@@ -1,0 +1,707 @@
+/* ==============================================================================
+   CORS Geodetic Suite - Buttery Smooth Animations (No Jank)
+   ============================================================================== */
+
+:root {
+    --bs-body-bg: #0f0f0f;
+    --surface-1: #1a1a1a;
+    --surface-2: #2c2c2e;
+    --surface-3: #3a3a3c;
+    
+    --primary: #0d6efd;
+    --primary-hover: #0b5ed7;
+    --primary-light: #66a3ff;
+    
+    --success: #198754;
+    --warning: #ffc107;
+    --danger: #dc3545;
+    
+    --glow-primary: rgba(13, 110, 253, 0.4);
+    --glow-success: rgba(25, 135, 84, 0.4);
+    
+    /* Ultra smooth easing - no bounce, no spring */
+    --ease-butter: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-silk: cubic-bezier(0.25, 0.1, 0.25, 1);
+    
+    /* Longer durations for smoothness */
+    --duration-fast: 400ms;
+    --duration-normal: 500ms;
+    --duration-slow: 700ms;
+}
+
+/* Enable hardware acceleration */
+* {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.vh-80 { height: 80vh; }
+.bg-dark-tertiary { background-color: var(--surface-2); }
+
+/* ==============================================================================
+   DEVICE LIST - Ultra Smooth Hover
+   ============================================================================== */
+
+#device-list {
+    --item-gap: 10px;
+}
+
+.list-group-item {
+    position: relative;
+    margin-bottom: var(--item-gap);
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 3px solid transparent;
+    background: var(--surface-1);
+    overflow: hidden;
+    cursor: pointer;
+    
+    /* Only animate what's needed - smooth as butter */
+    transition: 
+        transform var(--duration-normal) var(--ease-butter),
+        border-left-color var(--duration-normal) var(--ease-butter),
+        box-shadow var(--duration-normal) var(--ease-butter);
+    
+    will-change: transform;
+    transform: translateZ(0);
+}
+
+/* Phần thông tin trạm có thể click */
+.device-info-clickable {
+    flex: 1;
+}
+
+/* Nút xóa ẩn mặc định */
+.delete-device-btn {
+    opacity: 0;
+    transform: scale(0.8);
+    transition: 
+        opacity var(--duration-fast) var(--ease-butter),
+        transform var(--duration-fast) var(--ease-butter),
+        background-color var(--duration-fast) var(--ease-butter);
+}
+
+/* Hiện nút xóa khi hover vào item */
+.list-group-item:hover .delete-device-btn {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* Hiệu ứng hover riêng cho nút xóa */
+.delete-device-btn:hover {
+    background-color: var(--danger) !important;
+    color: white !important;
+    border-color: var(--danger) !important;
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+}
+
+/* Đảm bảo nút không bị ảnh hưởng bởi animation của item */
+.delete-device-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25);
+}
+
+/* Gentle glow overlay */
+.list-group-item::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 0%, 
+        rgba(13, 110, 253, 0.08) 0%, 
+        transparent 70%);
+    opacity: 0;
+    transition: opacity var(--duration-slow) var(--ease-butter);
+    pointer-events: none;
+}
+
+/* Smooth hover - no jank */
+.list-group-item:hover:not(.active) {
+    transform: translateX(8px);
+    border-left-color: rgba(13, 110, 253, 0.5);
+    box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.4),
+        inset 1px 0 0 rgba(13, 110, 253, 0.3);
+}
+
+.list-group-item:hover:not(.active)::before {
+    opacity: 1;
+}
+
+/* Active state - simple and smooth */
+.list-group-item.active {
+    transform: translateX(12px);
+    background: linear-gradient(135deg, 
+        rgba(13, 110, 253, 0.2) 0%, 
+        rgba(13, 110, 253, 0.1) 100%);
+    border-left-color: var(--primary);
+    border-color: rgba(13, 110, 253, 0.3);
+    box-shadow: 
+        0 12px 40px rgba(13, 110, 253, 0.3),
+        inset 1px 0 0 rgba(13, 110, 253, 0.5);
+}
+
+.list-group-item.active::before {
+    opacity: 1;
+}
+
+.list-group-item.active .text-white-50 {
+    color: rgba(255, 255, 255, 0.95) !important;
+    transition: color var(--duration-normal) var(--ease-butter);
+}
+
+/* Fade in animation - slow and smooth */
+.list-group-item {
+    animation: itemFadeIn var(--duration-slow) var(--ease-butter) backwards;
+}
+
+.list-group-item:nth-child(1) { animation-delay: 0ms; }
+.list-group-item:nth-child(2) { animation-delay: 80ms; }
+.list-group-item:nth-child(3) { animation-delay: 160ms; }
+.list-group-item:nth-child(4) { animation-delay: 240ms; }
+.list-group-item:nth-child(5) { animation-delay: 320ms; }
+
+@keyframes itemFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ==============================================================================
+   DETAILS PANEL - Gentle Reveal
+   ============================================================================== */
+
+#details-panel {
+    animation: panelReveal var(--duration-slow) var(--ease-butter);
+}
+
+@keyframes panelReveal {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.card {
+    transition: 
+        transform var(--duration-normal) var(--ease-butter),
+        box-shadow var(--duration-normal) var(--ease-butter);
+    border-radius: 16px;
+    background: var(--surface-1);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: 
+        0 16px 48px rgba(0, 0, 0, 0.5),
+        0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* ==============================================================================
+   TOGGLE SWITCHES - Smooth iOS Style
+   ============================================================================== */
+
+.form-switch.form-switch-lg {
+    padding-left: 3.75rem;
+    min-height: 2.5rem;
+    display: flex;
+    align-items: center;
+}
+
+.form-switch.form-switch-lg .form-check-input {
+    width: 3.25rem;
+    height: 1.75rem;
+    margin-left: -3.75rem;
+    margin-top: 0;
+    cursor: pointer;
+    border: none;
+    background-color: rgba(120, 120, 128, 0.32);
+    transition: background-color var(--duration-normal) var(--ease-butter);
+    position: relative;
+    appearance: none;
+    outline: none;
+}
+
+/* Toggle knob */
+.form-switch.form-switch-lg .form-check-input::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: calc(1.75rem - 4px);
+    height: calc(1.75rem - 4px);
+    background: linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%);
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: transform var(--duration-normal) var(--ease-butter);
+}
+
+.form-switch.form-switch-lg .form-check-input:checked {
+    background-color: var(--primary);
+}
+
+.form-switch.form-switch-lg .form-check-input:checked::before {
+    transform: translateX(1.5rem);
+}
+
+.form-switch.form-switch-lg .form-check-label {
+    cursor: pointer;
+    user-select: none;
+    transition: color var(--duration-fast) var(--ease-butter);
+}
+
+.form-switch.form-switch-lg .form-check-input:checked + .form-check-label {
+    color: var(--primary-light);
+}
+
+/* ==============================================================================
+   BADGES - Gentle Animations
+   ============================================================================== */
+
+.badge {
+    padding: 0.4em 0.8em;
+    font-weight: 600;
+    border-radius: 12px;
+    transition: transform var(--duration-fast) var(--ease-butter);
+}
+
+.badge.bg-success {
+    background: linear-gradient(135deg, #198754 0%, #157347 100%) !important;
+    box-shadow: 0 2px 12px rgba(25, 135, 84, 0.3);
+}
+
+.badge.bg-warning {
+    background: linear-gradient(135deg, #ffc107 0%, #ffb300 100%) !important;
+    color: #000 !important;
+    box-shadow: 0 2px 12px rgba(255, 193, 7, 0.3);
+}
+
+.badge.bg-primary {
+    background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%) !important;
+    box-shadow: 0 2px 12px rgba(13, 110, 253, 0.3);
+}
+
+.badge.bg-danger {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%) !important;
+    box-shadow: 0 2px 12px rgba(220, 53, 69, 0.3);
+}
+
+/* ==============================================================================
+   BUTTONS - Smooth Interactions
+   ============================================================================== */
+
+.btn {
+    position: relative;
+    overflow: hidden;
+    border-radius: 12px;
+    font-weight: 500;
+    border: none;
+    transition: 
+        transform var(--duration-fast) var(--ease-butter),
+        box-shadow var(--duration-normal) var(--ease-butter);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
+    box-shadow: 0 4px 16px rgba(13, 110, 253, 0.3);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(13, 110, 253, 0.4);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+    transition-duration: 100ms;
+}
+
+.btn-success {
+    background: linear-gradient(135deg, var(--success) 0%, #157347 100%);
+    box-shadow: 0 4px 16px rgba(25, 135, 84, 0.3);
+}
+
+.btn-success:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(25, 135, 84, 0.4);
+}
+
+.btn-outline-danger {
+    border: 2px solid var(--danger);
+    color: var(--danger);
+    background: transparent;
+    transition: all var(--duration-normal) var(--ease-butter);
+}
+
+.btn-outline-danger:hover {
+    background: var(--danger);
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(220, 53, 69, 0.4);
+}
+
+.btn-outline-primary {
+    border: 2px solid var(--primary);
+    color: var(--primary);
+    background: transparent;
+    transition: all var(--duration-normal) var(--ease-butter);
+}
+
+.btn-outline-primary:hover {
+    background: var(--primary);
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(13, 110, 253, 0.4);
+}
+
+/* ==============================================================================
+   ACCORDION - Smooth Expand
+   ============================================================================== */
+
+.accordion-item {
+    background: var(--surface-1);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px !important;
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+
+.accordion-button {
+    background: var(--surface-2);
+    color: #fff;
+    border: none;
+    border-radius: 12px !important;
+    padding: 1rem 1.25rem;
+    transition: 
+        background var(--duration-normal) var(--ease-butter),
+        color var(--duration-normal) var(--ease-butter);
+}
+
+.accordion-button::after {
+    transition: transform var(--duration-normal) var(--ease-butter);
+    filter: brightness(2);
+}
+
+.accordion-button:not(.collapsed) {
+    background: linear-gradient(135deg, 
+        rgba(13, 110, 253, 0.15) 0%, 
+        rgba(13, 110, 253, 0.05) 100%);
+    color: var(--primary-light);
+}
+
+.accordion-button:not(.collapsed)::after {
+    transform: rotate(-180deg);
+}
+
+.accordion-collapse {
+    transition: height var(--duration-normal) var(--ease-butter);
+}
+
+.accordion-body {
+    animation: accordionBodyReveal var(--duration-normal) var(--ease-butter);
+}
+
+@keyframes accordionBodyReveal {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* ==============================================================================
+   TABS - Smooth Navigation
+   ============================================================================== */
+
+.nav-tabs {
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-tabs .nav-link {
+    color: rgba(255, 255, 255, 0.6);
+    border: none;
+    border-radius: 10px 10px 0 0;
+    padding: 0.75rem 1.25rem;
+    position: relative;
+    transition: 
+        color var(--duration-fast) var(--ease-butter),
+        background var(--duration-normal) var(--ease-butter);
+}
+
+.nav-tabs .nav-link::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 3px;
+    background: var(--primary);
+    transition: width var(--duration-normal) var(--ease-butter);
+    border-radius: 2px;
+}
+
+.nav-tabs .nav-link:hover {
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--primary-light);
+    background: rgba(13, 110, 253, 0.1);
+}
+
+.nav-tabs .nav-link.active::after {
+    width: 80%;
+}
+
+.tab-pane {
+    animation: tabReveal var(--duration-normal) var(--ease-butter);
+}
+
+@keyframes tabReveal {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* ==============================================================================
+   FORMS - Smooth Inputs
+   ============================================================================== */
+
+.form-control, .form-select {
+    background: var(--surface-2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-radius: 10px;
+    padding: 0.625rem 0.875rem;
+    transition: 
+        border-color var(--duration-normal) var(--ease-butter),
+        box-shadow var(--duration-normal) var(--ease-butter);
+}
+
+.form-control:focus, .form-select:focus {
+    background: var(--surface-2);
+    border-color: var(--primary);
+    color: #fff;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+    outline: none;
+}
+
+.form-control::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+/* ==============================================================================
+   CONNECTION STATUS
+   ============================================================================== */
+
+#connection-status {
+    transition: all var(--duration-normal) var(--ease-butter);
+    border-radius: 50%;
+}
+
+#connection-status.spinner-border {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+#connection-status.bg-success {
+    box-shadow: 0 0 12px var(--glow-success);
+}
+
+/* ==============================================================================
+   SCROLLBAR
+   ============================================================================== */
+
+.overflow-auto::-webkit-scrollbar {
+    width: 8px;
+}
+
+.overflow-auto::-webkit-scrollbar-track {
+    background: var(--surface-1);
+    border-radius: 4px;
+}
+
+.overflow-auto::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    transition: background var(--duration-fast) var(--ease-butter);
+}
+
+.overflow-auto::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* ==============================================================================
+   UTILITY ANIMATIONS
+   ============================================================================== */
+
+.fade-in {
+    animation: fadeIn var(--duration-slow) var(--ease-butter);
+}
+
+@keyframes fadeIn {
+    from { 
+        opacity: 0;
+        transform: translateY(15px);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ==============================================================================
+   NAVBAR
+   ============================================================================== */
+
+.navbar {
+    backdrop-filter: blur(10px);
+    background: rgba(15, 15, 15, 0.95) !important;
+    transition: box-shadow var(--duration-normal) var(--ease-butter);
+}
+
+/* ==============================================================================
+   RESPONSIVE
+   ============================================================================== */
+
+@media (max-width: 768px) {
+    .list-group-item:hover:not(.active) {
+        transform: translateX(6px);
+    }
+    
+    .list-group-item.active {
+        transform: translateX(10px);
+    }
+}
+
+/* ==============================================================================
+   ACCESSIBILITY
+   ============================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ==============================================================================
+   POLISH
+   ============================================================================== */
+
+.alert {
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+/* Smooth focus outline */
+*:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 8px;
+}
+
+/* Remove default focus styles */
+button:focus, 
+a:focus, 
+input:focus, 
+select:focus {
+    outline: none;
+}
+/* CSS cho Dashboard moi */
+.skyplot-container {
+    position: relative;
+    width: 100%;
+    padding-top: 100%; /* Tao ti le 1:1 */
+}
+.skyplot-container canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+.signal-bars-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    height: 320px;
+    overflow-y: auto;
+}
+.constellation-group {
+    margin-bottom: 10px;
+}
+.constellation-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #ccc;
+}
+.constellation-header img {
+    width: 24px;
+    height: 24px;
+}
+.bars-wrapper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.sat-bar-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 35px;
+}
+.sat-bar {
+    width: 100%;
+    height: 100px;
+    background: #333;
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+}
+.sat-bar-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    transition: height 0.3s ease-out;
+}
+.sat-bar-snr {
+    font-size: 11px;
+    font-weight: bold;
+    color: white;
+    margin-bottom: 3px;
+}
+.sat-bar-prn {
+    font-size: 10px;
+    color: #aaa;
+}
