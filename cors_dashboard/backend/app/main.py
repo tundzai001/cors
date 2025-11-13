@@ -211,17 +211,24 @@ async def lifespan(app: FastAPI):
     
     # Create default admin if needed
     try:
-        async with AsyncAuthSession() as session:
-            # ... (logic tạo admin mặc định giữ nguyên) ...
-            pass # Giữ code cũ của bạn ở đây
+        async with AsyncAuthSession() as db_session:
+            admin_user = await crud.get_user_by_username(db_session, username="admin")
+            if not admin_user:
+                logger.warning("Không tìm thấy người dùng 'admin' mặc định. Đang tiến hành tạo...")
+                # Lưu ý: Mật khẩu mặc định nên được đặt trong biến môi trường
+                hashed_password = await auth.get_password_hash("admin@1234") 
+                await crud.create_user(
+                    db=db_session,
+                    username="admin",
+                    hashed_password=hashed_password,
+                    role=auth.Role.ADMIN,
+                    full_name="Administrator"
+                )
+                logger.info("✓ Đã tạo người dùng 'admin' mặc định thành công.")
     except Exception as e:
         logger.error(f"Failed to create default admin: {e}")
-    
-    # =================================================================
-    # <<< THÊM VÀO ĐÂY: Khởi động MQTT client >>>
-    # =================================================================
+
     mqtt_handler.start_mqtt_loop()
-    # =================================================================
     
     # Start background tasks
     tasks = []
@@ -758,7 +765,7 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
 app.add_middleware(MonitoringMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ Trong production, hãy chỉ định origins cụ thể
+    allow_origins=["https://aitogy.click"],  # ⚠️ Trong production, hãy chỉ định origins cụ thể
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
