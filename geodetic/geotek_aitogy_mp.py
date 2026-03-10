@@ -179,17 +179,11 @@ class RelayWorker(threading.Thread):
                 self.log("INFO", f"Connecting TARGET: {TARGET_HOST}/{self.cfg['target_mp']} (v1.0)")
                 target_sock = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
                 
-                # NTRIP v1.0: SOURCE password /mountpoint
-                auth_str = f"source:{TARGET_PASS}"
-                auth = base64.b64encode(auth_str.encode()).decode()
-                
+                # NTRIP v1.0: SOURCE password /mountpoint (không có HTTP/1.1)
                 target_request = (
-                    f"SOURCE {TARGET_PASS} /{self.cfg['target_mp']} HTTP/1.1\r\n"
-                    f"Host: {TARGET_HOST}:{TARGET_PORT}\r\n"
-                    f"Ntrip-Version: Ntrip/2.0\r\n"
-                    f"User-Agent: NTRIP GeodeticAgent/4.1\r\n"
-                    f"Authorization: Basic {auth}\r\n"
-                    f"Connection: Keep-Alive\r\n\r\n"
+                    f"SOURCE {TARGET_PASS} /{self.cfg['target_mp']}\r\n"
+                    f"Source-Agent: NTRIP NtripSource/1.0\r\n"
+                    f"\r\n"
                 )
                 
                 target_sock.sendall(target_request.encode())
@@ -199,13 +193,14 @@ class RelayWorker(threading.Thread):
                 response_text = response.decode(errors='ignore')
                 
                 # Kiểm tra response
+                self.log("DEBUG", f"Target response: {repr(response_text[:300])}")
+                
                 if "SOURCETABLE" in response_text:
                     self.log("ERROR", "❌ Server still returned SOURCETABLE!")
-                    self.log("ERROR", f"Response: {response_text[:200]}")
                     raise Exception("Wrong request format")
                 
                 if not (b"ICY 200" in response or b"200 OK" in response):
-                    raise Exception(f"Target rejected: {response_text[:200]}")
+                    raise Exception(f"Target rejected: {response_text[:300]}")
                 
                 self.is_connected = True
                 self.publish_status()
@@ -274,6 +269,13 @@ class RelayWorker(threading.Thread):
                             target_sock.sendall(b'\r\n')
                         except:
                             break
+                
+                # Inner data loop đã kết thúc (data error hoặc EOF) - delay trước khi reconnect
+                self.log("INFO", f"Relay disconnected, reconnecting in {RECONNECT_INTERVAL}s...")
+                self.is_connected = False
+                self.current_bps = 0
+                self.publish_status()
+                time.sleep(RECONNECT_INTERVAL)
             
             except Exception as e:
                 self.log("WARNING", f"Connection error: {e}")
