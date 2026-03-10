@@ -1,0 +1,1068 @@
+<!--security.html-->
+<!DOCTYPE html>
+<html lang="vi" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Dashboard - CORS Geodetic Suite</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --neon-green: #00ff41;
+            --neon-red: #ff0033;
+            --neon-blue: #00d4ff;
+            --neon-purple: #d600ff; /* Màu tím mới */
+        }
+        @keyframes pulse-glow-danger {
+            0%, 100% { box-shadow: 0 0 15px var(--neon-red); }
+            50% { box-shadow: 0 0 30px var(--neon-red); }
+        }
+        .pulse-glow-danger {
+            animation: pulse-glow-danger 1.5s ease-in-out infinite;
+        }
+
+        @keyframes matrix-rain {
+            0% { transform: translateY(-100%); opacity: 1; }
+            100% { transform: translateY(100vh); opacity: 0; }
+        }
+        
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 20px currentColor, inset 0 0 20px currentColor; }
+            50% { box-shadow: 0 0 40px currentColor, inset 0 0 40px currentColor; }
+        }
+        
+        @keyframes rotate-scan {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes data-flow {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        @keyframes blink-cursor {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        
+        body {
+            background: #000;
+            overflow-x: hidden;
+            position: relative;
+        }
+        
+        /* Matrix Rain Background */
+        .matrix-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.03;
+        }
+        
+        .matrix-char {
+            position: absolute;
+            color: var(--neon-green);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            animation: matrix-rain linear infinite;
+        }
+        
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .navbar {
+            backdrop-filter: blur(10px);
+            background: rgba(0, 0, 0, 0.95) !important;
+            border-bottom: 1px solid var(--neon-green);
+        }
+        
+        /* Circular Stats - Hacker Style */
+        .stat-circle-container {
+            position: relative;
+            width: 180px;
+            height: 180px;
+            margin: 0 auto;
+        }
+        
+        .stat-circle {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .circle-bg {
+            fill: none;
+            stroke: rgba(0, 255, 65, 0.1);
+            stroke-width: 8;
+        }
+        
+        .circle-progress {
+            fill: none;
+            stroke-width: 8;
+            stroke-linecap: round;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+            transition: stroke-dashoffset 1s ease;
+        }
+        
+        .circle-danger { stroke: var(--neon-red); filter: drop-shadow(0 0 10px var(--neon-red)); }
+        .circle-warning { stroke: #ffd700; filter: drop-shadow(0 0 10px #ffd700); }
+        .circle-info { stroke: var(--neon-blue); filter: drop-shadow(0 0 10px var(--neon-blue)); }
+        .circle-success { stroke: var(--neon-green); filter: drop-shadow(0 0 10px var(--neon-green)); }
+        
+        .stat-circle-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        
+        .stat-circle-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 0 20px currentColor;
+        }
+        
+        .stat-circle-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-top: 5px;
+            opacity: 0.8;
+        }
+        
+        /* Radar Scanning Effect */
+        .radar-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .radar-line {
+            position: absolute;
+            width: 2px;
+            height: 50%;
+            background: linear-gradient(to top, transparent, var(--neon-green));
+            top: 0;
+            left: 50%;
+            transform-origin: bottom center;
+            animation: rotate-scan 4s linear infinite;
+            opacity: 0.5;
+        }
+        
+        /* Stat Card Hacker Style */
+        .stat-card-hacker {
+            background: linear-gradient(135deg, rgba(0, 255, 65, 0.05), rgba(0, 0, 0, 0.9));
+            border: 1px solid var(--neon-green);
+            border-radius: 15px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 0 30px rgba(0, 255, 65, 0.2);
+        }
+        
+        .stat-card-hacker::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, var(--neon-green), transparent, var(--neon-green));
+            z-index: -1;
+            animation: pulse-glow 2s ease-in-out infinite;
+            border-radius: 15px;
+        }
+        
+        /* Data Flow Animation */
+        .data-flow {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            overflow: hidden;
+        }
+        
+        .data-flow::before {
+            content: '';
+            position: absolute;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, var(--neon-green), transparent);
+            animation: data-flow 2s ease-in-out infinite;
+        }
+        
+        /* Terminal Style Table */
+        .terminal-table {
+            background: #000;
+            border: 1px solid var(--neon-green);
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            box-shadow: 0 0 30px rgba(0, 255, 65, 0.3);
+        }
+        
+        .terminal-header {
+            background: rgba(0, 255, 65, 0.1);
+            border-bottom: 1px solid var(--neon-green);
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .dot-red { background: var(--neon-red); box-shadow: 0 0 10px var(--neon-red); }
+        .dot-yellow { background: #ffd700; box-shadow: 0 0 10px #ffd700; }
+        .dot-green { background: var(--neon-green); box-shadow: 0 0 10px var(--neon-green); }
+        
+        .terminal-title {
+            color: var(--neon-green);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-left: 10px;
+        }
+        
+        .terminal-cursor {
+            display: inline-block;
+            width: 10px;
+            height: 1em;
+            background: var(--neon-green);
+            animation: blink-cursor 1s step-end infinite;
+            margin-left: 5px;
+        }
+        
+        .table-hacker {
+            color: var(--neon-green);
+        }
+        
+        .table-hacker thead th {
+            border-bottom: 1px solid var(--neon-green);
+            padding: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.85rem;
+        }
+        
+        .table-hacker tbody tr {
+            border-bottom: 1px solid rgba(0, 255, 65, 0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .table-hacker tbody tr:hover {
+            background: rgba(0, 255, 65, 0.05);
+            transform: translateX(10px);
+        }
+        
+        .table-hacker code {
+            background: rgba(0, 212, 255, 0.1);
+            color: var(--neon-blue);
+            padding: 5px 10px;
+            border-radius: 5px;
+            border: 1px solid var(--neon-blue);
+            font-family: 'Courier New', monospace;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+        }
+        
+        /* Buttons Hacker Style */
+        .btn-hacker {
+            background: rgba(0, 255, 65, 0.1);
+            border: 1px solid var(--neon-green);
+            color: var(--neon-green);
+            font-family: 'Courier New', monospace;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 10px 20px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn-hacker::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(0, 255, 65, 0.3);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.5s, height 0.5s;
+        }
+        
+        .btn-hacker:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+        
+        .btn-hacker:hover {
+            box-shadow: 0 0 20px var(--neon-green);
+            transform: translateY(-2px);
+        }
+        
+        .btn-danger-hacker {
+            border-color: var(--neon-red);
+            color: var(--neon-red);
+        }
+        
+        .btn-danger-hacker:hover {
+            box-shadow: 0 0 20px var(--neon-red);
+        }
+        
+        .switch-hacker .form-check-input {
+            width: 60px;
+            height: 30px;
+            background-color: rgba(255, 0, 51, 0.2);
+            border: 1px solid var(--neon-red);
+            cursor: pointer;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            border-radius: 30px;
+            position: relative;
+            transition: all 0.3s ease-in-out;
+        }
+
+        .switch-hacker .form-check-input:checked {
+            background-color: rgba(0, 255, 65, 0.2);
+            border-color: var(--neon-green);
+        }
+
+        .switch-hacker .form-check-input::before {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background-color: var(--neon-red);
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: all 0.3s ease-in-out;
+            box-shadow: 0 0 10px var(--neon-red);
+        }
+
+        .switch-hacker .form-check-input:checked::before {
+            transform: translateX(30px);
+            background-color: var(--neon-green);
+            box-shadow: 0 0 10px var(--neon-green);
+        }
+        /* Form Input Hacker */
+        .input-hacker {
+            background: rgba(0, 255, 65, 0.05);
+            border: 1px solid var(--neon-green);
+            color: var(--neon-green);
+            font-family: 'Courier New', monospace;
+            padding: 12px 15px;
+            border-radius: 8px;
+        }
+        
+        .input-hacker:focus {
+            background: rgba(0, 255, 65, 0.1);
+            border-color: var(--neon-green);
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+            color: var(--neon-green);
+        }
+        
+        .input-hacker::placeholder {
+            color: rgba(0, 255, 65, 0.5);
+        }
+        
+        /* Loading Bar */
+        .loading-bar {
+            height: 3px;
+            background: rgba(0, 255, 65, 0.2);
+            position: relative;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        
+        .loading-bar-fill {
+            height: 100%;
+            background: var(--neon-green);
+            box-shadow: 0 0 10px var(--neon-green);
+            animation: data-flow 1.5s ease-in-out infinite;
+        }
+        
+        /* Alert Hacker */
+        .alert-hacker {
+            background: rgba(255, 0, 51, 0.1);
+            border: 1px solid var(--neon-red);
+            border-radius: 10px;
+            color: var(--neon-red);
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        /* Threat Level Indicator */
+        .threat-level {
+            display: flex;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        
+        .threat-bar {
+            flex: 1;
+            height: 8px;
+            background: rgba(0, 255, 65, 0.2);
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .threat-bar.active {
+            background: var(--neon-green);
+            box-shadow: 0 0 10px var(--neon-green);
+        }
+        
+        .threat-bar.warning {
+            background: #ffd700;
+            box-shadow: 0 0 10px #ffd700;
+        }
+        
+        .threat-bar.danger {
+            background: var(--neon-red);
+            box-shadow: 0 0 10px var(--neon-red);
+            animation: pulse-glow 1s ease-in-out infinite;
+        }
+        
+        /* Monitoring Panel */
+        .monitor-panel {
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid var(--neon-blue);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .monitor-line {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+        
+        .monitor-label {
+            color: var(--neon-blue);
+        }
+        
+        .monitor-value {
+            color: var(--neon-green);
+            font-weight: 700;
+        }
+        
+        /* Scan Effect */
+        .scan-line {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--neon-green), transparent);
+            animation: data-flow 2s ease-in-out infinite;
+            pointer-events: none;
+        }
+        
+        /* Empty State Hacker */
+        .empty-state-hacker {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--neon-green);
+            font-family: 'Courier New', monospace;
+        }
+        
+        .empty-state-hacker i {
+            font-size: 5rem;
+            opacity: 0.3;
+            text-shadow: 0 0 30px var(--neon-green);
+        }
+        
+        /* Header Hacker Style */
+        .header-hacker {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(0, 255, 65, 0.05);
+            border: 1px solid var(--neon-green);
+            border-radius: 15px;
+        }
+        
+        .header-title {
+            font-family: 'Courier New', monospace;
+            color: var(--neon-green);
+            font-size: 2rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            text-shadow: 0 0 20px var(--neon-green);
+        }
+        
+        .header-subtitle {
+            color: rgba(0, 255, 65, 0.7);
+            font-family: 'Courier New', monospace;
+            margin-top: 5px;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Matrix Rain Background -->
+    <div class="matrix-bg" id="matrix-bg"></div>
+    
+    <div class="content-wrapper">
+        <nav class="navbar navbar-expand-lg border-bottom border-secondary-subtle sticky-top">
+            <div class="container-fluid">
+                <a class="navbar-brand fw-bold" href="/" style="color: var(--neon-green); text-shadow: 0 0 10px var(--neon-green);">
+                    <i class="bi bi-shield-lock-fill me-2"></i>CORS SECURITY SYSTEM
+                </a>
+                
+                <!-- 🔥 THÊM NÚT TOGGLE CHO MOBILE -->
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <!-- 🔥 WRAP MENU TRONG COLLAPSE -->
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul id="main-nav" class="navbar-nav me-auto mb-2 mb-lg-0">
+                        <!-- JavaScript sẽ tự động render menu -->
+                    </ul>
+                </div>
+                
+                <!-- Phần user info và logout vẫn nằm ngoài để luôn hiển thị -->
+                <div class="d-flex align-items-center">
+                    <span id="user-info" class="navbar-text me-3 d-none d-md-inline" style="color: var(--neon-green);"></span>
+                    <button id="logout-btn" class="btn btn-sm btn-danger-hacker">
+                        <i class="bi bi-box-arrow-right"></i>
+                        <span class="d-none d-md-inline ms-1">LOGOUT</span>
+                    </button>
+                </div>
+            </div>
+        </nav>
+        <main class="container-fluid mt-4 px-4">
+            <!-- Header -->
+            <div class="header-hacker">
+                <div>
+                    <div class="header-title">
+                        <i class="bi bi-shield-lock-fill me-2"></i>SECURITY MONITOR
+                        <span class="terminal-cursor"></span>
+                    </div>
+                    <div class="header-subtitle">REAL-TIME THREAT DETECTION & PREVENTION SYSTEM</div>
+                </div>
+                <button class="btn btn-hacker" id="refresh-btn">
+                    <i class="bi bi-arrow-clockwise me-2"></i>RELOAD DATA
+                </button>
+            </div>
+
+            <!-- SERVER RESOURCES PANEL -->
+            <div class="row g-4 mb-4">
+                <!-- CPU -->
+                <div class="col-md-6 col-xl-3">
+                    <div class="terminal-table p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="monitor-label"><i class="bi bi-cpu-fill me-2"></i>CPU LOAD</span>
+                            <span class="monitor-value" id="cpu-val">0%</span>
+                        </div>
+                        <div class="progress" style="height: 5px; background: rgba(0,255,65,0.2);">
+                            <div id="cpu-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RAM -->
+                <div class="col-md-6 col-xl-3">
+                    <div class="terminal-table p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="monitor-label"><i class="bi bi-memory me-2"></i>RAM USAGE</span>
+                            <span class="monitor-value" id="ram-val">0%</span>
+                        </div>
+                        <div class="progress" style="height: 5px; background: rgba(0,255,65,0.2);">
+                            <div id="ram-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <div class="text-end mt-1" style="font-size: 0.7rem; color: #666;">
+                            FREE: <span id="ram-free">0</span> MB
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DISK -->
+                <div class="col-md-6 col-xl-3">
+                    <div class="terminal-table p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="monitor-label"><i class="bi bi-hdd-fill me-2"></i>DISK SPACE</span>
+                            <span class="monitor-value" id="disk-val">0%</span>
+                        </div>
+                        <div class="progress" style="height: 5px; background: rgba(0,255,65,0.2);">
+                            <div id="disk-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <div class="text-end mt-1" style="font-size: 0.7rem; color: #666;">
+                            FREE: <span id="disk-free">0</span> GB
+                        </div>
+                    </div>
+                </div>
+
+                <!-- UPTIME & LATENCY -->
+                <div class="col-md-6 col-xl-3">
+                    <div class="terminal-table p-3 d-flex flex-column justify-content-center h-100">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="monitor-label">UPTIME:</span>
+                            <span class="monitor-value text-end" id="uptime-val">00:00:00</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="monitor-label">AVG LATENCY:</span>
+                            <span class="monitor-value text-end" id="latency-val">0ms</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Real-time Monitoring Panel -->
+            <div class="accordion" id="systemStatusAccordion">
+                <div class="accordion-item" style="background: rgba(0,0,0,0.9); border: 1px solid var(--neon-blue);">
+                    <h2 class="accordion-header" id="headingOne">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="false" aria-controls="collapseOne" style="background: rgba(0, 212, 255, 0.1); color: var(--neon-blue); box-shadow: none;">
+                            <div class="d-flex justify-content-between w-100 align-items-center pe-3">
+                                <h6 class="mb-0" style="font-family: 'Courier New', monospace; text-transform: uppercase; letter-spacing: 2px;">
+                                    <i class="bi bi-activity me-2"></i>SYSTEM STATUS OVERVIEW
+                                </h6>
+                                <span id="system-status-badge" class="badge">LOADING STATUS...</span>
+                            </div>
+                        </button>
+                    </h2>
+                    <div id="collapseOne" class="accordion-collapse collapse" aria-labelledby="headingOne" data-bs-parent="#systemStatusAccordion">
+                        <div class="accordion-body">
+                            <div class="monitor-line align-items-center">
+                                <label for="firewall-switch" class="monitor-label">[ FIREWALL STATUS ]</label>
+                                <div class="form-check form-switch switch-hacker">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="firewall-switch" checked>
+                                </div>
+                            </div>
+                            <div class="monitor-line align-items-center">
+                                <label for="vpn-switch" class="monitor-label">[ VPN DETECTION ]</label>
+                                <div class="form-check form-switch switch-hacker">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="vpn-switch" checked>
+                                </div>
+                            </div>
+                            <div class="monitor-line align-items-center">
+                                <label for="pattern-switch" class="monitor-label">[ PATTERN ANALYSIS ]</label>
+                                <div class="form-check form-switch switch-hacker">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="pattern-switch" checked>
+                                </div>
+                            </div>
+
+                            <hr style="border-color: rgba(0, 212, 255, 0.3); margin: 15px 0;">
+
+                            <div class="monitor-line">
+                                <span class="monitor-label">[ LAST SCAN ]</span>
+                                <span class="monitor-value" id="last-scan-time">00:00:00</span>
+                            </div>
+                            <div class="monitor-line">
+                                <span class="monitor-label">[ THREATS DETECTED ]</span>
+                                <span class="monitor-value" id="threats-count">0</span>
+                            </div>
+
+                            <!-- 🆕 MỚI CHÈN: VISITOR COUNTER -->
+                            <div class="monitor-line">
+                                <span class="monitor-label" style="color: #d600ff; text-shadow: 0 0 10px #d600ff;">
+                                    <i class="bi bi-eye-fill me-2"></i>[ LIVE VISITORS ]
+                                </span>
+                                <span class="monitor-value text-end" id="live-visitors-count" style="color: #d600ff; font-size: 1.2em;">
+                                    0
+                                </span>
+                            </div>
+                            <div class="text-end mt-1 mb-3" style="font-size: 0.65rem; color: rgba(214, 0, 255, 0.7); font-family: 'Courier New', monospace; letter-spacing: 1px;">
+                                * REAL-TIME SESSION TRACKING
+                            </div>
+
+                            <!-- Thanh Threat Level -->
+                            <div class="mt-3">
+                                <span class="monitor-label small">[ CURRENT THREAT LEVEL ]</span>
+                                <div class="threat-level">
+                                    <div class="threat-bar"></div>
+                                    <div class="threat-bar"></div>
+                                    <div class="threat-bar"></div>
+                                    <div class="threat-bar"></div>
+                                    <div class="threat-bar"></div>
+                                </div>
+                            </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Suspicious IPs Alert Panel -->
+            <div class="terminal-table mb-4">
+                <div class="terminal-header">
+                    <span class="terminal-dot dot-red"></span>
+                    <span class="terminal-dot dot-yellow"></span>
+                    <span class="terminal-dot dot-green"></span>
+                    <span class="terminal-title">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        SUSPICIOUS ACTIVITY MONITOR
+                        <span class="terminal-cursor"></span>
+                    </span>
+                </div>
+                <div style="padding: 20px;" id="suspicious-ips-container">
+                    <p class="text-success"><i class="bi bi-shield-check me-2"></i>No suspicious activity detected</p>
+                </div>
+            </div>
+
+            <!-- Circular Stats -->
+            <div class="row g-4 mb-4">
+                <div class="col-md-6 col-xl-3">
+                    <div class="stat-card-hacker text-center">
+                        <div class="stat-circle-container">
+                            <svg class="stat-circle" viewBox="0 0 200 200">
+                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
+                                <circle class="circle-progress circle-warning" cx="100" cy="100" r="90" 
+                                    stroke-dasharray="565.48" stroke-dashoffset="423" id="circle-blocked-ips"/>
+                            </svg>
+                            <div class="stat-circle-content">
+                                <div class="stat-circle-value" style="color: #ffd700;" id="blocked-ips-count">0</div>
+                                <div class="stat-circle-label" style="color: #ffd700;">TEMP BLOCKED</div>
+                            </div>
+                            <div class="radar-container">
+                                <div class="radar-line" style="background: linear-gradient(to top, transparent, #ffd700);"></div>
+                            </div>
+                        </div>
+                        <div class="data-flow"></div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6 col-xl-3">
+                    <div class="stat-card-hacker text-center">
+                        <div class="stat-circle-container">
+                            <svg class="stat-circle" viewBox="0 0 200 200">
+                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
+                                <circle class="circle-progress circle-success" cx="100" cy="100" r="90" 
+                                    stroke-dasharray="565.48" stroke-dashoffset="565" id="circle-blocked-users"/>
+                            </svg>
+                            <div class="stat-circle-content">
+                                <div class="stat-circle-value" style="color: var(--neon-green);" id="blocked-users-count">0</div>
+                                <div class="stat-circle-label" style="color: var(--neon-green);">USER LOCKED</div>
+                            </div>
+                            <div class="radar-container">
+                                <div class="radar-line"></div>
+                            </div>
+                        </div>
+                        <div class="data-flow"></div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6 col-xl-3">
+                    <div class="stat-card-hacker text-center">
+                        <div class="stat-circle-container">
+                            <svg class="stat-circle" viewBox="0 0 200 200">
+                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
+                                <circle class="circle-progress circle-danger" cx="100" cy="100" r="90" 
+                                    stroke-dasharray="565.48" stroke-dashoffset="283" id="circle-permanent"/>
+                            </svg>
+                            <div class="stat-circle-content">
+                                <div class="stat-circle-value" style="color: var(--neon-red);" id="permanent-blacklist-count">0</div>
+                                <div class="stat-circle-label" style="color: var(--neon-red);">BLACKLISTED</div>
+                            </div>
+                            <div class="radar-container">
+                                <div class="radar-line" style="background: linear-gradient(to top, transparent, var(--neon-red));"></div>
+                            </div>
+                        </div>
+                        <div class="data-flow"></div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6 col-xl-3">
+                    <div class="stat-card-hacker text-center">
+                        <div class="stat-circle-container">
+                            <svg class="stat-circle" viewBox="0 0 200 200">
+                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
+                                <circle class="circle-progress circle-info" cx="100" cy="100" r="90" 
+                                    stroke-dasharray="565.48" stroke-dashoffset="141" id="circle-tracked"/>
+                            </svg>
+                            <div class="stat-circle-content">
+                                <div class="stat-circle-value" style="color: var(--neon-blue);" id="total-ips-tracked">0</div>
+                                <div class="stat-circle-label" style="color: var(--neon-blue);">MONITORED</div>
+                            </div>
+                            <div class="radar-container">
+                                <div class="radar-line" style="background: linear-gradient(to top, transparent, var(--neon-blue));"></div>
+                            </div>
+                        </div>
+                        <div class="data-flow"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <!-- Temporary Blocked IPs Table - THÊM MỚI -->
+                <div class="col-xl-12 mb-4">
+                    <div class="terminal-table">
+                        <div class="terminal-header">
+                            <span class="terminal-dot dot-red"></span>
+                            <span class="terminal-dot dot-yellow"></span>
+                            <span class="terminal-dot dot-green"></span>
+                            <span class="terminal-title">
+                                <i class="bi bi-clock-history me-2"></i>
+                                TEMPORARY BLOCKED IPS
+                                <span class="terminal-cursor"></span>
+                            </span>
+                        </div>
+                        <div class="scan-line"></div>
+                        <div class="table-responsive">
+                            <table class="table table-hacker">
+                                <thead>
+                                    <tr>
+                                        <th><i class="bi bi-geo-alt-fill me-2"></i>IP ADDRESS</th>
+                                        <th><i class="bi bi-hourglass-split me-2"></i>REMAINING TIME</th>
+                                        <th><i class="bi bi-info-circle-fill me-2"></i>REASON</th>
+                                        <th class="text-end"><i class="bi bi-gear-fill me-2"></i>ACTION</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="temp-blocked-table-body">
+                                    <tr>
+                                        <td colspan="4"> 
+                                            <div class="empty-state-hacker">
+                                                <i class="bi bi-shield-check"></i>
+                                                <p class="mt-3 mb-0">[ NO TEMPORARY BLOCKS ]</p>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="loading-bar">
+                            <div class="loading-bar-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Blacklist Table -->
+                <div class="col-xl-8">
+                    <div class="terminal-table">
+                        <div class="terminal-header">
+                            <span class="terminal-dot dot-red"></span>
+                            <span class="terminal-dot dot-yellow"></span>
+                            <span class="terminal-dot dot-green"></span>
+                            <span class="terminal-title">
+                                <i class="bi bi-exclamation-octagon-fill me-2"></i>
+                                PERMANENT BLACKLIST DATABASE
+                                <span class="terminal-cursor"></span>
+                            </span>
+                        </div>
+                        <div class="scan-line"></div>
+                        <div class="table-responsive">
+                            <table class="table table-hacker">
+                                <thead>
+                                    <tr>
+                                        <th><i class="bi bi-geo-alt-fill me-2"></i>IP ADDRESS</th>
+                                        <th><i class="bi bi-info-circle-fill me-2"></i>REASON</th>
+                                        <th class="text-end"><i class="bi bi-gear-fill me-2"></i>ACTION</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="blacklist-table-body">
+                                    <tr>
+                                        <td colspan="3">
+                                            <div class="empty-state-hacker">
+                                                <i class="bi bi-shield-check"></i>
+                                                <p class="mt-3 mb-0">[ SYSTEM SECURE ] - NO BLACKLISTED IPS</p>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="loading-bar">
+                            <div class="loading-bar-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 🆕 NEW: ATTACK MODE OVERLAY (Ẩn mặc định, hiện bằng JS) -->
+                <div id="attack-mode-alert" class="d-none" style="background: rgba(255, 0, 0, 0.2); border: 1px solid var(--neon-red); color: var(--neon-red); padding: 15px; margin-bottom: 20px; text-align: center; animation: pulse-glow-danger 0.5s infinite;">
+                    <h2 class="fw-bold mb-0"><i class="bi bi-exclamation-diamond-fill me-2"></i>ACTIVE DDOS ATTACK DETECTED - DEFENSE SYSTEMS ENGAGED</h2>
+                </div>
+
+                <div class="row g-4 mb-4">
+                    <!-- 🆕 NEW: REAL-TIME TRAFFIC CHART -->
+                    <div class="col-xl-8">
+                        <div class="terminal-table h-100">
+                            <div class="terminal-header">
+                                <span class="terminal-dot dot-red"></span>
+                                <span class="terminal-dot dot-yellow"></span>
+                                <span class="terminal-dot dot-green"></span>
+                                <span class="terminal-title">
+                                    <i class="bi bi-activity me-2"></i>NETWORK TRAFFIC ANALYSIS (60s)
+                                </span>
+                            </div>
+                            <div class="p-3 position-relative">
+                                <!-- Canvas vẽ biểu đồ -->
+                                <canvas id="trafficChart" style="width: 100%; height: 250px;"></canvas>
+                                <div class="position-absolute top-0 end-0 p-3 text-end">
+                                    <small class="text-muted d-block">CURRENT RATE</small>
+                                    <span id="current-rps" class="fs-4 fw-bold" style="color: var(--neon-green)">0</span> <span style="color: var(--neon-green)">req/s</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 🆕 NEW: IDENTITY INTELLIGENCE (VPN/BOTS) -->
+                    <div class="col-xl-4">
+                        <div class="terminal-table h-100">
+                            <div class="terminal-header">
+                                <span class="terminal-dot dot-red"></span>
+                                <span class="terminal-dot dot-yellow"></span>
+                                <span class="terminal-dot dot-green"></span>
+                                <span class="terminal-title">
+                                    <i class="bi bi-incognito me-2"></i>IDENTITY INTEL
+                                </span>
+                            </div>
+                            <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                                <table class="table table-hacker table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>FINGERPRINT</th>
+                                            <th class="text-center">IPs</th>
+                                            <th class="text-end">RISK</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="vpn-intel-body">
+                                        <!-- JS sẽ điền dữ liệu vào đây -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Block IP Form -->
+                <div class="col-xl-4">
+                    <div class="terminal-table">
+                        <div class="terminal-header">
+                            <span class="terminal-dot dot-red"></span>
+                            <span class="terminal-dot dot-yellow"></span>
+                            <span class="terminal-dot dot-green"></span>
+                            <span class="terminal-title">
+                                <i class="bi bi-sign-stop-fill me-2"></i>MANUAL IP BLOCK
+                            </span>
+                        </div>
+                        <div style="padding: 25px;">
+                            <div class="alert-hacker mb-3">
+                                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                                <strong>WARNING:</strong> PERMANENT BLOCK ACTION
+                            </div>
+                            
+                            <form id="block-ip-form">
+                                <div class="mb-3">
+                                    <label class="form-label" style="color: var(--neon-green); font-family: 'Courier New', monospace; text-transform: uppercase; letter-spacing: 1px;">
+                                        <i class="bi bi-keyboard me-2"></i>TARGET IP ADDRESS
+                                    </label>
+                                    <input 
+                                        type="text" 
+                                        class="form-control input-hacker" 
+                                        id="ip-to-block" 
+                                        placeholder="192.168.1.100"
+                                        required
+                                    >
+                                </div>
+                                <button type="submit" class="btn btn-danger-hacker w-100">
+                                    <i class="bi bi-lock-fill me-2"></i>EXECUTE BLOCK
+                                </button>
+                            </form>
+                            <div class="loading-bar mt-3">
+                                <div class="loading-bar-fill"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1100"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Matrix Rain Effect
+        function createMatrixRain() {
+            const container = document.getElementById('matrix-bg');
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()';
+            
+            for (let i = 0; i < 50; i++) {
+                const char = document.createElement('div');
+                char.className = 'matrix-char';
+                char.textContent = chars[Math.floor(Math.random() * chars.length)];
+                char.style.left = Math.random() * 100 + '%';
+                char.style.animationDuration = (Math.random() * 3 + 2) + 's';
+                char.style.animationDelay = Math.random() * 5 + 's';
+                container.appendChild(char);
+            }
+        }
+        
+        // Update Last Scan Time
+        function updateLastScanTime() {
+            const now = new Date();
+            const timeString = now.toTimeString().split(' ')[0];
+            document.getElementById('last-scan-time').textContent = timeString;
+        }
+        
+        // Update Circular Progress
+        function updateCircularProgress(elementId, value, max = 100) {
+            const circle = document.getElementById(elementId);
+            if (!circle) return;
+            
+            const circumference = 565.48;
+            const percentage = (value / max) * 100;
+            const offset = circumference - (percentage / 100) * circumference;
+            circle.style.strokeDashoffset = offset;
+        }
+        
+        // Update Threat Level
+        function updateThreatLevel(level) {
+            const bars = document.querySelectorAll('.threat-bar');
+            bars.forEach((bar, index) => {
+                bar.classList.remove('active', 'warning', 'danger');
+                if (index < level) {
+                    if (level >= 4) bar.classList.add('danger');
+                    else if (level >= 3) bar.classList.add('warning');
+                    else bar.classList.add('active');
+                }
+            });
+        }
+        
+        createMatrixRain();
+        updateLastScanTime();
+        setInterval(updateLastScanTime, 1000);
+    </script>
+    <!-- React Core -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Chart.js (Để vẽ biểu đồ Traffic) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Leaflet JS (Nếu main.js có dùng bản đồ, nên thêm để tránh lỗi) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script src="/js/react-components.js"></script>
+
+    <script src="/js/nav-manager.js"></script>
+    <script src="/js/main.js"></script> 
+    <script src="/js/security.js"></script>
+</body>
+</html>

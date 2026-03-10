@@ -1,0 +1,2905 @@
+// ======================
+// react-components.js 
+// ======================
+
+const { useState, useEffect, memo, useRef } = React;
+
+// === CONSTANTS ===
+const STATUS_TEXT_MAP = {
+    'online': 'ONLINE',
+    'offline': 'OFFLINE',
+    'unprovisioned': 'CHƯA KÍCH HOẠT',
+    'awaiting_license': 'CHỜ LICENSE',
+    'configuring': 'ĐANG CẤU HÌNH',
+    'rebooting': 'KHỞI ĐỘNG LẠI',
+    'rebooting_for_reset': 'ĐANG RESET',
+    'locked': 'BỊ KHÓA'
+};
+
+const STATUS_CLASS_MAP = {
+    'online': 'bg-success',
+    'offline': 'bg-secondary',
+    'unprovisioned': 'bg-warning text-dark',
+    'awaiting_license': 'bg-info text-dark',
+    'configuring': 'bg-primary',
+    'rebooting': 'bg-warning text-dark',
+    'rebooting_for_reset': 'bg-danger',
+    'locked': 'bg-danger'
+};
+
+
+// ===============================================================================
+// === DEVICE LIST COMPONENTS
+// ===============================================================================
+
+const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSelect, onDelete, currentUser }) {
+    const isAdmin = currentUser?.role === 'admin';
+    const canDelete = currentUser?.role === 'admin' || 
+                     (currentUser?.role === 'coordinator' && device.user_id === currentUser.id);
+    
+    // ============================================================
+    // STATE MANAGEMENT
+    // ============================================================
+    const [displayStatus, setDisplayStatus] = React.useState({
+        s1Connected: false,
+        s2Connected: false
+    });
+    
+    const lastUpdateTimeRef = React.useRef({
+        s1: 0,
+        s2: 0
+    });
+    
+    React.useEffect(() => {
+        lastUpdateTimeRef.current = {
+            s1: 0,
+            s2: 0
+        };
+    }, [device.serial]);
+
+    React.useEffect(() => {
+        const ntripStatus = device.ntrip_status || {};
+        const s1 = ntripStatus.server1 || { connected: false, bps: 0 };
+        const s2 = ntripStatus.server2 || { connected: false, bps: 0 };
+        
+        const now = Date.now();
+        
+        if (s1.bps > 0) {
+            lastUpdateTimeRef.current.s1 = now;
+        }
+        if (s2.bps > 0) {
+            lastUpdateTimeRef.current.s2 = now;
+        }
+        
+        const GRACE_PERIOD = 5000;
+        const UNSTABLE_TIMEOUT = 15000;
+        
+        const s1TimeSince = now - lastUpdateTimeRef.current.s1;
+        const s2TimeSince = now - lastUpdateTimeRef.current.s2;
+        
+        // ============================================================
+        // LOGIC 3 TRẠNG THÁI CHO SERVER 1
+        // ============================================================
+        let s1Connected = false;
+        
+        if (lastUpdateTimeRef.current.s1 === 0) {
+            s1Connected = false;
+        } else if (s1.bps > 0) {
+            s1Connected = true;
+        } else if (s1TimeSince < GRACE_PERIOD) {
+            s1Connected = true;
+        } else if (s1TimeSince < UNSTABLE_TIMEOUT) {
+            s1Connected = 'unstable';
+        } else {
+            s1Connected = false;
+        }
+        
+        // ============================================================
+        // LOGIC 3 TRẠNG THÁI CHO SERVER 2
+        // ============================================================
+        let s2Connected = false;
+        
+        if (lastUpdateTimeRef.current.s2 === 0) {
+            s2Connected = false;
+        } else if (s2.bps > 0) {
+            s2Connected = true;
+        } else if (s2TimeSince < GRACE_PERIOD) {
+            s2Connected = true;
+        } else if (s2TimeSince < UNSTABLE_TIMEOUT) {
+            s2Connected = 'unstable';
+        } else {
+            s2Connected = false;
+        }
+        
+        setDisplayStatus({
+            s1Connected: s1Connected,
+            s2Connected: s2Connected
+        });
+        
+    }, [device.ntrip_status]);
+
+    // ============================================================
+    // EVENT HANDLERS
+    // ============================================================
+    const handleDelete = (e) => {
+        e.stopPropagation();
+        onDelete(device.serial, device.name);
+    };
+
+    // ============================================================
+    // FORMAT BPS
+    // ============================================================
+    const formatSpeed = (bytes) => {
+        if (!bytes || bytes === 0) return { value: '0', unit: 'B/s' };
+        if (bytes < 1024) return { value: Math.round(bytes).toString(), unit: 'B/s' };
+        return { 
+            value: (bytes / 1024).toFixed(1), 
+            unit: 'KB/s' 
+        };
+    };
+
+    // ============================================================
+    // LẤY THÔNG TIN SERVER
+    // ============================================================
+    const ntripStatus = device.ntrip_status || {};
+    const s1 = ntripStatus.server1 || { connected: false, bps: 0 };
+    const s2 = ntripStatus.server2 || { connected: false, bps: 0 };
+
+    const config = device.service_config || {};
+    const s1Enabled = config.server1_enabled;
+    const s2Enabled = config.server2_enabled;
+
+    const statusColorClass = device.status === 'online' ? 'online' : 
+                            device.status === 'awaiting_license' ? 'awaiting_license' :
+                            device.status === 'unprovisioned' ? 'unprovisioned' : 
+                            device.status === 'configuring' ? 'configuring' :
+                            device.status === 'rebooting' ? 'rebooting' :
+                            device.status === 'rebooting_for_reset' ? 'rebooting_for_reset' :
+                            device.status === 'locked' ? 'locked' : 'offline';
+
+    // ✅ KIỂM TRA TRẠM ẢO
+    const isVirtualStation = device.detected_chip_type === 'VIRTUAL';
+
+    // ============================================================
+    // RENDER
+    // ============================================================
+    return (
+        <div 
+            className={`device-card ${isSelected ? 'active' : ''}`}
+            onClick={() => onSelect(device.serial)}
+        >
+            {/* Thanh trạng thái dọc */}
+            <div className={`status-bar ${statusColorClass}`}></div>
+
+            {/* Header: Name + Chip Badge */}
+            <div className="d-flex justify-content-between align-items-start mb-1 ps-2">
+                <div className="flex-grow-1 pe-2">
+                    <div className="device-name" title={device.name}>
+                        {device.name}
+                    </div>
+                    {isAdmin && (
+                        <div className="device-meta">
+                            {device.serial}
+                        </div>
+                    )}
+                </div>
+                
+                {/* ✅ HIỂN THỊ BADGE TRẠM ẢO HOẶC CHIP THẬT */}
+                {isVirtualStation ? (
+                    <span className="badge bg-info text-dark" title="Trạm ảo - Nhận RTCM từ Cục và phát lại">
+                        <i className="bi bi-cloud-check-fill me-1"></i>
+                        VIRTUAL
+                    </span>
+                ) : (
+                    <span className="badge">
+                        {device.detected_chip_type || 'UNK'}
+                    </span>
+                )}
+            </div>
+
+            {/* Server Indicators */}
+            {(s1Enabled || s2Enabled) && (
+                <div className="server-indicators">
+                    {/* Server 1 */}
+                    {s1Enabled && (
+                        <div className={`server-status-item ${
+                            displayStatus.s1Connected === 'unstable' ? 'unstable' : 
+                            displayStatus.s1Connected ? 'connected' : 'disconnected'
+                        }`}>
+                            <div className="server-label">
+                                <i className="bi bi-hdd-network-fill"></i>
+                                S1
+                            </div>
+                            <div className="d-flex align-items-baseline gap-1">
+                                <span className="server-bps">
+                                    {formatSpeed(s1.bps).value}
+                                </span>
+                                <span className="server-bps-unit">
+                                    {formatSpeed(s1.bps).unit}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Server 2 */}
+                    {s2Enabled && (
+                        <div className={`server-status-item ${
+                            displayStatus.s2Connected === 'unstable' ? 'unstable' : 
+                            displayStatus.s2Connected ? 'connected' : 'disconnected'
+                        }`}>
+                            <div className="server-label">
+                                <i className="bi bi-hdd-network-fill"></i>
+                                S2
+                            </div>
+                            <div className="d-flex align-items-baseline gap-1">
+                                <span className="server-bps">
+                                    {formatSpeed(s2.bps).value}
+                                </span>
+                                <span className="server-bps-unit">
+                                    {formatSpeed(s2.bps).unit}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ✅ HIỂN THỊ RTCM INPUT CHO TRẠM ẢO */}
+            {isVirtualStation && device.ntrip_stats && device.ntrip_stats.rtcm_in_bps > 0 && (
+                <div className="mt-2 p-2 bg-dark rounded border border-info">
+                    <div className="d-flex align-items-center justify-content-between">
+                        <div className="d-flex align-items-center">
+                            <i className="bi bi-arrow-down-circle text-info me-2"></i>
+                            <span className="small text-muted">RTCM Input (Cục)</span>
+                        </div>
+                        <div className="d-flex align-items-baseline">
+                            <span className="fw-bold text-info">
+                                {formatSpeed(device.ntrip_stats.rtcm_in_bps).value}
+                            </span>
+                            <span className="small text-muted ms-1">
+                                {formatSpeed(device.ntrip_stats.rtcm_in_bps).unit}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Button */}
+            {canDelete && (
+                <button 
+                    className="btn btn-delete" 
+                    onClick={handleDelete}
+                    title="Xóa trạm"
+                >
+                    <i className="bi bi-trash3"></i>
+                </button>
+            )}
+        </div>
+    );
+});
+
+window.DeviceListItem = DeviceListItem;
+
+const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
+    const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
+    const searchTimeoutRef = useRef(null);
+    
+    useEffect(() => {
+        setLocalSearchTerm(searchTerm);
+    }, [searchTerm]);
+    
+    const handleSearchChange = (e) => {
+        const value = e.target.value;
+        setLocalSearchTerm(value);
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = setTimeout(() => {
+            onSearch(value);
+        }, 250);
+    };
+
+    return (
+        <div className="d-flex flex-column h-100 device-list-container">
+            {/* Header: Số lượng & Search */}
+            <div className="p-3 border-bottom border-secondary bg-black bg-opacity-25">
+                <div className="d-flex justify-content-between align-items-center mb-2">
+                    <h6 className="text-white mb-0 fw-bold">Trạm ({devices.length})</h6>
+                    <button className="btn btn-sm btn-link text-muted text-decoration-none p-0">
+                        <i className="bi bi-filter-right fs-5"></i>
+                    </button>
+                </div>
+                
+                <div className="input-group input-group-sm">
+                    <span className="input-group-text bg-dark border-secondary text-secondary">
+                        <i className="bi bi-search"></i>
+                    </span>
+                    <input 
+                        type="text" 
+                        className="form-control search-box-modern" 
+                        placeholder="Tìm kiếm..." 
+                        value={localSearchTerm}
+                        onChange={handleSearchChange}
+                    />
+                    {localSearchTerm && (
+                        <button 
+                            className="btn btn-dark border-secondary text-muted" 
+                            type="button"
+                            onClick={() => { setLocalSearchTerm(''); onSearch(''); }}
+                        >
+                            <i className="bi bi-x"></i>
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* List */}
+            <div className="flex-grow-1 overflow-auto custom-scrollbar p-2">
+                {devices.length === 0 ? (
+                    <div className="text-center mt-5 text-muted">
+                        <i className="bi bi-inbox display-4 opacity-25"></i>
+                        <p className="mt-2 small">Không tìm thấy dữ liệu</p>
+                    </div>
+                ) : (
+                    devices.map(device => (
+                        <DeviceListItem 
+                            key={device.serial}
+                            device={device}
+                            isSelected={device.serial === selectedDeviceSerial}
+                            onSelect={onSelect}
+                            onDelete={onDelete}
+                            currentUser={currentUser}
+                        />
+                    ))
+                )}
+            </div>
+        </div>
+    );
+});
+window.DeviceList = DeviceList;
+
+// ===============================================================================
+// === FORM COMPONENTS
+// ===============================================================================
+
+const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disabled }) {
+    const [licenseKey, setLicenseKey] = useState('');
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [isDeploying, setIsDeploying] = useState(false);
+
+    const handleGenerateKey = async () => {
+        setIsGenerating(true);
+        try {
+            const response = await window.apiFetch('/api/license/pi', {
+                method: 'POST',
+                body: JSON.stringify({ serial: device.serial })
+            });
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Failed to generate license');
+            }
+            const data = await response.json();
+            setLicenseKey(data.license_key);
+            window.showSuccess('License key đã được tạo!');
+        } catch (error) {
+            window.showError('Không thể tạo key: ' + error.message);
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return;
+        if (!licenseKey) return window.showError('Vui lòng tạo license key trước!');
+        setIsDeploying(true);
+        try {
+            await onDeployLicense(device.serial, licenseKey);
+        } finally {
+            setIsDeploying(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="alert alert-warning small">
+                <i className="bi bi-key-fill me-2"></i>
+                Chức năng này dùng để cấp phép cho các trạm Pi đang ở trạng thái "CHỜ LICENSE".
+            </div>
+            <div className="mb-3">
+                <label className="form-label">Serial Number của Pi</label>
+                <div className="input-group">
+                    <input type="text" className="form-control" value={device.serial} readOnly />
+                    <button 
+                        className="btn btn-outline-secondary" 
+                        type="button" 
+                        title="Sao chép Serial"
+                        onClick={() => {
+                            navigator.clipboard.writeText(device.serial);
+                            window.showSuccess('Đã sao chép Serial!');
+                        }}
+                    >
+                        <i className="bi bi-clipboard"></i>
+                    </button>
+                </div>
+            </div>
+            <div className="mb-3">
+                <label className="form-label">License Key</label>
+                <div className="input-group">
+                    <input type="text" className="form-control" value={licenseKey} readOnly placeholder="Nhấn 'Tạo Key' để tạo..." />
+                    <button 
+                        className="btn btn-outline-secondary" 
+                        type="button" 
+                        title="Sao chép Key"
+                        onClick={() => {
+                            if (licenseKey) {
+                                navigator.clipboard.writeText(licenseKey);
+                                window.showSuccess('Đã sao chép Key!');
+                            }
+                        }}
+                    >
+                        <i className="bi bi-clipboard-check"></i>
+                    </button>
+                </div>
+            </div>
+            <button type="button" onClick={handleGenerateKey} className="btn btn-info w-100 mb-2" disabled={isGenerating}>
+                {isGenerating ? (
+                    <>
+                        <span className="spinner-border spinner-border-sm me-2"></span>
+                        Đang tạo...
+                    </>
+                ) : (
+                    <>
+                        <i className="bi bi-magic me-2"></i>
+                        Tạo Key
+                    </>
+                )}
+            </button>
+            <button type="submit" className="btn btn-primary w-100" disabled={isDeploying || !licenseKey}>
+                {isDeploying ? (
+                    <>
+                        <span className="spinner-border spinner-border-sm me-2"></span>
+                        Đang gửi...
+                    </>
+                ) : (
+                    <>
+                        <i className="bi bi-send-fill me-2"></i>
+                        Gửi Key đến Thiết bị
+                    </>
+                )}
+            </button>
+        </form>
+    );
+});
+
+const ProvisionForm = memo(function ProvisionForm({ device, onProvision, disabled }) {
+    const [stationName, setStationName] = useState(device.name);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return; 
+        if (!stationName.trim()) {
+            return window.showError('Vui lòng nhập tên trạm!');
+        }
+        setIsSubmitting(true);
+        try {
+            await onProvision(device.serial, stationName);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="p-4 border rounded border-primary bg-dark-subtle">
+            <h5 className="text-primary">
+                <i className="bi bi-1-circle-fill me-2"></i>
+                Bước 1: Kích hoạt trạm
+            </h5>
+            <p className="small text-muted">
+                Vui lòng đặt tên cho trạm phát của bạn để tiếp tục. Tên này sẽ được hiển thị trên toàn hệ thống.
+            </p>
+            
+            {/* Thông báo chế độ xem */}
+            {disabled && (
+                <div className="alert alert-info">
+                    <i className="bi bi-eye-fill me-2"></i>
+                    Chế độ xem: Bạn không có quyền kích hoạt trạm này.
+                </div>
+            )}
+            
+            <form onSubmit={handleSubmit}>
+                {/* Fieldset để khóa tất cả input */}
+                <fieldset disabled={disabled}>
+                    <div className="mb-3">
+                        <label htmlFor="station-name" className="form-label fw-bold">Tên trạm</label>
+                        <input 
+                            type="text" 
+                            className="form-control form-control-lg" 
+                            id="station-name"
+                            value={stationName}
+                            onChange={(e) => setStationName(e.target.value)}
+                            required
+                        />
+                    </div>
+                    
+                    {/* Chỉ hiện nút submit khi có quyền */}
+                    {!disabled && (
+                        <button type="submit" className="btn btn-primary w-100 btn-lg" disabled={isSubmitting}>
+                            {isSubmitting ? (
+                                <>
+                                    <span className="spinner-border spinner-border-sm me-2"></span>
+                                    Đang kích hoạt...
+                                </>
+                            ) : (
+                                <>
+                                    <i className="bi bi-check-circle-fill me-2"></i>
+                                    Lưu tên và Kích hoạt
+                                </>
+                            )}
+                        </button>
+                    )}
+                </fieldset>
+            </form>
+        </div>
+    );
+});
+
+const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, disabled }) {
+    const knownChips = ['Ublox', 'Unicorecomm'];
+    const needsManualSelection = !knownChips.includes(device.detected_chip_type);
+    
+    const [manualChip, setManualChip] = useState('Ublox');
+    const [method, setMethod] = useState('FIXED_LLA');
+    
+    // Tọa độ Fixed
+    const [latitude, setLatitude] = useState('');
+    const [longitude, setLongitude] = useState('');
+    const [altitude, setAltitude] = useState('');
+    const [fixedAccuracyMm, setFixedAccuracyMm] = useState('10'); // Đơn vị mm cho Fixed
+    
+    // Survey-In Params
+    const [svinDuration, setSvinDuration] = useState('300'); // Giây
+    const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
+
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+        // 1. Reset về giá trị mặc định khi đổi thiết bị
+        setManualChip('Ublox');
+        setMethod('FIXED_LLA');
+        setLatitude('');
+        setLongitude('');
+        setAltitude('');
+        setFixedAccuracyMm('10');
+        setSvinDuration('300');
+        setSvinAccuracyM('3.00');
+        
+        // 2. Load config từ DB (nếu có)
+        if (device.base_config) {
+            const config = device.base_config;
+            
+            // Set Method
+            if (config.base_setup_method) {
+                setMethod(config.base_setup_method);
+            }
+
+            // Load Fixed Params
+            if (config.coords) {
+                setLatitude(config.coords.lat || '');
+                setLongitude(config.coords.lon || '');
+                setAltitude(config.coords.alt || '');
+            }
+            // Load Accuracy cho Fixed (Lưu trong DB là mét -> Đổi ra mm để hiển thị)
+            if (config.accuracy !== undefined) {
+                setFixedAccuracyMm(String(Math.round(config.accuracy * 1000)));
+            }
+
+            // Load Survey-In Params
+            if (config.survey_in_duration !== undefined) {
+                setSvinDuration(String(config.survey_in_duration));
+            }
+            // Load Accuracy cho Survey-In (Lưu trong DB là mét -> Giữ nguyên là mét)
+            if (config.survey_in_accuracy !== undefined) {
+                setSvinAccuracyM(String(config.survey_in_accuracy));
+            }
+        }
+    }, [device.serial]); 
+
+    const handleDecimalInputChange = (setter) => (e) => {
+        const value = e.target.value;
+        // Cho phép nhập số thập phân âm/dương
+        if (/^-?[0-9]*\.?[0-9]*$/.test(value)) {
+            setter(value);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return; 
+        setIsSubmitting(true);
+        
+        try {
+            const finalChipType = needsManualSelection 
+                ? manualChip                  
+                : device.detected_chip_type;
+
+            let params = { base_setup_method: method };
+            
+            if (method === 'FIXED_LLA') {
+                params.coords = {
+                    lat: parseFloat(latitude),
+                    lon: parseFloat(longitude),
+                    alt: parseFloat(altitude)
+                };
+                // Fixed: Input là mm -> Chia 1000 để thành m gửi cho backend
+                params.accuracy = parseFloat(fixedAccuracyMm) / 1000.0;
+            } else {
+                params.survey_in_duration = parseInt(svinDuration);
+                // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
+                params.survey_in_accuracy = parseFloat(svinAccuracyM);
+            }
+            
+            const payload = {
+                sensor_type: finalChipType,
+                mode: 'BASE',
+                params: params
+            };
+            
+            await onConfigureChip(device.serial, payload);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="alert alert-info small">
+                <i className="bi bi-info-circle me-2"></i>
+                Đây là bước cấu hình tọa độ gốc cho trạm phát. Các thay đổi sẽ reset chip GNSS.
+            </div>
+            
+            {disabled && (
+                <div className="alert alert-warning py-2 mb-3">
+                    <i className="bi bi-eye-fill me-2"></i>
+                    Chế độ xem: Không thể chỉnh sửa cấu hình GNSS.
+                </div>
+            )}
+            
+            {needsManualSelection && (
+                <div className="mb-3 p-3 border border-warning rounded">
+                    <div className="alert alert-warning small p-2">
+                        <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                        Không thể nhận diện loại chip (hiện tại là: <strong>{device.detected_chip_type}</strong>). Vui lòng chọn thủ công.
+                    </div>
+                    <label className="form-label fw-bold">Chọn Loại Chip</label>
+                    <select 
+                        className="form-select"
+                        value={manualChip}
+                        onChange={(e) => setManualChip(e.target.value)}
+                        disabled={disabled}
+                    >
+                        <option value="Ublox">Ublox</option>
+                        <option value="Unicorecomm">Unicorecomm</option>
+                    </select>
+                </div>
+            )}
+            
+            <div className="mb-3">
+                <label className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>
+                <select 
+                    className="form-select border-primary" 
+                    value={method}
+                    onChange={(e) => setMethod(e.target.value)}
+                    disabled={disabled}
+                >
+                    <option value="FIXED_LLA">Nhập tọa độ thủ công (Fixed Mode - Độ chính xác cao)</option>
+                    <option value="SURVEY_IN">Tự động khảo sát (Survey-In - Độ chính xác thấp)</option>
+                </select>
+            </div>
+            
+            <fieldset disabled={disabled}>
+                {method === 'FIXED_LLA' ? (
+                    <div className="row g-3">
+                        <div className="col-12 text-muted small fst-italic mb-2">
+                            * Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Latitude (Vĩ độ)</label>
+                            <input 
+                                type="text" inputMode="decimal" className="form-control"
+                                value={latitude} onChange={handleDecimalInputChange(setLatitude)}
+                                required placeholder="VD: 21.028511"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Longitude (Kinh độ)</label>
+                            <input 
+                                type="text" inputMode="decimal" className="form-control"
+                                value={longitude} onChange={handleDecimalInputChange(setLongitude)}
+                                required placeholder="VD: 105.854167"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Altitude (Độ cao - mét)</label>
+                            <input 
+                                type="text" inputMode="decimal" className="form-control"
+                                value={altitude} onChange={handleDecimalInputChange(setAltitude)}
+                                required placeholder="VD: 15.5"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label fw-bold">Giới hạn sai số (mm)</label>
+                            <input 
+                                type="number" className="form-control"
+                                value={fixedAccuracyMm} onChange={(e) => setFixedAccuracyMm(e.target.value)}
+                                required placeholder="VD: 10"
+                            />
+                            <div className="form-text">Đơn vị: Milimet (Thường để 5mm - 20mm)</div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="row g-3">
+                        <div className="col-12 text-muted small fst-italic mb-2">
+                            * Chế độ này thiết bị sẽ tự đo trung bình cộng vị trí. Phù hợp thiết lập trạm tạm thời.
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Thời gian khảo sát (giây)</label>
+                            <input 
+                                type="number" className="form-control"
+                                value={svinDuration} onChange={(e) => setSvinDuration(e.target.value)}
+                                required
+                            />
+                            <div className="form-text">Tối thiểu: 60s. Khuyên dùng: &gt; 300s.</div>
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label fw-bold">Giới hạn sai số (m)</label>
+                            <input 
+                                type="number" step="0.01" className="form-control"
+                                value={svinAccuracyM} onChange={(e) => setSvinAccuracyM(e.target.value)}
+                                required placeholder="VD: 3.0"
+                            />
+                            <div className="form-text text-danger">Đơn vị: MÉT (Ví dụ nhập 3.0 là 3 mét)</div>
+                        </div>
+                    </div>
+                )}
+                
+                {!disabled && (
+                    <button type="submit" className="btn btn-primary mt-4 w-100" disabled={isSubmitting}>
+                        {isSubmitting ? (
+                            <>
+                                <span className="spinner-border spinner-border-sm me-2"></span>
+                                Đang gửi...
+                            </>
+                        ) : (
+                            <>
+                                <i className="bi bi-lightning-charge-fill me-2"></i>
+                                Áp dụng cấu hình BASE
+                            </>
+                        )}
+                    </button>
+                )}
+            </fieldset>
+        </form>
+    );
+});
+
+const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureService, disabled }) {
+    const [formState, setFormState] = useState({
+        ncomport: '',
+        reconnectioninterval: 10,
+        server1_enabled: false,
+        ntrip_version1: 1,
+        serverhost1: '',
+        port1: '',
+        mountpoint1: '',
+        password1: '',
+        server2_enabled: false,
+        ntrip_version2: 1,
+        serverhost2: '',
+        port2: '',
+        mountpoint2: '',
+        password2: '',
+        rtcm_enabled: false,
+        rtcmserver1: '',
+        rtcmport1: '',
+        rtcmmountpoint1: '',
+        rtcmusername1: '',
+        rtcmpassword1: ''
+    });
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+        // Reset về trạng thái mặc định
+        const defaultState = {
+            ncomport: '',
+            reconnectioninterval: 10,
+            server1_enabled: false,
+            ntrip_version1: 1,
+            username1: '',  
+            serverhost1: '',
+            port1: '',
+            mountpoint1: '',
+            password1: '',
+            server2_enabled: false,
+            ntrip_version2: 1,
+            username2: '',  
+            serverhost2: '',
+            port2: '',
+            mountpoint2: '',
+            password2: '',
+            rtcm_enabled: false,
+            rtcmserver1: '',
+            rtcmport1: '',
+            rtcmmountpoint1: '',
+            rtcmusername1: '',
+            rtcmpassword1: ''
+        };
+        
+        if (device.service_config) {
+            setFormState({
+                ...defaultState,
+                ...device.service_config
+            });
+        } else {
+            setFormState(defaultState);
+        }
+    }, [device.serial]); 
+
+    const handleChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        setFormState(prev => ({
+            ...prev,
+            [name]: type === 'checkbox' ? checked : value
+        }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return; 
+        setIsSubmitting(true);
+        
+        try {
+            const payload = {
+                ...formState,
+                ntrip_version1: parseInt(formState.ntrip_version1, 10),
+                ntrip_version2: parseInt(formState.ntrip_version2, 10),
+                port1: formState.port1 ? parseInt(formState.port1, 10) : null,
+                port2: formState.port2 ? parseInt(formState.port2, 10) : null,
+                rtcmport1: formState.rtcmport1 ? parseInt(formState.rtcmport1, 10) : null,
+                reconnectioninterval: parseInt(formState.reconnectioninterval, 10)
+            };
+            
+            await onConfigureService(device.serial, payload);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="alert alert-info small">
+                <i className="bi bi-info-circle-fill me-2"></i>
+                Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.
+            </div>
+            
+            {/* 🔥 Thông báo chế độ xem */}
+            {disabled && (
+                <div className="alert alert-warning py-2 mb-3">
+                    <i className="bi bi-eye-fill me-2"></i>
+                    Chế độ xem: Không thể chỉnh sửa cấu hình dịch vụ.
+                </div>
+            )}
+            
+            <div className="mb-4 p-3 border rounded border-secondary">
+                <h5 className="mb-3">Cài đặt chung</h5>
+                {/* 🔥 Fieldset khóa inputs */}
+                <fieldset disabled={disabled}>
+                    <div className="row g-3">
+                        <div className="col-md-6">
+                            <label htmlFor="ncomport" className="form-label">Định danh Trạm (ID)</label>
+                            <input 
+                                type="text" 
+                                className="form-control" 
+                                id="ncomport"
+                                name="ncomport"
+                                value={formState.ncomport}
+                                onChange={handleChange}
+                                placeholder="Ví dụ: TRAM_HN_01"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label htmlFor="reconnectioninterval" className="form-label">Thời gian kết nối lại (giây)</label>
+                            <input 
+                                type="number" 
+                                className="form-control" 
+                                id="reconnectioninterval"
+                                name="reconnectioninterval"
+                                value={formState.reconnectioninterval}
+                                onChange={handleChange}
+                            />
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+
+            <div className="accordion" id="service-config-accordion">
+                {/* ==================== SERVER 1 ==================== */}
+                <div className="accordion-item">
+                    <h2 className="accordion-header">
+                        <button 
+                            className="accordion-button" 
+                            type="button" 
+                            data-bs-toggle="collapse" 
+                            data-bs-target="#collapseOne"
+                        >
+                            <i className="bi bi-box-arrow-up me-2 text-primary"></i>
+                            NTRIP Caster Server 1
+                        </button>
+                    </h2>
+                    <div id="collapseOne" className="accordion-collapse collapse show" data-bs-parent="#service-config-accordion">
+                        <div className="accordion-body">
+                            <fieldset disabled={disabled}>
+                                {/* Enable Switch */}
+                                <div className="form-check form-switch form-switch-lg mb-3">
+                                    <input 
+                                        className="form-check-input" 
+                                        type="checkbox" 
+                                        role="switch" 
+                                        id="server1_enabled"
+                                        name="server1_enabled"
+                                        checked={formState.server1_enabled}
+                                        onChange={handleChange}
+                                    />
+                                    <label className="form-check-label" htmlFor="server1_enabled">Kích hoạt Server 1</label>
+                                </div>
+
+                                {/* NTRIP Version Selection */}
+                                <div className="mb-3 p-3 bg-dark rounded border border-secondary">
+                                    <label className="form-label fw-bold text-info">
+                                        <i className="bi bi-gear-fill me-2"></i>NTRIP Protocol Version
+                                    </label>
+                                    <div className="d-flex gap-4">
+                                        <div className="form-check">
+                                            <input 
+                                                className="form-check-input" 
+                                                type="radio" 
+                                                name="ntrip_version1" 
+                                                id="ntrip_v1_1" 
+                                                value="1" 
+                                                checked={parseInt(formState.ntrip_version1) === 1} 
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v1_1">
+                                                <strong>Version 1.0</strong> 
+                                                <br/>
+                                                <small className="text-muted">SOURCE command (Legacy)</small>
+                                            </label>
+                                        </div>
+                                        <div className="form-check">
+                                            <input 
+                                                className="form-check-input" 
+                                                type="radio" 
+                                                name="ntrip_version1" 
+                                                id="ntrip_v1_2" 
+                                                value="2" 
+                                                checked={parseInt(formState.ntrip_version1) === 2} 
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v1_2">
+                                                <strong>Version 2.0</strong>
+                                                <br/>
+                                                <small className="text-muted">HTTP POST (Modern)</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div className="alert alert-secondary small mt-2 mb-0">
+                                        <i className="bi bi-info-circle me-1"></i>
+                                        <strong>Ghi chú:</strong> Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0
+                                    </div>
+                                </div>
+
+                                {/* Connection Details */}
+                                <div className="row g-3">
+                                    <div className="col-md-8">
+                                        <label className="form-label">Host / IP</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="serverhost1"
+                                            value={formState.serverhost1}
+                                            onChange={handleChange}
+                                            placeholder="Ví dụ: rtk2go.com"
+                                        />
+                                    </div>
+                                    <div className="col-md-4">
+                                        <label className="form-label">Port</label>
+                                        <input 
+                                            type="number" 
+                                            className="form-control"
+                                            name="port1"
+                                            value={formState.port1}
+                                            onChange={handleChange}
+                                            placeholder="2101"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">
+                                            Username 
+                                            <small className="text-muted ms-1">(NTRIP Source Account)</small>
+                                        </label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="username1"
+                                            value={formState.username1}
+                                            onChange={handleChange}
+                                            placeholder="source hoặc username riêng"
+                                        />
+                                        <small className="text-muted">
+                                            Mặc định: "source" (NTRIP v1). Caster hiện đại có thể yêu cầu username riêng.
+                                        </small>
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Password</label>
+                                        <input 
+                                            type="password" 
+                                            className="form-control"
+                                            name="password1"
+                                            value={formState.password1}
+                                            onChange={handleChange}
+                                            placeholder="••••••••"
+                                        />
+                                    </div>
+                                    <div className="col-12">
+                                        <label className="form-label">Mountpoint</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="mountpoint1"
+                                            value={formState.mountpoint1}
+                                            onChange={handleChange}
+                                            placeholder="MY_BASE_01"
+                                        />
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ==================== SERVER 2 ==================== */}
+                <div className="accordion-item">
+                    <h2 className="accordion-header">
+                        <button 
+                            className="accordion-button collapsed" 
+                            type="button" 
+                            data-bs-toggle="collapse" 
+                            data-bs-target="#collapseTwo"
+                        >
+                            <i className="bi bi-box-arrow-up me-2 text-info"></i>
+                            NTRIP Caster Server 2
+                        </button>
+                    </h2>
+                    <div id="collapseTwo" className="accordion-collapse collapse" data-bs-parent="#service-config-accordion">
+                        <div className="accordion-body">
+                            <fieldset disabled={disabled}>
+                                {/* Enable Switch */}
+                                <div className="form-check form-switch form-switch-lg mb-3">
+                                    <input 
+                                        className="form-check-input" 
+                                        type="checkbox" 
+                                        role="switch" 
+                                        id="server2_enabled"
+                                        name="server2_enabled"
+                                        checked={formState.server2_enabled}
+                                        onChange={handleChange}
+                                    />
+                                    <label className="form-check-label" htmlFor="server2_enabled">Kích hoạt Server 2</label>
+                                </div>
+
+                                {/* NTRIP Version Selection */}
+                                <div className="mb-3 p-3 bg-dark rounded border border-secondary">
+                                    <label className="form-label fw-bold text-info">
+                                        <i className="bi bi-gear-fill me-2"></i>NTRIP Protocol Version
+                                    </label>
+                                    <div className="d-flex gap-4">
+                                        <div className="form-check">
+                                            <input 
+                                                className="form-check-input" 
+                                                type="radio" 
+                                                name="ntrip_version2" 
+                                                id="ntrip_v2_1" 
+                                                value="1" 
+                                                checked={parseInt(formState.ntrip_version2) === 1} 
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v2_1">
+                                                <strong>Version 1.0</strong>
+                                                <br/>
+                                                <small className="text-muted">SOURCE command (Legacy)</small>
+                                            </label>
+                                        </div>
+                                        <div className="form-check">
+                                            <input 
+                                                className="form-check-input" 
+                                                type="radio" 
+                                                name="ntrip_version2" 
+                                                id="ntrip_v2_2" 
+                                                value="2" 
+                                                checked={parseInt(formState.ntrip_version2) === 2} 
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v2_2">
+                                                <strong>Version 2.0</strong>
+                                                <br/>
+                                                <small className="text-muted">HTTP POST (Modern)</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div className="alert alert-secondary small mt-2 mb-0">
+                                        <i className="bi bi-info-circle me-1"></i>
+                                        <strong>Ghi chú:</strong> Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0
+                                    </div>
+                                </div>
+
+                                {/* Connection Details */}
+                                <div className="row g-3">
+                                    <div className="col-md-8">
+                                        <label className="form-label">Host / IP</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="serverhost2"
+                                            value={formState.serverhost2}
+                                            onChange={handleChange}
+                                            placeholder="Ví dụ: backup.caster.com"
+                                        />
+                                    </div>
+                                    <div className="col-md-4">
+                                        <label className="form-label">Port</label>
+                                        <input 
+                                            type="number" 
+                                            className="form-control"
+                                            name="port2"
+                                            value={formState.port2}
+                                            onChange={handleChange}
+                                            placeholder="2101"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">
+                                            Username
+                                            <small className="text-muted ms-1">(NTRIP Source Account)</small>
+                                        </label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="username2"
+                                            value={formState.username2}
+                                            onChange={handleChange}
+                                            placeholder="source hoặc username riêng"
+                                        />
+                                        <small className="text-muted">
+                                            Mặc định: "source" (NTRIP v1). Caster hiện đại có thể yêu cầu username riêng.
+                                        </small>
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Password</label>
+                                        <input 
+                                            type="password" 
+                                            className="form-control"
+                                            name="password2"
+                                            value={formState.password2}
+                                            onChange={handleChange}
+                                            placeholder="••••••••"
+                                        />
+                                    </div>
+                                    <div className="col-12">
+                                        <label className="form-label">Mountpoint</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="mountpoint2"
+                                            value={formState.mountpoint2}
+                                            onChange={handleChange}
+                                            placeholder="MY_BASE_02"
+                                        />
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ==================== RTCM CLIENT ==================== */}
+                <div className="accordion-item">
+                    <h2 className="accordion-header">
+                        <button 
+                            className="accordion-button collapsed" 
+                            type="button" 
+                            data-bs-toggle="collapse" 
+                            data-bs-target="#collapseThree"
+                        >
+                            <i className="bi bi-box-arrow-in-down me-2 text-success"></i>
+                            RTCM Client (Nhận tín hiệu hiệu chỉnh)
+                        </button>
+                    </h2>
+                    <div id="collapseThree" className="accordion-collapse collapse" data-bs-parent="#service-config-accordion">
+                        <div className="accordion-body">
+                            <fieldset disabled={disabled}>
+                                {/* Enable Switch */}
+                                <div className="form-check form-switch form-switch-lg mb-3">
+                                    <input 
+                                        className="form-check-input" 
+                                        type="checkbox" 
+                                        role="switch" 
+                                        id="rtcm_enabled"
+                                        name="rtcm_enabled"
+                                        checked={formState.rtcm_enabled}
+                                        onChange={handleChange}
+                                    />
+                                    <label className="form-check-label" htmlFor="rtcm_enabled">Kích hoạt nhận RTCM</label>
+                                </div>
+
+                                <div className="alert alert-warning small mb-3">
+                                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                                    <strong>Lưu ý:</strong> Chức năng này dành cho trạm Rover nhận tín hiệu hiệu chỉnh từ Base Station.
+                                    Không bật nếu thiết bị đang được cấu hình làm Base Station.
+                                </div>
+
+                                {/* Connection Details */}
+                                <div className="row g-3">
+                                    <div className="col-md-8">
+                                        <label className="form-label">Caster Host / IP</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="rtcmserver1"
+                                            value={formState.rtcmserver1}
+                                            onChange={handleChange}
+                                            placeholder="Ví dụ: rtk2go.com"
+                                        />
+                                    </div>
+                                    <div className="col-md-4">
+                                        <label className="form-label">Caster Port</label>
+                                        <input 
+                                            type="number" 
+                                            className="form-control"
+                                            name="rtcmport1"
+                                            value={formState.rtcmport1}
+                                            onChange={handleChange}
+                                            placeholder="2101"
+                                        />
+                                    </div>
+                                    <div className="col-12">
+                                        <label className="form-label">Mountpoint</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="rtcmmountpoint1"
+                                            value={formState.rtcmmountpoint1}
+                                            onChange={handleChange}
+                                            placeholder="BASE_STATION_MP"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Username</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control"
+                                            name="rtcmusername1"
+                                            value={formState.rtcmusername1}
+                                            onChange={handleChange}
+                                            placeholder="username"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Password</label>
+                                        <input 
+                                            type="password" 
+                                            className="form-control"
+                                            name="rtcmpassword1"
+                                            value={formState.rtcmpassword1}
+                                            onChange={handleChange}
+                                            placeholder="••••••••"
+                                        />
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            {/* 🔥 Chỉ hiện nút submit khi có quyền */}
+            {!disabled && (
+                <button type="submit" className="btn btn-success mt-4 w-100 btn-lg" disabled={isSubmitting}>
+                    {isSubmitting ? (
+                        <>
+                            <span className="spinner-border spinner-border-sm me-2"></span>
+                            Đang lưu...
+                        </>
+                    ) : (
+                        <>
+                            <i className="bi bi-save-fill me-2"></i>
+                            Lưu và Áp dụng Cấu hình
+                        </>
+                    )}
+                </button>
+            )}
+        </form>
+    );
+});
+
+// === MAP COMPONENT ===
+// ==================== MAP COMPONENT (FIXED HTTPS) ====================
+const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
+    const mapContainerRef = useRef(null);
+    const mapInstanceRef = useRef(null);
+    const markerRef = useRef(null);
+    
+    console.log('[Map] Received coords:', coords);
+
+    useEffect(() => {
+        // Kiểm tra tọa độ đầu vào
+        if (!coords || !coords.lat || !coords.lon) {
+            console.warn('[Map] No coords provided'); 
+            return;
+        }
+        const lat = parseFloat(coords.lat);
+        const lon = parseFloat(coords.lon);
+        
+        if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
+
+        // Kiểm tra Leaflet đã load chưa
+        if (typeof L === 'undefined') {
+            console.error('Leaflet chưa được load!');
+            return;
+        }
+
+        // Khởi tạo Map
+        if (!mapInstanceRef.current) {
+            mapInstanceRef.current = L.map(mapContainerRef.current).setView([lat, lon], 16);
+   
+            L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                attribution: 'Google Maps'
+            }).addTo(mapInstanceRef.current);
+
+            markerRef.current = L.marker([lat, lon]).addTo(mapInstanceRef.current)
+                .bindPopup(`<b>Vị trí Base</b><br>Lat: ${lat}<br>Lon: ${lon}`)
+                .openPopup();
+        } else {
+            mapInstanceRef.current.setView([lat, lon], 16);
+            if (markerRef.current) markerRef.current.setLatLng([lat, lon]);
+        }
+        setTimeout(() => {
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.invalidateSize();
+            }
+        }, 300);
+
+    }, [coords?.lat, coords?.lon]);
+
+    // Handle Resize
+    useEffect(() => {
+        const handleResize = () => {
+            if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    // Hiển thị placeholder nếu chưa có tọa độ
+    if (!coords || !coords.lat || (parseFloat(coords.lat) === 0 && parseFloat(coords.lon) === 0)) {
+        console.warn('[Map] No valid coords - showing placeholder');
+        return (
+            <div className="d-flex align-items-center justify-content-center p-4 text-danger border rounded bg-dark" 
+                style={{height: '250px', border: '2px solid red'}}>
+                <div className="text-center">
+                    <i className="bi bi-geo-alt-slash display-4 mb-2"></i>
+                    <p className="mb-0">❌ Chưa có tọa độ Base</p>
+                    <small>Debug: lat={coords?.lat || 'null'}, lon={coords?.lon || 'null'}</small>
+                </div>
+            </div>
+        );
+    }
+
+    if (typeof L === 'undefined') {
+        console.error('[Map] ❌ LEAFLET CHƯA ĐƯỢC LOAD!');
+        return (
+            <div className="alert alert-danger" style={{height: '250px'}}>
+                <h5>⚠️ Lỗi: Leaflet chưa được tải</h5>
+                <p>Kiểm tra file HTML có thêm Leaflet CSS/JS chưa.</p>
+            </div>
+        );
+    }
+    return (
+        <div>
+             <div className="d-flex justify-content-between align-items-center mb-2">
+                <h6 className="mb-0">Vị trí trạm Base (Lưu cứng)</h6>
+                <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lon}`} target="_blank" className="btn btn-sm btn-outline-primary">
+                    <i className="bi bi-box-arrow-up-right me-1"></i>Google Maps
+                </a>
+            </div>
+            <div ref={mapContainerRef} style={{ width: '100%', height: '300px', borderRadius: '8px', border: '2px solid #444', zIndex: 0 }} />
+             <div className="mt-2 small text-muted">Lat: {parseFloat(coords.lat).toFixed(8)} | Lon: {parseFloat(coords.lon).toFixed(8)}</div>
+        </div>
+    );
+});
+
+// ===============================================================================
+// === DASHBOARD COMPONENT ===
+// ===============================================================================
+
+const flags = { us: new Image(), ru: new Image(), eu: new Image(), cn: new Image(), jp: new Image(), un: new Image() };
+flags.us.src = '/img/flags/us.jpg';
+flags.ru.src = '/img/flags/ru.jpg';
+flags.eu.src = '/img/flags/eu.jpg';
+flags.cn.src = '/img/flags/cn.jpg';
+flags.jp.src = '/img/flags/jp.jpg';
+flags.un.src = '/img/flags/un.jpg';
+
+const colors = { us: '#00d47e', ru: '#ff5c5c', eu: '#5c9cff', cn: '#ffb95c', jp: '#ff77a9', un: '#aaaaaa' };
+const constellationNames = { us: "GPS (USA)", ru: "GLONASS (Russia)", eu: "Galileo (EU)", cn: "BeiDou (China)", jp: "QZSS (Japan)", un: "Unknown" };
+
+function getSatelliteSystem(sat) {
+    if (sat.system && ['us', 'ru', 'eu', 'cn', 'jp'].includes(sat.system)) return sat.system;
+    const prn = sat.prn;
+    if (prn >= 1 && prn <= 32) return 'us';
+    if (prn >= 65 && prn <= 96) return 'ru';
+    if (prn >= 301 && prn <= 336) return 'eu'; 
+    if (prn >= 193 && prn <= 200) return 'jp';
+    if ((prn >= 33 && prn <= 64) || (prn >= 401 && prn <= 463)) return 'cn';
+    return 'un';
+}
+
+// ===============================================================================
+// === ENHANCED DASHBOARD COMPONENT (REPLACED)
+// ===============================================================================
+
+const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
+    const rtk_status = device.rtk_fix_status || 'NO_FIX';
+    
+    let fixInfo = { label: 'NO FIX', color: '#ff0000', icon: '❌' };
+
+    if (device.base_mode_active) {
+        const baseConfig = device.base_config || {};
+        if (baseConfig.base_setup_method === 'FIXED_LLA') {
+            fixInfo = { label: 'BASE FIXED', color: '#00ff00', icon: '🏯' };
+        } else {
+            if (device.ntrip_connected) {
+                fixInfo = { label: 'BASE READY', color: '#00ff00', icon: '📡' };
+            } else {
+                fixInfo = { label: 'SURVEYING...', color: '#ffaa00', icon: '⏳' };
+            }
+        }
+    } else {
+        const FIX_STATUS_MAP = {
+            'RTK_FIXED': { label: 'RTK FIXED', color: '#00ff00', icon: '🎯' },
+            'RTK_FLOAT': { label: 'RTK FLOAT', color: '#ffaa00', icon: '📍' },
+            'DGPS': { label: 'DGPS', color: '#ff9900', icon: '⚠️' },
+            'GPS_FIX': { label: 'GPS FIX', color: '#999999', icon: '📡' },
+            'NO_FIX': { label: 'NO FIX', color: '#ff0000', icon: '❌' }
+        };
+        fixInfo = FIX_STATUS_MAP[rtk_status] || FIX_STATUS_MAP['NO_FIX'];
+    }
+    const bgCanvasRef = useRef(null);
+    const satCanvasRef = useRef(null);
+    const animationFrameRef = useRef(null);
+    const lastSatelliteDataRef = useRef(null);
+    const signalBarsContainerRef = useRef(null);
+    
+    const [satStats, setSatStats] = useState({ total: 0, tracking: 0, bySystem: {} });
+    
+    // 🆕 METRIC TRACKING STATE
+    const [metrics, setMetrics] = useState({
+        fixQuality: { value: 0, history: [] },
+        satellites: { value: 0, history: [] },
+        hdop: { value: 0, history: [] },
+        signalStrength: { value: 0, history: [] }
+    });
+    
+    const satelliteBufferRef = useRef(new Map());
+    const SATELLITE_TIMEOUT = 5000;
+    const FADE_DURATION = 2000;
+    const safeNmeaData = nmeaData || { gga: null, gsa: null, satellites: {} };
+    const baseCoords = safeNmeaData.base_coords || device?.base_config?.coords;
+
+    const lastStatsUpdate = useRef(0);
+    const lastCanvasUpdate = useRef(0);
+    const lastBarsUpdate = useRef(0);
+    
+    const STATS_INTERVAL = 1000;
+    const CANVAS_INTERVAL = 200;
+    const BARS_INTERVAL = 500;
+
+    // 🆕 METRICS UPDATE LOGIC
+    useEffect(() => {
+        if (!device || !nmeaData) return;
+        const interval = setInterval(() => {
+            const gga = nmeaData.gga || {};
+            const gsa = nmeaData.gsa || {};
+            const sats = Object.values(nmeaData.satellites || {});
+            
+            const avgSnr = sats.length > 0 
+                ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length 
+                : 0;
+            
+            setMetrics(prev => ({
+                fixQuality: {
+                    value: gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1,
+                    history: [...prev.fixQuality.history, prev.fixQuality.value].slice(-30)
+                },
+                satellites: {
+                    value: gga.satellites || 0,
+                    history: [...prev.satellites.history, gga.satellites || 0].slice(-30)
+                },
+                hdop: {
+                    value: gsa.hdop || 0,
+                    history: [...prev.hdop.history, gsa.hdop || 0].slice(-30)
+                },
+                signalStrength: {
+                    value: avgSnr.toFixed(1),
+                    history: [...prev.signalStrength.history, avgSnr].slice(-30)
+                }
+            }));
+        }, 2000);
+        return () => clearInterval(interval);
+    }, [device?.serial]); // Update logic dependencies
+
+    // SKYPLOT & CANVAS LOGIC
+    useEffect(() => {
+        if (!bgCanvasRef.current || !satCanvasRef.current) return;
+
+        const bgCtx = bgCanvasRef.current.getContext('2d');
+        const satCtx = satCanvasRef.current.getContext('2d');
+        
+        const drawSkyplotBase = () => {
+            const w = bgCtx.canvas.width, h = bgCtx.canvas.height;
+            if (w === 0 || h === 0) return;
+
+            const centerX = w / 2, centerY = h / 2;
+            const radius = Math.min(centerX, centerY) * 0.85; 
+            
+            bgCtx.clearRect(0, 0, w, h);
+            
+            // Background Gradient
+            const grad = bgCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+            grad.addColorStop(0, '#1a2332');
+            grad.addColorStop(0.5, '#0d1520');
+            grad.addColorStop(1, '#000');
+            bgCtx.fillStyle = grad;
+            bgCtx.fillRect(0, 0, w, h);
+            
+            // Circles
+            bgCtx.strokeStyle = '#3a4a5a';
+            bgCtx.lineWidth = 1.5;
+            bgCtx.font = '11px Arial';
+            bgCtx.fillStyle = '#6a7a8a';
+            bgCtx.textAlign = 'left';
+            
+            [{ frac: 0.33, label: '60°' }, { frac: 0.66, label: '30°' }, { frac: 1.0, label: '0°' }]
+            .forEach(({ frac, label }) => {
+                const r = radius * frac;
+                bgCtx.beginPath();
+                bgCtx.arc(centerX, centerY, r, 0, 2 * Math.PI);
+                bgCtx.stroke();
+                bgCtx.fillText(label, centerX + r + 5, centerY);
+            });
+            
+            // Cross Lines
+            bgCtx.strokeStyle = '#2a3a4a';
+            bgCtx.lineWidth = 1;
+            bgCtx.beginPath();
+            for (let i = 0; i < 12; i++) {
+                const angle = i * 30 * Math.PI / 180;
+                bgCtx.moveTo(centerX, centerY);
+                bgCtx.lineTo(centerX + radius * Math.sin(angle), centerY - radius * Math.cos(angle));
+            }
+            bgCtx.stroke();
+            
+            // Labels
+            bgCtx.fillStyle = '#fff';
+            bgCtx.font = 'bold 18px Arial';
+            bgCtx.textAlign = 'center';
+            bgCtx.textBaseline = 'middle';
+            const labelDistance = radius + 25;
+            [{t:'N',a:0}, {t:'E',a:90}, {t:'S',a:180}, {t:'W',a:270}].forEach(({t,a}) => {
+                const rad = a * Math.PI / 180;
+                bgCtx.fillText(t, centerX + labelDistance * Math.sin(rad), centerY - labelDistance * Math.cos(rad));
+            });
+        };
+        
+        drawSkyplotBase();
+
+        const drawSkyplotSatellites = (satellites) => {
+            const now = Date.now();
+            const buffer = satelliteBufferRef.current;
+            
+            satellites.forEach(sat => {
+                buffer.set(sat.prn, { ...sat, lastSeen: now, opacity: 1.0 });
+            });
+            
+            for (const [prn, satData] of buffer.entries()) {
+                const timeSinceLastSeen = now - satData.lastSeen;
+                if (timeSinceLastSeen > SATELLITE_TIMEOUT + FADE_DURATION) {
+                    buffer.delete(prn);
+                } else if (timeSinceLastSeen > SATELLITE_TIMEOUT) {
+                    const fadeProgress = (timeSinceLastSeen - SATELLITE_TIMEOUT) / FADE_DURATION;
+                    satData.opacity = Math.max(0, 1 - fadeProgress);
+                }
+            }
+            
+            satCtx.clearRect(0, 0, satCtx.canvas.width, satCtx.canvas.height);
+            const centerX = satCtx.canvas.width / 2;
+            const centerY = satCtx.canvas.height / 2;
+            const radius = Math.min(centerX, centerY) * 0.82;
+
+            if (satCtx.canvas.width === 0 || satCtx.canvas.height === 0) return;
+            
+            for (const satData of buffer.values()) {
+                let az = Number(satData.azimuth);
+                let el = Number(satData.elevation);
+                let snr = Number(satData.snr);
+
+                if (isNaN(snr) || snr === 0) continue;
+                if (isNaN(az)) az = 0;
+                if (isNaN(el)) el = 0; 
+                
+                const az_rad = (az * Math.PI) / 180;
+                const dist = radius * (90 - el) / 90;
+                const x = centerX + dist * Math.sin(az_rad);
+                const y = centerY - dist * Math.cos(az_rad);
+                
+                const system = getSatelliteSystem(satData);
+                const flag = flags[system];
+                const isTracking = satData.isTracking;
+                
+                satCtx.globalAlpha = satData.opacity || 1.0;
+                const flagSize = isTracking ? 18 : 14;
+
+                if (isTracking) {
+                    satCtx.beginPath();
+                    satCtx.arc(x, y, flagSize / 2 + 3, 0, 2 * Math.PI);
+                    satCtx.fillStyle = (colors[system] || '#fff') + '40';
+                    satCtx.fill();
+                }
+
+                if (flag && flag.complete) {
+                    satCtx.drawImage(flag, x - flagSize / 2, y - flagSize / 2, flagSize, flagSize);
+                } else {
+                    satCtx.beginPath();
+                    satCtx.arc(x, y, 9, 0, 2 * Math.PI);
+                    satCtx.fillStyle = colors[system] || '#ccc';
+                    satCtx.fill();
+                }
+
+                satCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                satCtx.fillRect(x - 8, y + flagSize / 2 + 2, 16, 10);
+                satCtx.fillStyle = '#fff';
+                satCtx.font = 'bold 7px Arial';
+                satCtx.textAlign = 'center';
+                satCtx.textBaseline = 'middle';
+                satCtx.fillText(satData.prn, x, y + flagSize / 2 + 7);
+            }
+            satCtx.globalAlpha = 1.0;
+        };
+        
+        const drawSignalBars = (satellites) => {
+            const container = signalBarsContainerRef.current;
+            if (!container) return;
+
+            const buffer = satelliteBufferRef.current;
+            const activeSatellites = Array.from(buffer.values()).filter(s => s.snr > 0 && s.opacity > 0.3);
+            const dataHash = activeSatellites.map(s => `${s.prn}:${s.snr}`).sort().join('|');
+            
+            if (lastSatelliteDataRef.current === dataHash) return;
+            lastSatelliteDataRef.current = dataHash;
+
+            const fragment = document.createDocumentFragment();
+            const groupedSats = activeSatellites.reduce((acc, sat) => {
+                const system = getSatelliteSystem(sat);
+                if (!acc[system]) acc[system] = [];
+                acc[system].push(sat);
+                return acc;
+            }, {});
+            
+            setSatStats({ total: activeSatellites.length, tracking: activeSatellites.filter(s => s.isTracking).length, bySystem: groupedSats });
+
+            ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
+                if (groupedSats[system]) {
+                    const sats = groupedSats[system].sort((a, b) => b.snr - a.snr);
+                    const groupDiv = document.createElement('div');
+                    groupDiv.className = 'constellation-group';
+                    
+                    const headerDiv = document.createElement('div');
+                    headerDiv.className = 'constellation-header';
+                    headerDiv.innerHTML = `<img src="${flags[system].src}" width="24" height="24" /> ${constellationNames[system]} (${sats.length})`;
+                    
+                    const barsWrapper = document.createElement('div');
+                    barsWrapper.className = 'bars-wrapper';
+                    
+                    sats.forEach(sat => {
+                        const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+                        let barColor = colors[system];
+                        if (sat.snr >= 40) barColor = '#00ff88';
+                        else if (sat.snr >= 20) barColor = '#ffc107';
+                        else barColor = '#ff5252';
+
+                        const itemDiv = document.createElement('div');
+                        itemDiv.className = 'sat-bar-item';
+                        itemDiv.innerHTML = `
+                            <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
+                            <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
+                            <div class="sat-bar-prn">${sat.prn}</div>
+                        `;
+                        barsWrapper.appendChild(itemDiv);
+                    });
+                    
+                    groupDiv.appendChild(headerDiv);
+                    groupDiv.appendChild(barsWrapper);
+                    fragment.appendChild(groupDiv);
+                }
+            });
+            container.innerHTML = '';
+            container.appendChild(fragment);
+        };
+
+        const animate = () => {
+            const now = Date.now();
+            const { gga, gsa, satellites } = safeNmeaData;
+            
+            // Text Stats Updates
+            if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
+                
+                const satCountEl = document.getElementById('db-sats');
+                if (satCountEl) satCountEl.textContent = gga?.satellites || 0;
+                
+                const dopEl = document.getElementById('db-dop');
+                if (dopEl) dopEl.textContent = `${gsa?.hdop?.toFixed(2) || '0.0'} / ${gsa?.pdop?.toFixed(2) || '0.0'}`;
+                
+                const latEl = document.getElementById('db-lat');
+                if (latEl) latEl.textContent = gga?.latitude?.toFixed(8) || '0.0';
+                
+                const lonEl = document.getElementById('db-lon');
+                if (lonEl) lonEl.textContent = gga?.longitude?.toFixed(8) || '0.0';
+                
+                lastStatsUpdate.current = now;
+            }
+
+            // Canvas & Bars Updates
+            if (now - lastCanvasUpdate.current >= CANVAS_INTERVAL) {
+                if (satellites && Object.keys(satellites).length > 0) {
+                    drawSkyplotSatellites(Object.values(satellites));
+                }
+                lastCanvasUpdate.current = now;
+            }
+
+            if (now - lastBarsUpdate.current >= BARS_INTERVAL) {
+                if (satellites && Object.keys(satellites).length > 0) {
+                    drawSignalBars(Object.values(satellites));
+                }
+                lastBarsUpdate.current = now;
+            }
+            
+            animationFrameRef.current = requestAnimationFrame(animate);
+        };
+
+        const handleResize = () => {
+            if (bgCanvasRef.current && satCanvasRef.current) {
+                const container = bgCanvasRef.current.parentElement;
+                if (!container) return;
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+                
+                if (w > 0 && h > 0) {
+                    bgCanvasRef.current.width = w;
+                    bgCanvasRef.current.height = h;
+                    satCanvasRef.current.width = w;
+                    satCanvasRef.current.height = h;
+                    drawSkyplotBase();
+                }
+            }
+        };
+
+        handleResize();
+        setTimeout(handleResize, 100);
+        setTimeout(handleResize, 500);
+        window.addEventListener('resize', handleResize);
+        
+        animate();
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        };
+    }, [nmeaData]);
+    /*
+    const FIX_STATUS_MAP = {
+        'RTK_FIXED': { label: 'RTK FIXED', color: '#00ff00', icon: '🎯', priority: 5 },
+        'RTK_FLOAT': { label: 'RTK FLOAT', color: '#ffaa00', icon: '📍', priority: 4 },
+        'DGPS': { label: 'DGPS', color: '#ff9900', icon: '⚠️', priority: 3 },
+        'GPS_FIX': { label: 'GPS FIX', color: '#999999', icon: '📡', priority: 2 },
+        'NO_FIX': { label: 'NO FIX', color: '#ff0000', icon: '❌', priority: 1 }
+    };
+    
+    const rtk_status = device.rtk_fix_status || 'NO_FIX';
+    const fixInfo = FIX_STATUS_MAP[rtk_status] || FIX_STATUS_MAP['NO_FIX'];
+    */
+
+    return (
+        <div className="dashboard-master">
+            {/* 🆕 METRIC CARDS WITH SPARKLINES (Nếu có component MetricCard) */}
+            {window.MetricCard && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                    <window.MetricCard title="Fix Quality" value={metrics.fixQuality.value} unit="/5" trend={0} sparklineData={metrics.fixQuality.history} color="#51cf66" icon="🎯" />
+                    <window.MetricCard title="Satellites" value={metrics.satellites.value} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
+                    <window.MetricCard title="HDOP" value={metrics.hdop.value.toFixed(2)} unit="" trend={0} sparklineData={metrics.hdop.history} color="#ffd43b" icon="📡" />
+                    <window.MetricCard title="Avg SNR" value={metrics.signalStrength.value} unit="dB" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
+                </div>
+            )}
+            
+            {/* STATS STRIP */}
+            <div className="stats-strip">
+                {/* ✅ CẬP NHẬT FIX STATUS CARD */}
+                <div className="stat-item">
+                    <div className="stat-icon" style={{ fontSize: '2rem' }}>{fixInfo.icon}</div>
+                    <div className="stat-content">
+                        <div className="stat-label">Fix Status</div>
+                        <div 
+                            className="stat-value" 
+                            style={{ 
+                                color: fixInfo.color,
+                                textShadow: `0 0 10px ${fixInfo.color}`,
+                                fontWeight: 'bold'
+                            }}
+                        >
+                            {fixInfo.label}
+                        </div>
+                    </div>
+                </div>
+                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Satellites</div><div id="db-sats" className="stat-value">0</div></div></div>
+                <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">0.0 / 0.0</div></div></div>
+                <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">0.0</span> / <span id="db-lon">0.0</span></div></div></div>
+            </div>
+            {/* BASE MODE WARNING */}
+            {device.base_mode_active && rtk_status !== 'RTK_FIXED' && (
+                <div className="alert alert-warning mt-3" role="alert">
+                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                    <strong>Base Station Mode Active</strong> - Waiting for RTK convergence...
+                    {rtk_status === 'DGPS' && (
+                        <div className="small mt-1">
+                            Currently in DGPS mode. RTK Fixed typically requires 5-10 minutes after power-on.
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* MAP */}
+            <div className="map-section">
+                <BaseLocationMap coords={baseCoords} />
+            </div>
+            
+            {/* SKYPLOT & SIGNALS */}
+            <div className="sky-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', height: '400px', minHeight: '400px' }}>
+                <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div className="panel-header" style={{ flexShrink: 0 }}>
+                        <i className="bi bi-radar"></i><span>Sky View</span>
+                        <span className="badge bg-primary-subtle text-primary ms-auto">{Object.keys(safeNmeaData.satellites || {}).length} Sats</span>
+                    </div>
+                    <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%', minHeight: '300px' }}>
+                        <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
+                        <canvas ref={satCanvasRef} className="skyplot-sat" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2 }}></canvas>
+                    </div>
+                </div>
+                
+                <div className="sky-panel signals-panel">
+                    <div className="panel-header">
+                        <i className="bi bi-bar-chart-fill"></i><span>Signal Strength (SNR)</span>
+                        <div className="ms-auto d-flex gap-2">
+                            <span className="badge bg-success">{satStats.tracking} Tracking</span>
+                            <span className="badge bg-secondary">{satStats.total} Total</span>
+                        </div>
+                    </div>
+                    <div ref={signalBarsContainerRef} className="signals-scroll" style={{flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px'}}></div>
+                </div>
+            </div>
+        </div>
+    );
+});
+window.DashboardPanel = DashboardPanel;
+
+const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
+    const [rovers, setRovers] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    
+    // Form States
+    const [newUsername, setNewUsername] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [selectedMountpoint, setSelectedMountpoint] = useState('');
+    const [expiryDays, setExpiryDays] = useState('365'); // Mặc định 1 năm
+
+    // --- 1. LẤY DANH SÁCH MOUNTPOINT KHẢ DỤNG TỪ CẤU HÌNH ---
+    const availableMountpoints = [];
+    const config = device.service_config || {};
+
+    if (config.server1_enabled && config.mountpoint1) {
+        availableMountpoints.push({ 
+            id: 'server1', 
+            name: config.mountpoint1, 
+            host: config.serverhost1 || 'Local' 
+        });
+    }
+    if (config.server2_enabled && config.mountpoint2) {
+        availableMountpoints.push({ 
+            id: 'server2', 
+            name: config.mountpoint2, 
+            host: config.serverhost2 || 'Local' 
+        });
+    }
+
+    // Tự động chọn Mountpoint đầu tiên khi load
+    useEffect(() => {
+        if (availableMountpoints.length > 0 && !selectedMountpoint) {
+            setSelectedMountpoint(availableMountpoints[0].name);
+        }
+    }, [device.service_config]);
+
+    // --- 2. TẢI DANH SÁCH ROVER ---
+    const fetchRovers = async () => {
+        try {
+            setIsLoading(true);
+            const response = await window.apiFetch(`/api/bases/${device.serial}/rovers`);
+            if (!response.ok) throw new Error("Không thể tải danh sách Rover");
+            const data = await response.json();
+            setRovers(data);
+        } catch (error) {
+            window.showError(error.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (device?.serial) {
+            fetchRovers();
+        }
+    }, [device?.serial]);
+
+    // --- 3. XỬ LÝ TẠO ROVER ---
+    const handleCreateRover = async (e) => {
+        e.preventDefault();
+        
+        // Validation cơ bản
+        if (!newUsername.trim() || !newPassword.trim()) {
+            return window.showError("Tên đăng nhập và mật khẩu không được để trống.");
+        }
+
+        // Validation ký tự đặc biệt (QUAN TRỌNG CHO CASTER)
+        // Chỉ cho phép chữ cái (a-z, A-Z), số (0-9) và gạch dưới (_)
+        const validUsernameRegex = /^[a-zA-Z0-9_]+$/;
+        if (!validUsernameRegex.test(newUsername)) {
+            return window.showError("Tên đăng nhập chỉ được chứa chữ cái không dấu, số và dấu gạch dưới (_). Không dùng khoảng trắng hoặc ký tự đặc biệt.");
+        }
+
+        // Kiểm tra xem đã chọn mountpoint chưa
+        let targetMp = selectedMountpoint;
+        if (!targetMp && availableMountpoints.length > 0) {
+            targetMp = availableMountpoints[0].name;
+        }
+        if (!targetMp) {
+            // Fallback nếu chưa cấu hình gì cả (ít khi xảy ra nếu UI đúng)
+            targetMp = `MP_${device.serial}`;
+        }
+
+        try {
+            const payload = {
+                username: newUsername,
+                password: newPassword,
+                mountpoint_allow: targetMp,
+                expiry_days: parseInt(expiryDays)
+            };
+
+            const response = await window.apiFetch(`/api/bases/${device.serial}/rovers`, {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || "Tạo tài khoản thất bại");
+            }
+
+            window.showSuccess(`Đã tạo tài khoản Rover '${newUsername}' thành công!`);
+            
+            // Reset form
+            setNewUsername('');
+            setNewPassword('');
+            fetchRovers(); // Reload list
+
+        } catch (error) {
+            window.showError(error.message);
+        }
+    };
+    
+    // --- 4. XỬ LÝ XÓA ROVER ---
+    const handleDeleteRover = async (roverId, username) => {
+        if (!confirm(`Bạn có chắc muốn xóa tài khoản Rover '${username}'? Tài khoản này sẽ bị ngắt kết nối ngay lập tức.`)) return;
+        try {
+            const response = await window.apiFetch(`/api/rovers/${roverId}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error("Xóa thất bại");
+            window.showSuccess(`Đã xóa tài khoản '${username}'.`);
+            fetchRovers();
+        } catch (error) {
+            window.showError(error.message);
+        }
+    };
+
+    return (
+        <div>
+            {/* CẢNH BÁO NẾU CHƯA CẤU HÌNH SERVER NTRIP */}
+            {availableMountpoints.length === 0 && (
+                <div className="alert alert-warning small mb-3">
+                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                    <strong>Chưa cấu hình dịch vụ phát:</strong> Trạm này chưa bật NTRIP Server nào. 
+                    Vui lòng sang tab <strong>"Dịch vụ"</strong> để bật Server 1 hoặc Server 2 và đặt tên Mountpoint trước khi tạo tài khoản Rover.
+                </div>
+            )}
+
+            {/* FORM TẠO MỚI */}
+            <div className="p-3 border rounded bg-dark-subtle mb-4 shadow-sm">
+                <h5 className="text-primary-emphasis border-bottom pb-2 mb-3">
+                    <i className="bi bi-person-plus-fill me-2"></i>Thêm tài khoản Rover (Khách hàng)
+                </h5>
+                <form onSubmit={handleCreateRover}>
+                    <div className="row g-3">
+                        <div className="col-md-3">
+                            <label className="form-label small fw-bold">Tên đăng nhập</label>
+                            <input 
+                                type="text" 
+                                className="form-control" 
+                                value={newUsername} 
+                                onChange={e => setNewUsername(e.target.value)}
+                                placeholder="VD: khach_a_01" 
+                            />
+                        </div>
+                        <div className="col-md-3">
+                            <label className="form-label small fw-bold">Mật khẩu</label>
+                            <input 
+                                type="text" 
+                                className="form-control" 
+                                value={newPassword} 
+                                onChange={e => setNewPassword(e.target.value)} 
+                            />
+                        </div>
+                        <div className="col-md-3">
+                            <label className="form-label small fw-bold">Quyền truy cập (Mountpoint)</label>
+                            <select 
+                                className="form-select" 
+                                value={selectedMountpoint}
+                                onChange={(e) => setSelectedMountpoint(e.target.value)}
+                                disabled={availableMountpoints.length === 0}
+                            >
+                                {availableMountpoints.length === 0 && <option>Chưa có MP</option>}
+                                {availableMountpoints.map(mp => (
+                                    <option key={mp.id} value={mp.name}>
+                                        {mp.name} ({mp.id === 'server1' ? 'S1' : 'S2'})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="col-md-3">
+                            <label className="form-label small fw-bold">Thời hạn sử dụng</label>
+                            <select 
+                                className="form-select" 
+                                value={expiryDays} 
+                                onChange={(e) => setExpiryDays(e.target.value)}
+                            >
+                                <option value="1">1 Ngày (Test)</option>
+                                <option value="7">1 Tuần</option>
+                                <option value="30">1 Tháng</option>
+                                <option value="90">3 Tháng</option>
+                                <option value="180">6 Tháng</option>
+                                <option value="365">1 Năm</option>
+                                <option value="730">2 Năm</option>
+                                <option value="1095">3 Năm</option>
+                                <option value="3650">Vĩnh viễn (~10 năm)</option>
+                            </select>
+                        </div>
+                        <div className="col-12 text-end">
+                            <button type="submit" className="btn btn-primary px-4" disabled={availableMountpoints.length === 0}>
+                                <i className="bi bi-plus-circle me-2"></i>Tạo Tài Khoản
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            {/* DANH SÁCH TÀI KHOẢN */}
+            <h5 className="mt-4 mb-3">Danh sách Rover đã tạo</h5>
+            {isLoading ? (
+                <div className="text-center py-3">
+                    <div className="spinner-border text-primary" role="status"></div>
+                    <p className="mt-2 text-muted">Đang đồng bộ danh sách...</p>
+                </div>
+            ) : rovers.length === 0 ? (
+                <div className="text-center p-4 bg-dark rounded text-muted border border-secondary">
+                    <i className="bi bi-people display-6 d-block mb-3 opacity-50"></i>
+                    Chưa có tài khoản Rover nào được tạo cho trạm này.
+                </div>
+            ) : (
+                <div className="table-responsive">
+                    <table className="table table-hover align-middle table-bordered border-secondary">
+                        <thead className="table-dark text-center">
+                            <tr>
+                                <th>Tài khoản (Username)</th>
+                                <th>Mật khẩu</th>
+                                <th>Mountpoint (Luồng dữ liệu)</th>
+                                <th>Trạng thái</th>
+                                <th>Hành động</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rovers.map(rover => (
+                                <tr key={rover.id}>
+                                    <td>
+                                        <div className="d-flex align-items-center">
+                                            <div className="bg-primary rounded-circle p-2 me-2 d-flex align-items-center justify-content-center" style={{width: '32px', height: '32px'}}>
+                                                <i className="bi bi-person-fill text-white"></i>
+                                            </div>
+                                            <strong>{rover.username}</strong>
+                                        </div>
+                                    </td>
+                                    <td className="font-monospace text-warning">{rover.password}</td>
+                                    <td className="text-center">
+                                        <span className="badge bg-info text-dark border border-info-subtle">
+                                            <i className="bi bi-broadcast me-1"></i>
+                                            {/* Logic hiển thị Mountpoint, ưu tiên lấy từ config hiện tại nếu khớp, ko thì hiển thị cái fallback */}
+                                            {availableMountpoints.find(mp => mp.name === rover.base_serial) 
+                                                ? rover.base_serial // Lưu ý: Backend đang lưu base_serial, nên cần sửa backend để lưu mountpoint nếu muốn hiển thị chính xác lịch sử.
+                                                : (availableMountpoints.length > 0 ? availableMountpoints[0].name : "Mặc định")
+                                            } 
+                                            {/* Tạm thời hiển thị MP hiện tại của trạm vì logic DB đang lưu base_serial chứ chưa lưu mountpoint cụ thể từng user. 
+                                                Nhưng với caster, user đó chỉ login được vào MP đã đăng ký. 
+                                                Ở đây hiển thị MP hiện tại của trạm là hợp lý nhất. */}
+                                            {selectedMountpoint || (availableMountpoints[0]?.name || "N/A")}
+                                        </span>
+                                    </td>
+                                    <td className="text-center">
+                                        <span className={`badge ${rover.is_active ? 'bg-success' : 'bg-secondary'}`}>
+                                            {rover.is_active ? 'Active' : 'Expired'}
+                                        </span>
+                                    </td>
+                                    <td className="text-center">
+                                        <button 
+                                            className="btn btn-sm btn-outline-danger" 
+                                            title="Xóa & Ngắt kết nối Rover này"
+                                            onClick={() => handleDeleteRover(rover.id, rover.username)}
+                                        >
+                                            <i className="bi bi-trash3 me-1"></i> Xóa
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* HƯỚNG DẪN SỬ DỤNG */}
+            <div className="alert alert-secondary small mt-4">
+                <h6 className="alert-heading fw-bold"><i className="bi bi-info-circle-fill me-2"></i>Hướng dẫn kết nối cho Khách hàng:</h6>
+                <hr />
+                <ul className="mb-0 ps-3">
+                    <li><strong>IP / Host:</strong> {window.location.hostname} (hoặc Domain của bạn)</li>
+                    <li><strong>Port:</strong> 2101</li>
+                    <li><strong>Mountpoint:</strong> {selectedMountpoint || "Xem ở cột Mountpoint"}</li>
+                    <li><strong>Username / Password:</strong> Cấp theo danh sách trên.</li>
+                </ul>
+            </div>
+        </div>
+    );
+});
+
+const CasterConfigModal = memo(function CasterConfigModal() {
+    const [config, setConfig] = useState({ host: 'aitogy.com.vn', port: 2101 });
+    const [isOpen, setIsOpen] = useState(false);
+    
+    // Hàm mở modal (gắn vào window để gọi từ console hoặc nút khác)
+    useEffect(() => {
+        window.openCasterConfig = () => {
+            fetchConfig();
+            setIsOpen(true);
+        };
+    }, []);
+
+    const fetchConfig = async () => {
+        try {
+            const res = await window.apiFetch('/api/admin/caster-config');
+            if(res.ok) setConfig(await res.json());
+        } catch(e) { console.error(e); }
+    };
+
+    const handleSave = async () => {
+        try {
+            await window.apiFetch('/api/admin/caster-config', {
+                method: 'PUT',
+                body: JSON.stringify(config)
+            });
+            window.showSuccess("Đã cập nhật cấu hình NTRIP Caster!");
+            setIsOpen(false);
+        } catch(e) {
+            window.showError(e.message);
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="modal d-block" style={{backgroundColor: 'rgba(0,0,0,0.5)'}}>
+            <div className="modal-dialog">
+                <div className="modal-content bg-dark text-light border-secondary">
+                    <div className="modal-header border-secondary">
+                        <h5 className="modal-title">Cấu hình Hệ thống NTRIP Caster</h5>
+                        <button type="button" className="btn-close btn-close-white" onClick={() => setIsOpen(false)}></button>
+                    </div>
+                    <div className="modal-body">
+                        <p className="text-muted small">Cấu hình địa chỉ Caster dùng để tạo/xóa Rover qua giao thức TCP Admin.</p>
+                        <div className="mb-3">
+                            <label className="form-label">Caster Host / IP</label>
+                            <input type="text" className="form-control" value={config.host} 
+                                onChange={e => setConfig({...config, host: e.target.value})} />
+                        </div>
+                        <div className="mb-3">
+                            <label className="form-label">Admin Port (TCP)</label>
+                            <input type="number" className="form-control" value={config.port} 
+                                onChange={e => setConfig({...config, port: parseInt(e.target.value)})} />
+                        </div>
+                    </div>
+                    <div className="modal-footer border-secondary">
+                        <button type="button" className="btn btn-secondary" onClick={() => setIsOpen(false)}>Đóng</button>
+                        <button type="button" className="btn btn-primary" onClick={handleSave}>Lưu Cấu hình</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+});
+window.CasterConfigModal = CasterConfigModal;
+
+// ===============================================================================
+// === SYSTEM INFO SIDE PANEL 
+// ===============================================================================
+
+const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose }) {
+    if (!device || !device.system_info) {
+        return null;
+    }
+
+    const info = device.system_info;
+    
+    // Format uptime
+    const formatUptime = (seconds) => {
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        
+        if (days > 0) return `${days}d ${hours}h ${mins}m`;
+        if (hours > 0) return `${hours}h ${mins}m`;
+        return `${mins}m`;
+    };
+    
+    // Calculate health score
+    const calculateHealthScore = () => {
+        let score = 100;
+        if (info.cpu?.usage_percent > 80) score -= 20;
+        else if (info.cpu?.usage_percent > 60) score -= 10;
+        
+        if (info.temperature?.celsius > 70) score -= 25;
+        else if (info.temperature?.celsius > 60) score -= 15;
+        
+        if (info.memory?.percent > 85) score -= 20;
+        else if (info.memory?.percent > 70) score -= 10;
+        
+        return Math.max(score, 0);
+    };
+    
+    const healthScore = calculateHealthScore();
+    const healthColor = healthScore >= 80 ? '#51cf66' : healthScore >= 60 ? '#ffd43b' : '#fa5252';
+
+    return (
+        <div className={`system-info-panel ${isOpen ? 'open' : ''}`}>
+            {/* Header */}
+            <div className="panel-header-sys">
+                <div className="d-flex align-items-center gap-2">
+                    <i className="bi bi-cpu text-primary"></i>
+                    <h5 className="mb-0">System Monitor</h5>
+                </div>
+                <button className="btn btn-sm btn-ghost" onClick={onClose} title="Đóng">
+                    <i className="bi bi-x-lg"></i>
+                </button>
+            </div>
+
+            {/* Body */}
+            <div className="panel-body-sys">
+                
+                {/* 1. HEALTH SCORE & DEVICE INFO */}
+                <div className="d-flex align-items-center justify-content-between mb-4 p-3 rounded bg-dark border border-secondary">
+                    <div>
+                        <div className="text-muted small text-uppercase">Health Score</div>
+                        <div className="display-6 fw-bold" style={{ color: healthColor }}>{healthScore}%</div>
+                        <div className="small text-light">{healthScore >= 80 ? 'Excellent' : 'Warning'}</div>
+                    </div>
+                    <div className="text-end">
+                        <div className="text-muted small">Uptime</div>
+                        <div className="fw-bold text-light">{info.uptime_seconds ? formatUptime(info.uptime_seconds) : 'N/A'}</div>
+                        <div className="text-muted small mt-1">Chip: {device.detected_chip_type || 'Unknown'}</div>
+                    </div>
+                </div>
+
+                {/* 2. CIRCULAR METRICS (CPU & RAM) */}
+                <div className="row g-3 mb-4">
+                    {/* CPU Ring */}
+                    {info.cpu && window.ProgressRing && (
+                        <div className="col-6 d-flex justify-content-center">
+                            <window.ProgressRing 
+                                value={info.cpu.usage_percent} 
+                                max={100} 
+                                size={110} 
+                                strokeWidth={8}
+                                color={info.cpu.usage_percent > 80 ? '#fa5252' : '#0d6efd'}
+                                label="CPU Load"
+                                subLabel={`${info.cpu.count} Cores`}
+                            />
+                        </div>
+                    )}
+                    
+                    {/* RAM Ring */}
+                    {info.memory && window.ProgressRing && (
+                        <div className="col-6 d-flex justify-content-center">
+                            <window.ProgressRing 
+                                value={info.memory.percent} 
+                                max={100} 
+                                size={110} 
+                                strokeWidth={8}
+                                color={info.memory.percent > 85 ? '#fa5252' : '#74c0fc'}
+                                label="RAM Usage"
+                                subLabel={`${Math.round(info.memory.used_mb)}/${Math.round(info.memory.total_mb)}MB`}
+                            />
+                        </div>
+                    )}
+                </div>
+
+                {/* 3. TEMPERATURE & DISK (Bar Style for Compactness) */}
+                <div className="info-section">
+                    <div className="section-title"><i className="bi bi-thermometer-half me-2"></i>Temperature</div>
+                    {info.temperature?.celsius ? (
+                        <div className="metric-card">
+                            <div className="d-flex justify-content-between mb-1">
+                                <span className="fw-bold text-light">{info.temperature.celsius}°C</span>
+                                <span className="text-muted small">Max: 85°C</span>
+                            </div>
+                            <div className="progress" style={{height: '8px'}}>
+                                <div 
+                                    className={`progress-bar ${info.temperature.celsius > 70 ? 'bg-danger' : 'bg-success'}`} 
+                                    style={{width: `${Math.min((info.temperature.celsius / 85) * 100, 100)}%`}}
+                                ></div>
+                            </div>
+                        </div>
+                    ) : <div className="text-muted small">No sensor data</div>}
+                </div>
+
+                <div className="info-section mt-3">
+                    <div className="section-title"><i className="bi bi-hdd me-2"></i>Disk Usage</div>
+                    {info.disk ? (
+                        <div className="metric-card">
+                             <div className="d-flex justify-content-between mb-1">
+                                <span className="fw-bold text-light">{info.disk.percent}% Used</span>
+                                <span className="text-muted small">Free: {(info.disk.total_gb - info.disk.used_gb).toFixed(1)} GB</span>
+                            </div>
+                            <div className="progress" style={{height: '8px'}}>
+                                <div 
+                                    className={`progress-bar ${info.disk.percent > 90 ? 'bg-danger' : 'bg-primary'}`} 
+                                    style={{width: `${info.disk.percent}%`}}
+                                ></div>
+                            </div>
+                        </div>
+                    ) : <div className="text-muted small">No disk data</div>}
+                </div>
+
+                {/* Footer */}
+                <div className="text-center text-muted small mt-4 pt-3 border-top border-secondary">
+                    <i className="bi bi-clock-history me-1"></i>
+                    Updated: {new Date(info.timestamp * 1000).toLocaleTimeString()}
+                </div>
+            </div>
+        </div>
+    );
+});
+window.SystemInfoPanel = SystemInfoPanel;
+
+console.log('✓ SystemInfoPanel component loaded');
+
+// =========================================
+// === COMPONENT CHÍNH: DetailsPanel ===
+// =========================================
+const DetailsPanel = memo(function DetailsPanel({ 
+    device, 
+    currentUser,
+    nmeaData,
+    onReset, 
+    onProvision, 
+    onConfigureChip, 
+    onDeployLicense, 
+    onConfigureService,
+    onLock,
+    onUnlock 
+}) {
+    const isAdmin = currentUser?.role === 'admin';
+    const [activeTab, setActiveTab] = useState('');
+    
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [tempName, setTempName] = useState('');
+    const [userSelectedTab, setUserSelectedTab] = useState(false);
+    const [isSystemPanelOpen, setIsSystemPanelOpen] = useState(false);
+    useEffect(() => {
+        if (!device) return;     
+        let newActiveTab = '';
+        
+        switch (device.status) {
+            case 'awaiting_license':
+                newActiveTab = 'license';
+                break;
+            case 'unprovisioned':
+                newActiveTab = 'chip';
+                break;
+            default:
+                if (userSelectedTab && activeTab) {
+                    return; 
+                }
+                
+                const isGnssConfigured = device.base_config && Object.keys(device.base_config).length > 0;
+                if (!isGnssConfigured) {
+                    newActiveTab = 'chip'; 
+                } else {
+                    newActiveTab = 'service'; 
+                }
+                break;
+        }
+
+        if (newActiveTab) {
+            setActiveTab(newActiveTab);
+            setUserSelectedTab(false); // Reset flag
+        }
+
+        setTempName(device.name || '');
+        setIsEditingName(false);
+        
+    }, [device?.serial, device?.status]); 
+    
+    const handleTabClick = (tabName) => {
+        setActiveTab(tabName);
+        setUserSelectedTab(true); 
+    };
+    
+    const handleSaveName = () => {
+        if (!tempName.trim()) {
+            window.showError('Tên trạm không được để trống!');
+            return;
+        }
+        
+        if (tempName !== device.name) {
+            window.handleRenameDevice(device.serial, tempName);
+        }
+        setIsEditingName(false);
+    }; 
+
+    if (!device) {
+        return (
+            <div className="card bg-dark-tertiary h-100">
+                <div className="card-body text-center d-flex flex-column justify-content-center">
+                    <i className="bi bi-cursor-fill display-1 text-muted"></i>
+                    <h3 className="mt-3 text-muted">Vui lòng chọn một trạm từ danh sách bên trái.</h3>
+                </div>
+            </div>
+        );
+    }
+
+    const canEdit = currentUser?.role === 'admin' || 
+                    (currentUser?.role === 'coordinator' && device.user_id === currentUser.id);
+
+    if (device.status === 'rebooting_for_reset') {
+        return (
+            <div className="card bg-dark-tertiary h-100">
+                <div className="card-body text-center d-flex flex-column justify-content-center align-items-center">
+                    <div className="spinner-border text-danger" style={{ width: '3rem', height: '3rem' }} role="status">
+                        <span className="visually-hidden">Loading...</span>
+                    </div>
+                    <h3 className="mt-4 text-danger">Đang Reset Trạm</h3>
+                    <p className="text-muted mt-2">
+                        Thiết bị đang xóa cấu hình và khởi động lại.<br />
+                        Giao diện sẽ tự động chuyển sang bước cấp License sau giây lát.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    const renderTabContent = () => {
+        const commonProps = { device, disabled: !canEdit }; 
+        
+        switch(activeTab) {
+            case 'license':
+                return <LicenseForm {...commonProps} onDeployLicense={onDeployLicense} />;
+            case 'chip':
+                if (device.status === 'unprovisioned') {
+                    return <ProvisionForm {...commonProps} onProvision={onProvision} />;
+                }
+                return <BaseConfigForm {...commonProps} onConfigureChip={onConfigureChip} />;
+            case 'service':
+                return <ServiceConfigForm {...commonProps} onConfigureService={onConfigureService} />; 
+            case 'dashboard':
+                return <DashboardPanel device={device} nmeaData={nmeaData} />; 
+            case 'rovers': 
+                if (!canEdit) {
+                        return <div className="alert alert-danger">Bạn không có quyền truy cập mục này.</div>;
+                    }
+                return <RoverManagementPanel device={device} />;
+            default:
+                return null;
+        }
+    };
+
+    const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_create_rovers));
+    const showConfigTabs = !['awaiting_license', 'rebooting_for_reset'].includes(device.status);
+    const showServiceAndDashboardTabs = showConfigTabs && device.status !== 'unprovisioned';
+
+    const isDeviceLocked = device.is_locked || device.status === 'locked';
+
+    return (
+        <div className="card bg-dark-tertiary h-100 d-flex flex-column" style={{ maxHeight: '100vh', position: 'relative' }}>
+            {isAdmin && device && device.system_info && (
+                <button 
+                    className="btn-system-toggle"
+                    onClick={() => setIsSystemPanelOpen(!isSystemPanelOpen)}
+                    title="System Monitor"
+                >
+                    <i className="bi bi-cpu"></i>
+                </button>
+            )}
+            {/* CARD-HEADER */}
+            <div className="card-header d-flex justify-content-between align-items-center bg-dark flex-shrink-0">
+                <div className="d-flex align-items-center flex-grow-1">
+                    {/* 🔥 THAY THẾ PHẦN HIỂN THỊ TÊN */}
+                    {isEditingName ? (
+                        <div className="input-group input-group-sm me-3" style={{maxWidth: '300px'}}>
+                            <input 
+                                type="text" 
+                                className="form-control" 
+                                value={tempName}
+                                onChange={(e) => setTempName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveName();
+                                    if (e.key === 'Escape') setIsEditingName(false);
+                                }}
+                                autoFocus
+                            />
+                            <button 
+                                className="btn btn-success" 
+                                onClick={handleSaveName}
+                                title="Lưu tên mới"
+                            >
+                                <i className="bi bi-check"></i>
+                            </button>
+                            <button 
+                                className="btn btn-secondary" 
+                                onClick={() => {
+                                    setTempName(device.name);
+                                    setIsEditingName(false);
+                                }}
+                                title="Hủy"
+                            >
+                                <i className="bi bi-x"></i>
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="d-flex align-items-center me-3">
+                            <h4 className="mb-0 me-2 text-truncate" style={{maxWidth: '350px'}} title={device.name}>
+                                {device.name}
+                            </h4>
+                            {canEdit && (
+                                <button 
+                                    className="btn btn-link text-muted p-0 ms-1" 
+                                    onClick={() => {
+                                        setTempName(device.name);
+                                        setIsEditingName(true);
+                                    }}
+                                    title="Đổi tên trạm"
+                                    style={{ fontSize: '1.1rem' }}
+                                >
+                                    <i className="bi bi-pencil-square"></i>
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Các Badge trạng thái */}
+                    <div className="d-flex align-items-center">
+                        {!device.is_synced && canEdit && (
+                            <div className="me-2 position-relative group-hover-target">
+                                <button 
+                                    className="btn btn-warning btn-sm text-dark fw-bold" 
+                                    onClick={() => {
+                                        // Cho phép click để xem alert chi tiết nếu cần
+                                        const errText = device.sync_errors ? device.sync_errors.join('\n') : "Đang chờ dữ liệu...";
+                                        alert("CHI TIẾT SAI LỆCH:\n" + errText);
+                                    }}
+                                    title={device.sync_errors ? device.sync_errors.join('\n') : "Click để xem chi tiết"}
+                                >
+                                    <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                    Không đồng bộ (Click xem)
+                                </button>
+                            </div>
+                        )}
+                        
+                        {/* Badge trạng thái (luôn hiển thị) */}
+                        <span className={`badge ${STATUS_CLASS_MAP[device.status] || 'bg-secondary'}`}>
+                            {STATUS_TEXT_MAP[device.status] || device.status}
+                        </span>
+
+                        {/* 3. BADGE LOẠI CHÍNH (Hiện VIRTUAL nếu là trạm ảo) */}
+                        {device.detected_chip_type === 'VIRTUAL' && (
+                            <span className="badge bg-info text-dark">
+                                <i className="bi bi-cloud-check-fill me-1"></i>TRẠM ẢO
+                            </span>
+                        )}
+                        
+                        {/* Badge LOCKED (luôn hiển thị nếu bị khóa) */}
+                        {isDeviceLocked && (
+                            <span className="badge bg-danger ms-2">
+                                <i className="bi bi-lock-fill me-1"></i>LOCKED
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+                {/* Nút Reset */}
+                {canEdit && !isEditingName && (
+                    <button 
+                        className="btn btn-sm btn-outline-danger ms-2" 
+                        title="Reset Trạm về trạng thái ban đầu"
+                        onClick={() => {
+                            const confirmMsg = `⚠️ XÁC NHẬN RESET\n\nBạn có chắc chắn muốn reset trạm '${device.name}' về trạng thái ban đầu không?`;
+                            if (window.confirm(confirmMsg)) {
+                                onReset(device.serial);
+                            }
+                        }}
+                    >
+                        <i className="bi bi-arrow-counterclockwise"></i> Reset
+                    </button>
+                )}
+            </div>
+            <div className="card-body overflow-auto flex-grow-1 p-3">
+                <div className="d-flex justify-content-between align-items-center mb-3">
+                    {isAdmin ? (
+                        <p className="text-white-50 small mb-0">Serial: {device.serial}</p>
+                    ) : (
+                        <div></div> 
+                    )}
+                    <span className="badge bg-dark-subtle text-light border border-secondary">
+                        {device.detected_chip_type || 'UNKNOWN'}
+                    </span>
+                </div>
+                
+                <ul className="nav nav-tabs mb-3" role="tablist">
+                    {device.status === 'awaiting_license' && (
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'license' ? 'active' : ''}`} onClick={() => setActiveTab('license')}>
+                                <i className="bi bi-key-fill me-1"></i>License
+                            </button>
+                        </li>
+                    )}
+
+                    {showConfigTabs && (
+                         <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'chip' ? 'active' : ''}`} onClick={() => setActiveTab('chip')}>
+                                <i className="bi bi-cpu-fill me-1"></i>Kích hoạt & GNSS
+                            </button>
+                        </li>
+                    )}
+
+                    {showServiceAndDashboardTabs && (
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'service' ? 'active' : ''}`} onClick={() => setActiveTab('service')}>
+                                <i className="bi bi-hdd-network-fill me-1"></i>Dịch vụ
+                            </button>
+                        </li>
+                    )}
+                    
+                    {showServiceAndDashboardTabs && canManageRovers && (
+                         <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'rovers' ? 'active' : ''}`} onClick={() => setActiveTab('rovers')}>
+                                <i className="bi bi-person-circle me-1"></i>Quản lý Rover
+                            </button>
+                        </li>
+                    )}
+
+                    {['online', 'configuring'].includes(device.status) && (
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+                                <i className="bi bi-speedometer2 me-1"></i>Dashboard
+                            </button>
+                        </li>
+                    )}
+                </ul>
+
+                <div className="tab-content pt-3">
+                    {renderTabContent()}
+                </div>
+            </div> 
+            {canEdit && (
+                <div className="card-footer bg-dark border-top border-secondary p-3 mt-auto">
+                     {/* CHỈ HIỂN THỊ NÚT KHÓA NẾU LÀ ADMIN */}
+                     {isAdmin && (
+                        <div id="admin-actions-section">
+                            <div className="d-flex align-items-center justify-content-between">
+                                <span className="text-muted small">
+                                    <i className="bi bi-shield-lock-fill me-2 text-danger"></i>
+                                    Admin Control (Chỉ Admin)
+                                </span>
+                                <div style={{ width: '60%' }}> 
+                                    {isDeviceLocked ? (
+                                        <button onClick={() => onUnlock(device.serial)} className="btn btn-success w-100">
+                                            <i className="bi bi-unlock-fill me-2"></i>Mở Khóa (Unlock)
+                                        </button>
+                                    ) : (
+                                        <button onClick={() => onLock(device.serial)} className="btn btn-warning w-100 text-dark fw-bold">
+                                            <i className="bi bi-lock-fill me-2"></i>Khóa Thiết Bị (Lock)
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                     
+                    {/* Nếu là Coordinator thì không hiện gì hoặc hiện thông báo khác tùy bạn */}
+                    {!isAdmin && (
+                        <div className="text-center text-muted small">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Bạn có quyền quản lý trạm này.
+                        </div>
+                     )}
+                </div>
+            )}    
+            {isAdmin && device && (
+                <SystemInfoPanel 
+                    device={device}
+                    isOpen={isSystemPanelOpen}
+                    onClose={() => setIsSystemPanelOpen(false)}
+                />
+            )}
+        </div>
+    );
+});
+window.DetailsPanel = DetailsPanel;
+
+// ===============================================================================
+// === ALL STATIONS MAP COMPONENT
+// ===============================================================================
+const createColoredIcon = (color) => {
+    return L.divIcon({
+        className: 'custom-div-icon',
+        html: `<div style="background-color: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 4px black;"></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6]
+    });
+};
+
+const getStatusColor = (status) => {
+    switch(status) {
+        case 'online': return '#0f0'; // Xanh lá
+        case 'offline': return '#666'; // Xám
+        case 'unprovisioned': return '#ff0'; // Vàng
+        default: return '#f00'; // Đỏ
+    }
+};
+
+const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
+    const mapContainerRef = useRef(null);
+    const mapInstanceRef = useRef(null);
+    const markersRef = useRef({});
+
+    useEffect(() => {
+        // 1. Khởi tạo Map
+        if (!mapInstanceRef.current) {
+            const map = L.map(mapContainerRef.current).setView([21.0285, 105.8542], 6);
+            
+            L.tileLayer('http://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+            }).addTo(map);
+
+            mapInstanceRef.current = map;
+        }
+
+        const map = mapInstanceRef.current;
+        const currentMarkers = markersRef.current;
+        const validSerials = new Set();
+        const bounds = [];
+
+        // 2. Vẽ Marker
+        devices.forEach(device => {
+            const coords = device.base_config?.coords;
+            if (coords && coords.lat && coords.lon) {
+                validSerials.add(device.serial);
+                const lat = parseFloat(coords.lat);
+                const lon = parseFloat(coords.lon);
+                bounds.push([lat, lon]);
+                
+                // --- KHAI BÁO BIẾN TRƯỚC KHI DÙNG ---
+                const displayName = device.name || "Unknown Device";
+                const isAdmin = currentUser?.role === 'admin';
+                const serialHtml = isAdmin ? `<small>${device.serial}</small>` : '';
+
+                // Nội dung Popup
+                const popupContent = `
+                    <div style="color: #333;">
+                        <strong>${displayName}</strong> <br>
+                        <span class="badge bg-${device.status === 'online' ? 'success' : 'secondary'}">${device.status}</span><br>
+                        ${serialHtml}
+                    </div>
+                `;
+
+                // Nếu marker đã có -> update
+                if (currentMarkers[device.serial]) {
+                    currentMarkers[device.serial].setLatLng([lat, lon]);
+                    currentMarkers[device.serial].setIcon(createColoredIcon(getStatusColor(device.status)));
+                    currentMarkers[device.serial].setPopupContent(popupContent);
+                } 
+                // Nếu chưa có -> tạo mới
+                else {
+                    const marker = L.marker([lat, lon], {
+                        icon: createColoredIcon(getStatusColor(device.status))
+                    }).addTo(map).bindPopup(popupContent);
+                    
+                    marker.on('mouseover', function (e) {
+                        this.openPopup();
+                    });
+                    
+                    currentMarkers[device.serial] = marker;
+                }
+            }
+        });
+
+        // 3. Xóa marker thừa
+        Object.keys(currentMarkers).forEach(serial => {
+            if (!validSerials.has(serial)) {
+                map.removeLayer(currentMarkers[serial]);
+                delete currentMarkers[serial];
+            }
+        });
+
+        // 4. Tự động zoom
+        if (bounds.length > 0 && !map.fitted) {
+            map.fitBounds(bounds, { padding: [50, 50] });
+            map.fitted = true;
+        }
+
+    }, [devices, currentUser]); // Dependency array chuẩn
+
+    return (
+        <div 
+            ref={mapContainerRef} 
+            style={{ 
+                width: '100%', 
+                height: 'calc(100vh - 150px)', 
+                borderRadius: '8px',
+                border: '2px solid #444',
+                background: '#222'
+            }}
+        />
+    );
+});
+window.AllStationsMap = AllStationsMap;
+
+console.log('✓ React Components loaded and assigned to window object.');

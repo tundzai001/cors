@@ -1,0 +1,1040 @@
+<!--login.html-->
+<!DOCTYPE html>
+<html lang="vi" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Đăng nhập - Aitogy CORS Control</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Background Animation */
+        .bg-animated {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            background: radial-gradient(circle at 30% 50%, #1a0f00 0%, #000 50%);
+        }
+
+        .grid {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(255, 140, 0, 0.06) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 140, 0, 0.06) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: gridMove 20s linear infinite;
+        }
+
+        @keyframes gridMove {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.3;
+            animation: orbFloat 20s ease-in-out infinite;
+        }
+
+        .orb1 {
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(255, 140, 0, 0.4), transparent);
+            top: -200px;
+            right: -100px;
+        }
+
+        .orb2 {
+            width: 350px;
+            height: 350px;
+            background: radial-gradient(circle, rgba(255, 100, 0, 0.3), transparent);
+            bottom: -150px;
+            left: -100px;
+            animation-delay: 7s;
+        }
+
+        @keyframes orbFloat {
+            0%, 100% { transform: translate(0, 0); }
+            50% { transform: translate(60px, -60px); }
+        }
+
+        .particles {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+
+        .particle {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: #ff8c00;
+            border-radius: 50%;
+            animation: rise 12s infinite ease-in;
+            box-shadow: 0 0 10px #ff8c00;
+        }
+
+        @keyframes rise {
+            0% { transform: translateY(100vh) scale(0); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-10vh) translateX(50px) scale(0.5); opacity: 0; }
+        }
+
+        /* LOGO BACKGROUND - FULL SCREEN */
+        .logo-bg-fullscreen {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70vw;
+            max-width: 1400px;
+            z-index: 2;
+            pointer-events: none;
+            opacity: 0.5;
+            animation: logoGlow 4s ease-in-out infinite, logoSway 8s ease-in-out infinite;
+            filter: drop-shadow(0 0 80px rgba(255, 140, 0, 0.7));
+        }
+
+        @keyframes logoGlow {
+            0%, 100% { 
+                filter: drop-shadow(0 0 60px rgba(255, 140, 0, 0.6));
+                opacity: 0.45;
+            }
+            50% { 
+                filter: drop-shadow(0 0 120px rgba(255, 140, 0, 0.9));
+                opacity: 0.55;
+            }
+        }
+
+        @keyframes logoSway {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+        }
+
+        /* Login Container */
+        .login-wrapper {
+            position: relative;
+            z-index: 10;
+            max-width: 450px;
+            width: 90%;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(40px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .login-box {
+            background: rgba(10, 10, 10, 0.75);
+            border: 2px solid rgba(255, 140, 0, 0.4);
+            border-radius: 20px;
+            padding: 2rem 1.8rem;
+            backdrop-filter: blur(10px);
+            box-shadow: 
+                0 0 60px rgba(255, 140, 0, 0.3),
+                0 20px 50px rgba(0, 0, 0, 0.8),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            position: relative;
+            overflow: visible; /* Changed to visible to allow glow but careful with clicks */
+        }
+
+        .login-box::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 30% 30%, rgba(255, 140, 0, 0.1), transparent 60%);
+            pointer-events: none;
+        }
+
+        /* 🔥 FIX: Thêm pointer-events: none để không chắn nút bấm */
+        .login-box::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: conic-gradient(transparent, rgba(255, 140, 0, 0.1), transparent 30deg);
+            animation: spin 8s linear infinite;
+            opacity: 0;
+            pointer-events: none; /* QUAN TRỌNG: Cho phép click xuyên qua */
+            z-index: 0;
+        }
+
+        .login-box:hover::after {
+            opacity: 1;
+        }
+
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Logo Section */
+        .logo-area {
+            text-align: center;
+            margin-bottom: 1.5rem;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Signal Waves */
+        .signal-waves {
+            position: absolute;
+            top: -70px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 100px;
+            z-index: 1;
+        }
+
+        .wave {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 30px;
+            height: 30px;
+            border: 2px solid rgba(255, 140, 0, 0.6);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            animation: signalWave 3s ease-out infinite;
+        }
+
+        .wave:nth-child(2) {
+            animation-delay: 1s;
+        }
+
+        .wave:nth-child(3) {
+            animation-delay: 2s;
+        }
+
+        @keyframes signalWave {
+            0% {
+                width: 30px;
+                height: 30px;
+                opacity: 1;
+                border-width: 2px;
+            }
+            100% {
+                width: 100px;
+                height: 100px;
+                opacity: 0;
+                border-width: 1px;
+            }
+        }
+
+        .logo-main-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 360px;
+            margin: 0 auto 1.5rem;
+        }
+
+        .logo-main {
+            width: 100%;
+            display: block;
+            transition: all 0.5s ease;
+            filter: drop-shadow(0 0 30px rgba(255, 140, 0, 0.7));
+            animation: logoFloat 4s ease-in-out infinite;
+        }
+
+        .logo-main-wrapper:hover .logo-main {
+            transform: scale(1.05);
+            filter: drop-shadow(0 0 50px rgba(255, 140, 0, 1)) 
+                    drop-shadow(0 0 80px rgba(255, 140, 0, 0.6));
+        }
+
+        @keyframes logoFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-12px); }
+        }
+
+        .logo-main-wrapper::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: radial-gradient(circle, rgba(255, 140, 0, 0.3), transparent 70%);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: all 0.5s ease;
+            z-index: -1;
+        }
+
+        .logo-main-wrapper:hover::before {
+            width: 150%;
+            height: 150%;
+        }
+
+        /* Satellite Orbits */
+        .satellite-orbit {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border: 1px dashed rgba(255, 140, 0, 0.2);
+            border-radius: 50%;
+            animation: orbitRotate 20s linear infinite;
+        }
+
+        .orbit-1 {
+            width: 200%;
+            height: 200%;
+        }
+
+        .orbit-2 {
+            width: 250%;
+            height: 250%;
+            animation-direction: reverse;
+            animation-duration: 30s;
+        }
+
+        @keyframes orbitRotate {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        .satellite {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: #ff8c00;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ff8c00, 0 0 20px #ff8c00;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .system-name {
+            font-size: 0.85rem;
+            color: #ff8c00;
+            font-weight: 600;
+            letter-spacing: 2px;
+            margin-bottom: 0.8rem;
+            text-shadow: 0 0 15px rgba(255, 140, 0, 0.6);
+            position: relative;
+            display: inline-block;
+        }
+
+        .system-name::before,
+        .system-name::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 30px;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #ff8c00);
+        }
+
+        .system-name::before {
+            right: calc(100% + 8px);
+            background: linear-gradient(to left, #ff8c00, transparent);
+        }
+
+        .system-name::after {
+            left: calc(100% + 8px);
+        }
+
+        .btn-map-wrapper {
+            margin-top: 0.8rem;
+        }
+
+        .btn-map {
+            background: transparent;
+            border: 2px solid #ff8c00;
+            color: #ff8c00;
+            font-size: 0.9rem;
+            font-weight: 600;
+            border-radius: 25px;
+            padding: 10px 28px;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            z-index: 5; /* Tăng z-index để đảm bảo bấm được */
+        }
+
+        .btn-map::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255, 140, 0, 0.2);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.4s, height 0.4s;
+        }
+
+        .btn-map:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .btn-map:hover {
+            background: rgba(255, 140, 0, 0.15);
+            color: #fff;
+            border-color: #ffa500;
+            box-shadow: 0 0 20px rgba(255, 140, 0, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .btn-map i {
+            font-size: 1.1rem;
+            animation: globeSpin 3s linear infinite;
+            position: relative;
+            z-index: 1;
+        }
+
+        @keyframes globeSpin {
+            0%, 100% { transform: rotateY(0deg); }
+            50% { transform: rotateY(180deg); }
+        }
+
+        .btn-map span {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* CORS Station Icons */
+        .cors-decorations {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 1;
+            overflow: hidden;
+        }
+
+        .cors-icon {
+            position: absolute;
+            color: rgba(255, 140, 0, 0.25);
+            font-size: 2.5rem;
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .cors-icon:nth-child(1) { top: 8%; right: 3%; animation-delay: 0s; }
+        .cors-icon:nth-child(2) { bottom: 12%; left: 5%; animation-delay: 2s; }
+        .cors-icon:nth-child(3) { top: 45%; right: 8%; font-size: 2rem; animation-delay: 4s; }
+        .cors-icon:nth-child(4) { top: 20%; left: 4%; font-size: 2.2rem; animation-delay: 1s; }
+        .cors-icon:nth-child(5) { bottom: 20%; right: 6%; font-size: 2rem; animation-delay: 3s; }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.25; }
+            50% { transform: translateY(-25px) rotate(8deg); opacity: 0.4; }
+        }
+
+        /* Data Stream Effect */
+        .data-stream {
+            position: absolute;
+            width: 2px;
+            height: 40px;
+            background: linear-gradient(to bottom, transparent, #ff8c00, transparent);
+            animation: dataFlow 3s linear infinite;
+            opacity: 0.6;
+        }
+
+        .stream-1 { top: 15%; left: 10%; animation-delay: 0s; }
+        .stream-2 { top: 30%; right: 12%; animation-delay: 1s; }
+        .stream-3 { bottom: 20%; left: 15%; animation-delay: 2s; }
+        .stream-4 { bottom: 35%; right: 8%; animation-delay: 1.5s; }
+
+        @keyframes dataFlow {
+            0% { transform: translateY(-100%); opacity: 0; }
+            50% { opacity: 0.6; }
+            100% { transform: translateY(200%); opacity: 0; }
+        }
+
+        /* Form */
+        .input-group {
+            position: relative;
+            margin-bottom: 1rem;
+            z-index: 5; /* Đảm bảo input nằm trên nền */
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: rgba(255, 140, 0, 0.6);
+            font-size: 1.2rem;
+            z-index: 6;
+            transition: all 0.3s;
+        }
+
+        .input-group:focus-within .input-icon {
+            color: #ff8c00;
+            transform: translateY(-50%) scale(1.15);
+            animation: iconPulse 0.5s ease;
+        }
+
+        @keyframes iconPulse {
+            0%, 100% { transform: translateY(-50%) scale(1.15); }
+            50% { transform: translateY(-50%) scale(1.25); }
+        }
+
+        .form-input {
+            background: rgba(20, 20, 20, 0.5);
+            border: 1px solid rgba(255, 140, 0, 0.3);
+            border-radius: 12px;
+            color: #fff;
+            padding: 0.85rem 1rem 0.85rem 3rem;
+            width: 100%;
+            font-size: 0.95rem;
+            transition: all 0.3s;
+            position: relative;
+            z-index: 5; /* Cao hơn decoration */
+        }
+
+        .form-input:focus {
+            outline: none;
+            background: rgba(30, 30, 30, 0.7);
+            border-color: #ff8c00;
+            box-shadow: 0 0 0 3px rgba(255, 140, 0, 0.15), 
+                        0 0 20px rgba(255, 140, 0, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .form-input::placeholder { color: #666; }
+
+        /* 🔥 FIX: Tăng z-index cho nút submit */
+        .btn-submit {
+            background: linear-gradient(135deg, #ff8c00 0%, #ff6b00 100%);
+            border: none;
+            padding: 0.8rem;
+            font-weight: 700;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            color: white;
+            width: 100%;
+            margin-top: 0.3rem;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+            letter-spacing: 0.5px;
+            z-index: 10; /* QUAN TRỌNG: Đảm bảo nút nổi lên trên cùng */
+            cursor: pointer;
+        }
+
+        .btn-submit::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.5s, height 0.5s;
+        }
+
+        .btn-submit:hover:not(:disabled)::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .btn-submit:hover:not(:disabled) {
+            box-shadow: 0 8px 25px rgba(255, 140, 0, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .btn-submit:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn-submit span {
+            position: relative;
+            z-index: 11;
+        }
+
+        /* Alert */
+        .alert-box {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid rgba(220, 53, 69, 0.5);
+            border-radius: 10px;
+            padding: 0.7rem 0.9rem;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            animation: slideIn 0.3s ease;
+            z-index: 10;
+            position: relative;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 1.2rem;
+            padding-top: 1.2rem;
+            border-top: 1px solid rgba(255, 140, 0, 0.2);
+            font-size: 0.65rem;
+            color: #666;
+            line-height: 1.5;
+            position: relative;
+            z-index: 2;
+        }
+
+        .footer .brand {
+            color: #ff8c00;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .footer .brand:hover {
+            text-shadow: 0 0 10px rgba(255, 140, 0, 0.6);
+        }
+
+        /* Map Modal */
+        .modal-content {
+            background: #1a1a1a;
+            border: 2px solid rgba(255, 140, 0, 0.3);
+            border-radius: 12px;
+            animation: modalSlideIn 0.4s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-dialog { max-width: 90vw; }
+
+        #publicMap {
+            height: 70vh;
+            min-height: 500px;
+            max-height: 800px;
+            width: 100%;
+            border-radius: 0 0 10px 10px;
+        }
+
+        .map-logo {
+            position: absolute;
+            top: 15px;
+            left: 60px;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 18px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 140, 0, 0.4);
+            animation: mapLogoFloat 3s ease-in-out infinite;
+        }
+
+        @keyframes mapLogoFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        .map-logo img { height: 40px; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .logo-bg-fullscreen { width: 85vw; }
+            .login-box { padding: 2rem 1.5rem; }
+            .logo-main-wrapper { max-width: 300px; }
+            .cors-icon { font-size: 1.5rem; }
+            .signal-waves { width: 60px; height: 60px; top: -50px; }
+            .wave { width: 15px; height: 15px; }
+            @keyframes signalWave {
+                0% { width: 15px; height: 15px; opacity: 1; }
+                100% { width: 60px; height: 60px; opacity: 0; }
+            }
+            .btn-map { font-size: 0.85rem; padding: 8px 22px; }
+            .form-input { font-size: 0.9rem; padding: 0.8rem 0.9rem 0.8rem 2.8rem; }
+            .btn-submit { font-size: 0.95rem; padding: 0.85rem; }
+            #publicMap { height: 60vh; min-height: 400px; }
+            .map-logo { left: 15px; padding: 8px 14px; }
+            .map-logo img { height: 32px; }
+        }
+
+        @media (max-height: 700px) {
+            .logo-main-wrapper { max-width: 320px; margin-bottom: 1rem; }
+            .input-group { margin-bottom: 1rem; }
+            .footer { margin-top: 1rem; padding-top: 1rem; }
+        }
+
+        @media (min-width: 1400px) {
+            .login-wrapper { max-width: 500px; }
+            .logo-main-wrapper { max-width: 380px; }
+            .logo-bg-fullscreen { width: 65vw; max-width: 1600px; }
+        }
+        body {
+            min-height: 100vh;
+            min-height: -webkit-fill-available; /* Safari iOS + Chrome Android */
+        }
+
+        html {
+            height: -webkit-fill-available;
+        }
+
+        /* 2. Fix logo background bị cắt xén */
+        .logo-bg-fullscreen {
+            width: 75vw;
+            max-width: 900px; /* Giảm kích thước để tránh tràn */
+            top: 45%; /* Đẩy xuống để không bị status bar che */
+        }
+
+        /* 3. Fix login box bị dồn xuống */
+        .login-wrapper {
+            max-width: 90%;
+            padding: 0 15px;
+            margin: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+        }
+
+        .login-box {
+            padding: 1.5rem 1.2rem; /* Giảm padding để vừa màn hình */
+            max-width: 400px;
+            width: 100%;
+        }
+
+        /* 4. Fix logo chính (Aitogy) không bị cắt */
+        .logo-main-wrapper {
+            max-width: 280px; /* Giảm kích thước trên mobile */
+            margin: 0 auto 1rem;
+        }
+
+        /* 5. Fix input và button */
+        .form-input {
+            font-size: 16px !important; /* Tránh auto-zoom trên Android */
+            padding: 0.75rem 0.9rem 0.75rem 2.8rem;
+        }
+
+        .btn-submit {
+            font-size: 0.95rem;
+            padding: 0.8rem;
+        }
+
+        /* 6. Fix nút "Mạng lưới trạm" */
+        .btn-map {
+            font-size: 0.85rem;
+            padding: 8px 20px;
+        }
+
+        /* 7. Fix system name bị chồng */
+        .system-name {
+            font-size: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* 8. Tắt hiệu ứng animation nặng trên Android (tùy chọn) */
+        @media (max-width: 768px) {
+            .orb, .particles, .grid {
+                display: none; /* Tắt hiệu ứng nền để tăng hiệu suất */
+            }
+            
+            .logo-bg-fullscreen {
+                animation: none; /* Tắt animation logo nền */
+            }
+        }
+
+        /* 9. Fix safe area cho notch/punch hole Android */
+        @supports (padding: env(safe-area-inset-top)) {
+            body {
+                padding-top: env(safe-area-inset-top);
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Background -->
+    <div class="bg-animated">
+        <div class="grid"></div>
+        <div class="orb orb1"></div>
+        <div class="orb orb2"></div>
+        <div class="particles" id="particles"></div>
+    </div>
+
+    <!-- LOGO BACKGROUND - FULL SCREEN -->
+    <img src="/img/logo-aitogy.png" alt="Aitogy Background" class="logo-bg-fullscreen">
+
+    <!-- Login -->
+    <div class="login-wrapper">
+        <div class="login-box">
+            <!-- CORS Decorations -->
+            <div class="cors-decorations">
+                <i class="bi bi-broadcast-pin cors-icon"></i>
+                <i class="bi bi-geo-alt-fill cors-icon"></i>
+                <i class="bi bi-router cors-icon"></i>
+                <i class="bi bi-diagram-3 cors-icon"></i>
+                <i class="bi bi-pin-map cors-icon"></i>
+                
+                <!-- Data Streams -->
+                <div class="data-stream stream-1"></div>
+                <div class="data-stream stream-2"></div>
+                <div class="data-stream stream-3"></div>
+                <div class="data-stream stream-4"></div>
+            </div>
+
+            <div class="logo-area">
+                <!-- Signal Waves -->
+                <div class="signal-waves">
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                </div>
+
+                <div class="logo-main-wrapper">
+                    <!-- Satellite Orbits -->
+                    <div class="satellite-orbit orbit-1">
+                        <div class="satellite"></div>
+                    </div>
+                    <div class="satellite-orbit orbit-2">
+                        <div class="satellite"></div>
+                    </div>
+                    
+                    <img src="/img/aitogy.png" alt="Aitogy Infrastructure" class="logo-main">
+                </div>
+                
+                <div class="system-name">CORS CONTROL CENTER</div>
+                <div class="btn-map-wrapper">
+                    <button type="button" class="btn-map" data-bs-toggle="modal" data-bs-target="#mapModal">
+                        <i class="bi bi-globe-asia-australia"></i> 
+                        <span>Mạng lưới trạm</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div id="errorAlert" class="alert-box d-none">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                <span id="errorMsg"></span>
+            </div>
+            
+            <form id="loginForm">
+                <div class="input-group">
+                    <i class="bi bi-person-fill input-icon"></i>
+                    <input type="text" class="form-input" id="username" placeholder="Tên đăng nhập" required autocomplete="username">
+                </div>
+                
+                <div class="input-group">
+                    <i class="bi bi-lock-fill input-icon"></i>
+                    <input type="password" class="form-input" id="password" placeholder="Mật khẩu" required autocomplete="current-password">
+                </div>
+                
+                <button type="submit" class="btn-submit" id="btnLogin">
+                    <span>Đăng nhập</span>
+                </button>
+            </form>
+            
+            <div class="footer">
+                <div><strong class="brand">© 2025 Aitogy., JSC</strong></div>
+                <div>Công ty Cổ phần Công nghệ Hạ tầng Cơ sở AITOGY</div>
+                <div>All rights reserved.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Map Modal -->
+    <div class="modal fade" id="mapModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title text-warning">
+                        <i class="bi bi-geo-alt-fill me-2"></i>Mạng lưới trạm CORS Aitogy
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0 position-relative">
+                    <div id="publicMap"></div>
+                    <div class="map-logo">
+                        <img src="/img/logo-aitogy.png" alt="Aitogy">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // Particles
+        const particlesEl = document.getElementById('particles');
+        const count = window.innerWidth < 768 ? 20 : 35;
+        for (let i = 0; i < count; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            p.style.left = Math.random() * 100 + '%';
+            p.style.animationDelay = Math.random() * 12 + 's';
+            p.style.animationDuration = (Math.random() * 8 + 10) + 's';
+            particlesEl.appendChild(p);
+        }
+
+        // Login
+        const form = document.getElementById('loginForm');
+        const btn = document.getElementById('btnLogin');
+        const errorAlert = document.getElementById('errorAlert');
+        const errorMsg = document.getElementById('errorMsg');
+
+        if (localStorage.getItem('access_token')) window.location.href = '/';
+
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorAlert.classList.remove('d-none');
+            setTimeout(() => errorAlert.classList.add('d-none'), 5000);
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const user = document.getElementById('username').value.trim();
+            const pass = document.getElementById('password').value;
+            
+            if (!user || !pass) return showError('Vui lòng nhập đầy đủ thông tin!');
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span><span>Đang xử lý...</span>';
+            
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: user, password: pass })
+                });
+                
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Đăng nhập thất bại');
+                
+                localStorage.setItem('access_token', data.access_token);
+                btn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i><span>Thành công!</span>';
+                setTimeout(() => window.location.href = '/', 500);
+            } catch (err) {
+                showError(err.message);
+                btn.disabled = false;
+                btn.innerHTML = '<span>Đăng nhập</span>';
+            }
+        });
+
+        // Map
+        let map = null;
+        const mapModal = document.getElementById('mapModal');
+        
+        mapModal.addEventListener('shown.bs.modal', function () {
+            if (!map) initMap();
+            else setTimeout(() => map.invalidateSize(), 100);
+        });
+
+        async function initMap() {
+            map = L.map('publicMap').setView([21.0285, 105.8542], 6);
+
+            L.tileLayer('http://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: 'Google Maps | Aitogy'
+            }).addTo(map);
+
+            try {
+                const res = await fetch('/api/public/map-stations');
+                if (!res.ok) throw new Error("Không tải được dữ liệu");
+                const stations = await res.json();
+
+                const bounds = [];
+                
+                stations.forEach(st => {
+                    let color = '#f00';
+                    if (st.status === 'online') color = '#0f0';
+                    else if (st.status === 'unprovisioned') color = '#ff0';
+
+                    const icon = L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 5px black"></div>`,
+                        iconSize: [14, 14],
+                        iconAnchor: [7, 7]
+                    });
+
+                    const popup = `<div style="text-align:center;color:#333">
+                        <strong style="font-size:1.1em">${st.name}</strong><br>
+                        <span class="badge ${st.status === 'online' ? 'bg-success' : 'bg-secondary'}">${st.status}</span>
+                    </div>`;
+
+                    L.marker([st.lat, st.lon], { icon }).addTo(map).bindPopup(popup);
+                    bounds.push([st.lat, st.lon]);
+                });
+
+                if (bounds.length > 0) map.fitBounds(bounds, { padding: [50, 50] });
+            } catch (err) {
+                console.error("Map error:", err);
+            }
+        }
+        // === 🆕 VISITOR TRACKING ===
+        function connectVisitorTracker() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/track-visitors`;
+            
+            const trackerWs = new WebSocket(wsUrl);
+            
+            trackerWs.onopen = () => console.log('Tracking active');
+            
+            trackerWs.onclose = () => {
+                // Tự động kết nối lại nếu rớt mạng để Admin luôn thấy đúng số lượng
+                setTimeout(connectVisitorTracker, 3000);
+            };
+        }
+        document.querySelectorAll('input[type="text"], input[type="password"]').forEach(input => {
+            input.addEventListener('focus', function() {
+                const viewport = document.querySelector('meta[name="viewport"]');
+                viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+            });
+            
+            input.addEventListener('blur', function() {
+                const viewport = document.querySelector('meta[name="viewport"]');
+                viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes');
+            });
+        });
+
+        // Chạy ngay khi load trang
+        connectVisitorTracker();
+    </script>
+</body>
+</html>

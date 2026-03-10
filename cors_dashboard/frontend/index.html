@@ -1,0 +1,133 @@
+<!--index.html-->
+<!DOCTYPE html>
+<html lang="vi" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>CORS Geodetic Suite - Web Dashboard</title>
+    
+    <!-- External CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""/>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""></script>
+    
+    <!-- Local CSS -->
+    <link rel="stylesheet" href="/css/style.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.4.2/chroma.min.js"></script>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg border-bottom border-secondary-subtle sticky-top">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="/"><i class="bi bi-satellite-dish me-2"></i>CORS Control Center</a>
+            
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul id="main-nav" class="navbar-nav me-auto mb-2 mb-lg-0">
+                    <!-- JavaScript sẽ tự động render toàn bộ menu -->
+                </ul>
+            </div>
+            
+            <div class="d-flex align-items-center">
+                <span id="connection-status" class="navbar-text me-3 fs-5" title="Trạng thái kết nối WebSocket"></span>
+                <span id="user-info" class="navbar-text me-3 d-none d-md-inline"></span>
+                <button id="logout-btn" class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-box-arrow-right"></i>
+                    <span class="d-none d-md-inline ms-1">Đăng xuất</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="container-fluid mt-4">
+        <!-- VIEW 1: DASHBOARD -->
+        <div id="view-dashboard" class="row fade-in">
+           <!-- Left Column: Device List & Quick Actions -->
+            <div class="col-lg-4 col-xl-3">
+                <!-- Admin Quick Link (Monitoring) - Mặc định ẩn, JS sẽ hiện nếu là Admin -->
+                <div id="admin-monitoring-widget" class="d-none mb-3">
+                    <div class="card bg-dark border-secondary">
+                        <div class="card-body p-3 d-flex align-items-center justify-content-between">
+                            <div class="d-flex align-items-center">
+                                <div class="bg-primary bg-opacity-25 p-2 rounded me-3 text-primary">
+                                    <i class="bi bi-activity fs-4"></i>
+                                </div>
+                                <div>
+                                    <h6 class="mb-0 text-light fw-bold">System Monitor</h6>
+                                    <small class="text-muted" style="font-size: 0.75rem;">Logs & Resources</small>
+                                </div>
+                            </div>
+                            <a href="/monitoring.html" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-arrow-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="mb-0">Danh sách trạm</h4>
+                    <div class="d-flex align-items-center">
+                        <span id="device-count" class="badge bg-primary rounded-pill me-2">0</span>
+                        <a href="#" class="btn btn-sm btn-outline-secondary" id="export-csv-btn" title="Xuất danh sách ra file CSV">
+                            <i class="bi bi-download"></i>
+                        </a>
+                    </div>
+                </div>
+                <div id="device-list-root" class="vh-80 border rounded border-secondary bg-dark overflow-hidden"></div>
+            </div>
+
+            <!-- Right Column: Details Panel -->
+            <div class="col-lg-8 col-xl-9 mt-4 mt-lg-0">
+                <div id="details-panel-root" class="h-100"></div>
+            </div>
+        </div>
+
+        <!-- VIEW 2: MAP -->
+        <div id="view-map" class="d-none fade-in">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 text-light"><i class="bi bi-globe-asia-australia me-2"></i>Bản đồ toàn hệ thống</h5>
+                    <small class="text-muted">Hiển thị vị trí dựa trên cấu hình Base (Fixed Coords)</small>
+                </div>
+                <div class="card-body p-0" id="map-root">
+                    <!-- React Map sẽ render vào đây -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast Container for Notifications -->
+    <div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1100"></div>
+
+    <!-- External JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    
+    <script type="text/babel" src="/js/react-components.js"></script>
+    <script type="text/babel" src="/js/dashboard-charts.js"></script>
+    <script type="text/babel" src="/js/advanced-features.js"></script>
+    
+    <!-- Navigation Manager -->
+    <script src="/js/nav-manager.js"></script>
+    
+    <!-- Local JS -->
+    <script src="/js/main.js"></script>
+</body>
+</html>

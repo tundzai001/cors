@@ -1,0 +1,154 @@
+// ==============================================================================
+// monitoring-dashboard.js - UPDATED
+// ==============================================================================
+
+const API_HEADERS = {
+    'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+    'Content-Type': 'application/json'
+};
+
+// Data buffers
+const systemHistory = {
+    cpu: [],
+    memory: [],
+    labels: []
+};
+
+const MAX_DATA_POINTS = 30;
+let systemChart = null;
+
+// Initialize Charts
+function initCharts() {
+    const ctx = document.getElementById('systemChart');
+    
+    // Kiểm tra nếu canvas không tồn tại (tránh lỗi can't acquire context)
+    if (!ctx) {
+        console.warn("Canvas #systemChart not found!");
+        return;
+    }
+
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { labels: { color: '#e0e0e0' } }
+        },
+        scales: {
+            y: { 
+                beginAtZero: true,
+                max: 100,
+                ticks: { color: '#888' },
+                grid: { color: 'rgba(255, 255, 255, 0.1)' }
+            },
+            x: { 
+                ticks: { color: '#888', maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+                grid: { display: false }
+            }
+        },
+        animation: { duration: 0 } // Tắt animation để mượt hơn khi update liên tục
+    };
+
+    systemChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: systemHistory.labels,
+            datasets: [
+                {
+                    label: 'CPU %',
+                    data: systemHistory.cpu,
+                    borderColor: '#0d6efd', // Bootstrap Primary Blue
+                    backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0
+                },
+                {
+                    label: 'RAM %',
+                    data: systemHistory.memory,
+                    borderColor: '#198754', // Bootstrap Success Green
+                    backgroundColor: 'rgba(25, 135, 84, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0
+                }
+            ]
+        },
+        options: commonOptions
+    });
+}
+
+// Fetch & Update Data
+async function fetchHealthData() {
+    try {
+        const response = await fetch('/api/health/detailed', { headers: API_HEADERS });
+        if (!response.ok) {
+            console.error("Health API Error:", response.status);
+            return;
+        }
+        
+        const data = await response.json();
+        updateUI(data);
+        updateCharts(data);
+        
+    } catch (error) {
+        console.error('Error fetching health data:', error);
+    }
+}
+
+function updateUI(data) {
+    if (!data || !data.system) return;
+
+    // Update Text Elements
+    const setText = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+    };
+
+    setText('cpu-percent', `${data.system.cpu_percent.toFixed(1)}%`);
+    setText('memory-percent', `${data.system.memory_percent.toFixed(1)}%`);
+    setText('disk-percent', `${data.system.disk_percent.toFixed(1)}%`);
+    
+    if (data.application) {
+        setText('avg-response-time', `${data.application.avg_response_time_ms.toFixed(1)}ms`);
+    }
+}
+
+function updateCharts(data) {
+    if (!systemChart || !data.system) return;
+
+    const now = new Date().toLocaleTimeString('en-US', { hour12: false, hour: "numeric", minute: "numeric", second: "numeric" });
+
+    // Update Arrays
+    systemHistory.cpu.push(data.system.cpu_percent);
+    systemHistory.memory.push(data.system.memory_percent);
+    systemHistory.labels.push(now);
+
+    // Keep size fixed
+    if (systemHistory.cpu.length > MAX_DATA_POINTS) {
+        systemHistory.cpu.shift();
+        systemHistory.memory.shift();
+        systemHistory.labels.shift();
+    }
+
+    // Chart.js Update
+    systemChart.data.labels = systemHistory.labels;
+    systemChart.data.datasets[0].data = systemHistory.cpu;
+    systemChart.data.datasets[1].data = systemHistory.memory;
+    systemChart.update('none'); // 'none' mode for performance
+}
+
+// Auto-refresh
+let refreshInterval;
+
+document.addEventListener('DOMContentLoaded', () => {
+    initCharts();
+    fetchHealthData();
+    refreshInterval = setInterval(fetchHealthData, 2000);
+});
+
+// Cleanup
+window.addEventListener('beforeunload', () => {
+    if (refreshInterval) clearInterval(refreshInterval);
+});

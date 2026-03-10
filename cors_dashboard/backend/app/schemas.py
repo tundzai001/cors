@@ -1,0 +1,192 @@
+# backend/app/schemas.py
+from pydantic import BaseModel, Field, validator
+from typing import Any, List, Optional
+
+# --- DEVICE SCHEMAS ---
+class DeviceBase(BaseModel):
+    serial: str
+    name: str | None = None
+    status: str | None = "offline"
+    timestamp: int | None = 0
+    system_info: Optional[dict] = None
+    
+    class Config:
+        from_attributes = True
+
+class Device(DeviceBase):
+    bps: int | None = 0
+    detected_chip_type: str | None = "UNKNOWN"
+    user_id: int | None = None  
+    
+    base_config: dict | None = Field(default_factory=dict)
+    service_config: dict | None = Field(default_factory=dict)
+    
+    ntrip_connected: bool | None = False
+    ntrip_status: dict | None = Field(default_factory=dict)
+    is_locked: bool | None = False
+
+    is_synced: bool | None = True
+
+class Command(BaseModel):
+    command: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+class ServiceConfig(BaseModel):
+    ncomport: str | None = Field(None, description="Định danh trạm hoặc ID cổng COM")
+    reconnectioninterval: int = 10
+    
+    # Server 1
+    server1_enabled: bool = False
+    ntrip_version1: int = 1
+    username1: str | None = None      
+    serverhost1: str | None = None
+    port1: int | None = None
+    mountpoint1: str | None = None
+    password1: str | None = None
+    
+    # Server 2
+    server2_enabled: bool = False
+    ntrip_version2: int = 1
+    username2: str | None = None     
+    serverhost2: str | None = None
+    port2: int | None = None
+    mountpoint2: str | None = None
+    password2: str | None = None
+    
+    # RTCM Client (giữ nguyên)
+    rtcm_enabled: bool = False
+    rtcmserver1: str | None = None
+    rtcmport1: int | None = None
+    rtcmmountpoint1: str | None = None
+    rtcmusername1: str | None = None
+    rtcmpassword1: str | None = None
+
+class LicenseRequest(BaseModel):
+    serial: str
+
+class LicenseResponse(BaseModel):
+    serial: str
+    license_key: str
+
+# --- USER SCHEMAS ---
+class UserBase(BaseModel):
+    username: str
+    full_name: str | None = None
+    role: str
+    
+    @validator('role')
+    def validate_role(cls, v):
+        allowed_roles = ['admin', 'viewer', 'coordinator']
+        if v not in allowed_roles:
+            raise ValueError(f'Role phải là một trong: {allowed_roles}')
+        return v
+
+class UserCreate(UserBase):
+    password: str
+    assigned_devices: List[str] | None = Field(default_factory=list)
+    can_create_rovers: bool = False
+    @validator('password')
+    def validate_password(cls, v):
+        if len(v) < 6:
+            raise ValueError('Mật khẩu phải có ít nhất 6 ký tự')
+        return v
+
+class DeviceRename(BaseModel):
+    name: str
+    
+class UserUpdate(BaseModel):
+    full_name: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+    password: str | None = None
+    assigned_devices: List[str] | None = None
+    can_create_rovers: bool | None = None
+    @validator('role')
+    def validate_role(cls, v):
+        if v is not None:
+            allowed_roles = ['admin', 'viewer', 'coordinator']
+            if v not in allowed_roles:
+                raise ValueError(f'Role phải là một trong: {allowed_roles}')
+        return v
+    
+    @validator('password')
+    def validate_password(cls, v):
+        if v is not None and len(v) < 6:
+            raise ValueError('Mật khẩu phải có ít nhất 6 ký tự')
+        return v
+
+class UserResponse(UserBase):
+    id: int
+    is_active: bool
+    created_at: int
+    permissions: list[str] = []
+    can_create_rovers: bool = False
+    
+    class Config:
+        from_attributes = True
+
+class RoverAccountBase(BaseModel):
+    username: str
+    password: str
+
+class RoverAccountCreate(RoverAccountBase):
+    mountpoint_allow: str | None = None
+    expiry_days: int = 365
+
+class RoverAccountResponse(RoverAccountBase):
+    id: int
+    base_serial: str
+    is_active: bool
+    created_at: int
+    base_name: str | None = None
+    mountpoints: str | None = None 
+    
+    class Config: from_attributes = True
+
+class RoverMultiCreate(BaseModel):
+    username: str
+    password: str
+    expiry_days: int = 365
+    selected_serials: List[str] # Danh sách serial các trạm đã chọn
+    mountpoint_override: str    # Chuỗi Mountpoint (người dùng chốt)
+    
+class RoverUpdate(BaseModel):
+    password: str | None = None
+    mountpoints: str | None = None # Cho phép sửa chuỗi mountpoint
+    expiry_days: int | None = None # Cho phép gia hạn lại
+    
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: str | None = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class CasterConfig(BaseModel):
+    host: str
+    port: int
+
+# --- ACTIVITY LOG SCHEMAS ---
+class ActivityLogBase(BaseModel):
+    timestamp: int
+    type: str
+    message: str
+    icon: str
+
+class ActivityLogCreate(ActivityLogBase):
+    user_id: Optional[int] = None
+    device_serial: Optional[str] = None
+    ip_address: Optional[str] = None
+
+class ActivityLogResponse(ActivityLogBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class HeatmapData(BaseModel):
+    # Trả về mảng 2 chiều: 7 ngày x 24 giờ
+    data: List[List[int]]
