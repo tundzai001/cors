@@ -34,7 +34,8 @@ from . import crud, models, schemas, command_builder, auth
 from starlette.responses import Response
 from .database import (
     engine, auth_engine, get_db, get_auth_db, 
-    AuthBase, AsyncAuthSession, AsyncSessionLocal, settings
+    AuthBase, AsyncAuthSession, AsyncSessionLocal, settings,
+    device_session_scope, auth_session_scope
 )
 
 from .websocket import manager as ui_manager, visitor_manager
@@ -156,7 +157,7 @@ async def check_device_heartbeats_with_retry():
         
         for attempt in range(max_retries):
             try:
-                async with AsyncSessionLocal() as db:
+                async with device_session_scope() as db:
                     # Sử dụng circuit breaker
                     await db_circuit_breaker.call(
                         _do_heartbeat_check, db, HEARTBEAT_TIMEOUT
@@ -206,7 +207,7 @@ async def check_device_heartbeats():
         await asyncio.sleep(30)
         
         try:
-            async with AsyncSessionLocal() as db:
+            async with device_session_scope() as db:
                 # Sử dụng single query thay vì loop
                 now = int(time.time())
                 timeout_threshold = now - HEARTBEAT_TIMEOUT
@@ -259,7 +260,7 @@ async def periodic_buffer_flush():
         if device_update_buffer:
             try:
                 # Mở ĐÚNG 1 KẾT NỐI DB để lưu tất cả updates
-                async with AsyncSessionLocal() as db:
+                async with device_session_scope() as db:
                     await flush_device_buffer(db)
             except Exception as e:
                 logger.error(f"Flush task error: {e}")
@@ -294,7 +295,7 @@ async def lifespan(app: FastAPI):
         # BƯỚC 2: CREATE DEFAULT ADMIN USER
         # ===================================================================
         try:
-            async with AsyncAuthSession() as db_session:
+            async with auth_session_scope() as db_session:
                 admin_user = await crud.get_user_by_username(db_session, username="admin")
                 if not admin_user:
                     logger.warning("Không tìm thấy người dùng 'admin' mặc định. Đang tiến hành tạo...")
@@ -314,7 +315,7 @@ async def lifespan(app: FastAPI):
         # BƯỚC 2.5: CLEANUP GHOST DEVICES (optional)
         # ===================================================================
         try:
-            async with AsyncSessionLocal() as db:
+            async with device_session_scope() as db:
                 deleted_count = await crud.cleanup_ghost_devices(db)
                 if deleted_count > 0:
                     logger.info(f"🗑️ Cleaned up {deleted_count} ghost devices on startup")
@@ -345,7 +346,7 @@ async def lifespan(app: FastAPI):
                 
                 for attempt in range(max_retries):
                     try:
-                        async with AsyncSessionLocal() as db:
+                        async with device_session_scope() as db:
                             now = int(time.time())
                             timeout_threshold = now - HEARTBEAT_TIMEOUT
                             
@@ -437,7 +438,7 @@ async def lifespan(app: FastAPI):
         # --- BƯỚC 3: ĐÓNG KẾT NỐI DATABASE (QUAN TRỌNG NHẤT) ---
         try:
             logger.info("Setting all devices to OFFLINE...")
-            async with AsyncSessionLocal() as db:
+            async with device_session_scope() as db:
                 await db.execute(
                     update(models.Device)
                     .where(models.Device.status == 'online')

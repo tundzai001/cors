@@ -25,13 +25,16 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 let currentNmeaData = { gga: null, gsa: null, satellites: {} };
 
 // === RENDER THROTTLING LOGIC ===
-let isRenderPending = false;
 let lastRenderTime = 0;
 const RENDER_INTERVAL = 500; 
 
-let isMapRenderPending = false;
 let lastMapRenderTime = 0;
 const MAP_RENDER_INTERVAL = 2000; 
+
+let dashboardRafId = null;
+let mapRafId = null;
+let dashboardTimerId = null;
+let mapTimerId = null;
 
 
 let deviceListNeedsUpdate = false;
@@ -39,43 +42,54 @@ let detailsPanelNeedsUpdate = false;
 let mapNeedsUpdate = false;
 
 function scheduleRender(priority = 'high') {
+    const queueDashboardRender = () => {
+        if (dashboardRafId !== null) return;
+        dashboardRafId = requestAnimationFrame(() => {
+            dashboardRafId = null;
+            if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) return;
+            renderDashboard();
+            lastRenderTime = Date.now();
+        });
+    };
+
+    const queueMapRender = () => {
+        if (mapRafId !== null) return;
+        mapRafId = requestAnimationFrame(() => {
+            mapRafId = null;
+            if (!mapNeedsUpdate) return;
+            renderMap();
+            lastMapRenderTime = Date.now();
+        });
+    };
+
     if (priority === 'high') {
         deviceListNeedsUpdate = true;
         detailsPanelNeedsUpdate = true;
-        
+
         const now = Date.now();
-        if (!isRenderPending) {
-            if (now - lastRenderTime >= RENDER_INTERVAL) {
-                renderDashboard();
-                lastRenderTime = now;
-            } else {
-                isRenderPending = true;
-                setTimeout(() => {
-                    renderDashboard();
-                    lastRenderTime = Date.now();
-                    isRenderPending = false;
-                }, RENDER_INTERVAL - (now - lastRenderTime));
-            }
+        const waitMs = Math.max(0, RENDER_INTERVAL - (now - lastRenderTime));
+        if (waitMs === 0) {
+            queueDashboardRender();
+        } else {
+            if (dashboardTimerId) clearTimeout(dashboardTimerId);
+            dashboardTimerId = setTimeout(queueDashboardRender, waitMs);
         }
     }
     
     // Map render (chậm hơn)
     if (globalState.currentView === 'map') {
         mapNeedsUpdate = true;
-        
+
         const now = Date.now();
-        if (!isMapRenderPending) {
-            if (now - lastMapRenderTime >= MAP_RENDER_INTERVAL) {
-                renderMap();
-                lastMapRenderTime = now;
-            } else {
-                isMapRenderPending = true;
-                setTimeout(() => {
-                    renderMap();
-                    lastMapRenderTime = Date.now();
-                    isMapRenderPending = false;
-                }, MAP_RENDER_INTERVAL - (now - lastMapRenderTime));
-            }
+        const baseWait = Math.max(0, MAP_RENDER_INTERVAL - (now - lastMapRenderTime));
+        const lowPriorityDelay = priority === 'low' ? 120 : 0;
+        const waitMs = baseWait + lowPriorityDelay;
+
+        if (waitMs === 0) {
+            queueMapRender();
+        } else {
+            if (mapTimerId) clearTimeout(mapTimerId);
+            mapTimerId = setTimeout(queueMapRender, waitMs);
         }
     }
 }

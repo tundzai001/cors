@@ -43,6 +43,30 @@ body {
     overscroll-behavior-y: contain;
 }
 
+html {
+    scroll-behavior: smooth;
+}
+
+.device-card,
+.server-status-item,
+.navbar,
+.btn,
+.form-control,
+.form-select {
+    backface-visibility: hidden;
+    transform: translateZ(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+    }
+}
+
 .vh-80 { height: 80vh; }
 .bg-dark-tertiary { background-color: var(--surface-2); }
 

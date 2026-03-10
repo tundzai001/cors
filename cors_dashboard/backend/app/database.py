@@ -3,6 +3,7 @@
 # ==============================================================================
 
 import asyncio
+from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from pydantic_settings import BaseSettings
@@ -133,8 +134,10 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, autoflush
 Base = declarative_base()
 _device_db_semaphore = asyncio.Semaphore(settings.DEVICE_DB_SESSION_CONCURRENCY)
 
-async def get_db():
-    """Dependency Injection cho FastAPI"""
+
+@asynccontextmanager
+async def device_session_scope():
+    """Session scope dùng nội bộ cho background tasks, có giới hạn đồng thời."""
     async with _device_db_semaphore:
         async with AsyncSessionLocal() as session:
             try:
@@ -144,6 +147,11 @@ async def get_db():
                 raise
             finally:
                 await session.close()
+
+async def get_db():
+    """Dependency Injection cho FastAPI"""
+    async with device_session_scope() as session:
+        yield session
 
 # === DATABASE 2: Authentication (users) ===
 auth_engine = create_pg_engine(
@@ -158,8 +166,10 @@ AsyncAuthSession = async_sessionmaker(auth_engine, expire_on_commit=False, autof
 AuthBase = declarative_base()
 _auth_db_semaphore = asyncio.Semaphore(settings.AUTH_DB_SESSION_CONCURRENCY)
 
-async def get_auth_db():
-    """Dependency Injection cho Auth"""
+
+@asynccontextmanager
+async def auth_session_scope():
+    """Session scope cho auth background flow, giữ behavior nhất quán với dependency."""
     async with _auth_db_semaphore:
         async with AsyncAuthSession() as session:
             try:
@@ -169,3 +179,8 @@ async def get_auth_db():
                 raise
             finally:
                 await session.close()
+
+async def get_auth_db():
+    """Dependency Injection cho Auth"""
+    async with auth_session_scope() as session:
+        yield session
