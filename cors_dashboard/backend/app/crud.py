@@ -38,7 +38,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
 
                 # --- Tự động tính toán lại ntrip_status nếu thiếu ---
                 # (Phòng trường hợp payload chỉ có ntrip_stats thô)
-                if 'ntrip_status' not in device:
+                if 'ntrip_status' not in device and 'ntrip_stats' in device:
                     raw_stats = device.get('ntrip_stats', {})
                     try:
                         s1_bps = int(raw_stats.get('server1_bps', 0))
@@ -58,21 +58,25 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                 device_record = {
                     'serial': serial,
                     'name': device.get('name'), 
-                    'status': device.get('status', 'unknown'),
+                    # Với payload partial (ví dụ offline event), không ép default để tránh ghi đè dữ liệu cũ.
+                    'status': device.get('status'),
                     'timestamp': device.get('timestamp', int(time.time())),
-                    'bps': device.get('bps', 0),
-                    'ntrip_status': device.get('ntrip_status', {}),
-                    'ntrip_connected': device.get('ntrip_connected', False),
-                    'detected_chip_type': device.get('detected_chip_type', 'UNKNOWN'),
-                    # Các trường config giữ nguyên nếu có, không thì để trống
-                    'base_config': device.get('base_config', {}),
-                    'service_config': device.get('service_config', {}),
-                    'system_info': device.get('system_info', {}),
-                    'is_provisioned': device.get('is_provisioned', False),
-                    'is_synced': device.get('is_synced', True),
+                    'bps': device.get('bps'),
+                    'ntrip_status': device.get('ntrip_status'),
+                    'ntrip_connected': device.get('ntrip_connected'),
+                    'detected_chip_type': device.get('detected_chip_type'),
+                    'base_config': device.get('base_config'),
+                    'service_config': device.get('service_config'),
+                    'system_info': device.get('system_info'),
+                    'is_provisioned': device.get('is_provisioned'),
                     # is_locked thường ít khi gửi qua websocket status, nên dùng default cẩn thận
                     # Tốt nhất là không update is_locked ở đây nếu không có trong payload
                 }
+
+                # Chỉ mang theo is_synced khi payload gửi thật sự.
+                # Tránh đưa NULL vào cột NOT NULL khi dùng bulk UPSERT.
+                if 'is_synced' in device:
+                    device_record['is_synced'] = True if device.get('is_synced') is None else bool(device.get('is_synced'))
                 
                 unique_devices_map[serial] = device_record
             
@@ -82,32 +86,44 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
             if not values_list:
                 return 0
             
-            # 3. Thực hiện UPSERT (Insert or Update)
-            stmt = pg_insert(models.Device).values(values_list)
-            
-            # Định nghĩa các cột cần update khi trùng Serial
-            update_dict = {
-                'status': stmt.excluded.status,
-                'timestamp': stmt.excluded.timestamp,
-                'bps': stmt.excluded.bps,
-                'ntrip_status': stmt.excluded.ntrip_status,
-                'ntrip_connected': stmt.excluded.ntrip_connected,
-                'detected_chip_type': stmt.excluded.detected_chip_type,
-                'base_config': stmt.excluded.base_config,
-                'service_config': stmt.excluded.service_config,
-                'system_info': stmt.excluded.system_info,
-                'is_synced': stmt.excluded.is_synced,
-                # Chỉ update name nếu có dữ liệu
-                'name': func.coalesce(stmt.excluded.name, models.Device.name),
-                'is_provisioned': stmt.excluded.is_provisioned,
-            }
-            
-            stmt = stmt.on_conflict_do_update(
-                index_elements=['serial'],
-                set_=update_dict
-            )
-            
-            await db.execute(stmt)
+            async def execute_upsert(batch_values: list[dict], update_is_synced: bool = False) -> None:
+                if not batch_values:
+                    return
+
+                stmt = pg_insert(models.Device).values(batch_values)
+
+                # Định nghĩa các cột cần update khi trùng Serial
+                update_dict = {
+                    'status': func.coalesce(stmt.excluded.status, models.Device.status),
+                    'timestamp': stmt.excluded.timestamp,
+                    'bps': func.coalesce(stmt.excluded.bps, models.Device.bps),
+                    'ntrip_status': func.coalesce(stmt.excluded.ntrip_status, models.Device.ntrip_status),
+                    'ntrip_connected': func.coalesce(stmt.excluded.ntrip_connected, models.Device.ntrip_connected),
+                    # Không cho UNKNOWN ghi đè chip type hợp lệ đã lưu trước đó.
+                    'detected_chip_type': func.coalesce(func.nullif(stmt.excluded.detected_chip_type, 'UNKNOWN'), models.Device.detected_chip_type),
+                    'base_config': func.coalesce(stmt.excluded.base_config, models.Device.base_config),
+                    'service_config': func.coalesce(stmt.excluded.service_config, models.Device.service_config),
+                    'system_info': func.coalesce(stmt.excluded.system_info, models.Device.system_info),
+                    # Chỉ update name nếu có dữ liệu
+                    'name': func.coalesce(stmt.excluded.name, models.Device.name),
+                    'is_provisioned': func.coalesce(stmt.excluded.is_provisioned, models.Device.is_provisioned),
+                }
+
+                if update_is_synced:
+                    update_dict['is_synced'] = stmt.excluded.is_synced
+
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=['serial'],
+                    set_=update_dict
+                )
+
+                await db.execute(stmt)
+
+            batch_with_is_synced = [item for item in values_list if 'is_synced' in item]
+            batch_without_is_synced = [item for item in values_list if 'is_synced' not in item]
+
+            await execute_upsert(batch_without_is_synced, update_is_synced=False)
+            await execute_upsert(batch_with_is_synced, update_is_synced=True)
             await db.commit()
             
             # Log thành công (chỉ log khi retry để đỡ rác)
@@ -301,13 +317,16 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         should_update = True
 
     # ✅ KIỂM TRA BASE CONFIG
-    if existing_device.base_config != new_base_config and new_base_config:
+    # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
+    # Chỉ cập nhật nếu device gửi config hợp lệ với dữ liệu thực tế
+    if new_base_config and existing_device.base_config != new_base_config:
         update_values["base_config"] = new_base_config
         update_values["is_synced"] = False
         should_update = True
 
     # ✅ KIỂM TRA SERVICE CONFIG
-    if existing_device.service_config != new_service_config and new_service_config:
+    # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
+    if new_service_config and existing_device.service_config != new_service_config:
         update_values["service_config"] = new_service_config
         should_update = True
     

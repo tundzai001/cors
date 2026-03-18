@@ -260,6 +260,15 @@ async def handle_message_async(topic: str, payload: bytes):
                 db_data['timestamp'] = int(now)
                 db_data['is_synced'] = is_synced
                 
+                # 🔥 PRESERVE CONFIG KHI DEVICE OFFLINE
+                # Nếu device offline, KHÔNG cập nhật config & chip_type
+                # Để tránh để config bị xóa khi device tạm ngoại tuyến
+                if new_status == 'offline':
+                    # Xóa config từ db_data để CRUD không cập nhật
+                    db_data.pop('base_config', None)
+                    db_data.pop('service_config', None)
+                    db_data.pop('detected_chip_type', None)
+                
                 # Loại bỏ các field tạm thời
                 fields_to_remove = [
                     'bps', 'ntrip_stats', 'base_coords', 'gnss_stats', 'sync_errors'

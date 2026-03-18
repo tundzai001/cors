@@ -258,6 +258,7 @@ window.switchView = function(viewName) {
 function updateGlobalDevices(newDeviceData) {
     const deviceMap = new Map(globalState.devices.map(d => [d.serial, d]));
     const devicesToAddOrUpdate = Array.isArray(newDeviceData) ? newDeviceData : [newDeviceData];
+    const hasData = (obj) => !!(obj && typeof obj === 'object' && Object.keys(obj).length > 0);
     
     let hasChanges = false;
 
@@ -265,6 +266,24 @@ function updateGlobalDevices(newDeviceData) {
         if (!newDevice || !newDevice.serial) return;
         
         const existingDevice = deviceMap.get(newDevice.serial);
+
+        // Giữ chip/config đã biết khi bản tin realtime chỉ là partial update (đặc biệt lúc offline).
+        if (existingDevice) {
+            if (!newDevice.detected_chip_type || newDevice.detected_chip_type === 'UNKNOWN') {
+                if (existingDevice.detected_chip_type && existingDevice.detected_chip_type !== 'UNKNOWN') {
+                    newDevice.detected_chip_type = existingDevice.detected_chip_type;
+                }
+            }
+            if (!hasData(newDevice.base_config) && hasData(existingDevice.base_config)) {
+                newDevice.base_config = existingDevice.base_config;
+            }
+            if (!hasData(newDevice.service_config) && hasData(existingDevice.service_config)) {
+                newDevice.service_config = existingDevice.service_config;
+            }
+            if (typeof newDevice.is_provisioned === 'undefined' && typeof existingDevice.is_provisioned !== 'undefined') {
+                newDevice.is_provisioned = existingDevice.is_provisioned;
+            }
+        }
         
         // Xử lý offline state
         if (newDevice.status === 'offline') {

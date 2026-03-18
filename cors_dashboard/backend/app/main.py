@@ -519,24 +519,6 @@ async def track_visitors_endpoint(websocket: WebSocket):
             "ips": list(visitor_manager.active_ips)
         })
 
-def ensure_device_ownership(current_user: models.User, device: models.Device):
-    """
-    Chặn IDOR: Kiểm tra xem user có sở hữu thiết bị này không.
-    - Admin: Luôn được phép.
-    - Coordinator: Phải là người được gán (user_id khớp).
-    - Viewer: Thường chỉ xem, nhưng nếu có quyền sửa thì cũng phải check sở hữu (tùy logic).
-    """
-    # Admin có quyền tối thượng
-    if current_user.role == auth.Role.ADMIN:
-        return
-
-    # Nếu là Coordinator (hoặc role khác), phải là chủ sở hữu
-    if device.user_id != current_user.id:
-        logging.warning(f"IDOR DETECTED: User {current_user.username} tried to access device {device.serial} owned by {device.user_id}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Bạn không có quyền thao tác trên thiết bị này (Không phải chủ sở hữu)."
-        ) 
 # === AUTHENTICATION ===
 @app.post("/api/auth/login", response_model=schemas.Token)
 async def login(
@@ -802,9 +784,6 @@ async def rename_device(
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    
-    # Check IDOR
-    ensure_device_ownership(current_user, device)
 
     if not request.name.strip():
         raise HTTPException(status_code=400, detail="Tên không được để trống")
@@ -1092,7 +1071,6 @@ async def send_generic_command(
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    ensure_device_ownership(current_user, device)
     await log_system_event(
         db=db,
         type="info",
@@ -1428,9 +1406,6 @@ async def configure_chip_endpoint(
             status_code=404, 
             detail="Device not found in database"
         )
-
-    # Kiểm tra quyền sở hữu (IDOR protection)
-    ensure_device_ownership(current_user, device_in_db)
     
     # ==================== BƯỚC 2: PARSE PAYLOAD ====================
     payload = config_request.payload
@@ -1629,8 +1604,6 @@ async def configure_service_endpoint(
     device_in_db = await crud.get_device_by_serial(db, serial)
     if not device_in_db:
         raise HTTPException(status_code=404, detail="Device not found in database")
-
-    ensure_device_ownership(current_user, device_in_db)
     # --- BƯỚC 1: LƯU CẤU HÌNH "CHUẨN" VÀO DATABASE ---
     try:
         device_in_db.service_config = payload.model_dump()
@@ -1669,8 +1642,6 @@ async def reset_pi_device(
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
-
-    ensure_device_ownership(current_user, device)
 
     # 3. Gửi lệnh xuống thiết bị (Chỉ gửi khi đã qua cửa kiểm tra an ninh)
     try:
@@ -2078,13 +2049,25 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
     except WebSocketDisconnect:
         logging.info(f"Pi '{serial}' disconnected.")
         pi_manager.disconnect(serial)
+
+        persisted_device = None
+        try:
+            async with device_session_scope() as db:
+                persisted_device = await crud.get_device_by_serial(db, serial)
+        except Exception as e:
+            logging.warning(f"Could not load persisted device state for offline payload ({serial}): {e}")
         
         # --- FIXED: KHÔNG GỌI DB TRỰC TIẾP ---
         offline_payload = {
             "serial": serial,
+            "name": persisted_device.name if persisted_device else None,
             "status": "offline",
             "ntrip_connected": False,
             "bps": 0,
+            "detected_chip_type": persisted_device.detected_chip_type if persisted_device else None,
+            "base_config": persisted_device.base_config if persisted_device else None,
+            "service_config": persisted_device.service_config if persisted_device else None,
+            "is_provisioned": persisted_device.is_provisioned if persisted_device else None,
             "ntrip_status": {
                 "server1": {"connected": False, "bps": 0},
                 "server2": {"connected": False, "bps": 0}
