@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('can_create_rovers').checked = user.can_create_rovers;
             
             // Hiển thị phần gán trạm nếu là coordinator
-            if(user.role === 'coordinator') {
+            if(user.role === 'coordinator' || user.role === 'operator') {
                 deviceAssignmentSection.classList.remove('d-none');
                 roverPermissionSection.classList.remove('d-none');
                 // Lấy danh sách serial của các trạm đã gán
@@ -197,7 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
             payload.password = password;
         }
         
-        if (payload.role === 'coordinator') {
+        if (payload.role === 'coordinator' || payload.role === 'operator') {
             payload.assigned_devices = Array.from(deviceChecklist.querySelectorAll('input[type="checkbox"]:checked'))
                                             .map(cb => cb.value);
             
@@ -238,7 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // Hiển thị/ẩn phần gán trạm khi vai trò thay đổi trong modal
     roleSelect.addEventListener('change', (e) => {
-        if (e.target.value === 'coordinator') {
+        if (e.target.value === 'coordinator' || e.target.value === 'operator') {
             deviceAssignmentSection.classList.remove('d-none');
             roverPermissionSection.classList.remove('d-none');
             // Lấy danh sách các trạm đã được gán hiện tại để hiển thị đúng checkbox
@@ -279,7 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function getRoleBadgeClass(role) {
         if (role === 'admin') return 'bg-danger';
-        if (role === 'coordinator') return 'bg-warning text-dark';
+        if (role === 'coordinator' || role === 'operator') return 'bg-warning text-dark';
         return 'bg-info';
     }
     

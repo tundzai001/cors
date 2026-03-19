@@ -811,7 +811,7 @@ async function loadCurrentUser() {
 async function loadInitialDevices() {
     try {
         let apiUrl = '/api/devices';
-        if (globalState.currentUser?.role === 'coordinator') {
+        if (globalState.currentUser?.role === 'coordinator' || globalState.currentUser?.role === 'operator') {
             apiUrl = `/api/devices?user_id=${globalState.currentUser.id}`;
         }
         

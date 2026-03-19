@@ -76,7 +76,7 @@ class UserBase(BaseModel):
     
     @validator('role')
     def validate_role(cls, v):
-        allowed_roles = ['admin', 'viewer', 'coordinator']
+        allowed_roles = ['admin', 'viewer', 'coordinator', 'operator']
         if v not in allowed_roles:
             raise ValueError(f'Role phải là một trong: {allowed_roles}')
         return v
@@ -104,7 +104,7 @@ class UserUpdate(BaseModel):
     @validator('role')
     def validate_role(cls, v):
         if v is not None:
-            allowed_roles = ['admin', 'viewer', 'coordinator']
+            allowed_roles = ['admin', 'viewer', 'coordinator', 'operator']
             if v not in allowed_roles:
                 raise ValueError(f'Role phải là một trong: {allowed_roles}')
         return v

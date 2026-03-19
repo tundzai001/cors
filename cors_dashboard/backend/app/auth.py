@@ -89,7 +89,8 @@ class PasswordPolicy:
         # Nếu vượt qua tất cả các kiểm tra
         return True, ""
 
-class Role: ADMIN, VIEWER, COORDINATOR = "admin", "viewer", "coordinator"
+class Role:
+    ADMIN, VIEWER, COORDINATOR, OPERATOR = "admin", "viewer", "coordinator", "operator"
 class Permission: VIEW_DEVICES, VIEW_CONFIG, EDIT_DEVICE_NAME, EDIT_COORDINATES, EDIT_CHIP_CONFIG, EDIT_SERVICE_CONFIG, MANAGE_LICENSE, DELETE_DEVICE, MANAGE_USERS, EXPORT_DATA = "view:devices", "view:config", "edit:device_name", "edit:coordinates", "edit:chip_config", "edit:service_config", "manage:license", "delete:device", "manage:users", "export:data"
 
 ROLE_PERMISSIONS = {
@@ -106,6 +107,10 @@ ROLE_PERMISSIONS = {
     Role.COORDINATOR: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,
         Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME, 
+    ],
+    Role.OPERATOR: [
+        Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,
+        Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME,
     ],
     Role.VIEWER: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG,

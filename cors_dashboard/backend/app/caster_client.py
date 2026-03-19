@@ -94,6 +94,53 @@ class CasterClient:
             
         return True
 
+    async def get_clienttable(
+        self,
+        admin_user: Optional[str] = None,
+        mountpoint: str = "mp1",
+        password: str = "password1",
+        data_count: int = 20,
+    ) -> List[dict]:
+        user = admin_user or self.admin_user
+        cmd = f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{password}/{data_count}\r\n"
+
+        try:
+            response = await self._send_command(cmd)
+            clients: List[dict] = []
+
+            for raw_line in response.splitlines():
+                line = raw_line.strip()
+                if not line.startswith("STR;"):
+                    continue
+
+                parts = line.split(";")
+                if len(parts) < 8:
+                    continue
+
+                try:
+                    lat = float(parts[4])
+                    lon = float(parts[5])
+                except (TypeError, ValueError):
+                    # Skip entries with invalid coordinates
+                    continue
+
+                clients.append(
+                    {
+                        "username": parts[1].strip(),
+                        "receiver_id": parts[2].strip(),
+                        "mountpoint": parts[3].strip(),
+                        "latitude": lat,
+                        "longitude": lon,
+                        "status": int(parts[6]) if parts[6].isdigit() else None,
+                        "nsv": int(parts[7]) if parts[7].isdigit() else None,
+                    }
+                )
+
+            return clients
+        except Exception as e:
+            logger.error(f"Failed to fetch clienttable from caster: {e}")
+            return []
+
     async def delete_user(self, identifier: str, username: str) -> bool:
         cmd = f"GET /deluser HTTP/1.0/{identifier}/{username}\r\n"
         response = await self._send_command(cmd)

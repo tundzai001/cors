@@ -645,6 +645,27 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
         return []
 
 
+@app.get("/api/caster/clienttable")
+async def get_caster_clienttable(
+    db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    """Lấy danh sách rover đang kết nối từ NTRIP Caster để hiển thị trên map."""
+    try:
+        caster_client = await get_caster_client(db)
+        clients = await caster_client.get_clienttable()
+        return {
+            "count": len(clients),
+            "items": clients,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching clienttable: {e}")
+        return {
+            "count": 0,
+            "items": [],
+        }
+
+
 @app.get("/api/auth/me", response_model=schemas.UserResponse)
 async def get_current_user_info(current_user: models.User = Depends(auth.get_current_user)):
     permissions = auth.get_user_permissions(current_user)
