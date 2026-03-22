@@ -6,17 +6,17 @@ import logging
 import asyncio
 import os
 import time
+from typing import Awaitable, Callable, Optional
 import paho.mqtt.client as mqtt
-from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy import select
 
 from . import schemas
 from .websocket import manager
-from .database import engine, settings
+from .database import settings, device_session_scope
 from . import crud, nmea_parser, models
 
-# Tạo session maker riêng cho MQTT
-AsyncSessionLocal_MQTT = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+# Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
+mqtt_db_write_lock = asyncio.Lock()
 
 main_loop = None
 client_id = f"backend-listen-{settings.MQTT_HOST}-{os.getpid()}"
@@ -37,6 +37,7 @@ GLOBAL_SYNC_CHECK_INTERVAL = 60.0  # Batch check 60s/lần
 
 DB_WRITE_INTERVAL = 120.0    # Ghi DB định kỳ 2 phút/lần nếu không có gì thay đổi
 IS_SHUTTING_DOWN = False 
+external_command_handler: Optional[Callable[[str, bytes], Awaitable[None]]] = None
 
 # ==============================================================================
 # MQTT CALLBACKS
@@ -49,6 +50,8 @@ def on_connect(client, userdata, flags, rc):
         client.subscribe("pi/devices/+/raw_data", qos=0)
         client.subscribe("pi/devices/+/base_config_state", qos=1)
         client.subscribe("pi/devices/+/service_config_state", qos=1)
+        # NTRIP control plane -> backend listens and translates to agent commands.
+        client.subscribe("ntrip/rtcm/start", qos=1)
     else:
         logging.error(f"MQTT Connect Failed with code: {rc}")
 
@@ -58,6 +61,19 @@ def on_disconnect(client, userdata, rc, properties=None):
 
 def on_message(client, userdata, msg):
     if IS_SHUTTING_DOWN: 
+        return
+
+    if msg.topic.startswith("ntrip/rtcm/"):
+        if external_command_handler and main_loop and main_loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    external_command_handler(msg.topic, msg.payload),
+                    main_loop,
+                )
+            except RuntimeError:
+                pass
+        else:
+            logging.warning("Received NTRIP MQTT command but no external command handler is registered")
         return
     
     if main_loop and main_loop.is_running():
@@ -100,7 +116,7 @@ async def batch_sync_checker():
                 continue
             
             # 🔥 CHỈ MỞ 1 KẾT NỐI DB DUY NHẤT
-            async with AsyncSessionLocal_MQTT() as session:
+            async with device_session_scope() as session:
                 # Lấy tất cả devices cùng lúc bằng 1 query
                 result = await session.execute(
                     select(models.Device).filter(
@@ -282,12 +298,14 @@ async def handle_message_async(topic: str, payload: bytes):
                 max_db_retries = 3
                 for attempt in range(max_db_retries):
                     try:
-                        async with AsyncSessionLocal_MQTT() as session:
-                            await crud.update_or_create_device(
-                                session, 
-                                device_data=db_data
-                            )
-                            await session.commit()
+                        # Single-writer section: avoids pool exhaustion under reconnect storms.
+                        async with mqtt_db_write_lock:
+                            async with device_session_scope() as session:
+                                await crud.update_or_create_device(
+                                    session,
+                                    device_data=db_data
+                                )
+                                await session.commit()
                         
                         device_write_cache[serial] = now
                         if new_status:
@@ -422,3 +440,9 @@ def publish_message(topic: str, payload: str, qos: int = 1):
         mqtt_client.publish(topic, payload, qos=qos)
     except Exception as e:
         logging.error(f"Publish Error: {e}")
+
+
+def set_external_command_handler(handler: Callable[[str, bytes], Awaitable[None]]):
+    """Register a coroutine handler for non-device MQTT command topics."""
+    global external_command_handler
+    external_command_handler = handler

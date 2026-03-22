@@ -1,5 +1,5 @@
 # ==============================================================================
-# == backend/app/main.py - COMPLETE VERSION WITH ALL FIXES                  ==
+# == backend/app/main.py                ==
 # ==============================================================================
 
 import logging
@@ -15,8 +15,12 @@ import time
 import csv
 import psutil
 import secrets
+import ctypes
+from pathlib import Path
+from collections import deque
 from contextlib import asynccontextmanager
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Set, Dict
+from dotenv import dotenv_values, set_key
 
 from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect, Depends, 
@@ -27,7 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, select, update
+from sqlalchemy import text, select, update, delete, func
 from starlette.middleware.base import BaseHTTPMiddleware
 from .monitoring import health_monitor, CircuitBreaker, global_rate_limiter
 from . import crud, models, schemas, command_builder, auth
@@ -60,14 +64,914 @@ logging.basicConfig(
     ]
 )
 
+
+def disable_windows_quick_edit_mode() -> None:
+    """Prevent console freeze when selecting text in Windows terminal windows."""
+    if sys.platform != "win32":
+        return
+
+    try:
+        kernel32 = ctypes.windll.kernel32
+        STD_INPUT_HANDLE = -10
+        ENABLE_QUICK_EDIT_MODE = 0x0040
+        ENABLE_EXTENDED_FLAGS = 0x0080
+
+        h_stdin = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        if h_stdin in (0, -1):
+            return
+
+        mode = ctypes.c_uint()
+        if not kernel32.GetConsoleMode(h_stdin, ctypes.byref(mode)):
+            return
+
+        new_mode = (mode.value | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE
+        kernel32.SetConsoleMode(h_stdin, new_mode)
+    except Exception:
+        # Non-fatal: backend should continue even if console mode cannot be changed.
+        pass
+
+
+disable_windows_quick_edit_mode()
+
 BATCH_SIZE = 20  
 BATCH_TIMEOUT = 2.0 
+UI_BROADCAST_QUEUE_MAXSIZE = int(os.getenv("UI_BROADCAST_QUEUE_MAXSIZE", "10000"))
+PI_STATUS_INGEST_QUEUE_MAXSIZE = int(os.getenv("PI_STATUS_INGEST_QUEUE_MAXSIZE", "20000"))
+PI_INGEST_WORKER_COUNT = int(os.getenv("PI_INGEST_WORKER_COUNT", "4"))
+DEVICE_UPDATE_BUFFER_MAXSIZE = int(os.getenv("DEVICE_UPDATE_BUFFER_MAXSIZE", "50000"))
+STATUS_HEAVY_FIELD_MAX_BYTES = int(os.getenv("STATUS_HEAVY_FIELD_MAX_BYTES", "4096"))
+STATUS_ALLOW_HEAVY_FIELDS = str(os.getenv("STATUS_ALLOW_HEAVY_FIELDS", "1")).strip().lower() in ("1", "true", "yes", "on")
+STATUS_PAYLOAD_COMPACT_ENABLED = str(os.getenv("STATUS_PAYLOAD_COMPACT_ENABLED", "0")).strip().lower() in ("1", "true", "yes", "on")
+
+# Adaptive buffer flush tuning
+BUFFER_FLUSH_INTERVAL_MIN = float(os.getenv("BUFFER_FLUSH_INTERVAL_MIN", "0.5"))  # Early flush if buffer warm
+BUFFER_FLUSH_INTERVAL_MAX = float(os.getenv("BUFFER_FLUSH_INTERVAL_MAX", "2.0"))  # Normal flush timeout
+BUFFER_SIZE_THRESHOLD_HIGH = int(os.getenv("BUFFER_SIZE_THRESHOLD_HIGH", "30000"))  # Flush if buffer > 60% full
+BUFFER_SIZE_THRESHOLD_NORMAL = int(os.getenv("BUFFER_SIZE_THRESHOLD_NORMAL", "15000"))  # Switch to adaptive mode
 
 mqtt_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
 db_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=30)
 
 logger = logging.getLogger(__name__)
-device_update_buffer = []
+device_update_buffer = deque(maxlen=DEVICE_UPDATE_BUFFER_MAXSIZE)
+device_update_buffer_lock = asyncio.Lock()
+
+ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
+
+
+def _read_caster_config_from_env() -> tuple[Optional[str], Optional[int]]:
+    env_values = dotenv_values(ENV_FILE_PATH)
+    raw_host = env_values.get("CASTER_HOST")
+    raw_port = env_values.get("CASTER_PORT")
+
+    host = str(raw_host).strip() if raw_host is not None and str(raw_host).strip() else None
+    port = None
+    if raw_port is not None and str(raw_port).strip():
+        try:
+            port = int(str(raw_port).strip())
+        except ValueError:
+            logger.warning("Invalid CASTER_PORT in .env: %s", raw_port)
+
+    return host, port
+
+
+def _persist_caster_config_to_env(host: str, port: int) -> None:
+    set_key(str(ENV_FILE_PATH), "CASTER_HOST", host, quote_mode="never")
+    set_key(str(ENV_FILE_PATH), "CASTER_PORT", str(port), quote_mode="never")
+
+    # Keep runtime settings consistent without requiring process restart.
+    os.environ["CASTER_HOST"] = host
+    os.environ["CASTER_PORT"] = str(port)
+    settings.CASTER_HOST = host
+    settings.CASTER_PORT = port
+
+# Metrics for buffer performance tracking
+buffer_metrics = {
+    "flush_count": 0,
+    "total_updates_flushed": 0,
+    "total_duplicates_deduped": 0,
+    "ui_queue_drop_count": 0,
+    "pi_ingest_queue_drop_count": 0,
+    "status_payload_invalid_count": 0,
+    "status_payload_compacted_count": 0,
+    "last_flush_time": time.time(),
+    "last_buffer_size": 0,
+}
+ui_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=UI_BROADCAST_QUEUE_MAXSIZE)
+pi_status_ingest_queue: asyncio.Queue = asyncio.Queue(maxsize=PI_STATUS_INGEST_QUEUE_MAXSIZE)
+
+
+def _safe_json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str))
+    except Exception:
+        return len(str(value))
+
+
+def _compact_status_payload(payload: Any) -> Optional[dict]:
+    """
+    Keep only fields that DB/UI pipeline consumes and trim oversized heavy fields.
+    This reduces RAM pressure when status payloads contain very large nested objects.
+    """
+    if not isinstance(payload, dict):
+        buffer_metrics["status_payload_invalid_count"] += 1
+        return None
+    if not payload.get("serial"):
+        buffer_metrics["status_payload_invalid_count"] += 1
+        return None
+    if not STATUS_PAYLOAD_COMPACT_ENABLED:
+        return payload
+
+    allowed_keys = (
+        "serial",
+        "name",
+        "status",
+        "timestamp",
+        "bps",
+        "ntrip_status",
+        "ntrip_connected",
+        "detected_chip_type",
+        "base_config",
+        "service_config",
+        "system_info",
+        "is_provisioned",
+        "is_synced",
+        "ntrip_stats",
+    )
+    compact = {key: payload[key] for key in allowed_keys if key in payload}
+
+    if not STATUS_ALLOW_HEAVY_FIELDS:
+        compact.pop("base_config", None)
+        compact.pop("service_config", None)
+        compact.pop("system_info", None)
+        buffer_metrics["status_payload_compacted_count"] += 1
+        return compact
+
+    for heavy_key in ("base_config", "service_config", "system_info"):
+        if heavy_key not in compact:
+            continue
+        if _safe_json_size(compact[heavy_key]) > STATUS_HEAVY_FIELD_MAX_BYTES:
+            compact.pop(heavy_key, None)
+
+    buffer_metrics["status_payload_compacted_count"] += 1
+    return compact
+
+
+async def enqueue_ui_broadcast(message: dict) -> None:
+    try:
+        ui_broadcast_queue.put_nowait(message)
+    except asyncio.QueueFull:
+        # Backpressure protection: drop oldest queued broadcast and keep latest.
+        try:
+            _ = ui_broadcast_queue.get_nowait()
+            ui_broadcast_queue.task_done()
+            buffer_metrics["ui_queue_drop_count"] += 1
+        except Exception:
+            pass
+        try:
+            ui_broadcast_queue.put_nowait(message)
+        except Exception:
+            pass
+
+
+async def ui_broadcast_worker_task():
+    while True:
+        message = await ui_broadcast_queue.get()
+        try:
+            await ui_manager.broadcast(message)
+        except Exception as e:
+            logger.warning(f"UI broadcast worker error: {e}")
+        finally:
+            ui_broadcast_queue.task_done()
+
+
+async def pi_status_ingest_worker_task():
+    while True:
+        payload = await pi_status_ingest_queue.get()
+        try:
+            await enqueue_ui_broadcast({"type": "status_update", "data": payload})
+            async with device_update_buffer_lock:
+                device_update_buffer.append(payload)
+        except Exception as e:
+            logger.warning(f"PI status ingest worker error: {e}")
+        finally:
+            pi_status_ingest_queue.task_done()
+
+rtcm_session_lock = asyncio.Lock()
+RTCM_MIN_TTL = 30
+RTCM_MAX_TTL = 600
+RTCM_NTRIP_CLIENTTABLE_CHECK_INTERVAL = float(os.getenv("RTCM_NTRIP_CLIENTTABLE_CHECK_INTERVAL", "5"))
+RTCM_KEEPALIVE_MISS_THRESHOLD = max(1, int(os.getenv("RTCM_KEEPALIVE_MISS_THRESHOLD", "2")))
+RTCM_KEEPALIVE_FETCH_GRACE_SECONDS = max(15, int(os.getenv("RTCM_KEEPALIVE_FETCH_GRACE_SECONDS", "45")))
+RTCM_KEEPALIVE_DEBUG = str(
+    os.getenv(
+        "RTCM_KEEPALIVE_DEBUG",
+        str(dotenv_values(ENV_FILE_PATH).get("RTCM_KEEPALIVE_DEBUG", "0")),
+    )
+).strip().lower() in ("1", "true", "yes", "on")
+rtcm_keepalive_miss_counts: Dict[str, int] = {}
+
+
+def _sanitize_ttl(ttl_seconds: int) -> int:
+    try:
+        ttl = int(ttl_seconds)
+    except (TypeError, ValueError):
+        ttl = 90
+    return max(RTCM_MIN_TTL, min(RTCM_MAX_TTL, ttl))
+
+
+def _extract_station_mountpoints(device: models.Device) -> List[str]:
+    cfg = device.service_config or {}
+    result: List[str] = []
+    if cfg.get("server1_enabled") and cfg.get("mountpoint1"):
+        result.append(str(cfg.get("mountpoint1")))
+    if cfg.get("server2_enabled") and cfg.get("mountpoint2"):
+        result.append(str(cfg.get("mountpoint2")))
+    return result
+
+
+def _normalize_mountpoint(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned.lower() if cleaned else None
+
+
+def _resolve_requested_mountpoint(available: List[str], requested: Optional[str]) -> str:
+    if not available:
+        raise HTTPException(status_code=400, detail="Station has no enabled mountpoint in service_config")
+
+    requested_norm = _normalize_mountpoint(requested)
+    if requested_norm is None:
+        return available[0]
+
+    for mp in available:
+        if _normalize_mountpoint(mp) == requested_norm:
+            return mp
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Requested mountpoint '{requested}' is not enabled for this station",
+    )
+
+
+def _extract_active_mountpoint(device: Optional[models.Device]) -> Optional[str]:
+    if not device:
+        return None
+    cfg = device.service_config or {}
+    active_mp = cfg.get("active_mountpoint")
+    return str(active_mp) if active_mp else None
+
+
+def _build_rtcm_client_id(current_user: models.User, client_instance_id: Optional[str]) -> str:
+    base_id = f"user:{current_user.id}"
+    if not client_instance_id:
+        return base_id
+
+    clean = "".join(ch for ch in str(client_instance_id) if ch.isalnum() or ch in "-_.")[:40]
+    if not clean:
+        return base_id
+    return f"{base_id}:{clean}"
+
+
+def _resolve_stream_status(device: Optional[models.Device], force_starting: bool = False) -> str:
+    if force_starting:
+        return "starting"
+    if not device:
+        return "offline"
+
+    if bool(getattr(device, "ntrip_connected", False)):
+        return "streaming"
+
+    cfg = (getattr(device, "service_config", None) or {})
+    if cfg.get("stream_on_demand") and not cfg.get("stream_active", True):
+        return "offline"
+    return "starting"
+
+
+async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[str] = None) -> None:
+    payload = {"active": bool(active)}
+    if mountpoint:
+        payload["mountpoint"] = str(mountpoint)
+
+    await send_command_to_pi(
+        serial,
+        {
+            "command": "SET_RTCM_STREAM_ACTIVE",
+            "payload": payload,
+        },
+    )
+
+    # Keep DB service_config in sync with control-plane intent to avoid stale
+    # stream_active/active_mountpoint values until the next agent status heartbeat.
+    try:
+        async with device_session_scope() as db:
+            device = await crud.get_device_by_serial(db, serial)
+            if not device:
+                return
+
+            cfg = dict(device.service_config or {})
+            cfg["stream_on_demand"] = True
+            cfg["stream_active"] = bool(active)
+
+            if bool(active):
+                if mountpoint:
+                    cfg["active_mountpoint"] = str(mountpoint)
+            else:
+                cfg.pop("active_mountpoint", None)
+                # Reflect immediate off state in top-level flags.
+                device.ntrip_connected = False
+                device.bps = 0
+
+            device.service_config = cfg
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"[RTCM] Failed to persist stream state for '{serial}': {e}")
+
+
+async def _count_active_station_sessions(db: AsyncSession, serial: str, now_ts: Optional[int] = None) -> int:
+    now_ts = now_ts or int(time.time())
+    result = await db.execute(
+        select(func.count(models.RTCMStreamSession.session_id)).where(
+            models.RTCMStreamSession.serial == serial,
+            models.RTCMStreamSession.expires_at > now_ts,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def _count_active_mountpoint_sessions(
+    db: AsyncSession,
+    serial: str,
+    mountpoint: str,
+    now_ts: Optional[int] = None,
+) -> int:
+    now_ts = now_ts or int(time.time())
+    mountpoint_norm = _normalize_mountpoint(mountpoint)
+    if not mountpoint_norm:
+        return 0
+
+    result = await db.execute(
+        select(func.count(models.RTCMStreamSession.session_id)).where(
+            models.RTCMStreamSession.serial == serial,
+            func.lower(models.RTCMStreamSession.mountpoint) == mountpoint_norm,
+            models.RTCMStreamSession.expires_at > now_ts,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def _fetch_active_station_client_ids(db: AsyncSession, serial: str, now_ts: Optional[int] = None) -> List[str]:
+    now_ts = now_ts or int(time.time())
+    result = await db.execute(
+        select(models.RTCMStreamSession.client_id).where(
+            models.RTCMStreamSession.serial == serial,
+            models.RTCMStreamSession.expires_at > now_ts,
+        )
+    )
+    return sorted(set(str(row[0]) for row in result.all() if row and row[0]))
+
+
+def _build_ntrip_mqtt_client_id(client_instance_id: Optional[str]) -> str:
+    if not client_instance_id:
+        return "ntrip-mqtt:anonymous"
+    clean = "".join(ch for ch in str(client_instance_id) if ch.isalnum() or ch in "-_.")[:64]
+    if not clean:
+        clean = "anonymous"
+    return f"ntrip-mqtt:{clean}"
+
+
+def _extract_http10_path_segments(raw_cmd: Optional[str], endpoint: str) -> Optional[List[str]]:
+    if not raw_cmd:
+        return None
+    text = str(raw_cmd).strip().replace("\r", "").replace("\n", "")
+    marker = f"GET /{endpoint} HTTP/1.0/"
+    idx = text.find(marker)
+    if idx < 0:
+        return None
+    suffix = text[idx + len(marker):].strip().strip("/")
+    if not suffix:
+        return []
+    return [seg.strip() for seg in suffix.split("/")]
+
+
+def _extract_legacy_mountpoint(data: dict) -> Optional[str]:
+    clienttable_cmd = data.get("clienttable_cmd") or data.get("clienttable")
+    segs = _extract_http10_path_segments(clienttable_cmd, "clienttable")
+    if segs and len(segs) >= 2 and segs[1]:
+        return str(segs[1]).strip()
+
+    genuser_cmd = data.get("genuser_cmd") or data.get("genuser")
+    segs = _extract_http10_path_segments(genuser_cmd, "genuser")
+    if segs and len(segs) >= 4 and segs[3]:
+        # genuser mountpoint field can contain comma-separated MPs; use first non-empty.
+        first_mp = next((x.strip() for x in str(segs[3]).split(",") if x.strip()), None)
+        return first_mp
+    return None
+
+
+def _extract_legacy_client_instance_id(data: dict) -> Optional[str]:
+    direct = data.get("client_instance_id") or data.get("receiver_id") or data.get("identifier")
+    if direct:
+        return str(direct).strip()
+
+    genuser_cmd = data.get("genuser_cmd") or data.get("genuser")
+    segs = _extract_http10_path_segments(genuser_cmd, "genuser")
+    if segs:
+        # HTTP/1.0/<identifier>/<username>/<password>/...
+        if len(segs) >= 1 and segs[0]:
+            return str(segs[0]).strip()
+        if len(segs) >= 2 and segs[1]:
+            return str(segs[1]).strip()
+    return None
+
+
+async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: str, ttl_seconds: int = 90):
+    ttl = _sanitize_ttl(ttl_seconds)
+    now = int(time.time())
+
+    async with device_session_scope() as db:
+        device = await crud.get_device_by_serial(db, serial)
+        if not device:
+            raise ValueError(f"Station '{serial}' not found")
+
+        mountpoints = _extract_station_mountpoints(device)
+        selected_mountpoint = _resolve_requested_mountpoint(mountpoints, mountpoint)
+
+        session_id = uuid.uuid4().hex
+        client_id = _build_ntrip_mqtt_client_id(client_instance_id)
+        expires_at = now + ttl
+
+        should_activate = False
+        active_mountpoint_norm: Optional[str] = None
+
+        async with rtcm_session_lock:
+            await db.execute(
+                delete(models.RTCMStreamSession).where(
+                    models.RTCMStreamSession.serial == serial,
+                    models.RTCMStreamSession.expires_at <= now,
+                )
+            )
+
+            active_before_same_mp = await _count_active_mountpoint_sessions(db, serial, selected_mountpoint, now)
+            should_activate = active_before_same_mp == 0
+
+            active_before_station = await _count_active_station_sessions(db, serial, now)
+
+            if active_before_station > 0:
+                # Backend is source-of-truth for stream mountpoint while sessions are active.
+                # Do not let subsequent START requests switch mountpoint mid-stream.
+                active_mountpoint_norm = _normalize_mountpoint(_extract_active_mountpoint(device))
+                requested_norm = _normalize_mountpoint(selected_mountpoint)
+                if active_mountpoint_norm and requested_norm and active_mountpoint_norm != requested_norm:
+                    raise ValueError(
+                        f"Station '{serial}' is already active on mountpoint '{active_mountpoint_norm}', "
+                        f"cannot switch to '{requested_norm}' until all active sessions expire"
+                    )
+
+            db.add(
+                models.RTCMStreamSession(
+                    session_id=session_id,
+                    serial=serial,
+                    mountpoint=str(selected_mountpoint),
+                    client_id=client_id,
+                    expires_at=expires_at,
+                    created_at=now,
+                    last_heartbeat_at=now,
+                )
+            )
+            await db.commit()
+
+        # Only first active session triggers an agent command.
+        if should_activate or not getattr(device, 'ntrip_connected', False):
+            await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint)
+
+
+def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bool:
+    requested = _normalize_mountpoint(mountpoint)
+    if not requested:
+        return False
+
+    cfg = device.service_config or {}
+    s1_ok = bool(cfg.get("server1_enabled")) and _normalize_mountpoint(cfg.get("mountpoint1")) == requested
+    s2_ok = bool(cfg.get("server2_enabled")) and _normalize_mountpoint(cfg.get("mountpoint2")) == requested
+    return s1_ok or s2_ok
+
+
+async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: str) -> str:
+    requested = _normalize_mountpoint(mountpoint)
+    if not requested:
+        raise ValueError("mountpoint is required")
+
+    rs = await db.execute(select(models.Device))
+    devices = [d for d in rs.scalars().all() if _device_has_enabled_mountpoint(d, mountpoint)]
+
+    if not devices:
+        raise ValueError(f"No station found for mountpoint '{mountpoint}'")
+
+    if len(devices) == 1:
+        return str(devices[0].serial)
+
+    online = [d for d in devices if str(getattr(d, "status", "")).lower() == "online"]
+    if len(online) == 1:
+        return str(online[0].serial)
+
+    serials = ",".join(str(d.serial) for d in devices)
+    raise ValueError(f"Mountpoint '{mountpoint}' maps to multiple stations: {serials}")
+
+
+async def _resolve_stop_serial(
+    db: AsyncSession,
+    mountpoint: Optional[str],
+    client_instance_id: str,
+) -> str:
+    client_id = _build_ntrip_mqtt_client_id(client_instance_id)
+    now = int(time.time())
+    active_rs = await db.execute(
+        select(models.RTCMStreamSession.serial)
+        .where(
+            models.RTCMStreamSession.client_id == client_id,
+            models.RTCMStreamSession.expires_at > now,
+        )
+        .distinct()
+    )
+    serials = sorted(set(str(r[0]) for r in active_rs.all() if r and r[0]))
+    if len(serials) == 1:
+        return serials[0]
+    if len(serials) > 1:
+        raise ValueError("client_instance_id has active sessions on multiple stations; provide mountpoint")
+
+    if mountpoint:
+        return await _resolve_station_serial_by_mountpoint(db, mountpoint)
+
+    raise ValueError("Cannot resolve station for stop; provide mountpoint")
+
+
+async def _ntrip_mqtt_stop(serial: str, client_instance_id: str):
+    now = int(time.time())
+    client_id = _build_ntrip_mqtt_client_id(client_instance_id)
+    should_deactivate = False
+    active_mountpoint_norm: Optional[str] = None
+
+    async with device_session_scope() as db:
+        async with rtcm_session_lock:
+            await db.execute(
+                delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
+            )
+
+            active_sessions_rs = await db.execute(
+                select(models.RTCMStreamSession.session_id, models.RTCMStreamSession.mountpoint).where(
+                    models.RTCMStreamSession.serial == serial,
+                    models.RTCMStreamSession.client_id == client_id,
+                    models.RTCMStreamSession.expires_at > now,
+                )
+            )
+            active_rows = [(str(r[0]), str(r[1])) for r in active_sessions_rs.all() if r and r[0] and r[1]]
+            active_session_ids = [row[0] for row in active_rows]
+
+            if active_session_ids:
+                await db.execute(
+                    delete(models.RTCMStreamSession).where(
+                        models.RTCMStreamSession.session_id.in_(active_session_ids)
+                    )
+                )
+
+            await db.commit()
+
+            device = await crud.get_device_by_serial(db, serial)
+            active_mountpoint_norm = _normalize_mountpoint(_extract_active_mountpoint(device))
+
+            if active_mountpoint_norm:
+                remaining_for_active_mp = await _count_active_mountpoint_sessions(
+                    db,
+                    serial,
+                    active_mountpoint_norm,
+                    now,
+                )
+                should_deactivate = remaining_for_active_mp == 0
+
+    if should_deactivate:
+        await _set_station_stream(serial, active=False)
+
+
+async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except Exception as e:
+        logger.warning(f"[NTRIP MQTT] Invalid JSON on topic '{topic}': {e}")
+        return
+
+    if not topic.endswith("/start"):
+        logger.warning(f"[NTRIP MQTT] Unsupported topic '{topic}'. Use ntrip/rtcm/start only")
+        return
+
+    serial = str(data.get("serial", "")).strip()
+    mountpoint = str(data.get("mountpoint", "")).strip()
+    if not mountpoint:
+        mountpoint = _extract_legacy_mountpoint(data)
+    client_instance_id = _extract_legacy_client_instance_id(data) or ""
+
+    if serial:
+        logger.warning("[NTRIP MQTT] 'serial' is not allowed. Use mountpoint-only payload")
+        return
+
+    if not client_instance_id:
+        logger.warning("[NTRIP MQTT] Missing required field: client_instance_id/identifier")
+        return
+
+    try:
+        if not mountpoint:
+            logger.warning("[NTRIP MQTT] Missing 'mountpoint' for start command")
+            return
+
+        async with device_session_scope() as db:
+            resolved_serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+
+        ttl_seconds = int(data.get("ttl_seconds", 90))
+        await _ntrip_mqtt_start(
+            serial=resolved_serial,
+            mountpoint=mountpoint,
+            client_instance_id=client_instance_id,
+            ttl_seconds=ttl_seconds,
+        )
+        logger.info(f"[NTRIP MQTT] start accepted serial={resolved_serial} mountpoint={mountpoint} client={client_instance_id}")
+    except Exception as e:
+        logger.warning(f"[NTRIP MQTT] Start command failed mountpoint={mountpoint}: {e}")
+
+
+async def rtcm_ntrip_clienttable_keepalive_task():
+    global rtcm_keepalive_miss_counts
+
+    while True:
+        await asyncio.sleep(RTCM_NTRIP_CLIENTTABLE_CHECK_INTERVAL)
+        now = int(time.time())
+
+        try:
+            async with rtcm_session_lock:
+                async with device_session_scope() as db:
+                    rs = await db.execute(
+                        select(
+                            models.RTCMStreamSession.session_id,
+                            models.RTCMStreamSession.client_id,
+                            models.RTCMStreamSession.serial,
+                            models.RTCMStreamSession.mountpoint,
+                        )
+                        .where(
+                            models.RTCMStreamSession.expires_at > now,
+                            models.RTCMStreamSession.client_id.like("ntrip-mqtt:%"),
+                        )
+                    )
+                    active_rows = [
+                        (str(r[0]), str(r[1]), str(r[2]), str(r[3]))
+                        for r in rs.all()
+                        if r and r[0] and r[1] and r[2] and r[3]
+                    ]
+
+            if not active_rows:
+                rtcm_keepalive_miss_counts.clear()
+                continue
+
+            requested_mountpoints = sorted(
+                {
+                    mp
+                    for _, _, _, mp in active_rows
+                    if _normalize_mountpoint(mp)
+                }
+            )
+            requested_mountpoints_norm = sorted({_normalize_mountpoint(mp) for mp in requested_mountpoints if _normalize_mountpoint(mp)})
+            if RTCM_KEEPALIVE_DEBUG:
+                logger.warning(
+                    f"[RTCM DEBUG] keepalive requested_mountpoints_raw={requested_mountpoints} "
+                    f"requested_mountpoints_norm={requested_mountpoints_norm} active_sessions={len(active_rows)}"
+                )
+
+            clienttable: Optional[List[dict]] = None
+            try:
+                async with auth_session_scope() as auth_db:
+                    caster_client = await get_caster_client(auth_db)
+                    merged_clienttable: List[dict] = []
+                    for requested_mp in requested_mountpoints:
+                        rows = await caster_client.get_clienttable(mountpoint=requested_mp)
+                        if rows:
+                            merged_clienttable.extend(rows)
+                    clienttable = merged_clienttable
+            except Exception as e:
+                logger.warning(f"[RTCM] Failed to fetch clienttable, applying grace keepalive: {e}")
+
+            if clienttable is None:
+                grace_expires_at = now + RTCM_KEEPALIVE_FETCH_GRACE_SECONDS
+                touched = 0
+                active_session_ids = {sid for sid, _, _, _ in active_rows}
+                stale_ids = [sid for sid in rtcm_keepalive_miss_counts.keys() if sid not in active_session_ids]
+                for sid in stale_ids:
+                    rtcm_keepalive_miss_counts.pop(sid, None)
+
+                async with rtcm_session_lock:
+                    async with device_session_scope() as db:
+                        sessions_rs = await db.execute(
+                            select(models.RTCMStreamSession).where(
+                                models.RTCMStreamSession.session_id.in_(list(active_session_ids))
+                            )
+                        )
+                        sessions_by_id = {
+                            str(s.session_id): s for s in sessions_rs.scalars().all() if s and s.session_id
+                        }
+
+                        for session_id, _, _, _ in active_rows:
+                            session = sessions_by_id.get(session_id)
+                            if not session:
+                                continue
+                            if int(session.expires_at or 0) < grace_expires_at:
+                                session.expires_at = grace_expires_at
+                                session.last_heartbeat_at = now
+                                touched += 1
+                        if touched > 0:
+                            await db.commit()
+                continue
+
+            # get_clienttable() returns [] on failures too, so guard with one short retry to avoid false misses.
+            if len(clienttable) == 0:
+                try:
+                    await asyncio.sleep(1.0)
+                    async with auth_session_scope() as auth_db:
+                        caster_client = await get_caster_client(auth_db)
+                        retried_merged: List[dict] = []
+                        for requested_mp in requested_mountpoints:
+                            retried_rows = await caster_client.get_clienttable(mountpoint=requested_mp)
+                            if retried_rows:
+                                retried_merged.extend(retried_rows)
+                        if retried_merged:
+                            clienttable = retried_merged
+                except Exception:
+                    pass
+
+            active_mountpoints: Set[str] = set()
+            for item in clienttable:
+                mp = _normalize_mountpoint(item.get("mountpoint"))
+                if mp:
+                    active_mountpoints.add(mp)
+
+            if RTCM_KEEPALIVE_DEBUG:
+                logger.warning(
+                    f"[RTCM DEBUG] keepalive active_mountpoints={sorted(active_mountpoints)[:40]} "
+                    f"clienttable_rows={len(clienttable)}"
+                )
+
+            keepalive_to = now + 90
+            updated = 0
+            expired_on_miss = 0
+            stations_to_deactivate = set()
+            active_session_ids = {sid for sid, _, _, _ in active_rows}
+            stale_ids = [sid for sid in rtcm_keepalive_miss_counts.keys() if sid not in active_session_ids]
+            for sid in stale_ids:
+                rtcm_keepalive_miss_counts.pop(sid, None)
+
+            active_sessions_by_mountpoint: Dict[tuple[str, str], int] = {}
+            for _, _, serial, mountpoint in active_rows:
+                mp_norm = _normalize_mountpoint(mountpoint)
+                if not mp_norm:
+                    continue
+                key = (serial, mp_norm)
+                active_sessions_by_mountpoint[key] = active_sessions_by_mountpoint.get(key, 0) + 1
+
+            async with rtcm_session_lock:
+                async with device_session_scope() as db:
+                    sessions_rs = await db.execute(
+                        select(models.RTCMStreamSession).where(
+                            models.RTCMStreamSession.session_id.in_(list(active_session_ids))
+                        )
+                    )
+                    sessions_by_id = {
+                        str(s.session_id): s for s in sessions_rs.scalars().all() if s and s.session_id
+                    }
+
+                    for session_id, client_id, serial, mountpoint in active_rows:
+                        session = sessions_by_id.get(session_id)
+                        if not session:
+                            rtcm_keepalive_miss_counts.pop(session_id, None)
+                            continue
+
+                        session_mp = _normalize_mountpoint(mountpoint)
+                        if not session_mp or session_mp not in active_mountpoints:
+                            miss_count = rtcm_keepalive_miss_counts.get(session_id, 0) + 1
+                            rtcm_keepalive_miss_counts[session_id] = miss_count
+
+                            if RTCM_KEEPALIVE_DEBUG:
+                                logger.warning(
+                                    f"[RTCM DEBUG] miss_detail serial={serial} client_id={client_id} "
+                                    f"session_mountpoint_raw='{mountpoint}' session_mountpoint_norm='{session_mp}' "
+                                    f"present_in_active={bool(session_mp and session_mp in active_mountpoints)}"
+                                )
+
+                            if miss_count < RTCM_KEEPALIVE_MISS_THRESHOLD:
+                                logger.warning(
+                                    f"[RTCM] Keepalive pending miss({miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD}): "
+                                    f"serial={serial} mountpoint={mountpoint} client_id={client_id} "
+                                    f"active_mountpoints={len(active_mountpoints)}"
+                                )
+                                continue
+
+                            # Missing for N consecutive checks -> expire session.
+                            session.expires_at = now - 1
+                            session.last_heartbeat_at = now
+                            expired_on_miss += 1
+
+                            key = (serial, session_mp)
+                            remaining_for_mp = max(0, active_sessions_by_mountpoint.get(key, 0) - 1)
+                            active_sessions_by_mountpoint[key] = remaining_for_mp
+
+                            if remaining_for_mp == 0:
+                                stations_to_deactivate.add(serial)
+                            logger.warning(
+                                f"[RTCM] Keepalive miss: serial={serial} mountpoint={mountpoint} "
+                                f"client_id={client_id} miss_count={miss_count} "
+                                f"active_mountpoints={len(active_mountpoints)}"
+                            )
+                            continue
+
+                        rtcm_keepalive_miss_counts.pop(session_id, None)
+                        session.expires_at = keepalive_to
+                        session.last_heartbeat_at = now
+                        updated += 1
+
+                    if updated > 0 or expired_on_miss > 0 or stations_to_deactivate:
+                        await db.commit()
+
+            for serial in stations_to_deactivate:
+                try:
+                    await _set_station_stream(serial, active=False)
+                    logger.info(f"[RTCM] Auto-deactivated station '{serial}' due to missing receiver in clienttable")
+                except Exception as e:
+                    logger.warning(f"[RTCM] Failed to auto-deactivate station '{serial}' after clienttable drop: {e}")
+
+        except Exception as e:
+            logger.warning(f"[RTCM] NTRIP clienttable keepalive check failed: {e}")
+
+
+async def rtcm_session_reaper_task():
+    while True:
+        await asyncio.sleep(5)
+        now = int(time.time())
+        stations_to_deactivate = set()
+
+        async with rtcm_session_lock:
+            async with device_session_scope() as db:
+                expired_serials_rs = await db.execute(
+                    select(models.RTCMStreamSession.serial, models.RTCMStreamSession.mountpoint)
+                    .where(models.RTCMStreamSession.expires_at <= now)
+                    .distinct()
+                )
+                expired_pairs = [
+                    (str(r[0]), str(r[1]))
+                    for r in expired_serials_rs.all()
+                    if r and r[0] and r[1]
+                ]
+
+                if expired_pairs:
+                    await db.execute(
+                        delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
+                    )
+                    await db.commit()
+
+                    for serial, expired_mountpoint in expired_pairs:
+                        device = await crud.get_device_by_serial(db, serial)
+                        active_mountpoint = _extract_active_mountpoint(device)
+                        if _normalize_mountpoint(active_mountpoint) != _normalize_mountpoint(expired_mountpoint):
+                            continue
+
+                        active_count = await _count_active_mountpoint_sessions(db, serial, expired_mountpoint, now)
+                        if active_count == 0:
+                            stations_to_deactivate.add(serial)
+
+                # Safety sweep: if stream is marked active but there are no sessions for active mountpoint,
+                # force stream off. This covers manual DB cleanup and stale state scenarios.
+                devices_rs = await db.execute(select(models.Device))
+                for device in devices_rs.scalars().all():
+                    cfg = device.service_config or {}
+                    if not cfg.get("stream_on_demand"):
+                        continue
+                    if not bool(cfg.get("stream_active", False)):
+                        continue
+
+                    active_mountpoint = _extract_active_mountpoint(device)
+                    if not active_mountpoint:
+                        continue
+
+                    remaining_for_active_mp = await _count_active_mountpoint_sessions(
+                        db,
+                        str(device.serial),
+                        active_mountpoint,
+                        now,
+                    )
+                    if remaining_for_active_mp == 0:
+                        stations_to_deactivate.add(str(device.serial))
+
+        for serial in stations_to_deactivate:
+            try:
+                await _set_station_stream(serial, active=False)
+                logger.info(f"[RTCM] Auto-deactivated station '{serial}' due to expired sessions")
+            except Exception as e:
+                logger.warning(f"[RTCM] Failed to auto-deactivate station '{serial}': {e}")
 
 async def log_system_event(
     db: AsyncSession,
@@ -77,19 +981,19 @@ async def log_system_event(
     serial: str = None,
     ip: str = None
 ):
-    """Hàm helper để ghi log vào DB từ bất kỳ đâu"""
+    """HÃ m helper Ä‘á»ƒ ghi log vÃ o DB tá»« báº¥t ká»³ Ä‘Ã¢u"""
     icon_map = {
-        "success": "✅",
-        "error": "❌",
-        "warning": "⚠️",
-        "info": "ℹ️"
+        "success": "âœ…",
+        "error": "âŒ",
+        "warning": "âš ï¸",
+        "info": "â„¹ï¸"
     }
     try:
         log_entry = schemas.ActivityLogCreate(
             timestamp=int(time.time()),
             type=type,
             message=message,
-            icon=icon_map.get(type, "📝"),
+            icon=icon_map.get(type, "ðŸ“"),
             user_id=user_id,
             device_serial=serial,
             ip_address=ip
@@ -101,7 +1005,7 @@ async def log_system_event(
             "data": {
                 "type": type,
                 "message": message,
-                "icon": icon_map.get(type, "📝"),
+                "icon": icon_map.get(type, "ðŸ“"),
                 "timestamp": int(time.time())
             }
         })
@@ -110,31 +1014,31 @@ async def log_system_event(
 
 class IgnoreSocketErrorsFilter(logging.Filter):
     def filter(self, record):
-        # Chặn các log warning của asyncio liên quan đến socket.send
+        # Cháº·n cÃ¡c log warning cá»§a asyncio liÃªn quan Ä‘áº¿n socket.send
         if "socket.send() raised exception" in record.getMessage():
             return False
         return True
 
-# Áp dụng filter cho logger của asyncio
+# Ãp dá»¥ng filter cho logger cá»§a asyncio
 logging.getLogger("asyncio").addFilter(IgnoreSocketErrorsFilter())
 
 class RequestIDFilter(logging.Filter):
-    """Filter thêm request_id vào mọi log"""
+    """Filter thÃªm request_id vÃ o má»i log"""
     def filter(self, record):
         record.request_id = getattr(record, 'request_id', 'N/A')
         return True
 
-# Thêm filter vào root logger
+# ThÃªm filter vÃ o root logger
 for handler in logging.root.handlers:
     handler.addFilter(RequestIDFilter())
 
-# --- CẢI TIẾN 2: REQUEST ID MIDDLEWARE ---
+# --- Cáº¢I TIáº¾N 2: REQUEST ID MIDDLEWARE ---
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
         
-        # Ghi log mà không cần extra, vì filter sẽ tự thêm vào
+        # Ghi log mÃ  khÃ´ng cáº§n extra, vÃ¬ filter sáº½ tá»± thÃªm vÃ o
         logger.info(f"--> {request.method} {request.url.path}")
         
         start_time = time.time()
@@ -148,21 +1052,21 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 # === HEARTBEAT CHECKER (FIXED) ===
 async def check_device_heartbeats_with_retry():
-    """Heartbeat check với retry và backoff"""
+    """Heartbeat check vá»›i retry vÃ  backoff"""
     HEARTBEAT_TIMEOUT = 300 
     max_retries = 3
     
     while True:
-        await asyncio.sleep(60) # Check mỗi 60s là đủ, không cần 30s
+        await asyncio.sleep(60) # Check má»—i 60s lÃ  Ä‘á»§, khÃ´ng cáº§n 30s
         
         for attempt in range(max_retries):
             try:
                 async with device_session_scope() as db:
-                    # Sử dụng circuit breaker
+                    # Sá»­ dá»¥ng circuit breaker
                     await db_circuit_breaker.call(
                         _do_heartbeat_check, db, HEARTBEAT_TIMEOUT
                     )
-                break  # Success, thoát retry loop
+                break  # Success, thoÃ¡t retry loop
             
             except Exception as e:
                 logger.error(f"Heartbeat check failed (attempt {attempt+1}/{max_retries}): {e}")
@@ -172,7 +1076,7 @@ async def check_device_heartbeats_with_retry():
                     health_monitor.record_error('heartbeat_check', str(e))
 
 async def _do_heartbeat_check(db, timeout_threshold):
-    """Logic thực tế của heartbeat check"""
+    """Logic thá»±c táº¿ cá»§a heartbeat check"""
     from sqlalchemy import select
     
     now = int(time.time())
@@ -189,6 +1093,7 @@ async def _do_heartbeat_check(db, timeout_threshold):
     if timed_out_devices:
         for device in timed_out_devices:
             device.status = 'offline'
+            device.timestamp = now
             device.bps = 0
             device.ntrip_connected = False
             device.ntrip_status = {
@@ -200,7 +1105,7 @@ async def _do_heartbeat_check(db, timeout_threshold):
         logger.info(f"Set {len(timed_out_devices)} devices to offline")
 
 async def check_device_heartbeats():
-    """Heartbeat check với bulk update"""
+    """Heartbeat check vá»›i bulk update"""
     HEARTBEAT_TIMEOUT = 180
     
     while True:
@@ -208,11 +1113,11 @@ async def check_device_heartbeats():
         
         try:
             async with device_session_scope() as db:
-                # Sử dụng single query thay vì loop
+                # Sá»­ dá»¥ng single query thay vÃ¬ loop
                 now = int(time.time())
                 timeout_threshold = now - HEARTBEAT_TIMEOUT
                 
-                # Tìm devices cần set offline
+                # TÃ¬m devices cáº§n set offline
                 result = await db.execute(
                     select(models.Device)
                     .filter(
@@ -228,6 +1133,7 @@ async def check_device_heartbeats():
                 # Bulk update
                 for device in timed_out_devices:
                     device.status = 'offline'
+                    device.timestamp = now
                     device.bps = 0
                     device.ntrip_connected = False
                 
@@ -246,59 +1152,83 @@ async def check_device_heartbeats():
             logging.error(f"Error in heartbeat check: {e}", exc_info=True)
 
 async def cleanup_rate_limiter():
-    """Dọn dẹp rate limiter định kỳ"""
+    """Dá»n dáº¹p rate limiter Ä‘á»‹nh ká»³"""
     while True:
-        await asyncio.sleep(300)  # Mỗi 5 phút
+        await asyncio.sleep(300)  # Má»—i 5 phÃºt
         global_rate_limiter.cleanup()
         logger.debug("Rate limiter cleanup completed")
 
 # === LIFESPAN ===
 async def periodic_buffer_flush():
-    """Chạy ngầm mỗi 1.0 giây để ghi DB"""
+    """Adaptive buffer flush: faster when buffer is warm, slower when cold"""
+    last_flush = time.monotonic()
+    
     while True:
-        await asyncio.sleep(1.0)
-        if device_update_buffer:
+        # Calculate adaptive timeout based on buffer size
+        buffer_size = len(device_update_buffer)
+        
+        if buffer_size > BUFFER_SIZE_THRESHOLD_HIGH:
+            # Buffer very full: flush ASAP
+            flush_timeout = BUFFER_FLUSH_INTERVAL_MIN
+        elif buffer_size > BUFFER_SIZE_THRESHOLD_NORMAL:
+            # Buffer warm: intermediate timeout
+            flush_timeout = (BUFFER_FLUSH_INTERVAL_MIN + BUFFER_FLUSH_INTERVAL_MAX) / 2
+        else:
+            # Buffer cool: normal timeout
+            flush_timeout = BUFFER_FLUSH_INTERVAL_MAX
+        
+        # Sleep with adaptive timeout
+        await asyncio.sleep(flush_timeout)
+        
+        # Check if we should flush (either time-based or threshold-based)
+        elapsed_since_last_flush = time.monotonic() - last_flush
+        should_flush = (
+            (elapsed_since_last_flush >= BUFFER_FLUSH_INTERVAL_MAX) or  # Always flush after max timeout
+            (device_update_buffer and buffer_size > BUFFER_SIZE_THRESHOLD_NORMAL)  # Or if buffer warm
+        )
+        
+        if should_flush and device_update_buffer:
             try:
-                # Mở ĐÚNG 1 KẾT NỐI DB để lưu tất cả updates
                 async with device_session_scope() as db:
                     await flush_device_buffer(db)
+                    last_flush = time.monotonic()
             except Exception as e:
                 logger.error(f"Flush task error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan context với proper error handling, khởi động MQTT và Rate Limiter.
+    Lifespan context vá»›i proper error handling, khá»Ÿi Ä‘á»™ng MQTT vÃ  Rate Limiter.
     """
-    logger.info("🚀 Application starting...")
+    logger.info("ðŸš€ Application starting...")
     
-    # List để track tất cả background tasks
+    # List Ä‘á»ƒ track táº¥t cáº£ background tasks
     tasks = []
     
     try:
         # ===================================================================
-        # BƯỚC 1: INITIALIZE DATABASES
+        # BÆ¯á»šC 1: INITIALIZE DATABASES
         # ===================================================================
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(models.Base.metadata.create_all)
-            logger.info("✓ Device database initialized")
+            logger.info("âœ“ Device database initialized")
             
             async with auth_engine.begin() as conn:
                 await conn.run_sync(AuthBase.metadata.create_all) 
-            logger.info("✓ Auth database initialized")
+            logger.info("âœ“ Auth database initialized")
         except Exception as e:
             logger.critical(f"Database initialization failed: {e}", exc_info=True)
             raise
         
         # ===================================================================
-        # BƯỚC 2: CREATE DEFAULT ADMIN USER
+        # BÆ¯á»šC 2: CREATE DEFAULT ADMIN USER
         # ===================================================================
         try:
             async with auth_session_scope() as db_session:
                 admin_user = await crud.get_user_by_username(db_session, username="admin")
                 if not admin_user:
-                    logger.warning("Không tìm thấy người dùng 'admin' mặc định. Đang tiến hành tạo...")
+                    logger.warning("KhÃ´ng tÃ¬m tháº¥y ngÆ°á»i dÃ¹ng 'admin' máº·c Ä‘á»‹nh. Äang tiáº¿n hÃ nh táº¡o...")
                     hashed_password = await auth.get_password_hash("Admin@123")
                     await crud.create_user(
                         db=db_session,
@@ -307,33 +1237,34 @@ async def lifespan(app: FastAPI):
                         role=auth.Role.ADMIN,
                         full_name="Administrator"
                     )
-                    logger.info("✓ Đã tạo người dùng 'admin' mặc định thành công.")
+                    logger.info("âœ“ ÄÃ£ táº¡o ngÆ°á»i dÃ¹ng 'admin' máº·c Ä‘á»‹nh thÃ nh cÃ´ng.")
         except Exception as e:
             logger.error(f"Failed to create default admin: {e}")
         
         # ===================================================================
-        # BƯỚC 2.5: CLEANUP GHOST DEVICES (optional)
+        # BÆ¯á»šC 2.5: CLEANUP GHOST DEVICES (optional)
         # ===================================================================
         try:
             async with device_session_scope() as db:
                 deleted_count = await crud.cleanup_ghost_devices(db)
                 if deleted_count > 0:
-                    logger.info(f"🗑️ Cleaned up {deleted_count} ghost devices on startup")
+                    logger.info(f"ðŸ—‘ï¸ Cleaned up {deleted_count} ghost devices on startup")
         except Exception as e:
             logger.warning(f"Ghost device cleanup failed (non-critical): {e}")
         
         # ===================================================================
-        # BƯỚC 3: START MQTT
+        # BÆ¯á»šC 3: START MQTT
         # ===================================================================
+        mqtt_handler.set_external_command_handler(handle_ntrip_mqtt_command)
         mqtt_handler.start_mqtt_loop()
         
         # ===================================================================
-        # BƯỚC 4: START BACKGROUND TASKS
+        # BÆ¯á»šC 4: START BACKGROUND TASKS
         # ===================================================================
         
         # Task 1: Check device heartbeats
         async def check_device_heartbeats_with_retry():
-            """Heartbeat check với retry và backoff"""
+            """Heartbeat check vá»›i retry vÃ  backoff"""
             from .database import AsyncSessionLocal
             from . import schemas
             from .websocket import manager as ui_manager
@@ -361,6 +1292,7 @@ async def lifespan(app: FastAPI):
                             if timed_out_devices:
                                 for device in timed_out_devices:
                                     device.status = 'offline'
+                                    device.timestamp = now
                                     device.bps = 0
                                     device.ntrip_connected = False
                                 
@@ -374,68 +1306,73 @@ async def lifespan(app: FastAPI):
                                         "data": schemas.Device.from_orm(device).model_dump()
                                     })
                         
-                        break  # Success, thoát retry loop
+                        break  # Success, thoÃ¡t retry loop
                     
                     except Exception as e:
                         logger.error(f"Heartbeat check failed (attempt {attempt+1}/{max_retries}): {e}")
                         if attempt < max_retries - 1:
                             await asyncio.sleep(2 ** attempt) 
         
-        # Task 2: Global rate limiter cleanup (nếu có)
+        # Task 2: Global rate limiter cleanup (náº¿u cÃ³)
         async def global_rate_limiter_cleanup_task():
-            """Dọn dẹp global rate limiter định kỳ"""
+            """Dá»n dáº¹p global rate limiter Ä‘á»‹nh ká»³"""
             from .monitoring import global_rate_limiter
             while True:
-                await asyncio.sleep(300)  # Mỗi 5 phút
+                await asyncio.sleep(300)  # Má»—i 5 phÃºt
                 try:
                     global_rate_limiter.cleanup()
                     logger.debug("Global rate limiter cleanup completed")
                 except Exception as e:
                     logger.error(f"Global rate limiter cleanup error: {e}")
 
-        # Task 3: Security rate limiter cleanup - THÊM MỚI
+        # Task 3: Security rate limiter cleanup - THÃŠM Má»šI
         async def security_rate_limiter_cleanup_task():
-            """Dọn dẹp dữ liệu cũ trong security rate limiter"""
+            """Dá»n dáº¹p dá»¯ liá»‡u cÅ© trong security rate limiter"""
             from .security import rate_limiter
             while True:
-                await asyncio.sleep(900)  # Mỗi 15 phút
+                await asyncio.sleep(900)  # Má»—i 15 phÃºt
                 try:
                     rate_limiter.cleanup_stale_data()
                     logger.debug("Security rate limiter cleanup completed")
                 except Exception as e:
                     logger.error(f"Security rate limiter cleanup error: {e}")
         
-        # Tạo và track tất cả tasks
+        # Táº¡o vÃ  track táº¥t cáº£ tasks
         tasks.append(asyncio.create_task(check_device_heartbeats_with_retry()))
         tasks.append(asyncio.create_task(global_rate_limiter_cleanup_task()))
         tasks.append(asyncio.create_task(security_rate_limiter_cleanup_task()))
         tasks.append(asyncio.create_task(periodic_buffer_flush()))
-        logger.info("✓ Background tasks started")
+        tasks.append(asyncio.create_task(rtcm_session_reaper_task()))
+        tasks.append(asyncio.create_task(rtcm_ntrip_clienttable_keepalive_task()))
+        tasks.append(asyncio.create_task(ui_broadcast_worker_task()))
+        for _ in range(max(1, PI_INGEST_WORKER_COUNT)):
+            tasks.append(asyncio.create_task(pi_status_ingest_worker_task()))
+        logger.info("âœ“ Background tasks started")
         logger.info("=" * 60)
-        logger.info("🎉 Application startup complete!")
+        logger.info("ðŸŽ‰ Application startup complete!")
         logger.info("=" * 60)
         
         yield
         
     finally:
-        logger.info("🛑 Application shutting down...")
+        logger.info("ðŸ›‘ Application shutting down...")
         
-        # --- BƯỚC 1: DỪNG MQTT TRƯỚC (Ngắt nguồn dữ liệu vào) ---
+        # --- BÆ¯á»šC 1: Dá»ªNG MQTT TRÆ¯á»šC (Ngáº¯t nguá»“n dá»¯ liá»‡u vÃ o) ---
         try:
             mqtt_handler.stop_mqtt_loop()
-            logger.info("✓ MQTT stopped")
+            logger.info("âœ“ MQTT stopped")
             await asyncio.sleep(1.0) 
         except Exception as e:
             logger.error(f"Error stopping MQTT: {e}")
         
-        # --- BƯỚC 2: HỦY CÁC BACKGROUND TASKS ---
+        # --- BÆ¯á»šC 2: Há»¦Y CÃC BACKGROUND TASKS ---
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info(f"✓ Cancelled {len(tasks)} background tasks")
+            logger.info(f"âœ“ Cancelled {len(tasks)} background tasks")
         
-        # --- BƯỚC 3: ĐÓNG KẾT NỐI DATABASE (QUAN TRỌNG NHẤT) ---
+        # --- BÆ¯á»šC 3: ÄÃ“NG Káº¾T Ná»I DATABASE (QUAN TRá»ŒNG NHáº¤T) ---
         try:
             logger.info("Setting all devices to OFFLINE...")
             async with device_session_scope() as db:
@@ -449,20 +1386,20 @@ async def lifespan(app: FastAPI):
                     )
                 )
                 await db.commit()
-            logger.info("✓ All devices marked as OFFLINE")
+            logger.info("âœ“ All devices marked as OFFLINE")
         except Exception as e:
             logger.error(f"Error setting devices offline: {e}")
 
-        # 4. ĐÓNG KẾT NỐI DATABASE (Cuối cùng)
+        # 4. ÄÃ“NG Káº¾T Ná»I DATABASE (Cuá»‘i cÃ¹ng)
         try:
             logger.info("Closing database connections...")
             await engine.dispose()
             await auth_engine.dispose()
-            logger.info("✓ Database connections closed gracefully")
+            logger.info("âœ“ Database connections closed gracefully")
         except Exception as e:
             logger.error(f"Error closing databases: {e}")
             
-        logger.info("✅ Shutdown sequence complete")
+        logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
 app.add_middleware(RequestIDMiddleware) 
@@ -484,16 +1421,19 @@ async def send_command_to_pi(serial: str, command: dict) -> dict:
 
 # --- CASTER CLIENT FACTORY ---
 async def get_caster_client(db: AsyncSession) -> CasterClient:
-    """Helper để khởi tạo Caster Client từ SystemSettings"""
-    settings = await crud.get_system_settings(db)
-    
-    # Lấy config hoặc dùng default giống file config.json cũ
-    host = settings.get('caster_host', 'aitogy.click') 
-    port = int(settings.get('caster_port', 2101))
+    """Helper Ä‘á»ƒ khá»Ÿi táº¡o Caster Client tá»« SystemSettings"""
+    system_settings = await crud.get_system_settings(db)
+
+    env_host, env_port = _read_caster_config_from_env()
+    # Æ¯u tiÃªn .env (cÃ³ thá»ƒ vá»«a Ä‘Æ°á»£c cáº­p nháº­t tá»« web), fallback runtime settings rá»“i DB.
+    host = str(env_host or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
+    port = int(env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
+    if RTCM_KEEPALIVE_DEBUG:
+        logger.warning(f"[RTCM DEBUG] Using caster host={host} port={port}")
     
     return CasterClient(host, port)
 
-# === 🆕 WEBSOCKET THEO DÕI KHÁCH TRUY CẬP (PUBLIC) ===
+# === ðŸ†• WEBSOCKET THEO DÃ•I KHÃCH TRUY Cáº¬P (PUBLIC) ===
 @app.websocket("/ws/track-visitors")
 async def track_visitors_endpoint(websocket: WebSocket):
     client_ip = websocket.client.host
@@ -502,17 +1442,17 @@ async def track_visitors_endpoint(websocket: WebSocket):
     await ui_manager.broadcast({
         "type": "visitor_update",
         "count": visitor_manager.get_count(),
-        "ips": list(visitor_manager.active_ips) # Gửi danh sách IP để Admin soi (tùy chọn)
+        "ips": list(visitor_manager.active_ips) # Gá»­i danh sÃ¡ch IP Ä‘á»ƒ Admin soi (tÃ¹y chá»n)
     })
     
     try:
         while True:
-            # Giữ kết nối sống, nhận ping pong
+            # Giá»¯ káº¿t ná»‘i sá»‘ng, nháº­n ping pong
             await websocket.receive_text()
     except:
-        # Khi ngắt kết nối
+        # Khi ngáº¯t káº¿t ná»‘i
         visitor_manager.disconnect(websocket, client_ip)
-        # 📢 Báo lại cho Admin khi có người thoát
+        # ðŸ“¢ BÃ¡o láº¡i cho Admin khi cÃ³ ngÆ°á»i thoÃ¡t
         await ui_manager.broadcast({
             "type": "visitor_update",
             "count": visitor_manager.get_count(),
@@ -549,7 +1489,7 @@ async def login(
             auth.pwd_context.hash("dummy_password_12345")
         )
         logger.warning(
-            f"❌ Login failed: Unknown user '{login_data.username}' "
+            f"âŒ Login failed: Unknown user '{login_data.username}' "
             f"from {request.client.host}"
         )
         raise HTTPException(
@@ -559,7 +1499,7 @@ async def login(
     
     if not await auth.verify_password(login_data.password, user.hashed_password):
         logger.warning(
-            f"❌ Login failed: Wrong password for '{login_data.username}' "
+            f"âŒ Login failed: Wrong password for '{login_data.username}' "
             f"from {request.client.host}"
         )
         raise HTTPException(
@@ -569,7 +1509,7 @@ async def login(
     
     if not user.is_active:
         logger.warning(
-            f"❌ Login failed: Inactive account '{login_data.username}'"
+            f"âŒ Login failed: Inactive account '{login_data.username}'"
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -577,7 +1517,7 @@ async def login(
         )
     
     logger.info(
-        f"✅ Successful login: '{user.username}' (role: {user.role}) "
+        f"âœ… Successful login: '{user.username}' (role: {user.role}) "
         f"from {request.client.host}"
     )
     
@@ -605,7 +1545,7 @@ async def login(
 @app.get("/api/public/map-stations")
 async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
     try:
-        # Lấy tất cả thiết bị
+        # Láº¥y táº¥t cáº£ thiáº¿t bá»‹
         result = await db.execute(select(models.Device))
         devices = result.scalars().all()
         
@@ -614,7 +1554,7 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
         for dev in devices:
             base_config = dev.base_config or {}
             
-            # === TRY FORMAT 1: NESTED (Trạm thật) ===
+            # === TRY FORMAT 1: NESTED (Tráº¡m tháº­t) ===
             coords = base_config.get('coords', {})
             lat = coords.get('lat')
             lon = coords.get('lon')
@@ -624,7 +1564,7 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                 lat = base_config.get('lat')
                 lon = base_config.get('lon')
             
-            # Chỉ thêm vào danh sách nếu có đủ tọa độ hợp lệ
+            # Chá»‰ thÃªm vÃ o danh sÃ¡ch náº¿u cÃ³ Ä‘á»§ tá»a Ä‘á»™ há»£p lá»‡
             if lat and lon:
                 try:
                     public_data.append({
@@ -634,14 +1574,14 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                         "lon": float(lon)
                     })
                 except (ValueError, TypeError) as e:
-                    logging.warning(f"⚠️ Invalid coordinates for {dev.name}: {e}")
+                    logging.warning(f"âš ï¸ Invalid coordinates for {dev.name}: {e}")
                     continue
         
-        logging.info(f"✓ Public map returned {len(public_data)} stations")
+        logging.info(f"âœ“ Public map returned {len(public_data)} stations")
         return public_data
         
     except Exception as e:
-        logging.error(f"❌ Error fetching public map data: {e}")
+        logging.error(f"âŒ Error fetching public map data: {e}")
         return []
 
 
@@ -650,13 +1590,17 @@ async def get_caster_clienttable(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
 ):
-    """Lấy danh sách rover đang kết nối từ NTRIP Caster để hiển thị trên map."""
+    """Láº¥y danh sÃ¡ch rover Ä‘ang káº¿t ná»‘i tá»« NTRIP Caster Ä‘á»ƒ hiá»ƒn thá»‹ trÃªn map."""
     try:
         caster_client = await get_caster_client(db)
         clients = await caster_client.get_clienttable()
+        
+        # Lọc bỏ rover có số lượng vệ tinh (nsv) bằng 0 để không hiển thị trên map
+        filtered_clients = [c for c in clients if c.get("nsv") != 0]
+        
         return {
-            "count": len(clients),
-            "items": clients,
+            "count": len(filtered_clients),
+            "items": filtered_clients,
         }
     except Exception as e:
         logger.error(f"Error fetching clienttable: {e}")
@@ -664,6 +1608,307 @@ async def get_caster_clienttable(
             "count": 0,
             "items": [],
         }
+
+
+@app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse)
+async def activate_rtcm_station(
+    serial: str,
+    req: schemas.RTCMStationActivateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Station not found")
+
+    mountpoints = _extract_station_mountpoints(device)
+    selected_mountpoint = _resolve_requested_mountpoint(mountpoints, req.mountpoint)
+
+    ttl = _sanitize_ttl(req.ttl_seconds)
+    now = int(time.time())
+    expires_at = now + ttl
+    session_id = uuid.uuid4().hex
+    client_id = _build_rtcm_client_id(current_user, req.client_instance_id)
+
+    should_activate = False
+
+    async with rtcm_session_lock:
+        # Clean expired sessions of this station before counting
+        await db.execute(
+            delete(models.RTCMStreamSession).where(
+                models.RTCMStreamSession.serial == serial,
+                models.RTCMStreamSession.expires_at <= now,
+            )
+        )
+
+        active_before_same_mp = await _count_active_mountpoint_sessions(db, serial, selected_mountpoint, now)
+        should_activate = active_before_same_mp == 0
+
+        active_before_station = await _count_active_station_sessions(db, serial, now)
+        if active_before_station > 0:
+            active_mountpoint_norm = _normalize_mountpoint(_extract_active_mountpoint(device))
+            requested_norm = _normalize_mountpoint(selected_mountpoint)
+            if active_mountpoint_norm and requested_norm and active_mountpoint_norm != requested_norm:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Station '{serial}' is already active on mountpoint '{active_mountpoint_norm}', "
+                        f"cannot switch to '{requested_norm}' until all active sessions expire"
+                    ),
+                )
+
+        db.add(
+            models.RTCMStreamSession(
+                session_id=session_id,
+                serial=serial,
+                mountpoint=str(selected_mountpoint),
+                client_id=client_id,
+                expires_at=expires_at,
+                created_at=now,
+                last_heartbeat_at=now,
+            )
+        )
+        await db.commit()
+
+        active_count = await _count_active_station_sessions(db, serial, now)
+
+    if should_activate:
+        try:
+            await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint)
+        except Exception as e:
+            async with rtcm_session_lock:
+                await db.execute(
+                    delete(models.RTCMStreamSession).where(
+                        models.RTCMStreamSession.session_id == session_id
+                    )
+                )
+                await db.commit()
+            raise HTTPException(status_code=503, detail=f"Failed to activate station stream: {e}")
+
+    return schemas.RTCMSessionResponse(
+        session_id=session_id,
+        serial=serial,
+        client_id=client_id,
+        expires_at=expires_at,
+        active_sessions_for_station=active_count,
+        stream_status=_resolve_stream_status(device, force_starting=should_activate),
+        mountpoints=mountpoints,
+        selected_mountpoint=selected_mountpoint,
+    )
+
+
+@app.post("/api/rtcm/ntrip/start", response_model=schemas.RTCMSessionResponse)
+async def ntrip_start_forward(
+    req: schemas.RTCMNtripStartRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    # Wrapper endpoint for NTRIP server integration.
+    # Keeps existing activate semantics while allowing NTRIP team to call a single, explicit API.
+    return await activate_rtcm_station(
+        serial=req.serial,
+        req=schemas.RTCMStationActivateRequest(
+            client_instance_id=req.client_instance_id,
+            ttl_seconds=req.ttl_seconds,
+            mountpoint=req.mountpoint,
+        ),
+        db=db,
+        current_user=current_user,
+    )
+
+
+@app.post("/api/rtcm/sessions/{session_id}/heartbeat", response_model=schemas.RTCMSessionResponse)
+async def heartbeat_rtcm_session(
+    session_id: str,
+    req: schemas.RTCMSessionHeartbeatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    ttl = _sanitize_ttl(req.ttl_seconds)
+    now = int(time.time())
+    expires_at = now + ttl
+
+    async with rtcm_session_lock:
+        session = await db.get(models.RTCMStreamSession, session_id)
+        if not session or int(session.expires_at) <= now:
+            if session and int(session.expires_at) <= now:
+                await db.execute(
+                    delete(models.RTCMStreamSession).where(models.RTCMStreamSession.session_id == session_id)
+                )
+                await db.commit()
+            raise HTTPException(status_code=404, detail="Session not found or expired")
+
+        expected_prefix = f"user:{current_user.id}"
+        if not str(session.client_id).startswith(expected_prefix):
+            raise HTTPException(status_code=403, detail="Session does not belong to this user")
+
+        session.expires_at = expires_at
+        session.last_heartbeat_at = now
+        await db.commit()
+
+        serial = str(session.serial)
+        client_id = str(session.client_id)
+        active_count = await _count_active_station_sessions(db, serial, now)
+
+    device = await crud.get_device_by_serial(db, serial)
+    mountpoints = _extract_station_mountpoints(device) if device else []
+
+    return schemas.RTCMSessionResponse(
+        session_id=session_id,
+        serial=serial,
+        client_id=client_id,
+        expires_at=expires_at,
+        active_sessions_for_station=active_count,
+        stream_status=_resolve_stream_status(device),
+        mountpoints=mountpoints,
+        selected_mountpoint=_extract_active_mountpoint(device),
+    )
+
+
+@app.delete("/api/rtcm/sessions/{session_id}")
+async def release_rtcm_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    serial_to_deactivate: Optional[str] = None
+    remaining = 0
+
+    async with rtcm_session_lock:
+        session = await db.get(models.RTCMStreamSession, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found or already released")
+
+        expected_prefix = f"user:{current_user.id}"
+        if not str(session.client_id).startswith(expected_prefix):
+            raise HTTPException(status_code=403, detail="Session does not belong to this user")
+
+        serial = str(session.serial)
+        mountpoint = str(getattr(session, "mountpoint", "") or "").strip()
+
+        await db.execute(
+            delete(models.RTCMStreamSession).where(models.RTCMStreamSession.session_id == session_id)
+        )
+        await db.commit()
+
+        remaining = await _count_active_station_sessions(db, serial)
+        device = await crud.get_device_by_serial(db, serial)
+        active_mountpoint = _extract_active_mountpoint(device)
+        if _normalize_mountpoint(active_mountpoint) == _normalize_mountpoint(mountpoint):
+            remaining_for_mountpoint = await _count_active_mountpoint_sessions(db, serial, mountpoint)
+            if remaining_for_mountpoint == 0:
+                serial_to_deactivate = serial
+
+    if serial_to_deactivate:
+        try:
+            await _set_station_stream(serial_to_deactivate, active=False)
+        except Exception as e:
+            logger.warning(f"[RTCM] Failed to deactivate station '{serial_to_deactivate}' after release: {e}")
+
+    return {
+        "status": "released",
+        "session_id": session_id,
+        "remaining_sessions_for_station": remaining,
+    }
+
+
+@app.post("/api/rtcm/ntrip/stop")
+async def ntrip_stop_forward(
+    req: schemas.RTCMNtripStopRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    now = int(time.time())
+    client_id = _build_rtcm_client_id(current_user, req.client_instance_id)
+    serial_to_deactivate: Optional[str] = None
+
+    async with rtcm_session_lock:
+        # Opportunistic cleanup first.
+        await db.execute(
+            delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
+        )
+
+        active_sessions_rs = await db.execute(
+            select(models.RTCMStreamSession.session_id, models.RTCMStreamSession.mountpoint).where(
+                models.RTCMStreamSession.serial == req.serial,
+                models.RTCMStreamSession.client_id == client_id,
+                models.RTCMStreamSession.expires_at > now,
+            )
+        )
+        active_rows = [(str(r[0]), str(r[1])) for r in active_sessions_rs.all() if r and r[0] and r[1]]
+        active_session_ids = [row[0] for row in active_rows]
+
+        if active_session_ids:
+            await db.execute(
+                delete(models.RTCMStreamSession).where(
+                    models.RTCMStreamSession.session_id.in_(active_session_ids)
+                )
+            )
+
+        await db.commit()
+
+        remaining = await _count_active_station_sessions(db, req.serial, now)
+
+        device = await crud.get_device_by_serial(db, req.serial)
+        active_mountpoint = _extract_active_mountpoint(device)
+        if active_mountpoint:
+            remaining_for_active_mountpoint = await _count_active_mountpoint_sessions(
+                db,
+                req.serial,
+                active_mountpoint,
+                now,
+            )
+            if remaining_for_active_mountpoint == 0:
+                serial_to_deactivate = req.serial
+
+    if serial_to_deactivate:
+        try:
+            await _set_station_stream(serial_to_deactivate, active=False)
+        except Exception as e:
+            logger.warning(f"[RTCM] Failed to deactivate station '{serial_to_deactivate}' after ntrip stop: {e}")
+
+    return {
+        "status": "released",
+        "serial": req.serial,
+        "client_id": client_id,
+        "released_sessions": len(active_session_ids),
+        "remaining_sessions_for_station": remaining,
+    }
+
+
+@app.get("/api/rtcm/stations/active", response_model=list[schemas.RTCMActiveStationResponse])
+async def get_active_rtcm_stations(
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    now = int(time.time())
+    async with rtcm_session_lock:
+        # Opportunistic cleanup before listing actives
+        await db.execute(
+            delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
+        )
+        await db.commit()
+
+        active_serials_rs = await db.execute(
+            select(models.RTCMStreamSession.serial)
+            .where(models.RTCMStreamSession.expires_at > now)
+            .distinct()
+        )
+        serials = sorted(str(r[0]) for r in active_serials_rs.all() if r and r[0])
+
+        items: list[schemas.RTCMActiveStationResponse] = []
+        for serial in serials:
+            active_count = await _count_active_station_sessions(db, serial, now)
+            client_ids = await _fetch_active_station_client_ids(db, serial, now)
+            items.append(
+                schemas.RTCMActiveStationResponse(
+                    serial=serial,
+                    active_sessions=active_count,
+                    client_ids=client_ids,
+                )
+            )
+
+        return items
 
 
 @app.get("/api/auth/me", response_model=schemas.UserResponse)
@@ -679,9 +1924,14 @@ async def get_system_settings(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Lấy trạng thái hiện tại của các cài đặt bảo mật."""
-    settings = await crud.get_system_settings(db)
-    return settings
+    """Láº¥y tráº¡ng thÃ¡i hiá»‡n táº¡i cá»§a cÃ¡c cÃ i Ä‘áº·t báº£o máº­t."""
+    settings_data = await crud.get_system_settings(db)
+    env_host, env_port = _read_caster_config_from_env()
+    if env_host:
+        settings_data["caster_host"] = env_host
+    if env_port:
+        settings_data["caster_port"] = env_port
+    return settings_data
 
 @app.post("/api/admin/settings")
 async def update_system_settings(
@@ -689,7 +1939,26 @@ async def update_system_settings(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Cập nhật cài đặt bảo mật."""
+    """Cáº­p nháº­t cÃ i Ä‘áº·t báº£o máº­t."""
+    caster_host = settings_data.get("caster_host")
+    caster_port = settings_data.get("caster_port")
+    if caster_host is not None or caster_port is not None:
+        env_host, env_port = _read_caster_config_from_env()
+        resolved_host = str(caster_host).strip() if caster_host is not None else env_host
+        resolved_port = caster_port if caster_port is not None else env_port
+
+        if not resolved_host:
+            raise HTTPException(status_code=400, detail="caster_host khÃ´ng há»£p lá»‡")
+
+        try:
+            resolved_port_int = int(resolved_port)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="caster_port khÃ´ng há»£p lá»‡")
+
+        _persist_caster_config_to_env(resolved_host, resolved_port_int)
+        settings_data["caster_host"] = resolved_host
+        settings_data["caster_port"] = resolved_port_int
+
     await crud.update_system_settings(db, settings_data)
     logger.info(f"Admin '{current_user.username}' updated system settings: {settings_data}")
     return {"status": "ok", "updated_settings": settings_data}
@@ -700,7 +1969,7 @@ async def get_security_stats(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     """
-    Enhanced security stats với error handling
+    Enhanced security stats vá»›i error handling
     """
     try:
         # 1. Security stats
@@ -742,7 +2011,7 @@ async def unblock_ip(
     db: AsyncSession = Depends(get_auth_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Admin unblock một IP (thao tác trên database)."""
+    """Admin unblock má»™t IP (thao tÃ¡c trÃªn database)."""
     ip = request_data.get("ip_address")
     if not ip:
         raise HTTPException(status_code=400, detail="ip_address is required")
@@ -761,13 +2030,13 @@ async def block_ip_manually(
     db: AsyncSession = Depends(get_auth_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Admin block thủ công một IP (lưu vào database)."""
+    """Admin block thá»§ cÃ´ng má»™t IP (lÆ°u vÃ o database)."""
     ip = request_data.get("ip_address")
     if not ip:
         raise HTTPException(status_code=400, detail="ip_address is required")
     
     await rate_limiter.block_ip(db, ip) 
-    logger.warning(f"⚠️ Admin '{current_user.username}' permanently blocked IP: {ip}")
+    logger.warning(f"âš ï¸ Admin '{current_user.username}' permanently blocked IP: {ip}")
     
     return {"status": "blocked", "ip": ip}
 
@@ -801,19 +2070,19 @@ async def rename_device(
     request: schemas.DeviceRename, 
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_DEVICE_NAME))):
-    # 1. Kiểm tra thiết bị
+    # 1. Kiá»ƒm tra thiáº¿t bá»‹
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
     if not request.name.strip():
-        raise HTTPException(status_code=400, detail="Tên không được để trống")
+        raise HTTPException(status_code=400, detail="TÃªn khÃ´ng Ä‘Æ°á»£c Ä‘á»ƒ trá»‘ng")
 
-    # 2. Cập nhật Database
+    # 2. Cáº­p nháº­t Database
     device.name = request.name
     await db.commit()
     
-    # 3. Gửi lệnh xuống Agent
+    # 3. Gá»­i lá»‡nh xuá»‘ng Agent
     try:
         await send_command_to_pi(serial, {
             "command": "PROVISION_DEVICE", 
@@ -842,10 +2111,10 @@ async def create_user(
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
     try:
-        # Dòng này có thể ném ra lỗi ValueError
+        # DÃ²ng nÃ y cÃ³ thá»ƒ nÃ©m ra lá»—i ValueError
         hashed_password = await auth.get_password_hash(user_data.password)
     except ValueError as e:
-        # Nếu có lỗi từ chính sách mật khẩu, trả về lỗi 400 với thông điệp cụ thể
+        # Náº¿u cÃ³ lá»—i tá»« chÃ­nh sÃ¡ch máº­t kháº©u, tráº£ vá» lá»—i 400 vá»›i thÃ´ng Ä‘iá»‡p cá»¥ thá»ƒ
         raise HTTPException(status_code=400, detail=str(e))
     # -----------------------------------------------------------
         
@@ -888,32 +2157,32 @@ async def update_user(
     update_dict = user_data.dict(exclude_unset=True)
     
     # ===================================================================
-    # FIX: LOGIC CẬP NHẬT DANH SÁCH THIẾT BỊ (ASSIGN/UNASSIGN)
+    # FIX: LOGIC Cáº¬P NHáº¬T DANH SÃCH THIáº¾T Bá»Š (ASSIGN/UNASSIGN)
     # ===================================================================
     assigned_serials = update_dict.pop("assigned_devices", None)
     
     if assigned_serials is not None:
-        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user này
+        # 1. Láº¥y táº¥t cáº£ thiáº¿t bá»‹ HIá»†N Táº I Ä‘ang gÃ¡n cho user nÃ y
         current_devices = await crud.get_devices_by_user_id(devices_db, user_id)
         
-        # 2. Gỡ bỏ tất cả trước (Reset về None)
+        # 2. Gá»¡ bá» táº¥t cáº£ trÆ°á»›c (Reset vá» None)
         for dev in current_devices:
             dev.user_id = None
-            # Broadcast cập nhật UI: Trạm này đã bị gỡ
+            # Broadcast cáº­p nháº­t UI: Tráº¡m nÃ y Ä‘Ã£ bá»‹ gá»¡
             await ui_manager.broadcast({
                 "type": "status_update",
                 "data": schemas.Device.from_orm(dev).model_dump()
             })
         
-        # 3. Nếu user là Coordinator -> Gán danh sách mới
+        # 3. Náº¿u user lÃ  Coordinator -> GÃ¡n danh sÃ¡ch má»›i
         if user_to_update.role == 'coordinator' or user_data.role == 'coordinator':
             for serial in assigned_serials:
                 device = await crud.get_device_by_serial(devices_db, serial)
-                # Chỉ gán nếu trạm chưa có chủ hoặc chủ chính là user này (đề phòng tranh chấp)
-                # Hoặc Admin có quyền ghi đè (tùy logic, ở đây cho phép ghi đè để tiện quản lý)
+                # Chá»‰ gÃ¡n náº¿u tráº¡m chÆ°a cÃ³ chá»§ hoáº·c chá»§ chÃ­nh lÃ  user nÃ y (Ä‘á» phÃ²ng tranh cháº¥p)
+                # Hoáº·c Admin cÃ³ quyá»n ghi Ä‘Ã¨ (tÃ¹y logic, á»Ÿ Ä‘Ã¢y cho phÃ©p ghi Ä‘Ã¨ Ä‘á»ƒ tiá»‡n quáº£n lÃ½)
                 if device:
                     device.user_id = user_id
-                    # Broadcast cập nhật UI: Trạm này đã có chủ mới
+                    # Broadcast cáº­p nháº­t UI: Tráº¡m nÃ y Ä‘Ã£ cÃ³ chá»§ má»›i
                     await ui_manager.broadcast({
                         "type": "status_update",
                         "data": schemas.Device.from_orm(device).model_dump()
@@ -947,7 +2216,7 @@ async def delete_user(
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
     
-    # 1. Kiểm tra user tồn tại
+    # 1. Kiá»ƒm tra user tá»“n táº¡i
     user = await crud.get_user_by_id(auth_db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -956,31 +2225,31 @@ async def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
     
     # ===================================================================
-    # FIX: GỠ THIẾT BỊ + BROADCAST ĐỂ UI CẬP NHẬT NGAY LẬP TỨC
+    # FIX: Gá»  THIáº¾T Bá»Š + BROADCAST Äá»‚ UI Cáº¬P NHáº¬T NGAY Láº¬P Tá»¨C
     # ===================================================================
     try:
-        # Tìm các thiết bị đang thuộc về user này
+        # TÃ¬m cÃ¡c thiáº¿t bá»‹ Ä‘ang thuá»™c vá» user nÃ y
         result = await devices_db.execute(select(models.Device).where(models.Device.user_id == user_id))
         devices_to_unlink = result.scalars().all()
 
         for dev in devices_to_unlink:
-            dev.user_id = None # Gỡ bỏ user_id
+            dev.user_id = None # Gá»¡ bá» user_id
             
-            # QUAN TRỌNG: Gửi thông báo WebSocket xuống UI để Admin thấy ngay là trạm đã "trống"
+            # QUAN TRá»ŒNG: Gá»­i thÃ´ng bÃ¡o WebSocket xuá»‘ng UI Ä‘á»ƒ Admin tháº¥y ngay lÃ  tráº¡m Ä‘Ã£ "trá»‘ng"
             await ui_manager.broadcast({
                 "type": "status_update",
                 "data": schemas.Device.from_orm(dev).model_dump()
             })
         
-        await devices_db.commit() # Lưu thay đổi vào DB Device
+        await devices_db.commit() # LÆ°u thay Ä‘á»•i vÃ o DB Device
         logger.info(f"Unlinked {len(devices_to_unlink)} devices from deleted user {user_id}")
 
     except Exception as e:
         logger.error(f"Error unlinking devices: {e}")
-        # Không raise lỗi để tiếp tục xóa user
+        # KhÃ´ng raise lá»—i Ä‘á»ƒ tiáº¿p tá»¥c xÃ³a user
     # ===================================================================
 
-    # 3. Xóa user trong Auth DB
+    # 3. XÃ³a user trong Auth DB
     success = await crud.delete_user(auth_db, user_id) 
     if not success:
          raise HTTPException(status_code=404, detail="User not found during deletion")
@@ -1001,11 +2270,13 @@ async def update_caster_config(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Cập nhật Host/Port của NTRIP Caster"""
+    """Cáº­p nháº­t Host/Port cá»§a NTRIP Caster"""
     settings_data = {
-        "caster_host": config.host,
+        "caster_host": config.host.strip(),
         "caster_port": config.port
     }
+
+    _persist_caster_config_to_env(settings_data["caster_host"], int(settings_data["caster_port"]))
     await crud.update_system_settings(db, settings_data)
     return {"status": "success", "config": settings_data}
 
@@ -1014,10 +2285,15 @@ async def get_caster_config_endpoint(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    settings = await crud.get_system_settings(db)
+    system_settings = await crud.get_system_settings(db)
+    env_host, env_port = _read_caster_config_from_env()
+
+    host = env_host or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn')
+    port = env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101)
+
     return {
-        "host": settings.get('caster_host', 'aitogy.xyz'),
-        "port": settings.get('caster_port', 2101)
+        "host": host,
+        "port": int(port)
     }
 
 # === LICENSE ===
@@ -1034,7 +2310,7 @@ async def generate_pi_license(
         base_code = license_manager.generate_pi_license_base(serial)
         license_key = license_manager.get_license_code_from_string(base_code)
         
-        if "Lỗi" in license_key:
+        if "Lá»—i" in license_key:
             raise ValueError("License generation failed.")
 
         return schemas.LicenseResponse(serial=serial, license_key=license_key)
@@ -1050,10 +2326,10 @@ async def get_initial_devices(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)) 
 ):
     """
-    ✅ CHỐNG IDOR: Backend LUÔN ƯU TIÊN current_user.id từ JWT token
+    âœ… CHá»NG IDOR: Backend LUÃ”N Æ¯U TIÃŠN current_user.id tá»« JWT token
     """
     
-    # 🔒 COORDINATOR: Bỏ qua mọi tham số user_id (CHỐNG IDOR)
+    # ðŸ”’ COORDINATOR: Bá» qua má»i tham sá»‘ user_id (CHá»NG IDOR)
     if current_user.role == auth.Role.COORDINATOR:
         logging.info(
             f"Coordinator '{current_user.username}' requested devices. "
@@ -1061,11 +2337,11 @@ async def get_initial_devices(
         )
         return await crud.get_devices_by_user_id(db, user_id=current_user.id)
     
-    # 🔒 ADMIN: Cho phép filter, nhưng validate
+    # ðŸ”’ ADMIN: Cho phÃ©p filter, nhÆ°ng validate
     if user_id is not None:
         if current_user.role != auth.Role.ADMIN:
             logging.warning(
-                f"⚠️ IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
+                f"âš ï¸ IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
                 f"tried to filter by user_id={user_id}"
             )
             raise HTTPException(
@@ -1074,7 +2350,7 @@ async def get_initial_devices(
             )
         return await crud.get_devices_by_user_id(db, user_id=user_id)
     
-    # Mặc định: Admin và Viewer xem tất cả
+    # Máº·c Ä‘á»‹nh: Admin vÃ  Viewer xem táº¥t cáº£
     return await crud.get_all_devices(db)
 
 @app.post("/api/devices/{serial}/command")
@@ -1088,7 +2364,7 @@ async def send_generic_command(
     if not auth.has_permission(current_user, auth.Permission.EDIT_CHIP_CONFIG):
          raise HTTPException(status_code=403, detail="Permission denied.")
     
-    # 1. Lấy thiết bị
+    # 1. Láº¥y thiáº¿t bá»‹
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -1101,26 +2377,26 @@ async def send_generic_command(
     )
     return await send_command_to_pi(serial, command.model_dump())
 
-# --- CÁC ENDPOINT CHO QUẢN LÝ ROVER ---
+# --- CÃC ENDPOINT CHO QUáº¢N LÃ ROVER ---
 @app.get("/api/bases/{serial}/rovers", response_model=list[schemas.RoverAccountResponse])
 async def get_rovers_for_base(
     serial: str,
     db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # Thêm vào để kiểm tra quyền
+    devices_db: AsyncSession = Depends(get_db), # ThÃªm vÃ o Ä‘á»ƒ kiá»ƒm tra quyá»n
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # Admin có thể xem Rover của bất kỳ trạm nào
+    # Admin cÃ³ thá»ƒ xem Rover cá»§a báº¥t ká»³ tráº¡m nÃ o
     if current_user.role == auth.Role.ADMIN:
         return await crud.get_rovers_by_base_serial(db, base_serial=serial)
 
-    # Coordinator chỉ có thể xem Rover của các trạm họ quản lý
+    # Coordinator chá»‰ cÃ³ thá»ƒ xem Rover cá»§a cÃ¡c tráº¡m há» quáº£n lÃ½
     if current_user.role == auth.Role.COORDINATOR:
         device = await crud.get_device_by_serial(devices_db, serial)
         if device and device.user_id == current_user.id:
             return await crud.get_rovers_by_base_serial(db, base_serial=serial)
     
-    # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
-    raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm này.")
+    # Náº¿u khÃ´ng pháº£i Admin hoáº·c khÃ´ng pháº£i chá»§ sá»Ÿ há»¯u, tá»« chá»‘i
+    raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n xem danh sÃ¡ch Rover cá»§a tráº¡m nÃ y.")
 
 @app.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse)
 async def create_rover_for_base(
@@ -1130,7 +2406,7 @@ async def create_rover_for_base(
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Kiểm tra quyền
+    # 1. Kiá»ƒm tra quyá»n
     is_admin = current_user.role == auth.Role.ADMIN
     is_authorized_coordinator = (
         current_user.role == auth.Role.COORDINATOR and 
@@ -1138,26 +2414,26 @@ async def create_rover_for_base(
     )
 
     if not is_admin and not is_authorized_coordinator:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tài khoản Rover.")
+        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n táº¡o tÃ i khoáº£n Rover.")
 
     if not is_admin:
         device = await crud.get_device_by_serial(devices_db, serial)
         if not device or device.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
+            raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng Ä‘Æ°á»£c phÃ©p táº¡o Rover cho tráº¡m Base nÃ y.")
 
-    # 2. Kiểm tra trùng lặp trong DB Local
+    # 2. Kiá»ƒm tra trÃ¹ng láº·p trong DB Local
     existing_rover = await crud.get_rover_by_username(db, rover_data.username)
     if existing_rover:
-        raise HTTPException(status_code=400, detail="Tên đăng nhập Rover đã tồn tại (DB).")
+        raise HTTPException(status_code=400, detail="TÃªn Ä‘Äƒng nháº­p Rover Ä‘Ã£ tá»“n táº¡i (DB).")
 
-    # 1. Lấy thông tin thiết bị để kiểm tra Mountpoint hợp lệ
+    # 1. Láº¥y thÃ´ng tin thiáº¿t bá»‹ Ä‘á»ƒ kiá»ƒm tra Mountpoint há»£p lá»‡
     device_info = await crud.get_device_by_serial(devices_db, serial)
     if not device_info:
-        raise HTTPException(status_code=404, detail="Trạm Base không tồn tại.")
+        raise HTTPException(status_code=404, detail="Tráº¡m Base khÃ´ng tá»“n táº¡i.")
     
     service_conf = device_info.service_config or {}
     
-    # 2. Xác định Mountpoint (Logic mới)
+    # 2. XÃ¡c Ä‘á»‹nh Mountpoint (Logic má»›i)
     target_mountpoint = rover_data.mountpoint_allow
     
     valid_mps = []
@@ -1166,7 +2442,7 @@ async def create_rover_for_base(
     if service_conf.get('server2_enabled'):
         valid_mps.append(service_conf.get('mountpoint2'))
         
-    # Lọc giá trị None/Rỗng
+    # Lá»c giÃ¡ trá»‹ None/Rá»—ng
     valid_mps = [mp for mp in valid_mps if mp]
 
     if not valid_mps:
@@ -1174,12 +2450,12 @@ async def create_rover_for_base(
     elif target_mountpoint not in valid_mps:
         target_mountpoint = valid_mps[0]
 
-    duration_seconds = 315360000 # 10 năm mặc định
+    duration_seconds = 315360000 # 10 nÄƒm máº·c Ä‘á»‹nh
     
     if rover_data.expiry_days > 0:
-        duration_seconds = rover_data.expiry_days * 86400  # 1 ngày = 86400 giây
+        duration_seconds = rover_data.expiry_days * 86400  # 1 ngÃ y = 86400 giÃ¢y
 
-    # 3. GỌI TCP ĐẾN NTRIP CASTER
+    # 3. Gá»ŒI TCP Äáº¾N NTRIP CASTER
     try:
         caster = await get_caster_client(db)
         
@@ -1193,13 +2469,13 @@ async def create_rover_for_base(
             expiry_seconds=duration_seconds, 
             max_users=1
         )
-        logger.info(f"✓ Created Rover '{rover_data.username}' for MP '{target_mountpoint}'")
+        logger.info(f"âœ“ Created Rover '{rover_data.username}' for MP '{target_mountpoint}'")
         
     except Exception as e:
         logger.error(f"Failed to create rover on Caster: {e}")
-        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Lá»—i Caster: {str(e)}")
 
-    # 4. Lưu vào DB
+    # 4. LÆ°u vÃ o DB
     new_rover = await crud.create_rover_account(
         db, 
         username=rover_data.username,
@@ -1217,35 +2493,35 @@ async def update_rover(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Lấy thông tin Rover cũ
+    # 1. Láº¥y thÃ´ng tin Rover cÅ©
     rover = await crud.get_rover_by_id(db, rover_id)
     if not rover:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover.")
+        raise HTTPException(status_code=404, detail="KhÃ´ng tÃ¬m tháº¥y tÃ i khoáº£n Rover.")
 
-    # 2. Kiểm tra quyền
+    # 2. Kiá»ƒm tra quyá»n
     is_admin = current_user.role == auth.Role.ADMIN
     is_creator = rover.created_by_user_id == current_user.id
     if not is_admin and not is_creator:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền sửa tài khoản này.")
+        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n sá»­a tÃ i khoáº£n nÃ y.")
 
-    # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
+    # 3. Chuáº©n bá»‹ dá»¯ liá»‡u má»›i (náº¿u client khÃ´ng gá»­i thÃ¬ dÃ¹ng cÃ¡i cÅ©)
     new_password = update_req.password if update_req.password else rover.password
     new_mountpoints = update_req.mountpoints if update_req.mountpoints else rover.mountpoints
     
-    # Xử lý thời hạn (Mặc định reset lại thời hạn nếu có gửi expiry_days)
+    # Xá»­ lÃ½ thá»i háº¡n (Máº·c Ä‘á»‹nh reset láº¡i thá»i háº¡n náº¿u cÃ³ gá»­i expiry_days)
     duration_seconds = 315360000 # Default
     if update_req.expiry_days:
         duration_seconds = update_req.expiry_days * 86400
     
-    # 4. GỌI CASTER ĐỂ CẬP NHẬT (Ghi đè user cũ)
+    # 4. Gá»ŒI CASTER Äá»‚ Cáº¬P NHáº¬T (Ghi Ä‘Ã¨ user cÅ©)
     try:
         caster = await get_caster_client(db)
         creator_identifier = current_user.username 
         
-        # Hàm create_user của Caster thường hoạt động như "Upsert" (Tạo mới hoặc Ghi đè)
+        # HÃ m create_user cá»§a Caster thÆ°á»ng hoáº¡t Ä‘á»™ng nhÆ° "Upsert" (Táº¡o má»›i hoáº·c Ghi Ä‘Ã¨)
         await caster.create_user(
             creator=creator_identifier,
-            username=rover.username, # Username không đổi
+            username=rover.username, # Username khÃ´ng Ä‘á»•i
             password=new_password,
             mountpoints=new_mountpoints, 
             expiry_seconds=duration_seconds, 
@@ -1253,9 +2529,9 @@ async def update_rover(
         )
     except Exception as e:
         logger.error(f"Caster Update Error: {e}")
-        raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Lá»—i cáº­p nháº­t Caster: {str(e)}")
 
-    # 5. Cập nhật DB Local
+    # 5. Cáº­p nháº­t DB Local
     update_data = {
         "password": new_password,
         "mountpoints": new_mountpoints
@@ -1270,33 +2546,33 @@ async def delete_rover(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Lấy thông tin Rover
+    # 1. Láº¥y thÃ´ng tin Rover
     rover_to_delete = await crud.get_rover_by_id(db, rover_id)
     if not rover_to_delete:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover.")
+        raise HTTPException(status_code=404, detail="KhÃ´ng tÃ¬m tháº¥y tÃ i khoáº£n Rover.")
 
-    # 2. Kiểm tra quyền
+    # 2. Kiá»ƒm tra quyá»n
     is_admin = current_user.role == auth.Role.ADMIN
     is_creator = rover_to_delete.created_by_user_id == current_user.id
 
     if not is_admin and not is_creator:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền xóa tài khoản Rover này.")
+        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n xÃ³a tÃ i khoáº£n Rover nÃ y.")
     
     creator_user = await crud.get_user_by_id(db, rover_to_delete.created_by_user_id)
     creator_username = creator_user.username if creator_user else "admin"
 
-    # 3. GỌI TCP ĐẾN NTRIP CASTER ĐỂ XÓA
+    # 3. Gá»ŒI TCP Äáº¾N NTRIP CASTER Äá»‚ XÃ“A
     try:
         caster = await get_caster_client(db)
         await caster.delete_user(
             identifier=creator_username, 
             username=rover_to_delete.username
         )
-        logger.info(f"✓ Deleted Rover '{rover_to_delete.username}' from Caster via TCP")
+        logger.info(f"âœ“ Deleted Rover '{rover_to_delete.username}' from Caster via TCP")
     except Exception as e:
         logger.warning(f"Failed to delete rover from Caster (might be already deleted): {e}")
 
-    # 4. Xóa khỏi DB Local
+    # 4. XÃ³a khá»i DB Local
     success = await crud.delete_rover_account(db, rover_id=rover_id)
     
     return {"status": "deleted", "rover_id": rover_id}
@@ -1309,36 +2585,36 @@ async def get_all_rovers_global(
     current_user: models.User = Depends(auth.get_current_user)
 ):
 
-    # 1. Kiểm tra quyền cơ bản
+    # 1. Kiá»ƒm tra quyá»n cÆ¡ báº£n
     if current_user.role == auth.Role.VIEWER:
         raise HTTPException(
             status_code=403, 
-            detail="Viewer không có quyền xem danh sách Rover."
+            detail="Viewer khÃ´ng cÃ³ quyá»n xem danh sÃ¡ch Rover."
         )
     
     if current_user.role == auth.Role.COORDINATOR and not current_user.can_create_rovers:
         raise HTTPException(
             status_code=403, 
-            detail="Bạn chưa được cấp quyền quản lý Rover."
+            detail="Báº¡n chÆ°a Ä‘Æ°á»£c cáº¥p quyá»n quáº£n lÃ½ Rover."
         )
     
-    # 2. Lấy danh sách Rover dựa trên role
+    # 2. Láº¥y danh sÃ¡ch Rover dá»±a trÃªn role
     if current_user.role == auth.Role.ADMIN:
         rovers = await crud.get_all_rovers_by_user(db, user_id=current_user.id, role="admin")
     else:
         rovers = await crud.get_all_rovers_by_user(db, user_id=current_user.id, role="coordinator")
     
-    # 3. Làm giàu dữ liệu (XỬ LÝ HIỂN THỊ NHIỀU TRẠM)
+    # 3. LÃ m giÃ u dá»¯ liá»‡u (Xá»¬ LÃ HIá»‚N THá»Š NHIá»€U TRáº M)
     enriched_rovers = []
     
-    # Cache devices để tránh query DB quá nhiều lần trong vòng lặp
+    # Cache devices Ä‘á»ƒ trÃ¡nh query DB quÃ¡ nhiá»u láº§n trong vÃ²ng láº·p
     all_devices_result = await devices_db.execute(select(models.Device))
     all_devices = {d.serial: d.name for d in all_devices_result.scalars().all()}
 
     for rover in rovers:
         rover_dict = schemas.RoverAccountResponse.from_orm(rover).model_dump()
         
-        # Xử lý base_serial có thể là "SN1,SN2"
+        # Xá»­ lÃ½ base_serial cÃ³ thá»ƒ lÃ  "SN1,SN2"
         serials = rover.base_serial.split(',')
         station_names = []
         
@@ -1347,9 +2623,9 @@ async def get_all_rovers_global(
             if s_name:
                 station_names.append(s_name)
             else:
-                station_names.append(sn) # Nếu không tìm thấy tên thì hiện serial
+                station_names.append(sn) # Náº¿u khÃ´ng tÃ¬m tháº¥y tÃªn thÃ¬ hiá»‡n serial
         
-        # Nối tên các trạm lại: "Trạm A, Trạm B"
+        # Ná»‘i tÃªn cÃ¡c tráº¡m láº¡i: "Tráº¡m A, Tráº¡m B"
         rover_dict['base_name'] = ", ".join(station_names)
          
         enriched_rovers.append(rover_dict)
@@ -1361,27 +2637,27 @@ async def create_multi_base_rover(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Kiểm tra quyền (như cũ)
+    # 1. Kiá»ƒm tra quyá»n (nhÆ° cÅ©)
     is_admin = current_user.role == auth.Role.ADMIN
     if not is_admin and not (current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers):
-        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tài khoản Rover.")
+        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n táº¡o tÃ i khoáº£n Rover.")
 
-    # 2. Kiểm tra trùng (như cũ)
+    # 2. Kiá»ƒm tra trÃ¹ng (nhÆ° cÅ©)
     existing = await crud.get_rover_by_username(db, request.username)
     if existing:
-        raise HTTPException(status_code=400, detail="Username đã tồn tại.")
+        raise HTTPException(status_code=400, detail="Username Ä‘Ã£ tá»“n táº¡i.")
 
-    # 3. Chuẩn bị dữ liệu
+    # 3. Chuáº©n bá»‹ dá»¯ liá»‡u
     duration_seconds = request.expiry_days * 86400
     target_mountpoints = request.mountpoint_override.strip()
     
     if not request.selected_serials:
-         raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm.")
+         raise HTTPException(status_code=400, detail="Pháº£i chá»n Ã­t nháº¥t 1 tráº¡m.")
     
-    # Gộp serial lại thành chuỗi để lưu vào base_serial
+    # Gá»™p serial láº¡i thÃ nh chuá»—i Ä‘á»ƒ lÆ°u vÃ o base_serial
     combined_serials = ",".join(request.selected_serials)
 
-    # 4. GỌI CASTER (Tạo user thật)
+    # 4. Gá»ŒI CASTER (Táº¡o user tháº­t)
     try:
         caster = await get_caster_client(db)
         creator_identifier = current_user.username 
@@ -1394,19 +2670,19 @@ async def create_multi_base_rover(
             expiry_seconds=duration_seconds, 
             max_users=1
         )
-        logging.info(f"✓ Created Multi-Rover '{request.username}' allowed: {target_mountpoints}")
+        logging.info(f"âœ“ Created Multi-Rover '{request.username}' allowed: {target_mountpoints}")
 
     except Exception as e:
         logging.error(f"Caster Error: {e}")
-        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Lá»—i Caster: {str(e)}")
 
-    # 5. LƯU VÀO DB (Ghi rõ mountpoint)
+    # 5. LÆ¯U VÃ€O DB (Ghi rÃµ mountpoint)
     new_rover = await crud.create_rover_account(
         db, 
         username=request.username,
         password=request.password,
-        base_serial=combined_serials,   # Lưu: "SN1,SN2"
-        mountpoints=target_mountpoints, # Lưu: "MP1;MP2" (Cột mới)
+        base_serial=combined_serials,   # LÆ°u: "SN1,SN2"
+        mountpoints=target_mountpoints, # LÆ°u: "MP1;MP2" (Cá»™t má»›i)
         creator_id=current_user.id
     )
     
@@ -1420,7 +2696,7 @@ async def configure_chip_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_COORDINATES))
 ):
-    # ==================== BƯỚC 1: KIỂM TRA THIẾT BỊ ====================
+    # ==================== BÆ¯á»šC 1: KIá»‚M TRA THIáº¾T Bá»Š ====================
     device_in_db = await crud.get_device_by_serial(db, serial)
     if not device_in_db:
         raise HTTPException(
@@ -1428,7 +2704,7 @@ async def configure_chip_endpoint(
             detail="Device not found in database"
         )
     
-    # ==================== BƯỚC 2: PARSE PAYLOAD ====================
+    # ==================== BÆ¯á»šC 2: PARSE PAYLOAD ====================
     payload = config_request.payload
     sensor_type = payload.get("sensor_type")
     params = payload.get("params", {})
@@ -1441,25 +2717,25 @@ async def configure_chip_endpoint(
             detail="Missing required fields: sensor_type or mode"
         )
 
-    # ==================== BƯỚC 3: LƯU CẤU HÌNH VÀO DATABASE ====================
+    # ==================== BÆ¯á»šC 3: LÆ¯U Cáº¤U HÃŒNH VÃ€O DATABASE ====================
     try:
-        # Cập nhật chip type
+        # Cáº­p nháº­t chip type
         if sensor_type:
             device_in_db.detected_chip_type = sensor_type
         
-        # Cập nhật base config
+        # Cáº­p nháº­t base config
         if params:
             device_in_db.base_config = params
         
-        # ✅ ĐÁNH DẤU CHƯA ĐỒNG BỘ
+        # âœ… ÄÃNH Dáº¤U CHÆ¯A Äá»’NG Bá»˜
         device_in_db.is_synced = False
         
-        # Commit vào DB
+        # Commit vÃ o DB
         await db.commit()
         await db.refresh(device_in_db)
         
         logging.info(
-            f"✓ Saved base config for {serial} to database:\n"
+            f"âœ“ Saved base config for {serial} to database:\n"
             f"  Chip: {sensor_type}\n"
             f"  Method: {method}\n"
             f"  Marked as UNSYNCED"
@@ -1472,13 +2748,13 @@ async def configure_chip_endpoint(
 
     except Exception as e:
         await db.rollback()
-        logging.error(f"❌ Failed to save config to DB for {serial}: {e}")
+        logging.error(f"âŒ Failed to save config to DB for {serial}: {e}")
         raise HTTPException(
             status_code=500, 
             detail=f"Failed to save configuration to database: {str(e)}"
         )
 
-    # ==================== BƯỚC 4: BUILD COMMANDS ====================
+    # ==================== BÆ¯á»šC 4: BUILD COMMANDS ====================
     try:
         commands_to_send = []
         
@@ -1544,24 +2820,24 @@ async def configure_chip_endpoint(
             raise ValueError("No commands generated")
 
     except Exception as e:
-        logging.error(f"❌ Failed to build commands for {serial}: {e}")
+        logging.error(f"âŒ Failed to build commands for {serial}: {e}")
         raise HTTPException(
             status_code=400,
             detail=f"Failed to build configuration commands: {str(e)}"
         )
 
-    # ==================== BƯỚC 5: GỬI LỆNH XUỐNG AGENT ====================
+    # ==================== BÆ¯á»šC 5: Gá»¬I Lá»†NH XUá»NG AGENT ====================
     pi_command = {
         "command": "EXECUTE_RAW_COMMANDS",
         "payload": {"commands_b64": encoded_commands},
-        "original_config": config_request.payload  # Để Agent biết context
+        "original_config": config_request.payload  # Äá»ƒ Agent biáº¿t context
     }
     
     try:
         response = await send_command_to_pi(serial, pi_command)
         
         logging.info(
-            f"✓ Sent {len(commands_to_send)} configuration commands to {serial}\n"
+            f"âœ“ Sent {len(commands_to_send)} configuration commands to {serial}\n"
             f"  Channel: {response['channel']}\n"
             f"  Status: Waiting for device confirmation..."
         )
@@ -1574,7 +2850,7 @@ async def configure_chip_endpoint(
             serial=serial
         )
         
-        # ✅ TRẢ VỀ SUCCESS - CHỜ AGENT XÁC NHẬN
+        # âœ… TRáº¢ Vá»€ SUCCESS - CHá»œ AGENT XÃC NHáº¬N
         return {
             "status": "command_sent_waiting_sync",
             "channel": response['channel'],
@@ -1583,18 +2859,18 @@ async def configure_chip_endpoint(
                 "Configuration saved to database and sent to device. "
                 "Waiting for device to apply and confirm sync status..."
             ),
-            "is_synced": False  # Hiện tại vẫn chưa đồng bộ
+            "is_synced": False  # Hiá»‡n táº¡i váº«n chÆ°a Ä‘á»“ng bá»™
         }
 
     except HTTPException as http_exc:
-        # Device offline hoặc không thể gửi lệnh
+        # Device offline hoáº·c khÃ´ng thá»ƒ gá»­i lá»‡nh
         logging.warning(
-            f"⚠️ Failed to send command to {serial}: {http_exc.detail}\n"
-            f"  Config đã được lưu vào DB.\n"
-            f"  Sẽ tự động đồng bộ khi device online lại."
+            f"âš ï¸ Failed to send command to {serial}: {http_exc.detail}\n"
+            f"  Config Ä‘Ã£ Ä‘Æ°á»£c lÆ°u vÃ o DB.\n"
+            f"  Sáº½ tá»± Ä‘á»™ng Ä‘á»“ng bá»™ khi device online láº¡i."
         )
         
-        # ✅ TRẢ VỀ PARTIAL SUCCESS
+        # âœ… TRáº¢ Vá»€ PARTIAL SUCCESS
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1606,7 +2882,7 @@ async def configure_chip_endpoint(
     
     except Exception as e:
         logging.error(
-            f"❌ Unexpected error sending command to {serial}: {e}",
+            f"âŒ Unexpected error sending command to {serial}: {e}",
             exc_info=True
         )
         
@@ -1625,17 +2901,17 @@ async def configure_service_endpoint(
     device_in_db = await crud.get_device_by_serial(db, serial)
     if not device_in_db:
         raise HTTPException(status_code=404, detail="Device not found in database")
-    # --- BƯỚC 1: LƯU CẤU HÌNH "CHUẨN" VÀO DATABASE ---
+    # --- BÆ¯á»šC 1: LÆ¯U Cáº¤U HÃŒNH "CHUáº¨N" VÃ€O DATABASE ---
     try:
         device_in_db.service_config = payload.model_dump()
         await db.commit()
         await db.refresh(device_in_db)
-        logging.info(f"✓ Saved service_config for {serial} to database.")
+        logging.info(f"âœ“ Saved service_config for {serial} to database.")
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save service config to database.")
     
-    # --- BƯỚC 2: GỬI LỆNH ĐẾN PI ---
+    # --- BÆ¯á»šC 2: Gá»¬I Lá»†NH Äáº¾N PI ---
     pi_command = {
         "command": "DEPLOY_SERVICE_CONFIG",
         "payload": payload.model_dump()
@@ -1659,19 +2935,19 @@ async def reset_pi_device(
     db: AsyncSession = Depends(get_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.DELETE_DEVICE))
 ):
-    # 1. Lấy thiết bị từ DB TRƯỚC để kiểm tra sự tồn tại
+    # 1. Láº¥y thiáº¿t bá»‹ tá»« DB TRÆ¯á»šC Ä‘á»ƒ kiá»ƒm tra sá»± tá»“n táº¡i
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
+        raise HTTPException(status_code=404, detail="Thiáº¿t bá»‹ khÃ´ng tá»“n táº¡i")
 
-    # 3. Gửi lệnh xuống thiết bị (Chỉ gửi khi đã qua cửa kiểm tra an ninh)
+    # 3. Gá»­i lá»‡nh xuá»‘ng thiáº¿t bá»‹ (Chá»‰ gá»­i khi Ä‘Ã£ qua cá»­a kiá»ƒm tra an ninh)
     try:
         await send_command_to_pi(serial, {"command": "DELETE_DEVICE", "payload": {}})
     except Exception as e:
-        # Log lỗi nhưng không chặn dòng chảy để cập nhật DB cho UI phản hồi
+        # Log lá»—i nhÆ°ng khÃ´ng cháº·n dÃ²ng cháº£y Ä‘á»ƒ cáº­p nháº­t DB cho UI pháº£n há»“i
         logging.error(f"Failed to send reset command to {serial}: {e}")
 
-    # 4. Cập nhật DB ngay lập tức
+    # 4. Cáº­p nháº­t DB ngay láº­p tá»©c
     device.status = "rebooting_for_reset"
     device.is_provisioned = False 
     device.detected_chip_type = "UNKNOWN"  
@@ -1681,7 +2957,7 @@ async def reset_pi_device(
     device.bps = 0
     
     await db.commit()
-    # 5. Broadcast để UI cập nhật ngay
+    # 5. Broadcast Ä‘á»ƒ UI cáº­p nháº­t ngay
     await ui_manager.broadcast({
         "type": "status_update",
         "data": schemas.Device.from_orm(device).model_dump()
@@ -1706,23 +2982,23 @@ async def delete_device_from_list(
     device = await crud.get_device_by_serial(db, serial)
     
     if not device:
-        raise HTTPException(status_code=404, detail="Trạm không tồn tại")
+        raise HTTPException(status_code=404, detail="Tráº¡m khÃ´ng tá»“n táº¡i")
     
-    # Kiểm tra quyền (Coordinator chỉ xóa được trạm của mình)
+    # Kiá»ƒm tra quyá»n (Coordinator chá»‰ xÃ³a Ä‘Æ°á»£c tráº¡m cá»§a mÃ¬nh)
     if current_user.role == auth.Role.COORDINATOR:
         if device.user_id != current_user.id:
             raise HTTPException(
                 status_code=403, 
-                detail="Bạn chỉ có thể xóa trạm được gán cho mình"
+                detail="Báº¡n chá»‰ cÃ³ thá»ƒ xÃ³a tráº¡m Ä‘Æ°á»£c gÃ¡n cho mÃ¬nh"
             )
     
-    # Xóa khỏi database
+    # XÃ³a khá»i database
     await db.delete(device)
     await db.commit()
     
     logging.info(f"User '{current_user.username}' deleted device '{serial}' from list (not reset)")
     
-    # Broadcast để các client khác cập nhật UI
+    # Broadcast Ä‘á»ƒ cÃ¡c client khÃ¡c cáº­p nháº­t UI
     await ui_manager.broadcast({
         "type": "device_deleted",
         "serial": serial
@@ -1793,32 +3069,32 @@ async def export_devices_to_csv(
     writer = csv.writer(stream)
     
     headers = [
-        # === THÔNG TIN CHUNG ===
+        # === THÃ”NG TIN CHUNG ===
         "serial", 
         "name", 
         "status", 
         "timestamp", 
         "human_readable_time", 
-        "total_bps",  # Tổng BPS (server1 + server2)
+        "total_bps",  # Tá»•ng BPS (server1 + server2)
         "detected_chip_type", 
         "assigned_coordinator", 
         "ntrip_connected",
         
-        # === CẤU HÌNH BASE STATION ===
-        "base_setup_method",     # FIXED_LLA hoặc SURVEY_IN
+        # === Cáº¤U HÃŒNH BASE STATION ===
+        "base_setup_method",     # FIXED_LLA hoáº·c SURVEY_IN
         "base_lat", 
         "base_lon", 
         "base_alt", 
-        "base_accuracy_m",       # Accuracy (mét)
+        "base_accuracy_m",       # Accuracy (mÃ©t)
         
         # === NTRIP SERVER 1 ===
         "server1_enabled",
-        "server1_ntrip_version",  # v1.0 hoặc v2.0
+        "server1_ntrip_version",  # v1.0 hoáº·c v2.0
         "server1_host",
         "server1_port",
         "server1_mountpoint",
         "server1_username",
-        "server1_bps",            # Traffic hiện tại (B/s)
+        "server1_bps",            # Traffic hiá»‡n táº¡i (B/s)
         "server1_connected",      # True/False
         
         # === NTRIP SERVER 2 ===
@@ -1842,51 +3118,58 @@ async def export_devices_to_csv(
     writer.writerow(headers)
     
     # ===================================================================
-    # LẤY DANH SÁCH THIẾT BỊ VÀ XỬ LÝ
+    # Láº¤Y DANH SÃCH THIáº¾T Bá»Š VÃ€ Xá»¬ LÃ
     # ===================================================================
     devices = await crud.get_all_devices(db)
+
+    # Prefetch coordinator usernames in one query to avoid N+1 lookups.
+    user_ids = sorted({int(d.user_id) for d in devices if getattr(d, "user_id", None) is not None})
+    coordinator_map = {}
+    if user_ids:
+        rs_users = await auth_db.execute(
+            select(models.User.id, models.User.username).where(models.User.id.in_(user_ids))
+        )
+        coordinator_map = {int(row[0]): str(row[1]) for row in rs_users.all() if row and row[0] is not None}
     
     for device in devices:
-        # === THÔNG TIN CHUNG ===
+        # === THÃ”NG TIN CHUNG ===
         human_time = time.strftime(
             '%Y-%m-%d %H:%M:%S', 
             time.localtime(device.timestamp)
         ) if device.timestamp else "N/A"
         
-        # Lấy tên Coordinator
+        # Láº¥y tÃªn Coordinator
         coordinator_name = ""
         if device.user_id:
-            user = await crud.get_user_by_id(auth_db, user_id=device.user_id)
-            if user:
-                coordinator_name = user.username
+            coordinator_name = coordinator_map.get(int(device.user_id), "")
         
-        # === CẤU HÌNH BASE ===
+        # === Cáº¤U HÃŒNH BASE ===
         base_config = device.base_config or {}
         coords = base_config.get('coords', {})
         base_method = base_config.get('base_setup_method', '')
-        base_lat = coords.get('lat', '')
-        base_lon = coords.get('lon', '')
-        base_alt = coords.get('alt', '')
-        base_accuracy = base_config.get('accuracy', '')
+        base_lat = coords.get('lat', base_config.get('lat', ''))
+        base_lon = coords.get('lon', base_config.get('lon', ''))
+        base_alt = coords.get('alt', base_config.get('alt', ''))
+        base_accuracy = base_config.get('accuracy', base_config.get('acc', ''))
         
-        # === CẤU HÌNH SERVICE ===
+        # === Cáº¤U HÃŒNH SERVICE ===
         service_config = device.service_config or {}
         
         # --- SERVER 1 ---
         s1_enabled = service_config.get('server1_enabled', False)
         s1_version = service_config.get('ntrip_version1', 1)
-        s1_host = service_config.get('serverhost1', '')
-        s1_port = service_config.get('port1', '')
-        s1_mountpoint = service_config.get('mountpoint1', '')
-        s1_username = service_config.get('username1', 'source')
+        s1_host = service_config.get('serverhost1', service_config.get('host1', ''))
+        s1_port = service_config.get('port1', service_config.get('serverport1', ''))
+        s1_mountpoint = service_config.get('mountpoint1', service_config.get('mp1', ''))
+        s1_username = service_config.get('username1', service_config.get('user1', 'source'))
         
         # --- SERVER 2 ---
         s2_enabled = service_config.get('server2_enabled', False)
         s2_version = service_config.get('ntrip_version2', 1)
-        s2_host = service_config.get('serverhost2', '')
-        s2_port = service_config.get('port2', '')
-        s2_mountpoint = service_config.get('mountpoint2', '')
-        s2_username = service_config.get('username2', 'source')
+        s2_host = service_config.get('serverhost2', service_config.get('host2', ''))
+        s2_port = service_config.get('port2', service_config.get('serverport2', ''))
+        s2_mountpoint = service_config.get('mountpoint2', service_config.get('mp2', ''))
+        s2_username = service_config.get('username2', service_config.get('user2', 'source'))
         
         # --- RTCM CLIENT ---
         rtcm_enabled = service_config.get('rtcm_enabled', False)
@@ -1895,7 +3178,7 @@ async def export_devices_to_csv(
         rtcm_mountpoint = service_config.get('rtcmmountpoint1', '')
         rtcm_username = service_config.get('rtcmusername1', '')
         
-        # === NTRIP STATUS (TRAFFIC HIỆN TẠI) ===
+        # === NTRIP STATUS (TRAFFIC HIá»†N Táº I) ===
         ntrip_status = device.ntrip_status
         if not isinstance(ntrip_status, dict):
             ntrip_status = {}
@@ -1904,29 +3187,36 @@ async def export_devices_to_csv(
         if not isinstance(s1_status, dict):
             s1_status = {} 
             
-        s1_bps = s1_status.get('bps', 0)
-        s1_connected = s1_status.get('connected', False)
+        s1_bps = int(s1_status.get('bps', 0) or 0)
+        s1_connected = bool(s1_status.get('connected', False))
         s2_status = ntrip_status.get('server2')
         if not isinstance(s2_status, dict):
             s2_status = {} 
 
-        s2_bps = s2_status.get('bps', 0)
-        s2_connected = s2_status.get('connected', False)
+        s2_bps = int(s2_status.get('bps', 0) or 0)
+        s2_connected = bool(s2_status.get('connected', False))
+
+        # Backward-compatible fallback for offline/legacy rows.
+        if s1_bps == 0 and s2_bps == 0 and isinstance(device.ntrip_status, dict):
+            s1_bps = int(device.ntrip_status.get('server1_bps', 0) or 0)
+            s2_bps = int(device.ntrip_status.get('server2_bps', 0) or 0)
+            s1_connected = s1_connected or (s1_bps > 0)
+            s2_connected = s2_connected or (s2_bps > 0)
         
         total_bps = s1_bps + s2_bps
         
         # ===================================================================
-        # TẠO HÀNG DỮ LIỆU
+        # Táº O HÃ€NG Dá»® LIá»†U
         # ===================================================================
         row = [
-            # Thông tin chung
+            # ThÃ´ng tin chung
             device.serial,
             device.name,
             device.status,
             device.timestamp,
             human_time,
-            total_bps,  # Tổng traffic
-            device.detected_chip_type,
+            total_bps,  # Tá»•ng traffic
+            device.detected_chip_type or "UNKNOWN",
             coordinator_name,
             device.ntrip_connected,
             
@@ -1939,7 +3229,7 @@ async def export_devices_to_csv(
             
             # Server 1
             s1_enabled,
-            f"v{s1_version}.0",  # Format: v1.0 hoặc v2.0
+            f"v{s1_version}.0",  # Format: v1.0 hoáº·c v2.0
             s1_host,
             s1_port,
             s1_mountpoint,
@@ -1968,7 +3258,7 @@ async def export_devices_to_csv(
         writer.writerow(row)
     
     # ===================================================================
-    # TRẢ VỀ FILE CSV
+    # TRáº¢ Vá»€ FILE CSV
     # ===================================================================
     response = StreamingResponse(
         iter([stream.getvalue()]), 
@@ -2004,38 +3294,50 @@ async def ui_websocket_endpoint(websocket: WebSocket):
     # logging.info("New UI client connected.") 
     try:
         while True: 
-            # Giữ kết nối sống, chờ tin nhắn (dù UI chỉ nhận chứ không gửi gì)
+            # Giá»¯ káº¿t ná»‘i sá»‘ng, chá» tin nháº¯n (dÃ¹ UI chá»‰ nháº­n chá»© khÃ´ng gá»­i gÃ¬)
             await websocket.receive_text()
     except (WebSocketDisconnect, Exception):
-        # Khi client ngắt kết nối, xóa khỏi manager
+        # Khi client ngáº¯t káº¿t ná»‘i, xÃ³a khá»i manager
         ui_manager.disconnect(websocket)
         # logging.info("UI client disconnected.")
 
 async def flush_device_buffer(db: AsyncSession):
-    global device_update_buffer
-    if not device_update_buffer: 
-        return
+    global device_update_buffer, buffer_metrics
 
-    # Lấy snapshot và xóa buffer ngay lập tức
-    current_batch = device_update_buffer[:]
-    device_update_buffer.clear()
+    async with device_update_buffer_lock:
+        if not device_update_buffer:
+            return
 
-    if not current_batch: 
-        return
+        # Dedup in-place to avoid duplicating the whole buffer in memory.
+        snapshot_size = len(device_update_buffer)
+        unique_updates = {}
+        while device_update_buffer:
+            item = device_update_buffer.popleft()
+            serial = item.get("serial") if isinstance(item, dict) else None
+            if serial:
+                unique_updates[serial] = item
 
-    # Deduplication: Giữ lại bản tin mới nhất cho mỗi serial
-    unique_updates = {}
-    for item in current_batch:
-        if 'serial' in item:
-            unique_updates[item['serial']] = item
-    
     final_batch = list(unique_updates.values())
+    duplicates_count = snapshot_size - len(final_batch)
 
     if final_batch:
         try:
-            # Gọi hàm batch update trong crud.py
+            # Call batch update in crud.py
             await crud.batch_update_devices(db, final_batch)
-            #logger.info(f"⚡ Flushed {len(final_batch)} device updates to DB")
+
+            # Update metrics
+            buffer_metrics["flush_count"] += 1
+            buffer_metrics["total_updates_flushed"] += len(final_batch)
+            buffer_metrics["total_duplicates_deduped"] += duplicates_count
+            buffer_metrics["last_flush_time"] = time.time()
+            buffer_metrics["last_buffer_size"] = snapshot_size
+
+            if buffer_metrics["flush_count"] % 100 == 0:
+                logger.info(
+                    f"Buffer flush stats: flushes={buffer_metrics['flush_count']}, "
+                    f"total_flushed={buffer_metrics['total_updates_flushed']}, "
+                    f"dedup_ratio={buffer_metrics['total_duplicates_deduped']/max(1, buffer_metrics['total_updates_flushed']):.2%}"
+                )
         except Exception as e:
             logger.error(f"Error flushing DB: {e}")
 
@@ -2050,13 +3352,24 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
             payload = data.get("payload")
 
             if message_type == "status_update" and payload:
-                # 1. Bắn ra UI ngay (Real-time)
-                await ui_manager.broadcast({
-                    "type": "status_update",
-                    "data": payload
-                })
-                # 2. Đẩy vào Buffer (DB lưu sau)
-                device_update_buffer.append(payload)
+                compact_payload = _compact_status_payload(payload)
+                if not compact_payload:
+                    continue
+                # Hot path: enqueue for async workers (broadcast + buffered DB write)
+                try:
+                    pi_status_ingest_queue.put_nowait(compact_payload)
+                except asyncio.QueueFull:
+                    # If overloaded, keep newest packet and drop oldest pending packet.
+                    try:
+                        _ = pi_status_ingest_queue.get_nowait()
+                        pi_status_ingest_queue.task_done()
+                        buffer_metrics["pi_ingest_queue_drop_count"] += 1
+                    except Exception:
+                        pass
+                    try:
+                        pi_status_ingest_queue.put_nowait(compact_payload)
+                    except Exception:
+                        pass
             
             elif message_type == "nmea_update" and payload:
                 parsed_data = nmea_parser.parse(payload)
@@ -2071,24 +3384,18 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
         logging.info(f"Pi '{serial}' disconnected.")
         pi_manager.disconnect(serial)
 
-        persisted_device = None
-        try:
-            async with device_session_scope() as db:
-                persisted_device = await crud.get_device_by_serial(db, serial)
-        except Exception as e:
-            logging.warning(f"Could not load persisted device state for offline payload ({serial}): {e}")
-        
-        # --- FIXED: KHÔNG GỌI DB TRỰC TIẾP ---
+        # Lightweight offline payload: no DB lookup on disconnect to avoid pool exhaustion.
+        # Device state (name, config, etc.) will be inferred by UI from last known state or loaded separately.
         offline_payload = {
             "serial": serial,
-            "name": persisted_device.name if persisted_device else None,
+            "name": None,  # Will be filled by UI from previous cached state
             "status": "offline",
             "ntrip_connected": False,
             "bps": 0,
-            "detected_chip_type": persisted_device.detected_chip_type if persisted_device else None,
-            "base_config": persisted_device.base_config if persisted_device else None,
-            "service_config": persisted_device.service_config if persisted_device else None,
-            "is_provisioned": persisted_device.is_provisioned if persisted_device else None,
+            "detected_chip_type": None,
+            "base_config": None,
+            "service_config": None,
+            "is_provisioned": None,
             "ntrip_status": {
                 "server1": {"connected": False, "bps": 0},
                 "server2": {"connected": False, "bps": 0}
@@ -2096,14 +3403,15 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
             "timestamp": int(time.time())
         }
         
-        # 1. Báo UI ngay
-        await ui_manager.broadcast({
+        # 1. BÃ¡o UI ngay (non-blocking, via queue)
+        await enqueue_ui_broadcast({
             "type": "status_update",
             "data": offline_payload
         })
         
-        # 2. Đẩy vào buffer -> Background task sẽ lưu DB sau 1s
-        device_update_buffer.append(offline_payload)
+        # 2. Äáº©y vÃ o buffer -> Background flush task sáº½ lÆ°u DB sau 1s
+        async with device_update_buffer_lock:
+            device_update_buffer.append(offline_payload)
     
     except Exception as e:
         logging.error(f"WS Error '{serial}': {e}")
@@ -2112,7 +3420,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
 # === GLOBAL EXCEPTION HANDLER ===
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Bắt mọi unhandled exceptions"""
+    """Báº¯t má»i unhandled exceptions"""
     health_monitor.record_error('unhandled_exception', str(exc))
     
     logger.error(
@@ -2140,7 +3448,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/api/health/detailed")
 async def detailed_health_check():
     """
-    Enhanced health check với system metrics cho monitoring dashboard
+    Enhanced health check vá»›i system metrics cho monitoring dashboard
     """
     try:
         # System metrics
@@ -2148,7 +3456,7 @@ async def detailed_health_check():
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         
-        # Application metrics từ health_monitor
+        # Application metrics tá»« health_monitor
         health_status = health_monitor.get_health_status()
         
         return {
@@ -2210,9 +3518,55 @@ async def detailed_health_check():
             }
         )
 
+@app.get("/api/metrics/buffer")
+async def buffer_metrics_endpoint():
+    """Buffer and flush performance metrics for realtime monitoring"""
+    global buffer_metrics, device_update_buffer
+    
+    current_buffer_size = len(device_update_buffer)
+    uptime_since_flush = time.time() - buffer_metrics.get("last_flush_time", time.time())
+    
+    return {
+        "status": "ok",
+        "timestamp": time.time(),
+        "buffer": {
+            "current_size": current_buffer_size,
+            "max_size": DEVICE_UPDATE_BUFFER_MAXSIZE,
+            "utilization_percent": (current_buffer_size / max(1, DEVICE_UPDATE_BUFFER_MAXSIZE)) * 100,
+            "queue_full_threshold": BUFFER_SIZE_THRESHOLD_HIGH,
+            "warm_threshold": BUFFER_SIZE_THRESHOLD_NORMAL,
+        },
+        "flush": {
+            "total_flushes": buffer_metrics["flush_count"],
+            "total_updates_flushed": buffer_metrics["total_updates_flushed"],
+            "total_duplicates_deduped": buffer_metrics["total_duplicates_deduped"],
+            "ui_queue_drop_count": buffer_metrics["ui_queue_drop_count"],
+            "pi_ingest_queue_drop_count": buffer_metrics["pi_ingest_queue_drop_count"],
+            "status_payload_invalid_count": buffer_metrics["status_payload_invalid_count"],
+            "status_payload_compacted_count": buffer_metrics["status_payload_compacted_count"],
+            "dedup_ratio_percent": (
+                (buffer_metrics["total_duplicates_deduped"] / 
+                max(1, buffer_metrics["total_updates_flushed"])) * 100
+            ),
+            "seconds_since_last_flush": uptime_since_flush,
+            "last_flush_size": buffer_metrics["last_buffer_size"],
+        },
+        "config": {
+            "flush_interval_min_sec": BUFFER_FLUSH_INTERVAL_MIN,
+            "flush_interval_max_sec": BUFFER_FLUSH_INTERVAL_MAX,
+            "ui_broadcast_queue_size": UI_BROADCAST_QUEUE_MAXSIZE,
+            "pi_ingest_queue_size": PI_STATUS_INGEST_QUEUE_MAXSIZE,
+            "pi_ingest_worker_count": PI_INGEST_WORKER_COUNT,
+            "device_update_buffer_max_size": DEVICE_UPDATE_BUFFER_MAXSIZE,
+            "status_heavy_field_max_bytes": STATUS_HEAVY_FIELD_MAX_BYTES,
+            "status_allow_heavy_fields": STATUS_ALLOW_HEAVY_FIELDS,
+            "status_payload_compact_enabled": STATUS_PAYLOAD_COMPACT_ENABLED,
+        }
+    }
+
 @app.get("/api/health/errors")
 async def recent_errors():
-    """Lấy danh sách lỗi gần đây"""
+    """Láº¥y danh sÃ¡ch lá»—i gáº§n Ä‘Ã¢y"""
     return {
         "errors": health_monitor.get_recent_errors(),
         "total_errors": health_monitor.error_count
@@ -2241,24 +3595,20 @@ async def get_server_logs(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     """
-    Đọc N dòng cuối cùng từ file app.log để hiển thị lên UI.
-    Chỉ Admin mới có quyền xem.
+    Äá»c N dÃ²ng cuá»‘i cÃ¹ng tá»« file app.log Ä‘á»ƒ hiá»ƒn thá»‹ lÃªn UI.
+    Chá»‰ Admin má»›i cÃ³ quyá»n xem.
     """
     log_file = 'app.log'
     if not os.path.exists(log_file):
         return {"logs": ["Log file not found."]}
 
     try:
-        # Đọc file log (cách đơn giản để lấy n dòng cuối)
+        # Tail-style read to avoid loading entire log file into memory.
+        from collections import deque as _deque
         with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-            # Đọc toàn bộ lines (lưu ý: nếu file quá lớn >100MB cần dùng cách khác tối ưu hơn)
-            # Với server nhỏ/vừa, cách này ổn.
-            all_lines = f.readlines()
+            last_lines = list(_deque(f, maxlen=max(1, lines)))
             
-            # Lấy N dòng cuối
-            last_lines = all_lines[-lines:]
-            
-            # Filter theo level nếu cần (INFO, ERROR, WARNING)
+            # Filter theo level náº¿u cáº§n (INFO, ERROR, WARNING)
             if level and level != 'ALL':
                 last_lines = [line for line in last_lines if level in line]
                 
@@ -2271,7 +3621,7 @@ app.mount("/img", StaticFiles(directory="../frontend/img"), name="images")
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="static")
 
 class MonitoringMiddleware(BaseHTTPMiddleware):
-    """Middleware để ghi nhận metrics"""
+    """Middleware Ä‘á»ƒ ghi nháº­n metrics"""
     
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
@@ -2289,10 +3639,10 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             duration_ms = (time.time() - start_time) * 1000
             
-            # Ghi nhận metrics
+            # Ghi nháº­n metrics
             health_monitor.record_request(duration_ms)
             
-            # Cảnh báo nếu response chậm
+            # Cáº£nh bÃ¡o náº¿u response cháº­m
             if duration_ms > 1000:
                 logger.warning(f"Slow request: {request.url.path} took {duration_ms:.2f}ms")
             
@@ -2308,8 +3658,9 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
 app.add_middleware(MonitoringMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://cors.aitogy.com"],  # ⚠️ Trong production, hãy chỉ định origins cụ thể
+    allow_origins=["https://cors.aitogy.com"],  # âš ï¸ Trong production, hÃ£y chá»‰ Ä‘á»‹nh origins cá»¥ thá»ƒ
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+

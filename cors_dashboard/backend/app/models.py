@@ -83,3 +83,21 @@ class ActivityLog(Base):
     user_id = Column(Integer, nullable=True)
     device_serial = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
+
+
+class RTCMStreamSession(Base):
+    __tablename__ = "rtcm_stream_sessions"
+
+    session_id = Column(String, primary_key=True, index=True)
+    serial = Column(String, nullable=False, index=True)
+    mountpoint = Column(String, nullable=False, index=True)
+    client_id = Column(String, nullable=False, index=True)
+    expires_at = Column(BigInteger, nullable=False, index=True)
+    created_at = Column(BigInteger, nullable=False)
+    last_heartbeat_at = Column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        Index('ix_rtcm_serial_expires', 'serial', 'expires_at'),
+        Index('ix_rtcm_serial_mountpoint_expires', 'serial', 'mountpoint', 'expires_at'),
+        Index('ix_rtcm_client_serial', 'client_id', 'serial'),
+    )

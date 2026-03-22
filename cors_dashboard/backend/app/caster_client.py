@@ -1,8 +1,18 @@
 import asyncio
 import logging
+import os
+from pathlib import Path
 from typing import List, Optional
+from dotenv import dotenv_values
 
 logger = logging.getLogger(__name__)
+ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
+CLIENTTABLE_DEBUG = str(
+    os.getenv(
+        "RTCM_KEEPALIVE_DEBUG",
+        str(dotenv_values(ENV_FILE_PATH).get("RTCM_KEEPALIVE_DEBUG", "0")),
+    )
+).strip().lower() in ("1", "true", "yes", "on")
 
 class CasterClient:
     def __init__(self, host: str, port: int, admin_user: str = "id"):
@@ -46,7 +56,7 @@ class CasterClient:
                     pass
 
     async def get_users(self) -> List[dict]:
-        cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/password1/20\r\n"
+        cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/password1/9999\r\n"
         
         try:
             response = await self._send_command(cmd)
@@ -99,7 +109,7 @@ class CasterClient:
         admin_user: Optional[str] = None,
         mountpoint: str = "mp1",
         password: str = "password1",
-        data_count: int = 20,
+        data_count: int = 9999,
     ) -> List[dict]:
         user = admin_user or self.admin_user
         cmd = f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{password}/{data_count}\r\n"
@@ -107,22 +117,27 @@ class CasterClient:
         try:
             response = await self._send_command(cmd)
             clients: List[dict] = []
+            raw_str_rows: List[str] = []
 
             for raw_line in response.splitlines():
                 line = raw_line.strip()
                 if not line.startswith("STR;"):
                     continue
+                if CLIENTTABLE_DEBUG:
+                    raw_str_rows.append(line)
 
                 parts = line.split(";")
                 if len(parts) < 8:
                     continue
 
+                lat = None
+                lon = None
                 try:
                     lat = float(parts[4])
                     lon = float(parts[5])
                 except (TypeError, ValueError):
-                    # Skip entries with invalid coordinates
-                    continue
+                    # Keep client row for keepalive even when coordinates are unavailable.
+                    pass
 
                 clients.append(
                     {
@@ -133,8 +148,18 @@ class CasterClient:
                         "longitude": lon,
                         "status": int(parts[6]) if parts[6].isdigit() else None,
                         "nsv": int(parts[7]) if parts[7].isdigit() else None,
+                        "identifier": parts[8].strip() if len(parts) > 8 else "",
+                        "client_id": parts[9].strip() if len(parts) > 9 else "",
                     }
                 )
+
+            if CLIENTTABLE_DEBUG:
+                parsed_mps = sorted({str(item.get("mountpoint", "")).strip().lower() for item in clients if item.get("mountpoint")})
+                logger.warning(
+                    f"[RTCM DEBUG] clienttable request mp='{mountpoint}' parsed_rows={len(clients)} parsed_mountpoints={parsed_mps[:20]}"
+                )
+                if raw_str_rows:
+                    logger.warning(f"[RTCM DEBUG] clienttable sample raw: {raw_str_rows[:3]}")
 
             return clients
         except Exception as e:

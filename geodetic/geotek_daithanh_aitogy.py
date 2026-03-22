@@ -8,7 +8,30 @@ import threading
 import time
 import base64
 import select
+import os
+import ctypes
+import gc
+from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
+
+# Khóa QuickEdit Mode trên Windows CMD để tránh bị dừng (pause) khi lỡ click chuột vào màn hình
+if os.name == 'nt':
+    try:
+        kernel32 = ctypes.windll.kernel32
+        STD_INPUT_HANDLE = -10
+        hStdIn = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        mode = ctypes.c_uint32()
+        kernel32.GetConsoleMode(hStdIn, ctypes.byref(mode))
+        mode.value &= ~0x0040 # Tắt ENABLE_QUICK_EDIT_MODE
+        kernel32.SetConsoleMode(hStdIn, mode)
+    except Exception:
+        pass
+
+# Tối ưu RAM: Giảm kích thước memory stack cho mỗi thread (mặc định Windows tốn tới 1.5MB-8MB mỗi thread)
+try:
+    threading.stack_size(65536) # Chỉ dùng 64KB mỗi thread
+except ValueError:
+    pass
 
 # ==============================================================================
 # === CẤU HÌNH ===
@@ -19,6 +42,19 @@ STATION_LIST = [
     {"source_mp": "TNN_TPThaiNguyen", "lat": 21.573653528, "lon": 105.840291958, "alt": 11.1829, "target_mp": "TN.TP"},
     {"source_mp": "TNN_DaiTu",        "lat": 21.633503578, "lon": 105.637082715, "alt": 47.8438, "target_mp": "TN.DaiTu"},
     {"source_mp": "TNN_PhoYen",       "lat": 21.416232244, "lon": 105.86204898,  "alt": 6.469,   "target_mp": "TN.PhoYen"},
+]
+
+# Monitor List: Các trạm đã truyền sẵn về aitogy, chỉ cần đọc để hiển thị lên web
+#Đại Thành 
+MONITOR_LIST = [
+    {
+        "mountpoint": "ATGDT", 
+        "lat": 19.848627810, 
+        "lon": 105.482040020, 
+        "alt": 0.0,
+        "rover_user": "daithanh_webcors",
+        "rover_pass": "12345"
+    }
 ]
 
 # MQTT
@@ -48,7 +84,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 # === HELPER ===
 # ==============================================================================
 def generate_gga(lat, lon, alt):
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).strftime("%H%M%S.00")
     
     def to_nmea(val, is_lat):
@@ -299,6 +334,139 @@ class RelayWorker(threading.Thread):
                 self.publish_status()
 
 # ==============================================================================
+# === MONITOR WORKER (Dành cho trạm đã có sẵn trên server) ===
+# ==============================================================================
+class MonitorWorker(threading.Thread):
+    def __init__(self, station_config, mqtt_client):
+        super().__init__()
+        self.cfg = station_config
+        self.mqtt_client = mqtt_client
+        self.daemon = True
+        self.stop_event = threading.Event()
+        
+        self.serial = f"MONITOR_{self.cfg['mountpoint'].replace('.', '_')}"
+        self.topic_status = f"pi/devices/{self.serial}/status"
+        
+        self.is_connected = False
+        self.bytes_received = 0
+        self.last_stat_update = time.time()
+        self.current_bps = 0
+        
+        self.name = f"Monitor-{self.cfg['mountpoint']}"
+    
+    def log(self, level, msg):
+        logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['mountpoint']}] {msg}")
+    
+    def publish_status(self):
+        if not self.mqtt_client or not self.mqtt_client.is_connected():
+            return
+        
+        status = {
+            "serial": self.serial,
+            "name": self.cfg['mountpoint'],
+            "status": "online" if self.is_connected else "offline",
+            "timestamp": int(time.time()),
+            "base_config": {
+                "base_setup_method": "FIXED_LLA",
+                "coords": {
+                    "lat": self.cfg['lat'],
+                    "lon": self.cfg['lon'],
+                    "alt": getattr(self.cfg, 'alt', 0.0)
+                }
+            },
+            "ntrip_connected": self.is_connected,
+            "ntrip_stats": {"server1_bps": self.current_bps},
+            "ntrip_status": {"server1": {"connected": self.is_connected, "bps": self.current_bps}},
+            "service_config": {
+                "server1_enabled": True,
+                "mountpoint1": self.cfg['mountpoint'],
+                "serverhost1": TARGET_HOST
+            },
+            "source_mountpoint": self.cfg['mountpoint'],
+            "rtk_fix_status": "FIXED",
+            "detected_chip_type": "MONITOR_ONLY",
+            "is_provisioned": True
+        }
+        
+        try:
+            self.mqtt_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
+        except:
+            pass
+    
+    def run(self):
+        while not self.stop_event.is_set():
+            sock = None
+            try:
+                self.log("INFO", f"Connecting MONITOR: {TARGET_HOST}:{TARGET_PORT}/{self.cfg['mountpoint']}")
+                sock = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
+                
+                # Cấu trúc y hệt chuẩn thiết bị Rover Ntrip 1.0 cổ điển:
+                # Có Server NTRIP không dùng ICY 200 OK mà xả thẳng Data ngay lập tức nên đọc Header chuẩn sẽ bị lỗi.
+                r_user = self.cfg.get('rover_user', 'aitogy')
+                r_pass = self.cfg.get('rover_pass', TARGET_PASS)
+                auth = base64.b64encode(f"{r_user}:{r_pass}".encode()).decode()
+                request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP NtripClient/1.0\r\nAuthorization: Basic {auth}\r\n\r\n"
+                sock.sendall(request.encode())
+                
+                gga = generate_gga(self.cfg['lat'], self.cfg['lon'], getattr(self.cfg, 'alt', 0.0))
+                sock.sendall(gga.encode())
+                
+                # Bỏ qua hàm read_http_header kiểm tra 200 OK vì NTRIP 1.0 rất nhiều server đẩy thẳng Byte thô RTCM (không chứa \r\n\r\n)
+                # Ngay lập tức mở luồng nhận Data!
+                self.is_connected = True
+                self.publish_status()
+                self.log("SUCCESS", f"✅ MONITOR ACTIVE: {self.cfg['mountpoint']}")
+                
+                self.bytes_received = 0
+                self.last_stat_update = time.time()
+                
+                sock.settimeout(10.0)
+                while not self.stop_event.is_set():
+                    try:
+                        data = sock.recv(4096)
+                        if not data:
+                            self.log("WARNING", "Monitor EOF (Server tu choi hoac Mountpoint khong ton tai)")
+                            break
+                        
+                        self.bytes_received += len(data)
+                        now = time.time()
+                        if now - self.last_stat_update >= 1.0:
+                            self.current_bps = int(self.bytes_received / (now - self.last_stat_update))
+                            if self.current_bps > 0:
+                                self.log("INFO", f"📊 [MONITOR] {self.current_bps} B/s")
+                            self.bytes_received = 0
+                            self.last_stat_update = now
+                            self.publish_status()
+                            
+                    except socket.timeout:
+                        self.log("WARNING", "Monitor socket timeout (no data)")
+                        self.current_bps = 0
+                        self.publish_status()
+                    except Exception as e:
+                        self.log("WARNING", f"Data error: {e}")
+                        break
+                        
+                self.log("INFO", f"Monitor disconnected, reconnecting in {RECONNECT_INTERVAL}s...")
+                self.is_connected = False
+                self.current_bps = 0
+                self.publish_status()
+                time.sleep(RECONNECT_INTERVAL)
+                
+            except Exception as e:
+                self.log("WARNING", f"Monitor connection error: {e}")
+                self.is_connected = False
+                self.current_bps = 0
+                self.publish_status()
+                time.sleep(RECONNECT_INTERVAL)
+            finally:
+                self.is_connected = False
+                self.current_bps = 0
+                if sock:
+                    try: sock.close()
+                    except: pass
+                self.publish_status()
+
+# ==============================================================================
 # === MQTT ===
 # ==============================================================================
 def setup_mqtt():
@@ -336,7 +504,7 @@ if __name__ == "__main__":
     print(f" Source: {SOURCE_HOST}:{SOURCE_PORT}")
     print(f" Target: {TARGET_HOST}:{TARGET_PORT}")
     print(f" Protocol: NTRIP v{NTRIP_VERSION}.0 (SOURCE command)")
-    print(f" Stations: {len(STATION_LIST)}")
+    print(f" Relays: {len(STATION_LIST)} | Monitors: {len(MONITOR_LIST)}")
     print("="*70)
     
     mqtt_client = setup_mqtt()
@@ -347,15 +515,27 @@ if __name__ == "__main__":
             worker = RelayWorker(cfg, mqtt_client)
             worker.start()
             workers.append(worker)
-            logging.info(f"✓ Started: {cfg['source_mp']} → {cfg['target_mp']}")
+            logging.info(f"✓ Started Relay: {cfg['source_mp']} → {cfg['target_mp']}")
             time.sleep(1)
         
+        for cfg in MONITOR_LIST:
+            worker = MonitorWorker(cfg, mqtt_client)
+            worker.start()
+            workers.append(worker)
+            logging.info(f"✓ Started Monitor: {cfg['mountpoint']}")
+            time.sleep(1)
+            
         logging.info("="*70)
-        logging.info("🚀 ALL RELAYS RUNNING")
+        logging.info("🚀 ALL WORKERS RUNNING")
         logging.info("="*70)
         
+        last_gc = time.time()
         while True:
             time.sleep(1)
+            # Tối ưu dọn rác bộ nhớ (Garbage Collector) mỗi 60s
+            if time.time() - last_gc > 60:
+                gc.collect()
+                last_gc = time.time()
     
     except KeyboardInterrupt:
         print("\n🛑 Stopping...")

@@ -34,6 +34,8 @@ class Command(BaseModel):
 class ServiceConfig(BaseModel):
     ncomport: str | None = Field(None, description="Định danh trạm hoặc ID cổng COM")
     reconnectioninterval: int = 10
+    stream_on_demand: bool = False
+    stream_active: bool = True
     
     # Server 1
     server1_enabled: bool = False
@@ -169,6 +171,46 @@ class LoginRequest(BaseModel):
 class CasterConfig(BaseModel):
     host: str
     port: int
+
+
+class RTCMStationActivateRequest(BaseModel):
+    client_instance_id: Optional[str] = None
+    ttl_seconds: int = 90
+    mountpoint: Optional[str] = None
+
+
+class RTCMNtripStartRequest(BaseModel):
+    serial: str
+    mountpoint: str
+    client_instance_id: str
+    ttl_seconds: int = 90
+
+
+class RTCMNtripStopRequest(BaseModel):
+    serial: str
+    client_instance_id: str
+
+
+class RTCMSessionHeartbeatRequest(BaseModel):
+    ttl_seconds: int = 90
+
+
+class RTCMSessionResponse(BaseModel):
+    session_id: str
+    serial: str
+    client_id: str
+    expires_at: int
+    active_sessions_for_station: int
+    stream_status: str
+    connect_after_seconds: int = 3
+    mountpoints: List[str] = Field(default_factory=list)
+    selected_mountpoint: Optional[str] = None
+
+
+class RTCMActiveStationResponse(BaseModel):
+    serial: str
+    active_sessions: int
+    client_ids: List[str] = Field(default_factory=list)
 
 # --- ACTIVITY LOG SCHEMAS ---
 class ActivityLogBase(BaseModel):

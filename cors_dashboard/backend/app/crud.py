@@ -7,6 +7,7 @@ from sqlalchemy import update, func, and_, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from . import models, schemas
+from .database import settings
 import time
 import logging
 import asyncio
@@ -114,7 +115,9 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
 
                 stmt = stmt.on_conflict_do_update(
                     index_elements=['serial'],
-                    set_=update_dict
+                    set_=update_dict,
+                    # Ignore out-of-order stale status packets.
+                    where=(stmt.excluded.timestamp >= models.Device.timestamp)
                 )
 
                 await db.execute(stmt)
@@ -393,8 +396,8 @@ async def get_system_settings(db: AsyncSession) -> dict:
         'firewall_enabled': True, 
         'vpn_detection_enabled': True, 
         'pattern_analysis_enabled': True,
-        'caster_host': 'aitogy.com.vn',
-        'caster_port': 2101
+        'caster_host': settings.CASTER_HOST or 'aitogy.com.vn',
+        'caster_port': settings.CASTER_PORT or 2101
     }
     settings_dict = {s.key: s.value for s in settings_list}
     for key, value in defaults.items():
