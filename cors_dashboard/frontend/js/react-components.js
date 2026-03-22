@@ -1690,59 +1690,96 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             if (!container) return;
 
             const buffer = satelliteBufferRef.current;
+            // Chỉ lấy các vệ tinh có thông tin SNR > 0 và còn sống (opacity > 0.3) theo yêu cầu ẩn SNR 0
             const activeSatellites = Array.from(buffer.values()).filter(s => s.snr > 0 && s.opacity > 0.3);
-            const dataHash = activeSatellites.map(s => `${s.prn}:${s.snr}`).sort().join('|');
             
-            if (lastSatelliteDataRef.current === dataHash) return;
-            lastSatelliteDataRef.current = dataHash;
-
-            const fragment = document.createDocumentFragment();
+            // Tạo hash cấu trúc (Chỉ phụ thuộc số lượng và loại PRN - Không chứa giá trị SNR để tránh giật hình)
+            const structureHash = activeSatellites.map(s => s.prn).sort().join('|');
+            
+            // Cập nhật text Stats
             const groupedSats = activeSatellites.reduce((acc, sat) => {
                 const system = getSatelliteSystem(sat);
                 if (!acc[system]) acc[system] = [];
                 acc[system].push(sat);
                 return acc;
             }, {});
-            
             setSatStats({ total: activeSatellites.length, tracking: activeSatellites.filter(s => s.isTracking).length, bySystem: groupedSats });
 
-            ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
-                if (groupedSats[system]) {
-                    const sats = groupedSats[system].sort((a, b) => b.snr - a.snr);
-                    const groupDiv = document.createElement('div');
-                    groupDiv.className = 'constellation-group';
-                    
-                    const headerDiv = document.createElement('div');
-                    headerDiv.className = 'constellation-header';
-                    headerDiv.innerHTML = `<img src="${flags[system].src}" width="24" height="24" /> ${constellationNames[system]} (${sats.length})`;
-                    
-                    const barsWrapper = document.createElement('div');
-                    barsWrapper.className = 'bars-wrapper';
-                    
-                    sats.forEach(sat => {
+            // 1. Nếu CẤU TRÚC bị đổi (thêm/bớt vệ tinh) -> Xóa toàn bộ và vẽ lại DOM
+            if (lastSatelliteDataRef.current !== structureHash) {
+                lastSatelliteDataRef.current = structureHash;
+
+                const fragment = document.createDocumentFragment();
+
+                ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
+                    if (groupedSats[system]) {
+                        // Bắt chước phần mềm u-center: Phải sắp xếp cố định theo số PRN thay vì SNR để cột không bị đảo lộn vị trí!
+                        const sats = groupedSats[system].sort((a, b) => parseFloat(a.prn) - parseFloat(b.prn));
+                        const groupDiv = document.createElement('div');
+                        groupDiv.className = 'constellation-group';
+                        
+                        const headerDiv = document.createElement('div');
+                        headerDiv.className = 'constellation-header';
+                        headerDiv.innerHTML = `<img src="${flags[system].src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${sats.length}</span>)`;
+                        
+                        const barsWrapper = document.createElement('div');
+                        barsWrapper.className = 'bars-wrapper';
+                        
+                        sats.forEach(sat => {
+                            const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+                            let barColor = colors[system];
+                            if (sat.snr >= 40) barColor = '#00ff88';
+                            else if (sat.snr >= 20) barColor = '#ffc107';
+                            else barColor = '#ff5252';
+
+                            const itemDiv = document.createElement('div');
+                            itemDiv.className = 'sat-bar-item';
+                            // Gắn id bằng PRN để sau này chọc thẳng vào DOM update
+                            itemDiv.id = `sat-bar-${String(sat.prn).replace(/\\s+/g, '-')}`; 
+                            itemDiv.innerHTML = `
+                                <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
+                                <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
+                                <div class="sat-bar-prn">${sat.prn}</div>
+                            `;
+                            barsWrapper.appendChild(itemDiv);
+                        });
+                        
+                        groupDiv.appendChild(headerDiv);
+                        groupDiv.appendChild(barsWrapper);
+                        fragment.appendChild(groupDiv);
+                    }
+                });
+
+                container.innerHTML = '';
+                container.appendChild(fragment);
+            } 
+            // 2. Chế độ NGẦM: Chỉ cập nhật trị SNR + Color (Không tái tạo DOM, giúp thanh Transition mượt mà và hết giật nền)
+            else {
+                activeSatellites.forEach(sat => {
+                    const domId = `sat-bar-${String(sat.prn).replace(/\\s+/g, '-')}`;
+                    const itemDiv = document.getElementById(domId);
+                    if (itemDiv) {
                         const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+                        const system = getSatelliteSystem(sat);
                         let barColor = colors[system];
                         if (sat.snr >= 40) barColor = '#00ff88';
                         else if (sat.snr >= 20) barColor = '#ffc107';
                         else barColor = '#ff5252';
 
-                        const itemDiv = document.createElement('div');
-                        itemDiv.className = 'sat-bar-item';
-                        itemDiv.innerHTML = `
-                            <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
-                            <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
-                            <div class="sat-bar-prn">${sat.prn}</div>
-                        `;
-                        barsWrapper.appendChild(itemDiv);
-                    });
-                    
-                    groupDiv.appendChild(headerDiv);
-                    groupDiv.appendChild(barsWrapper);
-                    fragment.appendChild(groupDiv);
-                }
-            });
-            container.innerHTML = '';
-            container.appendChild(fragment);
+                        const snrText = itemDiv.querySelector('.sat-bar-snr');
+                        const fillDiv = itemDiv.querySelector('.sat-bar-fill');
+                        
+                        if (snrText) {
+                            snrText.textContent = sat.snr;
+                            snrText.style.color = barColor;
+                        }
+                        if (fillDiv) {
+                            fillDiv.style.height = `${barFillHeight}%`;
+                            fillDiv.style.background = barColor;
+                        }
+                    }
+                });
+            }
         };
 
         const animate = () => {
@@ -2557,7 +2594,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const isDeviceLocked = device.is_locked || device.status === 'locked';
 
     return (
-        <div className="card bg-dark-tertiary h-100 d-flex flex-column" style={{ maxHeight: '100vh', position: 'relative' }}>
+        <div className="card bg-dark-tertiary h-100 d-flex flex-column" style={{ maxHeight: '100vh', position: 'relative', overflowX: 'hidden' }}>
             {isAdmin && device && device.system_info && (
                 <button 
                     className="btn-system-toggle"
@@ -2803,11 +2840,16 @@ const getRoverStatusMeta = (status) => {
 };
 
 const createRoverIcon = (color) => {
+    const svg = `
+        <svg fill="${color}" stroke="white" stroke-width="2" viewBox="0 0 24 24" width="24" height="24" style="filter: drop-shadow(0px 2px 3px rgba(0,0,0,0.8));">
+            <path d="M12 2 L22 20 L2 20 Z" />
+        </svg>
+    `;
     return L.divIcon({
         className: 'custom-div-icon',
-        html: `<div style="background-color: ${color}; width: 10px; height: 10px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);"></div>`,
-        iconSize: [10, 10],
-        iconAnchor: [5, 5]
+        html: svg,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
     });
 };
 
@@ -2898,6 +2940,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     const [roverSearch, setRoverSearch] = useState('');
     const [mapViewportVersion, setMapViewportVersion] = useState(0);
     const [deadbandMeters, setDeadbandMeters] = useState(1.5);
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
     const roverProcessFrameRef = useRef(null);
     const roverChunkSizeRef = useRef(24);
 
@@ -3269,129 +3312,142 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
     return (
         <div style={{ position: 'relative' }}>
+            <style>{`
+                @keyframes mapFilterFadeIn {
+                    from { opacity: 0; transform: translateY(-5px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            `}</style>
             <div
-                className="d-flex align-items-center gap-2"
                 style={{
                     position: 'absolute',
                     top: '10px',
                     left: '10px',
                     zIndex: 1000,
-                    background: 'rgba(8, 12, 20, 0.85)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    borderRadius: '10px',
-                    padding: '8px 10px',
-                    flexDirection: switchOrientation === 'vertical' ? 'column' : 'row'
                 }}
             >
+                {/* Nút bật/tắt Popup Filter */}
                 <button
-                    className="btn btn-sm btn-outline-light"
-                    onClick={() => setSwitchOrientation((prev) => prev === 'horizontal' ? 'vertical' : 'horizontal')}
-                    title="Đổi nút gạt ngang/dọc"
+                    className="btn text-light fw-bold"
+                    onClick={() => setIsFilterOpen(!isFilterOpen)}
+                    style={{
+                        background: 'rgba(8, 12, 20, 0.85)',
+                        border: '1px solid rgba(255, 255, 255, 0.3)',
+                        borderRadius: '8px',
+                        padding: '8px 16px',
+                        boxShadow: '0 4px 6px rgba(0,0,0,0.6)'
+                    }}
                 >
-                    <i className={`bi ${switchOrientation === 'horizontal' ? 'bi-distribute-horizontal' : 'bi-distribute-vertical'}`}></i>
+                    <i className={`bi ${isFilterOpen ? 'bi-x-circle-fill text-warning' : 'bi-funnel-fill'} me-2`}></i>
+                    Bộ lọc Bản đồ
                 </button>
 
-                <div className="form-check form-switch m-0">
-                    <input
-                        className="form-check-input"
-                        type="checkbox"
-                        role="switch"
-                        id="toggle-cors-layer"
-                        checked={showCors}
-                        onChange={(e) => setShowCors(e.target.checked)}
-                    />
-                    <label className="form-check-label text-light small" htmlFor="toggle-cors-layer">
-                        Trạm CORS
-                    </label>
-                </div>
+                {/* Khung chứa các Filter, chỉ hiện khi isFilterOpen = true */}
+                {isFilterOpen && (
+                    <div
+                        className="d-flex align-items-center gap-2 mt-2"
+                        style={{
+                            background: 'rgba(8, 12, 20, 0.95)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '10px',
+                            padding: '12px',
+                            flexDirection: switchOrientation === 'vertical' ? 'column' : 'row',
+                            boxShadow: '0 8px 16px rgba(0,0,0,0.7)',
+                            animation: 'mapFilterFadeIn 0.2s ease-out forwards'
+                        }}
+                    >
+                        <button
+                            className="btn btn-sm btn-outline-light"
+                            onClick={() => setSwitchOrientation((prev) => prev === 'horizontal' ? 'vertical' : 'horizontal')}
+                            title="Đổi nút gạt ngang/dọc"
+                        >
+                            <i className={`bi ${switchOrientation === 'horizontal' ? 'bi-distribute-horizontal' : 'bi-distribute-vertical'}`}></i>
+                        </button>
 
-                {canViewRovers && (
-                    <>
-                        <div className="form-check form-switch m-0">
+                        <div className="form-check form-switch m-0 d-flex align-items-center" style={{ gap: '0.5rem' }}>
                             <input
-                                className="form-check-input"
+                                className="form-check-input m-0 mt-1"
                                 type="checkbox"
                                 role="switch"
-                                id="toggle-rover-layer"
-                                checked={showRovers}
-                                onChange={(e) => setShowRovers(e.target.checked)}
+                                id="toggle-cors-layer"
+                                checked={showCors}
+                                onChange={(e) => setShowCors(e.target.checked)}
                             />
-                            <label className="form-check-label text-light small" htmlFor="toggle-rover-layer">
-                                Rover
+                            <label className="form-check-label text-light small fw-bold m-0" htmlFor="toggle-cors-layer">
+                                Trạm CORS
                             </label>
                         </div>
 
-                        <div className="dropdown" data-bs-auto-close="outside">
-                            <button
-                                className="btn btn-sm btn-outline-light dropdown-toggle"
-                                type="button"
-                                data-bs-toggle="dropdown"
-                                aria-expanded="false"
-                                title="Chọn nhiều mountpoint bằng cách bấm trực tiếp"
-                            >
-                                {selectedMountpoints.length > 0
-                                    ? `MP (${selectedMountpoints.length})`
-                                    : 'MP: ALL'}
-                            </button>
-                            <ul className="dropdown-menu dropdown-menu-dark p-2" style={{ minWidth: '240px', maxHeight: '260px', overflowY: 'auto' }}>
-                                <li className="mb-2">
+                        {canViewRovers && (
+                            <>
+                                <div className="form-check form-switch m-0 d-flex align-items-center" style={{ gap: '0.5rem' }}>
+                                    <input
+                                        className="form-check-input m-0 mt-1"
+                                        type="checkbox"
+                                        role="switch"
+                                        id="toggle-rover-layer"
+                                        checked={showRovers}
+                                        onChange={(e) => setShowRovers(e.target.checked)}
+                                    />
+                                    <label className="form-check-label text-light small fw-bold m-0" htmlFor="toggle-rover-layer">
+                                        Rover
+                                    </label>
+                                </div>
+
+                                <div className="dropdown" data-bs-auto-close="outside">
                                     <button
+                                        className="btn btn-sm btn-outline-light dropdown-toggle"
                                         type="button"
-                                        className="btn btn-sm btn-outline-info w-100"
-                                        onClick={() => setSelectedMountpoints([])}
+                                        data-bs-toggle="dropdown"
+                                        aria-expanded="false"
+                                        title="Chọn nhiều mountpoint bằng cách bấm trực tiếp"
                                     >
-                                        Chọn tất cả Mountpoint
+                                        {selectedMountpoints.length > 0
+                                            ? `MP (${selectedMountpoints.length})`
+                                            : 'MP: ALL'}
                                     </button>
-                                </li>
-                                {mountpointOptions.length === 0 && (
-                                    <li className="dropdown-item-text text-muted small">Không có mountpoint</li>
-                                )}
-                                {mountpointOptions.map((mp) => {
-                                    const checked = selectedMountpoints.includes(mp);
-                                    return (
-                                        <li key={mp} className="mb-1">
+                                    <ul className="dropdown-menu dropdown-menu-dark p-2" style={{ minWidth: '240px', maxHeight: '260px', overflowY: 'auto' }}>
+                                        <li className="mb-2">
                                             <button
                                                 type="button"
-                                                className={`btn btn-sm w-100 text-start ${checked ? 'btn-primary' : 'btn-outline-secondary'}`}
-                                                onClick={() => toggleMountpoint(mp)}
+                                                className="btn btn-sm btn-outline-info w-100"
+                                                onClick={() => setSelectedMountpoints([])}
                                             >
-                                                {checked ? '✓ ' : ''}{mp}
+                                                Chọn tất cả Mountpoint
                                             </button>
                                         </li>
-                                    );
-                                })}
-                            </ul>
-                        </div>
+                                        {mountpointOptions.length === 0 && (
+                                            <li className="dropdown-item-text text-muted small">Không có mountpoint</li>
+                                        )}
+                                        {mountpointOptions.map((mp) => {
+                                            const checked = selectedMountpoints.includes(mp);
+                                            return (
+                                                <li key={mp} className="mb-1">
+                                                    <button
+                                                        type="button"
+                                                        className={`btn btn-sm w-100 text-start ${checked ? 'btn-primary' : 'btn-outline-secondary'}`}
+                                                        onClick={() => toggleMountpoint(mp)}
+                                                    >
+                                                        {checked ? '✓ ' : ''}{mp}
+                                                    </button>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                </div>
 
-                        <input
-                            type="text"
-                            className="form-control form-control-sm bg-dark text-light border-secondary"
-                            style={{ minWidth: '180px' }}
-                            placeholder="Lọc rover (user/RX)"
-                            value={roverSearch}
-                            onChange={(e) => setRoverSearch(e.target.value)}
-                        />
+                                <input
+                                    type="text"
+                                    className="form-control form-control-sm bg-dark text-light border-secondary"
+                                    style={{ minWidth: '180px' }}
+                                    placeholder="Lọc rover (user/RX)"
+                                    value={roverSearch}
+                                    onChange={(e) => setRoverSearch(e.target.value)}
+                                />
 
-                        <div className="d-flex align-items-center gap-2">
-                            <label className="text-light small mb-0" htmlFor="deadband-meters-input">Deadband (m)</label>
-                            <input
-                                id="deadband-meters-input"
-                                type="number"
-                                min="0"
-                                max="30"
-                                step="0.1"
-                                className="form-control form-control-sm bg-dark text-light border-secondary"
-                                style={{ width: '90px' }}
-                                value={deadbandMeters}
-                                onChange={(e) => {
-                                    const val = Number(e.target.value);
-                                    if (!Number.isFinite(val)) return;
-                                    setDeadbandMeters(Math.max(0, Math.min(30, val)));
-                                }}
-                                title="Ngưỡng di chuyển tối thiểu để cập nhật marker"
-                            />
-                        </div>
-                    </>
+                            </>
+                        )}
+                    </div>
                 )}
             </div>
 

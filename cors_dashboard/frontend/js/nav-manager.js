@@ -93,21 +93,33 @@ const NavigationManager = {
             active: this.currentPage === 'dashboard'
         });
 
-        // === 2. BẢN ĐỒ TRẠM (CHỈ Ở TRANG DASHBOARD) ===
-        if (this.currentPage === 'dashboard') {
-            const li = document.createElement('li');
-            li.className = 'nav-item';
-            const a = document.createElement('a');
-            a.className = 'nav-link';
-            a.style.cursor = 'pointer';
-            a.id = 'nav-map';
-            a.onclick = () => {
-                if (window.switchView) window.switchView('map');
-            };
-            a.innerHTML = '<i class="bi bi-map-fill me-1"></i>Bản đồ trạm';
-            li.appendChild(a);
-            navContainer.appendChild(li);
+        // === 2. BẢN ĐỒ TRẠM (LUÔN HIỂN THỊ) ===
+        const liMap = document.createElement('li');
+        liMap.className = 'nav-item';
+        const aMap = document.createElement('a');
+        aMap.className = 'nav-link';
+        aMap.style.cursor = 'pointer';
+        aMap.id = 'nav-map';
+        aMap.onclick = (e) => {
+            e.preventDefault();
+            if (this.currentPage === 'dashboard' && window.switchView) {
+                window.switchView('map');
+                // Cập nhật lại URL để có thể share link hoặc tải lại trang vẫn đúng
+                window.history.pushState({}, '', '/?view=map');
+            } else {
+                // Đang ở trang khác thì nhét URL thẳng về Dashboard với tham số
+                window.location.href = '/?view=map';
+            }
+        };
+        aMap.innerHTML = '<i class="bi bi-map-fill me-1"></i>Bản đồ trạm';
+        
+        // Active nếu đang ở dashboard và có param 
+        if (this.currentPage === 'dashboard' && window.location.search.includes('view=map')) {
+            aMap.classList.add('active');
         }
+        
+        liMap.appendChild(aMap);
+        navContainer.appendChild(liMap);
 
         // === 3. QUẢN LÝ USER (CHỈ ADMIN) ===
         if (this.currentUser?.role === 'admin') {

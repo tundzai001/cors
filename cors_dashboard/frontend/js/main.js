@@ -912,6 +912,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     connectWebSocket();
     await loadInitialDevices();
+    
+    // Nếu có tham số view trong URL, chuyển view tự động (giữ nút Bản đồ luôn active)
+    let initialView = 'dashboard';
+    if (window.location.search.includes('view=map')) {
+        initialView = 'map';
+        switchView('map');
+    }
 
-    console.log('✓ App initialized with Performance Optimization');
+    console.log(`✓ App initialized with Performance Optimization (view: ${initialView})`);
 });
