@@ -30,6 +30,7 @@ device_write_cache = {}      # Lưu thời gian lần cuối ghi DB (Save)
 device_status_cache = {}     # Lưu trạng thái cũ (online/offline)
 device_sync_cache = {}       # Lưu trạng thái sync (True/False)
 device_last_sync_check = {}  # Lưu thời gian lần cuối check DB
+device_name_cache = {}       # Lưu tên trạm để ghép vào bản tin offline (LWT không kèm tên)
 
 # 🔥 NEW: Global sync check tracking
 LAST_GLOBAL_SYNC_CHECK = 0
@@ -243,7 +244,18 @@ async def handle_message_async(topic: str, payload: bytes):
             data['is_synced'] = is_synced
             data['sync_errors'] = sync_errors
 
-            # --- 2.4. BROADCAST REAL-TIME TO UI ---
+            # --- 2.4. BẢO VỆ TÊN TRẠM ---
+            # Bản tin LWT (offline) không kèm tên → lấy từ DB trước khi broadcast
+            if not data.get('name'):
+                try:
+                    async with device_session_scope() as _db:
+                        _dev = await crud.get_device_by_serial(_db, serial)
+                        if _dev and _dev.name:
+                            data['name'] = _dev.name
+                except Exception:
+                    pass  # Không tên vẫn broadcast được, không chặn luồng
+
+            # --- 2.5. BROADCAST REAL-TIME TO UI ---
             await manager.broadcast({
                 "type": "status_update", 
                 "data": data

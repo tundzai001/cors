@@ -174,8 +174,8 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
             {/* Header: Name + Chip Badge */}
             <div className="d-flex justify-content-between align-items-start mb-1 ps-2">
                 <div className="flex-grow-1 pe-2">
-                    <div className="device-name" title={device.name}>
-                        {device.name}
+                    <div className="device-name" title={device.name || device.serial}>
+                        {device.name || device.serial}
                     </div>
                     {isAdmin && (
                         <div className="device-meta">
@@ -1918,13 +1918,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             </div>
             
             {/* SKYPLOT & SIGNALS */}
-            <div className="sky-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', height: '400px', minHeight: '400px' }}>
+            <div className="sky-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>
                         <i className="bi bi-radar"></i><span>Sky View</span>
                         <span className="badge bg-primary-subtle text-primary ms-auto">{Object.keys(safeNmeaData.satellites || {}).length} Sats</span>
                     </div>
-                    <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%', minHeight: '300px' }}>
+                    <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
                         <canvas ref={satCanvasRef} className="skyplot-sat" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2 }}></canvas>
                     </div>
@@ -2949,19 +2949,44 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         return role === 'admin' || role === 'viewer' || role === 'coordinator' || role === 'operator';
     }, [currentUser?.role]);
 
+    // Các trạm mà coordinator có thể xem sẽ bị giới hạn bởi mountpoint
+    const allowedMountpoints = React.useMemo(() => {
+        const role = String(currentUser?.role || '').toLowerCase();
+        if (role === 'admin') return null; // Admin sees all
+        
+        const mps = new Set();
+        (devices || []).forEach(d => {
+            const mp1 = d.service_config?.mountpoint1;
+            const mp2 = d.service_config?.mountpoint2;
+            if (mp1) mps.add(mp1);
+            if (mp2) mps.add(mp2);
+        });
+        return mps;
+    }, [devices, currentUser?.role]);
+
     const mountpointOptions = React.useMemo(() => {
         const mps = new Set();
         roverClients.forEach((rover) => {
             const mp = (rover.mountpoint || '').trim();
-            if (mp) mps.add(mp);
+            if (mp) {
+                if (allowedMountpoints === null || allowedMountpoints.has(mp)) {
+                    mps.add(mp);
+                }
+            }
         });
         return Array.from(mps).sort((a, b) => a.localeCompare(b));
-    }, [roverClients]);
+    }, [roverClients, allowedMountpoints]);
 
     const filteredRoverClients = React.useMemo(() => {
         const search = roverSearch.trim().toLowerCase();
         return roverClients.filter((rover) => {
             const mp = (rover.mountpoint || '').trim();
+            
+            // Block if not authorized to view this mountpoint
+            if (allowedMountpoints !== null && !allowedMountpoints.has(mp)) {
+                return false;
+            }
+
             if (selectedMountpoints.length > 0 && !selectedMountpoints.includes(mp)) {
                 return false;
             }
@@ -2972,7 +2997,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             const receiverId = String(rover.receiver_id || '').toLowerCase();
             return username.includes(search) || receiverId.includes(search);
         });
-    }, [roverClients, selectedMountpoints, roverSearch]);
+    }, [roverClients, selectedMountpoints, roverSearch, allowedMountpoints]);
 
     useEffect(() => {
         let isMounted = true;

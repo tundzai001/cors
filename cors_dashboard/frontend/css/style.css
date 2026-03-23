@@ -513,9 +513,8 @@ html {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
-    min-height: 400px;
-    height: auto !important; 
-    overflow: visible !important;
+    height: 550px;
+    min-height: 550px;
 }
 
 .sky-panel {
@@ -1054,6 +1053,8 @@ grid-template-columns: repeat(2, 1fr);
 }
 .sky-grid {
     grid-template-columns: 1fr;
+    height: auto;
+    aspect-ratio: auto;
 }
 
 .skyplot-wrapper {
