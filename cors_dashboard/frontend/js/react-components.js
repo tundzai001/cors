@@ -2943,6 +2943,11 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const roverProcessFrameRef = useRef(null);
     const roverChunkSizeRef = useRef(24);
+    
+    // Nearest Station Feature States
+    const [findingNearest, setFindingNearest] = useState(false);
+    const userMarkerRef = useRef(null);
+    const polylineRef = useRef(null);
 
     const canViewRovers = React.useMemo(() => {
         const role = String(currentUser?.role || '').toLowerCase();
@@ -3092,6 +3097,9 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 roverClusterRef.current.clearLayers();
                 roverClusterRef.current = null;
             }
+
+            if (userMarkerRef.current) userMarkerRef.current = null;
+            if (polylineRef.current) polylineRef.current = null;
 
             if (map.__viewportHandler) {
                 map.off('moveend zoomend', map.__viewportHandler);
@@ -3335,6 +3343,99 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         });
     };
 
+    const handleFindNearest = () => {
+        if (!navigator.geolocation) {
+            if (window.showError) window.showError("Trình duyệt không hỗ trợ Geolocation.");
+            return;
+        }
+
+        setFindingNearest(true);
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const lat = pos.coords.latitude;
+                const lon = pos.coords.longitude;
+                
+                let nearestDist = Infinity;
+                let nearestDevices = [];
+
+                // Chỉ tính các trạm "online" và có tọa độ
+                const validDevices = devices.filter(d => 
+                    d.status === 'online' &&
+                    d.base_config && d.base_config.coords && 
+                    d.base_config.coords.lat && d.base_config.coords.lon
+                );
+
+                if (validDevices.length === 0) {
+                    setFindingNearest(false);
+                    if (window.showError) window.showError("Không có trạm CORS nào đang ONLINE và có tọa độ hợp lệ.");
+                    return;
+                }
+
+                validDevices.forEach(d => {
+                    const coords = d.base_config.coords;
+                    const dist = window.getDistanceMeters 
+                        ? window.getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon)) 
+                        : getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon));
+                    
+                    // Nếu gần hơn thì reset mảng, nếu bằng (trùng tọa độ hoàn toàn) thì thêm vào list
+                    if (dist < nearestDist) {
+                        nearestDist = dist;
+                        nearestDevices = [d];
+                    } else if (Math.abs(dist - nearestDist) < 0.1) { 
+                        // Sai số 0.1 mét coi như trùng nhau hoàn toàn (copy tọa độ)
+                        nearestDevices.push(d);
+                    }
+                });
+
+                if (nearestDevices.length > 0) {
+                    const names = nearestDevices.map(d => d.name || d.serial).join(" & ");
+                    if (window.showSuccess) window.showSuccess(`Trạm gần nhất: ${names} (${(nearestDist/1000).toFixed(2)} km)`);
+                    
+                    const map = mapInstanceRef.current;
+                    if (map) {
+                        // Tọa độ vẽ đường lấy từ trạm đầu tiên (do tất cả đều trùng tọa độ)
+                        const nearestLat = parseFloat(nearestDevices[0].base_config.coords.lat);
+                        const nearestLon = parseFloat(nearestDevices[0].base_config.coords.lon);
+                        
+                        if (userMarkerRef.current) map.removeLayer(userMarkerRef.current);
+                        if (polylineRef.current) map.removeLayer(polylineRef.current);
+
+                        const userIcon = L.divIcon({
+                            className: 'custom-div-icon',
+                            html: `<div style="background-color: #007bff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`,
+                            iconSize: [16, 16],
+                            iconAnchor: [8, 8]
+                        });
+                        userMarkerRef.current = L.marker([lat, lon], { icon: userIcon }).addTo(map)
+                            .bindPopup("<b>Vị trí của bạn</b>").openPopup();
+
+                        // Tạo polyline và zoom để vừa khít polyline
+                        polylineRef.current = L.polyline([
+                            [lat, lon],
+                            [nearestLat, nearestLon]
+                        ], { 
+                            color: '#00ffff', // Cyan sáng bắt mắt
+                            weight: 6,        // Khá dày 
+                            opacity: 1.0,     // Rõ 100%
+                            dashArray: '12, 12', // Nét đứt to hơn
+                            lineCap: 'round',
+                            lineJoin: 'round'
+                        }).addTo(map);
+
+                        const bounds = polylineRef.current.getBounds();
+                        map.flyToBounds(bounds, { padding: [60, 60], maxZoom: 16, duration: 1.5 });
+                    }
+                }
+                setFindingNearest(false);
+            },
+            (err) => {
+                setFindingNearest(false);
+                if (window.showError) window.showError("Không thể lấy vị trí hiện tại.");
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+    };
+
     return (
         <div style={{ position: 'relative' }}>
             <style>{`
@@ -3351,21 +3452,46 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                     zIndex: 1000,
                 }}
             >
-                {/* Nút bật/tắt Popup Filter */}
-                <button
-                    className="btn text-light fw-bold"
-                    onClick={() => setIsFilterOpen(!isFilterOpen)}
-                    style={{
-                        background: 'rgba(8, 12, 20, 0.85)',
-                        border: '1px solid rgba(255, 255, 255, 0.3)',
-                        borderRadius: '8px',
-                        padding: '8px 16px',
-                        boxShadow: '0 4px 6px rgba(0,0,0,0.6)'
-                    }}
-                >
-                    <i className={`bi ${isFilterOpen ? 'bi-x-circle-fill text-warning' : 'bi-funnel-fill'} me-2`}></i>
-                    Bộ lọc Bản đồ
-                </button>
+                <div className="d-flex gap-2">
+                    {/* Nút bật/tắt Popup Filter */}
+                    <button
+                        className="btn text-light fw-bold"
+                        onClick={() => setIsFilterOpen(!isFilterOpen)}
+                        style={{
+                            background: 'rgba(8, 12, 20, 0.85)',
+                            border: '1px solid rgba(255, 255, 255, 0.3)',
+                            borderRadius: '8px',
+                            padding: '8px 16px',
+                            boxShadow: '0 4px 6px rgba(0,0,0,0.6)'
+                        }}
+                    >
+                        <i className={`bi ${isFilterOpen ? 'bi-x-circle-fill text-warning' : 'bi-funnel-fill'} me-2`}></i>
+                        Bộ lọc
+                    </button>
+                    
+                    {/* Nút Tìm trạm gần nhất */}
+                    {currentUser && (
+                        <button
+                            className="btn text-light fw-bold btn-primary border-0"
+                            onClick={handleFindNearest}
+                            disabled={findingNearest}
+                            style={{
+                                background: findingNearest ? '#6c757d' : '#0d6efd',
+                                borderRadius: '8px',
+                                padding: '8px 16px',
+                                boxShadow: '0 4px 6px rgba(0,0,0,0.6)',
+                                transition: 'background-color 0.2s'
+                            }}
+                            title="Lấy vị trí của bạn và tìm trạm gần nhất"
+                        >
+                            {findingNearest ? (
+                                <><span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Đang tìm...</>
+                            ) : (
+                                <><i className="bi bi-geo-alt-fill me-2"></i>Tìm trạm gần nhất</>
+                            )}
+                        </button>
+                    )}
+                </div>
 
                 {/* Khung chứa các Filter, chỉ hiện khi isFilterOpen = true */}
                 {isFilterOpen && (
