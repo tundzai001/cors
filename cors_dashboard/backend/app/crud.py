@@ -162,6 +162,16 @@ async def get_all_devices(db: AsyncSession):
     result = await db.execute(select(models.Device).order_by(models.Device.name))
     return result.scalars().all()
 
+async def delete_device(db: AsyncSession, serial: str) -> bool:
+    """Xóa thiết bị khỏi DB theo serial. Trả về True nếu tìm thấy và xóa thành công."""
+    device = await get_device_by_serial(db, serial)
+    if not device:
+        return False
+    await db.delete(device)
+    await db.commit()
+    logger.info(f"🗑️ Device deleted: {serial}")
+    return True
+
 # ==============================================================================
 # VALIDATION FUNCTION: Chặn Ghost Devices
 # ==============================================================================
@@ -258,7 +268,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
             ntrip_status["server2"] = {"connected": s2_bps > 0, "bps": s2_bps}
         return ntrip_status
     
-    # ✅ BƯỚC 2: CHỈ TẠO MỚI KHI ĐÃ PROVISION
+    # ✅ BƯỚC 2: CHỈ TẠO MỚI KHI ĐàPROVISION
     if not existing_device:
         # ⚠️ QUAN TRỌNG: Chỉ tạo device mới nếu:
         # 1. Có is_provisioned=True (Agent đã được kích hoạt)

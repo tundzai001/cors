@@ -981,7 +981,7 @@ async def log_system_event(
     serial: str = None,
     ip: str = None
 ):
-    """HÃ m helper Ä‘á»ƒ ghi log vÃ o DB tá»« báº¥t ká»³ Ä‘Ã¢u"""
+    """HÃ m helper để ghi log vÃ o DB từ bất kỳ đâu"""
     icon_map = {
         "success": "âœ…",
         "error": "âŒ",
@@ -1014,31 +1014,31 @@ async def log_system_event(
 
 class IgnoreSocketErrorsFilter(logging.Filter):
     def filter(self, record):
-        # Cháº·n cÃ¡c log warning cá»§a asyncio liÃªn quan Ä‘áº¿n socket.send
+        # Chặn các log warning của asyncio liên quan đến socket.send
         if "socket.send() raised exception" in record.getMessage():
             return False
         return True
 
-# Ãp dá»¥ng filter cho logger cá»§a asyncio
+# Áp dụng filter cho logger của asyncio
 logging.getLogger("asyncio").addFilter(IgnoreSocketErrorsFilter())
 
 class RequestIDFilter(logging.Filter):
-    """Filter thÃªm request_id vÃ o má»i log"""
+    """Filter thêm request_id vÃ o mọi log"""
     def filter(self, record):
         record.request_id = getattr(record, 'request_id', 'N/A')
         return True
 
-# ThÃªm filter vÃ o root logger
+# Thêm filter vÃ o root logger
 for handler in logging.root.handlers:
     handler.addFilter(RequestIDFilter())
 
-# --- Cáº¢I TIáº¾N 2: REQUEST ID MIDDLEWARE ---
+# --- CẢI TIẾN 2: REQUEST ID MIDDLEWARE ---
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
         
-        # Ghi log mÃ  khÃ´ng cáº§n extra, vÃ¬ filter sáº½ tá»± thÃªm vÃ o
+        # Ghi log mÃ  không cần extra, vì filter sẽ tự thêm vÃ o
         logger.info(f"--> {request.method} {request.url.path}")
         
         start_time = time.time()
@@ -1052,21 +1052,21 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 # === HEARTBEAT CHECKER (FIXED) ===
 async def check_device_heartbeats_with_retry():
-    """Heartbeat check vá»›i retry vÃ  backoff"""
+    """Heartbeat check với retry vÃ  backoff"""
     HEARTBEAT_TIMEOUT = 300 
     max_retries = 3
     
     while True:
-        await asyncio.sleep(60) # Check má»—i 60s lÃ  Ä‘á»§, khÃ´ng cáº§n 30s
+        await asyncio.sleep(60) # Check mỗi 60s lÃ  đủ, không cần 30s
         
         for attempt in range(max_retries):
             try:
                 async with device_session_scope() as db:
-                    # Sá»­ dá»¥ng circuit breaker
+                    # Sử dụng circuit breaker
                     await db_circuit_breaker.call(
                         _do_heartbeat_check, db, HEARTBEAT_TIMEOUT
                     )
-                break  # Success, thoÃ¡t retry loop
+                break  # Success, thoát retry loop
             
             except Exception as e:
                 logger.error(f"Heartbeat check failed (attempt {attempt+1}/{max_retries}): {e}")
@@ -1076,7 +1076,7 @@ async def check_device_heartbeats_with_retry():
                     health_monitor.record_error('heartbeat_check', str(e))
 
 async def _do_heartbeat_check(db, timeout_threshold):
-    """Logic thá»±c táº¿ cá»§a heartbeat check"""
+    """Logic thực tế của heartbeat check"""
     from sqlalchemy import select
     
     now = int(time.time())
@@ -1105,7 +1105,7 @@ async def _do_heartbeat_check(db, timeout_threshold):
         logger.info(f"Set {len(timed_out_devices)} devices to offline")
 
 async def check_device_heartbeats():
-    """Heartbeat check vá»›i bulk update"""
+    """Heartbeat check với bulk update"""
     HEARTBEAT_TIMEOUT = 180
     
     while True:
@@ -1113,11 +1113,11 @@ async def check_device_heartbeats():
         
         try:
             async with device_session_scope() as db:
-                # Sá»­ dá»¥ng single query thay vÃ¬ loop
+                # Sử dụng single query thay vì loop
                 now = int(time.time())
                 timeout_threshold = now - HEARTBEAT_TIMEOUT
                 
-                # TÃ¬m devices cáº§n set offline
+                # Tìm devices cần set offline
                 result = await db.execute(
                     select(models.Device)
                     .filter(
@@ -1152,9 +1152,9 @@ async def check_device_heartbeats():
             logging.error(f"Error in heartbeat check: {e}", exc_info=True)
 
 async def cleanup_rate_limiter():
-    """Dá»n dáº¹p rate limiter Ä‘á»‹nh ká»³"""
+    """Dọn dẹp rate limiter định kỳ"""
     while True:
-        await asyncio.sleep(300)  # Má»—i 5 phÃºt
+        await asyncio.sleep(300)  # Mỗi 5 phút
         global_rate_limiter.cleanup()
         logger.debug("Rate limiter cleanup completed")
 
@@ -1198,16 +1198,16 @@ async def periodic_buffer_flush():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan context vá»›i proper error handling, khá»Ÿi Ä‘á»™ng MQTT vÃ  Rate Limiter.
+    Lifespan context với proper error handling, khởi động MQTT vÃ  Rate Limiter.
     """
     logger.info("ðŸš€ Application starting...")
     
-    # List Ä‘á»ƒ track táº¥t cáº£ background tasks
+    # List để track tất cả background tasks
     tasks = []
     
     try:
         # ===================================================================
-        # BÆ¯á»šC 1: INITIALIZE DATABASES
+        # BƯỚC 1: INITIALIZE DATABASES
         # ===================================================================
         try:
             async with engine.begin() as conn:
@@ -1222,13 +1222,13 @@ async def lifespan(app: FastAPI):
             raise
         
         # ===================================================================
-        # BÆ¯á»šC 2: CREATE DEFAULT ADMIN USER
+        # BƯỚC 2: CREATE DEFAULT ADMIN USER
         # ===================================================================
         try:
             async with auth_session_scope() as db_session:
                 admin_user = await crud.get_user_by_username(db_session, username="admin")
                 if not admin_user:
-                    logger.warning("KhÃ´ng tÃ¬m tháº¥y ngÆ°á»i dÃ¹ng 'admin' máº·c Ä‘á»‹nh. Äang tiáº¿n hÃ nh táº¡o...")
+                    logger.warning("Không tìm thấy người dùng 'admin' mặc định. Đang tiến hÃ nh tạo...")
                     hashed_password = await auth.get_password_hash("Admin@123")
                     await crud.create_user(
                         db=db_session,
@@ -1237,12 +1237,12 @@ async def lifespan(app: FastAPI):
                         role=auth.Role.ADMIN,
                         full_name="Administrator"
                     )
-                    logger.info("âœ“ ÄÃ£ táº¡o ngÆ°á»i dÃ¹ng 'admin' máº·c Ä‘á»‹nh thÃ nh cÃ´ng.")
+                    logger.info("âœ“ Đã tạo người dùng 'admin' mặc định thÃ nh công.")
         except Exception as e:
             logger.error(f"Failed to create default admin: {e}")
         
         # ===================================================================
-        # BÆ¯á»šC 2.5: CLEANUP GHOST DEVICES (optional)
+        # BƯỚC 2.5: CLEANUP GHOST DEVICES (optional)
         # ===================================================================
         try:
             async with device_session_scope() as db:
@@ -1253,18 +1253,18 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Ghost device cleanup failed (non-critical): {e}")
         
         # ===================================================================
-        # BÆ¯á»šC 3: START MQTT
+        # BƯỚC 3: START MQTT
         # ===================================================================
         mqtt_handler.set_external_command_handler(handle_ntrip_mqtt_command)
         mqtt_handler.start_mqtt_loop()
         
         # ===================================================================
-        # BÆ¯á»šC 4: START BACKGROUND TASKS
+        # BƯỚC 4: START BACKGROUND TASKS
         # ===================================================================
         
         # Task 1: Check device heartbeats
         async def check_device_heartbeats_with_retry():
-            """Heartbeat check vá»›i retry vÃ  backoff"""
+            """Heartbeat check với retry vÃ  backoff"""
             from .database import AsyncSessionLocal
             from . import schemas
             from .websocket import manager as ui_manager
@@ -1306,38 +1306,38 @@ async def lifespan(app: FastAPI):
                                         "data": schemas.Device.from_orm(device).model_dump()
                                     })
                         
-                        break  # Success, thoÃ¡t retry loop
+                        break  # Success, thoát retry loop
                     
                     except Exception as e:
                         logger.error(f"Heartbeat check failed (attempt {attempt+1}/{max_retries}): {e}")
                         if attempt < max_retries - 1:
                             await asyncio.sleep(2 ** attempt) 
         
-        # Task 2: Global rate limiter cleanup (náº¿u cÃ³)
+        # Task 2: Global rate limiter cleanup (nếu có)
         async def global_rate_limiter_cleanup_task():
-            """Dá»n dáº¹p global rate limiter Ä‘á»‹nh ká»³"""
+            """Dọn dẹp global rate limiter định kỳ"""
             from .monitoring import global_rate_limiter
             while True:
-                await asyncio.sleep(300)  # Má»—i 5 phÃºt
+                await asyncio.sleep(300)  # Mỗi 5 phút
                 try:
                     global_rate_limiter.cleanup()
                     logger.debug("Global rate limiter cleanup completed")
                 except Exception as e:
                     logger.error(f"Global rate limiter cleanup error: {e}")
 
-        # Task 3: Security rate limiter cleanup - THÃŠM Má»šI
+        # Task 3: Security rate limiter cleanup - THÊM MỚI
         async def security_rate_limiter_cleanup_task():
-            """Dá»n dáº¹p dá»¯ liá»‡u cÅ© trong security rate limiter"""
+            """Dọn dẹp dữ liệu cũ trong security rate limiter"""
             from .security import rate_limiter
             while True:
-                await asyncio.sleep(900)  # Má»—i 15 phÃºt
+                await asyncio.sleep(900)  # Mỗi 15 phút
                 try:
                     rate_limiter.cleanup_stale_data()
                     logger.debug("Security rate limiter cleanup completed")
                 except Exception as e:
                     logger.error(f"Security rate limiter cleanup error: {e}")
         
-        # Táº¡o vÃ  track táº¥t cáº£ tasks
+        # Tạo vÃ  track tất cả tasks
         tasks.append(asyncio.create_task(check_device_heartbeats_with_retry()))
         tasks.append(asyncio.create_task(global_rate_limiter_cleanup_task()))
         tasks.append(asyncio.create_task(security_rate_limiter_cleanup_task()))
@@ -1357,7 +1357,7 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("ðŸ›‘ Application shutting down...")
         
-        # --- BÆ¯á»šC 1: Dá»ªNG MQTT TRÆ¯á»šC (Ngáº¯t nguá»“n dá»¯ liá»‡u vÃ o) ---
+        # --- BƯỚC 1: DỪNG MQTT TRƯỚC (Ngắt nguồn dữ liệu vÃ o) ---
         try:
             mqtt_handler.stop_mqtt_loop()
             logger.info("âœ“ MQTT stopped")
@@ -1365,14 +1365,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error stopping MQTT: {e}")
         
-        # --- BÆ¯á»šC 2: Há»¦Y CÃC BACKGROUND TASKS ---
+        # --- BƯỚC 2: HỦY CÁC BACKGROUND TASKS ---
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
             logger.info(f"âœ“ Cancelled {len(tasks)} background tasks")
         
-        # --- BÆ¯á»šC 3: ÄÃ“NG Káº¾T Ná»I DATABASE (QUAN TRá»ŒNG NHáº¤T) ---
+        # --- BƯỚC 3: ĐÓNG KẾT NỐI DATABASE (QUAN TRỌNG NHẤT) ---
         try:
             logger.info("Setting all devices to OFFLINE...")
             async with device_session_scope() as db:
@@ -1390,7 +1390,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error setting devices offline: {e}")
 
-        # 4. ÄÃ“NG Káº¾T Ná»I DATABASE (Cuá»‘i cÃ¹ng)
+        # 4. ĐÓNG KẾT NỐI DATABASE (Cuối cùng)
         try:
             logger.info("Closing database connections...")
             await engine.dispose()
@@ -1421,11 +1421,11 @@ async def send_command_to_pi(serial: str, command: dict) -> dict:
 
 # --- CASTER CLIENT FACTORY ---
 async def get_caster_client(db: AsyncSession) -> CasterClient:
-    """Helper Ä‘á»ƒ khá»Ÿi táº¡o Caster Client tá»« SystemSettings"""
+    """Helper để khởi tạo Caster Client từ SystemSettings"""
     system_settings = await crud.get_system_settings(db)
 
     env_host, env_port = _read_caster_config_from_env()
-    # Æ¯u tiÃªn .env (cÃ³ thá»ƒ vá»«a Ä‘Æ°á»£c cáº­p nháº­t tá»« web), fallback runtime settings rá»“i DB.
+    # Ưu tiên .env (có thể vừa được cập nhật từ web), fallback runtime settings rồi DB.
     host = str(env_host or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
     port = int(env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
     if RTCM_KEEPALIVE_DEBUG:
@@ -1433,7 +1433,7 @@ async def get_caster_client(db: AsyncSession) -> CasterClient:
     
     return CasterClient(host, port)
 
-# === ðŸ†• WEBSOCKET THEO DÃ•I KHÃCH TRUY Cáº¬P (PUBLIC) ===
+# === ðŸ†• WEBSOCKET THEO DÕI KHÁCH TRUY CẬP (PUBLIC) ===
 @app.websocket("/ws/track-visitors")
 async def track_visitors_endpoint(websocket: WebSocket):
     client_ip = websocket.client.host
@@ -1442,17 +1442,17 @@ async def track_visitors_endpoint(websocket: WebSocket):
     await ui_manager.broadcast({
         "type": "visitor_update",
         "count": visitor_manager.get_count(),
-        "ips": list(visitor_manager.active_ips) # Gá»­i danh sÃ¡ch IP Ä‘á»ƒ Admin soi (tÃ¹y chá»n)
+        "ips": list(visitor_manager.active_ips) # Gửi danh sách IP để Admin soi (tùy chọn)
     })
     
     try:
         while True:
-            # Giá»¯ káº¿t ná»‘i sá»‘ng, nháº­n ping pong
+            # Giữ kết nối sống, nhận ping pong
             await websocket.receive_text()
     except:
-        # Khi ngáº¯t káº¿t ná»‘i
+        # Khi ngắt kết nối
         visitor_manager.disconnect(websocket, client_ip)
-        # ðŸ“¢ BÃ¡o láº¡i cho Admin khi cÃ³ ngÆ°á»i thoÃ¡t
+        # ðŸ“¢ Báo lại cho Admin khi có người thoát
         await ui_manager.broadcast({
             "type": "visitor_update",
             "count": visitor_manager.get_count(),
@@ -1545,7 +1545,7 @@ async def login(
 @app.get("/api/public/map-stations")
 async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
     try:
-        # Láº¥y táº¥t cáº£ thiáº¿t bá»‹
+        # Lấy tất cả thiết bị
         result = await db.execute(select(models.Device))
         devices = result.scalars().all()
         
@@ -1554,7 +1554,7 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
         for dev in devices:
             base_config = dev.base_config or {}
             
-            # === TRY FORMAT 1: NESTED (Tráº¡m tháº­t) ===
+            # === TRY FORMAT 1: NESTED (Trạm thật) ===
             coords = base_config.get('coords', {})
             lat = coords.get('lat')
             lon = coords.get('lon')
@@ -1564,7 +1564,7 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                 lat = base_config.get('lat')
                 lon = base_config.get('lon')
             
-            # Chá»‰ thÃªm vÃ o danh sÃ¡ch náº¿u cÃ³ Ä‘á»§ tá»a Ä‘á»™ há»£p lá»‡
+            # Chỉ thêm vÃ o danh sách nếu có đủ tọa độ hợp lệ
             if lat and lon:
                 try:
                     public_data.append({
@@ -1585,12 +1585,13 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
         return []
 
 
+
 @app.get("/api/caster/clienttable")
 async def get_caster_clienttable(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
 ):
-    """Láº¥y danh sÃ¡ch rover Ä‘ang káº¿t ná»‘i tá»« NTRIP Caster Ä‘á»ƒ hiá»ƒn thá»‹ trÃªn map."""
+    """Lấy danh sách rover đang kết nối từ NTRIP Caster để hiển thị trên map."""
     try:
         caster_client = await get_caster_client(db)
         clients = await caster_client.get_clienttable()
@@ -1924,7 +1925,7 @@ async def get_system_settings(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Láº¥y tráº¡ng thÃ¡i hiá»‡n táº¡i cá»§a cÃ¡c cÃ i Ä‘áº·t báº£o máº­t."""
+    """Lấy trạng thái hiện tại của các cÃ i đặt bảo mật."""
     settings_data = await crud.get_system_settings(db)
     env_host, env_port = _read_caster_config_from_env()
     if env_host:
@@ -1939,7 +1940,7 @@ async def update_system_settings(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Cáº­p nháº­t cÃ i Ä‘áº·t báº£o máº­t."""
+    """Cập nhật cÃ i đặt bảo mật."""
     caster_host = settings_data.get("caster_host")
     caster_port = settings_data.get("caster_port")
     if caster_host is not None or caster_port is not None:
@@ -1948,12 +1949,12 @@ async def update_system_settings(
         resolved_port = caster_port if caster_port is not None else env_port
 
         if not resolved_host:
-            raise HTTPException(status_code=400, detail="caster_host khÃ´ng há»£p lá»‡")
+            raise HTTPException(status_code=400, detail="caster_host không hợp lệ")
 
         try:
             resolved_port_int = int(resolved_port)
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="caster_port khÃ´ng há»£p lá»‡")
+            raise HTTPException(status_code=400, detail="caster_port không hợp lệ")
 
         _persist_caster_config_to_env(resolved_host, resolved_port_int)
         settings_data["caster_host"] = resolved_host
@@ -1969,7 +1970,7 @@ async def get_security_stats(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     """
-    Enhanced security stats vá»›i error handling
+    Enhanced security stats với error handling
     """
     try:
         # 1. Security stats
@@ -2011,7 +2012,7 @@ async def unblock_ip(
     db: AsyncSession = Depends(get_auth_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Admin unblock má»™t IP (thao tÃ¡c trÃªn database)."""
+    """Admin unblock một IP (thao tác trên database)."""
     ip = request_data.get("ip_address")
     if not ip:
         raise HTTPException(status_code=400, detail="ip_address is required")
@@ -2030,7 +2031,7 @@ async def block_ip_manually(
     db: AsyncSession = Depends(get_auth_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Admin block thá»§ cÃ´ng má»™t IP (lÆ°u vÃ o database)."""
+    """Admin block thủ công một IP (lưu vÃ o database)."""
     ip = request_data.get("ip_address")
     if not ip:
         raise HTTPException(status_code=400, detail="ip_address is required")
@@ -2070,19 +2071,19 @@ async def rename_device(
     request: schemas.DeviceRename, 
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_DEVICE_NAME))):
-    # 1. Kiá»ƒm tra thiáº¿t bá»‹
+    # 1. Kiểm tra thiết bị
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
     if not request.name.strip():
-        raise HTTPException(status_code=400, detail="TÃªn khÃ´ng Ä‘Æ°á»£c Ä‘á»ƒ trá»‘ng")
+        raise HTTPException(status_code=400, detail="Tên không được để trống")
 
-    # 2. Cáº­p nháº­t Database
+    # 2. Cập nhật Database
     device.name = request.name
     await db.commit()
     
-    # 3. Gá»­i lá»‡nh xuá»‘ng Agent
+    # 3. Gửi lệnh xuống Agent
     try:
         await send_command_to_pi(serial, {
             "command": "PROVISION_DEVICE", 
@@ -2111,10 +2112,10 @@ async def create_user(
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
     try:
-        # DÃ²ng nÃ y cÃ³ thá»ƒ nÃ©m ra lá»—i ValueError
+        # Dòng này có thể ném ra lỗi ValueError
         hashed_password = await auth.get_password_hash(user_data.password)
     except ValueError as e:
-        # Náº¿u cÃ³ lá»—i tá»« chÃ­nh sÃ¡ch máº­t kháº©u, tráº£ vá» lá»—i 400 vá»›i thÃ´ng Ä‘iá»‡p cá»¥ thá»ƒ
+        # Nếu có lỗi từ chính sách mật khẩu, trả về lỗi 400 với thông điệp cụ thể
         raise HTTPException(status_code=400, detail=str(e))
     # -----------------------------------------------------------
         
@@ -2157,32 +2158,32 @@ async def update_user(
     update_dict = user_data.dict(exclude_unset=True)
     
     # ===================================================================
-    # FIX: LOGIC Cáº¬P NHáº¬T DANH SÃCH THIáº¾T Bá»Š (ASSIGN/UNASSIGN)
+    # FIX: LOGIC CẬP NHẬT DANH SÁCH THIẾT BỊ (ASSIGN/UNASSIGN)
     # ===================================================================
     assigned_serials = update_dict.pop("assigned_devices", None)
     
     if assigned_serials is not None:
-        # 1. Láº¥y táº¥t cáº£ thiáº¿t bá»‹ HIá»†N Táº I Ä‘ang gÃ¡n cho user nÃ y
+        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user nÃ y
         current_devices = await crud.get_devices_by_user_id(devices_db, user_id)
         
-        # 2. Gá»¡ bá» táº¥t cáº£ trÆ°á»›c (Reset vá» None)
+        # 2. Gỡ bỏ tất cả trước (Reset về None)
         for dev in current_devices:
             dev.user_id = None
-            # Broadcast cáº­p nháº­t UI: Tráº¡m nÃ y Ä‘Ã£ bá»‹ gá»¡
+            # Broadcast cập nhật UI: Trạm này đã bị gỡ
             await ui_manager.broadcast({
                 "type": "status_update",
                 "data": schemas.Device.from_orm(dev).model_dump()
             })
         
-        # 3. Náº¿u user lÃ  Coordinator -> GÃ¡n danh sÃ¡ch má»›i
+        # 3. Nếu user là Coordinator -> Gán danh sách mới
         if user_to_update.role == 'coordinator' or user_data.role == 'coordinator':
             for serial in assigned_serials:
                 device = await crud.get_device_by_serial(devices_db, serial)
-                # Chá»‰ gÃ¡n náº¿u tráº¡m chÆ°a cÃ³ chá»§ hoáº·c chá»§ chÃ­nh lÃ  user nÃ y (Ä‘á» phÃ²ng tranh cháº¥p)
-                # Hoáº·c Admin cÃ³ quyá»n ghi Ä‘Ã¨ (tÃ¹y logic, á»Ÿ Ä‘Ã¢y cho phÃ©p ghi Ä‘Ã¨ Ä‘á»ƒ tiá»‡n quáº£n lÃ½)
+                # Chỉ gán nếu trạm chưa có chủ hoặc chủ chính là user này (đề phòng tranh chấp)
+                # Hoặc Admin có quyền ghi đè (tùy logic, ở đây cho phép ghi đè để tiện quản lý)
                 if device:
                     device.user_id = user_id
-                    # Broadcast cáº­p nháº­t UI: Tráº¡m nÃ y Ä‘Ã£ cÃ³ chá»§ má»›i
+                    # Broadcast cập nhật UI: Trạm nÃ y đã có chủ mới
                     await ui_manager.broadcast({
                         "type": "status_update",
                         "data": schemas.Device.from_orm(device).model_dump()
@@ -2216,7 +2217,7 @@ async def delete_user(
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
     
-    # 1. Kiá»ƒm tra user tá»“n táº¡i
+    # 1. Kiểm tra user tồn tại
     user = await crud.get_user_by_id(auth_db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -2225,31 +2226,31 @@ async def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
     
     # ===================================================================
-    # FIX: Gá»  THIáº¾T Bá»Š + BROADCAST Äá»‚ UI Cáº¬P NHáº¬T NGAY Láº¬P Tá»¨C
+    # FIX: GỠ THIẾT BỊ + BROADCAST ĐỂ UI CẬP NHẬT NGAY LẬP TỨC
     # ===================================================================
     try:
-        # TÃ¬m cÃ¡c thiáº¿t bá»‹ Ä‘ang thuá»™c vá» user nÃ y
+        # Tìm các thiết bị đang thuộc về user này
         result = await devices_db.execute(select(models.Device).where(models.Device.user_id == user_id))
         devices_to_unlink = result.scalars().all()
 
         for dev in devices_to_unlink:
-            dev.user_id = None # Gá»¡ bá» user_id
+            dev.user_id = None # Gỡ bỏ user_id
             
-            # QUAN TRá»ŒNG: Gá»­i thÃ´ng bÃ¡o WebSocket xuá»‘ng UI Ä‘á»ƒ Admin tháº¥y ngay lÃ  tráº¡m Ä‘Ã£ "trá»‘ng"
+            # QUAN TRỌNG: Gửi thông báo WebSocket xuống UI để Admin thấy ngay là trạm đã "trống"
             await ui_manager.broadcast({
                 "type": "status_update",
                 "data": schemas.Device.from_orm(dev).model_dump()
             })
         
-        await devices_db.commit() # LÆ°u thay Ä‘á»•i vÃ o DB Device
+        await devices_db.commit() # Lưu thay đổi vào DB Device
         logger.info(f"Unlinked {len(devices_to_unlink)} devices from deleted user {user_id}")
 
     except Exception as e:
         logger.error(f"Error unlinking devices: {e}")
-        # KhÃ´ng raise lá»—i Ä‘á»ƒ tiáº¿p tá»¥c xÃ³a user
+        # Không raise lỗi để tiếp tục xóa user
     # ===================================================================
 
-    # 3. XÃ³a user trong Auth DB
+    # 3. Xóa user trong Auth DB
     success = await crud.delete_user(auth_db, user_id) 
     if not success:
          raise HTTPException(status_code=404, detail="User not found during deletion")
@@ -2270,7 +2271,7 @@ async def update_caster_config(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Cáº­p nháº­t Host/Port cá»§a NTRIP Caster"""
+    """Cập nhật Host/Port của NTRIP Caster"""
     settings_data = {
         "caster_host": config.host.strip(),
         "caster_port": config.port
@@ -2310,7 +2311,7 @@ async def generate_pi_license(
         base_code = license_manager.generate_pi_license_base(serial)
         license_key = license_manager.get_license_code_from_string(base_code)
         
-        if "Lá»—i" in license_key:
+        if "Lỗi" in license_key:
             raise ValueError("License generation failed.")
 
         return schemas.LicenseResponse(serial=serial, license_key=license_key)
@@ -2326,10 +2327,10 @@ async def get_initial_devices(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)) 
 ):
     """
-    âœ… CHá»NG IDOR: Backend LUÃ”N Æ¯U TIÃŠN current_user.id tá»« JWT token
+    âœ… CHỐNG IDOR: Backend LUÔN ƯU TIÊN current_user.id từ JWT token
     """
     
-    # ðŸ”’ COORDINATOR: Bá» qua má»i tham sá»‘ user_id (CHá»NG IDOR)
+    # ðŸ”’ COORDINATOR: Bỏ qua mọi tham số user_id (CHỐNG IDOR)
     if current_user.role == auth.Role.COORDINATOR:
         logging.info(
             f"Coordinator '{current_user.username}' requested devices. "
@@ -2337,7 +2338,7 @@ async def get_initial_devices(
         )
         return await crud.get_devices_by_user_id(db, user_id=current_user.id)
     
-    # ðŸ”’ ADMIN: Cho phÃ©p filter, nhÆ°ng validate
+    # ðŸ”’ ADMIN: Cho phép filter, nhưng validate
     if user_id is not None:
         if current_user.role != auth.Role.ADMIN:
             logging.warning(
@@ -2350,7 +2351,7 @@ async def get_initial_devices(
             )
         return await crud.get_devices_by_user_id(db, user_id=user_id)
     
-    # Máº·c Ä‘á»‹nh: Admin vÃ  Viewer xem táº¥t cáº£
+    # Mặc định: Admin vÃ  Viewer xem tất cả
     return await crud.get_all_devices(db)
 
 @app.post("/api/devices/{serial}/command")
@@ -2364,7 +2365,7 @@ async def send_generic_command(
     if not auth.has_permission(current_user, auth.Permission.EDIT_CHIP_CONFIG):
          raise HTTPException(status_code=403, detail="Permission denied.")
     
-    # 1. Láº¥y thiáº¿t bá»‹
+    # 1. Lấy thiết bị
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -2377,26 +2378,26 @@ async def send_generic_command(
     )
     return await send_command_to_pi(serial, command.model_dump())
 
-# --- CÃC ENDPOINT CHO QUáº¢N LÃ ROVER ---
+# --- CÁC ENDPOINT CHO QUẢN LÝ ROVER ---
 @app.get("/api/bases/{serial}/rovers", response_model=list[schemas.RoverAccountResponse])
 async def get_rovers_for_base(
     serial: str,
     db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # ThÃªm vÃ o Ä‘á»ƒ kiá»ƒm tra quyá»n
+    devices_db: AsyncSession = Depends(get_db), # Thêm vÃ o để kiểm tra quyền
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # Admin cÃ³ thá»ƒ xem Rover cá»§a báº¥t ká»³ tráº¡m nÃ o
+    # Admin có thể xem Rover của bất kỳ trạm nÃ o
     if current_user.role == auth.Role.ADMIN:
         return await crud.get_rovers_by_base_serial(db, base_serial=serial)
 
-    # Coordinator chá»‰ cÃ³ thá»ƒ xem Rover cá»§a cÃ¡c tráº¡m há» quáº£n lÃ½
+    # Coordinator chỉ có thể xem Rover của các trạm họ quản lý
     if current_user.role == auth.Role.COORDINATOR:
         device = await crud.get_device_by_serial(devices_db, serial)
         if device and device.user_id == current_user.id:
             return await crud.get_rovers_by_base_serial(db, base_serial=serial)
     
-    # Náº¿u khÃ´ng pháº£i Admin hoáº·c khÃ´ng pháº£i chá»§ sá»Ÿ há»¯u, tá»« chá»‘i
-    raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n xem danh sÃ¡ch Rover cá»§a tráº¡m nÃ y.")
+    # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
+    raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm nÃ y.")
 
 @app.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse)
 async def create_rover_for_base(
@@ -2406,7 +2407,7 @@ async def create_rover_for_base(
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Kiá»ƒm tra quyá»n
+    # 1. Kiểm tra quyền
     is_admin = current_user.role == auth.Role.ADMIN
     is_authorized_coordinator = (
         current_user.role == auth.Role.COORDINATOR and 
@@ -2414,26 +2415,26 @@ async def create_rover_for_base(
     )
 
     if not is_admin and not is_authorized_coordinator:
-        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n táº¡o tÃ i khoáº£n Rover.")
+        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tÃ i khoản Rover.")
 
     if not is_admin:
         device = await crud.get_device_by_serial(devices_db, serial)
         if not device or device.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng Ä‘Æ°á»£c phÃ©p táº¡o Rover cho tráº¡m Base nÃ y.")
+            raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base nÃ y.")
 
-    # 2. Kiá»ƒm tra trÃ¹ng láº·p trong DB Local
+    # 2. Kiểm tra trùng lặp trong DB Local
     existing_rover = await crud.get_rover_by_username(db, rover_data.username)
     if existing_rover:
-        raise HTTPException(status_code=400, detail="TÃªn Ä‘Äƒng nháº­p Rover Ä‘Ã£ tá»“n táº¡i (DB).")
+        raise HTTPException(status_code=400, detail="Tên đăng nhập Rover đã tồn tại (DB).")
 
-    # 1. Láº¥y thÃ´ng tin thiáº¿t bá»‹ Ä‘á»ƒ kiá»ƒm tra Mountpoint há»£p lá»‡
+    # 1. Lấy thông tin thiết bị để kiểm tra Mountpoint hợp lệ
     device_info = await crud.get_device_by_serial(devices_db, serial)
     if not device_info:
-        raise HTTPException(status_code=404, detail="Tráº¡m Base khÃ´ng tá»“n táº¡i.")
+        raise HTTPException(status_code=404, detail="Trạm Base không tồn tại.")
     
     service_conf = device_info.service_config or {}
     
-    # 2. XÃ¡c Ä‘á»‹nh Mountpoint (Logic má»›i)
+    # 2. Xác định Mountpoint (Logic mới)
     target_mountpoint = rover_data.mountpoint_allow
     
     valid_mps = []
@@ -2442,7 +2443,7 @@ async def create_rover_for_base(
     if service_conf.get('server2_enabled'):
         valid_mps.append(service_conf.get('mountpoint2'))
         
-    # Lá»c giÃ¡ trá»‹ None/Rá»—ng
+    # Lọc giá trị None/Rỗng
     valid_mps = [mp for mp in valid_mps if mp]
 
     if not valid_mps:
@@ -2450,12 +2451,12 @@ async def create_rover_for_base(
     elif target_mountpoint not in valid_mps:
         target_mountpoint = valid_mps[0]
 
-    duration_seconds = 315360000 # 10 nÄƒm máº·c Ä‘á»‹nh
+    duration_seconds = 315360000 # 10 năm mặc định
     
     if rover_data.expiry_days > 0:
-        duration_seconds = rover_data.expiry_days * 86400  # 1 ngÃ y = 86400 giÃ¢y
+        duration_seconds = rover_data.expiry_days * 86400  # 1 ngÃ y = 86400 giây
 
-    # 3. Gá»ŒI TCP Äáº¾N NTRIP CASTER
+    # 3. GỌI TCP ĐẾN NTRIP CASTER
     try:
         caster = await get_caster_client(db)
         
@@ -2473,9 +2474,9 @@ async def create_rover_for_base(
         
     except Exception as e:
         logger.error(f"Failed to create rover on Caster: {e}")
-        raise HTTPException(status_code=502, detail=f"Lá»—i Caster: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(e)}")
 
-    # 4. LÆ°u vÃ o DB
+    # 4. Lưu vÃ o DB
     new_rover = await crud.create_rover_account(
         db, 
         username=rover_data.username,
@@ -2493,35 +2494,35 @@ async def update_rover(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Láº¥y thÃ´ng tin Rover cÅ©
+    # 1. Lấy thông tin Rover cũ
     rover = await crud.get_rover_by_id(db, rover_id)
     if not rover:
-        raise HTTPException(status_code=404, detail="KhÃ´ng tÃ¬m tháº¥y tÃ i khoáº£n Rover.")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
 
-    # 2. Kiá»ƒm tra quyá»n
+    # 2. Kiểm tra quyền
     is_admin = current_user.role == auth.Role.ADMIN
     is_creator = rover.created_by_user_id == current_user.id
     if not is_admin and not is_creator:
-        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n sá»­a tÃ i khoáº£n nÃ y.")
+        raise HTTPException(status_code=403, detail="Bạn không có quyền sửa tÃ i khoản nÃ y.")
 
-    # 3. Chuáº©n bá»‹ dá»¯ liá»‡u má»›i (náº¿u client khÃ´ng gá»­i thÃ¬ dÃ¹ng cÃ¡i cÅ©)
+    # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
     new_password = update_req.password if update_req.password else rover.password
     new_mountpoints = update_req.mountpoints if update_req.mountpoints else rover.mountpoints
     
-    # Xá»­ lÃ½ thá»i háº¡n (Máº·c Ä‘á»‹nh reset láº¡i thá»i háº¡n náº¿u cÃ³ gá»­i expiry_days)
+    # Xử lý thời hạn (Mặc định reset lại thời hạn nếu có gửi expiry_days)
     duration_seconds = 315360000 # Default
     if update_req.expiry_days:
         duration_seconds = update_req.expiry_days * 86400
     
-    # 4. Gá»ŒI CASTER Äá»‚ Cáº¬P NHáº¬T (Ghi Ä‘Ã¨ user cÅ©)
+    # 4. GỌI CASTER ĐỂ CẬP NHẬT (Ghi đè user cũ)
     try:
         caster = await get_caster_client(db)
         creator_identifier = current_user.username 
         
-        # HÃ m create_user cá»§a Caster thÆ°á»ng hoáº¡t Ä‘á»™ng nhÆ° "Upsert" (Táº¡o má»›i hoáº·c Ghi Ä‘Ã¨)
+        # HÃ m create_user của Caster thường hoạt động như "Upsert" (Tạo mới hoặc Ghi đè)
         await caster.create_user(
             creator=creator_identifier,
-            username=rover.username, # Username khÃ´ng Ä‘á»•i
+            username=rover.username, # Username không đổi
             password=new_password,
             mountpoints=new_mountpoints, 
             expiry_seconds=duration_seconds, 
@@ -2529,9 +2530,9 @@ async def update_rover(
         )
     except Exception as e:
         logger.error(f"Caster Update Error: {e}")
-        raise HTTPException(status_code=502, detail=f"Lá»—i cáº­p nháº­t Caster: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(e)}")
 
-    # 5. Cáº­p nháº­t DB Local
+    # 5. Cập nhật DB Local
     update_data = {
         "password": new_password,
         "mountpoints": new_mountpoints
@@ -2546,22 +2547,22 @@ async def delete_rover(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Láº¥y thÃ´ng tin Rover
+    # 1. Lấy thông tin Rover
     rover_to_delete = await crud.get_rover_by_id(db, rover_id)
     if not rover_to_delete:
-        raise HTTPException(status_code=404, detail="KhÃ´ng tÃ¬m tháº¥y tÃ i khoáº£n Rover.")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
 
-    # 2. Kiá»ƒm tra quyá»n
+    # 2. Kiểm tra quyền
     is_admin = current_user.role == auth.Role.ADMIN
     is_creator = rover_to_delete.created_by_user_id == current_user.id
 
     if not is_admin and not is_creator:
-        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n xÃ³a tÃ i khoáº£n Rover nÃ y.")
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xóa tÃ i khoản Rover nÃ y.")
     
     creator_user = await crud.get_user_by_id(db, rover_to_delete.created_by_user_id)
     creator_username = creator_user.username if creator_user else "admin"
 
-    # 3. Gá»ŒI TCP Äáº¾N NTRIP CASTER Äá»‚ XÃ“A
+    # 3. GỌI TCP ĐẾN NTRIP CASTER ĐỂ XÓA
     try:
         caster = await get_caster_client(db)
         await caster.delete_user(
@@ -2572,7 +2573,7 @@ async def delete_rover(
     except Exception as e:
         logger.warning(f"Failed to delete rover from Caster (might be already deleted): {e}")
 
-    # 4. XÃ³a khá»i DB Local
+    # 4. Xóa khỏi DB Local
     success = await crud.delete_rover_account(db, rover_id=rover_id)
     
     return {"status": "deleted", "rover_id": rover_id}
@@ -2585,36 +2586,36 @@ async def get_all_rovers_global(
     current_user: models.User = Depends(auth.get_current_user)
 ):
 
-    # 1. Kiá»ƒm tra quyá»n cÆ¡ báº£n
+    # 1. Kiểm tra quyền cơ bản
     if current_user.role == auth.Role.VIEWER:
         raise HTTPException(
             status_code=403, 
-            detail="Viewer khÃ´ng cÃ³ quyá»n xem danh sÃ¡ch Rover."
+            detail="Viewer không có quyền xem danh sách Rover."
         )
     
     if current_user.role == auth.Role.COORDINATOR and not current_user.can_create_rovers:
         raise HTTPException(
             status_code=403, 
-            detail="Báº¡n chÆ°a Ä‘Æ°á»£c cáº¥p quyá»n quáº£n lÃ½ Rover."
+            detail="Bạn chưa được cấp quyền quản lý Rover."
         )
     
-    # 2. Láº¥y danh sÃ¡ch Rover dá»±a trÃªn role
+    # 2. Lấy danh sách Rover dựa trên role
     if current_user.role == auth.Role.ADMIN:
         rovers = await crud.get_all_rovers_by_user(db, user_id=current_user.id, role="admin")
     else:
         rovers = await crud.get_all_rovers_by_user(db, user_id=current_user.id, role="coordinator")
     
-    # 3. LÃ m giÃ u dá»¯ liá»‡u (Xá»¬ LÃ HIá»‚N THá»Š NHIá»€U TRáº M)
+    # 3. LÃ m giÃ u dữ liệu (XỬ LÝ HIỂN THỊ NHIỀU TRẠM)
     enriched_rovers = []
     
-    # Cache devices Ä‘á»ƒ trÃ¡nh query DB quÃ¡ nhiá»u láº§n trong vÃ²ng láº·p
+    # Cache devices để tránh query DB quá nhiều lần trong vòng lặp
     all_devices_result = await devices_db.execute(select(models.Device))
     all_devices = {d.serial: d.name for d in all_devices_result.scalars().all()}
 
     for rover in rovers:
         rover_dict = schemas.RoverAccountResponse.from_orm(rover).model_dump()
         
-        # Xá»­ lÃ½ base_serial cÃ³ thá»ƒ lÃ  "SN1,SN2"
+        # Xử lý base_serial có thể lÃ  "SN1,SN2"
         serials = rover.base_serial.split(',')
         station_names = []
         
@@ -2623,9 +2624,9 @@ async def get_all_rovers_global(
             if s_name:
                 station_names.append(s_name)
             else:
-                station_names.append(sn) # Náº¿u khÃ´ng tÃ¬m tháº¥y tÃªn thÃ¬ hiá»‡n serial
+                station_names.append(sn) # Nếu không tìm thấy tên thì hiện serial
         
-        # Ná»‘i tÃªn cÃ¡c tráº¡m láº¡i: "Tráº¡m A, Tráº¡m B"
+        # Nối tên các trạm lại: "Trạm A, Trạm B"
         rover_dict['base_name'] = ", ".join(station_names)
          
         enriched_rovers.append(rover_dict)
@@ -2637,27 +2638,27 @@ async def create_multi_base_rover(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # 1. Kiá»ƒm tra quyá»n (nhÆ° cÅ©)
+    # 1. Kiểm tra quyền (như cũ)
     is_admin = current_user.role == auth.Role.ADMIN
     if not is_admin and not (current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers):
-        raise HTTPException(status_code=403, detail="Báº¡n khÃ´ng cÃ³ quyá»n táº¡o tÃ i khoáº£n Rover.")
+        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tÃ i khoản Rover.")
 
-    # 2. Kiá»ƒm tra trÃ¹ng (nhÆ° cÅ©)
+    # 2. Kiểm tra trùng (như cũ)
     existing = await crud.get_rover_by_username(db, request.username)
     if existing:
-        raise HTTPException(status_code=400, detail="Username Ä‘Ã£ tá»“n táº¡i.")
+        raise HTTPException(status_code=400, detail="Username đã tồn tại.")
 
-    # 3. Chuáº©n bá»‹ dá»¯ liá»‡u
+    # 3. Chuẩn bị dữ liệu
     duration_seconds = request.expiry_days * 86400
     target_mountpoints = request.mountpoint_override.strip()
     
     if not request.selected_serials:
-         raise HTTPException(status_code=400, detail="Pháº£i chá»n Ã­t nháº¥t 1 tráº¡m.")
+         raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm.")
     
-    # Gá»™p serial láº¡i thÃ nh chuá»—i Ä‘á»ƒ lÆ°u vÃ o base_serial
+    # Gộp serial lại thÃ nh chuỗi để lưu vÃ o base_serial
     combined_serials = ",".join(request.selected_serials)
 
-    # 4. Gá»ŒI CASTER (Táº¡o user tháº­t)
+    # 4. GỌI CASTER (Tạo user thật)
     try:
         caster = await get_caster_client(db)
         creator_identifier = current_user.username 
@@ -2674,15 +2675,15 @@ async def create_multi_base_rover(
 
     except Exception as e:
         logging.error(f"Caster Error: {e}")
-        raise HTTPException(status_code=502, detail=f"Lá»—i Caster: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(e)}")
 
-    # 5. LÆ¯U VÃ€O DB (Ghi rÃµ mountpoint)
+    # 5. LƯU VÀO DB (Ghi rõ mountpoint)
     new_rover = await crud.create_rover_account(
         db, 
         username=request.username,
         password=request.password,
-        base_serial=combined_serials,   # LÆ°u: "SN1,SN2"
-        mountpoints=target_mountpoints, # LÆ°u: "MP1;MP2" (Cá»™t má»›i)
+        base_serial=combined_serials,   # Lưu: "SN1,SN2"
+        mountpoints=target_mountpoints, # Lưu: "MP1;MP2" (Cột mới)
         creator_id=current_user.id
     )
     
@@ -2696,7 +2697,7 @@ async def configure_chip_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_COORDINATES))
 ):
-    # ==================== BÆ¯á»šC 1: KIá»‚M TRA THIáº¾T Bá»Š ====================
+    # ==================== BƯỚC 1: KIỂM TRA THIẾT BỊ ====================
     device_in_db = await crud.get_device_by_serial(db, serial)
     if not device_in_db:
         raise HTTPException(
@@ -2704,7 +2705,7 @@ async def configure_chip_endpoint(
             detail="Device not found in database"
         )
     
-    # ==================== BÆ¯á»šC 2: PARSE PAYLOAD ====================
+    # ==================== BƯỚC 2: PARSE PAYLOAD ====================
     payload = config_request.payload
     sensor_type = payload.get("sensor_type")
     params = payload.get("params", {})
@@ -2717,17 +2718,17 @@ async def configure_chip_endpoint(
             detail="Missing required fields: sensor_type or mode"
         )
 
-    # ==================== BÆ¯á»šC 3: LÆ¯U Cáº¤U HÃŒNH VÃ€O DATABASE ====================
+    # ==================== BƯỚC 3: LƯU CẤU HÌNH VÀO DATABASE ====================
     try:
-        # Cáº­p nháº­t chip type
+        # Cập nhật chip type
         if sensor_type:
             device_in_db.detected_chip_type = sensor_type
         
-        # Cáº­p nháº­t base config
+        # Cập nhật base config
         if params:
             device_in_db.base_config = params
         
-        # âœ… ÄÃNH Dáº¤U CHÆ¯A Äá»’NG Bá»˜
+        # âœ… ĐÁNH DẤU CHƯA ĐỒNG BỘ
         device_in_db.is_synced = False
         
         # Commit vÃ o DB
@@ -2754,7 +2755,7 @@ async def configure_chip_endpoint(
             detail=f"Failed to save configuration to database: {str(e)}"
         )
 
-    # ==================== BÆ¯á»šC 4: BUILD COMMANDS ====================
+    # ==================== BƯỚC 4: BUILD COMMANDS ====================
     try:
         commands_to_send = []
         
@@ -2826,11 +2827,11 @@ async def configure_chip_endpoint(
             detail=f"Failed to build configuration commands: {str(e)}"
         )
 
-    # ==================== BÆ¯á»šC 5: Gá»¬I Lá»†NH XUá»NG AGENT ====================
+    # ==================== BƯỚC 5: GỬI LỆNH XUỐNG AGENT ====================
     pi_command = {
         "command": "EXECUTE_RAW_COMMANDS",
         "payload": {"commands_b64": encoded_commands},
-        "original_config": config_request.payload  # Äá»ƒ Agent biáº¿t context
+        "original_config": config_request.payload  # Để Agent biết context
     }
     
     try:
@@ -2850,7 +2851,7 @@ async def configure_chip_endpoint(
             serial=serial
         )
         
-        # âœ… TRáº¢ Vá»€ SUCCESS - CHá»œ AGENT XÃC NHáº¬N
+        # âœ… TRẢ VỀ SUCCESS - CHỜ AGENT XÁC NHẬN
         return {
             "status": "command_sent_waiting_sync",
             "channel": response['channel'],
@@ -2859,18 +2860,18 @@ async def configure_chip_endpoint(
                 "Configuration saved to database and sent to device. "
                 "Waiting for device to apply and confirm sync status..."
             ),
-            "is_synced": False  # Hiá»‡n táº¡i váº«n chÆ°a Ä‘á»“ng bá»™
+            "is_synced": False  # Hiện tại vẫn chưa đồng bộ
         }
 
     except HTTPException as http_exc:
-        # Device offline hoáº·c khÃ´ng thá»ƒ gá»­i lá»‡nh
+        # Device offline hoặc không thể gửi lệnh
         logging.warning(
             f"âš ï¸ Failed to send command to {serial}: {http_exc.detail}\n"
-            f"  Config Ä‘Ã£ Ä‘Æ°á»£c lÆ°u vÃ o DB.\n"
-            f"  Sáº½ tá»± Ä‘á»™ng Ä‘á»“ng bá»™ khi device online láº¡i."
+            f"  Config đã được lưu vÃ o DB.\n"
+            f"  Sẽ tự động đồng bộ khi device online lại."
         )
         
-        # âœ… TRáº¢ Vá»€ PARTIAL SUCCESS
+        # âœ… TRẢ VỀ PARTIAL SUCCESS
         raise HTTPException(
             status_code=503,
             detail=(
@@ -2901,7 +2902,7 @@ async def configure_service_endpoint(
     device_in_db = await crud.get_device_by_serial(db, serial)
     if not device_in_db:
         raise HTTPException(status_code=404, detail="Device not found in database")
-    # --- BÆ¯á»šC 1: LÆ¯U Cáº¤U HÃŒNH "CHUáº¨N" VÃ€O DATABASE ---
+    # --- BƯỚC 1: LƯU CẤU HÌNH "CHUẨN" VÀO DATABASE ---
     try:
         device_in_db.service_config = payload.model_dump()
         await db.commit()
@@ -2911,7 +2912,7 @@ async def configure_service_endpoint(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save service config to database.")
     
-    # --- BÆ¯á»šC 2: Gá»¬I Lá»†NH Äáº¾N PI ---
+    # --- BƯỚC 2: GỬI LỆNH ĐẾN PI ---
     pi_command = {
         "command": "DEPLOY_SERVICE_CONFIG",
         "payload": payload.model_dump()
@@ -2935,19 +2936,19 @@ async def reset_pi_device(
     db: AsyncSession = Depends(get_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.DELETE_DEVICE))
 ):
-    # 1. Láº¥y thiáº¿t bá»‹ tá»« DB TRÆ¯á»šC Ä‘á»ƒ kiá»ƒm tra sá»± tá»“n táº¡i
+    # 1. Lấy thiết bị từ DB TRƯỚC để kiểm tra sự tồn tại
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Thiáº¿t bá»‹ khÃ´ng tá»“n táº¡i")
+        raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
 
-    # 3. Gá»­i lá»‡nh xuá»‘ng thiáº¿t bá»‹ (Chá»‰ gá»­i khi Ä‘Ã£ qua cá»­a kiá»ƒm tra an ninh)
+    # 3. Gửi lệnh xuống thiết bị (Chỉ gửi khi đã qua cửa kiểm tra an ninh)
     try:
         await send_command_to_pi(serial, {"command": "DELETE_DEVICE", "payload": {}})
     except Exception as e:
-        # Log lá»—i nhÆ°ng khÃ´ng cháº·n dÃ²ng cháº£y Ä‘á»ƒ cáº­p nháº­t DB cho UI pháº£n há»“i
+        # Log lỗi nhưng không chặn dòng chảy để cập nhật DB cho UI phản hồi
         logging.error(f"Failed to send reset command to {serial}: {e}")
 
-    # 4. Cáº­p nháº­t DB ngay láº­p tá»©c
+    # 4. Cập nhật DB ngay lập tức
     device.status = "rebooting_for_reset"
     device.is_provisioned = False 
     device.detected_chip_type = "UNKNOWN"  
@@ -2957,7 +2958,7 @@ async def reset_pi_device(
     device.bps = 0
     
     await db.commit()
-    # 5. Broadcast Ä‘á»ƒ UI cáº­p nháº­t ngay
+    # 5. Broadcast để UI cập nhật ngay
     await ui_manager.broadcast({
         "type": "status_update",
         "data": schemas.Device.from_orm(device).model_dump()
@@ -2982,23 +2983,44 @@ async def delete_device_from_list(
     device = await crud.get_device_by_serial(db, serial)
     
     if not device:
-        raise HTTPException(status_code=404, detail="Tráº¡m khÃ´ng tá»“n táº¡i")
+        raise HTTPException(status_code=404, detail="Trạm không tồn tại")
     
-    # Kiá»ƒm tra quyá»n (Coordinator chá»‰ xÃ³a Ä‘Æ°á»£c tráº¡m cá»§a mÃ¬nh)
+    # Kiểm tra quyền (Coordinator chỉ xóa được trạm của mình)
     if current_user.role == auth.Role.COORDINATOR:
         if device.user_id != current_user.id:
             raise HTTPException(
                 status_code=403, 
-                detail="Báº¡n chá»‰ cÃ³ thá»ƒ xÃ³a tráº¡m Ä‘Æ°á»£c gÃ¡n cho mÃ¬nh"
+                detail="Bạn chỉ có thể xóa trạm được gán cho mình"
             )
     
-    # XÃ³a khá»i database
+    # Gửi lệnh xuống cho Pi tự xóa file config.json và license.key rồi reboot!
+    try:
+        await send_command_to_pi(serial, {"command": "DELETE_DEVICE"})
+        logging.info(f"Gửi lệnh xóa thành công xuống Pi '{serial}'")
+    except Exception as e:
+        logging.warning(f"Không thể gửi lệnh xóa xuống Pi '{serial}' (có thể thiết bị đang tắt): {e}")
+
+    # Xóa khỏi database
     await db.delete(device)
     await db.commit()
+
+    # Thêm: Dọn dẹp in-memory MQTT cache để tránh thiết bị bị zombie hóa
+    for cache in [
+        mqtt_handler.device_write_cache,
+        mqtt_handler.device_status_cache,
+        mqtt_handler.device_sync_cache,
+        mqtt_handler.device_name_cache,
+    ]:
+        cache.pop(serial, None)
     
+    # Xóa tất cả các keys liên quan đến serial (như config) trong cache đồng bộ
+    for key in list(mqtt_handler.device_sync_cache.keys()):
+        if str(key).startswith(f"{serial}_"):
+            mqtt_handler.device_sync_cache.pop(key, None)
+
     logging.info(f"User '{current_user.username}' deleted device '{serial}' from list (not reset)")
     
-    # Broadcast Ä‘á»ƒ cÃ¡c client khÃ¡c cáº­p nháº­t UI
+    # Broadcast để các client khác cập nhật UI
     await ui_manager.broadcast({
         "type": "device_deleted",
         "serial": serial
@@ -3069,32 +3091,32 @@ async def export_devices_to_csv(
     writer = csv.writer(stream)
     
     headers = [
-        # === THÃ”NG TIN CHUNG ===
+        # === THÔNG TIN CHUNG ===
         "serial", 
         "name", 
         "status", 
         "timestamp", 
         "human_readable_time", 
-        "total_bps",  # Tá»•ng BPS (server1 + server2)
+        "total_bps",  # Tổng BPS (server1 + server2)
         "detected_chip_type", 
         "assigned_coordinator", 
         "ntrip_connected",
         
-        # === Cáº¤U HÃŒNH BASE STATION ===
-        "base_setup_method",     # FIXED_LLA hoáº·c SURVEY_IN
+        # === CẤU HÌNH BASE STATION ===
+        "base_setup_method",     # FIXED_LLA hoặc SURVEY_IN
         "base_lat", 
         "base_lon", 
         "base_alt", 
-        "base_accuracy_m",       # Accuracy (mÃ©t)
+        "base_accuracy_m",       # Accuracy (mét)
         
         # === NTRIP SERVER 1 ===
         "server1_enabled",
-        "server1_ntrip_version",  # v1.0 hoáº·c v2.0
+        "server1_ntrip_version",  # v1.0 hoặc v2.0
         "server1_host",
         "server1_port",
         "server1_mountpoint",
         "server1_username",
-        "server1_bps",            # Traffic hiá»‡n táº¡i (B/s)
+        "server1_bps",            # Traffic hiện tại (B/s)
         "server1_connected",      # True/False
         
         # === NTRIP SERVER 2 ===
@@ -3118,7 +3140,7 @@ async def export_devices_to_csv(
     writer.writerow(headers)
     
     # ===================================================================
-    # Láº¤Y DANH SÃCH THIáº¾T Bá»Š VÃ€ Xá»¬ LÃ
+    # LẤY DANH SÁCH THIẾT BỊ VÀ XỬ LÝ
     # ===================================================================
     devices = await crud.get_all_devices(db)
 
@@ -3132,18 +3154,18 @@ async def export_devices_to_csv(
         coordinator_map = {int(row[0]): str(row[1]) for row in rs_users.all() if row and row[0] is not None}
     
     for device in devices:
-        # === THÃ”NG TIN CHUNG ===
+        # === THÔNG TIN CHUNG ===
         human_time = time.strftime(
             '%Y-%m-%d %H:%M:%S', 
             time.localtime(device.timestamp)
         ) if device.timestamp else "N/A"
         
-        # Láº¥y tÃªn Coordinator
+        # Lấy tên Coordinator
         coordinator_name = ""
         if device.user_id:
             coordinator_name = coordinator_map.get(int(device.user_id), "")
         
-        # === Cáº¤U HÃŒNH BASE ===
+        # === CẤU HÌNH BASE ===
         base_config = device.base_config or {}
         coords = base_config.get('coords', {})
         base_method = base_config.get('base_setup_method', '')
@@ -3152,7 +3174,7 @@ async def export_devices_to_csv(
         base_alt = coords.get('alt', base_config.get('alt', ''))
         base_accuracy = base_config.get('accuracy', base_config.get('acc', ''))
         
-        # === Cáº¤U HÃŒNH SERVICE ===
+        # === CẤU HÌNH SERVICE ===
         service_config = device.service_config or {}
         
         # --- SERVER 1 ---
@@ -3178,7 +3200,7 @@ async def export_devices_to_csv(
         rtcm_mountpoint = service_config.get('rtcmmountpoint1', '')
         rtcm_username = service_config.get('rtcmusername1', '')
         
-        # === NTRIP STATUS (TRAFFIC HIá»†N Táº I) ===
+        # === NTRIP STATUS (TRAFFIC HIỆN TẠI) ===
         ntrip_status = device.ntrip_status
         if not isinstance(ntrip_status, dict):
             ntrip_status = {}
@@ -3206,16 +3228,16 @@ async def export_devices_to_csv(
         total_bps = s1_bps + s2_bps
         
         # ===================================================================
-        # Táº O HÃ€NG Dá»® LIá»†U
+        # TẠO HÀNG DỮ LIỆU
         # ===================================================================
         row = [
-            # ThÃ´ng tin chung
+            # Thông tin chung
             device.serial,
             device.name,
             device.status,
             device.timestamp,
             human_time,
-            total_bps,  # Tá»•ng traffic
+            total_bps,  # Tổng traffic
             device.detected_chip_type or "UNKNOWN",
             coordinator_name,
             device.ntrip_connected,
@@ -3229,7 +3251,7 @@ async def export_devices_to_csv(
             
             # Server 1
             s1_enabled,
-            f"v{s1_version}.0",  # Format: v1.0 hoáº·c v2.0
+            f"v{s1_version}.0",  # Format: v1.0 hoặc v2.0
             s1_host,
             s1_port,
             s1_mountpoint,
@@ -3258,7 +3280,7 @@ async def export_devices_to_csv(
         writer.writerow(row)
     
     # ===================================================================
-    # TRáº¢ Vá»€ FILE CSV
+    # TRẢ VỀ FILE CSV
     # ===================================================================
     response = StreamingResponse(
         iter([stream.getvalue()]), 
@@ -3294,10 +3316,10 @@ async def ui_websocket_endpoint(websocket: WebSocket):
     # logging.info("New UI client connected.") 
     try:
         while True: 
-            # Giá»¯ káº¿t ná»‘i sá»‘ng, chá» tin nháº¯n (dÃ¹ UI chá»‰ nháº­n chá»© khÃ´ng gá»­i gÃ¬)
+            # Giữ kết nối sống, chờ tin nhắn (dù UI chỉ nhận chứ không gửi gì)
             await websocket.receive_text()
     except (WebSocketDisconnect, Exception):
-        # Khi client ngáº¯t káº¿t ná»‘i, xÃ³a khá»i manager
+        # Khi client ngắt kết nối, xóa khỏi manager
         ui_manager.disconnect(websocket)
         # logging.info("UI client disconnected.")
 
@@ -3403,13 +3425,13 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
             "timestamp": int(time.time())
         }
         
-        # 1. BÃ¡o UI ngay (non-blocking, via queue)
+        # 1. Báo UI ngay (non-blocking, via queue)
         await enqueue_ui_broadcast({
             "type": "status_update",
             "data": offline_payload
         })
         
-        # 2. Äáº©y vÃ o buffer -> Background flush task sáº½ lÆ°u DB sau 1s
+        # 2. Đẩy vÃ o buffer -> Background flush task sẽ lưu DB sau 1s
         async with device_update_buffer_lock:
             device_update_buffer.append(offline_payload)
     
@@ -3420,7 +3442,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
 # === GLOBAL EXCEPTION HANDLER ===
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Báº¯t má»i unhandled exceptions"""
+    """Bắt mọi unhandled exceptions"""
     health_monitor.record_error('unhandled_exception', str(exc))
     
     logger.error(
@@ -3448,7 +3470,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/api/health/detailed")
 async def detailed_health_check():
     """
-    Enhanced health check vá»›i system metrics cho monitoring dashboard
+    Enhanced health check với system metrics cho monitoring dashboard
     """
     try:
         # System metrics
@@ -3456,7 +3478,7 @@ async def detailed_health_check():
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         
-        # Application metrics tá»« health_monitor
+        # Application metrics từ health_monitor
         health_status = health_monitor.get_health_status()
         
         return {
@@ -3566,7 +3588,7 @@ async def buffer_metrics_endpoint():
 
 @app.get("/api/health/errors")
 async def recent_errors():
-    """Láº¥y danh sÃ¡ch lá»—i gáº§n Ä‘Ã¢y"""
+    """Lấy danh sách lỗi gần đây"""
     return {
         "errors": health_monitor.get_recent_errors(),
         "total_errors": health_monitor.error_count
@@ -3595,8 +3617,8 @@ async def get_server_logs(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     """
-    Äá»c N dÃ²ng cuá»‘i cÃ¹ng tá»« file app.log Ä‘á»ƒ hiá»ƒn thá»‹ lÃªn UI.
-    Chá»‰ Admin má»›i cÃ³ quyá»n xem.
+    Đọc N dòng cuối cùng từ file app.log để hiển thị lên UI.
+    Chỉ Admin mới có quyền xem.
     """
     log_file = 'app.log'
     if not os.path.exists(log_file):
@@ -3608,7 +3630,7 @@ async def get_server_logs(
         with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
             last_lines = list(_deque(f, maxlen=max(1, lines)))
             
-            # Filter theo level náº¿u cáº§n (INFO, ERROR, WARNING)
+            # Filter theo level nếu cần (INFO, ERROR, WARNING)
             if level and level != 'ALL':
                 last_lines = [line for line in last_lines if level in line]
                 
@@ -3621,7 +3643,7 @@ app.mount("/img", StaticFiles(directory="../frontend/img"), name="images")
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="static")
 
 class MonitoringMiddleware(BaseHTTPMiddleware):
-    """Middleware Ä‘á»ƒ ghi nháº­n metrics"""
+    """Middleware để ghi nhận metrics"""
     
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
@@ -3639,10 +3661,10 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             duration_ms = (time.time() - start_time) * 1000
             
-            # Ghi nháº­n metrics
+            # Ghi nhận metrics
             health_monitor.record_request(duration_ms)
             
-            # Cáº£nh bÃ¡o náº¿u response cháº­m
+            # Cảnh báo nếu response chậm
             if duration_ms > 1000:
                 logger.warning(f"Slow request: {request.url.path} took {duration_ms:.2f}ms")
             
@@ -3658,7 +3680,7 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
 app.add_middleware(MonitoringMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://cors.aitogy.com"],  # âš ï¸ Trong production, hÃ£y chá»‰ Ä‘á»‹nh origins cá»¥ thá»ƒ
+    allow_origins=["https://cors.aitogy.com"],  # âš ï¸ Trong production, hãy chỉ định origins cụ thể
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

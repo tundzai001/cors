@@ -384,7 +384,7 @@ class MonitorWorker(threading.Thread):
             },
             "source_mountpoint": self.cfg['mountpoint'],
             "rtk_fix_status": "FIXED",
-            "detected_chip_type": "MONITOR_ONLY",
+            "detected_chip_type": "ublox",
             "is_provisioned": True
         }
         

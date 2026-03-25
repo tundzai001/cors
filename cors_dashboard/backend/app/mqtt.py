@@ -167,7 +167,7 @@ async def batch_sync_checker():
             logging.error(f"❌ Batch sync checker error: {e}", exc_info=True)
 
 # ==============================================================================
-# MAIN MESSAGE HANDLER (ĐÃ TỐI ƯU HÓA - KHÔNG MỞ DB MỖI MESSAGE)
+# MAIN MESSAGE HANDLER (ĐàTỐI ƯU HÓA - KHÔNG MỞ DB MỖI MESSAGE)
 # ==============================================================================
 
 async def handle_message_async(topic: str, payload: bytes):
