@@ -24,8 +24,34 @@ from dotenv import dotenv_values, set_key
 
 from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect, Depends, 
-    HTTPException, Request, Query, status
+    HTTPException, Request, Query, status, Body
 )
+from fastapi.responses import PlainTextResponse
+# === NTRIP WAKE STATION HTTP ENDPOINT ===
+@app.post("/api/ntrip/wake-station", response_class=PlainTextResponse)
+async def ntrip_wake_station(
+    payload: dict = Body(...)
+):
+    """
+    Endpoint cho NTRIP gửi lệnh bật trạm qua HTTP.
+    Yêu cầu JSON: {"mountpoint": "...", "client_instance_id": "...", "ttl_seconds": 90}
+    """
+    from .mqtt import handle_ntrip_mqtt_command
+    import json
+    # Giả lập message như MQTT gửi vào
+    topic = "ntrip/rtcm/start"
+    try:
+        # Chỉ lấy các trường cần thiết
+        data = {
+            "mountpoint": payload.get("mountpoint"),
+            "client_instance_id": payload.get("client_instance_id"),
+            "ttl_seconds": int(payload.get("ttl_seconds", 90)),
+        }
+        # Chuyển thành bytes như MQTT
+        await handle_ntrip_mqtt_command(topic, json.dumps(data).encode("utf-8"))
+        return "OK"
+    except Exception as e:
+        return PlainTextResponse(f"ERROR: {e}", status_code=500)
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -192,6 +218,8 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "ntrip_connected",
         "detected_chip_type",
         "base_config",
+        "base_coords",
+        "auto_base_progress",
         "service_config",
         "system_info",
         "is_provisioned",
@@ -2655,7 +2683,7 @@ async def create_multi_base_rover(
     if not request.selected_serials:
          raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm.")
     
-    # Gộp serial lại thÃ nh chuỗi để lưu vÃ o base_serial
+    # Gộp serial lại thành chuỗi để lưu vào base_serial
     combined_serials = ",".join(request.selected_serials)
 
     # 4. GỌI CASTER (Tạo user thật)
@@ -2671,7 +2699,7 @@ async def create_multi_base_rover(
             expiry_seconds=duration_seconds, 
             max_users=1
         )
-        logging.info(f"âœ“ Created Multi-Rover '{request.username}' allowed: {target_mountpoints}")
+        logging.info(f"✓ Created Multi-Rover '{request.username}' allowed: {target_mountpoints}")
 
     except Exception as e:
         logging.error(f"Caster Error: {e}")
@@ -2720,27 +2748,16 @@ async def configure_chip_endpoint(
 
     # ==================== BƯỚC 3: LƯU CẤU HÌNH VÀO DATABASE ====================
     try:
-        # Cập nhật chip type
         if sensor_type:
             device_in_db.detected_chip_type = sensor_type
-        
-        # Cập nhật base config
         if params:
             device_in_db.base_config = params
-        
-        # âœ… ĐÁNH DẤU CHƯA ĐỒNG BỘ
         device_in_db.is_synced = False
         
-        # Commit vÃ o DB
         await db.commit()
         await db.refresh(device_in_db)
         
-        logging.info(
-            f"âœ“ Saved base config for {serial} to database:\n"
-            f"  Chip: {sensor_type}\n"
-            f"  Method: {method}\n"
-            f"  Marked as UNSYNCED"
-        )
+        logging.info(f"✓ Saved base config for {serial} to database: Chip={sensor_type}, Method={method}, Marked as UNSYNCED")
         
         await ui_manager.broadcast({
             "type": "status_update",
@@ -2749,19 +2766,36 @@ async def configure_chip_endpoint(
 
     except Exception as e:
         await db.rollback()
-        logging.error(f"âŒ Failed to save config to DB for {serial}: {e}")
+        logging.error(f"❌ Failed to save config to DB for {serial}: {e}")
         raise HTTPException(
             status_code=500, 
             detail=f"Failed to save configuration to database: {str(e)}"
         )
 
-    # ==================== BƯỚC 4: BUILD COMMANDS ====================
+    # ==================== BƯỚC 4 & 5: BUILD VÀ GỬI LỆNH XUỐNG AGENT ====================
     try:
         commands_to_send = []
+        pi_command = None
         
         if mode == "BASE":
-            if method == "SURVEY_IN":
-                # Build Survey-In commands
+            if method == "AUTO_CORS":
+                import os
+                pi_command = {
+                    "command": "TRIGGER_AUTO_BASE",
+                    "payload": {
+                        "ip": os.getenv("AUTO_BASE_CORS_IP", "14.238.1.125"),
+                        "port": int(os.getenv("AUTO_BASE_CORS_PORT", 2101)),
+                        "user": os.getenv("AUTO_BASE_CORS_USER", "aitogy"),
+                        "password": os.getenv("AUTO_BASE_CORS_PASS", "123"),
+                        "mountpoint": os.getenv("AUTO_BASE_CORS_MOUNTPOINT", "VRS.105M3"),
+                        "timeout": 3600,
+                        "samples": 60,
+                        "sensor_type": sensor_type
+                    },
+                    "original_config": config_request.payload
+                }
+                logging.info(f"Built Auto Base Setup trigger for {serial}")
+            elif method == "SURVEY_IN":
                 survey_duration = params.get('survey_in_duration')
                 survey_accuracy = params.get('survey_in_accuracy')
                 
@@ -2769,79 +2803,47 @@ async def configure_chip_endpoint(
                     raise ValueError("Missing survey_in parameters")
                 
                 commands_to_send = command_builder.build_base_survey_in_command(
-                    sensor_type, 
-                    survey_duration, 
-                    survey_accuracy
+                    sensor_type, survey_duration, survey_accuracy
                 )
-                
-                logging.info(
-                    f"Built Survey-In commands for {serial}:\n"
-                    f"  Duration: {survey_duration}s\n"
-                    f"  Accuracy: {survey_accuracy}m"
-                )
-            
+                logging.info(f"Built Survey-In commands for {serial}: {survey_duration}s, {survey_accuracy}m")
             elif method == "FIXED_LLA":
-                # Build Fixed LLA commands
                 coords = params.get('coords')
                 if not coords or not all(k in coords for k in ['lat', 'lon', 'alt']):
                     raise ValueError("Missing or incomplete coordinates")
                 
                 accuracy = params.get('accuracy', 10.0)
-                
                 commands_to_send = command_builder.build_base_fixed_lla_command(
-                    sensor_type,
-                    coords['lat'],
-                    coords['lon'],
-                    coords['alt'],
-                    accuracy
+                    sensor_type, coords['lat'], coords['lon'], coords['alt'], accuracy
                 )
-                
-                logging.info(
-                    f"Built Fixed LLA commands for {serial}:\n"
-                    f"  Lat: {coords['lat']}\n"
-                    f"  Lon: {coords['lon']}\n"
-                    f"  Alt: {coords['alt']}\n"
-                    f"  Accuracy: {accuracy}m"
-                )
-            
+                logging.info(f"Built Fixed LLA commands for {serial}: lat/lon/alt, acc={accuracy}m")
             else:
                 raise ValueError(f"Unknown base setup method: {method}")
-        
         else:
             raise ValueError(f"Unsupported mode: {mode}")
         
-        # Encode commands to base64
-        encoded_commands = [
-            base64.b64encode(cmd).decode('ascii') 
-            for cmd in commands_to_send 
-            if cmd
-        ]
-        
-        if not encoded_commands:
-            raise ValueError("No commands generated")
+        if not pi_command:
+            encoded_commands = [base64.b64encode(cmd).decode('ascii') for cmd in commands_to_send if cmd]
+            if not encoded_commands:
+                raise ValueError("No commands generated")
 
+            pi_command = {
+                "command": "EXECUTE_RAW_COMMANDS",
+                "payload": {"commands_b64": encoded_commands},
+                "original_config": config_request.payload
+            }
+            
     except Exception as e:
-        logging.error(f"âŒ Failed to build commands for {serial}: {e}")
+        logging.error(f"❌ Failed to build configuration commands for {serial}: {e}")
         raise HTTPException(
             status_code=400,
             detail=f"Failed to build configuration commands: {str(e)}"
         )
 
-    # ==================== BƯỚC 5: GỬI LỆNH XUỐNG AGENT ====================
-    pi_command = {
-        "command": "EXECUTE_RAW_COMMANDS",
-        "payload": {"commands_b64": encoded_commands},
-        "original_config": config_request.payload  # Để Agent biết context
-    }
-    
+    # ==================== BƯỚC 6: GỬI LỆNH ====================
     try:
         response = await send_command_to_pi(serial, pi_command)
         
-        logging.info(
-            f"âœ“ Sent {len(commands_to_send)} configuration commands to {serial}\n"
-            f"  Channel: {response['channel']}\n"
-            f"  Status: Waiting for device confirmation..."
-        )
+        logging.info(f"✓ Sent configuration commands to {serial}")
         
         await log_system_event(
             db=db,
@@ -2851,42 +2853,22 @@ async def configure_chip_endpoint(
             serial=serial
         )
         
-        # âœ… TRẢ VỀ SUCCESS - CHỜ AGENT XÁC NHẬN
         return {
             "status": "command_sent_waiting_sync",
             "channel": response['channel'],
-            "commands_sent": len(commands_to_send),
-            "message": (
-                "Configuration saved to database and sent to device. "
-                "Waiting for device to apply and confirm sync status..."
-            ),
-            "is_synced": False  # Hiện tại vẫn chưa đồng bộ
+            "commands_sent": len(commands_to_send) if not pi_command else 1,
+            "message": "Configuration saved to database and sent to device. Waiting for device to apply and confirm sync status...",
+            "is_synced": False
         }
 
     except HTTPException as http_exc:
-        # Device offline hoặc không thể gửi lệnh
-        logging.warning(
-            f"âš ï¸ Failed to send command to {serial}: {http_exc.detail}\n"
-            f"  Config đã được lưu vÃ o DB.\n"
-            f"  Sẽ tự động đồng bộ khi device online lại."
-        )
-        
-        # âœ… TRẢ VỀ PARTIAL SUCCESS
+        logging.warning(f"⚠️ Failed to send command to {serial}: {http_exc.detail}. Config auto-sync when online.")
         raise HTTPException(
             status_code=503,
-            detail=(
-                f"Configuration saved to database successfully, "
-                f"but device is offline ({http_exc.detail}). "
-                f"Config will auto-sync when device comes back online."
-            )
+            detail=f"Configuration saved to database successfully, but device is offline ({http_exc.detail}). Config will auto-sync when device comes back online."
         )
-    
     except Exception as e:
-        logging.error(
-            f"âŒ Unexpected error sending command to {serial}: {e}",
-            exc_info=True
-        )
-        
+        logging.error(f"❌ Unexpected error sending command to {serial}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Internal error while sending command: {str(e)}"

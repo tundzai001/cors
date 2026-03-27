@@ -13,7 +13,11 @@ const STATUS_TEXT_MAP = {
     'configuring': 'ĐANG CẤU HÌNH',
     'rebooting': 'KHỞI ĐỘNG LẠI',
     'rebooting_for_reset': 'ĐANG RESET',
-    'locked': 'BỊ KHÓA'
+    'locked': 'BỊ KHÓA',
+    'auto_setup_rover': 'AUTO: CHẾ ĐỘ ROVER',
+    'auto_setup_wait_fix': 'AUTO: CHỜ RTK FIX',
+    'auto_setup_averaging': 'AUTO: LẤY MẪU TỌA ĐỘ',
+    'auto_setup_base': 'AUTO: CÀI ĐẶT BASE'
 };
 
 const STATUS_CLASS_MAP = {
@@ -24,7 +28,11 @@ const STATUS_CLASS_MAP = {
     'configuring': 'bg-primary',
     'rebooting': 'bg-warning text-dark',
     'rebooting_for_reset': 'bg-danger',
-    'locked': 'bg-danger'
+    'locked': 'bg-danger',
+    'auto_setup_rover': 'bg-info',
+    'auto_setup_wait_fix': 'bg-info',
+    'auto_setup_averaging': 'bg-info',
+    'auto_setup_base': 'bg-info'
 };
 
 
@@ -34,9 +42,9 @@ const STATUS_CLASS_MAP = {
 
 const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSelect, onDelete, currentUser }) {
     const isAdmin = currentUser?.role === 'admin';
-    const canDelete = currentUser?.role === 'admin' || 
-                     (currentUser?.role === 'coordinator' && device.user_id === currentUser.id);
-    
+    const canDelete = currentUser?.role === 'admin' ||
+        (currentUser?.role === 'coordinator' && device.user_id === currentUser.id);
+
     // ============================================================
     // STATE MANAGEMENT
     // ============================================================
@@ -44,12 +52,12 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
         s1Connected: false,
         s2Connected: false
     });
-    
+
     const lastUpdateTimeRef = React.useRef({
         s1: 0,
         s2: 0
     });
-    
+
     React.useEffect(() => {
         lastUpdateTimeRef.current = {
             s1: 0,
@@ -61,27 +69,27 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
         const ntripStatus = device.ntrip_status || {};
         const s1 = ntripStatus.server1 || { connected: false, bps: 0 };
         const s2 = ntripStatus.server2 || { connected: false, bps: 0 };
-        
+
         const now = Date.now();
-        
+
         if (s1.bps > 0) {
             lastUpdateTimeRef.current.s1 = now;
         }
         if (s2.bps > 0) {
             lastUpdateTimeRef.current.s2 = now;
         }
-        
+
         const GRACE_PERIOD = 5000;
         const UNSTABLE_TIMEOUT = 15000;
-        
+
         const s1TimeSince = now - lastUpdateTimeRef.current.s1;
         const s2TimeSince = now - lastUpdateTimeRef.current.s2;
-        
+
         // ============================================================
         // LOGIC 3 TRẠNG THÁI CHO SERVER 1
         // ============================================================
         let s1Connected = false;
-        
+
         if (lastUpdateTimeRef.current.s1 === 0) {
             s1Connected = false;
         } else if (s1.bps > 0) {
@@ -93,12 +101,12 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
         } else {
             s1Connected = false;
         }
-        
+
         // ============================================================
         // LOGIC 3 TRẠNG THÁI CHO SERVER 2
         // ============================================================
         let s2Connected = false;
-        
+
         if (lastUpdateTimeRef.current.s2 === 0) {
             s2Connected = false;
         } else if (s2.bps > 0) {
@@ -110,12 +118,12 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
         } else {
             s2Connected = false;
         }
-        
+
         setDisplayStatus({
             s1Connected: s1Connected,
             s2Connected: s2Connected
         });
-        
+
     }, [device.ntrip_status]);
 
     // ============================================================
@@ -132,9 +140,9 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
     const formatSpeed = (bytes) => {
         if (!bytes || bytes === 0) return { value: '0', unit: 'B/s' };
         if (bytes < 1024) return { value: Math.round(bytes).toString(), unit: 'B/s' };
-        return { 
-            value: (bytes / 1024).toFixed(1), 
-            unit: 'KB/s' 
+        return {
+            value: (bytes / 1024).toFixed(1),
+            unit: 'KB/s'
         };
     };
 
@@ -149,13 +157,15 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
     const s1Enabled = config.server1_enabled;
     const s2Enabled = config.server2_enabled;
 
-    const statusColorClass = device.status === 'online' ? 'online' : 
-                            device.status === 'awaiting_license' ? 'awaiting_license' :
-                            device.status === 'unprovisioned' ? 'unprovisioned' : 
-                            device.status === 'configuring' ? 'configuring' :
-                            device.status === 'rebooting' ? 'rebooting' :
-                            device.status === 'rebooting_for_reset' ? 'rebooting_for_reset' :
-                            device.status === 'locked' ? 'locked' : 'offline';
+    const isAutoSetup = (device.status || '').startsWith('auto_setup');
+    const statusColorClass = device.status === 'online' ? 'online' :
+        device.status === 'awaiting_license' ? 'awaiting_license' :
+            device.status === 'unprovisioned' ? 'unprovisioned' :
+                device.status === 'configuring' ? 'configuring' :
+                    device.status === 'rebooting' ? 'rebooting' :
+                        device.status === 'rebooting_for_reset' ? 'rebooting_for_reset' :
+                            device.status === 'locked' ? 'locked' : 
+                                isAutoSetup ? 'configuring' : 'offline';
 
     // ✅ KIỂM TRA TRẠM ẢO
     const isVirtualStation = device.detected_chip_type === 'VIRTUAL';
@@ -164,7 +174,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
     // RENDER
     // ============================================================
     return (
-        <div 
+        <div
             className={`device-card ${isSelected ? 'active' : ''}`}
             onClick={() => onSelect(device.serial)}
         >
@@ -183,7 +193,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
                         </div>
                     )}
                 </div>
-                
+
                 {/* ✅ HIỂN THỊ BADGE TRẠM ẢO HOẶC CHIP THẬT */}
                 {isVirtualStation ? (
                     <span className="badge bg-info text-dark" title="Trạm ảo - Nhận RTCM từ Cục và phát lại">
@@ -202,10 +212,9 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
                 <div className="server-indicators">
                     {/* Server 1 */}
                     {s1Enabled && (
-                        <div className={`server-status-item ${
-                            displayStatus.s1Connected === 'unstable' ? 'unstable' : 
-                            displayStatus.s1Connected ? 'connected' : 'disconnected'
-                        }`}>
+                        <div className={`server-status-item ${displayStatus.s1Connected === 'unstable' ? 'unstable' :
+                                displayStatus.s1Connected ? 'connected' : 'disconnected'
+                            }`}>
                             <div className="server-label">
                                 <i className="bi bi-hdd-network-fill"></i>
                                 S1
@@ -223,10 +232,9 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
 
                     {/* Server 2 */}
                     {s2Enabled && (
-                        <div className={`server-status-item ${
-                            displayStatus.s2Connected === 'unstable' ? 'unstable' : 
-                            displayStatus.s2Connected ? 'connected' : 'disconnected'
-                        }`}>
+                        <div className={`server-status-item ${displayStatus.s2Connected === 'unstable' ? 'unstable' :
+                                displayStatus.s2Connected ? 'connected' : 'disconnected'
+                            }`}>
                             <div className="server-label">
                                 <i className="bi bi-hdd-network-fill"></i>
                                 S2
@@ -266,8 +274,8 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
 
             {/* Delete Button */}
             {canDelete && (
-                <button 
-                    className="btn btn-delete" 
+                <button
+                    className="btn btn-delete"
                     onClick={handleDelete}
                     title="Xóa trạm"
                 >
@@ -283,11 +291,11 @@ window.DeviceListItem = DeviceListItem;
 const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
     const searchTimeoutRef = useRef(null);
-    
+
     useEffect(() => {
         setLocalSearchTerm(searchTerm);
     }, [searchTerm]);
-    
+
     const handleSearchChange = (e) => {
         const value = e.target.value;
         setLocalSearchTerm(value);
@@ -307,21 +315,21 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                         <i className="bi bi-filter-right fs-5"></i>
                     </button>
                 </div>
-                
+
                 <div className="input-group input-group-sm">
                     <span className="input-group-text bg-dark border-secondary text-secondary">
                         <i className="bi bi-search"></i>
                     </span>
-                    <input 
-                        type="text" 
-                        className="form-control search-box-modern" 
-                        placeholder="Tìm kiếm..." 
+                    <input
+                        type="text"
+                        className="form-control search-box-modern"
+                        placeholder="Tìm kiếm..."
                         value={localSearchTerm}
                         onChange={handleSearchChange}
                     />
                     {localSearchTerm && (
-                        <button 
-                            className="btn btn-dark border-secondary text-muted" 
+                        <button
+                            className="btn btn-dark border-secondary text-muted"
                             type="button"
                             onClick={() => { setLocalSearchTerm(''); onSearch(''); }}
                         >
@@ -340,7 +348,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                     </div>
                 ) : (
                     devices.map(device => (
-                        <DeviceListItem 
+                        <DeviceListItem
                             key={device.serial}
                             device={device}
                             isSelected={device.serial === selectedDeviceSerial}
@@ -408,9 +416,9 @@ const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disable
                 <label className="form-label">Serial Number của Pi</label>
                 <div className="input-group">
                     <input type="text" className="form-control" value={device.serial} readOnly />
-                    <button 
-                        className="btn btn-outline-secondary" 
-                        type="button" 
+                    <button
+                        className="btn btn-outline-secondary"
+                        type="button"
                         title="Sao chép Serial"
                         onClick={() => {
                             navigator.clipboard.writeText(device.serial);
@@ -425,9 +433,9 @@ const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disable
                 <label className="form-label">License Key</label>
                 <div className="input-group">
                     <input type="text" className="form-control" value={licenseKey} readOnly placeholder="Nhấn 'Tạo Key' để tạo..." />
-                    <button 
-                        className="btn btn-outline-secondary" 
-                        type="button" 
+                    <button
+                        className="btn btn-outline-secondary"
+                        type="button"
                         title="Sao chép Key"
                         onClick={() => {
                             if (licenseKey) {
@@ -473,10 +481,17 @@ const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disable
 const ProvisionForm = memo(function ProvisionForm({ device, onProvision, disabled }) {
     const [stationName, setStationName] = useState(device.name);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
+    const autoProgress = device?.auto_base_progress || {};
+    const autoSamplesCollected = Number(autoProgress.samples_collected || 0);
+    const autoSamplesTarget = Number(autoProgress.samples_target || 0);
+    const autoProgressPercent = autoSamplesTarget > 0
+        ? Math.min(100, Math.round((autoSamplesCollected / autoSamplesTarget) * 100))
+        : null;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (disabled) return; 
+        if (disabled) return;
         if (!stationName.trim()) {
             return window.showError('Vui lòng nhập tên trạm!');
         }
@@ -497,7 +512,7 @@ const ProvisionForm = memo(function ProvisionForm({ device, onProvision, disable
             <p className="small text-muted">
                 Vui lòng đặt tên cho trạm phát của bạn để tiếp tục. Tên này sẽ được hiển thị trên toàn hệ thống.
             </p>
-            
+
             {/* Thông báo chế độ xem */}
             {disabled && (
                 <div className="alert alert-info">
@@ -505,22 +520,22 @@ const ProvisionForm = memo(function ProvisionForm({ device, onProvision, disable
                     Chế độ xem: Bạn không có quyền kích hoạt trạm này.
                 </div>
             )}
-            
+
             <form onSubmit={handleSubmit}>
                 {/* Fieldset để khóa tất cả input */}
                 <fieldset disabled={disabled}>
                     <div className="mb-3">
                         <label htmlFor="station-name" className="form-label fw-bold">Tên trạm</label>
-                        <input 
-                            type="text" 
-                            className="form-control form-control-lg" 
+                        <input
+                            type="text"
+                            className="form-control form-control-lg"
                             id="station-name"
                             value={stationName}
                             onChange={(e) => setStationName(e.target.value)}
                             required
                         />
                     </div>
-                    
+
                     {/* Chỉ hiện nút submit khi có quyền */}
                     {!disabled && (
                         <button type="submit" className="btn btn-primary w-100 btn-lg" disabled={isSubmitting}>
@@ -546,16 +561,16 @@ const ProvisionForm = memo(function ProvisionForm({ device, onProvision, disable
 const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, disabled }) {
     const knownChips = ['Ublox', 'Unicorecomm'];
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
-    
-    const [manualChip, setManualChip] = useState('Ublox');
+
+    const [manualChip, setManualChip] = useState(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
     const [method, setMethod] = useState('FIXED_LLA');
-    
+
     // Tọa độ Fixed
     const [latitude, setLatitude] = useState('');
     const [longitude, setLongitude] = useState('');
     const [altitude, setAltitude] = useState('');
     const [fixedAccuracyMm, setFixedAccuracyMm] = useState('10'); // Đơn vị mm cho Fixed
-    
+
     // Survey-In Params
     const [svinDuration, setSvinDuration] = useState('300'); // Giây
     const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
@@ -564,7 +579,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
 
     useEffect(() => {
         // 1. Reset về giá trị mặc định khi đổi thiết bị
-        setManualChip('Ublox');
+        setManualChip(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
         setMethod('FIXED_LLA');
         setLatitude('');
         setLongitude('');
@@ -572,21 +587,26 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
         setFixedAccuracyMm('10');
         setSvinDuration('300');
         setSvinAccuracyM('3.00');
-        
+
         // 2. Load config từ DB (nếu có)
         if (device.base_config) {
             const config = device.base_config;
-            
+
             // Set Method
             if (config.base_setup_method) {
                 setMethod(config.base_setup_method);
             }
 
             // Load Fixed Params
-            if (config.coords) {
-                setLatitude(config.coords.lat || '');
-                setLongitude(config.coords.lon || '');
-                setAltitude(config.coords.alt || '');
+            const coords = config.coords || (
+                (config.lat !== undefined && config.lon !== undefined)
+                    ? { lat: config.lat, lon: config.lon, alt: config.alt }
+                    : null
+            );
+            if (coords) {
+                setLatitude(coords.lat ?? '');
+                setLongitude(coords.lon ?? '');
+                setAltitude(coords.alt ?? '');
             }
             // Load Accuracy cho Fixed (Lưu trong DB là mét -> Đổi ra mm để hiển thị)
             if (config.accuracy !== undefined) {
@@ -602,7 +622,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                 setSvinAccuracyM(String(config.survey_in_accuracy));
             }
         }
-    }, [device.serial]); 
+    }, [device.serial, device.base_config]);
 
     const handleDecimalInputChange = (setter) => (e) => {
         const value = e.target.value;
@@ -614,16 +634,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (disabled) return; 
+        if (disabled) return;
         setIsSubmitting(true);
-        
+
         try {
-            const finalChipType = needsManualSelection 
-                ? manualChip                  
+            const finalChipType = needsManualSelection
+                ? manualChip
                 : device.detected_chip_type;
 
             let params = { base_setup_method: method };
-            
+
             if (method === 'FIXED_LLA') {
                 params.coords = {
                     lat: parseFloat(latitude),
@@ -632,18 +652,20 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                 };
                 // Fixed: Input là mm -> Chia 1000 để thành m gửi cho backend
                 params.accuracy = parseFloat(fixedAccuracyMm) / 1000.0;
-            } else {
+            } else if (method === 'SURVEY_IN') {
                 params.survey_in_duration = parseInt(svinDuration);
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
                 params.survey_in_accuracy = parseFloat(svinAccuracyM);
+            } else if (method === 'AUTO_CORS') {
+                // Auto CORS uses backend config directly, no frontend parameters needed beyond the method
             }
-            
+
             const payload = {
                 sensor_type: finalChipType,
                 mode: 'BASE',
                 params: params
             };
-            
+
             await onConfigureChip(device.serial, payload);
         } finally {
             setIsSubmitting(false);
@@ -656,55 +678,117 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                 <i className="bi bi-info-circle me-2"></i>
                 Đây là bước cấu hình tọa độ gốc cho trạm phát. Các thay đổi sẽ reset chip GNSS.
             </div>
-            
+
             {disabled && (
                 <div className="alert alert-warning py-2 mb-3">
                     <i className="bi bi-eye-fill me-2"></i>
                     Chế độ xem: Không thể chỉnh sửa cấu hình GNSS.
                 </div>
             )}
-            
+
             {needsManualSelection && (
                 <div className="mb-3 p-3 border border-warning rounded">
                     <div className="alert alert-warning small p-2">
                         <i className="bi bi-exclamation-triangle-fill me-2"></i>
-                        Không thể nhận diện loại chip (hiện tại là: <strong>{device.detected_chip_type}</strong>). Vui lòng chọn thủ công.
+                        {device.detected_chip_type === 'RTCM3_Source' ? (
+                            <span>Chip nhận dạng là <strong>RTCM3_Source</strong> (thường là chip Unicorecomm/UM982 trả về mã chung). Vui lòng xác nhận loại chip để cấu hình chính xác.</span>
+                        ) : (
+                            <span>Không thể nhận diện loại chip (hiện tại là: <strong>{device.detected_chip_type}</strong>). Vui lòng chọn thủ công.</span>
+                        )}
                     </div>
-                    <label className="form-label fw-bold">Chọn Loại Chip</label>
-                    <select 
+                    <label className="form-label fw-bold">Xác nhận Loại Chip</label>
+                    <select
                         className="form-select"
                         value={manualChip}
                         onChange={(e) => setManualChip(e.target.value)}
                         disabled={disabled}
                     >
                         <option value="Ublox">Ublox</option>
-                        <option value="Unicorecomm">Unicorecomm</option>
+                        <option value="Unicorecomm">Unicorecomm (Mặc định cho UM982 / RTCM3)</option>
                     </select>
                 </div>
             )}
-            
+
             <div className="mb-3">
                 <label className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>
-                <select 
-                    className="form-select border-primary" 
+                <select
+                    className="form-select border-primary"
                     value={method}
                     onChange={(e) => setMethod(e.target.value)}
                     disabled={disabled}
                 >
+                    <option value="AUTO_CORS">Tự động cấu hình Base từ CORS liên kết</option>
                     <option value="FIXED_LLA">Nhập tọa độ thủ công (Fixed Mode - Độ chính xác cao)</option>
                     <option value="SURVEY_IN">Tự động khảo sát (Survey-In - Độ chính xác thấp)</option>
                 </select>
             </div>
-            
+
             <fieldset disabled={disabled}>
-                {method === 'FIXED_LLA' ? (
+                {method === 'AUTO_CORS' ? (
+                    <div className="row g-3">
+                        {isAutoSetupStatus && (
+                            <div className="col-12">
+                                <div className="alert alert-info small mb-2">
+                                    <div className="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <i className="bi bi-hourglass-split me-2"></i>
+                                            <strong>Đang tự động cấu hình:</strong> {STATUS_TEXT_MAP[device.status] || device.status}
+                                        </div>
+                                        {autoProgressPercent !== null && (
+                                            <span className="badge bg-primary">{autoProgressPercent}%</span>
+                                        )}
+                                    </div>
+                                    {autoSamplesTarget > 0 && (
+                                        <div className="mt-2">
+                                            <div className="progress" style={{ height: '8px' }}>
+                                                <div
+                                                    className="progress-bar progress-bar-striped progress-bar-animated"
+                                                    style={{ width: `${autoProgressPercent || 0}%` }}
+                                                ></div>
+                                            </div>
+                                            <div className="mt-1 text-muted">
+                                                Mẫu tọa độ: {autoSamplesCollected}/{autoSamplesTarget}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        <div className="col-12">
+                            <div className="alert alert-success small mb-2">
+                                <i className="bi bi-robot me-2"></i>
+                                {latitude && longitude ? (
+                                    <span>Hệ thống đã tự động cấu hình tọa độ cho trạm từ CORS liên kết thành công!</span>
+                                ) : (
+                                    <span>Hệ thống sẽ tự động ghép nối với máy chủ CORS và tính trung bình tọa độ để thiết lập trạm phát Base hoàn toàn tự động!</span>
+                                )}
+                            </div>
+                        </div>
+                        {latitude && longitude && (
+                            <>
+                                <div className="col-md-4">
+                                    <label className="form-label small">Lat (Tự động)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={latitude} readOnly />
+                                </div>
+                                <div className="col-md-4">
+                                    <label className="form-label small">Lon (Tự động)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={longitude} readOnly />
+                                </div>
+                                <div className="col-md-4">
+                                    <label className="form-label small">Alt (Tự động)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={altitude} readOnly />
+                                </div>
+                            </>
+                        )}
+                    </div>
+                ) : method === 'FIXED_LLA' ? (
                     <div className="row g-3">
                         <div className="col-12 text-muted small fst-italic mb-2">
                             * Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).
                         </div>
                         <div className="col-md-6">
                             <label className="form-label">Latitude (Vĩ độ)</label>
-                            <input 
+                            <input
                                 type="text" inputMode="decimal" className="form-control"
                                 value={latitude} onChange={handleDecimalInputChange(setLatitude)}
                                 required placeholder="VD: 21.028511"
@@ -712,7 +796,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                         </div>
                         <div className="col-md-6">
                             <label className="form-label">Longitude (Kinh độ)</label>
-                            <input 
+                            <input
                                 type="text" inputMode="decimal" className="form-control"
                                 value={longitude} onChange={handleDecimalInputChange(setLongitude)}
                                 required placeholder="VD: 105.854167"
@@ -720,7 +804,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                         </div>
                         <div className="col-md-6">
                             <label className="form-label">Altitude (Độ cao - mét)</label>
-                            <input 
+                            <input
                                 type="text" inputMode="decimal" className="form-control"
                                 value={altitude} onChange={handleDecimalInputChange(setAltitude)}
                                 required placeholder="VD: 15.5"
@@ -728,7 +812,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                         </div>
                         <div className="col-md-6">
                             <label className="form-label fw-bold">Giới hạn sai số (mm)</label>
-                            <input 
+                            <input
                                 type="number" className="form-control"
                                 value={fixedAccuracyMm} onChange={(e) => setFixedAccuracyMm(e.target.value)}
                                 required placeholder="VD: 10"
@@ -743,7 +827,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                         </div>
                         <div className="col-md-6">
                             <label className="form-label">Thời gian khảo sát (giây)</label>
-                            <input 
+                            <input
                                 type="number" className="form-control"
                                 value={svinDuration} onChange={(e) => setSvinDuration(e.target.value)}
                                 required
@@ -752,7 +836,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                         </div>
                         <div className="col-md-6">
                             <label className="form-label fw-bold">Giới hạn sai số (m)</label>
-                            <input 
+                            <input
                                 type="number" step="0.01" className="form-control"
                                 value={svinAccuracyM} onChange={(e) => setSvinAccuracyM(e.target.value)}
                                 required placeholder="VD: 3.0"
@@ -761,7 +845,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                         </div>
                     </div>
                 )}
-                
+
                 {!disabled && (
                     <button type="submit" className="btn btn-primary mt-4 w-100" disabled={isSubmitting}>
                         {isSubmitting ? (
@@ -814,14 +898,14 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
             reconnectioninterval: 10,
             server1_enabled: false,
             ntrip_version1: 1,
-            username1: '',  
+            username1: '',
             serverhost1: '',
             port1: '',
             mountpoint1: '',
             password1: '',
             server2_enabled: false,
             ntrip_version2: 1,
-            username2: '',  
+            username2: '',
             serverhost2: '',
             port2: '',
             mountpoint2: '',
@@ -833,7 +917,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
             rtcmusername1: '',
             rtcmpassword1: ''
         };
-        
+
         if (device.service_config) {
             setFormState({
                 ...defaultState,
@@ -842,7 +926,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
         } else {
             setFormState(defaultState);
         }
-    }, [device.serial]); 
+    }, [device.serial]);
 
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -854,9 +938,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (disabled) return; 
+        if (disabled) return;
         setIsSubmitting(true);
-        
+
         try {
             const payload = {
                 ...formState,
@@ -867,7 +951,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                 rtcmport1: formState.rtcmport1 ? parseInt(formState.rtcmport1, 10) : null,
                 reconnectioninterval: parseInt(formState.reconnectioninterval, 10)
             };
-            
+
             await onConfigureService(device.serial, payload);
         } finally {
             setIsSubmitting(false);
@@ -880,7 +964,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                 <i className="bi bi-info-circle-fill me-2"></i>
                 Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.
             </div>
-            
+
             {/* 🔥 Thông báo chế độ xem */}
             {disabled && (
                 <div className="alert alert-warning py-2 mb-3">
@@ -888,7 +972,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                     Chế độ xem: Không thể chỉnh sửa cấu hình dịch vụ.
                 </div>
             )}
-            
+
             <div className="mb-4 p-3 border rounded border-secondary">
                 <h5 className="mb-3">Cài đặt chung</h5>
                 {/* 🔥 Fieldset khóa inputs */}
@@ -896,9 +980,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                     <div className="row g-3">
                         <div className="col-md-6">
                             <label htmlFor="ncomport" className="form-label">Định danh Trạm (ID)</label>
-                            <input 
-                                type="text" 
-                                className="form-control" 
+                            <input
+                                type="text"
+                                className="form-control"
                                 id="ncomport"
                                 name="ncomport"
                                 value={formState.ncomport}
@@ -908,9 +992,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                         </div>
                         <div className="col-md-6">
                             <label htmlFor="reconnectioninterval" className="form-label">Thời gian kết nối lại (giây)</label>
-                            <input 
-                                type="number" 
-                                className="form-control" 
+                            <input
+                                type="number"
+                                className="form-control"
                                 id="reconnectioninterval"
                                 name="reconnectioninterval"
                                 value={formState.reconnectioninterval}
@@ -925,10 +1009,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                 {/* ==================== SERVER 1 ==================== */}
                 <div className="accordion-item">
                     <h2 className="accordion-header">
-                        <button 
-                            className="accordion-button" 
-                            type="button" 
-                            data-bs-toggle="collapse" 
+                        <button
+                            className="accordion-button"
+                            type="button"
+                            data-bs-toggle="collapse"
                             data-bs-target="#collapseOne"
                         >
                             <i className="bi bi-box-arrow-up me-2 text-primary"></i>
@@ -940,10 +1024,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                             <fieldset disabled={disabled}>
                                 {/* Enable Switch */}
                                 <div className="form-check form-switch form-switch-lg mb-3">
-                                    <input 
-                                        className="form-check-input" 
-                                        type="checkbox" 
-                                        role="switch" 
+                                    <input
+                                        className="form-check-input"
+                                        type="checkbox"
+                                        role="switch"
                                         id="server1_enabled"
                                         name="server1_enabled"
                                         checked={formState.server1_enabled}
@@ -959,34 +1043,34 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </label>
                                     <div className="d-flex gap-4">
                                         <div className="form-check">
-                                            <input 
-                                                className="form-check-input" 
-                                                type="radio" 
-                                                name="ntrip_version1" 
-                                                id="ntrip_v1_1" 
-                                                value="1" 
-                                                checked={parseInt(formState.ntrip_version1) === 1} 
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version1"
+                                                id="ntrip_v1_1"
+                                                value="1"
+                                                checked={parseInt(formState.ntrip_version1) === 1}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v1_1">
-                                                <strong>Version 1.0</strong> 
-                                                <br/>
+                                                <strong>Version 1.0</strong>
+                                                <br />
                                                 <small className="text-muted">SOURCE command (Legacy)</small>
                                             </label>
                                         </div>
                                         <div className="form-check">
-                                            <input 
-                                                className="form-check-input" 
-                                                type="radio" 
-                                                name="ntrip_version1" 
-                                                id="ntrip_v1_2" 
-                                                value="2" 
-                                                checked={parseInt(formState.ntrip_version1) === 2} 
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version1"
+                                                id="ntrip_v1_2"
+                                                value="2"
+                                                checked={parseInt(formState.ntrip_version1) === 2}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v1_2">
                                                 <strong>Version 2.0</strong>
-                                                <br/>
+                                                <br />
                                                 <small className="text-muted">HTTP POST (Modern)</small>
                                             </label>
                                         </div>
@@ -1001,8 +1085,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                 <div className="row g-3">
                                     <div className="col-md-8">
                                         <label className="form-label">Host / IP</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="serverhost1"
                                             value={formState.serverhost1}
@@ -1012,8 +1096,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-4">
                                         <label className="form-label">Port</label>
-                                        <input 
-                                            type="number" 
+                                        <input
+                                            type="number"
                                             className="form-control"
                                             name="port1"
                                             value={formState.port1}
@@ -1023,11 +1107,11 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">
-                                            Username 
+                                            Username
                                             <small className="text-muted ms-1">(NTRIP Source Account)</small>
                                         </label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="username1"
                                             value={formState.username1}
@@ -1040,8 +1124,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">Password</label>
-                                        <input 
-                                            type="password" 
+                                        <input
+                                            type="password"
                                             className="form-control"
                                             name="password1"
                                             value={formState.password1}
@@ -1051,8 +1135,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-12">
                                         <label className="form-label">Mountpoint</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="mountpoint1"
                                             value={formState.mountpoint1}
@@ -1069,10 +1153,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                 {/* ==================== SERVER 2 ==================== */}
                 <div className="accordion-item">
                     <h2 className="accordion-header">
-                        <button 
-                            className="accordion-button collapsed" 
-                            type="button" 
-                            data-bs-toggle="collapse" 
+                        <button
+                            className="accordion-button collapsed"
+                            type="button"
+                            data-bs-toggle="collapse"
                             data-bs-target="#collapseTwo"
                         >
                             <i className="bi bi-box-arrow-up me-2 text-info"></i>
@@ -1084,10 +1168,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                             <fieldset disabled={disabled}>
                                 {/* Enable Switch */}
                                 <div className="form-check form-switch form-switch-lg mb-3">
-                                    <input 
-                                        className="form-check-input" 
-                                        type="checkbox" 
-                                        role="switch" 
+                                    <input
+                                        className="form-check-input"
+                                        type="checkbox"
+                                        role="switch"
                                         id="server2_enabled"
                                         name="server2_enabled"
                                         checked={formState.server2_enabled}
@@ -1103,34 +1187,34 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </label>
                                     <div className="d-flex gap-4">
                                         <div className="form-check">
-                                            <input 
-                                                className="form-check-input" 
-                                                type="radio" 
-                                                name="ntrip_version2" 
-                                                id="ntrip_v2_1" 
-                                                value="1" 
-                                                checked={parseInt(formState.ntrip_version2) === 1} 
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version2"
+                                                id="ntrip_v2_1"
+                                                value="1"
+                                                checked={parseInt(formState.ntrip_version2) === 1}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v2_1">
                                                 <strong>Version 1.0</strong>
-                                                <br/>
+                                                <br />
                                                 <small className="text-muted">SOURCE command (Legacy)</small>
                                             </label>
                                         </div>
                                         <div className="form-check">
-                                            <input 
-                                                className="form-check-input" 
-                                                type="radio" 
-                                                name="ntrip_version2" 
-                                                id="ntrip_v2_2" 
-                                                value="2" 
-                                                checked={parseInt(formState.ntrip_version2) === 2} 
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version2"
+                                                id="ntrip_v2_2"
+                                                value="2"
+                                                checked={parseInt(formState.ntrip_version2) === 2}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v2_2">
                                                 <strong>Version 2.0</strong>
-                                                <br/>
+                                                <br />
                                                 <small className="text-muted">HTTP POST (Modern)</small>
                                             </label>
                                         </div>
@@ -1145,8 +1229,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                 <div className="row g-3">
                                     <div className="col-md-8">
                                         <label className="form-label">Host / IP</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="serverhost2"
                                             value={formState.serverhost2}
@@ -1156,8 +1240,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-4">
                                         <label className="form-label">Port</label>
-                                        <input 
-                                            type="number" 
+                                        <input
+                                            type="number"
                                             className="form-control"
                                             name="port2"
                                             value={formState.port2}
@@ -1170,8 +1254,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                             Username
                                             <small className="text-muted ms-1">(NTRIP Source Account)</small>
                                         </label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="username2"
                                             value={formState.username2}
@@ -1184,8 +1268,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">Password</label>
-                                        <input 
-                                            type="password" 
+                                        <input
+                                            type="password"
                                             className="form-control"
                                             name="password2"
                                             value={formState.password2}
@@ -1195,8 +1279,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-12">
                                         <label className="form-label">Mountpoint</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="mountpoint2"
                                             value={formState.mountpoint2}
@@ -1213,10 +1297,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                 {/* ==================== RTCM CLIENT ==================== */}
                 <div className="accordion-item">
                     <h2 className="accordion-header">
-                        <button 
-                            className="accordion-button collapsed" 
-                            type="button" 
-                            data-bs-toggle="collapse" 
+                        <button
+                            className="accordion-button collapsed"
+                            type="button"
+                            data-bs-toggle="collapse"
                             data-bs-target="#collapseThree"
                         >
                             <i className="bi bi-box-arrow-in-down me-2 text-success"></i>
@@ -1228,10 +1312,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                             <fieldset disabled={disabled}>
                                 {/* Enable Switch */}
                                 <div className="form-check form-switch form-switch-lg mb-3">
-                                    <input 
-                                        className="form-check-input" 
-                                        type="checkbox" 
-                                        role="switch" 
+                                    <input
+                                        className="form-check-input"
+                                        type="checkbox"
+                                        role="switch"
                                         id="rtcm_enabled"
                                         name="rtcm_enabled"
                                         checked={formState.rtcm_enabled}
@@ -1250,8 +1334,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                 <div className="row g-3">
                                     <div className="col-md-8">
                                         <label className="form-label">Caster Host / IP</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="rtcmserver1"
                                             value={formState.rtcmserver1}
@@ -1261,8 +1345,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-4">
                                         <label className="form-label">Caster Port</label>
-                                        <input 
-                                            type="number" 
+                                        <input
+                                            type="number"
                                             className="form-control"
                                             name="rtcmport1"
                                             value={formState.rtcmport1}
@@ -1272,8 +1356,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-12">
                                         <label className="form-label">Mountpoint</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="rtcmmountpoint1"
                                             value={formState.rtcmmountpoint1}
@@ -1283,8 +1367,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">Username</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             className="form-control"
                                             name="rtcmusername1"
                                             value={formState.rtcmusername1}
@@ -1294,8 +1378,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">Password</label>
-                                        <input 
-                                            type="password" 
+                                        <input
+                                            type="password"
                                             className="form-control"
                                             name="rtcmpassword1"
                                             value={formState.rtcmpassword1}
@@ -1309,7 +1393,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                     </div>
                 </div>
             </div>
-            
+
             {/* 🔥 Chỉ hiện nút submit khi có quyền */}
             {!disabled && (
                 <button type="submit" className="btn btn-success mt-4 w-100 btn-lg" disabled={isSubmitting}>
@@ -1336,18 +1420,18 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const markerRef = useRef(null);
-    
+
     console.log('[Map] Received coords:', coords);
 
     useEffect(() => {
         // Kiểm tra tọa độ đầu vào
         if (!coords || !coords.lat || !coords.lon) {
-            console.warn('[Map] No coords provided'); 
+            console.warn('[Map] No coords provided');
             return;
         }
         const lat = parseFloat(coords.lat);
         const lon = parseFloat(coords.lon);
-        
+
         if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
 
         // Kiểm tra Leaflet đã load chưa
@@ -1359,7 +1443,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         // Khởi tạo Map
         if (!mapInstanceRef.current) {
             mapInstanceRef.current = L.map(mapContainerRef.current).setView([lat, lon], 16);
-   
+
             L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
                 maxZoom: 20,
                 attribution: 'Google Maps'
@@ -1393,8 +1477,8 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
     if (!coords || !coords.lat || (parseFloat(coords.lat) === 0 && parseFloat(coords.lon) === 0)) {
         console.warn('[Map] No valid coords - showing placeholder');
         return (
-            <div className="d-flex align-items-center justify-content-center p-4 text-danger border rounded bg-dark" 
-                style={{height: '250px', border: '2px solid red'}}>
+            <div className="d-flex align-items-center justify-content-center p-4 text-danger border rounded bg-dark"
+                style={{ height: '250px', border: '2px solid red' }}>
                 <div className="text-center">
                     <i className="bi bi-geo-alt-slash display-4 mb-2"></i>
                     <p className="mb-0">❌ Chưa có tọa độ Base</p>
@@ -1407,7 +1491,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
     if (typeof L === 'undefined') {
         console.error('[Map] ❌ LEAFLET CHƯA ĐƯỢC LOAD!');
         return (
-            <div className="alert alert-danger" style={{height: '250px'}}>
+            <div className="alert alert-danger" style={{ height: '250px' }}>
                 <h5>⚠️ Lỗi: Leaflet chưa được tải</h5>
                 <p>Kiểm tra file HTML có thêm Leaflet CSS/JS chưa.</p>
             </div>
@@ -1415,14 +1499,14 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
     }
     return (
         <div>
-             <div className="d-flex justify-content-between align-items-center mb-2">
+            <div className="d-flex justify-content-between align-items-center mb-2">
                 <h6 className="mb-0">Vị trí trạm Base (Lưu cứng)</h6>
                 <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lon}`} target="_blank" className="btn btn-sm btn-outline-primary">
                     <i className="bi bi-box-arrow-up-right me-1"></i>Google Maps
                 </a>
             </div>
             <div ref={mapContainerRef} style={{ width: '100%', height: '300px', borderRadius: '8px', border: '2px solid #444', zIndex: 0 }} />
-             <div className="mt-2 small text-muted">Lat: {parseFloat(coords.lat).toFixed(8)} | Lon: {parseFloat(coords.lon).toFixed(8)}</div>
+            <div className="mt-2 small text-muted">Lat: {parseFloat(coords.lat).toFixed(8)} | Lon: {parseFloat(coords.lon).toFixed(8)}</div>
         </div>
     );
 });
@@ -1447,7 +1531,7 @@ function getSatelliteSystem(sat) {
     const prn = sat.prn;
     if (prn >= 1 && prn <= 32) return 'us';
     if (prn >= 65 && prn <= 96) return 'ru';
-    if (prn >= 301 && prn <= 336) return 'eu'; 
+    if (prn >= 301 && prn <= 336) return 'eu';
     if (prn >= 193 && prn <= 200) return 'jp';
     if ((prn >= 33 && prn <= 64) || (prn >= 401 && prn <= 463)) return 'cn';
     return 'un';
@@ -1459,12 +1543,25 @@ function getSatelliteSystem(sat) {
 
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const rtk_status = device.rtk_fix_status || 'NO_FIX';
-    
+
     let fixInfo = { label: 'NO FIX', color: '#ff0000', icon: '❌' };
 
-    if (device.base_mode_active) {
+    const isAutoSetupStatus = (device.status || '').startsWith('auto_setup');
+
+    if (isAutoSetupStatus) {
+        const AUTO_SETUP_STEPS = {
+            'auto_setup_rover': { label: 'Bước 1: Đặt chế độ ROVER', color: '#17a2b8', icon: '🔄', step: 1 },
+            'auto_setup_wait_fix': { label: 'Bước 2: Chờ RTK Fix...', color: '#ffc107', icon: '📡', step: 2 },
+            'auto_setup_averaging': { label: 'Bước 3: Lấy mẫu tọa độ...', color: '#17a2b8', icon: '📊', step: 3 },
+            'auto_setup_base': { label: 'Bước 4: Cài đặt BASE', color: '#17a2b8', icon: '🏯', step: 4 }
+        };
+        const stepInfo = AUTO_SETUP_STEPS[device.status] || { label: 'Auto Setup...', color: '#17a2b8', icon: '⏳', step: 0 };
+        fixInfo = { label: stepInfo.label, color: stepInfo.color, icon: stepInfo.icon };
+    } else if (device.base_mode_active) {
         const baseConfig = device.base_config || {};
-        if (baseConfig.base_setup_method === 'FIXED_LLA') {
+        if (baseConfig.auto_configured) {
+            fixInfo = { label: 'BASE (Auto CORS)', color: '#00ff00', icon: '🏯' };
+        } else if (baseConfig.base_setup_method === 'FIXED_LLA') {
             fixInfo = { label: 'BASE FIXED', color: '#00ff00', icon: '🏯' };
         } else {
             if (device.ntrip_connected) {
@@ -1488,9 +1585,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const animationFrameRef = useRef(null);
     const lastSatelliteDataRef = useRef(null);
     const signalBarsContainerRef = useRef(null);
-    
+
     const [satStats, setSatStats] = useState({ total: 0, tracking: 0, bySystem: {} });
-    
+
     // 🆕 METRIC TRACKING STATE
     const [metrics, setMetrics] = useState({
         fixQuality: { value: 0, history: [] },
@@ -1498,17 +1595,26 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         hdop: { value: 0, history: [] },
         signalStrength: { value: 0, history: [] }
     });
-    
+
     const satelliteBufferRef = useRef(new Map());
     const SATELLITE_TIMEOUT = 5000;
     const FADE_DURATION = 2000;
     const safeNmeaData = nmeaData || { gga: null, gsa: null, satellites: {} };
-    const baseCoords = safeNmeaData.base_coords || device?.base_config?.coords;
+    const fallbackBaseCoords = device?.base_config?.coords || (
+        device?.base_config?.lat !== undefined && device?.base_config?.lon !== undefined
+            ? {
+                lat: device.base_config.lat,
+                lon: device.base_config.lon,
+                alt: device.base_config.alt
+            }
+            : null
+    );
+    const baseCoords = safeNmeaData.base_coords || fallbackBaseCoords;
 
     const lastStatsUpdate = useRef(0);
     const lastCanvasUpdate = useRef(0);
     const lastBarsUpdate = useRef(0);
-    
+
     const STATS_INTERVAL = 1000;
     const CANVAS_INTERVAL = 200;
     const BARS_INTERVAL = 500;
@@ -1520,11 +1626,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const gga = nmeaData.gga || {};
             const gsa = nmeaData.gsa || {};
             const sats = Object.values(nmeaData.satellites || {});
-            
-            const avgSnr = sats.length > 0 
-                ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length 
+
+            const avgSnr = sats.length > 0
+                ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length
                 : 0;
-            
+
             setMetrics(prev => ({
                 fixQuality: {
                     value: gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1,
@@ -1553,16 +1659,16 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
         const bgCtx = bgCanvasRef.current.getContext('2d');
         const satCtx = satCanvasRef.current.getContext('2d');
-        
+
         const drawSkyplotBase = () => {
             const w = bgCtx.canvas.width, h = bgCtx.canvas.height;
             if (w === 0 || h === 0) return;
 
             const centerX = w / 2, centerY = h / 2;
-            const radius = Math.min(centerX, centerY) * 0.85; 
-            
+            const radius = Math.min(centerX, centerY) * 0.85;
+
             bgCtx.clearRect(0, 0, w, h);
-            
+
             // Background Gradient
             const grad = bgCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
             grad.addColorStop(0, '#1a2332');
@@ -1570,23 +1676,23 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             grad.addColorStop(1, '#000');
             bgCtx.fillStyle = grad;
             bgCtx.fillRect(0, 0, w, h);
-            
+
             // Circles
             bgCtx.strokeStyle = '#3a4a5a';
             bgCtx.lineWidth = 1.5;
             bgCtx.font = '11px Arial';
             bgCtx.fillStyle = '#6a7a8a';
             bgCtx.textAlign = 'left';
-            
+
             [{ frac: 0.33, label: '60°' }, { frac: 0.66, label: '30°' }, { frac: 1.0, label: '0°' }]
-            .forEach(({ frac, label }) => {
-                const r = radius * frac;
-                bgCtx.beginPath();
-                bgCtx.arc(centerX, centerY, r, 0, 2 * Math.PI);
-                bgCtx.stroke();
-                bgCtx.fillText(label, centerX + r + 5, centerY);
-            });
-            
+                .forEach(({ frac, label }) => {
+                    const r = radius * frac;
+                    bgCtx.beginPath();
+                    bgCtx.arc(centerX, centerY, r, 0, 2 * Math.PI);
+                    bgCtx.stroke();
+                    bgCtx.fillText(label, centerX + r + 5, centerY);
+                });
+
             // Cross Lines
             bgCtx.strokeStyle = '#2a3a4a';
             bgCtx.lineWidth = 1;
@@ -1597,29 +1703,29 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 bgCtx.lineTo(centerX + radius * Math.sin(angle), centerY - radius * Math.cos(angle));
             }
             bgCtx.stroke();
-            
+
             // Labels
             bgCtx.fillStyle = '#fff';
             bgCtx.font = 'bold 18px Arial';
             bgCtx.textAlign = 'center';
             bgCtx.textBaseline = 'middle';
             const labelDistance = radius + 25;
-            [{t:'N',a:0}, {t:'E',a:90}, {t:'S',a:180}, {t:'W',a:270}].forEach(({t,a}) => {
+            [{ t: 'N', a: 0 }, { t: 'E', a: 90 }, { t: 'S', a: 180 }, { t: 'W', a: 270 }].forEach(({ t, a }) => {
                 const rad = a * Math.PI / 180;
                 bgCtx.fillText(t, centerX + labelDistance * Math.sin(rad), centerY - labelDistance * Math.cos(rad));
             });
         };
-        
+
         drawSkyplotBase();
 
         const drawSkyplotSatellites = (satellites) => {
             const now = Date.now();
             const buffer = satelliteBufferRef.current;
-            
+
             satellites.forEach(sat => {
                 buffer.set(sat.prn, { ...sat, lastSeen: now, opacity: 1.0 });
             });
-            
+
             for (const [prn, satData] of buffer.entries()) {
                 const timeSinceLastSeen = now - satData.lastSeen;
                 if (timeSinceLastSeen > SATELLITE_TIMEOUT + FADE_DURATION) {
@@ -1629,14 +1735,14 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     satData.opacity = Math.max(0, 1 - fadeProgress);
                 }
             }
-            
+
             satCtx.clearRect(0, 0, satCtx.canvas.width, satCtx.canvas.height);
             const centerX = satCtx.canvas.width / 2;
             const centerY = satCtx.canvas.height / 2;
             const radius = Math.min(centerX, centerY) * 0.82;
 
             if (satCtx.canvas.width === 0 || satCtx.canvas.height === 0) return;
-            
+
             for (const satData of buffer.values()) {
                 let az = Number(satData.azimuth);
                 let el = Number(satData.elevation);
@@ -1644,17 +1750,17 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 if (isNaN(snr) || snr === 0) continue;
                 if (isNaN(az)) az = 0;
-                if (isNaN(el)) el = 0; 
-                
+                if (isNaN(el)) el = 0;
+
                 const az_rad = (az * Math.PI) / 180;
                 const dist = radius * (90 - el) / 90;
                 const x = centerX + dist * Math.sin(az_rad);
                 const y = centerY - dist * Math.cos(az_rad);
-                
+
                 const system = getSatelliteSystem(satData);
                 const flag = flags[system];
                 const isTracking = satData.isTracking;
-                
+
                 satCtx.globalAlpha = satData.opacity || 1.0;
                 const flagSize = isTracking ? 18 : 14;
 
@@ -1684,7 +1790,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             }
             satCtx.globalAlpha = 1.0;
         };
-        
+
         const drawSignalBars = (satellites) => {
             const container = signalBarsContainerRef.current;
             if (!container) return;
@@ -1692,10 +1798,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const buffer = satelliteBufferRef.current;
             // Chỉ lấy các vệ tinh có thông tin SNR > 0 và còn sống (opacity > 0.3) theo yêu cầu ẩn SNR 0
             const activeSatellites = Array.from(buffer.values()).filter(s => s.snr > 0 && s.opacity > 0.3);
-            
+
             // Tạo hash cấu trúc (Chỉ phụ thuộc số lượng và loại PRN - Không chứa giá trị SNR để tránh giật hình)
             const structureHash = activeSatellites.map(s => s.prn).sort().join('|');
-            
+
             // Cập nhật text Stats
             const groupedSats = activeSatellites.reduce((acc, sat) => {
                 const system = getSatelliteSystem(sat);
@@ -1717,14 +1823,14 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         const sats = groupedSats[system].sort((a, b) => parseFloat(a.prn) - parseFloat(b.prn));
                         const groupDiv = document.createElement('div');
                         groupDiv.className = 'constellation-group';
-                        
+
                         const headerDiv = document.createElement('div');
                         headerDiv.className = 'constellation-header';
                         headerDiv.innerHTML = `<img src="${flags[system].src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${sats.length}</span>)`;
-                        
+
                         const barsWrapper = document.createElement('div');
                         barsWrapper.className = 'bars-wrapper';
-                        
+
                         sats.forEach(sat => {
                             const barFillHeight = Math.min(100, sat.snr / 55 * 100);
                             let barColor = colors[system];
@@ -1735,7 +1841,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             const itemDiv = document.createElement('div');
                             itemDiv.className = 'sat-bar-item';
                             // Gắn id bằng PRN để sau này chọc thẳng vào DOM update
-                            itemDiv.id = `sat-bar-${String(sat.prn).replace(/\\s+/g, '-')}`; 
+                            itemDiv.id = `sat-bar-${String(sat.prn).replace(/\\s+/g, '-')}`;
                             itemDiv.innerHTML = `
                                 <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
                                 <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
@@ -1743,7 +1849,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             `;
                             barsWrapper.appendChild(itemDiv);
                         });
-                        
+
                         groupDiv.appendChild(headerDiv);
                         groupDiv.appendChild(barsWrapper);
                         fragment.appendChild(groupDiv);
@@ -1752,7 +1858,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 container.innerHTML = '';
                 container.appendChild(fragment);
-            } 
+            }
             // 2. Chế độ NGẦM: Chỉ cập nhật trị SNR + Color (Không tái tạo DOM, giúp thanh Transition mượt mà và hết giật nền)
             else {
                 activeSatellites.forEach(sat => {
@@ -1768,7 +1874,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                         const snrText = itemDiv.querySelector('.sat-bar-snr');
                         const fillDiv = itemDiv.querySelector('.sat-bar-fill');
-                        
+
                         if (snrText) {
                             snrText.textContent = sat.snr;
                             snrText.style.color = barColor;
@@ -1785,22 +1891,22 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         const animate = () => {
             const now = Date.now();
             const { gga, gsa, satellites } = safeNmeaData;
-            
+
             // Text Stats Updates
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
-                
+
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) satCountEl.textContent = gga?.satellites || 0;
-                
+
                 const dopEl = document.getElementById('db-dop');
                 if (dopEl) dopEl.textContent = `${gsa?.hdop?.toFixed(2) || '0.0'} / ${gsa?.pdop?.toFixed(2) || '0.0'}`;
-                
+
                 const latEl = document.getElementById('db-lat');
                 if (latEl) latEl.textContent = gga?.latitude?.toFixed(8) || '0.0';
-                
+
                 const lonEl = document.getElementById('db-lon');
                 if (lonEl) lonEl.textContent = gga?.longitude?.toFixed(8) || '0.0';
-                
+
                 lastStatsUpdate.current = now;
             }
 
@@ -1818,7 +1924,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 }
                 lastBarsUpdate.current = now;
             }
-            
+
             animationFrameRef.current = requestAnimationFrame(animate);
         };
 
@@ -1828,7 +1934,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 if (!container) return;
                 const w = container.clientWidth;
                 const h = container.clientHeight;
-                
+
                 if (w > 0 && h > 0) {
                     bgCanvasRef.current.width = w;
                     bgCanvasRef.current.height = h;
@@ -1843,7 +1949,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         setTimeout(handleResize, 100);
         setTimeout(handleResize, 500);
         window.addEventListener('resize', handleResize);
-        
+
         animate();
 
         return () => {
@@ -1875,7 +1981,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <window.MetricCard title="Avg SNR" value={metrics.signalStrength.value} unit="dB" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
                 </div>
             )}
-            
+
             {/* STATS STRIP */}
             <div className="stats-strip">
                 {/* ✅ CẬP NHẬT FIX STATUS CARD */}
@@ -1883,9 +1989,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <div className="stat-icon" style={{ fontSize: '2rem' }}>{fixInfo.icon}</div>
                     <div className="stat-content">
                         <div className="stat-label">Fix Status</div>
-                        <div 
-                            className="stat-value" 
-                            style={{ 
+                        <div
+                            className="stat-value"
+                            style={{
                                 color: fixInfo.color,
                                 textShadow: `0 0 10px ${fixInfo.color}`,
                                 fontWeight: 'bold'
@@ -1916,7 +2022,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             <div className="map-section">
                 <BaseLocationMap coords={baseCoords} />
             </div>
-            
+
             {/* SKYPLOT & SIGNALS */}
             <div className="sky-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1929,7 +2035,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         <canvas ref={satCanvasRef} className="skyplot-sat" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2 }}></canvas>
                     </div>
                 </div>
-                
+
                 <div className="sky-panel signals-panel">
                     <div className="panel-header">
                         <i className="bi bi-bar-chart-fill"></i><span>Signal Strength (SNR)</span>
@@ -1938,7 +2044,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             <span className="badge bg-secondary">{satStats.total} Total</span>
                         </div>
                     </div>
-                    <div ref={signalBarsContainerRef} className="signals-scroll" style={{flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px'}}></div>
+                    <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
                 </div>
             </div>
         </div>
@@ -1949,7 +2055,7 @@ window.DashboardPanel = DashboardPanel;
 const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
     const [rovers, setRovers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
-    
+
     // Form States
     const [newUsername, setNewUsername] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -1961,17 +2067,17 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
     const config = device.service_config || {};
 
     if (config.server1_enabled && config.mountpoint1) {
-        availableMountpoints.push({ 
-            id: 'server1', 
-            name: config.mountpoint1, 
-            host: config.serverhost1 || 'Local' 
+        availableMountpoints.push({
+            id: 'server1',
+            name: config.mountpoint1,
+            host: config.serverhost1 || 'Local'
         });
     }
     if (config.server2_enabled && config.mountpoint2) {
-        availableMountpoints.push({ 
-            id: 'server2', 
-            name: config.mountpoint2, 
-            host: config.serverhost2 || 'Local' 
+        availableMountpoints.push({
+            id: 'server2',
+            name: config.mountpoint2,
+            host: config.serverhost2 || 'Local'
         });
     }
 
@@ -2006,7 +2112,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
     // --- 3. XỬ LÝ TẠO ROVER ---
     const handleCreateRover = async (e) => {
         e.preventDefault();
-        
+
         // Validation cơ bản
         if (!newUsername.trim() || !newPassword.trim()) {
             return window.showError("Tên đăng nhập và mật khẩu không được để trống.");
@@ -2048,7 +2154,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
             }
 
             window.showSuccess(`Đã tạo tài khoản Rover '${newUsername}' thành công!`);
-            
+
             // Reset form
             setNewUsername('');
             setNewPassword('');
@@ -2058,7 +2164,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
             window.showError(error.message);
         }
     };
-    
+
     // --- 4. XỬ LÝ XÓA ROVER ---
     const handleDeleteRover = async (roverId, username) => {
         if (!confirm(`Bạn có chắc muốn xóa tài khoản Rover '${username}'? Tài khoản này sẽ bị ngắt kết nối ngay lập tức.`)) return;
@@ -2078,7 +2184,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
             {availableMountpoints.length === 0 && (
                 <div className="alert alert-warning small mb-3">
                     <i className="bi bi-exclamation-triangle-fill me-2"></i>
-                    <strong>Chưa cấu hình dịch vụ phát:</strong> Trạm này chưa bật NTRIP Server nào. 
+                    <strong>Chưa cấu hình dịch vụ phát:</strong> Trạm này chưa bật NTRIP Server nào.
                     Vui lòng sang tab <strong>"Dịch vụ"</strong> để bật Server 1 hoặc Server 2 và đặt tên Mountpoint trước khi tạo tài khoản Rover.
                 </div>
             )}
@@ -2092,27 +2198,27 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                     <div className="row g-3">
                         <div className="col-md-3">
                             <label className="form-label small fw-bold">Tên đăng nhập</label>
-                            <input 
-                                type="text" 
-                                className="form-control" 
-                                value={newUsername} 
+                            <input
+                                type="text"
+                                className="form-control"
+                                value={newUsername}
                                 onChange={e => setNewUsername(e.target.value)}
-                                placeholder="VD: khach_a_01" 
+                                placeholder="VD: khach_a_01"
                             />
                         </div>
                         <div className="col-md-3">
                             <label className="form-label small fw-bold">Mật khẩu</label>
-                            <input 
-                                type="text" 
-                                className="form-control" 
-                                value={newPassword} 
-                                onChange={e => setNewPassword(e.target.value)} 
+                            <input
+                                type="text"
+                                className="form-control"
+                                value={newPassword}
+                                onChange={e => setNewPassword(e.target.value)}
                             />
                         </div>
                         <div className="col-md-3">
                             <label className="form-label small fw-bold">Quyền truy cập (Mountpoint)</label>
-                            <select 
-                                className="form-select" 
+                            <select
+                                className="form-select"
                                 value={selectedMountpoint}
                                 onChange={(e) => setSelectedMountpoint(e.target.value)}
                                 disabled={availableMountpoints.length === 0}
@@ -2127,9 +2233,9 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                         </div>
                         <div className="col-md-3">
                             <label className="form-label small fw-bold">Thời hạn sử dụng</label>
-                            <select 
-                                className="form-select" 
-                                value={expiryDays} 
+                            <select
+                                className="form-select"
+                                value={expiryDays}
                                 onChange={(e) => setExpiryDays(e.target.value)}
                             >
                                 <option value="1">1 Ngày (Test)</option>
@@ -2181,7 +2287,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                                 <tr key={rover.id}>
                                     <td>
                                         <div className="d-flex align-items-center">
-                                            <div className="bg-primary rounded-circle p-2 me-2 d-flex align-items-center justify-content-center" style={{width: '32px', height: '32px'}}>
+                                            <div className="bg-primary rounded-circle p-2 me-2 d-flex align-items-center justify-content-center" style={{ width: '32px', height: '32px' }}>
                                                 <i className="bi bi-person-fill text-white"></i>
                                             </div>
                                             <strong>{rover.username}</strong>
@@ -2192,10 +2298,10 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                                         <span className="badge bg-info text-dark border border-info-subtle">
                                             <i className="bi bi-broadcast me-1"></i>
                                             {/* Logic hiển thị Mountpoint, ưu tiên lấy từ config hiện tại nếu khớp, ko thì hiển thị cái fallback */}
-                                            {availableMountpoints.find(mp => mp.name === rover.base_serial) 
+                                            {availableMountpoints.find(mp => mp.name === rover.base_serial)
                                                 ? rover.base_serial // Lưu ý: Backend đang lưu base_serial, nên cần sửa backend để lưu mountpoint nếu muốn hiển thị chính xác lịch sử.
                                                 : (availableMountpoints.length > 0 ? availableMountpoints[0].name : "Mặc định")
-                                            } 
+                                            }
                                             {/* Tạm thời hiển thị MP hiện tại của trạm vì logic DB đang lưu base_serial chứ chưa lưu mountpoint cụ thể từng user. 
                                                 Nhưng với caster, user đó chỉ login được vào MP đã đăng ký. 
                                                 Ở đây hiển thị MP hiện tại của trạm là hợp lý nhất. */}
@@ -2208,8 +2314,8 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                                         </span>
                                     </td>
                                     <td className="text-center">
-                                        <button 
-                                            className="btn btn-sm btn-outline-danger" 
+                                        <button
+                                            className="btn btn-sm btn-outline-danger"
                                             title="Xóa & Ngắt kết nối Rover này"
                                             onClick={() => handleDeleteRover(rover.id, rover.username)}
                                         >
@@ -2241,7 +2347,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
 const CasterConfigModal = memo(function CasterConfigModal() {
     const [config, setConfig] = useState({ host: 'aitogy.com.vn', port: 2101 });
     const [isOpen, setIsOpen] = useState(false);
-    
+
     // Hàm mở modal (gắn vào window để gọi từ console hoặc nút khác)
     useEffect(() => {
         window.openCasterConfig = () => {
@@ -2253,8 +2359,8 @@ const CasterConfigModal = memo(function CasterConfigModal() {
     const fetchConfig = async () => {
         try {
             const res = await window.apiFetch('/api/admin/caster-config');
-            if(res.ok) setConfig(await res.json());
-        } catch(e) { console.error(e); }
+            if (res.ok) setConfig(await res.json());
+        } catch (e) { console.error(e); }
     };
 
     const handleSave = async () => {
@@ -2265,7 +2371,7 @@ const CasterConfigModal = memo(function CasterConfigModal() {
             });
             window.showSuccess("Đã cập nhật cấu hình NTRIP Caster!");
             setIsOpen(false);
-        } catch(e) {
+        } catch (e) {
             window.showError(e.message);
         }
     };
@@ -2273,7 +2379,7 @@ const CasterConfigModal = memo(function CasterConfigModal() {
     if (!isOpen) return null;
 
     return (
-        <div className="modal d-block" style={{backgroundColor: 'rgba(0,0,0,0.5)'}}>
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <div className="modal-dialog">
                 <div className="modal-content bg-dark text-light border-secondary">
                     <div className="modal-header border-secondary">
@@ -2284,13 +2390,13 @@ const CasterConfigModal = memo(function CasterConfigModal() {
                         <p className="text-muted small">Cấu hình địa chỉ Caster dùng để tạo/xóa Rover qua giao thức TCP Admin.</p>
                         <div className="mb-3">
                             <label className="form-label">Caster Host / IP</label>
-                            <input type="text" className="form-control" value={config.host} 
-                                onChange={e => setConfig({...config, host: e.target.value})} />
+                            <input type="text" className="form-control" value={config.host}
+                                onChange={e => setConfig({ ...config, host: e.target.value })} />
                         </div>
                         <div className="mb-3">
                             <label className="form-label">Admin Port (TCP)</label>
-                            <input type="number" className="form-control" value={config.port} 
-                                onChange={e => setConfig({...config, port: parseInt(e.target.value)})} />
+                            <input type="number" className="form-control" value={config.port}
+                                onChange={e => setConfig({ ...config, port: parseInt(e.target.value) })} />
                         </div>
                     </div>
                     <div className="modal-footer border-secondary">
@@ -2314,33 +2420,33 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
     }
 
     const info = device.system_info;
-    
+
     // Format uptime
     const formatUptime = (seconds) => {
         const days = Math.floor(seconds / 86400);
         const hours = Math.floor((seconds % 86400) / 3600);
         const mins = Math.floor((seconds % 3600) / 60);
-        
+
         if (days > 0) return `${days}d ${hours}h ${mins}m`;
         if (hours > 0) return `${hours}h ${mins}m`;
         return `${mins}m`;
     };
-    
+
     // Calculate health score
     const calculateHealthScore = () => {
         let score = 100;
         if (info.cpu?.usage_percent > 80) score -= 20;
         else if (info.cpu?.usage_percent > 60) score -= 10;
-        
+
         if (info.temperature?.celsius > 70) score -= 25;
         else if (info.temperature?.celsius > 60) score -= 15;
-        
+
         if (info.memory?.percent > 85) score -= 20;
         else if (info.memory?.percent > 70) score -= 10;
-        
+
         return Math.max(score, 0);
     };
-    
+
     const healthScore = calculateHealthScore();
     const healthColor = healthScore >= 80 ? '#51cf66' : healthScore >= 60 ? '#ffd43b' : '#fa5252';
 
@@ -2359,7 +2465,7 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
 
             {/* Body */}
             <div className="panel-body-sys">
-                
+
                 {/* 1. HEALTH SCORE & DEVICE INFO */}
                 <div className="d-flex align-items-center justify-content-between mb-4 p-3 rounded bg-dark border border-secondary">
                     <div>
@@ -2379,10 +2485,10 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                     {/* CPU Ring */}
                     {info.cpu && window.ProgressRing && (
                         <div className="col-6 d-flex justify-content-center">
-                            <window.ProgressRing 
-                                value={info.cpu.usage_percent} 
-                                max={100} 
-                                size={110} 
+                            <window.ProgressRing
+                                value={info.cpu.usage_percent}
+                                max={100}
+                                size={110}
                                 strokeWidth={8}
                                 color={info.cpu.usage_percent > 80 ? '#fa5252' : '#0d6efd'}
                                 label="CPU Load"
@@ -2390,14 +2496,14 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                             />
                         </div>
                     )}
-                    
+
                     {/* RAM Ring */}
                     {info.memory && window.ProgressRing && (
                         <div className="col-6 d-flex justify-content-center">
-                            <window.ProgressRing 
-                                value={info.memory.percent} 
-                                max={100} 
-                                size={110} 
+                            <window.ProgressRing
+                                value={info.memory.percent}
+                                max={100}
+                                size={110}
                                 strokeWidth={8}
                                 color={info.memory.percent > 85 ? '#fa5252' : '#74c0fc'}
                                 label="RAM Usage"
@@ -2416,10 +2522,10 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                                 <span className="fw-bold text-light">{info.temperature.celsius}°C</span>
                                 <span className="text-muted small">Max: 85°C</span>
                             </div>
-                            <div className="progress" style={{height: '8px'}}>
-                                <div 
-                                    className={`progress-bar ${info.temperature.celsius > 70 ? 'bg-danger' : 'bg-success'}`} 
-                                    style={{width: `${Math.min((info.temperature.celsius / 85) * 100, 100)}%`}}
+                            <div className="progress" style={{ height: '8px' }}>
+                                <div
+                                    className={`progress-bar ${info.temperature.celsius > 70 ? 'bg-danger' : 'bg-success'}`}
+                                    style={{ width: `${Math.min((info.temperature.celsius / 85) * 100, 100)}%` }}
                                 ></div>
                             </div>
                         </div>
@@ -2430,14 +2536,14 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                     <div className="section-title"><i className="bi bi-hdd me-2"></i>Disk Usage</div>
                     {info.disk ? (
                         <div className="metric-card">
-                             <div className="d-flex justify-content-between mb-1">
+                            <div className="d-flex justify-content-between mb-1">
                                 <span className="fw-bold text-light">{info.disk.percent}% Used</span>
                                 <span className="text-muted small">Free: {(info.disk.total_gb - info.disk.used_gb).toFixed(1)} GB</span>
                             </div>
-                            <div className="progress" style={{height: '8px'}}>
-                                <div 
-                                    className={`progress-bar ${info.disk.percent > 90 ? 'bg-danger' : 'bg-primary'}`} 
-                                    style={{width: `${info.disk.percent}%`}}
+                            <div className="progress" style={{ height: '8px' }}>
+                                <div
+                                    className={`progress-bar ${info.disk.percent > 90 ? 'bg-danger' : 'bg-primary'}`}
+                                    style={{ width: `${info.disk.percent}%` }}
                                 ></div>
                             </div>
                         </div>
@@ -2460,29 +2566,29 @@ console.log('✓ SystemInfoPanel component loaded');
 // =========================================
 // === COMPONENT CHÍNH: DetailsPanel ===
 // =========================================
-const DetailsPanel = memo(function DetailsPanel({ 
-    device, 
+const DetailsPanel = memo(function DetailsPanel({
+    device,
     currentUser,
     nmeaData,
-    onReset, 
-    onProvision, 
-    onConfigureChip, 
-    onDeployLicense, 
+    onReset,
+    onProvision,
+    onConfigureChip,
+    onDeployLicense,
     onConfigureService,
     onLock,
-    onUnlock 
+    onUnlock
 }) {
     const isAdmin = currentUser?.role === 'admin';
     const [activeTab, setActiveTab] = useState('');
-    
+
     const [isEditingName, setIsEditingName] = useState(false);
     const [tempName, setTempName] = useState('');
     const [userSelectedTab, setUserSelectedTab] = useState(false);
     const [isSystemPanelOpen, setIsSystemPanelOpen] = useState(false);
     useEffect(() => {
-        if (!device) return;     
+        if (!device) return;
         let newActiveTab = '';
-        
+
         switch (device.status) {
             case 'awaiting_license':
                 newActiveTab = 'license';
@@ -2490,16 +2596,22 @@ const DetailsPanel = memo(function DetailsPanel({
             case 'unprovisioned':
                 newActiveTab = 'chip';
                 break;
+            case 'auto_setup_rover':
+            case 'auto_setup_wait_fix':
+            case 'auto_setup_averaging':
+            case 'auto_setup_base':
+                newActiveTab = 'chip';
+                break;
             default:
                 if (userSelectedTab && activeTab) {
-                    return; 
+                    return;
                 }
-                
+
                 const isGnssConfigured = device.base_config && Object.keys(device.base_config).length > 0;
                 if (!isGnssConfigured) {
-                    newActiveTab = 'chip'; 
+                    newActiveTab = 'chip';
                 } else {
-                    newActiveTab = 'service'; 
+                    newActiveTab = 'service';
                 }
                 break;
         }
@@ -2511,25 +2623,25 @@ const DetailsPanel = memo(function DetailsPanel({
 
         setTempName(device.name || '');
         setIsEditingName(false);
-        
-    }, [device?.serial, device?.status]); 
-    
+
+    }, [device?.serial, device?.status]);
+
     const handleTabClick = (tabName) => {
         setActiveTab(tabName);
-        setUserSelectedTab(true); 
+        setUserSelectedTab(true);
     };
-    
+
     const handleSaveName = () => {
         if (!tempName.trim()) {
             window.showError('Tên trạm không được để trống!');
             return;
         }
-        
+
         if (tempName !== device.name) {
             window.handleRenameDevice(device.serial, tempName);
         }
         setIsEditingName(false);
-    }; 
+    };
 
     if (!device) {
         return (
@@ -2542,8 +2654,8 @@ const DetailsPanel = memo(function DetailsPanel({
         );
     }
 
-    const canEdit = currentUser?.role === 'admin' || 
-                    (currentUser?.role === 'coordinator' && device.user_id === currentUser.id);
+    const canEdit = currentUser?.role === 'admin' ||
+        (currentUser?.role === 'coordinator' && device.user_id === currentUser.id);
 
     if (device.status === 'rebooting_for_reset') {
         return (
@@ -2563,9 +2675,9 @@ const DetailsPanel = memo(function DetailsPanel({
     }
 
     const renderTabContent = () => {
-        const commonProps = { device, disabled: !canEdit }; 
-        
-        switch(activeTab) {
+        const commonProps = { device, disabled: !canEdit };
+
+        switch (activeTab) {
             case 'license':
                 return <LicenseForm {...commonProps} onDeployLicense={onDeployLicense} />;
             case 'chip':
@@ -2574,13 +2686,13 @@ const DetailsPanel = memo(function DetailsPanel({
                 }
                 return <BaseConfigForm {...commonProps} onConfigureChip={onConfigureChip} />;
             case 'service':
-                return <ServiceConfigForm {...commonProps} onConfigureService={onConfigureService} />; 
+                return <ServiceConfigForm {...commonProps} onConfigureService={onConfigureService} />;
             case 'dashboard':
-                return <DashboardPanel device={device} nmeaData={nmeaData} />; 
-            case 'rovers': 
+                return <DashboardPanel device={device} nmeaData={nmeaData} />;
+            case 'rovers':
                 if (!canEdit) {
-                        return <div className="alert alert-danger">Bạn không có quyền truy cập mục này.</div>;
-                    }
+                    return <div className="alert alert-danger">Bạn không có quyền truy cập mục này.</div>;
+                }
                 return <RoverManagementPanel device={device} />;
             default:
                 return null;
@@ -2596,7 +2708,7 @@ const DetailsPanel = memo(function DetailsPanel({
     return (
         <div className="card bg-dark-tertiary h-100 d-flex flex-column" style={{ maxHeight: '100vh', position: 'relative', overflowX: 'hidden' }}>
             {isAdmin && device && device.system_info && (
-                <button 
+                <button
                     className="btn-system-toggle"
                     onClick={() => setIsSystemPanelOpen(!isSystemPanelOpen)}
                     title="System Monitor"
@@ -2609,10 +2721,10 @@ const DetailsPanel = memo(function DetailsPanel({
                 <div className="d-flex align-items-center flex-grow-1">
                     {/* 🔥 THAY THẾ PHẦN HIỂN THỊ TÊN */}
                     {isEditingName ? (
-                        <div className="input-group input-group-sm me-3" style={{maxWidth: '300px'}}>
-                            <input 
-                                type="text" 
-                                className="form-control" 
+                        <div className="input-group input-group-sm me-3" style={{ maxWidth: '300px' }}>
+                            <input
+                                type="text"
+                                className="form-control"
                                 value={tempName}
                                 onChange={(e) => setTempName(e.target.value)}
                                 onKeyDown={(e) => {
@@ -2621,15 +2733,15 @@ const DetailsPanel = memo(function DetailsPanel({
                                 }}
                                 autoFocus
                             />
-                            <button 
-                                className="btn btn-success" 
+                            <button
+                                className="btn btn-success"
                                 onClick={handleSaveName}
                                 title="Lưu tên mới"
                             >
                                 <i className="bi bi-check"></i>
                             </button>
-                            <button 
-                                className="btn btn-secondary" 
+                            <button
+                                className="btn btn-secondary"
                                 onClick={() => {
                                     setTempName(device.name);
                                     setIsEditingName(false);
@@ -2641,12 +2753,12 @@ const DetailsPanel = memo(function DetailsPanel({
                         </div>
                     ) : (
                         <div className="d-flex align-items-center me-3">
-                            <h4 className="mb-0 me-2 text-truncate" style={{maxWidth: '350px'}} title={device.name}>
+                            <h4 className="mb-0 me-2 text-truncate" style={{ maxWidth: '350px' }} title={device.name}>
                                 {device.name}
                             </h4>
                             {canEdit && (
-                                <button 
-                                    className="btn btn-link text-muted p-0 ms-1" 
+                                <button
+                                    className="btn btn-link text-muted p-0 ms-1"
                                     onClick={() => {
                                         setTempName(device.name);
                                         setIsEditingName(true);
@@ -2664,8 +2776,8 @@ const DetailsPanel = memo(function DetailsPanel({
                     <div className="d-flex align-items-center">
                         {!device.is_synced && canEdit && (
                             <div className="me-2 position-relative group-hover-target">
-                                <button 
-                                    className="btn btn-warning btn-sm text-dark fw-bold" 
+                                <button
+                                    className="btn btn-warning btn-sm text-dark fw-bold"
                                     onClick={() => {
                                         // Cho phép click để xem alert chi tiết nếu cần
                                         const errText = device.sync_errors ? device.sync_errors.join('\n') : "Đang chờ dữ liệu...";
@@ -2678,7 +2790,7 @@ const DetailsPanel = memo(function DetailsPanel({
                                 </button>
                             </div>
                         )}
-                        
+
                         {/* Badge trạng thái (luôn hiển thị) */}
                         <span className={`badge ${STATUS_CLASS_MAP[device.status] || 'bg-secondary'}`}>
                             {STATUS_TEXT_MAP[device.status] || device.status}
@@ -2690,7 +2802,7 @@ const DetailsPanel = memo(function DetailsPanel({
                                 <i className="bi bi-cloud-check-fill me-1"></i>TRẠM ẢO
                             </span>
                         )}
-                        
+
                         {/* Badge LOCKED (luôn hiển thị nếu bị khóa) */}
                         {isDeviceLocked && (
                             <span className="badge bg-danger ms-2">
@@ -2702,8 +2814,8 @@ const DetailsPanel = memo(function DetailsPanel({
 
                 {/* Nút Reset */}
                 {canEdit && !isEditingName && (
-                    <button 
-                        className="btn btn-sm btn-outline-danger ms-2" 
+                    <button
+                        className="btn btn-sm btn-outline-danger ms-2"
                         title="Reset Trạm về trạng thái ban đầu"
                         onClick={() => {
                             const confirmMsg = `⚠️ XÁC NHẬN RESET\n\nBạn có chắc chắn muốn reset trạm '${device.name}' về trạng thái ban đầu không?`;
@@ -2721,25 +2833,25 @@ const DetailsPanel = memo(function DetailsPanel({
                     {isAdmin ? (
                         <p className="text-white-50 small mb-0">Serial: {device.serial}</p>
                     ) : (
-                        <div></div> 
+                        <div></div>
                     )}
                     <span className="badge bg-dark-subtle text-light border border-secondary">
                         {device.detected_chip_type || 'UNKNOWN'}
                     </span>
                 </div>
-                
+
                 <ul className="nav nav-tabs mb-3" role="tablist">
                     {device.status === 'awaiting_license' && (
                         <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'license' ? 'active' : ''}`} onClick={() => setActiveTab('license')}>
+                            <button className={`nav-link ${activeTab === 'license' ? 'active' : ''}`} onClick={() => handleTabClick('license')}>
                                 <i className="bi bi-key-fill me-1"></i>License
                             </button>
                         </li>
                     )}
 
                     {showConfigTabs && (
-                         <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'chip' ? 'active' : ''}`} onClick={() => setActiveTab('chip')}>
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'chip' ? 'active' : ''}`} onClick={() => handleTabClick('chip')}>
                                 <i className="bi bi-cpu-fill me-1"></i>Kích hoạt & GNSS
                             </button>
                         </li>
@@ -2747,44 +2859,44 @@ const DetailsPanel = memo(function DetailsPanel({
 
                     {showServiceAndDashboardTabs && (
                         <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'service' ? 'active' : ''}`} onClick={() => setActiveTab('service')}>
+                            <button className={`nav-link ${activeTab === 'service' ? 'active' : ''}`} onClick={() => handleTabClick('service')}>
                                 <i className="bi bi-hdd-network-fill me-1"></i>Dịch vụ
                             </button>
                         </li>
                     )}
-                    
+
                     {showServiceAndDashboardTabs && canManageRovers && (
-                         <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'rovers' ? 'active' : ''}`} onClick={() => setActiveTab('rovers')}>
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'rovers' ? 'active' : ''}`} onClick={() => handleTabClick('rovers')}>
                                 <i className="bi bi-person-circle me-1"></i>Quản lý Rover
                             </button>
                         </li>
                     )}
 
-                    {['online', 'configuring'].includes(device.status) && (
+                    {(['online', 'configuring'].includes(device.status) || (device.status || '').startsWith('auto_setup')) ? (
                         <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+                            <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => handleTabClick('dashboard')}>
                                 <i className="bi bi-speedometer2 me-1"></i>Dashboard
                             </button>
                         </li>
-                    )}
+                    ) : null}
                 </ul>
 
                 <div className="tab-content pt-3">
                     {renderTabContent()}
                 </div>
-            </div> 
+            </div>
             {canEdit && (
                 <div className="card-footer bg-dark border-top border-secondary p-3 mt-auto">
-                     {/* CHỈ HIỂN THỊ NÚT KHÓA NẾU LÀ ADMIN */}
-                     {isAdmin && (
+                    {/* CHỈ HIỂN THỊ NÚT KHÓA NẾU LÀ ADMIN */}
+                    {isAdmin && (
                         <div id="admin-actions-section">
                             <div className="d-flex align-items-center justify-content-between">
                                 <span className="text-muted small">
                                     <i className="bi bi-shield-lock-fill me-2 text-danger"></i>
                                     Admin Control (Chỉ Admin)
                                 </span>
-                                <div style={{ width: '60%' }}> 
+                                <div style={{ width: '60%' }}>
                                     {isDeviceLocked ? (
                                         <button onClick={() => onUnlock(device.serial)} className="btn btn-success w-100">
                                             <i className="bi bi-unlock-fill me-2"></i>Mở Khóa (Unlock)
@@ -2798,18 +2910,18 @@ const DetailsPanel = memo(function DetailsPanel({
                             </div>
                         </div>
                     )}
-                     
+
                     {/* Nếu là Coordinator thì không hiện gì hoặc hiện thông báo khác tùy bạn */}
                     {!isAdmin && (
                         <div className="text-center text-muted small">
                             <i class="bi bi-info-circle me-1"></i>
                             Bạn có quyền quản lý trạm này.
                         </div>
-                     )}
+                    )}
                 </div>
-            )}    
+            )}
             {isAdmin && device && (
-                <SystemInfoPanel 
+                <SystemInfoPanel
                     device={device}
                     isOpen={isSystemPanelOpen}
                     onClose={() => setIsSystemPanelOpen(false)}
@@ -2917,7 +3029,7 @@ const getDistanceMeters = (lat1, lon1, lat2, lon2) => {
 };
 
 const getStatusColor = (status) => {
-    switch(status) {
+    switch (status) {
         case 'online': return '#0f0'; // Xanh lá
         case 'offline': return '#666'; // Xám
         case 'unprovisioned': return '#ff0'; // Vàng
@@ -2943,11 +3055,13 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const roverProcessFrameRef = useRef(null);
     const roverChunkSizeRef = useRef(24);
-    
+
     // Nearest Station Feature States
     const [findingNearest, setFindingNearest] = useState(false);
+    const [searchLocationQuery, setSearchLocationQuery] = useState('');
+    const [isSearchingLoc, setIsSearchingLoc] = useState(false);
     const userMarkerRef = useRef(null);
-    const polylineRef = useRef(null);
+    const polylinesRef = useRef([]); // Mảng chứa nhiều đường nối (online + offline)
 
     const canViewRovers = React.useMemo(() => {
         const role = String(currentUser?.role || '').toLowerCase();
@@ -2958,7 +3072,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     const allowedMountpoints = React.useMemo(() => {
         const role = String(currentUser?.role || '').toLowerCase();
         if (role === 'admin') return null; // Admin sees all
-        
+
         const mps = new Set();
         (devices || []).forEach(d => {
             const mp1 = d.service_config?.mountpoint1;
@@ -2986,7 +3100,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         const search = roverSearch.trim().toLowerCase();
         return roverClients.filter((rover) => {
             const mp = (rover.mountpoint || '').trim();
-            
+
             // Block if not authorized to view this mountpoint
             if (allowedMountpoints !== null && !allowedMountpoints.has(mp)) {
                 return false;
@@ -3053,7 +3167,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     useEffect(() => {
         if (!mapInstanceRef.current) {
             const map = L.map(mapContainerRef.current).setView([21.0285, 105.8542], 6);
-            
+
             L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
                 maxZoom: 20,
                 subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
@@ -3099,7 +3213,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             }
 
             if (userMarkerRef.current) userMarkerRef.current = null;
-            if (polylineRef.current) polylineRef.current = null;
+            if (polylinesRef.current) polylinesRef.current = [];
 
             if (map.__viewportHandler) {
                 map.off('moveend zoomend', map.__viewportHandler);
@@ -3343,6 +3457,116 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         });
     };
 
+    const findNearestFromCoords = (lat, lon, locationName = "Vị trí của bạn") => {
+        // Lấy tất cả các trạm có tọa độ
+        const validDevices = devices.filter(d => 
+            d.base_config && d.base_config.coords && 
+            d.base_config.coords.lat && d.base_config.coords.lon
+        );
+
+        if (validDevices.length === 0) {
+            if (window.showError) window.showError("Không có trạm CORS nào có tọa độ hợp lệ trên hệ thống.");
+            return;
+        }
+
+        // Tách riêng trạm online và offline
+        const onlineDevices = validDevices.filter(d => d.status === 'online');
+        const offlineDevices = validDevices.filter(d => d.status !== 'online');
+
+        // Hàm tính khoảng cách
+        const calcDist = (d) => {
+            const coords = d.base_config.coords;
+            return window.getDistanceMeters 
+                ? window.getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon)) 
+                : getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon));
+        };
+
+        // Tìm trạm gần nhất trong 1 danh sách
+        const findNearest = (list) => {
+            let best = null, bestDist = Infinity;
+            list.forEach(d => {
+                const dist = calcDist(d);
+                if (dist < bestDist) { bestDist = dist; best = d; }
+            });
+            return best ? { device: best, dist: bestDist } : null;
+        };
+
+        const nearestOnline = findNearest(onlineDevices);
+        const nearestOffline = findNearest(offlineDevices);
+
+        if (!nearestOnline && !nearestOffline) {
+            if (window.showError) window.showError("Không tìm thấy trạm CORS nào phù hợp.");
+            return;
+        }
+
+        // Thông báo kết quả
+        const textPrefix = locationName === "Vị trí của bạn" ? "Trạm gần nhất" : `Gần ${locationName.split(',')[0]} nhất`;
+        let msg = [];
+        if (nearestOnline) msg.push(`🟢 ONLINE: ${nearestOnline.device.name || nearestOnline.device.serial} (${(nearestOnline.dist/1000).toFixed(2)} km)`);
+        if (nearestOffline) msg.push(`🔴 OFFLINE: ${nearestOffline.device.name || nearestOffline.device.serial} (${(nearestOffline.dist/1000).toFixed(2)} km)`);
+        if (window.showSuccess) window.showSuccess(`${textPrefix} — ${msg.join(' | ')}`);
+
+        const map = mapInstanceRef.current;
+        if (map) {
+            // Xóa các đường cũ
+            if (userMarkerRef.current) map.removeLayer(userMarkerRef.current);
+            polylinesRef.current.forEach(item => {
+                map.removeLayer(item.line);
+                if (item.tooltip) map.removeLayer(item.tooltip);
+            });
+            polylinesRef.current = [];
+
+            // Marker vị trí người dùng
+            const iconHtml = locationName === "Vị trí của bạn"
+                ? `<div style="background-color: #007bff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`
+                : `<div style="background-color: #ffc107; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`;
+            const userIcon = L.divIcon({ className: 'custom-div-icon', html: iconHtml, iconSize: [16, 16], iconAnchor: [8, 8] });
+            userMarkerRef.current = L.marker([lat, lon], { icon: userIcon }).addTo(map)
+                .bindPopup(`<b>${locationName.split('(')[0]}</b>`).openPopup();
+
+            // Hàm vẽ 1 đường nối
+            const drawLine = (target, color, label) => {
+                if (!target) return null;
+                const tLat = parseFloat(target.device.base_config.coords.lat);
+                const tLon = parseFloat(target.device.base_config.coords.lon);
+                const distKm = (target.dist / 1000).toFixed(2);
+                const stationName = target.device.name || target.device.serial;
+
+                const line = L.polyline([[lat, lon], [tLat, tLon]], {
+                    color: color,
+                    weight: 5,
+                    opacity: 1.0,
+                    dashArray: '12, 12',
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                }).addTo(map);
+
+                line.bindTooltip(
+                    `<div style="font-size: 13px; font-weight: bold; color: ${color}; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; white-space: nowrap;">
+                        ${label} ${stationName}: ${distKm} km
+                    </div>`,
+                    { permanent: true, direction: 'center', className: 'bg-transparent border-0 shadow-none' }
+                ).openTooltip();
+
+                return { line };
+            };
+
+            // Vẽ đường xanh lá đến trạm online gần nhất
+            const onlineLine = drawLine(nearestOnline, '#00ff00', '🟢');
+            if (onlineLine) polylinesRef.current.push(onlineLine);
+
+            // Vẽ đường đỏ đến trạm offline gần nhất
+            const offlineLine = drawLine(nearestOffline, '#ff3333', '🔴');
+            if (offlineLine) polylinesRef.current.push(offlineLine);
+
+            // Zoom bao trọn tất cả đường nối
+            const allBounds = L.latLngBounds([[lat, lon]]);
+            if (nearestOnline) allBounds.extend([parseFloat(nearestOnline.device.base_config.coords.lat), parseFloat(nearestOnline.device.base_config.coords.lon)]);
+            if (nearestOffline) allBounds.extend([parseFloat(nearestOffline.device.base_config.coords.lat), parseFloat(nearestOffline.device.base_config.coords.lon)]);
+            map.flyToBounds(allBounds, { padding: [60, 60], maxZoom: 14, duration: 1.5 });
+        }
+    };
+
     const handleFindNearest = () => {
         if (!navigator.geolocation) {
             if (window.showError) window.showError("Trình duyệt không hỗ trợ Geolocation.");
@@ -3354,78 +3578,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             (pos) => {
                 const lat = pos.coords.latitude;
                 const lon = pos.coords.longitude;
-                
-                let nearestDist = Infinity;
-                let nearestDevices = [];
-
-                // Chỉ tính các trạm "online" và có tọa độ
-                const validDevices = devices.filter(d => 
-                    d.status === 'online' &&
-                    d.base_config && d.base_config.coords && 
-                    d.base_config.coords.lat && d.base_config.coords.lon
-                );
-
-                if (validDevices.length === 0) {
-                    setFindingNearest(false);
-                    if (window.showError) window.showError("Không có trạm CORS nào đang ONLINE và có tọa độ hợp lệ.");
-                    return;
-                }
-
-                validDevices.forEach(d => {
-                    const coords = d.base_config.coords;
-                    const dist = window.getDistanceMeters 
-                        ? window.getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon)) 
-                        : getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon));
-                    
-                    // Nếu gần hơn thì reset mảng, nếu bằng (trùng tọa độ hoàn toàn) thì thêm vào list
-                    if (dist < nearestDist) {
-                        nearestDist = dist;
-                        nearestDevices = [d];
-                    } else if (Math.abs(dist - nearestDist) < 0.1) { 
-                        // Sai số 0.1 mét coi như trùng nhau hoàn toàn (copy tọa độ)
-                        nearestDevices.push(d);
-                    }
-                });
-
-                if (nearestDevices.length > 0) {
-                    const names = nearestDevices.map(d => d.name || d.serial).join(" & ");
-                    if (window.showSuccess) window.showSuccess(`Trạm gần nhất: ${names} (${(nearestDist/1000).toFixed(2)} km)`);
-                    
-                    const map = mapInstanceRef.current;
-                    if (map) {
-                        // Tọa độ vẽ đường lấy từ trạm đầu tiên (do tất cả đều trùng tọa độ)
-                        const nearestLat = parseFloat(nearestDevices[0].base_config.coords.lat);
-                        const nearestLon = parseFloat(nearestDevices[0].base_config.coords.lon);
-                        
-                        if (userMarkerRef.current) map.removeLayer(userMarkerRef.current);
-                        if (polylineRef.current) map.removeLayer(polylineRef.current);
-
-                        const userIcon = L.divIcon({
-                            className: 'custom-div-icon',
-                            html: `<div style="background-color: #007bff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`,
-                            iconSize: [16, 16],
-                            iconAnchor: [8, 8]
-                        });
-                        userMarkerRef.current = L.marker([lat, lon], { icon: userIcon }).addTo(map)
-                            .bindPopup("<b>Vị trí của bạn</b>").openPopup();
-
-                        // Tạo polyline và zoom để vừa khít polyline
-                        polylineRef.current = L.polyline([
-                            [lat, lon],
-                            [nearestLat, nearestLon]
-                        ], { 
-                            color: '#00ffff', // Cyan sáng bắt mắt
-                            weight: 6,        // Khá dày 
-                            opacity: 1.0,     // Rõ 100%
-                            dashArray: '12, 12', // Nét đứt to hơn
-                            lineCap: 'round',
-                            lineJoin: 'round'
-                        }).addTo(map);
-
-                        const bounds = polylineRef.current.getBounds();
-                        map.flyToBounds(bounds, { padding: [60, 60], maxZoom: 16, duration: 1.5 });
-                    }
-                }
+                findNearestFromCoords(lat, lon, "Vị trí của bạn");
                 setFindingNearest(false);
             },
             (err) => {
@@ -3434,6 +3587,31 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             },
             { enableHighAccuracy: true, timeout: 10000 }
         );
+    };
+
+    const handleSearchLocation = async () => {
+        const query = searchLocationQuery.trim();
+        if (!query) return;
+
+        setIsSearchingLoc(true);
+        try {
+
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&countrycodes=vn&limit=1`);
+            const data = await response.json();
+
+            if (data && data.length > 0) {
+                const lat = parseFloat(data[0].lat);
+                const lon = parseFloat(data[0].lon);
+                findNearestFromCoords(lat, lon, data[0].display_name);
+            } else {
+                if (window.showError) window.showError(`Không tìm thấy địa danh: "${query}". Vui lòng thử nhập kèm Tên Huyện, Tỉnh.`);
+            }
+        } catch (error) {
+            console.error(error);
+            if (window.showError) window.showError("Lỗi kết nối khi tìm kiếm địa điểm.");
+        } finally {
+            setIsSearchingLoc(false);
+        }
     };
 
     return (
@@ -3447,32 +3625,34 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             <div
                 style={{
                     position: 'absolute',
-                    top: '10px',
-                    left: '10px',
+                    top: '12px',
+                    left: '55px', // Tránh nút +/- của Leaflet
                     zIndex: 1000,
+                    maxWidth: 'calc(100% - 70px)' // Đảm bảo không bị tràn trên màn hình nhỏ
                 }}
             >
-                <div className="d-flex gap-2">
+                <div className="d-flex flex-wrap gap-2 align-items-center">
                     {/* Nút bật/tắt Popup Filter */}
                     <button
-                        className="btn text-light fw-bold"
+                        className="btn text-light fw-bold flex-shrink-0"
                         onClick={() => setIsFilterOpen(!isFilterOpen)}
                         style={{
                             background: 'rgba(8, 12, 20, 0.85)',
                             border: '1px solid rgba(255, 255, 255, 0.3)',
                             borderRadius: '8px',
                             padding: '8px 16px',
-                            boxShadow: '0 4px 6px rgba(0,0,0,0.6)'
+                            boxShadow: '0 4px 6px rgba(0,0,0,0.6)',
+                            whiteSpace: 'nowrap'
                         }}
                     >
                         <i className={`bi ${isFilterOpen ? 'bi-x-circle-fill text-warning' : 'bi-funnel-fill'} me-2`}></i>
                         Bộ lọc
                     </button>
-                    
+
                     {/* Nút Tìm trạm gần nhất */}
                     {currentUser && (
                         <button
-                            className="btn text-light fw-bold btn-primary border-0"
+                            className="btn text-light fw-bold btn-primary border-0 flex-shrink-0"
                             onClick={handleFindNearest}
                             disabled={findingNearest}
                             style={{
@@ -3480,7 +3660,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                                 borderRadius: '8px',
                                 padding: '8px 16px',
                                 boxShadow: '0 4px 6px rgba(0,0,0,0.6)',
-                                transition: 'background-color 0.2s'
+                                transition: 'background-color 0.2s',
+                                whiteSpace: 'nowrap'
                             }}
                             title="Lấy vị trí của bạn và tìm trạm gần nhất"
                         >
@@ -3490,6 +3671,33 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                                 <><i className="bi bi-geo-alt-fill me-2"></i>Tìm trạm gần nhất</>
                             )}
                         </button>
+                    )}
+
+                    {/* Ô Tìm kiếm địa điểm */}
+                    {currentUser && (
+                        <div className="input-group" style={{ width: 'auto', minWidth: '220px', flex: '1 1 auto', boxShadow: '0 4px 6px rgba(0,0,0,0.6)' }}>
+                            <input
+                                type="text"
+                                className="form-control bg-dark text-light border-secondary"
+                                placeholder="Tên Xã, Huyện, Tỉnh..."
+                                value={searchLocationQuery}
+                                onChange={(e) => setSearchLocationQuery(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSearchLocation();
+                                }}
+                                style={{ borderRadius: '8px 0 0 8px' }}
+                            />
+                            <button
+                                className="btn btn-primary border-primary flex-shrink-0"
+                                onClick={handleSearchLocation}
+                                disabled={isSearchingLoc || !searchLocationQuery.trim()}
+                                style={{ borderRadius: '0 8px 8px 0' }}
+                            >
+                                {isSearchingLoc
+                                    ? <span className="spinner-border spinner-border-sm"></span>
+                                    : <i className="bi bi-search"></i>}
+                            </button>
+                        </div>
                     )}
                 </div>
 
@@ -3602,11 +3810,11 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 )}
             </div>
 
-            <div 
-                ref={mapContainerRef} 
-                style={{ 
-                    width: '100%', 
-                    height: 'calc(100vh - 150px)', 
+            <div
+                ref={mapContainerRef}
+                style={{
+                    width: '100%',
+                    height: 'calc(100vh - 150px)',
                     borderRadius: '8px',
                     border: '2px solid #444',
                     background: '#222'

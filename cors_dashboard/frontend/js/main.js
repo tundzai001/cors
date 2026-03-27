@@ -568,6 +568,7 @@ function handleWebSocketMessage(message) {
     const { type, data, serial, count } = message;
     
     if (type === 'status_update') {
+        const statusSerial = serial || data?.serial;
         // --- LOGIC CHẶN TRẠM LẠ CHO COORDINATOR ---
         if (globalState.currentUser?.role === 'coordinator') {
             
@@ -575,10 +576,10 @@ function handleWebSocketMessage(message) {
             if (data.user_id !== undefined && data.user_id !== null) {
                 // Nếu user_id không phải của mình -> Xóa khỏi list (nếu đang hiển thị) và Chặn
                 if (data.user_id !== globalState.currentUser.id) {
-                    const exists = globalState.devices.some(d => d.serial === data.serial);
+                    const exists = globalState.devices.some(d => d.serial === statusSerial);
                     if (exists) {
-                        console.log(`Removed unassigned device: ${data.serial}`);
-                        removeDeviceLocal(data.serial);
+                        console.log(`Removed unassigned device: ${statusSerial}`);
+                        removeDeviceLocal(statusSerial);
                     }
                     return; // Dừng lại, không update
                 }
@@ -587,7 +588,7 @@ function handleWebSocketMessage(message) {
             // Trường hợp 2: Trạm gửi Heartbeat/Status (Bản tin KHÔNG có user_id)
             else {
                 // Kiểm tra xem trạm này có nằm trong danh sách "của mình" (đã load từ API ban đầu) hay không
-                const isMyDevice = globalState.devices.some(d => d.serial === data.serial);
+                const isMyDevice = globalState.devices.some(d => d.serial === statusSerial);
                 
                 // Nếu trạm này chưa từng tồn tại trong danh sách của mình -> Đây là trạm của người khác -> Bỏ qua
                 if (!isMyDevice) {
@@ -598,7 +599,7 @@ function handleWebSocketMessage(message) {
         
         updateGlobalDevices(data);
         
-        if (serial === globalState.selectedDeviceSerial && data.base_coords) {
+        if (statusSerial === globalState.selectedDeviceSerial && data.base_coords) {
             currentNmeaData.base_coords = data.base_coords;
             detailsPanelNeedsUpdate = true;
             scheduleRender('high');
@@ -922,3 +923,4 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     console.log(`✓ App initialized with Performance Optimization (view: ${initialView})`);
 });
+
