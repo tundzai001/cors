@@ -16,6 +16,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentUser = null;
     let allRovers = [];
     let allDevices = [];
+    let casterUsers = [];  // Danh sách user từ Caster
+    let casterStats = {};  // Stats từ API
 
     // === 2. AUTH & PERMISSIONS CHECK ===
     try {
@@ -31,6 +33,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentUser.role === 'admin') {
             const casterTab = document.getElementById('caster-tab-li');
             if (casterTab) casterTab.classList.remove('d-none');
+
+            const casterRoverTab = document.getElementById('caster-rover-tab-li');
+            if (casterRoverTab) casterRoverTab.classList.remove('d-none');
+
             loadCasterConfig();
         }
 
@@ -45,6 +51,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function initData() {
         await fetchDevices();
         await fetchRovers();
+        // Load caster users khi tab được click lần đầu
+        const casterRoverTab = document.getElementById('caster-rover-tab');
+        if (casterRoverTab) {
+            casterRoverTab.addEventListener('shown.bs.tab', () => {
+                if (casterUsers.length === 0) fetchCasterUsers();
+            });
+        }
     }
 
     async function fetchDevices() {
@@ -66,6 +79,294 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderTable();
         } catch (error) {
             showToast(error.message, 'danger');
+        }
+    }
+
+    // === CASTER USERS MANAGEMENT ===
+    async function fetchCasterUsers() {
+        const tbody = document.getElementById('caster-table-body');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm me-2"></div> Đang tải dữ liệu từ Caster...
+            </td></tr>`;
+        }
+
+        try {
+            const res = await fetch('/api/caster/users', { headers: API_HEADERS });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Không thể tải danh sách user từ Caster');
+            }
+            const data = await res.json();
+            casterUsers = data.items || [];
+            casterStats = {
+                total: data.total || 0,
+                in_db_count: data.in_db_count || 0,
+                unknown_count: data.unknown_count || 0,
+                blocked_count: data.blocked_count || 0,
+            };
+            updateCasterStats();
+            renderCasterTable();
+        } catch (error) {
+            showToast(error.message, 'danger');
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>${error.message}
+                </td></tr>`;
+            }
+        }
+    }
+
+    function updateCasterStats() {
+        const el = (id, val) => {
+            const e = document.getElementById(id);
+            if (e) e.textContent = val;
+        };
+        el('stat-total', casterStats.total || 0);
+        el('stat-indb', casterStats.in_db_count || 0);
+        el('stat-unknown', casterStats.unknown_count || 0);
+        el('stat-blocked', casterStats.blocked_count || 0);
+    }
+
+    function renderCasterTable() {
+        const tbody = document.getElementById('caster-table-body');
+        if (!tbody) return;
+
+        const searchTerm = (document.getElementById('caster-search-box')?.value || '').toLowerCase();
+        const statusFilter = document.getElementById('caster-filter-status')?.value || '';
+
+        tbody.innerHTML = '';
+
+        const filtered = casterUsers.filter(u => {
+            // Search
+            const matchSearch = !searchTerm ||
+                u.username.toLowerCase().includes(searchTerm) ||
+                u.mountpoints.some(mp => mp.toLowerCase().includes(searchTerm));
+
+            // Status filter
+            let matchStatus = true;
+            if (statusFilter === 'blocked') matchStatus = u.is_blocked;
+            else if (statusFilter === 'active') matchStatus = !u.is_blocked;
+            else if (statusFilter === 'unknown') matchStatus = !u.in_db;
+            else if (statusFilter === 'indb') matchStatus = u.in_db;
+
+            return matchSearch && matchStatus;
+        });
+
+        const countEl = document.getElementById('caster-displayed-count');
+        const totalEl = document.getElementById('caster-total-count');
+        if (countEl) countEl.textContent = filtered.length;
+        if (totalEl) totalEl.textContent = casterUsers.length;
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy user nào.</td></tr>`;
+            return;
+        }
+
+        filtered.forEach(u => {
+            const tr = document.createElement('tr');
+
+            // Source badge
+            const sourceBadge = u.in_db
+                ? '<span class="badge badge-indb rounded-pill"><i class="bi bi-database-check me-1"></i>IN DB</span>'
+                : '<span class="badge badge-unknown rounded-pill"><i class="bi bi-question-circle me-1"></i>UNKNOWN</span>';
+
+            // Status badge  
+            let statusBadge;
+            if (u.is_blocked) {
+                statusBadge = '<span class="badge badge-blocked rounded-pill"><i class="bi bi-shield-x me-1"></i>BỊ CHẶN</span>';
+            } else {
+                statusBadge = '<span class="badge badge-active rounded-pill"><i class="bi bi-check-circle me-1"></i>ACTIVE</span>';
+            }
+
+            // Mountpoints display
+            const mpsDisplay = u.mountpoints.length > 0
+                ? u.mountpoints.map(mp => `<code class="text-info small">${mp}</code>`).join(' ')
+                : '<span class="text-muted small">N/A</span>';
+
+            // Block reason
+            const reasonHtml = u.is_blocked && u.blocked_reason
+                ? `<div class="block-reason mt-1"><i class="bi bi-info-circle me-1"></i>${u.blocked_reason}</div>`
+                : '';
+
+            // Blocked timestamp
+            const blockedTimeHtml = u.is_blocked && u.blocked_at
+                ? `<div class="text-muted" style="font-size:0.7rem">${new Date(u.blocked_at * 1000).toLocaleString('vi-VN')}</div>`
+                : '';
+
+            // Action buttons
+            let actionHtml;
+            if (u.is_blocked) {
+                actionHtml = `
+                    <button class="btn btn-sm btn-outline-success border-0 caster-unblock-btn" 
+                        data-username="${u.username}" title="Mở khóa user">
+                        <i class="bi bi-unlock-fill me-1"></i>Mở khóa
+                    </button>`;
+            } else {
+                actionHtml = `
+                    <button class="btn btn-sm btn-outline-danger border-0 caster-block-btn" 
+                        data-username="${u.username}" 
+                        data-mountpoints="${u.mountpoints.join(',')}"
+                        title="Chặn user">
+                        <i class="bi bi-shield-lock-fill me-1"></i>Chặn
+                    </button>`;
+            }
+
+            tr.innerHTML = `
+                <td>
+                    <div class="d-flex align-items-center">
+                        <div class="${u.is_blocked ? 'bg-danger' : 'bg-success'} bg-opacity-10 ${u.is_blocked ? 'text-danger' : 'text-success'} rounded-circle p-2 me-2">
+                            <i class="bi bi-person-fill"></i>
+                        </div>
+                        <div>
+                            <span class="fw-bold text-light">${u.username}</span>
+                            ${reasonHtml}
+                        </div>
+                    </div>
+                </td>
+                <td>${mpsDisplay}</td>
+                <td class="text-center">${sourceBadge}</td>
+                <td class="text-center">${statusBadge}${blockedTimeHtml}</td>
+                <td class="text-center">
+                    <span class="text-white fw-bold">${u.nclient}</span>
+                    <span class="text-muted">/ ${u.maxclient}</span>
+                </td>
+                <td class="text-end">${actionHtml}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Bind events
+        document.querySelectorAll('.caster-block-btn').forEach(btn => {
+            btn.addEventListener('click', handleBlockUser);
+        });
+        document.querySelectorAll('.caster-unblock-btn').forEach(btn => {
+            btn.addEventListener('click', handleUnblockUser);
+        });
+    }
+
+    let blockModal = null;
+    const MOUNTPOINT_EXAMPLES = "humga VP.VinhYen HY.MyHao UAV TV869 VP.TamDao VP.LapThach NA.ThanhChuong 7000 8001 Tram_HP LS.DL hhtg BRVT.CD HB.CaoPhong HN.SocSon QB.LeThuy QB.QuangNinh HD.TuMinh PQ01 PQ02 VP.SongLo SL.MocChau HP.AnThang HP.BatTrang hhks QN.DamHa TN.PhuBinh PT.DoanHung PT.TieuSon YB.LucYen ND.NamTruc HN.MinhChau ATGDT TDBD01 TDBD02 TDBD03 TDBD04".split(" ");
+
+    async function handleBlockUser(e) {
+        const username = e.currentTarget.dataset.username;
+        const currentMps = (e.currentTarget.dataset.mountpoints || "").split(",").map(m => m.trim()).filter(m => m);
+        
+        // Init modal if not exists
+        if (!blockModal) {
+            blockModal = new bootstrap.Modal(document.getElementById('blockUserModal'));
+        }
+
+        document.getElementById('blockModalUsername').value = username;
+        document.getElementById('blockReason').value = "Quá hạn sử dụng";
+        document.getElementById('selectAllMps').checked = false;
+        
+        const container = document.getElementById('mountpointSelector');
+        container.innerHTML = ""; // Clear
+
+        // 1. Lấy danh sách mountpoint Rover này đang dùng
+        const allMps = new Set([...currentMps, ...MOUNTPOINT_EXAMPLES]);
+        
+        allMps.forEach(mp => {
+            if (!mp) return;
+            const isCurrent = currentMps.includes(mp);
+            const chip = document.createElement('div');
+            chip.className = 'form-check form-check-inline';
+            chip.innerHTML = `
+                <input class="form-check-input mp-checkbox" type="checkbox" id="mp_${mp}" value="${mp}" ${isCurrent ? 'checked' : ''}>
+                <label class="form-check-label px-2 py-1 rounded ${isCurrent ? 'bg-danger-subtle text-danger border border-danger' : 'bg-secondary-subtle border border-secondary'} small" for="mp_${mp}">
+                    ${mp}
+                </label>
+            `;
+            container.appendChild(chip);
+        });
+
+        document.getElementById('blockInfoText').innerText = `Chặn ${username} (${currentMps.length} trạm hiện tại)`;
+        blockModal.show();
+    }
+
+    // Xử lý Select All
+    document.getElementById('selectAllMps').addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        document.querySelectorAll('.mp-checkbox').forEach(cb => {
+            cb.checked = checked;
+        });
+        const container = document.getElementById('mountpointSelector');
+        container.style.opacity = checked ? "0.5" : "1";
+        container.style.pointerEvents = checked ? "none" : "auto";
+    });
+
+    // Xác nhận chặn
+    document.getElementById('confirmBlockBtn').addEventListener('click', async () => {
+        const username = document.getElementById('blockModalUsername').value;
+        const reason = document.getElementById('blockReason').value;
+        const selectAll = document.getElementById('selectAllMps').checked;
+        
+        let targetMps = [];
+        if (!selectAll) {
+            document.querySelectorAll('.mp-checkbox:checked').forEach(cb => {
+                targetMps.push(cb.value);
+            });
+            if (targetMps.length === 0) {
+                showToast("Vui lòng chọn ít nhất 1 trạm hoặc tích 'Chặn toàn bộ'", "warning");
+                return;
+            }
+        }
+
+        const btn = document.getElementById('confirmBlockBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang chặn...';
+
+        try {
+            const res = await fetch('/api/caster/block-user', {
+                method: 'POST',
+                headers: API_HEADERS,
+                body: JSON.stringify({
+                    username: username,
+                    mountpoints: selectAll ? null : targetMps,
+                    reason: reason || 'Blocked by admin'
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Chặn thất bại');
+
+            showToast(`🔒 ${data.message}`, 'success');
+            blockModal.hide();
+            await fetchCasterUsers(); // Reload table
+        } catch (err) {
+            showToast(err.message, 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-shield-lock-fill me-1"></i>Xác nhận chặn';
+        }
+    });
+
+    async function handleUnblockUser(e) {
+        const username = e.currentTarget.dataset.username;
+        if (!confirm(`Bạn có chắc muốn mở khóa user "${username}"?`)) return;
+
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+        try {
+            const res = await fetch('/api/caster/unblock-user', {
+                method: 'POST',
+                headers: API_HEADERS,
+                body: JSON.stringify({ username: username })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Mở khóa thất bại');
+
+            showToast(`🔓 ${data.message}`, 'success');
+            await fetchCasterUsers(); // Reload
+        } catch (err) {
+            showToast(err.message, 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-unlock-fill me-1"></i>Mở khóa';
         }
     }
 
@@ -237,8 +538,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (sConf.server2_enabled && sConf.mountpoint2) deviceMps.push(sConf.mountpoint2);
 
                 if (deviceMps.length > 0) {
-                    // Kiểm tra xem Rover này có quyền trên trạm này không?
-                    // Logic: Nếu Rover đang sở hữu ít nhất 1 mountpoint của trạm này -> Check
                     const isChecked = deviceMps.some(mp => currentRoverMps.includes(mp));
                     
                     const div = document.createElement('div');
@@ -324,9 +623,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const modalInstance = bootstrap.Modal.getInstance(modalEl);
                 modalInstance.hide();
                 
-                // Hàm fetchRovers() phải được định nghĩa ở scope ngoài hoặc gọi lại logic tải bảng
-                // Nếu bạn dùng code cũ, hàm này đã có sẵn trong scope của initData
-                // Cách nhanh nhất để reload trang nếu không gọi được hàm:
                 window.location.reload(); 
 
             } catch (err) {
@@ -453,6 +749,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
+    // Rover tab events
     document.getElementById('search-box').addEventListener('input', renderTable);
     document.getElementById('filter-station').addEventListener('change', renderTable);
     document.getElementById('filter-status').addEventListener('change', renderTable);
@@ -464,6 +761,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.querySelector('i').classList.remove('spin-anim');
         showToast('Đã cập nhật dữ liệu', 'info');
     });
+
+    // Caster Rover tab events
+    const casterSearchBox = document.getElementById('caster-search-box');
+    if (casterSearchBox) casterSearchBox.addEventListener('input', renderCasterTable);
+
+    const casterFilterStatus = document.getElementById('caster-filter-status');
+    if (casterFilterStatus) casterFilterStatus.addEventListener('change', renderCasterTable);
+
+    const casterRefreshBtn = document.getElementById('caster-refresh-btn');
+    if (casterRefreshBtn) {
+        casterRefreshBtn.addEventListener('click', async () => {
+            casterRefreshBtn.querySelector('i').classList.add('spin-anim');
+            await fetchCasterUsers();
+            casterRefreshBtn.querySelector('i').classList.remove('spin-anim');
+            showToast('Đã tải lại dữ liệu từ Caster', 'info');
+        });
+    }
 
     function showToast(msg, type = 'primary') {
         const container = document.getElementById('toast-container');

@@ -232,3 +232,45 @@ class ActivityLogResponse(ActivityLogBase):
 class HeatmapData(BaseModel):
     # Trả về mảng 2 chiều: 7 ngày x 24 giờ
     data: List[List[int]]
+
+
+# --- CASTER ROVER MANAGEMENT SCHEMAS ---
+class BlockRoverRequest(BaseModel):
+    username: str
+    mountpoints: Optional[List[str]] = None # List các mountpoint cần chặn. Trống = chặn tất cả.
+    reason: Optional[str] = None
+
+
+class UnblockRoverRequest(BaseModel):
+    username: str
+    mountpoint: Optional[str] = None
+
+
+class CasterRoverItem(BaseModel):
+    username: str
+    password: str
+    mountpoints: List[str] = Field(default_factory=list)
+    datacount: int = 0
+    status: int = 0
+    identifier: str = ""
+    nclient: int = 0
+    maxclient: int = 0
+    in_db: bool = False  # Có trong DB local không
+    is_blocked: bool = False  # Có trong blocklist không
+    blocked_reason: Optional[str] = None
+    blocked_at: Optional[int] = None
+
+
+class CasterUsersResponse(BaseModel):
+    total: int
+    in_db_count: int
+    unknown_count: int
+    blocked_count: int
+    items: List[CasterRoverItem]
+
+
+class NtripAuthResponse(BaseModel):
+    allowed: bool
+    username: str
+    mountpoint: Optional[str] = None
+    reason: Optional[str] = None

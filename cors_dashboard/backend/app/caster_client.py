@@ -49,15 +49,26 @@ class CasterClient:
             if CLIENTTABLE_DEBUG:
                 logger.info("-> ĐANG ĐỢI DỮ LIỆU TỪ CASTER...")
             try:
-                data = await asyncio.wait_for(reader.read(8192), timeout=10.0)
-                response = data.decode('utf-8', errors='ignore')
+                chunks = []
+                while True:
+                    # Đọc dữ liệu theo từng chunk cho đến khi hết
+                    chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                
+                response = b"".join(chunks).decode('utf-8', errors='ignore')
                 if CLIENTTABLE_DEBUG:
-                    logger.info(f"-> NHẬN PHẢN HỒI ({len(data)} bytes) THÀNH CÔNG")
+                    logger.info(f"-> NHẬN PHẢN HỒI ({len(response)} bytes) THÀNH CÔNG")
                 return response
             except asyncio.TimeoutError:
-                error_msg = f"Đã kết nối nhưng CASTER KHÔNG PHẢN HỒI dữ liệu trong 10s ({self.host}:{self.port})"
-                logger.error(error_msg)
-                raise Exception(error_msg)
+                if not chunks:
+                    error_msg = f"Đã kết nối nhưng CASTER KHÔNG PHẢN HỒI dữ liệu trong 10s ({self.host}:{self.port})"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+                # Nếu đã đọc được một số chunks thì trả về luôn thay vì báo lỗi timeout
+                response = b"".join(chunks).decode('utf-8', errors='ignore')
+                return response
 
         except Exception as e:
             if not isinstance(e, asyncio.TimeoutError):

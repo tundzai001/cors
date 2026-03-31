@@ -138,6 +138,27 @@
             padding: 6px 10px;
         }
 
+        .badge-blocked {
+            background-color: rgba(239, 68, 68, 0.2);
+            color: #fb7185;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            padding: 6px 10px;
+        }
+
+        .badge-unknown {
+            background-color: rgba(251, 191, 36, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            padding: 6px 10px;
+        }
+
+        .badge-indb {
+            background-color: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            padding: 6px 10px;
+        }
+
         /* Buttons */
         .btn-primary {
             background-color: var(--primary-color);
@@ -154,6 +175,47 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 20px;
+        }
+
+        /* Stat Cards */
+        .stat-card {
+            background: linear-gradient(135deg, #1a1d26, #252a36);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 16px 20px;
+            text-align: center;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--primary-color);
+        }
+        .stat-card .stat-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .stat-card .stat-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Block reason tooltip */
+        .block-reason {
+            font-size: 0.75rem;
+            color: #f87171;
+            font-style: italic;
+        }
+
+        @keyframes spin-anim {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .spin-anim {
+            animation: spin-anim 0.6s linear infinite;
         }
     </style>
 </head>
@@ -207,7 +269,14 @@
                         <i class="bi bi-person-badge-fill me-2"></i>Tài khoản Rover
                     </button>
                 </li>
-                <!-- TAB CASTER: Mặc định có class d-none, JS sẽ gỡ nếu là Admin -->
+                <!-- TAB CASTER ROVER: Admin Only -->
+                <li class="nav-item d-none" id="caster-rover-tab-li" role="presentation">
+                    <button class="nav-link" id="caster-rover-tab" data-bs-toggle="tab" data-bs-target="#caster-rover-pane"
+                        type="button" role="tab">
+                        <i class="bi bi-shield-lock me-2"></i>Quản lý Rover Caster
+                    </button>
+                </li>
+                <!-- TAB CASTER CONFIG: Admin Only -->
                 <li class="nav-item d-none" id="caster-tab-li" role="presentation">
                     <button class="nav-link" id="caster-tab" data-bs-toggle="tab" data-bs-target="#caster-pane"
                         type="button" role="tab">
@@ -279,7 +348,97 @@
                     </div>
                 </div>
 
-                <!-- 2. CASTER PANEL (ADMIN ONLY) -->
+                <!-- 2. CASTER ROVER MANAGEMENT (ADMIN ONLY) -->
+                <div class="tab-pane fade" id="caster-rover-pane" role="tabpanel">
+                    <!-- Stat Cards -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-6 col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value text-white" id="stat-total">-</div>
+                                <div class="stat-label">Tổng trên Caster</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" style="color:#38bdf8" id="stat-indb">-</div>
+                                <div class="stat-label">Có trong DB</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" style="color:#fbbf24" id="stat-unknown">-</div>
+                                <div class="stat-label">Không có DB</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" style="color:#fb7185" id="stat-blocked">-</div>
+                                <div class="stat-label">Đang bị chặn</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Toolbar -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-5">
+                            <div class="input-group">
+                                <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
+                                <input type="text" id="caster-search-box" class="form-control" placeholder="Tìm username, mountpoint...">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <select id="caster-filter-status" class="form-select">
+                                <option value="">Tất cả trạng thái</option>
+                                <option value="blocked">Đang bị chặn</option>
+                                <option value="active">Hoạt động</option>
+                                <option value="unknown">Không có trong DB</option>
+                                <option value="indb">Có trong DB</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <button id="caster-refresh-btn" class="btn btn-dark border-secondary" title="Tải lại từ Caster">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Caster Auth Check Info -->
+                    <div class="alert alert-dark border-secondary d-flex align-items-start small mb-3">
+                        <i class="bi bi-info-circle-fill text-info fs-5 me-2 mt-1"></i>
+                        <div>
+                            <strong>Cách hoạt động:</strong> Khi Caster gửi lệnh wake-up, hệ thống tự kiểm tra blocklist.
+                            Nếu user bị chặn → response <code>BLOCKED</code> cho Caster → Caster không mở luồng.
+                            Nếu không bị chặn → response <code>OK</code> → Caster mở luồng bình thường.
+                            <br><span class="text-muted">Auth endpoint: <code>GET /api/ntrip/auth-check?user=xxx&mountpoint=yyy</code></span>
+                        </div>
+                    </div>
+
+                    <!-- Table -->
+                    <div class="table-responsive rounded border border-secondary border-opacity-25">
+                        <table class="table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Mountpoints</th>
+                                    <th class="text-center">Nguồn</th>
+                                    <th class="text-center">Trạng thái</th>
+                                    <th class="text-center">Clients</th>
+                                    <th class="text-end">Hành động</th>
+                                </tr>
+                            </thead>
+                            <tbody id="caster-table-body">
+                                <tr><td colspan="6" class="text-center py-5 text-muted">
+                                    <div class="spinner-border spinner-border-sm me-2"></div> Đang tải dữ liệu từ Caster...
+                                </td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-3 text-muted small">
+                        Hiển thị <span id="caster-displayed-count" class="fw-bold text-white">0</span> / <span id="caster-total-count">0</span> user trên Caster
+                    </div>
+                </div>
+
+                <!-- 3. CASTER CONFIG PANEL (ADMIN ONLY) -->
                 <div class="tab-pane fade" id="caster-pane" role="tabpanel">
                     <div class="row justify-content-center">
                         <div class="col-lg-8 col-xl-6">
@@ -469,6 +628,50 @@
 
     <!-- Toast Container -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" style="z-index: 1055;"></div>
+
+    <!-- Block User Modal -->
+    <div class="modal fade" id="blockUserModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content bg-dark border-secondary text-light">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title"><i class="bi bi-shield-lock-fill me-2 text-danger"></i>Chặn Rover Access</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="blockUserForm">
+                        <input type="hidden" id="blockModalUsername">
+                        
+                        <div class="mb-4">
+                            <label class="form-label text-secondary small text-uppercase fw-bold">1. Chọn trạm cần chặn</label>
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="small text-info" id="blockInfoText">Đang tải danh sách trạm...</span>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="selectAllMps">
+                                    <label class="form-check-label small" for="selectAllMps">Chặn TOÀN BỘ hệ thống</label>
+                                </div>
+                            </div>
+                            
+                            <!-- Đây là khu vực chứa các "ô box" (Chip/Checkbox) -->
+                            <div id="mountpointSelector" class="p-3 bg-black rounded border border-secondary d-flex flex-wrap gap-2" style="max-height: 250px; overflow-y: auto;">
+                                <!-- Chips sẽ được render ở đây -->
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="blockReason" class="form-label text-secondary small text-uppercase fw-bold">2. Lý do chặn</label>
+                            <input type="text" class="form-control bg-dark border-secondary text-light" id="blockReason" placeholder="Ví dụ: Quá hạn sử dụng, User lậu..." value="Quá hạn sử dụng">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Hủy</button>
+                    <button type="button" class="btn btn-danger" id="confirmBlockBtn">
+                        <i class="bi bi-shield-lock-fill me-1"></i>Xác nhận chặn
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <!-- 🆕 Navigation Manager -->

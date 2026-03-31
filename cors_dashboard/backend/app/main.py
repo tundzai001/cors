@@ -724,6 +724,15 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
             logger.warning("[NTRIP MQTT] Missing 'mountpoint' for start command")
             return
 
+        # === CHECK BLOCKLIST TRƯỚC KHI MỞ LUỒNG ===
+        block_reason = await _check_rover_blocked(client_instance_id, mountpoint)
+        if block_reason:
+            logger.warning(
+                f"[NTRIP MQTT] BLOCKED user='{client_instance_id}' "
+                f"mountpoint='{mountpoint}' reason='{block_reason}'"
+            )
+            return
+
         async with device_session_scope() as db:
             resolved_serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
 
@@ -1480,44 +1489,198 @@ async def ntrip_wake_station(payload: dict = Body(...)):
     
     return await _do_ntrip_wake(mountpoint, client_instance_id or "http-post", ttl_seconds)
 
-async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int):
-    """Hàm xử lý chung cho lệnh wake trạm từ HTTP, hỗ trợ streaming response."""
-    async def generate_response():
-        logger.info(f"[NTRIP HTTP] Received wake request: mountpoint={mountpoint}, client_id={client_id}")
-        yield "lắng nghe thành công\n"
-        
-        try:
-            async with device_session_scope() as db:
-                # Tìm trạm dựa trên mountpoint
-                try:
-                    serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
-                except ValueError as ve:
-                    msg = f"ERROR: {ve}"
-                    logger.warning(f"[NTRIP HTTP] {msg}")
-                    yield msg
-                    return
-                    
-                device = await crud.get_device_by_serial(db, serial)
-                name = device.name if device else serial
-                
-                # Thực hiện bật trạm (tạo session và gửi lệnh cho agent nếu cần)
-                await _ntrip_mqtt_start(
-                    serial=serial,
-                    mountpoint=mountpoint,
-                    client_instance_id=client_id,
-                    ttl_seconds=ttl,
-                )
-                
-                msg = f"ok bật trạm thành công {name} ({serial})"
-                logger.info(f"[NTRIP HTTP] {msg} for mountpoint={mountpoint}")
-                yield msg
-                
-        except Exception as e:
-            msg = f"ERROR: {e}"
-            logger.error(f"[NTRIP HTTP ERR] Failed for mountpoint={mountpoint}: {e}", exc_info=True)
-            yield msg
+async def _check_rover_blocked(username: str, mountpoint: Optional[str] = None) -> Optional[str]:
+    """Kiểm tra xem rover có bị chặn trong blocklist DB không."""
+    try:
+        async with auth_session_scope() as auth_db:
+            # Query tất cả block của user này
+            block_q = select(models.RoverBlocklist).where(models.RoverBlocklist.username == username)
+            block_rs = await auth_db.execute(block_q)
+            blocks = block_rs.scalars().all()
 
-    return StreamingResponse(generate_response(), media_type="text/plain")
+            for b in blocks:
+                # 1. Chặn tất cả (Global block)
+                if not b.mountpoint:
+                    return b.reason or "Account is globally blocked"
+                
+                # 2. Chặn theo Mountpoint cụ thể
+                if mountpoint and b.mountpoint.lower().strip() == mountpoint.lower().strip():
+                    return b.reason or f"Blocked on mountpoint: {mountpoint}"
+                    
+    except Exception as e:
+        logger.warning(f"[NTRIP AUTH] Error checking blocklist for '{username}': {e}")
+    return None
+
+async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int):
+    """Xử lý wake trạm, trả về PlainTextResponse chuẩn cho Caster."""
+    logger.info(f"[NTRIP Wake] mountpoint={mountpoint}, client_id={client_id}")
+
+    # 1. Check Blocklist ngay lập tức
+    reason = await _check_rover_blocked(client_id, mountpoint)
+    if reason:
+        msg = f"BLOCKED: {reason}"
+        logger.warning(f"[NTRIP Wake] {msg} for {client_id}@{mountpoint}")
+        return PlainTextResponse(msg)
+
+    # 2. Bật trạm nếu hợp lệ
+    try:
+        async with device_session_scope() as db:
+            serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+            device = await crud.get_device_by_serial(db, serial)
+            name = device.name if device else serial
+            
+            await _ntrip_mqtt_start(
+                serial=serial,
+                mountpoint=mountpoint,
+                client_instance_id=client_id,
+                ttl_seconds=ttl,
+            )
+            
+            msg = f"ok bật trạm thành công {name} ({serial})"
+            return PlainTextResponse(f"lắng nghe thành công\n{msg}")
+            
+    except Exception as e:
+        msg = f"ERROR: {e}"
+        logger.error(f"[NTRIP Wake ERR] {msg}")
+        return PlainTextResponse(msg, status_code=200)
+
+
+# === CASTER ROVER MANAGEMENT API ===
+
+@app.get("/api/caster/users", response_model=schemas.CasterUsersResponse)
+async def get_caster_users(
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
+):
+    """Danh sách rover từ NTRIP Caster kèm thông tin DB để đối soát."""
+    # Đọc cấu hình Caster trực tiếp từ .env (không query system_settings)
+    env_host, env_port = _read_caster_config_from_env()
+    host = str(env_host or settings.CASTER_HOST or 'aitogy.com.vn')
+    port = int(env_port or settings.CASTER_PORT or 2101)
+    caster = CasterClient(host, port)
+
+    users = await caster.get_users()
+    if not users:
+        return {"items": [], "total": 0}
+
+    results = []
+    async with auth_session_scope() as auth_db:
+        # Lấy toàn bộ blocklist
+        block_q = select(models.RoverBlocklist)
+        block_rs = await auth_db.execute(block_q)
+        blocks = block_rs.scalars().all()
+        
+        blocks_map = {}
+        for b in blocks:
+            if b.username not in blocks_map: blocks_map[b.username] = []
+            blocks_map[b.username].append(b)
+        
+        # Lấy list usernames trong DB local
+        db_rovers_q = select(models.RoverAccount.username)
+        db_rovers_rs = await auth_db.execute(db_rovers_q)
+        db_usernames = set(db_rovers_rs.scalars().all())
+
+    for u in users:
+        uname = u['username']
+        user_blocks = blocks_map.get(uname, [])
+        is_blocked = len(user_blocks) > 0
+        
+        reason = None
+        blocked_at = None
+        if user_blocks:
+            reason = ", ".join([f"{b.mountpoint or 'ALL'}: {b.reason}" for b in user_blocks])
+            blocked_at = user_blocks[0].blocked_at
+
+        results.append({
+            **u,
+            "in_db": uname in db_usernames,
+            "is_blocked": is_blocked,
+            "blocked_reason": reason,
+            "blocked_at": blocked_at
+        })
+
+    return {
+        "items": results,
+        "total": len(results),
+        "in_db_count": sum(1 for r in results if r['in_db']),
+        "unknown_count": sum(1 for r in results if not r['in_db']),
+        "blocked_count": sum(1 for r in results if r['is_blocked'])
+    }
+
+
+@app.post("/api/caster/block-user")
+async def block_caster_user(
+    request: schemas.BlockRoverRequest,
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
+):
+    """API chặn user trên một hoặc nhiều trạm (Lưu vào DB blocklist)."""
+    async with auth_session_scope() as auth_db:
+        target_mps = request.mountpoints or [None] # None = Chặn toàn bộ
+        
+        added_count = 0
+        for mp in target_mps:
+            # Kiểm tra xem đã tồn tại block cho user + mp này chưa
+            q = select(models.RoverBlocklist).where(
+                models.RoverBlocklist.username == request.username,
+                models.RoverBlocklist.mountpoint == mp
+            )
+            rs = await auth_db.execute(q)
+            if rs.scalar_one_or_none():
+                continue # Đã chặn rồi thì bỏ qua
+
+            new_block = models.RoverBlocklist(
+                username=request.username,
+                mountpoint=mp,
+                blocked_at=int(time.time()),
+                blocked_by=current_user.username,
+                reason=request.reason or "Blocked by admin"
+            )
+            auth_db.add(new_block)
+            added_count += 1
+        
+        # Nếu có chặn Global (None trong list) thì vô hiệu hóa tài khoản luôn
+        if None in target_mps:
+            q_rover = select(models.RoverAccount).where(models.RoverAccount.username == request.username)
+            res_rover = await auth_db.execute(q_rover)
+            rover = res_rover.scalar_one_or_none()
+            if rover: rover.is_active = False 
+            
+        await auth_db.commit()
+
+    target_str = "toàn bộ hệ thống" if None in target_mps else f"{len(target_mps)} trạm cụ thể"
+    return {"status": "ok", "message": f"Đã chặn user {request.username} trên {target_str}."}
+
+
+@app.post("/api/caster/unblock-user")
+async def unblock_caster_user(
+    request: schemas.UnblockRoverRequest,
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
+):
+    """Mở khóa user (xóa khỏi blocklist)."""
+    async with auth_session_scope() as auth_db:
+        q = delete(models.RoverBlocklist).where(models.RoverBlocklist.username == request.username)
+        await auth_db.execute(q)
+
+        q_rover = select(models.RoverAccount).where(models.RoverAccount.username == request.username)
+        res_rover = await auth_db.execute(q_rover)
+        rover = res_rover.scalar_one_or_none()
+        if rover:
+            rover.is_active = True
+            
+        await auth_db.commit()
+
+    return {"status": "ok", "message": f"Đã mở khóa cho user {request.username}"}
+
+@app.get("/api/ntrip/auth-check")
+async def ntrip_auth_check(
+    user: str = Query(...),
+    mountpoint: Optional[str] = Query(None)
+):
+    """Public API cho Caster gọi kiểm tra quyền kết nối."""
+    reason = await _check_rover_blocked(user, mountpoint)
+    if reason:
+        return JSONResponse({"status": "forbidden", "reason": reason}, status_code=403)
+    return JSONResponse({"status": "ok"})
+
 
 
 # === COMMAND DISPATCHER ===
@@ -1537,13 +1700,19 @@ async def send_command_to_pi(serial: str, command: dict) -> dict:
 
 # --- CASTER CLIENT FACTORY ---
 async def get_caster_client(db: AsyncSession) -> CasterClient:
-    """Helper để khởi tạo Caster Client từ SystemSettings"""
-    system_settings = await crud.get_system_settings(db)
+    """Helper để khởi tạo Caster Client an toàn từ .env hoặc DB"""
+    system_settings = {}
+    try:
+        # Nếu bảng system_settings không tồn tại (lỗi Postgres), ta bỏ qua
+        system_settings = await crud.get_system_settings(db)
+    except Exception as e:
+        logger.debug(f"[CASTER] system_settings table not available, using env only: {e}")
 
     env_host, env_port = _read_caster_config_from_env()
-    # Ưu tiên .env (có thể vừa được cập nhật từ web), fallback runtime settings rồi DB.
+    # Ưu tiên .env -> settings -> DB -> default
     host = str(env_host or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
     port = int(env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
+    
     if RTCM_KEEPALIVE_DEBUG:
         logger.warning(f"[RTCM DEBUG] Using caster host={host} port={port}")
     
@@ -1725,6 +1894,305 @@ async def get_caster_clienttable(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Không thể lấy clienttable từ Caster: {str(e)}"
         )
+
+
+# === CASTER ROVER MANAGEMENT: BLOCK / UNBLOCK / AUTH CHECK ===
+
+@app.get("/api/caster/users", response_model=schemas.CasterUsersResponse)
+async def get_caster_users(
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    """
+    Lấy danh sách toàn bộ user từ NTRIP Caster (qua TCP),
+    đối chiếu với DB local (RoverAccount + RoverBlocklist) để enrichment.
+    """
+    try:
+        caster_client = await get_caster_client(auth_db)
+        caster_users = await caster_client.get_users()
+    except Exception as e:
+        logger.error(f"[CASTER MGMT] Failed to fetch users from caster: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Không thể lấy danh sách user từ Caster: {str(e)}"
+        )
+
+    # Lấy danh sách rover accounts từ DB local
+    db_rovers_rs = await auth_db.execute(select(models.RoverAccount))
+    db_rovers_map = {str(r.username).lower(): r for r in db_rovers_rs.scalars().all()}
+
+    # Lấy danh sách blocklist từ DB local
+    blocklist_rs = await auth_db.execute(select(models.RoverBlocklist))
+    blocklist_items = blocklist_rs.scalars().all()
+    # Build lookup: username_lower -> list of blocked entries
+    blocklist_map: Dict[str, List[models.RoverBlocklist]] = {}
+    for bl in blocklist_items:
+        key = str(bl.username).lower()
+        if key not in blocklist_map:
+            blocklist_map[key] = []
+        blocklist_map[key].append(bl)
+
+    enriched_items = []
+    in_db_count = 0
+    unknown_count = 0
+    blocked_count = 0
+
+    for cu in caster_users:
+        username = str(cu.get("username", "")).strip()
+        username_lower = username.lower()
+
+        # Check DB
+        in_db = username_lower in db_rovers_map
+
+        # Check blocklist
+        is_blocked = False
+        blocked_reason = None
+        blocked_at = None
+        if username_lower in blocklist_map:
+            # Kiểm tra xem có block entry nào match mountpoint hoặc block all
+            for bl_entry in blocklist_map[username_lower]:
+                if bl_entry.mountpoint is None:
+                    # Block all mountpoints
+                    is_blocked = True
+                    blocked_reason = bl_entry.reason
+                    blocked_at = bl_entry.blocked_at
+                    break
+                else:
+                    user_mps = [mp.lower().strip() for mp in cu.get("mountpoints", [])]
+                    if bl_entry.mountpoint.lower().strip() in user_mps:
+                        is_blocked = True
+                        blocked_reason = bl_entry.reason
+                        blocked_at = bl_entry.blocked_at
+                        break
+
+        if in_db:
+            in_db_count += 1
+        else:
+            unknown_count += 1
+        if is_blocked:
+            blocked_count += 1
+
+        enriched_items.append(schemas.CasterRoverItem(
+            username=username,
+            password=str(cu.get("password", "")),
+            mountpoints=cu.get("mountpoints", []),
+            datacount=cu.get("datacount", 0),
+            status=cu.get("status", 0),
+            identifier=str(cu.get("identifier", "")),
+            nclient=cu.get("nclient", 0),
+            maxclient=cu.get("maxclient", 0),
+            in_db=in_db,
+            is_blocked=is_blocked,
+            blocked_reason=blocked_reason,
+            blocked_at=blocked_at,
+        ))
+
+    return schemas.CasterUsersResponse(
+        total=len(enriched_items),
+        in_db_count=in_db_count,
+        unknown_count=unknown_count,
+        blocked_count=blocked_count,
+        items=enriched_items,
+    )
+
+
+@app.post("/api/caster/block-user")
+async def block_caster_user(
+    req: schemas.BlockRoverRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    """
+    Chặn rover trên hệ thống:
+    1. Lưu vào blocklist DB (source of truth)
+    2. Gọi caster TCP delete_user để kick ngay lập tức
+    3. Cập nhật RoverAccount.is_active = False (nếu user có trong DB)
+    """
+    username = req.username.strip()
+    mountpoint = req.mountpoint.strip() if req.mountpoint else None
+    now = int(time.time())
+
+    # 1. Thêm vào blocklist DB
+    # Check xem đã block chưa (tránh duplicate)
+    existing_block_q = select(models.RoverBlocklist).where(
+        models.RoverBlocklist.username == username,
+    )
+    if mountpoint:
+        existing_block_q = existing_block_q.where(
+            models.RoverBlocklist.mountpoint == mountpoint
+        )
+    else:
+        existing_block_q = existing_block_q.where(
+            models.RoverBlocklist.mountpoint.is_(None)
+        )
+
+    existing_block_rs = await auth_db.execute(existing_block_q)
+    if existing_block_rs.scalars().first():
+        return {
+            "status": "already_blocked",
+            "username": username,
+            "message": f"User '{username}' đã bị chặn trước đó."
+        }
+
+    new_block = models.RoverBlocklist(
+        username=username,
+        mountpoint=mountpoint,
+        blocked_at=now,
+        blocked_by=current_user.username,
+        reason=req.reason or "Blocked by admin",
+    )
+    auth_db.add(new_block)
+
+    # 2. Nếu user có trong DB local → set is_active = False
+    rover = await crud.get_rover_by_username(auth_db, username)
+    if rover:
+        rover.is_active = False
+
+    await auth_db.commit()
+
+    # 3. Gọi caster TCP để xóa user (kick ngay lập tức)
+    caster_delete_ok = False
+    try:
+        caster = await get_caster_client(auth_db)
+        caster_delete_ok = await caster.delete_user(
+            identifier=current_user.username,
+            username=username,
+        )
+        logger.info(f"[CASTER MGMT] Blocked & deleted user '{username}' from caster")
+    except Exception as e:
+        logger.warning(f"[CASTER MGMT] Failed to delete user from caster (user still blocked in DB): {e}")
+
+    return {
+        "status": "blocked",
+        "username": username,
+        "mountpoint": mountpoint,
+        "caster_deleted": caster_delete_ok,
+        "message": f"Đã chặn user '{username}'" + (f" trên mountpoint '{mountpoint}'" if mountpoint else "") + ". User đã bị kick khỏi caster."
+    }
+
+
+@app.post("/api/caster/unblock-user")
+async def unblock_caster_user(
+    req: schemas.UnblockRoverRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    """
+    Mở khóa rover:
+    1. Xóa khỏi blocklist DB
+    2. Tạo lại user trên caster (nếu có thông tin trong DB)
+    3. Cập nhật RoverAccount.is_active = True (nếu có)
+    """
+    username = req.username.strip()
+    mountpoint = req.mountpoint.strip() if req.mountpoint else None
+
+    # 1. Xóa khỏi blocklist
+    del_q = delete(models.RoverBlocklist).where(
+        models.RoverBlocklist.username == username,
+    )
+    if mountpoint:
+        del_q = del_q.where(models.RoverBlocklist.mountpoint == mountpoint)
+    else:
+        # Xóa tất cả block entries cho user này
+        pass
+
+    result = await auth_db.execute(del_q)
+    deleted_count = result.rowcount
+
+    # 2. Nếu user có trong DB local → set is_active = True
+    rover = await crud.get_rover_by_username(auth_db, username)
+    caster_recreated = False
+
+    if rover:
+        rover.is_active = True
+        await auth_db.commit()
+
+        # 3. Tạo lại user trên caster
+        try:
+            caster = await get_caster_client(auth_db)
+            rover_mps = rover.mountpoints or ""
+            await caster.create_user(
+                creator=current_user.username,
+                username=rover.username,
+                password=rover.password,
+                mountpoints=rover_mps,
+                expiry_seconds=315360000,  # 10 năm
+                max_users=1,
+            )
+            caster_recreated = True
+            logger.info(f"[CASTER MGMT] Unblocked & re-created user '{username}' on caster")
+        except Exception as e:
+            logger.warning(f"[CASTER MGMT] Failed to re-create user on caster: {e}")
+    else:
+        await auth_db.commit()
+
+    if deleted_count == 0:
+        return {
+            "status": "not_found",
+            "username": username,
+            "message": f"User '{username}' không có trong danh sách chặn."
+        }
+
+    return {
+        "status": "unblocked",
+        "username": username,
+        "mountpoint": mountpoint,
+        "caster_recreated": caster_recreated,
+        "in_db": rover is not None,
+        "message": f"Đã mở khóa user '{username}'." + (" User đã được tạo lại trên caster." if caster_recreated else " (User không có trong DB, cần tạo thủ công trên caster)")
+    }
+
+
+@app.get("/api/ntrip/auth-check", response_class=PlainTextResponse)
+async def ntrip_auth_check(
+    user: str = Query(...),
+    mountpoint: Optional[str] = Query(None),
+):
+    """
+    Endpoint cho NTRIP Caster gọi để kiểm tra xem user có bị chặn không.
+    Caster gọi: GET /api/ntrip/auth-check?user=xxx&mountpoint=yyy
+    
+    Response:
+    - 200 "OK" → Caster cho phép kết nối (không bị chặn)
+    - 403 "BLOCKED" → Caster từ chối kết nối (bị chặn)
+    
+    Endpoint này KHÔNG yêu cầu auth token vì được gọi bởi caster process.
+    """
+    username = user.strip()
+    mountpoint_clean = mountpoint.strip() if mountpoint else None
+
+    try:
+        async with auth_session_scope() as auth_db:
+            # Check blocklist
+            block_q = select(models.RoverBlocklist).where(
+                models.RoverBlocklist.username == username,
+            )
+            block_rs = await auth_db.execute(block_q)
+            block_entries = block_rs.scalars().all()
+
+            for entry in block_entries:
+                # Block all mountpoints
+                if entry.mountpoint is None:
+                    logger.info(f"[NTRIP AUTH] BLOCKED user='{username}' reason='{entry.reason}' (all mountpoints)")
+                    return PlainTextResponse(
+                        f"BLOCKED: {entry.reason or 'User is blocked'}",
+                        status_code=403,
+                    )
+                # Block specific mountpoint
+                if mountpoint_clean and entry.mountpoint.lower().strip() == mountpoint_clean.lower():
+                    logger.info(f"[NTRIP AUTH] BLOCKED user='{username}' mountpoint='{mountpoint_clean}' reason='{entry.reason}'")
+                    return PlainTextResponse(
+                        f"BLOCKED: {entry.reason or 'User is blocked on this mountpoint'}",
+                        status_code=403,
+                    )
+
+            # Không bị chặn → cho phép
+            return PlainTextResponse("OK", status_code=200)
+
+    except Exception as e:
+        logger.error(f"[NTRIP AUTH] Error checking auth for user='{username}': {e}")
+        # Fail-open: nếu lỗi DB thì vẫn cho phép (tránh lock toàn bộ hệ thống)
+        return PlainTextResponse("OK", status_code=200)
 
 
 @app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse)

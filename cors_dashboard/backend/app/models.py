@@ -85,6 +85,21 @@ class ActivityLog(Base):
     ip_address = Column(String, nullable=True)
 
 
+class RoverBlocklist(AuthBase):
+    __tablename__ = "rover_blocklist"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, index=True, nullable=False)
+    mountpoint = Column(String, nullable=True)  # null = block all mountpoints
+    blocked_at = Column(BigInteger, nullable=False)
+    blocked_by = Column(String, nullable=True)  # admin username who blocked
+    reason = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index('ix_blocklist_user_mp', 'username', 'mountpoint'),
+    )
+
+
 class RTCMStreamSession(Base):
     __tablename__ = "rtcm_stream_sessions"
 
