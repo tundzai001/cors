@@ -110,7 +110,7 @@ async def batch_sync_checker():
             # Lấy danh sách devices online từ cache (không cần DB)
             online_serials = [
                 serial for serial, status in device_status_cache.items()
-                if status == 'online'
+                if status in ['online', 'sleep']
             ]
             
             if not online_serials:
@@ -202,7 +202,7 @@ async def handle_message_async(topic: str, payload: bytes):
             data = json.loads(payload.decode())
             if 'rtk_fix_status' not in data:
                 # Fallback: Dựa vào status cũ (nếu agent chưa update)
-                if data.get('status') == 'online':
+                if data.get('status') in ['online', 'sleep']:
                     data['rtk_fix_status'] = 'DGPS'
                     data['base_mode_active'] = bool(data.get('base_config'))
                 else:

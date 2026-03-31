@@ -14,6 +14,7 @@ const STATUS_TEXT_MAP = {
     'rebooting': 'KHỞI ĐỘNG LẠI',
     'rebooting_for_reset': 'ĐANG RESET',
     'locked': 'BỊ KHÓA',
+    'sleep': 'CHẾ ĐỘ NGỦ',
     'auto_setup_rover': 'AUTO: CHẾ ĐỘ ROVER',
     'auto_setup_wait_fix': 'AUTO: CHỜ RTK FIX',
     'auto_setup_averaging': 'AUTO: LẤY MẪU TỌA ĐỘ',
@@ -22,17 +23,32 @@ const STATUS_TEXT_MAP = {
 
 const STATUS_CLASS_MAP = {
     'online': 'bg-success',
-    'offline': 'bg-secondary',
+    'offline': 'bg-danger',
     'unprovisioned': 'bg-warning text-dark',
     'awaiting_license': 'bg-info text-dark',
     'configuring': 'bg-primary',
     'rebooting': 'bg-warning text-dark',
     'rebooting_for_reset': 'bg-danger',
     'locked': 'bg-danger',
+    'sleep': 'bg-info',
     'auto_setup_rover': 'bg-info',
     'auto_setup_wait_fix': 'bg-info',
     'auto_setup_averaging': 'bg-info',
     'auto_setup_base': 'bg-info'
+};
+
+const getStatusColor = (status) => {
+    switch (status) {
+        case 'online': return '#198754'; // success
+        case 'offline': return '#dc3545'; // danger
+        case 'sleep': return '#0dcaf0';   // info
+        case 'unprovisioned': return '#ffc107'; 
+        case 'configuring': return '#0d6efd';
+        case 'locked': return '#dc3545';
+        default: 
+            if (status && status.startsWith('auto_setup')) return '#0dcaf0';
+            return '#6c757d'; // secondary
+    }
 };
 
 
@@ -154,18 +170,11 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
     const s2 = ntripStatus.server2 || { connected: false, bps: 0 };
 
     const config = device.service_config || {};
-    const s1Enabled = config.server1_enabled;
-    const s2Enabled = config.server2_enabled;
+    const s1Enabled = config.server1_enabled === true;
+    const s2Enabled = config.server2_enabled === true;
 
     const isAutoSetup = (device.status || '').startsWith('auto_setup');
-    const statusColorClass = device.status === 'online' ? 'online' :
-        device.status === 'awaiting_license' ? 'awaiting_license' :
-            device.status === 'unprovisioned' ? 'unprovisioned' :
-                device.status === 'configuring' ? 'configuring' :
-                    device.status === 'rebooting' ? 'rebooting' :
-                        device.status === 'rebooting_for_reset' ? 'rebooting_for_reset' :
-                            device.status === 'locked' ? 'locked' : 
-                                isAutoSetup ? 'configuring' : 'offline';
+    const statusColorClass = device.status || 'offline';
 
     // ✅ KIỂM TRA TRẠM ẢO
     const isVirtualStation = device.detected_chip_type === 'VIRTUAL';
@@ -208,7 +217,25 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
             </div>
 
             {/* Server Indicators */}
-            {(s1Enabled || s2Enabled) && (
+            {device.status === 'sleep' ? (
+                /* Sleep mode: show RTCM chip input rate instead of server BPS */
+                <div className="server-indicators">
+                    <div className="server-status-item connected">
+                        <div className="server-label">
+                            <i className="bi bi-cpu-fill"></i>
+                            RTCM
+                        </div>
+                        <div className="d-flex align-items-baseline gap-1">
+                            <span className="server-bps" style={{color: '#22b8cf'}}>
+                                {formatSpeed((device.ntrip_stats || {}).rtcm_input_bps || 0).value}
+                            </span>
+                            <span className="server-bps-unit">
+                                {formatSpeed((device.ntrip_stats || {}).rtcm_input_bps || 0).unit}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            ) : (s1Enabled || s2Enabled) && (
                 <div className="server-indicators">
                     {/* Server 1 */}
                     {s1Enabled && (
@@ -565,6 +592,14 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
     const [manualChip, setManualChip] = useState(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
     const [method, setMethod] = useState('FIXED_LLA');
 
+    const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
+    const autoProgress = device?.auto_base_progress || {};
+    const autoSamplesCollected = Number(autoProgress.samples_collected || 0);
+    const autoSamplesTarget = Number(autoProgress.samples_target || 0);
+    const autoProgressPercent = autoSamplesTarget > 0
+        ? Math.min(100, Math.round((autoSamplesCollected / autoSamplesTarget) * 100))
+        : null;
+
     // Tọa độ Fixed
     const [latitude, setLatitude] = useState('');
     const [longitude, setLongitude] = useState('');
@@ -622,7 +657,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, onConfigureChip, d
                 setSvinAccuracyM(String(config.survey_in_accuracy));
             }
         }
-    }, [device.serial, device.base_config]);
+    }, [device.serial]);
 
     const handleDecimalInputChange = (setter) => (e) => {
         const value = e.target.value;
@@ -870,6 +905,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
     const [formState, setFormState] = useState({
         ncomport: '',
         reconnectioninterval: 10,
+        stream_on_demand: true,
         server1_enabled: false,
         ntrip_version1: 1,
         serverhost1: '',
@@ -896,6 +932,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
         const defaultState = {
             ncomport: '',
             reconnectioninterval: 10,
+            stream_on_demand: true,
             server1_enabled: false,
             ntrip_version1: 1,
             username1: '',
@@ -975,10 +1012,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
 
             <div className="mb-4 p-3 border rounded border-secondary">
                 <h5 className="mb-3">Cài đặt chung</h5>
-                {/* 🔥 Fieldset khóa inputs */}
                 <fieldset disabled={disabled}>
                     <div className="row g-3">
-                        <div className="col-md-6">
+                        <div className="col-md-4">
                             <label htmlFor="ncomport" className="form-label">Định danh Trạm (ID)</label>
                             <input
                                 type="text"
@@ -990,8 +1026,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                 placeholder="Ví dụ: TRAM_HN_01"
                             />
                         </div>
-                        <div className="col-md-6">
-                            <label htmlFor="reconnectioninterval" className="form-label">Thời gian kết nối lại (giây)</label>
+                        <div className="col-md-4">
+                            <label htmlFor="reconnectioninterval" className="form-label">Kết nối lại (giây)</label>
                             <input
                                 type="number"
                                 className="form-control"
@@ -1000,6 +1036,23 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, onConfigureS
                                 value={formState.reconnectioninterval}
                                 onChange={handleChange}
                             />
+                        </div>
+                        <div className="col-md-4">
+                            <label className="form-label">Nâng cao: Chế độ truyền</label>
+                            <div className="form-check form-switch pt-2">
+                                <input
+                                    className="form-check-input"
+                                    type="checkbox"
+                                    role="switch"
+                                    id="stream_on_demand"
+                                    name="stream_on_demand"
+                                    checked={formState.stream_on_demand}
+                                    onChange={handleChange}
+                                />
+                                <label className="form-check-label" htmlFor="stream_on_demand">
+                                    {formState.stream_on_demand ? "Ngủ (On-Demand)" : "Luôn nứ (Always-On)"}
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </fieldset>
@@ -2873,7 +2926,7 @@ const DetailsPanel = memo(function DetailsPanel({
                         </li>
                     )}
 
-                    {(['online', 'configuring'].includes(device.status) || (device.status || '').startsWith('auto_setup')) ? (
+                    {(['online', 'sleep', 'configuring'].includes(device.status) || (device.status || '').startsWith('auto_setup')) ? (
                         <li className="nav-item">
                             <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => handleTabClick('dashboard')}>
                                 <i className="bi bi-speedometer2 me-1"></i>Dashboard
@@ -3026,15 +3079,6 @@ const getDistanceMeters = (lat1, lon1, lat2, lon2) => {
         Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
-};
-
-const getStatusColor = (status) => {
-    switch (status) {
-        case 'online': return '#0f0'; // Xanh lá
-        case 'offline': return '#666'; // Xám
-        case 'unprovisioned': return '#ff0'; // Vàng
-        default: return '#f00'; // Đỏ
-    }
 };
 
 const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
@@ -3251,7 +3295,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                     const popupContent = `
                         <div style="color: #333; min-width: 180px;">
                             <strong>Trạm CORS: ${displayName}</strong> <br>
-                            <span class="badge bg-${device.status === 'online' ? 'success' : 'secondary'}">${device.status}</span><br>
+                            <span class="badge ${STATUS_CLASS_MAP[device.status] || 'bg-secondary'}">${STATUS_TEXT_MAP[device.status] || device.status}</span><br>
                             ${serialHtml}
                         </div>
                     `;

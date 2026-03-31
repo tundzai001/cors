@@ -35,11 +35,30 @@ let dashboardRafId = null;
 let mapRafId = null;
 let dashboardTimerId = null;
 let mapTimerId = null;
+let detailsRenderTimerId = null;
+let lastDetailsRenderAt = 0;
+const DETAILS_RENDER_MIN_INTERVAL = 220;
 
 
 let deviceListNeedsUpdate = false;
 let detailsPanelNeedsUpdate = false;
 let mapNeedsUpdate = false;
+
+function requestDetailsPanelUpdate(priority = 'high') {
+    detailsPanelNeedsUpdate = true;
+    const now = Date.now();
+    const waitMs = Math.max(0, DETAILS_RENDER_MIN_INTERVAL - (now - lastDetailsRenderAt));
+    if (waitMs === 0) {
+        lastDetailsRenderAt = now;
+        scheduleRender(priority);
+        return;
+    }
+    if (detailsRenderTimerId) clearTimeout(detailsRenderTimerId);
+    detailsRenderTimerId = setTimeout(() => {
+        lastDetailsRenderAt = Date.now();
+        scheduleRender(priority);
+    }, waitMs);
+}
 
 function scheduleRender(priority = 'high') {
     const queueDashboardRender = () => {
@@ -168,6 +187,8 @@ function renderDashboard() {
                 onDeployLicense: handleDeployLicense,
                 onProvision: handleProvisionDevice,
                 onConfigureChip: handleConfigureChip,
+                onStopAutoBase: handleStopAutoBase,
+                onApplyAutoProvince: handleApplyAutoProvince,
                 onConfigureService: handleConfigureService,
                 onLock: handleLockDevice,
                 onUnlock: handleUnlockDevice
@@ -259,6 +280,7 @@ function updateGlobalDevices(newDeviceData) {
     const deviceMap = new Map(globalState.devices.map(d => [d.serial, d]));
     const devicesToAddOrUpdate = Array.isArray(newDeviceData) ? newDeviceData : [newDeviceData];
     const hasData = (obj) => !!(obj && typeof obj === 'object' && Object.keys(obj).length > 0);
+    const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
     
     let hasChanges = false;
 
@@ -274,14 +296,26 @@ function updateGlobalDevices(newDeviceData) {
                     newDevice.detected_chip_type = existingDevice.detected_chip_type;
                 }
             }
-            if (!hasData(newDevice.base_config) && hasData(existingDevice.base_config)) {
+            // Only fallback when key is truly missing in partial updates.
+            // If backend explicitly sends {}, we must respect it (e.g. reset flow).
+            if (!hasOwn(newDevice, 'base_config') && hasData(existingDevice.base_config)) {
                 newDevice.base_config = existingDevice.base_config;
             }
-            if (!hasData(newDevice.service_config) && hasData(existingDevice.service_config)) {
+            if (!hasOwn(newDevice, 'service_config') && hasData(existingDevice.service_config)) {
                 newDevice.service_config = existingDevice.service_config;
             }
             if (typeof newDevice.is_provisioned === 'undefined' && typeof existingDevice.is_provisioned !== 'undefined') {
                 newDevice.is_provisioned = existingDevice.is_provisioned;
+            }
+        }
+
+        // Reset/provisioning states must clear stale configs on UI.
+        if (newDevice.status === 'rebooting_for_reset' || newDevice.status === 'unprovisioned') {
+            if (!hasOwn(newDevice, 'base_config') || !newDevice.base_config || typeof newDevice.base_config !== 'object') {
+                newDevice.base_config = {};
+            }
+            if (!hasOwn(newDevice, 'service_config') || !newDevice.service_config || typeof newDevice.service_config !== 'object') {
+                newDevice.service_config = {};
             }
         }
         
@@ -305,13 +339,18 @@ function updateGlobalDevices(newDeviceData) {
                 };
 
                 newDevice.bps = s1_bps + s2_bps;
-                newDevice.ntrip_connected = newDevice.bps > 0;
+                // Prefer backend/agent truth if provided; fallback to bps heuristic.
+                if (typeof newDevice.ntrip_connected !== 'boolean') {
+                    newDevice.ntrip_connected = newDevice.bps > 0;
+                }
             }
             else if (existingDevice && existingDevice.ntrip_status && existingDevice.bps > 0) {
                 newDevice.ntrip_stats = existingDevice.ntrip_stats;
                 newDevice.ntrip_status = existingDevice.ntrip_status;
                 newDevice.bps = existingDevice.bps;
-                newDevice.ntrip_connected = existingDevice.ntrip_connected;
+                if (typeof newDevice.ntrip_connected !== 'boolean') {
+                    newDevice.ntrip_connected = existingDevice.ntrip_connected;
+                }
             }
             else if (!newDevice.ntrip_status) {
                 newDevice.ntrip_status = {
@@ -319,6 +358,9 @@ function updateGlobalDevices(newDeviceData) {
                     server2: { connected: false, bps: 0 }
                 };
                 newDevice.bps = 0;
+                if (typeof newDevice.ntrip_connected !== 'boolean') {
+                    newDevice.ntrip_connected = false;
+                }
             }
         }
         
@@ -477,6 +519,32 @@ async function handleConfigureChip(serial, payload) {
     }
 }
 
+async function handleStopAutoBase(serial) {
+    try {
+        await apiFetch(`/api/devices/${serial}/command`, {
+            method: 'POST',
+            body: JSON.stringify({ command: 'STOP_AUTO_BASE', payload: {} })
+        });
+        showSuccess('Đã dừng quy trình Auto Base.');
+    } catch (e) {
+        showError(`Lỗi dừng Auto Base: ${e.message}`);
+        throw e;
+    }
+}
+
+async function handleApplyAutoProvince(serial, provinceCode) {
+    try {
+        await apiFetch(`/api/devices/${serial}/command`, {
+            method: 'POST',
+            body: JSON.stringify({ command: 'APPLY_VN2000_PROVINCE', payload: { province_code: provinceCode } })
+        });
+        showSuccess(`Đã áp dụng lại ITRF->VN2000 theo tỉnh ${provinceCode}.`);
+    } catch (e) {
+        showError(`Lỗi áp dụng tỉnh VN2000: ${e.message}`);
+        throw e;
+    }
+}
+
 async function handleConfigureService(serial, payload) {
     try {
         const response = await apiFetch(`/api/devices/${serial}/configure-service`, { 
@@ -601,8 +669,7 @@ function handleWebSocketMessage(message) {
         
         if (statusSerial === globalState.selectedDeviceSerial && data.base_coords) {
             currentNmeaData.base_coords = data.base_coords;
-            detailsPanelNeedsUpdate = true;
-            scheduleRender('high');
+            requestDetailsPanelUpdate('high');
         }
     }
     
@@ -642,8 +709,7 @@ function handleWebSocketMessage(message) {
         
         if (nmeaType === 'GGA') {
             currentNmeaData.gga = data;
-            detailsPanelNeedsUpdate = true;
-            scheduleRender('high');
+            requestDetailsPanelUpdate('high');
         } 
         else if (nmeaType === 'GSA') {
             currentNmeaData.gsa = data;
@@ -652,8 +718,7 @@ function handleWebSocketMessage(message) {
                     sat.isTracking = data.active_sats.includes(sat.prn);
                 });
             }
-            detailsPanelNeedsUpdate = true;
-            scheduleRender('high');
+            requestDetailsPanelUpdate('high');
         } 
         else if (nmeaType === 'GSV' && data.satellites) {
             data.satellites.forEach(sat => {
@@ -663,8 +728,7 @@ function handleWebSocketMessage(message) {
                     lastSeen: Date.now()
                 };
             });
-            detailsPanelNeedsUpdate = true;
-            scheduleRender('high');
+            requestDetailsPanelUpdate('high');
         }
     }
     if (type === 'activity_log_event') {

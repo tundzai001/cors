@@ -198,6 +198,21 @@ html {
     box-shadow: 0 0 12px rgba(250, 82, 82, 0.5);
 }
 
+.status-bar.sleep {
+    background: linear-gradient(180deg, #22b8cf 0%, #15aabf 100%);
+    box-shadow: 0 0 12px rgba(34, 184, 207, 0.5);
+    animation: pulse-sleep 3s infinite;
+}
+
+@keyframes pulse-sleep {
+    0%, 100% {
+        box-shadow: 0 0 8px rgba(34, 184, 207, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 16px rgba(34, 184, 207, 0.7);
+    }
+}
+
 @keyframes pulse-warning {
     0%, 100% {
         box-shadow: 0 0 16px rgba(255, 212, 59, 0.6);
@@ -1983,4 +1998,27 @@ html {
     50% {
         box-shadow: 0 0 0 0.3rem rgba(13, 110, 253, 0.4);
     }
+}
+
+/* ============================================
+   ANIMATION STABILITY OVERRIDES (ANTI-JANK)
+   ============================================ */
+
+/* Ensure loading spinners always rotate even if theme/bootstrap conflicts */
+.spinner-border {
+    animation: spin 0.8s linear infinite !important;
+}
+
+/* Prevent repeated entrance animations on frequent realtime rerenders */
+.device-card,
+.card,
+.stat-item {
+    animation: none !important;
+}
+
+/* Smoother realtime updates: transition width instead of replaying keyframes */
+.progress-bar {
+    animation: none !important;
+    transition: width 320ms cubic-bezier(0.23, 1, 0.32, 1), background-color 220ms ease;
+    will-change: width;
 }

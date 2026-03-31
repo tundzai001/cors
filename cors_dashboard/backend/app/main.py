@@ -27,31 +27,7 @@ from fastapi import (
     HTTPException, Request, Query, status, Body
 )
 from fastapi.responses import PlainTextResponse
-# === NTRIP WAKE STATION HTTP ENDPOINT ===
-@app.post("/api/ntrip/wake-station", response_class=PlainTextResponse)
-async def ntrip_wake_station(
-    payload: dict = Body(...)
-):
-    """
-    Endpoint cho NTRIP gửi lệnh bật trạm qua HTTP.
-    Yêu cầu JSON: {"mountpoint": "...", "client_instance_id": "...", "ttl_seconds": 90}
-    """
-    from .mqtt import handle_ntrip_mqtt_command
-    import json
-    # Giả lập message như MQTT gửi vào
-    topic = "ntrip/rtcm/start"
-    try:
-        # Chỉ lấy các trường cần thiết
-        data = {
-            "mountpoint": payload.get("mountpoint"),
-            "client_instance_id": payload.get("client_instance_id"),
-            "ttl_seconds": int(payload.get("ttl_seconds", 90)),
-        }
-        # Chuyển thành bytes như MQTT
-        await handle_ntrip_mqtt_command(topic, json.dumps(data).encode("utf-8"))
-        return "OK"
-    except Exception as e:
-        return PlainTextResponse(f"ERROR: {e}", status_code=500)
+
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -89,6 +65,42 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+
+
+# --- START CẢI TIẾN: SỬA LỖI TYPO 'POS' TRỰC TIẾP TRÊN TCP TCP STREAM ---
+def _fix_ntrip_pos_typo(data: bytes) -> bytes:
+    # 1. Sửa lỗi gửi nhầm ký tự văn bản "\r\n" thay vì dấu xuống dòng thật
+    if b"\\r\\n" in data:
+        data = data.replace(b"\\r\\n", b"\r\n")
+
+    # 2. Sửa lỗi "POS" thành "POST"
+    if data.startswith(b"POS /api/ntrip/wake-"):
+        idx = data.find(b" HTTP/1.")
+        if idx != -1:
+            return b"POST" + data[3:idx] + data[idx:]
+            
+    return data
+
+
+try:
+    from uvicorn.protocols.http.h11_impl import H11Protocol
+    _orig_h11_data_received = H11Protocol.data_received
+    def _patched_h11_data_received(self, data: bytes):
+        _orig_h11_data_received(self, _fix_ntrip_pos_typo(data))
+    H11Protocol.data_received = _patched_h11_data_received
+except Exception:
+    pass
+
+try:
+    from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol
+    _orig_httptools_data_received = HttpToolsProtocol.data_received
+    def _patched_httptools_data_received(self, data: bytes):
+        _orig_httptools_data_received(self, _fix_ntrip_pos_typo(data))
+    HttpToolsProtocol.data_received = _patched_httptools_data_received
+except Exception:
+    pass
+# --- END CẢI TIẾN ---
 
 
 def disable_windows_quick_edit_mode() -> None:
@@ -321,7 +333,7 @@ def _extract_station_mountpoints(device: models.Device) -> List[str]:
 def _normalize_mountpoint(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
-    cleaned = str(value).strip()
+    cleaned = str(value).strip().strip('/')
     return cleaned.lower() if cleaned else None
 
 
@@ -1311,7 +1323,7 @@ async def lifespan(app: FastAPI):
                             
                             result = await db.execute(
                                 select(models.Device).filter(
-                                    models.Device.status == 'online',
+                                    models.Device.status.in_(['online', 'sleep']),
                                     models.Device.timestamp < timeout_threshold
                                 )
                             )
@@ -1353,7 +1365,6 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.error(f"Global rate limiter cleanup error: {e}")
 
-        # Task 3: Security rate limiter cleanup - THÊM MỚI
         async def security_rate_limiter_cleanup_task():
             """Dọn dẹp dữ liệu cũ trong security rate limiter"""
             from .security import rate_limiter
@@ -1385,7 +1396,7 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("ðŸ›‘ Application shutting down...")
         
-        # --- BƯỚC 1: DỪNG MQTT TRƯỚC (Ngắt nguồn dữ liệu vÃ o) ---
+        # --- BƯỚC 1: DỪNG MQTT TRƯỚC (Ngắt nguồn dữ liệu vào) ---
         try:
             mqtt_handler.stop_mqtt_loop()
             logger.info("âœ“ MQTT stopped")
@@ -1406,7 +1417,7 @@ async def lifespan(app: FastAPI):
             async with device_session_scope() as db:
                 await db.execute(
                     update(models.Device)
-                    .where(models.Device.status == 'online')
+                    .where(models.Device.status.in_(['online', 'sleep']))
                     .values(
                         status='offline',
                         ntrip_connected=False,
@@ -1431,6 +1442,83 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
 app.add_middleware(RequestIDMiddleware) 
+
+# === NTRIP WAKE STATION HTTP ENDPOINT ===
+@app.get("/api/ntrip/wake-listen", response_class=PlainTextResponse)
+@app.get("/api/ntrip/wake-station", response_class=PlainTextResponse)
+async def ntrip_wake_listen_get(
+    mountpoint: str = Query(...),
+    client_instance_id: Optional[str] = Query(None),
+    receiver_id: Optional[str] = Query(None),
+    identifier: Optional[str] = Query(None),
+    ttl_seconds: int = 90
+):
+    """
+    Endpoint cho NTRIP gửi lệnh bật trạm qua HTTP GET.
+    Ví dụ: /api/ntrip/wake-listen?mountpoint=HN01&identifier=test-client
+    """
+    id_to_use = client_instance_id or receiver_id or identifier or "http-get"
+    return await _do_ntrip_wake(mountpoint, id_to_use, ttl_seconds)
+
+@app.post("/api/ntrip/wake-station", response_class=PlainTextResponse)
+async def ntrip_wake_station(payload: dict = Body(...)):
+    """
+    Endpoint cho NTRIP gửi lệnh bật trạm qua HTTP POST.
+    Yêu cầu JSON: {"mountpoint": "...", "client_instance_id": "...", "ttl_seconds": 90}
+    """
+    mountpoint = payload.get("mountpoint")
+    # Hỗ trợ nhiều loại alias cho ID
+    client_instance_id = (
+        payload.get("client_instance_id") or 
+        payload.get("receiver_id") or 
+        payload.get("identifier")
+    )
+    ttl_seconds = int(payload.get("ttl_seconds", 90))
+    
+    if not mountpoint:
+        return PlainTextResponse("ERROR: mountpoint is required", status_code=400)
+    
+    return await _do_ntrip_wake(mountpoint, client_instance_id or "http-post", ttl_seconds)
+
+async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int):
+    """Hàm xử lý chung cho lệnh wake trạm từ HTTP, hỗ trợ streaming response."""
+    async def generate_response():
+        logger.info(f"[NTRIP HTTP] Received wake request: mountpoint={mountpoint}, client_id={client_id}")
+        yield "lắng nghe thành công\n"
+        
+        try:
+            async with device_session_scope() as db:
+                # Tìm trạm dựa trên mountpoint
+                try:
+                    serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+                except ValueError as ve:
+                    msg = f"ERROR: {ve}"
+                    logger.warning(f"[NTRIP HTTP] {msg}")
+                    yield msg
+                    return
+                    
+                device = await crud.get_device_by_serial(db, serial)
+                name = device.name if device else serial
+                
+                # Thực hiện bật trạm (tạo session và gửi lệnh cho agent nếu cần)
+                await _ntrip_mqtt_start(
+                    serial=serial,
+                    mountpoint=mountpoint,
+                    client_instance_id=client_id,
+                    ttl_seconds=ttl,
+                )
+                
+                msg = f"ok bật trạm thành công {name} ({serial})"
+                logger.info(f"[NTRIP HTTP] {msg} for mountpoint={mountpoint}")
+                yield msg
+                
+        except Exception as e:
+            msg = f"ERROR: {e}"
+            logger.error(f"[NTRIP HTTP ERR] Failed for mountpoint={mountpoint}: {e}", exc_info=True)
+            yield msg
+
+    return StreamingResponse(generate_response(), media_type="text/plain")
+
 
 # === COMMAND DISPATCHER ===
 async def send_command_to_pi(serial: str, command: dict) -> dict:
@@ -1633,10 +1721,10 @@ async def get_caster_clienttable(
         }
     except Exception as e:
         logger.error(f"Error fetching clienttable: {e}")
-        return {
-            "count": 0,
-            "items": [],
-        }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Không thể lấy clienttable từ Caster: {str(e)}"
+        )
 
 
 @app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse)

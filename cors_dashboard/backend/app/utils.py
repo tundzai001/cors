@@ -60,7 +60,11 @@ class NMEAParser:
                 "fix_status": fix_map.get(fix_quality, f"UNKNOWN_{fix_quality}"),
                 "satellites": int(parts[7]),
                 "hdop": float(parts[8]) if parts[8] else 99.99,
-                "altitude": float(parts[9])
+                # NMEA GGA: field 9 = MSL height H, field 11 = geoid separation N.
+                # Ellipsoidal height h = H + N.
+                "altitude": float(parts[9]) + (float(parts[11]) if len(parts) > 11 and parts[11] else 0.0),
+                "altitude_msl": float(parts[9]),
+                "altitude_ref": "ELLIPSOID"
             }
             return self.last_gga
         

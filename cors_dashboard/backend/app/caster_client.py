@@ -23,30 +23,48 @@ class CasterClient:
     async def _send_command(self, command: str) -> str:
         reader, writer = None, None
         try:
-            # logger.info(f"Connecting to Caster {self.host}:{self.port}")
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), 
-                timeout=5.0
-            )
-            # logger.debug(f"Sending TCP: {command.strip()}")
+            if CLIENTTABLE_DEBUG:
+                logger.info(f"--- THỰC HIỆN KẾT NỐI ĐẾN {self.host}:{self.port} ---")
             
-            writer.write(command.encode('utf-8'))
+            # 1. Mở kết nối TCP
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.host, self.port), 
+                    timeout=10.0
+                )
+                if CLIENTTABLE_DEBUG:
+                    logger.info("-> ĐÃ MỞ SOCKET THÀNH CÔNG!")
+            except asyncio.TimeoutError:
+                error_msg = f"Không thể KẾT NỐI TCP đến NTRIP Caster ({self.host}:{self.port}) - Timeout"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
+            # 2. Gửi lệnh
+            if CLIENTTABLE_DEBUG:
+                logger.info(f"-> GỬI LỆNH: {repr(command)}")
+            writer.write(command.encode('ascii', errors='ignore'))
             await writer.drain()
 
-            data = await asyncio.wait_for(reader.read(4096), timeout=5.0)
-            response = data.decode('utf-8', errors='ignore')
-            
-            # if response.strip():
-            #     logger.debug(f"Caster Response: {response.strip()}")
-            
-            return response
+            # 3. Đọc dữ liệu
+            if CLIENTTABLE_DEBUG:
+                logger.info("-> ĐANG ĐỢI DỮ LIỆU TỪ CASTER...")
+            try:
+                data = await asyncio.wait_for(reader.read(8192), timeout=10.0)
+                response = data.decode('utf-8', errors='ignore')
+                if CLIENTTABLE_DEBUG:
+                    logger.info(f"-> NHẬN PHẢN HỒI ({len(data)} bytes) THÀNH CÔNG")
+                return response
+            except asyncio.TimeoutError:
+                error_msg = f"Đã kết nối nhưng CASTER KHÔNG PHẢN HỒI dữ liệu trong 10s ({self.host}:{self.port})"
+                logger.error(error_msg)
+                raise Exception(error_msg)
 
-        except asyncio.TimeoutError:
-            logger.error("Caster connection timed out")
-            raise Exception("Không thể kết nối đến NTRIP Caster (Timeout)")
         except Exception as e:
-            logger.error(f"Caster Error: {e}")
-            raise Exception(f"Lỗi kết nối Caster: {str(e)}")
+            if not isinstance(e, asyncio.TimeoutError):
+                error_msg = f"Lỗi không xác định khi gọi Caster ({self.host}:{self.port}): {str(e)}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            raise e
         finally:
             if writer:
                 writer.close()
@@ -109,22 +127,30 @@ class CasterClient:
         admin_user: Optional[str] = None,
         mountpoint: str = "mp1",
         password: str = "password1",
-        data_count: int = 9999,
+        data_count: int = 20, # Theo định nghĩa của anh là 20
     ) -> List[dict]:
         user = admin_user or self.admin_user
+        # Format chuẩn: GET /clienttable HTTP/1.0/id/[mp]/[pass]/[count]\r\n
         cmd = f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{password}/{data_count}\r\n"
 
         try:
             response = await self._send_command(cmd)
+            
+            # Kiểm tra Header phản hồi (CLIENTTABLE 200 OK)
+            if "CLIENTTABLE 200 OK" not in response:
+                logger.warning(f"Caster response header unexpected: {response[:100]}")
+            
             clients: List[dict] = []
-            raw_str_rows: List[str] = []
-
+            
             for raw_line in response.splitlines():
                 line = raw_line.strip()
+                
+                # Kết thúc khi gặp ENDCLIENTTABLE
+                if "ENDCLIENTTABLE" in line:
+                    break
+                    
                 if not line.startswith("STR;"):
                     continue
-                if CLIENTTABLE_DEBUG:
-                    raw_str_rows.append(line)
 
                 parts = line.split(";")
                 if len(parts) < 8:
@@ -136,7 +162,6 @@ class CasterClient:
                     lat = float(parts[4])
                     lon = float(parts[5])
                 except (TypeError, ValueError):
-                    # Keep client row for keepalive even when coordinates are unavailable.
                     pass
 
                 clients.append(
@@ -152,6 +177,8 @@ class CasterClient:
                         "client_id": parts[9].strip() if len(parts) > 9 else "",
                     }
                 )
+
+            return clients
 
             if CLIENTTABLE_DEBUG:
                 parsed_mps = sorted({str(item.get("mountpoint", "")).strip().lower() for item in clients if item.get("mountpoint")})

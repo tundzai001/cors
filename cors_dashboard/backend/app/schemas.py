@@ -35,7 +35,7 @@ class ServiceConfig(BaseModel):
     ncomport: str | None = Field(None, description="Định danh trạm hoặc ID cổng COM")
     reconnectioninterval: int = 10
     stream_on_demand: bool = False
-    stream_active: bool = True
+    stream_active: Optional[bool] = None
     
     # Server 1
     server1_enabled: bool = False
