@@ -7,11 +7,18 @@ from dotenv import dotenv_values
 
 logger = logging.getLogger(__name__)
 ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
+_ENV_VALUES = dotenv_values(ENV_FILE_PATH)
+
+
+def _get_env_preferring_dotenv(key: str, default: str) -> str:
+    val = _ENV_VALUES.get(key)
+    if val is not None and str(val).strip() != "":
+        return str(val)
+    return str(os.getenv(key, default))
+
+
 CLIENTTABLE_DEBUG = str(
-    os.getenv(
-        "RTCM_KEEPALIVE_DEBUG",
-        str(dotenv_values(ENV_FILE_PATH).get("RTCM_KEEPALIVE_DEBUG", "0")),
-    )
+    _get_env_preferring_dotenv("RTCM_KEEPALIVE_DEBUG", "0")
 ).strip().lower() in ("1", "true", "yes", "on")
 
 class CasterClient:
@@ -96,6 +103,12 @@ class CasterClient:
                 if line.startswith('STR;'):
                     parts = line.split(';')
                     if len(parts) >= 9:
+                        def _to_int(value: str, default: int = 0) -> int:
+                            try:
+                                return int(str(value).strip())
+                            except Exception:
+                                return default
+
                         # === FIX 1: Cắt bỏ khoảng trắng khi parse mountpoints ===
                         raw_mps = parts[3]
                         mps_list = []
@@ -107,16 +120,16 @@ class CasterClient:
                             "username": parts[1],
                             "password": parts[2],
                             "mountpoints": mps_list, # List sạch không có dấu cách
-                            "datacount": int(parts[4]) if parts[4].isdigit() else 0,
-                            "status": int(parts[5]) if parts[5].isdigit() else 0, 
+                            "datacount": _to_int(parts[4], 0),
+                            "status": _to_int(parts[5], 0), 
                             "identifier": parts[6], 
-                            "nclient": int(parts[7]) if parts[7].isdigit() else 0,
-                            "maxclient": int(parts[8]) if parts[8].isdigit() else 0,
+                            "nclient": _to_int(parts[7], 0),
+                            "maxclient": _to_int(parts[8], 0),
                         })
             return users
         except Exception as e:
             logger.error(f"Failed to fetch users from caster: {e}")
-            return []
+            return None
 
     async def create_user(self, creator: str, username: str, password: str, mountpoints: str, expiry_seconds: int = 31536000, max_users: int = 1) -> bool:
         clean_mountpoints = mountpoints.replace(";", ",").replace(" ", "").strip()
@@ -136,10 +149,10 @@ class CasterClient:
     async def get_clienttable(
         self,
         admin_user: Optional[str] = None,
-        mountpoint: str = "mp1",
+        mountpoint: str = "all",
         password: str = "password1",
-        data_count: int = 20, # Theo định nghĩa của anh là 20
-    ) -> List[dict]:
+        data_count: int = 1000, # Theo định nghĩa của anh là 20, nhưng 1000 mới đủ an toàn
+    ) -> Optional[List[dict]]:
         user = admin_user or self.admin_user
         # Format chuẩn: GET /clienttable HTTP/1.0/id/[mp]/[pass]/[count]\r\n
         cmd = f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{password}/{data_count}\r\n"
@@ -152,6 +165,12 @@ class CasterClient:
                 logger.warning(f"Caster response header unexpected: {response[:100]}")
             
             clients: List[dict] = []
+
+            def _to_int_or_none(value: str) -> Optional[int]:
+                try:
+                    return int(str(value).strip())
+                except Exception:
+                    return None
             
             for raw_line in response.splitlines():
                 line = raw_line.strip()
@@ -182,27 +201,23 @@ class CasterClient:
                         "mountpoint": parts[3].strip(),
                         "latitude": lat,
                         "longitude": lon,
-                        "status": int(parts[6]) if parts[6].isdigit() else None,
-                        "nsv": int(parts[7]) if parts[7].isdigit() else None,
+                        "status": _to_int_or_none(parts[6]),
+                        "nsv": _to_int_or_none(parts[7]),
                         "identifier": parts[8].strip() if len(parts) > 8 else "",
                         "client_id": parts[9].strip() if len(parts) > 9 else "",
                     }
                 )
-
-            return clients
 
             if CLIENTTABLE_DEBUG:
                 parsed_mps = sorted({str(item.get("mountpoint", "")).strip().lower() for item in clients if item.get("mountpoint")})
                 logger.warning(
                     f"[RTCM DEBUG] clienttable request mp='{mountpoint}' parsed_rows={len(clients)} parsed_mountpoints={parsed_mps[:20]}"
                 )
-                if raw_str_rows:
-                    logger.warning(f"[RTCM DEBUG] clienttable sample raw: {raw_str_rows[:3]}")
 
             return clients
         except Exception as e:
             logger.error(f"Failed to fetch clienttable from caster: {e}")
-            return []
+            return None
 
     async def delete_user(self, identifier: str, username: str) -> bool:
         cmd = f"GET /deluser HTTP/1.0/{identifier}/{username}\r\n"

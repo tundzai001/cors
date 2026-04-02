@@ -36,6 +36,10 @@ class ServiceConfig(BaseModel):
     reconnectioninterval: int = 10
     stream_on_demand: bool = False
     stream_active: Optional[bool] = None
+    server1_stream_on_demand: Optional[bool] = None
+    server1_stream_active: Optional[bool] = None
+    server2_stream_on_demand: Optional[bool] = None
+    server2_stream_active: Optional[bool] = None
     
     # Server 1
     server1_enabled: bool = False
@@ -57,11 +61,21 @@ class ServiceConfig(BaseModel):
     
     # RTCM Client (giữ nguyên)
     rtcm_enabled: bool = False
+    rtcmntripversion1: int = 1
     rtcmserver1: str | None = None
     rtcmport1: int | None = None
     rtcmmountpoint1: str | None = None
     rtcmusername1: str | None = None
     rtcmpassword1: str | None = None
+
+
+class VirtualStationCreate(BaseModel):
+    name: str
+    lat: float
+    lon: float
+    alt: float = 0.0
+    serial: str | None = None
+    service_config: ServiceConfig = Field(default_factory=ServiceConfig)
 
 class LicenseRequest(BaseModel):
     serial: str

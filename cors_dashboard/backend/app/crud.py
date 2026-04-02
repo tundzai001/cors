@@ -29,6 +29,19 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
     
     for attempt in range(MAX_RETRIES):
         try:
+            def _normalize_optional_text(value):
+                if value is None:
+                    return None
+                text = str(value).strip()
+                return text if text else None
+
+            def _normalize_optional_json(value):
+                if value is None:
+                    return None
+                if isinstance(value, dict) and len(value) == 0:
+                    return None
+                return value
+
             # 1. Deduplication: Chỉ giữ lại update mới nhất cho mỗi Serial
             unique_devices_map = {}
             
@@ -56,19 +69,25 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
 
                 # Chuẩn bị record
                 # Lưu ý: Dùng .get(key, default) để tránh lỗi KeyError
+                normalized_name = _normalize_optional_text(device.get('name'))
+                normalized_chip_type = _normalize_optional_text(device.get('detected_chip_type'))
+                normalized_base_config = _normalize_optional_json(device.get('base_config'))
+                normalized_service_config = _normalize_optional_json(device.get('service_config'))
+                normalized_system_info = _normalize_optional_json(device.get('system_info'))
+
                 device_record = {
                     'serial': serial,
-                    'name': device.get('name'), 
+                    'name': normalized_name,
                     # Với payload partial (ví dụ offline event), không ép default để tránh ghi đè dữ liệu cũ.
                     'status': device.get('status'),
                     'timestamp': device.get('timestamp', int(time.time())),
                     'bps': device.get('bps'),
                     'ntrip_status': device.get('ntrip_status'),
                     'ntrip_connected': device.get('ntrip_connected'),
-                    'detected_chip_type': device.get('detected_chip_type'),
-                    'base_config': device.get('base_config'),
-                    'service_config': device.get('service_config'),
-                    'system_info': device.get('system_info'),
+                    'detected_chip_type': normalized_chip_type,
+                    'base_config': normalized_base_config,
+                    'service_config': normalized_service_config,
+                    'system_info': normalized_system_info,
                     'is_provisioned': device.get('is_provisioned'),
                     # is_locked thường ít khi gửi qua websocket status, nên dùng default cẩn thận
                     # Tốt nhất là không update is_locked ở đây nếu không có trong payload
@@ -106,7 +125,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     'service_config': func.coalesce(stmt.excluded.service_config, models.Device.service_config),
                     'system_info': func.coalesce(stmt.excluded.system_info, models.Device.system_info),
                     # Chỉ update name nếu có dữ liệu
-                    'name': func.coalesce(stmt.excluded.name, models.Device.name),
+                    'name': func.coalesce(func.nullif(func.btrim(stmt.excluded.name), ''), models.Device.name),
                     'is_provisioned': func.coalesce(stmt.excluded.is_provisioned, models.Device.is_provisioned),
                 }
 
@@ -184,6 +203,8 @@ def is_valid_serial(serial: str) -> bool:
     - Ublox: 10000000xxxxxxxx (16 ký tự hex)
     - LoRa Pi: LP_xxxxxxxxxxxx (MAC address)
     - Relay: RELAY_xxxxxxx
+    - Virtual: VIRTUAL_xxxxxxx
+    - Monitor: MONITOR_xxxxxxx
     
     KHÔNG HỢP LỆ:
     - Pi-xxxx (auto-generated name)
@@ -203,6 +224,14 @@ def is_valid_serial(serial: str) -> bool:
     
     # Pattern 3: Relay (RELAY_XXX)
     if serial.startswith('RELAY_'):
+        return True
+
+    # Pattern 4: Virtual station (VIRTUAL_XXX)
+    if serial.startswith('VIRTUAL_'):
+        return True
+
+    # Pattern 5: Monitor station (MONITOR_XXX)
+    if serial.startswith('MONITOR_'):
         return True
     
     # Bạn có thể thêm pattern khác nếu cần
@@ -268,47 +297,45 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
             ntrip_status["server2"] = {"connected": s2_bps > 0, "bps": s2_bps}
         return ntrip_status
     
-    # ✅ BƯỚC 2: CHỈ TẠO MỚI KHI ĐàPROVISION
+    # ✅ BƯỚC 2: TỰ ĐỘNG TẠO CHO RELAY / VIRTUAL / MONITOR
     if not existing_device:
-        # ⚠️ QUAN TRỌNG: Chỉ tạo device mới nếu:
-        # 1. Có is_provisioned=True (Agent đã được kích hoạt)
-        # 2. HOẶC là Relay (luôn provision sẵn)
+        is_relay_like = serial.startswith(('RELAY_', 'VIRTUAL_', 'MONITOR_'))
         
-        is_relay = serial.startswith('RELAY_')
-        is_explicitly_provisioned = raw_is_provisioned is True
-        
-        if not is_relay and not is_explicitly_provisioned:
-            logger.warning(
-                f"⚠️ BLOCKED AUTO-CREATE: Serial '{serial}' is not provisioned. "
-                f"Ignoring status update from unprovisioned device."
+        if is_relay_like:
+            # Initialize with defaults if missing to prevent sync errors
+            final_service_config = {
+                "port1": 2101,
+                "ntrip_version1": 1,
+                "reconnectioninterval": 10,
+                "stream_on_demand": True,
+                "server1_enabled": True
+            }
+            if isinstance(new_service_config, dict):
+                final_service_config.update(new_service_config)
+
+            # Tạo mới thiết bị nếu là relay-like
+            new_device = models.Device(
+                serial=serial,
+                name=new_name or serial,
+                status=new_status or "offline",
+                is_provisioned=True, # Relay stations are considered provisioned
+                timestamp=current_ts,
+                base_config=new_base_config,
+                service_config=final_service_config,
+                detected_chip_type=new_chip_type,
+                is_synced=True
             )
-            return None  # Từ chối tạo device chưa provision
-        
-        # Nếu đã pass validation → Tạo device mới
-        initial_provisioned = is_relay or is_explicitly_provisioned
-        initial_ntrip_status = build_ntrip_status(device_data, new_service_config)
-        
-        values_to_create = {
-            "serial": serial,
-            "name": new_name or f"New-{serial[-6:]}",  # Tên rõ ràng hơn
-            "status": new_status or "unknown",
-            "timestamp": current_ts,
-            "detected_chip_type": new_chip_type,
-            "base_config": new_base_config,
-            "service_config": new_service_config,
-            "ntrip_connected": device_data.get("ntrip_connected", False),
-            "ntrip_status": initial_ntrip_status,
-            "is_provisioned": initial_provisioned,
-            "is_synced": True
-        }
-        
-        stmt = pg_insert(models.Device).values(values_to_create).on_conflict_do_nothing()
-        await db.execute(stmt)
-        await db.commit()
-        
-        logger.info(f"✅ AUTO-CREATED NEW DEVICE: {serial} (provisioned={initial_provisioned})")
-        
-        return await get_device_by_serial(db, serial)
+            db.add(new_device)
+            await db.commit()
+            await db.refresh(new_device)
+            logger.info(f"🆕 AUTO-CREATED RELAY DEVICE: {serial}")
+            return new_device
+            
+        logger.warning(
+            f"⚠️ SKIP UNKNOWN DEVICE: Serial '{serial}' does not exist in DB. "
+            f"Auto-create is disabled for status updates."
+        )
+        return None
     
     # ✅ BƯỚC 3: UPDATE EXISTING DEVICE (giữ nguyên logic cũ)
     should_update = False

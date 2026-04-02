@@ -6,9 +6,11 @@
 let globalState = {
     devices: [],
     selectedDeviceSerial: null,
+    showVirtualStationForm: false,
     currentUser: null,
     searchTerm: '',
-    currentView: 'dashboard'
+    currentView: 'dashboard',
+    stateVersion: 0
 };
 window.globalState = globalState; 
 // === REACT ROOTS ===
@@ -26,7 +28,7 @@ let currentNmeaData = { gga: null, gsa: null, satellites: {} };
 
 // === RENDER THROTTLING LOGIC ===
 let lastRenderTime = 0;
-const RENDER_INTERVAL = 500; 
+const RENDER_INTERVAL = 220; 
 
 let lastMapRenderTime = 0;
 const MAP_RENDER_INTERVAL = 2000; 
@@ -43,6 +45,32 @@ const DETAILS_RENDER_MIN_INTERVAL = 220;
 let deviceListNeedsUpdate = false;
 let detailsPanelNeedsUpdate = false;
 let mapNeedsUpdate = false;
+
+// Batch status updates to prevent UI stalls under high websocket throughput.
+const STATUS_FLUSH_INTERVAL = 140;
+let pendingStatusUpdates = new Map();
+let statusFlushTimerId = null;
+let visitorPulseTimerId = null;
+let lastVisitorCount = null;
+
+function flushPendingStatusUpdates() {
+    statusFlushTimerId = null;
+    if (pendingStatusUpdates.size === 0) return;
+    const payload = Array.from(pendingStatusUpdates.values());
+    pendingStatusUpdates.clear();
+    updateGlobalDevices(payload);
+}
+
+function enqueueStatusUpdate(payload) {
+    const list = Array.isArray(payload) ? payload : [payload];
+    list.forEach((item) => {
+        if (!item || !item.serial) return;
+        pendingStatusUpdates.set(item.serial, item);
+    });
+
+    if (statusFlushTimerId !== null) return;
+    statusFlushTimerId = setTimeout(flushPendingStatusUpdates, STATUS_FLUSH_INTERVAL);
+}
 
 function requestDetailsPanelUpdate(priority = 'high') {
     detailsPanelNeedsUpdate = true;
@@ -116,39 +144,46 @@ function scheduleRender(priority = 'high') {
 // === CACHED FILTERED DEVICES ===
 let cachedFilteredDevices = [];
 let lastSearchTerm = null; 
+let lastStateVersion = -1;
 
 function getFilteredDevices() {
-    if (globalState.searchTerm !== lastSearchTerm) {
+    const currentVersion = globalState.stateVersion;
+    if (globalState.searchTerm !== lastSearchTerm || currentVersion !== lastStateVersion) {
         const term = globalState.searchTerm.toLowerCase();
-
-        const statusPriority = {
-            'awaiting_license': 1,
-            'configuring': 2,
-            'unprovisioned': 3,
-            'rebooting_for_reset': 4,
-            'rebooting': 5,
-            'locked': 20,
-            'online': 100,
-            'offline': 200
-        };
         
         cachedFilteredDevices = globalState.devices
             .filter(d => 
                 (d.name && d.name.toLowerCase().includes(term)) || 
                 (d.serial && d.serial.toLowerCase().includes(term))
-            )
-            .sort((a, b) => {
-                const priorityA = statusPriority[a.status] || 50;
-                const priorityB = statusPriority[b.status] || 50;
-                if (priorityA !== priorityB) {
-                    return priorityA - priorityB;
-                }
-                const nameA = (a.name || "").toLowerCase();
-                const nameB = (b.name || "").toLowerCase();
-                return nameA.localeCompare(nameB);
+            );
+
+        // --- SORT Logic ---
+        const needsSort = globalState.searchTerm !== lastSearchTerm || 
+                          currentVersion === 0 || 
+                          lastSearchTerm === null;
+                          
+        if (needsSort) {
+            cachedFilteredDevices.sort((a, b) => {
+                const isPendingSetup = (d) => {
+                    const status = String(d.status || '').toLowerCase();
+                    const name = String(d.name || '').trim();
+                    if (status === 'awaiting_license' || status === 'unprovisioned') return true;
+                    if (!name) return true;
+                    return false;
+                };
+
+                const aPending = isPendingSetup(a);
+                const bPending = isPendingSetup(b);
+                if (aPending !== bPending) return aPending ? -1 : 1;
+
+                const nameA = String(a.name || a.serial || '').trim();
+                const nameB = String(b.name || b.serial || '').trim();
+                return nameA.localeCompare(nameB, 'vi', { sensitivity: 'base', numeric: true });
             });
+        }
             
         lastSearchTerm = globalState.searchTerm;
+        lastStateVersion = currentVersion;
     }
     return cachedFilteredDevices;
 }
@@ -167,6 +202,7 @@ function renderDashboard() {
                 selectedDeviceSerial: globalState.selectedDeviceSerial,
                 onSelect: handleSelectDevice,
                 onDelete: handleDeleteDevice,
+                onOpenVirtualStationForm: handleOpenVirtualStationForm,
                 searchTerm: globalState.searchTerm,
                 onSearch: handleSearchChange,
                 currentUser: globalState.currentUser 
@@ -183,6 +219,7 @@ function renderDashboard() {
                 device: selectedDevice,
                 nmeaData: currentNmeaData,
                 currentUser: globalState.currentUser,
+                showVirtualStationForm: globalState.showVirtualStationForm,
                 onReset: handleResetDevice,
                 onDeployLicense: handleDeployLicense,
                 onProvision: handleProvisionDevice,
@@ -190,6 +227,8 @@ function renderDashboard() {
                 onStopAutoBase: handleStopAutoBase,
                 onApplyAutoProvince: handleApplyAutoProvince,
                 onConfigureService: handleConfigureService,
+                onCreateVirtualStation: handleCreateVirtualStation,
+                onCloseVirtualStationForm: handleCloseVirtualStationForm,
                 onLock: handleLockDevice,
                 onUnlock: handleUnlockDevice
             })
@@ -283,6 +322,8 @@ function updateGlobalDevices(newDeviceData) {
     const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
     
     let hasChanges = false;
+    let hasStatusChanges = false;
+    let hasStructuralChanges = false;
 
     devicesToAddOrUpdate.forEach(newDevice => {
         if (!newDevice || !newDevice.serial) return;
@@ -370,26 +411,58 @@ function updateGlobalDevices(newDeviceData) {
         }
 
         if (existingDevice) {
-            const mergedDevice = {
-                ...existingDevice,
-                ...newDevice,
-                ntrip_status: newDevice.ntrip_status || existingDevice.ntrip_status,
-                last_update: Date.now() 
-            };
+            // Check if we actually need to create a new object reference.
+            // BPS changes are frequent, but many other things are static.
+            // For now, let's check if the new device data is actually different.
+            let isDifferent = false;
             
-            if (JSON.stringify(existingDevice) !== JSON.stringify(mergedDevice)) {
+            // Simple heuristic: if any top-level property of newDevice is different from existingDevice
+            for (let key in newDevice) {
+                if (typeof newDevice[key] === 'object' && newDevice[key] !== null) {
+                    // Quick check for nested objects (ntrip_status, etc)
+                    if (JSON.stringify(newDevice[key]) !== JSON.stringify(existingDevice[key])) {
+                        isDifferent = true;
+                        break;
+                    }
+                } else if (newDevice[key] !== existingDevice[key]) {
+                    isDifferent = true;
+                    if (key === 'status' || key === 'name') hasStatusChanges = true;
+                    break;
+                }
+            }
+
+            if (isDifferent) {
+                const mergedDevice = {
+                    ...existingDevice,
+                    ...newDevice,
+                    last_update_local: Date.now()
+                };
                 deviceMap.set(newDevice.serial, mergedDevice);
                 hasChanges = true;
             }
         } else {
-            deviceMap.set(newDevice.serial, newDevice);
+            // New device found
+            deviceMap.set(newDevice.serial, {
+                ...newDevice,
+                last_update_local: Date.now()
+            });
             hasChanges = true;
+            hasStructuralChanges = true;
         }
     });
 
     if (hasChanges) {
         globalState.devices = Array.from(deviceMap.values());
-        lastSearchTerm = null;
+        globalState.stateVersion++; // Trigger cache refresh in getFilteredDevices
+
+        if (hasStructuralChanges || hasStatusChanges) {
+             console.log(`[STATE] Structural/Status change version: ${globalState.stateVersion}`);
+             lastSearchTerm = null; // Forces re-sort
+        }
+
+        // Trigger updates
+        deviceListNeedsUpdate = true;
+        mapNeedsUpdate = true;
         
         if (globalState.currentView === 'dashboard') {
             scheduleRender('high');
@@ -403,8 +476,23 @@ function handleSelectDevice(serial) {
     if (globalState.selectedDeviceSerial === serial) return; 
     
     globalState.selectedDeviceSerial = serial;
+    globalState.showVirtualStationForm = false;
     currentNmeaData = { gga: null, gsa: null, satellites: {} };
     
+    detailsPanelNeedsUpdate = true;
+    scheduleRender('high');
+}
+
+function handleOpenVirtualStationForm() {
+    globalState.selectedDeviceSerial = null;
+    globalState.showVirtualStationForm = true;
+    currentNmeaData = { gga: null, gsa: null, satellites: {} };
+    detailsPanelNeedsUpdate = true;
+    scheduleRender('high');
+}
+
+function handleCloseVirtualStationForm() {
+    globalState.showVirtualStationForm = false;
     detailsPanelNeedsUpdate = true;
     scheduleRender('high');
 }
@@ -569,6 +657,31 @@ async function handleConfigureService(serial, payload) {
     }
 }
 
+async function handleCreateVirtualStation(payload) {
+    try {
+        const response = await apiFetch('/api/admin/virtual-stations', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Không thể tạo trạm ảo');
+        }
+
+        const device = await response.json();
+        updateGlobalDevices(device);
+        globalState.showVirtualStationForm = false;
+        globalState.selectedDeviceSerial = device.serial;
+        detailsPanelNeedsUpdate = true;
+        showSuccess(`Đã tạo trạm ảo: ${device.name}`);
+        return device;
+    } catch (e) {
+        showError(`Lỗi tạo trạm ảo: ${e.message}`);
+        throw e;
+    }
+}
+
 async function handleLockDevice(serial) {
     try {
         await apiFetch(`/api/devices/${serial}/lock`, { method: 'POST' });
@@ -665,7 +778,7 @@ function handleWebSocketMessage(message) {
             }
         }
         
-        updateGlobalDevices(data);
+        enqueueStatusUpdate(data);
         
         if (statusSerial === globalState.selectedDeviceSerial && data.base_coords) {
             currentNmeaData.base_coords = data.base_coords;
@@ -693,12 +806,18 @@ function handleWebSocketMessage(message) {
     if (type === 'visitor_update') {
         const visitorEl = document.getElementById('live-visitors-count');
         if (visitorEl) {
+            if (lastVisitorCount === count) return;
+            lastVisitorCount = count;
             visitorEl.textContent = count;
             visitorEl.style.color = '#ffffff';
             visitorEl.style.textShadow = '0 0 15px #ffffff';
-            setTimeout(() => {
+            if (visitorPulseTimerId) {
+                clearTimeout(visitorPulseTimerId);
+            }
+            visitorPulseTimerId = setTimeout(() => {
                 visitorEl.style.color = '#ff00ff';
                 visitorEl.style.textShadow = 'none';
+                visitorPulseTimerId = null;
             }, 300);
         }
         return;
@@ -975,8 +1094,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
 
-    connectWebSocket();
     await loadInitialDevices();
+    connectWebSocket();
     
     // Nếu có tham số view trong URL, chuyển view tự động (giữ nút Bản đồ luôn active)
     let initialView = 'dashboard';

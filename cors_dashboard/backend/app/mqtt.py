@@ -80,7 +80,7 @@ def on_message(client, userdata, msg):
     if main_loop and main_loop.is_running():
         try:
             asyncio.run_coroutine_threadsafe(
-                handle_message_async(msg.topic, msg.payload), 
+                handle_message_async(msg.topic, msg.payload, is_retained=bool(getattr(msg, 'retain', False))), 
                 main_loop
             )
         except RuntimeError:
@@ -140,9 +140,11 @@ async def batch_sync_checker():
                     db_base = device.base_config or {}
                     db_service = device.service_config or {}
                     
+                    is_relay_like = serial.startswith(("RELAY_", "MONITOR_", "VIRTUAL_"))
+                    
                     # So sánh
-                    base_ok, base_errs = _compare_configs(agent_base, db_base, "Base")
-                    srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service")
+                    base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
+                    srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service", is_relay=is_relay_like)
                     
                     is_synced = base_ok and srv_ok
                     
@@ -170,7 +172,7 @@ async def batch_sync_checker():
 # MAIN MESSAGE HANDLER (ĐàTỐI ƯU HÓA - KHÔNG MỞ DB MỖI MESSAGE)
 # ==============================================================================
 
-async def handle_message_async(topic: str, payload: bytes):
+async def handle_message_async(topic: str, payload: bytes, is_retained: bool = False):
     if IS_SHUTTING_DOWN:
         return
         
@@ -213,6 +215,25 @@ async def handle_message_async(topic: str, payload: bytes):
             return
 
         if message_type in ["status", "status_update"]:
+            serial_upper = str(serial or "").upper()
+            is_relay_like = (
+                serial_upper.startswith("RELAY_")
+                or serial_upper.startswith("MONITOR_")
+                or serial_upper.startswith("VIRTUAL_")
+            )
+
+            # MQTT retained snapshots from old publishers can resurrect phantom relay rows.
+            # Ignore retained relay-like status if the device does not exist in DB.
+            if is_retained and is_relay_like:
+                try:
+                    async with device_session_scope() as _db:
+                        existing = await crud.get_device_by_serial(_db, serial)
+                    if not existing:
+                        logging.info(f"Ignoring retained ghost status for unknown serial: {serial}")
+                        return
+                except Exception as e:
+                    logging.warning(f"Retained ghost-check failed for {serial}: {e}")
+
             now = time.time()
             
             # --- 2.1. TÍNH TOÁN BPS ---
@@ -338,7 +359,7 @@ async def handle_message_async(topic: str, payload: bytes):
 # CONFIG COMPARISON (Giữ nguyên)
 # ==============================================================================
 
-def _compare_configs(config1: dict, config2: dict, prefix: str = "") -> tuple[bool, list[str]]:
+def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: bool = False) -> tuple[bool, list[str]]:
     """
     So sánh cấu hình: config1 (Agent/Real), config2 (DB/Target).
     Đã tối ưu để tránh lỗi NoneType và sai số Float.
@@ -383,6 +404,8 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "") -> tuple[bo
         current_path = f"{prefix}.{key}" if prefix else key
         
         if agent_val is None and db_val is not None:
+            if is_relay:
+                continue
             errors.append(f"[{current_path}] Agent=None")
             continue
             
@@ -393,7 +416,7 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "") -> tuple[bo
                 errors.append(f"[{current_path}] Type mismatch")
                 continue
             
-            is_match, sub_errors = _compare_configs(agent_val, db_val, current_path)
+            is_match, sub_errors = _compare_configs(agent_val, db_val, current_path, is_relay=is_relay)
             errors.extend(sub_errors)
             continue
 

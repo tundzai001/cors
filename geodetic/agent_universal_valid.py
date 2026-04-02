@@ -1320,6 +1320,80 @@ class AgentManager:
     def update_service_config(self, cfg: dict):
         self.config['services'] = cfg
         self.save_config()
+
+    def set_rtcm_stream_active(self, active: bool, mountpoint: str = None, server_id: int = None):
+        services = self.config.setdefault('services', {})
+        target_server_id = None
+
+        def _pick_preferred_server(mp_value: str | None):
+            target_mp = str(mp_value or '').strip().lower()
+            if not target_mp:
+                return None
+            candidates = []
+            for sid in (1, 2):
+                sid_enabled = bool(services.get(f'server{sid}_enabled', False))
+                sid_mp = str(services.get(f'mountpoint{sid}') or '').strip().lower()
+                if sid_enabled and sid_mp and sid_mp == target_mp:
+                    candidates.append(sid)
+            if not candidates:
+                return None
+            if len(candidates) == 1:
+                return candidates[0]
+            for marker in ('aitogy.com.vn',):
+                for sid in candidates:
+                    host = str(services.get(f'serverhost{sid}') or '').strip().lower()
+                    if host and marker in host:
+                        return sid
+            return sorted(candidates)[0]
+
+        def _maybe_remap_to_comvn(target_sid: int | None, mp_value: str | None):
+            if target_sid not in (1, 2):
+                return target_sid
+            target_mp = str(mp_value or '').strip().lower()
+            if not target_mp:
+                return target_sid
+            target_host = str(services.get(f'serverhost{target_sid}') or '').strip().lower()
+            if 'aitogy.com.vn' in target_host:
+                return target_sid
+            for sid in (1, 2):
+                sid_mp = str(services.get(f'mountpoint{sid}') or '').strip().lower()
+                sid_host = str(services.get(f'serverhost{sid}') or '').strip().lower()
+                if sid != target_sid and sid_mp == target_mp and 'aitogy.com.vn' in sid_host:
+                    logging.info(
+                        f"[RTCM ROUTE] Remap server {target_sid} -> {sid} for mountpoint '{target_mp}' "
+                        f"to prefer aitogy.com.vn"
+                    )
+                    return sid
+            return target_sid
+
+        if server_id in (1, 2):
+            target_server_id = server_id
+        elif mountpoint:
+            target_server_id = _pick_preferred_server(mountpoint)
+
+        target_server_id = _maybe_remap_to_comvn(target_server_id, mountpoint)
+
+        if target_server_id in (1, 2):
+            services['stream_on_demand'] = True
+            services[f'server{target_server_id}_stream_on_demand'] = True
+            services[f'server{target_server_id}_stream_active'] = bool(active)
+            if active and mountpoint:
+                services['active_mountpoint'] = str(mountpoint)
+            elif not active:
+                active_mp = str(services.get('active_mountpoint') or '').strip().lower()
+                target_mp = str(services.get(f'mountpoint{target_server_id}') or '').strip().lower()
+                if active_mp and target_mp and active_mp == target_mp:
+                    services.pop('active_mountpoint', None)
+        else:
+            services['stream_on_demand'] = True
+            services['stream_active'] = bool(active)
+            if active and mountpoint:
+                services['active_mountpoint'] = str(mountpoint)
+            elif not active:
+                services.pop('active_mountpoint', None)
+
+        self.config['services'] = services
+        self.save_config()
     
     def get_base_config(self):
         return self.config.get('base_config', {})
@@ -1369,8 +1443,55 @@ class AgentManager:
         with self.stats_lock:
             if self.service_stats:
                 status["ntrip_stats"] = self.service_stats.copy()
+            else:
+                status["ntrip_stats"] = {}
             status["ntrip_connected"] = any(self.ntrip_connection_status.values())
             status["ntrip_status"] = self.ntrip_connection_status.copy()
+            cfg = self.get_service_config() or {}
+
+            def _to_bool_local(value, default=False):
+                if value is None:
+                    return default
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, (int, float)):
+                    return value != 0
+                if isinstance(value, str):
+                    return value.strip().lower() in ("1", "true", "yes", "on")
+                return bool(value)
+
+            global_on_demand = _to_bool_local(cfg.get('stream_on_demand', False), False)
+            global_active = _to_bool_local(cfg.get('stream_active', False), False)
+            s1_enabled = _to_bool_local(cfg.get('server1_enabled'), False)
+            s2_enabled = _to_bool_local(cfg.get('server2_enabled'), False)
+            s1_on_demand = _to_bool_local(cfg.get('server1_stream_on_demand'), global_on_demand)
+            s2_on_demand = _to_bool_local(cfg.get('server2_stream_on_demand'), global_on_demand)
+            s1_active = True if not s1_on_demand else _to_bool_local(cfg.get('server1_stream_active'), global_active)
+            s2_active = True if not s2_on_demand else _to_bool_local(cfg.get('server2_stream_active'), global_active)
+
+            status["ntrip_stream_state"] = {
+                "selected_mountpoint": cfg.get("active_mountpoint"),
+                "server1": {
+                    "enabled": s1_enabled,
+                    "on_demand": s1_on_demand,
+                    "active": s1_active,
+                    "can_push": bool(s1_enabled and ((not s1_on_demand) or s1_active)),
+                    "sleep": bool(s1_enabled and s1_on_demand and not s1_active),
+                    "connected": bool(self.ntrip_connection_status.get('server1')),
+                    "bps": int(status["ntrip_stats"].get("server1_bps", 0)),
+                    "mountpoint": cfg.get("mountpoint1"),
+                },
+                "server2": {
+                    "enabled": s2_enabled,
+                    "on_demand": s2_on_demand,
+                    "active": s2_active,
+                    "can_push": bool(s2_enabled and ((not s2_on_demand) or s2_active)),
+                    "sleep": bool(s2_enabled and s2_on_demand and not s2_active),
+                    "connected": bool(self.ntrip_connection_status.get('server2')),
+                    "bps": int(status["ntrip_stats"].get("server2_bps", 0)),
+                    "mountpoint": cfg.get("mountpoint2"),
+                },
+            }
             
             for key, bps in self.service_stats.items():
                 if 'bps' in key and bps > 0 and bps < 100:

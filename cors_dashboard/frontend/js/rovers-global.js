@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if(document.getElementById('user-info-role')) document.getElementById('user-info-role').textContent = currentUser.role.toUpperCase();
         if(document.getElementById('user-avatar-text')) document.getElementById('user-avatar-text').textContent = currentUser.username.charAt(0).toUpperCase();
 
-        if (currentUser.role === 'admin') {
+        if (currentUser.permissions?.includes('manage:caster')) {
             const casterTab = document.getElementById('caster-tab-li');
             if (casterTab) casterTab.classList.remove('d-none');
 

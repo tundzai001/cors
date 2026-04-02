@@ -1,5 +1,4 @@
 # geotek_aitogy_working.py
-# âœ… WORKING VERSION - DÃ¹ng NTRIP v1.0 SOURCE
 
 import json
 import logging
@@ -16,7 +15,6 @@ import paho.mqtt.client as mqtt
 
 ACTIVE_WORKERS = {}
 
-# KhÃ³a QuickEdit Mode trÃªn Windows CMD Ä‘á»ƒ trÃ¡nh bá»‹ dá»«ng (pause) khi lá»¡ click chuá»™t vÃ o mÃ n hÃ¬nh
 if os.name == 'nt':
     try:
         kernel32 = ctypes.windll.kernel32
@@ -29,9 +27,9 @@ if os.name == 'nt':
     except Exception:
         pass
 
-# Tá»‘i Æ°u RAM: Giáº£m kÃ­ch thÆ°á»›c memory stack cho má»—i thread (máº·c Ä‘á»‹nh Windows tá»‘n tá»›i 1.5MB-8MB má»—i thread)
+
 try:
-    threading.stack_size(65536) # Chá»‰ dÃ¹ng 64KB má»—i thread
+    threading.stack_size(65536)
 except ValueError:
     pass
 
@@ -44,10 +42,12 @@ STATION_LIST = [
     {"source_mp": "TNN_TPThaiNguyen", "lat": 21.573653528, "lon": 105.840291958, "alt": 11.1829, "target_mp": "TN.TP"},
     {"source_mp": "TNN_DaiTu",        "lat": 21.633503578, "lon": 105.637082715, "alt": 47.8438, "target_mp": "TN.DaiTu"},
     {"source_mp": "TNN_PhoYen",       "lat": 21.416232244, "lon": 105.86204898,  "alt": 6.469,   "target_mp": "TN.PhoYen"},
+    {"source_mp": "BG.TP",            "lat": 21.279629,    "lon": 106.212334,   "alt": 0.0,     "target_mp": "BG.TP"},
+    {"source_mp": "HN.QuocOai",       "lat": 20.926164,    "lon": 105.600298,   "alt": 0.0,     "target_mp": "HN.QuocOai"},
+    {"source_mp": "BG.LucNam",        "lat": 21.311513,    "lon": 106.386418,   "alt": 0.0,     "target_mp": "BG.LucNam"},
+    {"source_mp": "HB.TP",            "lat": 20.806464,    "lon": 105.358762,   "alt": 0.0,     "target_mp": "HB.TP"},
 ]
 
-# Monitor List: CÃ¡c tráº¡m Ä‘Ã£ truyá»n sáºµn vá» aitogy, chá»‰ cáº§n Ä‘á»c Ä‘á»ƒ hiá»ƒn thá»‹ lÃªn web
-#Äáº¡i ThÃ nh 
 MONITOR_LIST = [
     {
         "mountpoint": "ATGDT", 
@@ -65,19 +65,16 @@ MQTT_PORT = 1883
 MQTT_USER = "mqttUser"
 MQTT_PASS = "MqttPassword123$%^"
 
-# SOURCE (KhÃ¡ch hÃ ng)
 SOURCE_HOST = "rtkvietnam.vn"
 SOURCE_PORT = 1508
 SOURCE_USER = "aitogy123"
 SOURCE_PASS = "aitogy123"
 
-# TARGET (Server cá»§a báº¡n)
 TARGET_HOST = "aitogy.com.vn"
 TARGET_PORT = 2101
 TARGET_PASS = "12345"
 
-# âš ï¸ QUAN TRá»ŒNG: Server chá»‰ há»— trá»£ NTRIP v1.0!
-NTRIP_VERSION = 1  # KhÃ´ng Ä‘á»•i sang 2!
+NTRIP_VERSION = 1  
 RECONNECT_INTERVAL = 15
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -158,7 +155,7 @@ class RelayWorker(threading.Thread):
         status = {
             "serial": self.serial,
             "name": self.cfg['target_mp'],
-            "status": "online",
+            "status": "online" if self.desired_active else "sleep",
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
@@ -383,7 +380,7 @@ class MonitorWorker(threading.Thread):
         status = {
             "serial": self.serial,
             "name": self.cfg['mountpoint'],
-            "status": "online",
+            "status": "online" if self.is_connected else "offline",
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",

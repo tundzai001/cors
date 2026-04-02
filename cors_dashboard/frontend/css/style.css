@@ -347,6 +347,15 @@ html {
     text-shadow: 0 0 8px rgba(255, 212, 59, 0.3);
 }
 
+.server-status-item.sleep {
+    border-color: rgba(34, 184, 207, 0.35);
+    background: rgba(34, 184, 207, 0.08);
+}
+
+.server-status-item.sleep .server-label {
+    color: #22b8cf;
+}
+
 .server-bps {
     font-size: 0.9rem;
     font-weight: 700;
@@ -359,6 +368,11 @@ html {
 .server-status-item.connected .server-bps {
     color: #51cf66;
     text-shadow: 0 0 8px rgba(81, 207, 102, 0.4);
+}
+
+.server-status-item.sleep .server-bps {
+    color: #22b8cf;
+    text-shadow: 0 0 8px rgba(34, 184, 207, 0.4);
 }
 
 .server-status-item.disconnected .server-bps {

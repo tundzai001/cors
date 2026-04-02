@@ -91,7 +91,13 @@ class PasswordPolicy:
 
 class Role:
     ADMIN, VIEWER, COORDINATOR, OPERATOR = "admin", "viewer", "coordinator", "operator"
-class Permission: VIEW_DEVICES, VIEW_CONFIG, EDIT_DEVICE_NAME, EDIT_COORDINATES, EDIT_CHIP_CONFIG, EDIT_SERVICE_CONFIG, MANAGE_LICENSE, DELETE_DEVICE, MANAGE_USERS, EXPORT_DATA = "view:devices", "view:config", "edit:device_name", "edit:coordinates", "edit:chip_config", "edit:service_config", "manage:license", "delete:device", "manage:users", "export:data"
+class Permission:
+    VIEW_DEVICES, VIEW_CONFIG = "view:devices", "view:config"
+    EDIT_DEVICE_NAME, EDIT_COORDINATES = "edit:device_name", "edit:coordinates"
+    EDIT_CHIP_CONFIG, EDIT_SERVICE_CONFIG = "edit:chip_config", "edit:service_config"
+    MANAGE_LICENSE, DELETE_DEVICE = "manage:license", "delete:device"
+    MANAGE_USERS, EXPORT_DATA = "manage:users", "export:data"
+    MANAGE_STATION_MODE, MANAGE_CASTER = "manage:station_mode", "manage:caster"
 
 ROLE_PERMISSIONS = {
     Role.ADMIN: [
@@ -101,8 +107,12 @@ ROLE_PERMISSIONS = {
         Permission.EDIT_COORDINATES,
         Permission.EDIT_CHIP_CONFIG,
         Permission.EDIT_SERVICE_CONFIG,
-        Permission.MANAGE_LICENSE, Permission.DELETE_DEVICE,
-        Permission.MANAGE_USERS, Permission.EXPORT_DATA,
+        Permission.MANAGE_LICENSE, 
+        Permission.DELETE_DEVICE,
+        Permission.MANAGE_USERS, 
+        Permission.EXPORT_DATA,
+        Permission.MANAGE_STATION_MODE,
+        Permission.MANAGE_CASTER,
     ],
     Role.COORDINATOR: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,

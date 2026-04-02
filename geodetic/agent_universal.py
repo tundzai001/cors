@@ -156,8 +156,91 @@ DATUM_LOCK = threading.Lock()
 AUTO_BASE_DATUM = RTCMDatum()
 active_auto_base_task = None
 active_auto_base_client = None
-# RTCM stream active flag (controlled by SET_RTCM_STREAM_ACTIVE command)
+# RTCM dispatcher flag (true when at least one configured server is allowed to publish)
 rtcm_stream_active_flag = False
+
+
+def _to_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def _normalize_mountpoint_value(value):
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned.lower() if cleaned else None
+
+
+def _get_server_stream_switches(cfg: dict, server_id: int) -> dict:
+    global_on_demand = _to_bool(cfg.get('stream_on_demand', False), False)
+    global_active = _to_bool(cfg.get('stream_active', False), False)
+
+    server_on_demand_key = f'server{server_id}_stream_on_demand'
+    server_active_key = f'server{server_id}_stream_active'
+
+    if server_on_demand_key in cfg and cfg.get(server_on_demand_key) is not None:
+        on_demand = _to_bool(cfg.get(server_on_demand_key), global_on_demand)
+    else:
+        on_demand = global_on_demand
+
+    if not on_demand:
+        active = True
+    elif server_active_key in cfg and cfg.get(server_active_key) is not None:
+        active = _to_bool(cfg.get(server_active_key), global_active)
+    else:
+        active = global_active
+
+    enabled = _to_bool(cfg.get(f'server{server_id}_enabled'), False)
+    can_push = enabled and ((not on_demand) or active)
+
+    return {
+        'enabled': enabled,
+        'on_demand': on_demand,
+        'active': active,
+        'can_push': can_push,
+    }
+
+
+def _compute_any_server_can_push(cfg: dict) -> bool:
+    for server_id in (1, 2):
+        if _get_server_stream_switches(cfg, server_id)['can_push']:
+            return True
+    return False
+
+
+def _resolve_preferred_server_for_mountpoint(cfg: dict, mountpoint: str | None) -> int | None:
+    target_mp = _normalize_mountpoint_value(mountpoint)
+    if not target_mp:
+        return None
+
+    candidates = []
+    for sid in (1, 2):
+        server_mp = _normalize_mountpoint_value(cfg.get(f'mountpoint{sid}'))
+        enabled = _to_bool(cfg.get(f'server{sid}_enabled'), False)
+        if enabled and server_mp and server_mp == target_mp:
+            candidates.append(sid)
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    preferred_hosts = ('aitogy.com.vn',)
+    for marker in preferred_hosts:
+        for sid in candidates:
+            host = str(cfg.get(f'serverhost{sid}', '') or '').strip().lower()
+            if host and marker in host:
+                return sid
+
+    return sorted(candidates)[0]
 # Internal RTCM ingress bitrate tracker (independent from NTRIP socket forwarding)
 rtcm_input_stats_lock = threading.Lock()
 rtcm_input_window_bytes = 0
@@ -206,6 +289,50 @@ def generate_pi_license_base(serial_number: str) -> str:
         return base_code_str[:12]
     return base_code_str.ljust(12, '0')
 
+CHIP_DETECT_BAUD_HINTS = {}
+
+
+def _ordered_baud_rates(port_device: str, common_baud_rates: list[int]) -> list[int]:
+    hint = CHIP_DETECT_BAUD_HINTS.get(str(port_device or "").strip())
+    if not hint or hint not in common_baud_rates:
+        return list(common_baud_rates)
+    return [hint] + [baud for baud in common_baud_rates if baud != hint]
+
+
+def _remember_baud_hint(port_device: str, baud: int) -> None:
+    if not port_device:
+        return
+    CHIP_DETECT_BAUD_HINTS[str(port_device).strip()] = int(baud)
+
+
+def _wait_for_serial_response(ser, wait_seconds: float, max_bytes: int = 2048) -> bytes:
+    deadline = time.time() + max(0.1, float(wait_seconds))
+    chunks = []
+    seen_data = False
+    idle_ticks_after_data = 0
+
+    while time.time() < deadline:
+        waiting = int(getattr(ser, 'in_waiting', 0) or 0)
+        if waiting > 0:
+            read_size = min(waiting, max_bytes)
+            chunk = ser.read(read_size)
+            if chunk:
+                chunks.append(chunk)
+                seen_data = True
+                idle_ticks_after_data = 0
+                if sum(len(x) for x in chunks) >= max_bytes:
+                    break
+            time.sleep(0.03)
+            continue
+
+        if seen_data:
+            idle_ticks_after_data += 1
+            if idle_ticks_after_data >= 3:
+                break
+        time.sleep(0.05)
+
+    return b''.join(chunks)
+
 # ==============================================================================
 # === EMBEDDED CHIP DETECTOR                                                ===
 # ==============================================================================
@@ -216,9 +343,9 @@ def get_chip_info(port: str, baudrate: int) -> dict | None:
             ser.reset_input_buffer()
             ser.write(b'\xB5\x62\x0A\x04\x00\x00\x0E\x34')
             ser.flush()
-            time.sleep(0.5)
-            response = ser.read(100)
+            response = _wait_for_serial_response(ser, wait_seconds=0.6, max_bytes=160)
             if b'\xB5\x62\x0A\x04' in response:
+                _remember_baud_hint(port, baudrate)
                 return {"type": "Ublox"}
     except Exception:
         pass
@@ -235,11 +362,11 @@ def get_chip_info(port: str, baudrate: int) -> dict | None:
                 ser.reset_input_buffer()
                 ser.write(test_cmd)
                 ser.flush()
-                time.sleep(1.5)
-                response = ser.read(1024)
+                response = _wait_for_serial_response(ser, wait_seconds=1.0, max_bytes=1024)
             
                 unicore_keywords = [b'Unicore', b'UM982', b'UM9', b'UB4', b'FIRMWARE', b'COMPTYPE']
                 if any(keyword in response for keyword in unicore_keywords):
+                    _remember_baud_hint(port, baudrate)
                     return {"type": "Unicorecomm"}
         except Exception:
             continue
@@ -261,7 +388,7 @@ def find_chip_robustly():
         if 'bluetooth' in port.device.lower() or 'rfcomm' in port.device.lower():
             continue
             
-        for baud in common_baud_rates:
+        for baud in _ordered_baud_rates(port.device, common_baud_rates):
             logging.info(f"  -> [ACTIVE] Probing {port.device} @ {baud}...")
             
             # === TEST UNICORECOMM FIRST ===
@@ -279,10 +406,8 @@ def find_chip_robustly():
                         
                         ser.write(cmd)
                         ser.flush()
-                        time.sleep(2.0)  
-                        
-                        if ser.in_waiting > 0:
-                            response = ser.read(ser.in_waiting)
+                        response = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
+                        if response:
                             response_str = response.decode('ascii', errors='ignore')
                             
                             # Check keywords
@@ -290,6 +415,7 @@ def find_chip_robustly():
                             if any(kw in response_str for kw in unicore_keywords):
                                 logging.info(f"!!! [ACTIVE] Detected UM982/Unicorecomm on {port.device} @ {baud}")
                                 logging.info(f"    Response snippet: {response_str[:100]}")
+                                _remember_baud_hint(port.device, baud)
                                 return {"port": port.device, "type": "Unicorecomm", "baud": baud}
                 except Exception as e:
                     logging.debug(f"Unicore command test failed: {e}")
@@ -301,13 +427,11 @@ def find_chip_robustly():
                     ser.reset_input_buffer()
                     ser.write(b'\xB5\x62\x0A\x04\x00\x00\x0E\x34')
                     ser.flush()
-                    time.sleep(1.0)
-                    
-                    if ser.in_waiting > 0:
-                        response = ser.read(512)
-                        if b'\xB5\x62\x0A\x04' in response:
-                            logging.info(f"!!! [ACTIVE] Detected U-blox on {port.device} @ {baud}")
-                            return {"port": port.device, "type": "Ublox", "baud": baud}
+                    response = _wait_for_serial_response(ser, wait_seconds=0.9, max_bytes=512)
+                    if b'\xB5\x62\x0A\x04' in response:
+                        logging.info(f"!!! [ACTIVE] Detected U-blox on {port.device} @ {baud}")
+                        _remember_baud_hint(port.device, baud)
+                        return {"port": port.device, "type": "Ublox", "baud": baud}
             except Exception as e:
                 logging.debug(f"Ublox test failed: {e}")
     
@@ -319,18 +443,17 @@ def find_chip_robustly():
         if 'bluetooth' in port.device.lower() or 'rfcomm' in port.device.lower():
             continue
             
-        for baud in common_baud_rates:
+        for baud in _ordered_baud_rates(port.device, common_baud_rates):
             logging.info(f"  -> [PASSIVE] Listening on {port.device} @ {baud}...")
             try:
                 with serial.Serial(port.device, baud, timeout=4.0) as ser:
-                    time.sleep(3.0)
-                    
-                    if ser.in_waiting > 0:
-                        raw_data = ser.read(ser.in_waiting)
+                    raw_data = _wait_for_serial_response(ser, wait_seconds=1.6, max_bytes=4096)
+                    if raw_data:
                         
                         # Check for RTCM3 first (priority)
                         if b'\xD3' in raw_data:
                             logging.info(f"!!! [PASSIVE] Detected RTCM3 output on {port.device} @ {baud}")
+                            _remember_baud_hint(port.device, baud)
                             return {"port": port.device, "type": "RTCM3_Source", "baud": baud}
                         
                         # Check for NMEA (last resort)
@@ -342,6 +465,7 @@ def find_chip_robustly():
                                 chip_type = "Generic_NMEA"
                             
                             logging.info(f"!!! [PASSIVE] Detected {chip_type} on {port.device} @ {baud}")
+                            _remember_baud_hint(port.device, baud)
                             return {"port": port.device, "type": chip_type, "baud": baud}
                         
             except Exception as e:
@@ -362,13 +486,13 @@ def find_chip_fallback():
             
         logging.info(f"[Fallback] Testing {port.device}...")
         
-        for baud in [115200, 460800, 921600, 38400]:
+        for baud in _ordered_baud_rates(port.device, [115200, 460800, 921600, 38400]):
             try:
                 with serial.Serial(port.device, baud, timeout=3) as ser:
                     ser.reset_input_buffer()
                     ser.write(b'unlog\r\n')
                     ser.flush()
-                    time.sleep(1.0)
+                    _wait_for_serial_response(ser, wait_seconds=0.6, max_bytes=512)
                     
                     # Clear buffer
                     if ser.in_waiting > 0:
@@ -377,24 +501,22 @@ def find_chip_fallback():
                     # Test version command
                     ser.write(b'version\r\n')
                     ser.flush()
-                    time.sleep(2.0)
-                    
-                    if ser.in_waiting > 0:
-                        response = ser.read(ser.in_waiting)
+                    response = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
+                    if response:
                         response_str = response.decode('ascii', errors='ignore')
                         
                         if any(kw in response_str for kw in ['UM982', 'Unicore', 'FIRMWARE']):
                             logging.info(f"[Fallback] Found UM982 on {port.device} @ {baud}")
+                            _remember_baud_hint(port.device, baud)
                             return {"port": port.device, "type": "Unicorecomm", "baud": baud}
                     
                     # Test for any GNSS data
                     ser.reset_input_buffer()
-                    time.sleep(2)
-                    if ser.in_waiting > 0:
-                        data = ser.read(ser.in_waiting)
-                        if b'$G' in data or b'\xB5\x62' in data or b'\xD3' in data:
-                            logging.info(f"[Fallback] Found GNSS-like data on {port.device} @ {baud}")
-                            return {"port": port.device, "type": "Generic", "baud": baud}
+                    data = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
+                    if b'$G' in data or b'\xB5\x62' in data or b'\xD3' in data:
+                        logging.info(f"[Fallback] Found GNSS-like data on {port.device} @ {baud}")
+                        _remember_baud_hint(port.device, baud)
+                        return {"port": port.device, "type": "Generic", "baud": baud}
                             
             except Exception as e:
                 logging.debug(f"Fallback test error: {e}")
@@ -1315,37 +1437,34 @@ def dispatch_nmea_data(data):
     """
     Enhanced NMEA dispatcher with overflow protection
     """
+    # Parse GGA outside lock to keep subscriber fan-out fast under high NMEA throughput.
+    try:
+        s = None
+        if isinstance(data, (bytes, bytearray)):
+            s = data.decode('ascii', errors='ignore')
+        elif isinstance(data, str):
+            s = data
+
+        if s and '$G' in s and 'GGA' in s[:10]:
+            try:
+                new_status, lat, lon, alt = parse_gga_data(s)
+                globals()['LAST_GGA_FIX_STATUS'] = new_status
+                if lat is not None:
+                    globals()['LAST_GGA_COORD'] = (lat, lon, alt)
+                raw_line = s.strip()
+                if '\n' in raw_line:
+                    raw_line = next((l.strip() for l in raw_line.split('\n') if 'GGA' in l), raw_line)
+                globals()['LAST_RAW_GGA'] = raw_line
+                globals()['LAST_RAW_GGA_TS'] = time.time()
+                ag = globals().get('agent')
+                if ag and hasattr(ag, 'last_gga_fix_status'):
+                    ag.last_gga_fix_status = new_status
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     with subscriber_lock:
-        # Try to detect GGA sentences and update last-known fix status
-        try:
-            s = None
-            if isinstance(data, (bytes, bytearray)):
-                s = data.decode('ascii', errors='ignore')
-            elif isinstance(data, str):
-                s = data
-
-            if s and '$G' in s and 'GGA' in s[:10]:
-                # If this is a GGA sentence, parse fix quality
-                try:
-                    new_status, lat, lon, alt = parse_gga_data(s)
-                    globals()['LAST_GGA_FIX_STATUS'] = new_status
-                    if lat is not None:
-                        globals()['LAST_GGA_COORD'] = (lat, lon, alt)
-                    # Store raw GGA for NTRIP VRS usage
-                    raw_line = s.strip()
-                    if '\n' in raw_line:
-                        raw_line = next((l.strip() for l in raw_line.split('\n') if 'GGA' in l), raw_line)
-                    globals()['LAST_RAW_GGA'] = raw_line
-                    globals()['LAST_RAW_GGA_TS'] = time.time()
-                    ag = globals().get('agent')
-                    if ag and hasattr(ag, 'last_gga_fix_status'):
-                        ag.last_gga_fix_status = new_status
-                except Exception:
-                    pass
-
-        except Exception:
-            pass
-
         for queue in list(nmea_subscribers):
             try:
                 queue.put_nowait(data)
@@ -1528,10 +1647,11 @@ class NTRIPServerWorker(threading.Thread):
                 # ========== DATA STREAMING LOOP ==========
                 while not self._stop_event.is_set() and not is_remote_locked():
                     try:
-                        # Hard gate: never push RTCM while stream is inactive.
-                        if not rtcm_stream_active_flag:
+                        # Per-server gate: each server can be configured independently.
+                        server_switches = _get_server_stream_switches(self.config, self.server_id)
+                        if not server_switches['can_push']:
                             if not standby_logged:
-                                self.log("INFO", f"S{self.server_id}: RTCM stream inactive, holding push in standby.")
+                                self.log("INFO", f"S{self.server_id}: RTCM stream inactive for this server, holding push in standby.")
                                 standby_logged = True
 
                             with self.stats_lock:
@@ -2369,15 +2489,29 @@ class AgentManager:
             # if not explicitly set (None or missing)
             if cfg.get('stream_active') is None:
                 cfg['stream_active'] = False
+
+        # Per-server stream controls with backward-compatible fallback to global flags.
+        for server_id in (1, 2):
+            on_demand_key = f'server{server_id}_stream_on_demand'
+            active_key = f'server{server_id}_stream_active'
+
+            if cfg.get(on_demand_key) is None:
+                cfg[on_demand_key] = stream_on_demand
+
+            if _to_bool(cfg.get(on_demand_key), stream_on_demand):
+                if cfg.get(active_key) is None:
+                    cfg[active_key] = bool(cfg.get('stream_active', False))
+            else:
+                # Always-on for this server.
+                cfg[active_key] = True
         
         self.config['services'] = cfg
         
         # Sync current engine state
-        stream_active = bool(cfg.get('stream_active', False))
-        self.rtcm_stream_active = stream_active
+        self.rtcm_stream_active = _compute_any_server_can_push(cfg)
         
         global rtcm_stream_active_flag
-        rtcm_stream_active_flag = stream_active
+        rtcm_stream_active_flag = self.rtcm_stream_active
         
         self.save_config()
 
@@ -2388,26 +2522,124 @@ class AgentManager:
         cleaned = str(value).strip()
         return cleaned.lower() if cleaned else None
 
-    def set_rtcm_stream_active(self, active: bool, mountpoint: str = None):
+    def set_rtcm_stream_active(self, active: bool, mountpoint: str = None, server_id: int = None):
         global rtcm_stream_active_flag
         services = self.config.setdefault('services', {})
-        prev_active = bool(services.get('stream_active', False))
-        prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+        should_restart = False
 
-        services['stream_on_demand'] = True
-        services['stream_active'] = bool(active)
+        def _maybe_remap_to_comvn(target_sid: int | None, mp_value: str | None) -> int | None:
+            if target_sid not in (1, 2):
+                return target_sid
+            target_mp = self._normalize_mountpoint(mp_value)
+            if not target_mp:
+                return target_sid
 
-        # Optional mountpoint selector from backend control plane.
-        if mountpoint and bool(active):
-            services['active_mountpoint'] = str(mountpoint)
-        elif not bool(active):
-            services.pop('active_mountpoint', None)
+            target_host = str(services.get(f'server{target_sid}_host', services.get(f'serverhost{target_sid}', '')) or '').strip().lower()
+            if 'aitogy.com.vn' in target_host:
+                return target_sid
 
-        new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-        should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
+            for sid in (1, 2):
+                sid_mp = self._normalize_mountpoint(services.get(f'mountpoint{sid}'))
+                sid_host = str(services.get(f'server{sid}_host', services.get(f'serverhost{sid}', '')) or '').strip().lower()
+                if sid != target_sid and sid_mp == target_mp and 'aitogy.com.vn' in sid_host:
+                    logging.info(
+                        f"[RTCM ROUTE] Remap server {target_sid} -> {sid} for mountpoint '{target_mp}' "
+                        f"to prefer aitogy.com.vn"
+                    )
+                    return sid
+            return target_sid
 
-        self.rtcm_stream_active = bool(active)
-        rtcm_stream_active_flag = bool(active)  # Update global flag for dispatch
+        if server_id in (1, 2):
+            server_id = _maybe_remap_to_comvn(server_id, mountpoint)
+            prev_switch = _get_server_stream_switches(services, server_id)
+            prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+
+            services['stream_on_demand'] = True
+            services[f'server{server_id}_stream_on_demand'] = True
+            services[f'server{server_id}_stream_active'] = bool(active)
+
+            # Optional selector for dashboards still using mountpoint targeting.
+            if mountpoint and bool(active):
+                services['active_mountpoint'] = str(mountpoint)
+            elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{server_id}')):
+                services.pop('active_mountpoint', None)
+
+            new_switch = _get_server_stream_switches(services, server_id)
+            new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+            should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
+            if not bool(active):
+                # Keep other server streams stable; worker loop can enter standby without full restart.
+                should_restart = False
+        else:
+            prev_active = bool(services.get('stream_active', False))
+            prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+            prev_any_can_push = _compute_any_server_can_push(services)
+            target_mp = self._normalize_mountpoint(mountpoint)
+
+            target_server_id = None
+            if target_mp:
+                target_server_id = _resolve_preferred_server_for_mountpoint(services, target_mp)
+                target_server_id = _maybe_remap_to_comvn(target_server_id, target_mp)
+
+            # For deactivate commands without explicit target, prefer current active mountpoint.
+            if target_server_id is None and not bool(active):
+                active_mp = self._normalize_mountpoint(services.get('active_mountpoint'))
+                if active_mp:
+                    target_server_id = _resolve_preferred_server_for_mountpoint(services, active_mp)
+                    target_server_id = _maybe_remap_to_comvn(target_server_id, active_mp)
+
+            # If still unknown on deactivate, affect only enabled on-demand servers and keep always-on servers untouched.
+            if target_server_id is None and not bool(active):
+                on_demand_servers = []
+                for sid in (1, 2):
+                    sw = _get_server_stream_switches(services, sid)
+                    if sw['enabled'] and sw['on_demand']:
+                        on_demand_servers.append(sid)
+
+                if len(on_demand_servers) == 1:
+                    target_server_id = on_demand_servers[0]
+                elif len(on_demand_servers) > 1:
+                    for sid in on_demand_servers:
+                        services[f'server{sid}_stream_on_demand'] = True
+                        services[f'server{sid}_stream_active'] = False
+                    services.pop('active_mountpoint', None)
+
+                    new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+                    should_restart = (prev_any_can_push != _compute_any_server_can_push(services)) or (prev_mountpoint != new_mountpoint)
+
+            # Backward-compatible behavior: if mountpoint maps to a known server,
+            # apply active/sleep directly to that specific server.
+            if target_server_id in (1, 2):
+                prev_switch = _get_server_stream_switches(services, target_server_id)
+                services[f'server{target_server_id}_stream_on_demand'] = True
+                services[f'server{target_server_id}_stream_active'] = bool(active)
+
+                if mountpoint and bool(active):
+                    services['active_mountpoint'] = str(mountpoint)
+                elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{target_server_id}')):
+                    services.pop('active_mountpoint', None)
+
+                new_switch = _get_server_stream_switches(services, target_server_id)
+                new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+                should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
+                if not bool(active):
+                    # Avoid bouncing unaffected server workers during sleep transition.
+                    should_restart = False
+            elif not should_restart:
+                services['stream_on_demand'] = True
+                services['stream_active'] = bool(active)
+
+                # Optional mountpoint selector from backend control plane.
+                if mountpoint and bool(active):
+                    services['active_mountpoint'] = str(mountpoint)
+                elif not bool(active):
+                    services.pop('active_mountpoint', None)
+
+                new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+                should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
+
+        self.rtcm_stream_active = _compute_any_server_can_push(services)
+        rtcm_stream_active_flag = self.rtcm_stream_active  # Update global dispatch gate
         self.save_config()
         if should_restart:
             self.restart_services()
@@ -2426,9 +2658,9 @@ class AgentManager:
         # New: Three-state (Online/Sleep/Offline) logic
         services = self.config.get('services', {})
         stream_on_demand = services.get('stream_on_demand') == True
-        stream_active = services.get('stream_active') == True
+        any_server_can_push = _compute_any_server_can_push(services)
         
-        if base_status == "online" and stream_on_demand and not stream_active:
+        if base_status == "online" and stream_on_demand and not any_server_can_push:
             base_status = "sleep"
 
         final_status = current_state.lower()
@@ -2504,29 +2736,31 @@ class AgentManager:
 
             # Backward-compatible UI keys: keep server1_bps/server2_bps present even in standby mode.
             cfg = self.get_service_config() or {}
-            server1_enabled = bool(cfg.get('server1_enabled'))
-            server2_enabled = bool(cfg.get('server2_enabled'))
-            stream_on_demand = bool(cfg.get('stream_on_demand', False))
-            stream_active = bool(cfg.get('stream_active', True))
-            can_push_rtcm = (not stream_on_demand) or stream_active
+            server1_switch = _get_server_stream_switches(cfg, 1)
+            server2_switch = _get_server_stream_switches(cfg, 2)
+            can_push_server1 = server1_switch['can_push']
+            can_push_server2 = server2_switch['can_push']
             selected_mountpoint = self._normalize_mountpoint(cfg.get('active_mountpoint'))
             server1_mp = self._normalize_mountpoint(cfg.get('mountpoint1'))
             server2_mp = self._normalize_mountpoint(cfg.get('mountpoint2'))
+            server1_connected = bool(self.ntrip_connection_status.get('server1'))
+            server2_connected = bool(self.ntrip_connection_status.get('server2'))
 
             synth_server1_bps = 0
             synth_server2_bps = 0
 
-            if can_push_rtcm:
+            # Only synthesize per-server egress bitrate when that server is truly connected to caster.
+            if (can_push_server1 and server1_connected) or (can_push_server2 and server2_connected):
                 if selected_mountpoint:
-                    if selected_mountpoint == server1_mp:
+                    if selected_mountpoint == server1_mp and can_push_server1 and server1_connected:
                         synth_server1_bps = ingress_bps
-                    elif selected_mountpoint == server2_mp:
+                    elif selected_mountpoint == server2_mp and can_push_server2 and server2_connected:
                         synth_server2_bps = ingress_bps
-                elif server1_enabled and not server2_enabled:
+                elif can_push_server1 and server1_connected and not (can_push_server2 and server2_connected):
                     synth_server1_bps = ingress_bps
-                elif server2_enabled and not server1_enabled:
+                elif can_push_server2 and server2_connected and not (can_push_server1 and server1_connected):
                     synth_server2_bps = ingress_bps
-                elif server1_enabled and server2_enabled:
+                elif can_push_server1 and server1_connected and can_push_server2 and server2_connected:
                     # No mountpoint selected: duplicate ingress for compatibility dashboards.
                     synth_server1_bps = ingress_bps
                     synth_server2_bps = ingress_bps
@@ -2534,8 +2768,35 @@ class AgentManager:
             status["ntrip_stats"]["server1_bps"] = int(status["ntrip_stats"].get("server1_bps", synth_server1_bps))
             status["ntrip_stats"]["server2_bps"] = int(status["ntrip_stats"].get("server2_bps", synth_server2_bps))
 
-            status["ntrip_connected"] = can_push_rtcm and any(self.ntrip_connection_status.values())
+            status["ntrip_connected"] = (
+                (can_push_server1 and bool(self.ntrip_connection_status.get('server1')))
+                or
+                (can_push_server2 and bool(self.ntrip_connection_status.get('server2')))
+            )
             status["ntrip_status"] = self.ntrip_connection_status.copy()
+            status["ntrip_stream_state"] = {
+                "selected_mountpoint": cfg.get("active_mountpoint"),
+                "server1": {
+                    "enabled": bool(server1_switch['enabled']),
+                    "on_demand": bool(server1_switch['on_demand']),
+                    "active": bool(server1_switch['active']),
+                    "can_push": bool(server1_switch['can_push']),
+                    "sleep": bool(server1_switch['enabled'] and server1_switch['on_demand'] and not server1_switch['active']),
+                    "connected": server1_connected,
+                    "bps": int(status["ntrip_stats"].get("server1_bps", 0)),
+                    "mountpoint": cfg.get("mountpoint1"),
+                },
+                "server2": {
+                    "enabled": bool(server2_switch['enabled']),
+                    "on_demand": bool(server2_switch['on_demand']),
+                    "active": bool(server2_switch['active']),
+                    "can_push": bool(server2_switch['can_push']),
+                    "sleep": bool(server2_switch['enabled'] and server2_switch['on_demand'] and not server2_switch['active']),
+                    "connected": server2_connected,
+                    "bps": int(status["ntrip_stats"].get("server2_bps", 0)),
+                    "mountpoint": cfg.get("mountpoint2"),
+                },
+            }
             
             for key, bps in self.service_stats.items():
                 if 'bps' in key and bps > 0 and bps < 100:
@@ -2544,6 +2805,7 @@ class AgentManager:
         return status
     
     def restart_services(self):
+        global rtcm_stream_active_flag
         for worker in self.service_workers:
             worker.stop()
             worker.join(timeout=2)
@@ -2559,17 +2821,25 @@ class AgentManager:
             return
         
         cfg = self.config.get("services", {})
-        stream_on_demand = bool(cfg.get('stream_on_demand', False))
-        stream_active = bool(cfg.get('stream_active', True))
-        self.rtcm_stream_active = stream_active
-        can_push_rtcm = (not stream_on_demand) or stream_active
+        self.rtcm_stream_active = _compute_any_server_can_push(cfg)
+        rtcm_stream_active_flag = self.rtcm_stream_active
         selected_mountpoint = self._normalize_mountpoint(cfg.get('active_mountpoint'))
 
         def _server_can_publish(server_id: int) -> bool:
-            if not cfg.get(f'server{server_id}_enabled'):
+            server_switch = _get_server_stream_switches(cfg, server_id)
+            if not server_switch['enabled']:
                 return False
-            if not can_push_rtcm:
+            
+            # Non-on-demand (Always-On) servers ALWAYS publish if enabled.
+            if not server_switch['on_demand']:
+                return True
+                
+            # On-demand servers must be in their 'active' state.
+            if not server_switch['active']:
                 return False
+            
+            # If a specific mountpoint is selected (steered), we only publish
+            # from on-demand servers that match that mountpoint.
             if not selected_mountpoint:
                 return True
 
@@ -2581,10 +2851,10 @@ class AgentManager:
         if _server_can_publish(2):
             self.service_workers.append(NTRIPServerWorker(2, cfg, self.log, self.service_stats, self.stats_lock, self.ntrip_connection_status))
 
-        if selected_mountpoint and can_push_rtcm and not self.service_workers:
+        if selected_mountpoint and not self.service_workers and self.rtcm_stream_active:
             self.log("WARNING", f"[RTCM] active_mountpoint='{cfg.get('active_mountpoint')}' does not match any enabled server mountpoint")
 
-        if stream_on_demand and not stream_active:
+        if bool(cfg.get('stream_on_demand', False)) and not self.rtcm_stream_active:
             self.log("INFO", "[RTCM] Stream is in standby mode (on-demand enabled, active=false).")
         
         is_base_station = bool(self.get_base_config())
@@ -2746,7 +3016,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                 pass
             active_auto_base_client = None
             active_auto_base_task = None
-            rtcm_stream_active_flag = False
+            rtcm_stream_active_flag = _compute_any_server_can_push(agent.get_service_config() or {})
             if gnss_reader:
                 try:
                     gnss_reader.resume()
@@ -2866,15 +3136,31 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
         elif command == "SET_RTCM_STREAM_ACTIVE":
             active = bool(payload.get("active", False))
             mountpoint = payload.get("mountpoint")
-            agent.set_rtcm_stream_active(active, mountpoint=mountpoint)
-            rtcm_stream_active_flag = bool(active)  # Update global flag immediately
+            raw_server_id = payload.get("server_id", payload.get("server"))
+            server_id = None
+            try:
+                if raw_server_id is not None:
+                    parsed_server_id = int(raw_server_id)
+                    if parsed_server_id in (1, 2):
+                        server_id = parsed_server_id
+            except (TypeError, ValueError):
+                server_id = None
+
+            agent.set_rtcm_stream_active(active, mountpoint=mountpoint, server_id=server_id)
+            rtcm_stream_active_flag = bool(agent.rtcm_stream_active)  # Update global dispatch gate immediately
+
             if active:
-                if mountpoint:
+                if server_id:
+                    logging.info(f"[RTCM] Stream activated for server {server_id} by control plane")
+                elif mountpoint:
                     logging.info(f"[RTCM] Stream activated for mountpoint '{mountpoint}' by control plane")
                 else:
                     logging.info("[RTCM] Stream activated by control plane - forwarding to NTRIP caster enabled")
             else:
-                logging.info("[RTCM] Stream set to standby by control plane - forwarding to NTRIP caster disabled")
+                if server_id:
+                    logging.info(f"[RTCM] Stream set to standby for server {server_id} by control plane")
+                else:
+                    logging.info("[RTCM] Stream set to standby by control plane - forwarding to NTRIP caster disabled")
             current_state = "ONLINE"
             await send_status(agent, mqtt_client)
             

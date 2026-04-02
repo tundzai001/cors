@@ -982,20 +982,35 @@
                 const bounds = [];
                 
                 stations.forEach(st => {
-                    let color = '#f00';
-                    if (st.status === 'online') color = '#0f0';
-                    else if (st.status === 'unprovisioned') color = '#ff0';
+                    let color = '#dc3545'; // Default: Offline (Red)
+                    let statusLabel = st.status || 'offline';
+                    
+                    if (st.status === 'online' || st.status === 'streaming') {
+                        color = '#198754'; // Online/Streaming (Green)
+                        statusLabel = 'ONLINE';
+                    } else if (st.status === 'sleep') {
+                        color = '#0dcaf0'; // Sleep/On-Demand (Cyan)
+                        statusLabel = 'CHẾ ĐỘ NGỦ';
+                    } else if (st.status === 'unprovisioned') {
+                        color = '#ffc107'; // Unprovisioned (Yellow)
+                        statusLabel = 'CHƯA KÍCH HOẠT';
+                    } else if (st.status === 'configuring') {
+                        color = '#0d6efd'; // Configuring (Blue)
+                        statusLabel = 'ĐANG CẤU HÌNH';
+                    }
 
                     const icon = L.divIcon({
                         className: 'custom-div-icon',
-                        html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 5px black"></div>`,
+                        html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.5)"></div>`,
                         iconSize: [14, 14],
                         iconAnchor: [7, 7]
                     });
 
-                    const popup = `<div style="text-align:center;color:#333">
-                        <strong style="font-size:1.1em">${st.name}</strong><br>
-                        <span class="badge ${st.status === 'online' ? 'bg-success' : 'bg-secondary'}">${st.status}</span>
+                    const popup = `<div style="text-align:center;color:#333;min-width:140px;font-family:sans-serif;">
+                        <strong style="font-size:1.1em;display:block;margin-bottom:5px;">${st.name}</strong>
+                        <span style="background:${color};color:${color === '#ffc107' ? '#000' : '#fff'};padding:2px 8px;border-radius:4px;font-size:0.85em;font-weight:bold;">
+                            ${statusLabel}
+                        </span>
                     </div>`;
 
                     L.marker([st.lat, st.lon], { icon }).addTo(map).bindPopup(popup);

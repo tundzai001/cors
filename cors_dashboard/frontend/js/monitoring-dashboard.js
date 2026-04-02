@@ -16,6 +16,9 @@ const systemHistory = {
 
 const MAX_DATA_POINTS = 30;
 let systemChart = null;
+const MONITORING_POLL_INTERVAL_MS = 3000;
+let healthFetchInFlight = false;
+let refreshTimer = null;
 
 // Initialize Charts
 function initCharts() {
@@ -81,6 +84,8 @@ function initCharts() {
 
 // Fetch & Update Data
 async function fetchHealthData() {
+    if (healthFetchInFlight) return;
+    healthFetchInFlight = true;
     try {
         const response = await fetch('/api/health/detailed', { headers: API_HEADERS });
         if (!response.ok) {
@@ -94,6 +99,8 @@ async function fetchHealthData() {
         
     } catch (error) {
         console.error('Error fetching health data:', error);
+    } finally {
+        healthFetchInFlight = false;
     }
 }
 
@@ -139,16 +146,35 @@ function updateCharts(data) {
     systemChart.update('none'); // 'none' mode for performance
 }
 
-// Auto-refresh
-let refreshInterval;
+function startMonitoringPolling() {
+    stopMonitoringPolling();
+    fetchHealthData();
+    refreshTimer = setInterval(() => {
+        if (document.hidden) return;
+        fetchHealthData();
+    }, MONITORING_POLL_INTERVAL_MS);
+}
+
+function stopMonitoringPolling() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     initCharts();
-    fetchHealthData();
-    refreshInterval = setInterval(fetchHealthData, 2000);
+    startMonitoringPolling();
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            stopMonitoringPolling();
+            return;
+        }
+        startMonitoringPolling();
+    });
 });
 
 // Cleanup
 window.addEventListener('beforeunload', () => {
-    if (refreshInterval) clearInterval(refreshInterval);
+    stopMonitoringPolling();
 });

@@ -727,6 +727,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let wsSecurity = null;
     let wsSecurityReconnectAttempts = 0;
     const MAX_WS_RECONNECT = 10;
+    let visitorPulseTimerId = null;
+    let lastVisitorCount = null;
 
     function connectSecurityWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -766,6 +768,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (type === 'visitor_update') {
             const visitorEl = document.getElementById('live-visitors-count');
             if (visitorEl) {
+                if (lastVisitorCount === count) return;
+                lastVisitorCount = count;
                 // Cập nhật số
                 visitorEl.textContent = count;
                 
@@ -775,10 +779,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 visitorEl.style.transform = 'scale(1.2)';
                 visitorEl.style.transition = 'all 0.2s ease';
                 
-                setTimeout(() => {
+                if (visitorPulseTimerId) {
+                    clearTimeout(visitorPulseTimerId);
+                }
+                visitorPulseTimerId = setTimeout(() => {
                     visitorEl.style.color = '#ff00ff'; // Trả về màu tím neon
                     visitorEl.style.textShadow = '0 0 10px #ff00ff';
                     visitorEl.style.transform = 'scale(1)';
+                    visitorPulseTimerId = null;
                 }, 300);
             }
         }
