@@ -966,11 +966,91 @@
         });
 
         async function initMap() {
+            // === SHARED CONSTANTS (Sync with dashboard) ===
+            const STATUS_TEXT_MAP = {
+                'online': 'ONLINE', 'offline': 'OFFLINE', 'unprovisioned': 'CHƯA KÍCH HOẠT',
+                'awaiting_license': 'CHỜ LICENSE', 'configuring': 'ĐANG CẤU HÌNH',
+                'rebooting': 'KHỞI ĐỘNG LẠI', 'rebooting_for_reset': 'ĐANG RESET',
+                'locked': 'BỊ KHÓA', 'sleep': 'CHẾ ĐỘ NGỦ', 'streaming': 'ĐANG PHÁT',
+                'starting': 'ĐANG KHỞI CHẠY'
+            };
+
+            const STATUS_CLASS_MAP = {
+                'online': 'bg-success', 'offline': 'bg-danger', 'unprovisioned': 'bg-warning text-dark',
+                'awaiting_license': 'bg-info text-dark', 'configuring': 'bg-primary',
+                'rebooting': 'bg-warning text-dark', 'rebooting_for_reset': 'bg-danger',
+                'locked': 'bg-danger', 'sleep': 'bg-info', 'streaming': 'bg-success',
+                'starting': 'bg-warning text-dark'
+            };
+
+            const getStatusColor = (status) => {
+                switch (status) {
+                    case 'online': return '#198754'; case 'offline': return '#dc3545';
+                    case 'sleep': return '#0dcaf0'; case 'streaming': return '#198754';
+                    case 'starting': return '#ffc107'; case 'unprovisioned': return '#ffc107'; 
+                    case 'configuring': return '#0d6efd'; case 'locked': return '#dc3545';
+                    default: return '#6c757d';
+                }
+            };
+
+            const parseBoolCompat = (v, def = false) => {
+                if (v === null || v === undefined) return def;
+                if (typeof v === 'boolean') return v;
+                if (typeof v === 'string') {
+                    const s = v.trim().toLowerCase();
+                    if (['true', '1', 'yes', 'on'].includes(s)) return true;
+                    if (['false', '0', 'no', 'off'].includes(s)) return false;
+                }
+                return Boolean(v);
+            };
+
+            const isServerConfigured = (cfg, idx) => {
+                const host = String(cfg[`serverhost${idx}`] || '').trim();
+                const port = String(cfg[`port${idx}`] || '').trim();
+                const mp = String(cfg[`mountpoint${idx}`] || '').trim();
+                return Boolean(host && port && mp);
+            };
+
+            const isPreferredHost = (h) => {
+                const preferred = ['aitogy.com.vn', 'aitogy.click'];
+                return preferred.some(d => String(h || '').toLowerCase().includes(d));
+            };
+
+            const getMapEffectiveStatus = (dev) => {
+                const raw = String(dev?.status || '').toLowerCase();
+                if (['offline', 'locked', 'awaiting_license', 'unprovisioned', 'rebooting', 'rebooting_for_reset', 'configuring']
+                    .includes(raw) || raw.startsWith('auto_setup')) return 'offline';
+
+                const cfg = dev?.service_config || {};
+                const s1Enabled = parseBoolCompat(cfg.server1_enabled, isServerConfigured(cfg, 1));
+                const s2Enabled = parseBoolCompat(cfg.server2_enabled, isServerConfigured(cfg, 2));
+                const enabledServers = []; if (s1Enabled) enabledServers.push(1); if (s2Enabled) enabledServers.push(2);
+
+                const stats = dev?.ntrip_stats || {};
+                const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
+                const isVirtual = String(dev?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
+
+                if (enabledServers.length === 0) return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
+
+                const prioritized = enabledServers.filter(sid => isPreferredHost(cfg[`serverhost${sid}`]));
+                const targets = prioritized.length > 0 ? prioritized : enabledServers;
+                let hasPushing = false, hasSleeping = false;
+
+                targets.forEach(sid => {
+                    const onDemand = parseBoolCompat(cfg[`server${sid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
+                    const active = onDemand ? parseBoolCompat(cfg[`server${sid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
+                    if (!onDemand || active) hasPushing = true; else hasSleeping = true;
+                });
+
+                if (hasPushing) return 'online';
+                if (hasSleeping) return 'sleep';
+                return 'offline';
+            };
+
             map = L.map('publicMap').setView([21.0285, 105.8542], 6);
 
-            L.tileLayer('http://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+            L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
                 maxZoom: 20,
-                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
                 attribution: 'Google Maps | Aitogy'
             }).addTo(map);
 
@@ -978,26 +1058,14 @@
                 const res = await fetch('/api/public/map-stations');
                 if (!res.ok) throw new Error("Không tải được dữ liệu");
                 const stations = await res.json();
-
                 const bounds = [];
                 
                 stations.forEach(st => {
-                    let color = '#dc3545'; // Default: Offline (Red)
-                    let statusLabel = st.status || 'offline';
-                    
-                    if (st.status === 'online' || st.status === 'streaming') {
-                        color = '#198754'; // Online/Streaming (Green)
-                        statusLabel = 'ONLINE';
-                    } else if (st.status === 'sleep') {
-                        color = '#0dcaf0'; // Sleep/On-Demand (Cyan)
-                        statusLabel = 'CHẾ ĐỘ NGỦ';
-                    } else if (st.status === 'unprovisioned') {
-                        color = '#ffc107'; // Unprovisioned (Yellow)
-                        statusLabel = 'CHƯA KÍCH HOẠT';
-                    } else if (st.status === 'configuring') {
-                        color = '#0d6efd'; // Configuring (Blue)
-                        statusLabel = 'ĐANG CẤU HÌNH';
-                    }
+                    const effectiveStatus = getMapEffectiveStatus(st);
+                    const color = getStatusColor(effectiveStatus);
+                    const label = STATUS_TEXT_MAP[effectiveStatus] || effectiveStatus.toUpperCase();
+                    const badgeClass = STATUS_CLASS_MAP[effectiveStatus] || 'bg-secondary';
+                    const isVirtual = String(st.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
                     const icon = L.divIcon({
                         className: 'custom-div-icon',
@@ -1006,11 +1074,12 @@
                         iconAnchor: [7, 7]
                     });
 
-                    const popup = `<div style="text-align:center;color:#333;min-width:140px;font-family:sans-serif;">
+                    const popup = `<div style="color:#333;min-width:180px;font-family:sans-serif;">
                         <strong style="font-size:1.1em;display:block;margin-bottom:5px;">${st.name}</strong>
-                        <span style="background:${color};color:${color === '#ffc107' ? '#000' : '#fff'};padding:2px 8px;border-radius:4px;font-size:0.85em;font-weight:bold;">
-                            ${statusLabel}
-                        </span>
+                        <div class="mb-2">
+                            <span class="badge ${badgeClass}">${label}</span>
+                            ${isVirtual ? '<span class="badge bg-info text-dark ms-1">VIRTUAL</span>' : ''}
+                        </div>
                     </div>`;
 
                     L.marker([st.lat, st.lon], { icon }).addTo(map).bindPopup(popup);

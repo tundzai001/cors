@@ -2238,17 +2238,24 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                 lat = base_config.get('lat')
                 lon = base_config.get('lon')
             
-            # Chỉ thêm vÃ o danh sách nếu có đủ tọa độ hợp lệ
+            # Chỉ thêm vào danh sách nếu có đủ tọa độ hợp lệ
             if lat and lon:
                 try:
                     public_data.append({
+                        "serial": dev.serial,
                         "name": dev.name,
-                        "status": _resolve_stream_status(dev) if dev.status == "online" else dev.status,
+                        "status": dev.status,
                         "lat": float(lat),
-                        "lon": float(lon)
+                        "lon": float(lon),
+                        "service_config": dev.service_config,
+                        "ntrip_stats": dev.ntrip_stats,
+                        "detected_chip_type": dev.detected_chip_type,
+                        "is_provisioned": dev.is_provisioned,
+                        "ntrip_connected": getattr(dev, "ntrip_connected", False),
+                        "bps": getattr(dev, "bps", 0)
                     })
                 except (ValueError, TypeError) as e:
-                    logging.warning(f"âš ï¸  Invalid coordinates for {dev.name}: {e}")
+                    logging.warning(f"⚠️ Invalid coordinates for {dev.name}: {e}")
                     continue
         
         logging.info(f"âœ“ Public map returned {len(public_data)} stations")
