@@ -156,20 +156,26 @@ device_update_buffer_lock = asyncio.Lock()
 ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 
-def _read_caster_config_from_env() -> tuple[Optional[str], Optional[int]]:
+def _read_caster_config_from_env() -> dict:
     env_values = dotenv_values(ENV_FILE_PATH)
     raw_host = env_values.get("CASTER_HOST")
     raw_port = env_values.get("CASTER_PORT")
+    raw_user = env_values.get("CASTER_ADMIN_USER")
+    raw_pass = env_values.get("CASTER_PASSWORD")
 
-    host = str(raw_host).strip() if raw_host is not None and str(raw_host).strip() else None
-    port = None
-    if raw_port is not None and str(raw_port).strip():
+    result = {
+        "host": str(raw_host).strip() if raw_host and str(raw_host).strip() else None,
+        "port": None,
+        "user": str(raw_user).strip() if raw_user and str(raw_user).strip() else None,
+        "pass": str(raw_pass).strip() if raw_pass and str(raw_pass).strip() else None,
+    }
+    if raw_port and str(raw_port).strip():
         try:
-            port = int(str(raw_port).strip())
+            result["port"] = int(str(raw_port).strip())
         except ValueError:
             logger.warning("Invalid CASTER_PORT in .env: %s", raw_port)
 
-    return host, port
+    return result
 
 
 def _persist_caster_config_to_env(host: str, port: int) -> None:
@@ -470,6 +476,7 @@ def _resolve_stream_status(device: Optional[models.Device], force_starting: bool
 
 
 async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[str] = None) -> None:
+    logger.info(f"[RTCM] Action: {'WAKE-UP' if active else 'SLEEP'} serial='{serial}' mountpoint='{mountpoint}'")
     requested_mp_norm = _normalize_mountpoint(mountpoint) if mountpoint else None
     payload = {"active": bool(active)}
     if mountpoint:
@@ -731,7 +738,10 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
 
         # Only first active session triggers an agent command.
         if should_activate or not getattr(device, 'ntrip_connected', False):
+            logger.info(f"[RTCM] Triggering activation for {serial} (mp={selected_mountpoint}, active_before={active_before_same_mp})")
             await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint)
+        else:
+            logger.info(f"[RTCM] Joined existing pool for {serial} (mp={selected_mountpoint}, count={active_before_same_mp + 1})")
 
 
 def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bool:
@@ -973,20 +983,16 @@ async def rtcm_ntrip_clienttable_keepalive_task():
             clienttable: Optional[List[dict]] = None
             try:
                 async with auth_session_scope() as auth_db:
-                    default_caster = await get_caster_client(auth_db)
-                    caster_client = default_caster
-                    merged_clienttable: List[dict] = []
-                    for requested_mp in requested_mountpoints:
-                        rows = await caster_client.get_clienttable(mountpoint=requested_mp)
-                        if rows:
-                            merged_clienttable.extend(rows)
-                    if not merged_clienttable:
-                        # Some caster builds can miss rows when filtering by mountpoint.
-                        # Fallback to full clienttable to avoid false keepalive misses.
-                        rows_all = await caster_client.get_clienttable(mountpoint="all")
-                        if rows_all:
-                            merged_clienttable.extend(rows_all)
-                    clienttable = merged_clienttable
+                    caster_client = await get_caster_client(auth_db)
+                    
+                    # 🔥 FIX: Chỉ lấy 'all' 1 lần thay vì lặp từng Mountpoint
+                    # (Tránh "Connection Storm" gây ra phản hồi rỗng từ Caster)
+                    clienttable = await caster_client.get_clienttable(mountpoint="all")
+                    
+                    if clienttable is None:
+                        # Thử lại 1 lần sau 1.5s nếu lỗi kết nối
+                        await asyncio.sleep(1.5)
+                        clienttable = await caster_client.get_clienttable(mountpoint="all")
             except Exception as e:
                 logger.warning(f"[RTCM] Failed to fetch clienttable, applying grace keepalive: {e}")
 
@@ -1021,26 +1027,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                             await db.commit()
                 continue
 
-            # get_clienttable() returns [] on failures too, so guard with one short retry to avoid false misses.
-            if len(clienttable) == 0:
-                try:
-                    await asyncio.sleep(1.0)
-                    async with auth_session_scope() as auth_db:
-                        default_caster = await get_caster_client(auth_db)
-                        caster_client = default_caster
-                        retried_merged: List[dict] = []
-                        for requested_mp in requested_mountpoints:
-                            retried_rows = await caster_client.get_clienttable(mountpoint=requested_mp)
-                            if retried_rows:
-                                retried_merged.extend(retried_rows)
-                        if not retried_merged:
-                            retried_rows_all = await caster_client.get_clienttable()
-                            if retried_rows_all:
-                                retried_merged.extend(retried_rows_all)
-                        if retried_merged:
-                            clienttable = retried_merged
-                except Exception:
-                    pass
+            # XÓA: Khối retry lặp mountpoint (đã gộp lên trên)
 
             active_clienttable_rows = []
             for item in clienttable:
@@ -1942,7 +1929,8 @@ async def get_caster_users(
 ):
     """Danh sách rover từ NTRIP Caster kèm thông tin DB để đối soát."""
     # Đọc cấu hình Caster trực tiếp từ .env (không query system_settings)
-    env_host, env_port = _read_caster_config_from_env()
+    env_cfg = _read_caster_config_from_env()
+    env_host, env_port = env_cfg["host"], env_cfg["port"]
     host = str(env_host or settings.CASTER_HOST or 'aitogy.com.vn')
     port = int(env_port or settings.CASTER_PORT or 2101)
     caster = CasterClient(host, port)
@@ -2092,20 +2080,22 @@ async def get_caster_client(db: AsyncSession) -> CasterClient:
     """Helper để khởi tạo Caster Client an toàn từ .env hoặc DB"""
     system_settings = {}
     try:
-        # Nếu bảng system_settings không tồn tại (lỗi Postgres), ta bỏ qua
         system_settings = await crud.get_system_settings(db)
     except Exception as e:
-        logger.debug(f"[CASTER] system_settings table not available, using env only: {e}")
+        logger.debug(f"[CASTER] system_settings table not available: {e}")
 
-    env_host, env_port = _read_caster_config_from_env()
+    env_cfg = _read_caster_config_from_env()
+    
     # Ưu tiên .env -> settings -> DB -> default
-    host = str(env_host or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
-    port = int(env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
+    host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
+    port = int(env_cfg["port"] or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
+    user = str(env_cfg["user"] or "admin")
+    password = str(env_cfg["pass"] or "12345")
     
     if RTCM_KEEPALIVE_DEBUG:
-        logger.warning(f"[RTCM DEBUG] Using caster host={host} port={port}")
+        logger.warning(f"[RTCM DEBUG] Using caster host={host} port={port} user={user}")
     
-    return CasterClient(host, port)
+    return CasterClient(host, port, admin_user=user, admin_password=password)
 
 # === ðŸ†• WEBSOCKET THEO DÕI KHÁCH TRUY CẬP (PUBLIC) ===
 @app.websocket("/ws/track-visitors")
@@ -2234,12 +2224,12 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
             lon = coords.get('lon')
             
             # === TRY FORMAT 2: FLAT (Relay/Virtual) ===
-            if not lat or not lon:
+            if lat is None or lon is None:
                 lat = base_config.get('lat')
                 lon = base_config.get('lon')
             
             # Chỉ thêm vào danh sách nếu có đủ tọa độ hợp lệ
-            if lat and lon:
+            if lat is not None and lon is not None:
                 try:
                     public_data.append({
                         "serial": dev.serial,
@@ -2248,7 +2238,7 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                         "lat": float(lat),
                         "lon": float(lon),
                         "service_config": dev.service_config,
-                        "ntrip_stats": dev.ntrip_stats,
+                        "ntrip_stats": dev.ntrip_status,
                         "detected_chip_type": dev.detected_chip_type,
                         "is_provisioned": dev.is_provisioned,
                         "ntrip_connected": getattr(dev, "ntrip_connected", False),
@@ -2258,7 +2248,8 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                     logging.warning(f"⚠️ Invalid coordinates for {dev.name}: {e}")
                     continue
         
-        logging.info(f"âœ“ Public map returned {len(public_data)} stations")
+        logging.info(f"✓ Public map API: found {len(devices)} devices, returning {len(public_data)} with valid coords")
+        return public_data
         return public_data
         
     except Exception as e:
@@ -2907,7 +2898,8 @@ async def get_system_settings(
 ):
     """Lấy trạng thái hiện tại của các cÃ i đặt bảo mật."""
     settings_data = await crud.get_system_settings(db)
-    env_host, env_port = _read_caster_config_from_env()
+    env_cfg = _read_caster_config_from_env()
+    env_host, env_port = env_cfg["host"], env_cfg["port"]
     if env_host:
         settings_data["caster_host"] = env_host
     if env_port:
@@ -2924,7 +2916,8 @@ async def update_system_settings(
     caster_host = settings_data.get("caster_host")
     caster_port = settings_data.get("caster_port")
     if caster_host is not None or caster_port is not None:
-        env_host, env_port = _read_caster_config_from_env()
+        env_cfg = _read_caster_config_from_env()
+        env_host, env_port = env_cfg["host"], env_cfg["port"]
         resolved_host = str(caster_host).strip() if caster_host is not None else env_host
         resolved_port = caster_port if caster_port is not None else env_port
 
@@ -3267,7 +3260,8 @@ async def get_caster_config_endpoint(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     system_settings = await crud.get_system_settings(db)
-    env_host, env_port = _read_caster_config_from_env()
+    env_cfg = _read_caster_config_from_env()
+    env_host, env_port = env_cfg["host"], env_cfg["port"]
 
     host = env_host or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn')
     port = env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101)
