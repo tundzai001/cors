@@ -1047,12 +1047,38 @@
                 return 'offline';
             };
 
-            map = L.map('publicMap').setView([21.0285, 105.8542], 6);
+            map = L.map('publicMap', {
+                center: [21.0285, 105.8542],
+                zoom: 6,
+                zoomControl: true
+            });
 
-            L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+            // Các lớp bản đồ
+            const googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
                 maxZoom: 20,
-                attribution: 'Google Maps | Aitogy'
-            }).addTo(map);
+                attribution: 'Google Hybrid'
+            });
+
+            const googleTerrain = L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                attribution: 'Google Terrain'
+            });
+
+            const googleStreets = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                attribution: 'Google Streets'
+            });
+
+            // Mặc định dùng Hybrid (Vệ tinh)
+            googleHybrid.addTo(map);
+
+            const baseMaps = {
+                "Vệ tinh": googleHybrid,
+                "Địa hình": googleTerrain,
+                "Đường phố": googleStreets
+            };
+
+            L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
 
             try {
                 const res = await fetch('/api/public/map-stations');
@@ -1066,6 +1092,11 @@
                     const label = STATUS_TEXT_MAP[effectiveStatus] || effectiveStatus.toUpperCase();
                     const badgeClass = STATUS_CLASS_MAP[effectiveStatus] || 'bg-secondary';
                     const isVirtual = String(st.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
+
+                    const stLat = Number(st.lat);
+                    const stLon = Number(st.lon);
+
+                    if (isNaN(stLat) || isNaN(stLon) || stLat === 0 || stLon === 0) return;
 
                     const icon = L.divIcon({
                         className: 'custom-div-icon',
@@ -1082,8 +1113,8 @@
                         </div>
                     </div>`;
 
-                    L.marker([st.lat, st.lon], { icon }).addTo(map).bindPopup(popup);
-                    bounds.push([st.lat, st.lon]);
+                    L.marker([stLat, stLon], { icon }).addTo(map).bindPopup(popup);
+                    bounds.push([stLat, stLon]);
                 });
 
                 if (bounds.length > 0) map.fitBounds(bounds, { padding: [50, 50] });

@@ -22,10 +22,11 @@ CLIENTTABLE_DEBUG = str(
 ).strip().lower() in ("1", "true", "yes", "on")
 
 class CasterClient:
-    def __init__(self, host: str, port: int, admin_user: str = "id"):
+    def __init__(self, host: str, port: int, admin_user: str = "admin", admin_password: str = "12345"):
         self.host = host
         self.port = port
-        self.admin_user = admin_user 
+        self.admin_user = admin_user
+        self.admin_password = admin_password
 
     async def _send_command(self, command: str) -> str:
         reader, writer = None, None
@@ -49,6 +50,8 @@ class CasterClient:
             # 2. Gửi lệnh
             if CLIENTTABLE_DEBUG:
                 logger.info(f"-> GỬI LỆNH: {repr(command)}")
+            elif "/clienttable" not in command: # Luôn log các lệnh quan trọng, ClientTable log nếu bật debug
+                logger.debug(f"-> GỬI LỆNH: {repr(command)}")
             writer.write(command.encode('ascii', errors='ignore'))
             await writer.drain()
 
@@ -92,10 +95,17 @@ class CasterClient:
                     pass
 
     async def get_users(self) -> List[dict]:
-        cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/password1/9999\r\n"
+        cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/password1/9999\r\n\r\n"
         
         try:
             response = await self._send_command(cmd)
+            
+            # Fallback nếu admin_user không hợp lệ
+            if "Error" in response and self.admin_user != "id":
+                logger.warning(f"Caster rejected user '{self.admin_user}', trying 'id' fallback...")
+                cmd = f"GET /usertable HTTP/1.0/id/mp1/password1/9999\r\n\r\n"
+                response = await self._send_command(cmd)
+
             users = []
             
             lines = response.split('\n')
@@ -147,22 +157,36 @@ class CasterClient:
         return True
 
     async def get_clienttable(
-        self,
-        admin_user: Optional[str] = None,
-        mountpoint: str = "all",
-        password: str = "password1",
-        data_count: int = 1000, # Theo định nghĩa của anh là 20, nhưng 1000 mới đủ an toàn
+        self, mountpoint: str = "all", password: str = None, data_count: int = 1, admin_user: str = None
     ) -> Optional[List[dict]]:
         user = admin_user or self.admin_user
-        # Format chuẩn: GET /clienttable HTTP/1.0/id/[mp]/[pass]/[count]\r\n
-        cmd = f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{password}/{data_count}\r\n"
+        password = password or self.admin_password
+        # Format chuẩn: GET /clienttable HTTP/1.0/id/[mp]/[pass]/[count]\r\n\r\n
+        cmd = f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{password}/{data_count}\r\n\r\n"
 
         try:
             response = await self._send_command(cmd)
             
             # Kiểm tra Header phản hồi (CLIENTTABLE 200 OK)
             if "CLIENTTABLE 200 OK" not in response:
-                logger.warning(f"Caster response header unexpected: {response[:100]}")
+                # Nếu nhận phản hồi rỗng hoặc lỗi, và chưa dùng fallback 'id', thử lại với 'id'
+                if (not response or "Error" in response) and user != "id":
+                    logger.warning(f"Caster rejected user '{user}', trying 'id' fallback...")
+                    return await self.get_clienttable(mountpoint, password, data_count, "id")
+                
+                # MẸO THỬ CUỐI CÙNG: Thử dùng id nhưng bỏ /clienttable (một số caster Aitogy cũ dùng thế này)
+                if (not response or "Error" in response) and "/clienttable" in cmd:
+                    logger.warning(f"Trying alternative command format (no /clienttable)...")
+                    alt_cmd = f"GET /{user}/{mountpoint}/{password}/{data_count} HTTP/1.0\r\n\r\n"
+                    # Gọi trực tiếp _send_command để tránh đệ quy vô tận
+                    alt_response = await self._send_command(alt_cmd)
+                    if "CLIENTTABLE 200 OK" in alt_response:
+                        response = alt_response
+                    else:
+                        logger.warning(f"Alternative format also failed: {repr(alt_response[:100])}")
+                
+                if "CLIENTTABLE 200 OK" not in response:
+                    logger.warning(f"Caster response header (MP={mountpoint}, User={user}): {repr(response[:200])}")
             
             clients: List[dict] = []
 
@@ -220,7 +244,7 @@ class CasterClient:
             return None
 
     async def delete_user(self, identifier: str, username: str) -> bool:
-        cmd = f"GET /deluser HTTP/1.0/{identifier}/{username}\r\n"
+        cmd = f"GET /deluser HTTP/1.0/{identifier}/{username}\r\n\r\n"
         response = await self._send_command(cmd)
         
         if "have been deleted" in response:
