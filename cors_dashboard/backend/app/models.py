@@ -24,6 +24,7 @@ class Device(Base):
     system_info = Column(JSON, nullable=True)
     rtk_fix_status = Column(String, default="NO_FIX")  
     base_mode_active = Column(Boolean, default=False)  
+    version = Column(String, nullable=True)
     
     __table_args__ = (
         Index('ix_user_status', 'user_id', 'status'),
@@ -108,6 +109,7 @@ class RTCMStreamSession(Base):
     mountpoint = Column(String, nullable=False, index=True)
     client_id = Column(String, nullable=False, index=True)
     expires_at = Column(BigInteger, nullable=False, index=True)
+    caster_host = Column(String, nullable=True, index=True)
     created_at = Column(BigInteger, nullable=False)
     last_heartbeat_at = Column(BigInteger, nullable=False)
 

@@ -8,6 +8,7 @@ class DeviceBase(BaseModel):
     name: str | None = None
     status: str | None = "offline"
     timestamp: int | None = 0
+    version: str | None = None
     system_info: Optional[dict] = None
     
     class Config:
@@ -137,6 +138,7 @@ class UserResponse(UserBase):
     created_at: int
     permissions: list[str] = []
     can_create_rovers: bool = False
+    app_version: str | None = None
     
     class Config:
         from_attributes = True
@@ -165,6 +167,7 @@ class RoverMultiCreate(BaseModel):
     expiry_days: int = 365
     selected_serials: List[str] # Danh sách serial các trạm đã chọn
     mountpoint_override: str    # Chuỗi Mountpoint (người dùng chốt)
+    target_casters: Optional[List[str]] = Field(default_factory=list) # Danh sách Host muốn add user
     
 class RoverUpdate(BaseModel):
     password: str | None = None
@@ -191,6 +194,7 @@ class RTCMStationActivateRequest(BaseModel):
     client_instance_id: Optional[str] = None
     ttl_seconds: int = 90
     mountpoint: Optional[str] = None
+    caster_host: Optional[str] = None
 
 
 class RTCMNtripStartRequest(BaseModel):
@@ -214,6 +218,7 @@ class RTCMSessionResponse(BaseModel):
     serial: str
     client_id: str
     expires_at: int
+    caster_host: Optional[str] = None
     active_sessions_for_station: int
     stream_status: str
     connect_after_seconds: int = 3
@@ -273,6 +278,8 @@ class CasterRoverItem(BaseModel):
     is_blocked: bool = False  # Có trong blocklist không
     blocked_reason: Optional[str] = None
     blocked_at: Optional[int] = None
+    server: Optional[str] = None
+    version: Optional[str] = None
 
 
 class CasterUsersResponse(BaseModel):

@@ -983,6 +983,7 @@ async function loadCurrentUser() {
         const response = await apiFetch('/api/auth/me');
         if (response.ok) {
             globalState.currentUser = await response.json();
+            window.APP_VERSION = globalState.currentUser.app_version || 'UNKNOWN';
         } else {
             throw new Error('Failed to load user info');
         }

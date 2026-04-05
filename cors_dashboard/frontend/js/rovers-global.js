@@ -18,6 +18,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let allDevices = [];
     let casterUsers = [];  // Danh sách user từ Caster
     let casterStats = {};  // Stats từ API
+    let globalAppVersion = null;
+    let availableCasters = [];
 
     // === 2. AUTH & PERMISSIONS CHECK ===
     try {
@@ -49,6 +51,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // === 3. DATA LOADING ===
     async function initData() {
+        await fetchCasterConfig(); // Load available servers first
         await fetchDevices();
         await fetchRovers();
         // Load caster users khi tab được click lần đầu
@@ -58,6 +61,41 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (casterUsers.length === 0) fetchCasterUsers();
             });
         }
+    }
+
+    async function fetchCasterConfig() {
+        try {
+            const res = await fetch('/api/caster/config', { headers: API_HEADERS });
+            if (res.ok) {
+                const data = await res.json();
+                availableCasters = data.hosts || [];
+                globalAppVersion = data.version;
+                renderCasterCheckboxes();
+            }
+        } catch (e) {
+            console.error("Failed to fetch caster config", e);
+        }
+    }
+
+    function renderCasterCheckboxes() {
+        const container = document.getElementById('target-caster-container');
+        if (!container) return;
+        
+        container.innerHTML = '';
+        if (availableCasters.length === 0) {
+            container.innerHTML = '<div class="text-muted small">Không tìm thấy caster nào.</div>';
+            return;
+        }
+
+        availableCasters.forEach(host => {
+            const div = document.createElement('div');
+            div.className = 'form-check form-check-inline mb-0';
+            div.innerHTML = `
+                <input class="form-check-input caster-target-check" type="checkbox" value="${host}" id="target-${host}" checked>
+                <label class="form-check-label text-white small" for="target-${host}">${host}</label>
+            `;
+            container.appendChild(div);
+        });
     }
 
     async function fetchDevices() {
@@ -212,6 +250,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </button>`;
             }
 
+            // Version check tick
+            let versionTick = '';
+            if (u.nclient > 0) {
+                // If the user has clients, they are "Online"
+                // Check if we can match the station version (this is a bit theoretical for rovers, 
+                // but we follow user's UI request for a tick next to online)
+                versionTick = ` <i class="bi bi-patch-check-fill text-info ms-1" title="Version Synced: ${globalAppVersion}"></i>`;
+            }
+
             tr.innerHTML = `
                 <td>
                     <div class="d-flex align-items-center">
@@ -225,8 +272,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </td>
                 <td>${mpsDisplay}</td>
+                <td class="text-center text-muted small">${u.server || 'default'}</td>
                 <td class="text-center">${sourceBadge}</td>
-                <td class="text-center">${statusBadge}${blockedTimeHtml}</td>
+                <td class="text-center">
+                    ${statusBadge}
+                    ${versionTick}
+                    ${blockedTimeHtml}
+                </td>
                 <td class="text-center">
                     <span class="text-white fw-bold">${u.nclient}</span>
                     <span class="text-muted">/ ${u.maxclient}</span>
@@ -677,12 +729,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
+            const targetCasters = Array.from(document.querySelectorAll('.caster-target-check:checked')).map(cb => cb.value);
+
             const payload = {
                 username: document.getElementById('new-username').value,
                 password: document.getElementById('new-password').value,
                 expiry_days: parseInt(document.getElementById('new-expiry').value),
                 selected_serials: selectedSerials,
-                mountpoint_override: mpOverride
+                mountpoint_override: mpOverride,
+                target_casters: targetCasters
             };
 
             try {

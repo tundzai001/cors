@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     CASTER_HOST: str | None = None
     CASTER_PORT: int | None = None
     
+    ENABLE_PREFERRED_HOST: bool = False
+    PREFERRED_HOST_MARKER: str = ""
+    
     # Database configs
     DATABASE_URL: str
     AUTH_DATABASE_URL: str
@@ -61,6 +64,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_MINUTES: int = 15
     RATE_LIMIT_BLOCK_MINUTES: int = 30
     RATE_LIMIT_PERMANENT_THRESHOLD: int = 20
+    
+    APP_VERSION: str = "V1.0.0"
     
     class Config:
         env_file = ".env"

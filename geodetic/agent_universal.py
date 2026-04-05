@@ -2443,11 +2443,21 @@ class AgentManager:
     def _force_rtcm_standby_on_startup(self):
         global rtcm_stream_active_flag
         services = self.config.setdefault('services', {})
-        services['stream_on_demand'] = True
-        services['stream_active'] = False
-        services.pop('active_mountpoint', None)
-        self.rtcm_stream_active = False
-        rtcm_stream_active_flag = False
+        
+        global_on_demand = _to_bool(services.get('stream_on_demand', False), False)
+        
+        if global_on_demand:
+            services['stream_active'] = False
+            services.pop('active_mountpoint', None)
+            
+        for sid in (1, 2):
+            if _to_bool(services.get(f'server{sid}_stream_on_demand', global_on_demand), global_on_demand):
+                services[f'server{sid}_stream_active'] = False
+            else:
+                services[f'server{sid}_stream_active'] = True
+                
+        self.rtcm_stream_active = _compute_any_server_can_push(services)
+        rtcm_stream_active_flag = self.rtcm_stream_active
         self.save_config()
     
     def load_config(self):
@@ -2554,22 +2564,24 @@ class AgentManager:
             prev_switch = _get_server_stream_switches(services, server_id)
             prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
 
-            services['stream_on_demand'] = True
-            services[f'server{server_id}_stream_on_demand'] = True
-            services[f'server{server_id}_stream_active'] = bool(active)
-
-            # Optional selector for dashboards still using mountpoint targeting.
-            if mountpoint and bool(active):
-                services['active_mountpoint'] = str(mountpoint)
-            elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{server_id}')):
-                services.pop('active_mountpoint', None)
-
-            new_switch = _get_server_stream_switches(services, server_id)
-            new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-            should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
-            if not bool(active):
-                # Keep other server streams stable; worker loop can enter standby without full restart.
+            if not bool(active) and not prev_switch['on_demand']:
+                logging.info(f"[STREAM CONTROL] Ignoring sleep command for explicit server {server_id} because it is in Always-On mode.")
                 should_restart = False
+            else:
+                services[f'server{server_id}_stream_active'] = bool(active)
+    
+                # Optional selector for dashboards still using mountpoint targeting.
+                if mountpoint and bool(active):
+                    services['active_mountpoint'] = str(mountpoint)
+                elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{server_id}')):
+                    services.pop('active_mountpoint', None)
+    
+                new_switch = _get_server_stream_switches(services, server_id)
+                new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+                should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
+                if not bool(active):
+                    # Keep other server streams stable; worker loop can enter standby without full restart.
+                    should_restart = False
         else:
             prev_active = bool(services.get('stream_active', False))
             prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
@@ -2600,7 +2612,6 @@ class AgentManager:
                     target_server_id = on_demand_servers[0]
                 elif len(on_demand_servers) > 1:
                     for sid in on_demand_servers:
-                        services[f'server{sid}_stream_on_demand'] = True
                         services[f'server{sid}_stream_active'] = False
                     services.pop('active_mountpoint', None)
 
@@ -2611,32 +2622,39 @@ class AgentManager:
             # apply active/sleep directly to that specific server.
             if target_server_id in (1, 2):
                 prev_switch = _get_server_stream_switches(services, target_server_id)
-                services[f'server{target_server_id}_stream_on_demand'] = True
-                services[f'server{target_server_id}_stream_active'] = bool(active)
-
-                if mountpoint and bool(active):
-                    services['active_mountpoint'] = str(mountpoint)
-                elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{target_server_id}')):
-                    services.pop('active_mountpoint', None)
-
-                new_switch = _get_server_stream_switches(services, target_server_id)
-                new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-                should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
-                if not bool(active):
-                    # Avoid bouncing unaffected server workers during sleep transition.
+                if not bool(active) and not prev_switch['on_demand']:
+                    logging.info(f"[STREAM CONTROL] Ignoring sleep command for server {target_server_id} because it is in Always-On mode.")
                     should_restart = False
+                else:
+                    services[f'server{target_server_id}_stream_active'] = bool(active)
+    
+                    if mountpoint and bool(active):
+                        services['active_mountpoint'] = str(mountpoint)
+                    elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{target_server_id}')):
+                        services.pop('active_mountpoint', None)
+    
+                    new_switch = _get_server_stream_switches(services, target_server_id)
+                    new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+                    should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
+                    if not bool(active):
+                        # Avoid bouncing unaffected server workers during sleep transition.
+                        should_restart = False
             elif not should_restart:
-                services['stream_on_demand'] = True
-                services['stream_active'] = bool(active)
-
-                # Optional mountpoint selector from backend control plane.
-                if mountpoint and bool(active):
-                    services['active_mountpoint'] = str(mountpoint)
-                elif not bool(active):
-                    services.pop('active_mountpoint', None)
-
-                new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-                should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
+                global_on_demand = _to_bool(services.get('stream_on_demand', False), False)
+                if not bool(active) and not global_on_demand:
+                    logging.info("[STREAM CONTROL] Ignoring global sleep command because agent is in Always-On mode.")
+                    should_restart = False
+                else:
+                    services['stream_active'] = bool(active)
+    
+                    # Optional mountpoint selector from backend control plane.
+                    if mountpoint and bool(active):
+                        services['active_mountpoint'] = str(mountpoint)
+                    elif not bool(active):
+                        services.pop('active_mountpoint', None)
+    
+                    new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+                    should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
 
         self.rtcm_stream_active = _compute_any_server_can_push(services)
         rtcm_stream_active_flag = self.rtcm_stream_active  # Update global dispatch gate

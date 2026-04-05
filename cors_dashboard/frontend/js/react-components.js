@@ -317,8 +317,15 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
                         {device.name || device.serial}
                     </div>
                     {!metrics.hideStatusBadge && (
-                        <div className="mt-1">
-                            <span className={`badge ${metrics.statusBadgeClass}`}>{metrics.statusText}</span>
+                        <div className="mt-1 d-flex align-items-center gap-1">
+                            <span className={`badge ${metrics.statusBadgeClass}`}>
+                                {metrics.statusText}
+                            </span>
+                            {device.version === window.APP_VERSION ? (
+                                <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ (${device.version})`} style={{ fontSize: '0.9rem' }}></i>
+                            ) : (
+                                <i className="bi bi-exclamation-triangle-fill text-warning" title={`Không đồng bộ (Agent: ${device.version || '??'} | Server: ${window.APP_VERSION})`} style={{ fontSize: '0.9rem' }}></i>
+                            )}
                         </div>
                     )}
                     {isAdmin && <div className="device-meta">{device.serial}</div>}
@@ -1662,6 +1669,24 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
             <div className="mb-4 p-3 border rounded border-secondary">
                 <h5 className="mb-3">Cài đặt chung</h5>
+                <div className="mb-3 p-2 rounded bg-dark border border-secondary-subtle">
+                    <div className="d-flex align-items-center justify-content-between mb-1">
+                        <span className="text-muted small">Phiên bản Agent:</span>
+                        <span className="fw-bold small text-light">{device.version || 'Không xác định'}</span>
+                    </div>
+                    <div className="d-flex align-items-center justify-content-between">
+                        <span className="text-muted small">Trạng thái đồng bộ:</span>
+                        {device.version === window.APP_VERSION ? (
+                            <span className="badge bg-success-subtle text-success border border-success-subtle">
+                                <i className="bi bi-check-circle-fill me-1"></i>ĐÃ ĐỒNG BỘ (OK)
+                            </span>
+                        ) : (
+                            <span className="badge bg-warning-subtle text-warning border border-warning-subtle">
+                                <i className="bi bi-exclamation-triangle-fill me-1"></i>KHÔNG ĐỒNG BỘ
+                            </span>
+                        )}
+                    </div>
+                </div>
                 <fieldset disabled={disabled}>
                     <div className="row g-3">
                         <div className="col-md-6">
@@ -3620,10 +3645,17 @@ const DetailsPanel = memo(function DetailsPanel({
                             </div>
                         )}
 
-                        {/* Badge trạng thái (luôn hiển thị) */}
-                        <span className={`badge ${STATUS_CLASS_MAP[device.status] || 'bg-secondary'}`}>
-                            {STATUS_TEXT_MAP[device.status] || device.status}
-                        </span>
+                         {/* Badge trạng thái (luôn hiển thị) */}
+                        <div className="d-flex align-items-center gap-1">
+                            <span className={`badge ${STATUS_CLASS_MAP[device.status] || 'bg-secondary'}`}>
+                                {STATUS_TEXT_MAP[device.status] || device.status}
+                            </span>
+                            {device.version === window.APP_VERSION ? (
+                                <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ (${device.version})`} style={{ fontSize: '1rem' }}></i>
+                            ) : (
+                                <i className="bi bi-exclamation-triangle-fill text-warning" title={`Không đồng bộ (Agent: ${device.version || '??'} | Server: ${window.APP_VERSION})`} style={{ fontSize: '1rem' }}></i>
+                            )}
+                        </div>
 
                         {/* 3. BADGE LOẠI CHÍNH (Hiện VIRTUAL nếu là trạm ảo) */}
                         {device.detected_chip_type === 'VIRTUAL' && (

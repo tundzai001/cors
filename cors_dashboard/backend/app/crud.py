@@ -88,6 +88,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     'base_config': normalized_base_config,
                     'service_config': normalized_service_config,
                     'system_info': normalized_system_info,
+                    'version': device.get('version'),
                     'is_provisioned': device.get('is_provisioned'),
                     # is_locked thường ít khi gửi qua websocket status, nên dùng default cẩn thận
                     # Tốt nhất là không update is_locked ở đây nếu không có trong payload
@@ -127,6 +128,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     # Chỉ update name nếu có dữ liệu
                     'name': func.coalesce(func.nullif(func.btrim(stmt.excluded.name), ''), models.Device.name),
                     'is_provisioned': func.coalesce(stmt.excluded.is_provisioned, models.Device.is_provisioned),
+                    'version': func.coalesce(stmt.excluded.version, models.Device.version),
                 }
 
                 if update_is_synced:
@@ -314,17 +316,18 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
                 final_service_config.update(new_service_config)
 
             # Tạo mới thiết bị nếu là relay-like
-            new_device = models.Device(
-                serial=serial,
-                name=new_name or serial,
-                status=new_status or "offline",
-                is_provisioned=True, # Relay stations are considered provisioned
-                timestamp=current_ts,
-                base_config=new_base_config,
-                service_config=final_service_config,
-                detected_chip_type=new_chip_type,
-                is_synced=True
-            )
+                new_device = models.Device(
+                    serial=serial,
+                    name=new_name or serial,
+                    status=new_status or "offline",
+                    is_provisioned=True, 
+                    timestamp=current_ts,
+                    base_config=new_base_config,
+                    service_config=final_service_config,
+                    detected_chip_type=new_chip_type,
+                    version=device_data.get("version"),
+                    is_synced=True
+                )
             db.add(new_device)
             await db.commit()
             await db.refresh(new_device)
@@ -354,6 +357,12 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     # Chip type
     if new_chip_type and new_chip_type != "UNKNOWN" and existing_device.detected_chip_type != new_chip_type:
         update_values["detected_chip_type"] = new_chip_type
+        should_update = True
+
+    # Version
+    new_version = device_data.get("version")
+    if new_version and existing_device.version != new_version:
+        update_values["version"] = new_version
         should_update = True
 
     # ✅ KIỂM TRA BASE CONFIG

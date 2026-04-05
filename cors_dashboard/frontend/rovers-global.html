@@ -420,6 +420,7 @@
                                 <tr>
                                     <th>Username</th>
                                     <th>Mountpoints</th>
+                                    <th class="text-center">Server</th>
                                     <th class="text-center">Nguồn</th>
                                     <th class="text-center">Trạng thái</th>
                                     <th class="text-center">Clients</th>
@@ -515,16 +516,19 @@
 
                         <!-- PHẦN MOUNTPOINT (HIỆN RÕ, CHO PHÉP SỬA) -->
                         <div class="mb-3">
-                            <label class="form-label small text-muted fw-bold">Allowed Mountpoints (Các luồng được
-                                phép)</label>
+                            <label class="form-label small text-muted fw-bold">Allowed Mountpoints (Các luồng được phép)</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-dark border-secondary"><i
-                                        class="bi bi-broadcast"></i></span>
-                                <input type="text" class="form-control" id="new-mountpoints" required
-                                    placeholder="Sẽ tự động điền khi chọn trạm...">
+                                <span class="input-group-text bg-dark border-secondary"><i class="bi bi-broadcast"></i></span>
+                                <input type="text" class="form-control" id="new-mountpoints" required placeholder="Sẽ tự động điền khi chọn trạm...">
                             </div>
-                            <div class="form-text text-secondary small fst-italic">
-                                Các mountpoint cách nhau bằng dấu chấm phẩy (;). Bạn có thể sửa thủ công nếu muốn.
+                        </div>
+
+                        <!-- PHẦN CHỌN SERVER (TARGET CASTERS) -->
+                        <div class="mb-3">
+                            <label class="form-label small text-muted fw-bold">Target Servers (Chọn server muốn cấp tài khoản)</label>
+                            <div id="target-caster-container" class="d-flex flex-wrap gap-2 p-2 border rounded bg-dark-subtle">
+                                <!-- JS will populate this -->
+                                <div class="text-muted small">Đang tải danh sách server...</div>
                             </div>
                         </div>
 
