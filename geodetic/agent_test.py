@@ -2,6 +2,7 @@
 AGENT_VERSION = "V1.1.0"
 
 import asyncio
+import gc
 import base64
 import json
 import logging
@@ -71,7 +72,7 @@ else:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CONNECTION CONFIGURATION ---
-BACKEND_HOST = "aitogy.click"
+BACKEND_HOST = os.getenv("BACKEND_HOST", "aitogy.click")
 MQTT_BROKER = "45.117.179.134"
 MQTT_PORT = 1883
 # === THÊM 2 DÒNG NÀY ===
@@ -2563,9 +2564,6 @@ class AgentManager:
                 new_switch = _get_server_stream_switches(services, server_id)
                 new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
                 should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
-                if not bool(active):
-                    # Keep other server streams stable; worker loop can enter standby without full restart.
-                    should_restart = False
         else:
             prev_active = bool(services.get('stream_active', False))
             prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
@@ -2609,10 +2607,7 @@ class AgentManager:
                         services.pop('active_mountpoint', None)
                         
                 new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-                if bool(active):
-                    should_restart = (prev_any_can_push != _compute_any_server_can_push(services)) or (prev_mountpoint != new_mountpoint)
-                else:
-                    should_restart = False
+                should_restart = (prev_any_can_push != _compute_any_server_can_push(services)) or (prev_mountpoint != new_mountpoint)
             else:
                 if not should_restart:
                     global_on_demand = _to_bool(services.get('stream_on_demand', False), False)
@@ -2626,16 +2621,16 @@ class AgentManager:
                             services.pop('active_mountpoint', None)
                         
                         new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-                        if bool(active):
-                            should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
-                        else:
-                            should_restart = False
+                        should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
 
         self.rtcm_stream_active = _compute_any_server_can_push(services)
         rtcm_stream_active_flag = self.rtcm_stream_active  # Update global dispatch gate
         self.save_config()
         if should_restart:
+            logging.info(f"[STREAM CONTROL] Restarting services to apply new configuration (active={self.rtcm_stream_active})")
             self.restart_services()
+        else:
+            logging.debug("[STREAM CONTROL] Service state unchanged. Skipping restart.")
     
     def get_base_config(self):
         return self.config.get('base_config', {})
@@ -3323,6 +3318,29 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
             except asyncio.CancelledError:
                 raise
 
+async def memory_guard_task():
+    """Background task to periodically clean up and monitor RAM usage."""
+    logging.info("[MEM GUARD] Memory guard task started (Interval: 30m)")
+    while True:
+        try:
+            # 1. Force Python garbage collection
+            collected = gc.collect()
+            
+            # 2. Check current RAM usage
+            process = psutil.Process(os.getpid())
+            ram_mb = process.memory_info().rss / (1024 * 1024)
+            
+            if ram_mb > 200:
+                logging.warning(f"[MEM GUARD] High RAM usage detected: {ram_mb:.2f} MB. GC collected {collected} objects.")
+            else:
+                logging.info(f"[MEM GUARD] Current RAM usage: {ram_mb:.2f} MB. GC collected {collected} objects.")
+                
+        except Exception as e:
+            logging.error(f"[MEM GUARD] Error during cleanup: {e}")
+            
+        await asyncio.sleep(1800) # Every 30 minutes
+
+
 async def status_publisher_task(agent: AgentManager, mqtt_client: mqtt.Client):
     try:
         while True:
@@ -3945,9 +3963,10 @@ async def main():
     status_task = asyncio.create_task(status_publisher_task(agent, mqtt_client))
     ws_task = asyncio.create_task(websocket_task(agent, gnss_reader, mqtt_client))
     auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
+    mem_guard_task = asyncio.create_task(memory_guard_task())
     
     try:
-        await asyncio.gather(status_task, ws_task, auto_base_task)
+        await asyncio.gather(status_task, ws_task, auto_base_task, mem_guard_task)
     except asyncio.CancelledError:
         logging.info("Tasks cancelled - shutting down gracefully")
     finally:

@@ -6,6 +6,7 @@ import logging
 import uuid
 import json
 import asyncio
+import gc
 import sys
 import traceback
 import base64
@@ -156,26 +157,30 @@ device_update_buffer_lock = asyncio.Lock()
 ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 
-def _read_caster_config_from_env() -> dict:
+def _read_caster_config_from_env() -> tuple[list[str], dict]:
+    """Reads caster config from .env and supports multiple CSV hosts."""
     env_values = dotenv_values(ENV_FILE_PATH)
-    raw_host = env_values.get("CASTER_HOST")
+    raw_host = str(env_values.get("CASTER_HOST", "")).strip()
     raw_port = env_values.get("CASTER_PORT")
     raw_user = env_values.get("CASTER_ADMIN_USER")
     raw_pass = env_values.get("CASTER_PASSWORD")
 
-    result = {
-        "host": str(raw_host).strip() if raw_host and str(raw_host).strip() else None,
+    # Split multiple hosts if comma-separated
+    hosts = [h.strip() for h in raw_host.split(',') if h.strip()]
+    
+    config = {
+        "host": hosts[0] if hosts else None,
         "port": None,
         "user": str(raw_user).strip() if raw_user and str(raw_user).strip() else None,
         "pass": str(raw_pass).strip() if raw_pass and str(raw_pass).strip() else None,
     }
     if raw_port and str(raw_port).strip():
         try:
-            result["port"] = int(str(raw_port).strip())
+            config["port"] = int(str(raw_port).strip())
         except ValueError:
             logger.warning("Invalid CASTER_PORT in .env: %s", raw_port)
 
-    return result
+    return hosts, config
 
 
 def _persist_caster_config_to_env(host: str, port: int) -> None:
@@ -303,6 +308,8 @@ async def pi_status_ingest_worker_task():
         finally:
             pi_status_ingest_queue.task_done()
 
+rtcm_keepalive_miss_counts = {}  # {(username, mountpoint): miss_count}
+rtcm_last_auto_wake_times = {} # {serial: last_timestamp}
 rtcm_session_lock = asyncio.Lock()
 _ENV_VALUES = dotenv_values(ENV_FILE_PATH)
 
@@ -359,6 +366,10 @@ RTCM_KEEPALIVE_DEBUG = str(
     _get_env_preferring_dotenv("RTCM_KEEPALIVE_DEBUG", "0")
 ).strip().lower() in ("1", "true", "yes", "on")
 rtcm_keepalive_miss_counts: Dict[str, int] = {}
+
+# Global to track last activation command time per station to prevent "command storms" (debounce)
+last_station_activation_ts: Dict[str, float] = {}
+
 
 
 def _sanitize_ttl(ttl_seconds: int) -> int:
@@ -488,12 +499,7 @@ def _resolve_stream_status(device: Optional[models.Device], force_starting: bool
     return "starting"
 
 
-<<<<<<< HEAD
 async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[str] = None, requested_address: Optional[str] = None) -> None:
-=======
-async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[str] = None) -> None:
-    logger.info(f"[RTCM] Action: {'WAKE-UP' if active else 'SLEEP'} serial='{serial}' mountpoint='{mountpoint}'")
->>>>>>> 6263a3077a841b129bbdef05dd8afa152598a8c6
     requested_mp_norm = _normalize_mountpoint(mountpoint) if mountpoint else None
     payload = {"active": bool(active)}
     if mountpoint:
@@ -765,16 +771,26 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
             )
             await db.commit()
 
-        # Only first active session triggers an agent command.
+        # Only trigger an agent command if:
+        # 1. This is the first active session (should_activate is True)
+        # 2. OR the station is reported as not connected (might have dropped)
+        # 3. AND we haven't sent a START command in the last 30 seconds (Debounce/Anti-Storm)
+        last_ts = last_station_activation_ts.get(serial, 0)
+        cooldown_elapsed = now - last_ts
+        is_cooling_down = cooldown_elapsed < 30 # 30 seconds debounce
+
         if should_activate or not getattr(device, 'ntrip_connected', False):
-<<<<<<< HEAD
-            await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint, requested_address=requested_address)
-=======
-            logger.info(f"[RTCM] Triggering activation for {serial} (mp={selected_mountpoint}, active_before={active_before_same_mp})")
-            await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint)
+            if is_cooling_down:
+                logger.info(
+                    f"[RTCM] Skipping redundant activation for {serial} (mp={selected_mountpoint}) "
+                    f"- Command storm protection active ({int(cooldown_elapsed)}s elapsed)"
+                )
+            else:
+                logger.info(f"[RTCM] Triggering activation for {serial} (mp={selected_mountpoint})")
+                last_station_activation_ts[serial] = now
+                await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint, requested_address=requested_address)
         else:
             logger.info(f"[RTCM] Joined existing pool for {serial} (mp={selected_mountpoint}, count={active_before_same_mp + 1})")
->>>>>>> 6263a3077a841b129bbdef05dd8afa152598a8c6
 
 
 def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bool:
@@ -968,8 +984,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                     ]
 
             if not active_rows:
-                # No active sessions to check. Reset miss counts.
-                rtcm_keepalive_miss_counts.clear()
+                # No active sessions to check.
                 continue
 
             # 2. Match each session against Global Caster Cache
@@ -985,19 +1000,28 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                 port = int(settings.CASTER_PORT or 2101)
                 cache_key = f"{target_host}:{port}"
                 
-                cache = global_caster_data_cache.get(cache_key)
+                hosts_to_check = [target_host]
+                other_hosts = [h.strip() for h in settings.CASTER_HOST.split(",") if h.strip() and h.strip() != target_host]
+                hosts_to_check.extend(other_hosts)
+
+                found_on_host = None
+                caster_error_on_primary = False
                 in_clienttable = False
-                
-                if cache and cache.get("clients"):
+                for h in hosts_to_check:
+                    h_port = int(settings.CASTER_PORT or 2101)
+                    h_key = f"{h}:{h_port}"
+                    h_cache = global_caster_data_cache.get(h_key)
+                    if not h_cache or h_cache.get("error"): continue
+
+                    clients = h_cache.get("clients", [])
                     session_mp_norm = _normalize_mountpoint(mountpoint)
                     session_client_norm = _normalize_keepalive_client_id(client_id)
                     
-                    for item in cache["clients"]:
+                    found_in_h = False
+                    for item in clients:
                         mp = _normalize_mountpoint(item.get("mountpoint"))
-                        if mp != session_mp_norm:
-                            continue
+                        if mp != session_mp_norm: continue
                         
-                        # Check multiple identifiers
                         row_ids = {
                             _normalize_keepalive_client_id(item.get("client_id")),
                             _normalize_keepalive_client_id(item.get("receiver_id")),
@@ -1005,270 +1029,67 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                         } - {""}
                         
                         if session_client_norm in row_ids:
-                            in_clienttable = True
+                            found_in_h = True
                             break
+                    if found_in_h:
+                        found_on_host = h
+                        break
 
-                if in_clienttable:
-                    rtcm_keepalive_miss_counts.pop(sid, None)
+                if found_on_host:
+                    rtcm_keepalive_miss_counts.pop((client_id, mountpoint), None)
                     updated_ids.append(sid)
+                    if found_on_host != target_host:
+                        logger.info(f"[RTCM KEEPALIVE] User '{client_id}' switched from {target_host} to {found_on_host}. Updating session.")
+                        async with rtcm_session_lock:
+                            async with device_session_scope() as db:
+                                await db.execute(
+                                    update(models.RTCMStreamSession)
+                                    .where(models.RTCMStreamSession.session_id == sid)
+                                    .values(caster_host=found_on_host)
+                                )
+                                await db.commit()
                 else:
-                    # Grace period for new sessions
+                    # Grace period for new sessions (60s default)
                     session_age = now - created_at
-                    if session_age < RTCM_NTRIP_CLIENTTABLE_CHECK_INTERVAL * 3: # ~3 checks grace
+                    if session_age < RTCM_KEEPALIVE_NEW_SESSION_GRACE_SECONDS:
                         updated_ids.append(sid)
                         continue
 
-                    # Miss count logic
-                    miss_count = rtcm_keepalive_miss_counts.get(sid, 0) + 1
-                    rtcm_keepalive_miss_counts[sid] = miss_count
-                    
-                    # If host scan failed recently, give grace
-                    if cache and cache.get("error"):
-                        if miss_count < 5: # Grace for connection errors
-                            updated_ids.append(sid)
-                            continue
+                    # SAFETY LOCK: Only skip if the primary caster actually had an error.
+                    # If it's healthy but empty, we MUST allow miss counting.
+                    if caster_error_on_primary:
+                        updated_ids.append(sid)
+                        continue
 
-<<<<<<< HEAD
+                    m_key = (client_id, mountpoint)
+                    miss_count = rtcm_keepalive_miss_counts.get(m_key, 0) + 1
+                    rtcm_keepalive_miss_counts[m_key] = miss_count
+                    
                     if miss_count >= RTCM_KEEPALIVE_MISS_THRESHOLD:
                         expired_ids.append(sid)
                         candidates_for_deactivation.add((serial, _normalize_mountpoint(mountpoint)))
-                        logger.warning(f"[RTCM] Session {sid} expired after {miss_count} misses on {target_host}")
+                        logger.warning(f"[RTCM] User '{client_id}' (@{mountpoint}) on station {serial} expired after {miss_count} misses.")
                     else:
                         if RTCM_KEEPALIVE_DEBUG:
-                            logger.info(f"[RTCM DEBUG] Session {sid} miss {miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD} on {target_host}")
-=======
-            clienttable: Optional[List[dict]] = None
-            try:
-                async with auth_session_scope() as auth_db:
-                    caster_client = await get_caster_client(auth_db)
-                    
-                    # 🔥 FIX: Chỉ lấy 'all' 1 lần thay vì lặp từng Mountpoint
-                    # (Tránh "Connection Storm" gây ra phản hồi rỗng từ Caster)
-                    clienttable = await caster_client.get_clienttable(mountpoint="all")
-                    
-                    if clienttable is None:
-                        # Thử lại 1 lần sau 1.5s nếu lỗi kết nối
-                        await asyncio.sleep(1.5)
-                        clienttable = await caster_client.get_clienttable(mountpoint="all")
-            except Exception as e:
-                logger.warning(f"[RTCM] Failed to fetch clienttable, applying grace keepalive: {e}")
-
-            if clienttable is None:
-                grace_expires_at = now + RTCM_KEEPALIVE_FETCH_GRACE_SECONDS
-                touched = 0
-                active_session_ids = {sid for sid, _, _, _ in active_rows}
-                stale_ids = [sid for sid in rtcm_keepalive_miss_counts.keys() if sid not in active_session_ids]
-                for sid in stale_ids:
-                    rtcm_keepalive_miss_counts.pop(sid, None)
->>>>>>> 6263a3077a841b129bbdef05dd8afa152598a8c6
+                            logger.info(f"[RTCM DEBUG] User '{client_id}' miss {miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD} on {target_host}")
 
             # 3. Update DB
             if updated_ids or expired_ids:
                 async with rtcm_session_lock:
                     async with device_session_scope() as db:
                         if updated_ids:
+                            # Batch update heartbeats
                             await db.execute(
                                 update(models.RTCMStreamSession)
                                 .where(models.RTCMStreamSession.session_id.in_(updated_ids))
                                 .values(expires_at=keepalive_to, last_heartbeat_at=now)
                             )
-<<<<<<< HEAD
                         if expired_ids:
+                            # Batch expire sessions
                             await db.execute(
                                 update(models.RTCMStreamSession)
                                 .where(models.RTCMStreamSession.session_id.in_(expired_ids))
                                 .values(expires_at=now - 1)
-=======
-                        )
-                        sessions_by_id = {
-                            str(s.session_id): s for s in sessions_rs.scalars().all() if s and s.session_id
-                        }
-
-                        for session_id, _, _, _ in active_rows:
-                            session = sessions_by_id.get(session_id)
-                            if not session:
-                                continue
-                            if int(session.expires_at or 0) < grace_expires_at:
-                                session.expires_at = grace_expires_at
-                                session.last_heartbeat_at = now
-                                touched += 1
-                        if touched > 0:
-                            await db.commit()
-                continue
-
-            # XÓA: Khối retry lặp mountpoint (đã gộp lên trên)
-
-            active_clienttable_rows = []
-            for item in clienttable:
-                # Keepalive should use only active rover rows from clienttable.
-                # Some casters return historical/inactive rows or source rows.
-                try:
-                    # CHANGE: Loosen status check. Some casters report status 0 for active rovers.
-                    # We only skip if status is explicitly negative or if it's a known source.
-                    status_val = item.get("status")
-                    if status_val is not None and int(status_val) < 0:
-                        if RTCM_KEEPALIVE_DEBUG:
-                            logger.warning(f"[RTCM DEBUG] skip row: status < 0: {item}")
-                        continue
-                    
-                    row_sig = f"{item.get('receiver_id', '')} {item.get('client_id', '')} {item.get('username', '')}".lower()
-                    if "source" in row_sig:
-                        if RTCM_KEEPALIVE_DEBUG:
-                            logger.warning(f"[RTCM DEBUG] skip row: source keyword: {item}")
-                        continue
-                except Exception:
-                    pass
-
-                row_client = str(item.get("client_id") or item.get("receiver_id") or item.get("username") or "").strip()
-                row_mountpoint = _normalize_mountpoint(item.get("mountpoint"))
-                if not row_client or not row_mountpoint:
-                    # Skip malformed rows so they cannot keep sessions alive.
-                    continue
-
-                active_clienttable_rows.append(item)
-
-            active_mountpoints: Set[str] = set()
-            active_mountpoint_counts: Dict[str, int] = {}
-            for item in active_clienttable_rows:
-                mp = _normalize_mountpoint(item.get("mountpoint"))
-                if mp:
-                    active_mountpoints.add(mp)
-                    active_mountpoint_counts[mp] = active_mountpoint_counts.get(mp, 0) + 1
-
-            if RTCM_KEEPALIVE_DEBUG:
-                logger.warning(
-                    f"[RTCM DEBUG] keepalive active_mountpoints={sorted(active_mountpoints)[:40]} "
-                    f"clienttable_rows={len(clienttable)}"
-                )
-
-            keepalive_to = now + 90
-            updated = 0
-            expired_on_miss = 0
-            stations_to_deactivate: Set[tuple[str, str]] = set()
-            stations_to_auto_activate = set()
-            active_session_ids = {sid for sid, _, _, _ in active_rows}
-            stale_ids = [sid for sid in rtcm_keepalive_miss_counts.keys() if sid not in active_session_ids]
-            for sid in stale_ids:
-                rtcm_keepalive_miss_counts.pop(sid, None)
-
-            active_sessions_by_mountpoint: Dict[tuple[str, str], int] = {}
-            for _, _, serial, mountpoint in active_rows:
-                mp_norm = _normalize_mountpoint(mountpoint)
-                if not mp_norm:
-                    continue
-                key = (serial, mp_norm)
-                active_sessions_by_mountpoint[key] = active_sessions_by_mountpoint.get(key, 0) + 1
-
-            async with rtcm_session_lock:
-                async with device_session_scope() as db:
-                    sessions_rs = await db.execute(
-                        select(models.RTCMStreamSession).where(
-                            models.RTCMStreamSession.session_id.in_(list(active_session_ids))
-                        )
-                    )
-                    sessions_by_id = {
-                        str(s.session_id): s for s in sessions_rs.scalars().all() if s and s.session_id
-                    }
-
-                    active_client_keys = {
-                        (
-                            _normalize_mountpoint(item.get("mountpoint")),
-                            # Normalize all potential client identifiers from the caster row
-                            tuple(sorted({
-                                _normalize_keepalive_client_id(item.get("client_id")),
-                                _normalize_keepalive_client_id(item.get("receiver_id")),
-                                _normalize_keepalive_client_id(item.get("username")),
-                            } - {""}))
-                        )
-                        for item in active_clienttable_rows
-                        if _normalize_mountpoint(item.get("mountpoint"))
-                    }
-
-                    # Debug match details
-                    if RTCM_KEEPALIVE_DEBUG and len(active_clienttable_rows) > 0:
-                        logger.warning(f"[RTCM DEBUG] active_keys={active_client_keys}")
-
-                    for session_id, client_id, serial, mountpoint in active_rows:
-                        session = sessions_by_id.get(session_id)
-                        if not session:
-                            rtcm_keepalive_miss_counts.pop(session_id, None)
-                            continue
-
-                        session_mp = _normalize_mountpoint(mountpoint)
-                        session_client_norm = _normalize_keepalive_client_id(client_id)
-
-                        # Strict keepalive: verify exact (mountpoint, client_id) presence in clienttable.
-                        # Check if session client matches ANY identifier in the caster row for this mountpoint
-                        in_clienttable = False
-                        if session_mp:
-                            for mp, ids in active_client_keys:
-                                if mp == session_mp and session_client_norm in ids:
-                                    in_clienttable = True
-                                    break
-
-                        if not in_clienttable:
-                            # New sessions can appear in DB before caster clienttable catches up.
-                            # Hold for a short grace window to avoid immediate false disconnect.
-                            created_at = int(getattr(session, "created_at", 0) or 0)
-                            session_age_seconds = (now - created_at) if created_at > 0 else None
-                            if (
-                                session_age_seconds is not None
-                                and session_age_seconds < RTCM_KEEPALIVE_NEW_SESSION_GRACE_SECONDS
-                            ):
-                                session.expires_at = max(int(session.expires_at or 0), keepalive_to)
-                                session.last_heartbeat_at = now
-                                updated += 1
-                                if RTCM_KEEPALIVE_DEBUG:
-                                    logger.warning(
-                                        f"[RTCM DEBUG] keepalive grace-new-session: serial={serial} "
-                                        f"mountpoint={mountpoint} client_id={client_id} "
-                                        f"session_age={session_age_seconds}s grace={RTCM_KEEPALIVE_NEW_SESSION_GRACE_SECONDS}s"
-                                    )
-                                continue
-
-                            miss_count = rtcm_keepalive_miss_counts.get(session_id, 0) + 1
-                            rtcm_keepalive_miss_counts[session_id] = miss_count
-
-                            miss_threshold = RTCM_KEEPALIVE_MISS_THRESHOLD
-                            # If caster shows mountpoint has no active receiver at all,
-                            # accelerate drop for that session.
-                            if session_mp and active_mountpoint_counts.get(session_mp, 0) == 0:
-                                miss_threshold = RTCM_KEEPALIVE_EMPTY_MOUNTPOINT_MISS_THRESHOLD
-
-                            if RTCM_KEEPALIVE_DEBUG:
-                                logger.warning(
-                                    f"[RTCM DEBUG] miss_detail serial={serial} client_id={client_id} "
-                                    f"session_mountpoint_raw='{mountpoint}' session_mountpoint_norm='{session_mp}' "
-                                    f"session_client_norm='{session_client_norm}' "
-                                    f"present_in_clienttable={in_clienttable} "
-                                    f"active_mp_clients={active_mountpoint_counts.get(session_mp or '', 0)} "
-                                    f"miss_threshold={miss_threshold}"
-                                )
-
-                            if miss_count < miss_threshold:
-                                logger.warning(
-                                    f"[RTCM] Keepalive pending miss({miss_count}/{miss_threshold}): "
-                                    f"serial={serial} mountpoint={mountpoint} client_id={client_id} "
-                                    f"active_client_rows={len(active_clienttable_rows)}"
-                                )
-                                continue
-
-                            # Missing for N consecutive checks -> expire session.
-                            session.expires_at = now - 1
-                            session.last_heartbeat_at = now
-                            expired_on_miss += 1
-
-                            key = (serial, session_mp)
-                            remaining_for_mp = max(0, active_sessions_by_mountpoint.get(key, 0) - 1)
-                            active_sessions_by_mountpoint[key] = remaining_for_mp
-
-                            if remaining_for_mp == 0:
-                                stations_to_deactivate.add((serial, session_mp or ""))
-                            logger.warning(
-                                f"[RTCM] Keepalive miss: serial={serial} mountpoint={mountpoint} "
-                                f"client_id={client_id} miss_count={miss_count} "
-                                f"active_client_rows={len(active_clienttable_rows)}"
->>>>>>> 6263a3077a841b129bbdef05dd8afa152598a8c6
                             )
                         await db.commit()
 
@@ -1358,21 +1179,11 @@ async def rtcm_session_reaper_task():
 
         for serial, mountpoint_norm in stations_to_deactivate:
             try:
+                device_label = f"{serial}@{mountpoint_norm}" if mountpoint_norm else serial
+                logger.info(f"[RTCM REAPER] Sending deactivation command to station {device_label}")
                 await _set_station_stream(serial, active=False, mountpoint=mountpoint_norm or None)
-                if mountpoint_norm:
-                    logger.info(
-                        f"[RTCM] Auto-deactivated station '{serial}' on mountpoint '{mountpoint_norm}' "
-                        f"due to expired sessions"
-                    )
-                else:
-                    logger.info(f"[RTCM] Auto-deactivated station '{serial}' due to expired sessions")
             except Exception as e:
-                if mountpoint_norm:
-                    logger.warning(
-                        f"[RTCM] Failed to auto-deactivate station '{serial}' on mountpoint '{mountpoint_norm}': {e}"
-                    )
-                else:
-                    logger.warning(f"[RTCM] Failed to auto-deactivate station '{serial}': {e}")
+                logger.warning(f"[RTCM REAPER] Failed to auto-deactivate station '{serial}': {e}")
 
 async def log_system_event(
     db: AsyncSession,
@@ -1596,6 +1407,23 @@ async def periodic_buffer_flush():
             except Exception as e:
                 logger.error(f"Flush task error: {e}")
 
+async def memory_guard_task():
+    """Tác vụ định kỳ dọn dẹp RAM cho Backend."""
+    logger.info("[MEM GUARD] Backend memory guard started")
+    while True:
+        try:
+            collected = gc.collect()
+            import psutil
+            process = psutil.Process()
+            ram_mb = process.memory_info().rss / (1024 * 1024)
+            if ram_mb > 500: # Backend thường dùng nhiều hơn Agent
+                logger.warning(f"[MEM GUARD] Backend RAM Usage: {ram_mb:.2f} MB. GC collected {collected} objects.")
+            else:
+                logger.debug(f"[MEM GUARD] RAM: {ram_mb:.2f} MB")
+        except Exception as e:
+            logger.error(f"[MEM GUARD] Error: {e}")
+        await asyncio.sleep(1800) # Mỗi 30 phút
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -1754,6 +1582,7 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(rtcm_session_reaper_task()))
         tasks.append(asyncio.create_task(rtcm_ntrip_clienttable_keepalive_task()))
         tasks.append(asyncio.create_task(ui_broadcast_worker_task()))
+        tasks.append(asyncio.create_task(memory_guard_task()))
         for _ in range(max(1, PI_INGEST_WORKER_COUNT)):
             tasks.append(asyncio.create_task(pi_status_ingest_worker_task()))
             
@@ -1922,6 +1751,30 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                     f"server_id={selected_server_id} host={selected_server_host or 'unknown'}"
                 )
 
+            # --- SMART POLLING ---
+            # Thay vì chờ cố định 5 giây, chúng ta kiểm tra trạng thái thực tế trên Caster 
+            # để phản hồi ngay khi trạm kết nối thành công.
+            start_poll = time.time()
+            check_success = False
+            try:
+                caster = await get_caster_client(db)
+                # Thử tối đa 30 lần (~30 giây) để bắt kịp các trạm khởi động chậm hoặc Caster update lâu
+                for i in range(30):
+                    # Quan trọng: Luôn lấy 'all' để đảm bảo Caster trả về dữ liệu (giống Hercules test)
+                    # Sau đó Backend sẽ tự lọc tìm mountpoint trong danh sách.
+                    clients = await caster.get_clienttable(mountpoint="all")
+                    if clients and any(str(c.get('mountpoint', '')).lower() == mountpoint.lower() for c in clients):
+                        check_success = True
+                        logger.info(f"[NTRIP Wake] Trạm {mountpoint} đã online sau {time.time() - start_poll:.2f}s")
+                        break
+                    await asyncio.sleep(0.8)
+            except Exception as poll_err:
+                logger.warning(f"[NTRIP Wake] Lỗi khi polling Caster: {poll_err}. Chờ dự phòng 3s.")
+                await asyncio.sleep(3)
+
+            if not check_success:
+                logger.warning(f"[NTRIP Wake] Hết thời gian chờ nhưng chưa thấy trạm {mountpoint} trên Caster.")
+
             msg = f"ok bật trạm thành công {name}"
             return PlainTextResponse(f"lắng nghe thành công\n{msg}")
             
@@ -1931,135 +1784,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
         return PlainTextResponse(msg, status_code=200)
 
 
-<<<<<<< HEAD
 # (Old single-instance Caster Rover Management API removed to prevent shadowing multi-instance logic)
-=======
-# === CASTER ROVER MANAGEMENT API ===
-
-@app.get("/api/caster/users", response_model=schemas.CasterUsersResponse)
-async def get_caster_users(
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
-):
-    """Danh sách rover từ NTRIP Caster kèm thông tin DB để đối soát."""
-    # Đọc cấu hình Caster trực tiếp từ .env (không query system_settings)
-    env_cfg = _read_caster_config_from_env()
-    env_host, env_port = env_cfg["host"], env_cfg["port"]
-    host = str(env_host or settings.CASTER_HOST or 'aitogy.com.vn')
-    port = int(env_port or settings.CASTER_PORT or 2101)
-    caster = CasterClient(host, port)
-
-    users = await caster.get_users()
-    if not users:
-        return {"items": [], "total": 0}
-
-    results = []
-    async with auth_session_scope() as auth_db:
-        # Lấy toàn bộ blocklist
-        block_q = select(models.RoverBlocklist)
-        block_rs = await auth_db.execute(block_q)
-        blocks = block_rs.scalars().all()
-        
-        blocks_map = {}
-        for b in blocks:
-            if b.username not in blocks_map: blocks_map[b.username] = []
-            blocks_map[b.username].append(b)
-        
-        # Lấy list usernames trong DB local
-        db_rovers_q = select(models.RoverAccount.username)
-        db_rovers_rs = await auth_db.execute(db_rovers_q)
-        db_usernames = set(db_rovers_rs.scalars().all())
-
-    for u in users:
-        uname = u['username']
-        user_blocks = blocks_map.get(uname, [])
-        is_blocked = len(user_blocks) > 0
-        
-        reason = None
-        blocked_at = None
-        if user_blocks:
-            reason = ", ".join([f"{b.mountpoint or 'ALL'}: {b.reason}" for b in user_blocks])
-            blocked_at = user_blocks[0].blocked_at
-
-        results.append({
-            **u,
-            "in_db": uname in db_usernames,
-            "is_blocked": is_blocked,
-            "blocked_reason": reason,
-            "blocked_at": blocked_at
-        })
-
-    return {
-        "items": results,
-        "total": len(results),
-        "in_db_count": sum(1 for r in results if r['in_db']),
-        "unknown_count": sum(1 for r in results if not r['in_db']),
-        "blocked_count": sum(1 for r in results if r['is_blocked'])
-    }
-
-
-@app.post("/api/caster/block-user")
-async def block_caster_user(
-    request: schemas.BlockRoverRequest,
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
-):
-    """API chặn user trên một hoặc nhiều trạm (Lưu vào DB blocklist)."""
-    async with auth_session_scope() as auth_db:
-        target_mps = request.mountpoints or [None] # None = Chặn toàn bộ
-        
-        added_count = 0
-        for mp in target_mps:
-            # Kiểm tra xem đã tồn tại block cho user + mp này chưa
-            q = select(models.RoverBlocklist).where(
-                models.RoverBlocklist.username == request.username,
-                models.RoverBlocklist.mountpoint == mp
-            )
-            rs = await auth_db.execute(q)
-            if rs.scalar_one_or_none():
-                continue # Đã chặn rồi thì bỏ qua
-
-            new_block = models.RoverBlocklist(
-                username=request.username,
-                mountpoint=mp,
-                blocked_at=int(time.time()),
-                blocked_by=current_user.username,
-                reason=request.reason or "Blocked by admin"
-            )
-            auth_db.add(new_block)
-            added_count += 1
-        
-        # Nếu có chặn Global (None trong list) thì vô hiệu hóa tài khoản luôn
-        if None in target_mps:
-            q_rover = select(models.RoverAccount).where(models.RoverAccount.username == request.username)
-            res_rover = await auth_db.execute(q_rover)
-            rover = res_rover.scalar_one_or_none()
-            if rover: rover.is_active = False 
-            
-        await auth_db.commit()
-
-    target_str = "toàn bộ hệ thống" if None in target_mps else f"{len(target_mps)} trạm cụ thể"
-    return {"status": "ok", "message": f"Đã chặn user {request.username} trên {target_str}."}
-
-
-@app.post("/api/caster/unblock-user")
-async def unblock_caster_user(
-    request: schemas.UnblockRoverRequest,
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
-):
-    """Mở khóa user (xóa khỏi blocklist)."""
-    async with auth_session_scope() as auth_db:
-        q = delete(models.RoverBlocklist).where(models.RoverBlocklist.username == request.username)
-        await auth_db.execute(q)
-
-        q_rover = select(models.RoverAccount).where(models.RoverAccount.username == request.username)
-        res_rover = await auth_db.execute(q_rover)
-        rover = res_rover.scalar_one_or_none()
-        if rover:
-            rover.is_active = True
-            
-        await auth_db.commit()
-
-    return {"status": "ok", "message": f"Đã mở khóa cho user {request.username}"}
->>>>>>> 6263a3077a841b129bbdef05dd8afa152598a8c6
 
 @app.get("/api/ntrip/auth-check")
 async def ntrip_auth_check(
@@ -2098,18 +1823,13 @@ async def get_caster_client(db: AsyncSession) -> CasterClient:
     except Exception as e:
         logger.debug(f"[CASTER] system_settings table not available: {e}")
 
-    env_cfg = _read_caster_config_from_env()
+    hosts, env_cfg = _read_caster_config_from_env()
     
     # Ưu tiên .env -> settings -> DB -> default
-<<<<<<< HEAD
-    host = str(env_host or settings.CASTER_HOST or system_settings.get('caster_host', ''))
-    port = int(env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
-=======
-    host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
+    host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', ''))
     port = int(env_cfg["port"] or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
     user = str(env_cfg["user"] or "admin")
     password = str(env_cfg["pass"] or "12345")
->>>>>>> 6263a3077a841b129bbdef05dd8afa152598a8c6
     
     if RTCM_KEEPALIVE_DEBUG:
         logger.warning(f"[RTCM DEBUG] Using caster host={host} port={port} user={user}")
@@ -2829,7 +2549,7 @@ async def caster_monitor_task():
         try:
             async with auth_session_scope() as db:
                 # 1. Get all hosts to scan
-                env_host, _ = _read_caster_config_from_env()
+                env_hosts, env_cfg = _read_caster_config_from_env()
                 settings_host = getattr(settings, "CASTER_HOST", "")
                 system_settings = {}
                 try:
@@ -2838,28 +2558,35 @@ async def caster_monitor_task():
                     pass
                 db_host = system_settings.get('caster_host', '')
 
-                raw_hosts = f"{env_host or ''},{settings_host or ''},{db_host or ''}"
                 unique_hosts = set()
-                for h in raw_hosts.split(','):
-                    h = h.strip()
-                    if h:
-                        unique_hosts.add(h)
+                # Add hosts from .env list
+                for h in env_hosts:
+                    unique_hosts.add(h)
+                
+                # Add hosts from settings and DB (might be CSV)
+                for raw_str in [settings_host, db_host]:
+                    if raw_str:
+                        for h in str(raw_str).split(','):
+                            h = h.strip()
+                            if h: unique_hosts.add(h)
 
                 # Also discover hosts from active sessions
                 try:
                     sessions_rs = await db.execute(select(models.RTCMStreamSession.caster_host).distinct())
                     for row in sessions_rs.all():
                         if row[0]:
-                            unique_hosts.add(row[0])
+                            unique_hosts.add(str(row[0]).strip())
                 except Exception:
                     pass
 
                 port = int(getattr(settings, "CASTER_PORT", 2101) or system_settings.get('caster_port', 2101))
+                user = env_cfg.get("user")
+                password = env_cfg.get("pass")
 
                 # 2. Scan each host
                 tasks = []
                 for host in unique_hosts:
-                    tasks.append(_sync_single_caster(host, port))
+                    tasks.append(_sync_single_caster(host, port, user, password))
 
                 if tasks:
                     await asyncio.gather(*tasks)
@@ -2870,12 +2597,12 @@ async def caster_monitor_task():
         await asyncio.sleep(5)
 
 
-async def _sync_single_caster(host: str, port: int):
+async def _sync_single_caster(host: str, port: int, user: str = None, password: str = None):
     """Worker to fetch data from one caster and update the global cache."""
     key = f"{host}:{port}"
     try:
         from app.caster_client import CasterClient
-        caster = CasterClient(host, port)
+        caster = CasterClient(host, port, admin_user=user, admin_password=password)
         # Fetch data in parallel
         users, clients = await asyncio.gather(
             caster.get_users(),
@@ -3018,7 +2745,7 @@ async def get_system_settings(
 ):
     """Lấy trạng thái hiện tại của các cÃ i đặt bảo mật."""
     settings_data = await crud.get_system_settings(db)
-    env_cfg = _read_caster_config_from_env()
+    _, env_cfg = _read_caster_config_from_env()
     env_host, env_port = env_cfg["host"], env_cfg["port"]
     if env_host:
         settings_data["caster_host"] = env_host
@@ -3036,7 +2763,7 @@ async def update_system_settings(
     caster_host = settings_data.get("caster_host")
     caster_port = settings_data.get("caster_port")
     if caster_host is not None or caster_port is not None:
-        env_cfg = _read_caster_config_from_env()
+        _, env_cfg = _read_caster_config_from_env()
         env_host, env_port = env_cfg["host"], env_cfg["port"]
         resolved_host = str(caster_host).strip() if caster_host is not None else env_host
         resolved_port = caster_port if caster_port is not None else env_port
@@ -3380,7 +3107,7 @@ async def get_caster_config_endpoint(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     system_settings = await crud.get_system_settings(db)
-    env_cfg = _read_caster_config_from_env()
+    _, env_cfg = _read_caster_config_from_env()
     env_host, env_port = env_cfg["host"], env_cfg["port"]
 
     host = env_host or settings.CASTER_HOST or system_settings.get('caster_host', '')
