@@ -365,7 +365,7 @@ RTCM_KEEPALIVE_SKIP_CLIENTTABLE = str(
 RTCM_KEEPALIVE_DEBUG = str(
     _get_env_preferring_dotenv("RTCM_KEEPALIVE_DEBUG", "0")
 ).strip().lower() in ("1", "true", "yes", "on")
-rtcm_keepalive_miss_counts: Dict[str, int] = {}
+
 
 # Global to track last activation command time per station to prevent "command storms" (debounce)
 last_station_activation_ts: Dict[str, float] = {}
@@ -780,11 +780,6 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
         is_cooling_down = cooldown_elapsed < 30 # 30 seconds debounce
 
         if should_activate or not getattr(device, 'ntrip_connected', False):
-<<<<<<< HEAD
-            await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint, requested_address=requested_address)
-            logger.info(f"[RTCM] Triggering activation for {serial} (mp={selected_mountpoint}, active_before={active_before_same_mp})")
-            await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint)
-=======
             if is_cooling_down:
                 logger.info(
                     f"[RTCM] Skipping redundant activation for {serial} (mp={selected_mountpoint}) "
@@ -794,7 +789,6 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
                 logger.info(f"[RTCM] Triggering activation for {serial} (mp={selected_mountpoint})")
                 last_station_activation_ts[serial] = now
                 await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint, requested_address=requested_address)
->>>>>>> f767ec34caf479f4ad3c75086bd37b906370c4e4
         else:
             logger.info(f"[RTCM] Joined existing pool for {serial} (mp={selected_mountpoint}, count={active_before_same_mp + 1})")
 
@@ -1011,8 +1005,10 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                 hosts_to_check.extend(other_hosts)
 
                 found_on_host = None
-                caster_error_on_primary = False
                 in_clienttable = False
+                # Check if the primary host's cache has an error (connection failure, etc.)
+                primary_cache = global_caster_data_cache.get(f"{target_host}:{port}")
+                caster_error_on_primary = bool(primary_cache and primary_cache.get("error"))
                 for h in hosts_to_check:
                     h_port = int(settings.CASTER_PORT or 2101)
                     h_key = f"{h}:{h_port}"
@@ -1067,47 +1063,17 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                         updated_ids.append(sid)
                         continue
 
-<<<<<<< HEAD
-=======
                     m_key = (client_id, mountpoint)
                     miss_count = rtcm_keepalive_miss_counts.get(m_key, 0) + 1
                     rtcm_keepalive_miss_counts[m_key] = miss_count
-                    
->>>>>>> f767ec34caf479f4ad3c75086bd37b906370c4e4
+
                     if miss_count >= RTCM_KEEPALIVE_MISS_THRESHOLD:
                         expired_ids.append(sid)
                         candidates_for_deactivation.add((serial, _normalize_mountpoint(mountpoint)))
                         logger.warning(f"[RTCM] User '{client_id}' (@{mountpoint}) on station {serial} expired after {miss_count} misses.")
                     else:
                         if RTCM_KEEPALIVE_DEBUG:
-<<<<<<< HEAD
-                            logger.info(f"[RTCM DEBUG] Session {sid} miss {miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD} on {target_host}")
-            clienttable: Optional[List[dict]] = None
-            try:
-                async with auth_session_scope() as auth_db:
-                    caster_client = await get_caster_client(auth_db)
-                    
-                    # 🔥 FIX: Chỉ lấy 'all' 1 lần thay vì lặp từng Mountpoint
-                    # (Tránh "Connection Storm" gây ra phản hồi rỗng từ Caster)
-                    clienttable = await caster_client.get_clienttable(mountpoint="all")
-                    
-                    if clienttable is None:
-                        # Thử lại 1 lần sau 1.5s nếu lỗi kết nối
-                        await asyncio.sleep(1.5)
-                        clienttable = await caster_client.get_clienttable(mountpoint="all")
-            except Exception as e:
-                logger.warning(f"[RTCM] Failed to fetch clienttable, applying grace keepalive: {e}")
-
-            if clienttable is None:
-                grace_expires_at = now + RTCM_KEEPALIVE_FETCH_GRACE_SECONDS
-                touched = 0
-                active_session_ids = {sid for sid, _, _, _ in active_rows}
-                stale_ids = [sid for sid in rtcm_keepalive_miss_counts.keys() if sid not in active_session_ids]
-                for sid in stale_ids:
-                    rtcm_keepalive_miss_counts.pop(sid, None)
-=======
                             logger.info(f"[RTCM DEBUG] User '{client_id}' miss {miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD} on {target_host}")
->>>>>>> f767ec34caf479f4ad3c75086bd37b906370c4e4
 
             # 3. Update DB
             if updated_ids or expired_ids:
@@ -1148,9 +1114,6 @@ async def rtcm_ntrip_clienttable_keepalive_task():
         except Exception as e:
             logger.error(f"[RTCM] Keepalive task error: {e}", exc_info=True)
 
-
-<<<<<<< HEAD
-=======
 async def rtcm_session_reaper_task():
     while True:
         await asyncio.sleep(5)
@@ -1261,7 +1224,6 @@ async def log_system_event(
     except Exception as e:
         logger.error(f"Failed to write activity log: {e}")
 
->>>>>>> f767ec34caf479f4ad3c75086bd37b906370c4e4
 class IgnoreSocketErrorsFilter(logging.Filter):
     def filter(self, record):
         # Chặn các log warning của asyncio liên quan đến socket.send
@@ -1864,11 +1826,7 @@ async def get_caster_client(db: AsyncSession) -> CasterClient:
     hosts, env_cfg = _read_caster_config_from_env()
     
     # Ưu tiên .env -> settings -> DB -> default
-<<<<<<< HEAD
     host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
-=======
-    host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', ''))
->>>>>>> f767ec34caf479f4ad3c75086bd37b906370c4e4
     port = int(env_cfg["port"] or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
     user = str(env_cfg["user"] or "admin")
     password = str(env_cfg["pass"] or "12345")
@@ -2593,12 +2551,7 @@ async def caster_monitor_task():
         try:
             async with auth_session_scope() as db:
                 # 1. Get all hosts to scan
-<<<<<<< HEAD
-                env_cfg = _read_caster_config_from_env()
-                env_host = env_cfg.get("host")
-=======
                 env_hosts, env_cfg = _read_caster_config_from_env()
->>>>>>> f767ec34caf479f4ad3c75086bd37b906370c4e4
                 settings_host = getattr(settings, "CASTER_HOST", "")
                 system_settings = {}
                 try:
