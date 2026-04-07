@@ -220,6 +220,12 @@ buffer_metrics = {
 ui_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=UI_BROADCAST_QUEUE_MAXSIZE)
 pi_status_ingest_queue: asyncio.Queue = asyncio.Queue(maxsize=PI_STATUS_INGEST_QUEUE_MAXSIZE)
 
+# TỐI ƯU CỰC ĐỘ: Cache mapping Mountpoint -> Serial để tránh quét DB liên tục
+# Giúp xử lý hàng nghìn yêu cầu wake-station mỗi giây mà không làm treo Backend.
+mountpoint_serial_cache: Dict[str, str] = {}
+mountpoint_cache_last_updated: float = 0
+mountpoint_cache_lock = asyncio.Lock()
+
 
 def _safe_json_size(value: Any) -> int:
     try:
@@ -347,7 +353,7 @@ RTCM_NTRIP_CLIENTTABLE_ACTIVE_CHECK_INTERVAL = max(
 RTCM_KEEPALIVE_MISS_THRESHOLD = max(
     1,
     int(
-        _get_env_preferring_dotenv("RTCM_KEEPALIVE_MISS_THRESHOLD", "5")
+        _get_env_preferring_dotenv("RTCM_KEEPALIVE_MISS_THRESHOLD", "15")
     ),
 )
 RTCM_KEEPALIVE_EMPTY_MOUNTPOINT_MISS_THRESHOLD = max(
@@ -817,37 +823,39 @@ def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bo
 
 
 async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: str) -> str:
+    global mountpoint_serial_cache, mountpoint_cache_last_updated
     requested = _normalize_mountpoint(mountpoint)
     if not requested:
         raise ValueError("mountpoint is required")
 
-    # TỐI ƯU CỰC ĐỘ: Không load object Device vào RAM để tránh nghẽn Python / gây RAM leak dội ngược về C#
-    rs = await db.execute(select(models.Device.serial, models.Device.service_config, models.Device.status))
-    
-    devices = []
-    for row in rs.all():
-        serial = str(row[0])
-        cfg = dict(row[1] or {})
-        status = str(row[2] or "").lower()
+    now = time.time()
+    # Nếu cache còn hạn (60 giây), dùng luôn để phản hồi SIÊU TỐC
+    async with mountpoint_cache_lock:
+        if requested in mountpoint_serial_cache and (now - mountpoint_cache_last_updated) < 60:
+            return mountpoint_serial_cache[requested]
+
+        # Cache hết hạn hoặc không có -> Quét DB 1 lần duy nhất để rebuild toàn bộ cache
+        if (now - mountpoint_cache_last_updated) >= 60:
+            logger.info("[CACHE] Rebuilding Mountpoint-to-Serial cache...")
+            new_cache = {}
+            rs = await db.execute(select(models.Device.serial, models.Device.service_config))
+            for row in rs.all():
+                serial = str(row[0])
+                cfg = dict(row[1] or {})
+                for sid in (1, 2):
+                    mp = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
+                    if mp:
+                        # Nếu trùng mountpoint, ưu tiên trạm nào đang online (nhưng ở đây ta lấy hết)
+                        if mp not in new_cache:
+                            new_cache[mp] = serial
+            
+            mountpoint_serial_cache = new_cache
+            mountpoint_cache_last_updated = now
         
-        s1_ok = bool(cfg.get("server1_enabled")) and _normalize_mountpoint(cfg.get("mountpoint1")) == requested
-        s2_ok = bool(cfg.get("server2_enabled")) and _normalize_mountpoint(cfg.get("mountpoint2")) == requested
-        
-        if s1_ok or s2_ok:
-            devices.append({"serial": serial, "status": status})
+        if requested in mountpoint_serial_cache:
+            return mountpoint_serial_cache[requested]
 
-    if not devices:
-        raise ValueError(f"No station found for mountpoint '{mountpoint}'")
-
-    if len(devices) == 1:
-        return devices[0]["serial"]
-
-    online = [d for d in devices if d["status"] == "online"]
-    if len(online) == 1:
-        return online[0]["serial"]
-
-    serials = ",".join(d["serial"] for d in devices)
-    raise ValueError(f"Mountpoint '{mountpoint}' maps to multiple stations: {serials}")
+    raise ValueError(f"No station found for mountpoint '{mountpoint}'")
 
 
 async def _resolve_stop_serial(
