@@ -377,7 +377,7 @@ RTCM_KEEPALIVE_SKIP_CLIENTTABLE = str(
 RTCM_KEEPALIVE_DEBUG = str(
     _get_env_preferring_dotenv("RTCM_KEEPALIVE_DEBUG", "0")
 ).strip().lower() in ("1", "true", "yes", "on")
-rtcm_keepalive_miss_counts: Dict[str, int] = {}
+
 
 # Global to track last activation command time per station to prevent "command storms" (debounce)
 last_station_activation_ts: Dict[str, float] = {}
@@ -1017,8 +1017,10 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                 hosts_to_check.extend(other_hosts)
 
                 found_on_host = None
-                caster_error_on_primary = False
                 in_clienttable = False
+                # Check if the primary host's cache has an error (connection failure, etc.)
+                primary_cache = global_caster_data_cache.get(f"{target_host}:{port}")
+                caster_error_on_primary = bool(primary_cache and primary_cache.get("error"))
                 for h in hosts_to_check:
                     h_port = int(settings.CASTER_PORT or 2101)
                     h_key = f"{h}:{h_port}"
@@ -1076,7 +1078,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                     m_key = (client_id, mountpoint)
                     miss_count = rtcm_keepalive_miss_counts.get(m_key, 0) + 1
                     rtcm_keepalive_miss_counts[m_key] = miss_count
-                    
+
                     if miss_count >= RTCM_KEEPALIVE_MISS_THRESHOLD:
                         expired_ids.append(sid)
                         candidates_for_deactivation.add((serial, _normalize_mountpoint(mountpoint)))
@@ -1112,19 +1114,17 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                     # Check if ANY active session still remains for this (serial, mp)
                     remain_q = select(func.count(models.RTCMStreamSession.session_id)).where(
                         models.RTCMStreamSession.serial == serial,
-                        models.RTCMStreamSession.mountpoint == mp_norm,
                         models.RTCMStreamSession.expires_at > now
                     )
-                    count_rs = await db.execute(remain_q)
-                    if count_rs.scalar() == 0:
-                        device = await crud.get_device_by_serial(db, serial)
-                        if device and getattr(device, 'service_config', {}).get('stream_on_demand', True):
-                            logger.info(f"[RTCM] Deactivating station {serial}@{mp_norm} (No more active sessions)")
-                            await _set_station_stream(serial, active=False, mountpoint=mp_norm)
+                    remain_rs = await db.execute(remain_q)
+                    remaining = remain_rs.scalar() or 0
+
+                    if remaining == 0:
+                        await _set_station_stream(serial, active=False)
+                        logger.info(f"[RTCM] Deactivated station {serial} (mp={mp_norm}, no remaining sessions)")
 
         except Exception as e:
-            logger.error(f"[RTCM KEEPALIVE] Task loop error: {e}", exc_info=True)
-
+            logger.error(f"[RTCM] Keepalive task error: {e}", exc_info=True)
 
 async def rtcm_session_reaper_task():
     while True:
@@ -1848,7 +1848,7 @@ async def get_caster_client(db: AsyncSession) -> CasterClient:
     hosts, env_cfg = _read_caster_config_from_env()
     
     # Ưu tiên .env -> settings -> DB -> default
-    host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', ''))
+    host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
     port = int(env_cfg["port"] or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
     user = str(env_cfg["user"] or "admin")
     password = str(env_cfg["pass"] or "12345")
@@ -2193,8 +2193,9 @@ async def block_caster_user(
     await auth_db.commit()
 
     # 3. Gọi các caster TCP để xóa user (kick ngay lập tức trên tất cả server)
-    env_hosts, _ = _read_caster_config_from_env()
-    target_hosts = env_hosts if env_hosts else [str(settings.CASTER_HOST or "localhost")]
+    env_cfg = _read_caster_config_from_env()
+    _env_host = env_cfg.get("host")
+    target_hosts = [_env_host] if _env_host else [str(settings.CASTER_HOST or "localhost")]
     port = int(settings.CASTER_PORT or 2101)
     
     deleted_count_caster = 0
@@ -2257,8 +2258,9 @@ async def unblock_caster_user(
         await auth_db.commit()
 
         # 3. Tạo lại user trên TẤT CẢ caster
-        env_hosts, _ = _read_caster_config_from_env()
-        target_hosts = env_hosts if env_hosts else [str(settings.CASTER_HOST or "localhost")]
+        env_cfg = _read_caster_config_from_env()
+        _env_host = env_cfg.get("host")
+        target_hosts = [_env_host] if _env_host else [str(settings.CASTER_HOST or "localhost")]
         port = int(settings.CASTER_PORT or 2101)
         
         recreated_count = 0
@@ -3657,8 +3659,8 @@ async def create_multi_base_rover(
         target_hosts = request.target_casters or []
         if not target_hosts:
             # Fallback to default caster
-            env_host, _ = _read_caster_config_from_env()
-            default_host = str(env_host or settings.CASTER_HOST or "")
+            env_cfg = _read_caster_config_from_env()
+            default_host = str(env_cfg.get("host") or settings.CASTER_HOST or "")
             if default_host:
                 target_hosts = [default_host]
 
@@ -4655,7 +4657,9 @@ async def get_caster_config(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
 ):
     """Return the list of configured caster hosts and system version."""
-    hosts, _ = _read_caster_config_from_env()
+    env_cfg = _read_caster_config_from_env()
+    _env_host = env_cfg.get("host")
+    hosts = [_env_host] if _env_host else []
     if not hosts:
         # Fallback to single host from settings
         hosts = [str(settings.CASTER_HOST or "localhost")]
