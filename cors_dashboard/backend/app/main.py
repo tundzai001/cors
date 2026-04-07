@@ -821,20 +821,32 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
     if not requested:
         raise ValueError("mountpoint is required")
 
-    rs = await db.execute(select(models.Device))
-    devices = [d for d in rs.scalars().all() if _device_has_enabled_mountpoint(d, mountpoint)]
+    # TỐI ƯU CỰC ĐỘ: Không load object Device vào RAM để tránh nghẽn Python / gây RAM leak dội ngược về C#
+    rs = await db.execute(select(models.Device.serial, models.Device.service_config, models.Device.status))
+    
+    devices = []
+    for row in rs.all():
+        serial = str(row[0])
+        cfg = dict(row[1] or {})
+        status = str(row[2] or "").lower()
+        
+        s1_ok = bool(cfg.get("server1_enabled")) and _normalize_mountpoint(cfg.get("mountpoint1")) == requested
+        s2_ok = bool(cfg.get("server2_enabled")) and _normalize_mountpoint(cfg.get("mountpoint2")) == requested
+        
+        if s1_ok or s2_ok:
+            devices.append({"serial": serial, "status": status})
 
     if not devices:
         raise ValueError(f"No station found for mountpoint '{mountpoint}'")
 
     if len(devices) == 1:
-        return str(devices[0].serial)
+        return devices[0]["serial"]
 
-    online = [d for d in devices if str(getattr(d, "status", "")).lower() == "online"]
+    online = [d for d in devices if d["status"] == "online"]
     if len(online) == 1:
-        return str(online[0].serial)
+        return online[0]["serial"]
 
-    serials = ",".join(str(d.serial) for d in devices)
+    serials = ",".join(d["serial"] for d in devices)
     raise ValueError(f"Mountpoint '{mountpoint}' maps to multiple stations: {serials}")
 
 
@@ -2618,7 +2630,9 @@ async def caster_monitor_task():
         except Exception as e:
             logger.error(f"[CASTER MONITOR] Sync loop error: {e}")
 
-        await asyncio.sleep(5)
+        # Nới lỏng thời gian quét tránh bão request tới Caster
+        monitor_interval = float(os.getenv("CASTER_MONITOR_INTERVAL", "30"))
+        await asyncio.sleep(monitor_interval)
 
 
 async def _sync_single_caster(host: str, port: int, user: str = None, password: str = None):
