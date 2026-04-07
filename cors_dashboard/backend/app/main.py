@@ -131,6 +131,18 @@ def disable_windows_quick_edit_mode() -> None:
 
 disable_windows_quick_edit_mode()
 
+# === SECURITY GATE (CHẶN QUÉT BOT RÁC) ===
+# Cấu trúc: 
+# - Bắt đầu bằng "." -> kiểm tra phần mở rộng (ví dụ .php, .env)
+# - Bắt đầu bằng "/" -> kiểm tra đoạn path chính xác (ví dụ /wp-admin)
+# - Khác -> kiểm tra chuỗi con (substring) nhưng thận trọng
+SECURITY_BLACKLIST_PATTERNS = {
+    ".env", ".php", ".git", ".jsp", ".asp", ".bak", ".swp",
+    "wp-admin", "wp-login", "phpmyadmin", "server-status", "cgi-bin",
+    "config.php", "config.bak", "setup.php", "mysql-admin", "/administrator/",
+    "public/.env", "backend/.env"
+}
+
 BATCH_SIZE = 20  
 BATCH_TIMEOUT = 2.0 
 UI_BROADCAST_QUEUE_MAXSIZE = int(os.getenv("UI_BROADCAST_QUEUE_MAXSIZE", "10000"))
@@ -1244,6 +1256,36 @@ class RequestIDFilter(logging.Filter):
 for handler in logging.root.handlers:
     handler.addFilter(RequestIDFilter())
 
+class SecurityGateMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware bảo mật: Chặn các yêu cầu quét tự động (bots) có chứa pattern nhạy cảm.
+    """
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path.lower()
+        
+        # Kiểm tra nhanh xem path có chứa bất kỳ mẫu nào bị cấm không
+        for pattern in SECURITY_BLACKLIST_PATTERNS:
+            blocked = False
+            if pattern.startswith("."):
+                if path.endswith(pattern) or f"{pattern}?" in path:
+                    blocked = True
+            elif pattern.startswith("/"):
+                if path.startswith(pattern) or f"{pattern}/" in path:
+                    blocked = True
+            else:
+                if pattern in path:
+                    blocked = True
+            
+            if blocked:
+                client_ip = request.client.host
+                logger.warning(f"⚠️ SECURITY BLOCK: IP {client_ip} tried suspicious path: {path} (Pattern: {pattern})")
+                return JSONResponse(
+                    status_code=403, 
+                    content={"detail": "Access Forbidden: Security Gate Blocked this request."}
+                )
+        
+        return await call_next(request)
+
 # --- CẢI TIẾN 2: REQUEST ID MIDDLEWARE ---
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -1644,6 +1686,7 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
+app.add_middleware(SecurityGateMiddleware) # SECURITY FIRST
 app.add_middleware(RequestIDMiddleware) 
 
 # === NTRIP WAKE STATION HTTP ENDPOINT ===
@@ -1751,32 +1794,11 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                     f"server_id={selected_server_id} host={selected_server_host or 'unknown'}"
                 )
 
-            # --- SMART POLLING ---
-            # Thay vì chờ cố định 5 giây, chúng ta kiểm tra trạng thái thực tế trên Caster 
-            # để phản hồi ngay khi trạm kết nối thành công.
-            start_poll = time.time()
-            check_success = False
-            try:
-                caster = await get_caster_client(db)
-                # Thử tối đa 30 lần (~30 giây) để bắt kịp các trạm khởi động chậm hoặc Caster update lâu
-                for i in range(30):
-                    # Quan trọng: Luôn lấy 'all' để đảm bảo Caster trả về dữ liệu (giống Hercules test)
-                    # Sau đó Backend sẽ tự lọc tìm mountpoint trong danh sách.
-                    clients = await caster.get_clienttable(mountpoint="all")
-                    if clients and any(str(c.get('mountpoint', '')).lower() == mountpoint.lower() for c in clients):
-                        check_success = True
-                        logger.info(f"[NTRIP Wake] Trạm {mountpoint} đã online sau {time.time() - start_poll:.2f}s")
-                        break
-                    await asyncio.sleep(0.8)
-            except Exception as poll_err:
-                logger.warning(f"[NTRIP Wake] Lỗi khi polling Caster: {poll_err}. Chờ dự phòng 3s.")
-                await asyncio.sleep(3)
-
-            if not check_success:
-                logger.warning(f"[NTRIP Wake] Hết thời gian chờ nhưng chưa thấy trạm {mountpoint} trên Caster.")
-
-            msg = f"ok bật trạm thành công {name}"
-            return PlainTextResponse(f"lắng nghe thành công\n{msg}")
+            # --- PHẢN HỒI SIÊU TỐC (FIRE & FORGET) ---
+            # Gửi lệnh xong là trả về OK ngay để tránh Caster chờ lâu gây Slow Request/Retry.
+            # Trạng thái trạm sẽ được cập nhật ngầm qua Agent status sau.
+            msg = f"OK bật trạm thành công {name}"
+            return PlainTextResponse(f"Lắng nghe thành công\n{msg}")
             
     except Exception as e:
         msg = f"ERROR: {e}"
