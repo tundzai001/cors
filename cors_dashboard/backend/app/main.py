@@ -314,6 +314,19 @@ async def pi_status_ingest_worker_task():
         payload = await pi_status_ingest_queue.get()
         try:
             await enqueue_ui_broadcast({"type": "status_update", "data": payload})
+            
+            # === CASTER STATUS SYNC: Detect per-server status changes ===
+            serial = payload.get("serial") if isinstance(payload, dict) else None
+            if serial:
+                try:
+                    async with device_session_scope() as db:
+                        device = await crud.get_device_by_serial(db, serial)
+                        if device:
+                            # Trigger status change detection (pass payload for rich ntrip_stream_state)
+                            await _on_device_status_update(device, payload)
+                except Exception as e:
+                    logger.warning(f"[CASTER SYNC] Error detecting status change for '{serial}': {e}")
+            
             async with device_update_buffer_lock:
                 device_update_buffer.append(payload)
         except Exception as e:
@@ -382,6 +395,12 @@ RTCM_KEEPALIVE_DEBUG = str(
 
 # Global to track last activation command time per station to prevent "command storms" (debounce)
 last_station_activation_ts: Dict[str, float] = {}
+
+# === CASTER STATUS SYNC ===
+# Cache per-device last known per-server status để detect changes
+# { serial: { "server1": {...}, "server2": {...} } }
+device_status_cache: Dict[str, dict] = {}
+device_status_cache_lock = asyncio.Lock()
 
 
 
@@ -1782,6 +1801,260 @@ async def ntrip_wake_station(payload: dict = Body(...)):
         return PlainTextResponse("ERROR: mountpoint is required", status_code=400)
         
     return await _do_ntrip_wake(mountpoint, client_instance_id or "http-post", ttl_seconds, requested_address=address)
+
+def _extract_per_server_status(device: models.Device, payload: dict | None = None) -> dict:
+    """
+    Trích xuất per-server NTRIP status từ device và payload.
+    Dùng để tracking thay đổi status S1/S2 riêng biệt.
+    
+    Ưu tiên sử dụng ntrip_stream_state từ payload (nếu có) để nhận data chi tiết từ Agent.
+    Fallback sang device fields nếu payload không có.
+    
+    State mapping:
+    - streaming: active=true && connected=true (đang push dữ liệu)
+    - sleep: active=false && on_demand=true (có thể wake)
+    - offline: Mọi trường hợp khác (không thể wake)
+    
+    Returns: {
+        "server1": {"enabled": bool, "state": "streaming|sleep|offline", "mountpoint": str},
+        "server2": {...}
+    }
+    """
+    cfg = device.service_config or {}
+    device_status = str(device.status or "").lower()
+    payload = payload or {}
+    
+    # Lấy ntrip_stream_state từ payload (nếu Agent gửi)
+    stream_state = payload.get("ntrip_stream_state", {})
+    has_stream_state = bool(stream_state)
+    
+    def _get_server_state(server_id: int) -> str:
+        """Determine server state: streaming, sleep, or offline"""
+        # Device offline → cả hai server offline
+        if device_status == "offline":
+            return "offline"
+        
+        server_key = f"server{server_id}"
+        
+        # Ưu tiên sử dụng rich state từ Agent (nếu có)
+        if has_stream_state and server_key in stream_state:
+            state_info = stream_state[server_key]
+            enabled = bool(state_info.get("enabled", False))
+            if not enabled:
+                return "offline"
+            
+            active = bool(state_info.get("active", False))
+            on_demand = bool(state_info.get("on_demand", False))
+            connected = bool(state_info.get("connected", False))
+            
+            # streaming: active && connected
+            if active and connected:
+                return "streaming"
+            # sleep: not active && on_demand
+            elif not active and on_demand:
+                return "sleep"
+            else:
+                return "offline"
+        
+        # Fallback: Use basic config fields nếu payload không có stream_state
+        enabled = bool(cfg.get(f"server{server_id}_enabled"))
+        if not enabled:
+            return "offline"
+        
+        active = bool(cfg.get(f"server{server_id}_active"))
+        stream_on_demand = bool(cfg.get("stream_on_demand"))
+        
+        # Không có per-server connected info → use basic logic
+        if active and bool(device.ntrip_connected):
+            return "streaming"
+        elif not active and stream_on_demand:
+            return "sleep"
+        else:
+            return "offline"
+    
+    result = {}
+    
+    # S1 status
+    result["server1"] = {
+        "enabled": bool(cfg.get("server1_enabled")),
+        "state": _get_server_state(1),
+        "mountpoint": cfg.get("mountpoint1") or "",
+    }
+    
+    # S2 status
+    result["server2"] = {
+        "enabled": bool(cfg.get("server2_enabled")),
+        "state": _get_server_state(2),
+        "mountpoint": cfg.get("mountpoint2") or "",
+    }
+    
+    return result
+
+
+def _status_changed(old_status: dict, new_status: dict) -> dict:
+    """
+    So sánh old vs new status, trả về dict chứa thay đổi per-server.
+    
+    Returns: {
+        "server1": {"changed": bool, "old": {...}, "new": {...}},
+        "server2": {...},
+        "overall_changed": bool
+    }
+    """
+    result = {
+        "server1": {"changed": False, "old": old_status.get("server1", {}), "new": new_status.get("server1", {})},
+        "server2": {"changed": False, "old": old_status.get("server2", {}), "new": new_status.get("server2", {})},
+        "overall_changed": False
+    }
+    
+    for sid in ("server1", "server2"):
+        if result[sid]["old"] != result[sid]["new"]:
+            result[sid]["changed"] = True
+            result["overall_changed"] = True
+    
+    return result
+
+
+async def _notify_casters_on_status_change(serial: str, device: models.Device, status_change: dict) -> None:
+    """
+    Detect per-server status change và gửi status to appropriate Caster.
+    
+    Logic:
+    - S1 changed → gửi cho serverhost1
+    - S2 changed → gửi cho serverhost2
+    - offline → gửi cho cả 2
+    """
+    try:
+        cfg = device.service_config or {}
+        device_status = str(device.status or "").lower()
+        
+        # Build common payload
+        payload = {
+            "mountpoint": "",
+            "state": "offline",  # streaming, sleep, offline
+            "enabled": False,
+        }
+        
+        # Offline → notify both casters
+        if device_status == "offline":
+            s1_host = cfg.get("serverhost1", "").strip()
+            s2_host = cfg.get("serverhost2", "").strip()
+            
+            if s1_host and cfg.get("mountpoint1"):
+                payload["mountpoint"] = cfg.get("mountpoint1")
+                payload["state"] = "offline"
+                payload["enabled"] = bool(cfg.get("server1_enabled"))
+                asyncio.create_task(_send_status_to_caster(s1_host, payload, "S1", serial))
+            
+            if s2_host and cfg.get("mountpoint2"):
+                payload["mountpoint"] = cfg.get("mountpoint2")
+                payload["state"] = "offline"
+                payload["enabled"] = bool(cfg.get("server2_enabled"))
+                asyncio.create_task(_send_status_to_caster(s2_host, payload, "S2", serial))
+            
+            return
+        
+        # Notify S1 if changed
+        if status_change["server1"]["changed"] and cfg.get("server1_enabled"):
+            s1_host = cfg.get("serverhost1", "").strip()
+            s1_mp = cfg.get("mountpoint1", "").strip()
+            if s1_host and s1_mp:
+                s1_info = status_change["server1"]["new"]
+                payload["mountpoint"] = s1_mp
+                payload["state"] = s1_info.get("state", "offline")
+                payload["enabled"] = s1_info.get("enabled", False)
+                asyncio.create_task(_send_status_to_caster(s1_host, payload, "S1", serial))
+        
+        # Notify S2 if changed
+        if status_change["server2"]["changed"] and cfg.get("server2_enabled"):
+            s2_host = cfg.get("serverhost2", "").strip()
+            s2_mp = cfg.get("mountpoint2", "").strip()
+            if s2_host and s2_mp:
+                s2_info = status_change["server2"]["new"]
+                payload["mountpoint"] = s2_mp
+                payload["state"] = s2_info.get("state", "offline")
+                payload["enabled"] = s2_info.get("enabled", False)
+                asyncio.create_task(_send_status_to_caster(s2_host, payload, "S2", serial))
+    
+    except Exception as e:
+        logger.error(f"[CASTER SYNC] Error notifying casters for '{serial}': {e}")
+
+
+async def _send_status_to_caster(caster_host: str, status_payload: dict, server_label: str, serial: str) -> None:
+    """
+    Gửi HTTP POST status to Caster.
+    endpoint: POST http://caster_host/api/station-status
+    
+    Payload: {
+        "mountpoint": "HN01",
+        "state": "streaming|sleep|offline",
+        "enabled": bool
+    }
+    """
+    try:
+        import urllib.request
+        import json as json_lib
+        
+        # Build URL (caster_host có thể là "aitogy.com.vn" hoặc "aitogy.com.vn:2101")
+        if "://" not in caster_host:
+            url = f"http://{caster_host}/api/station-status"
+        else:
+            url = f"{caster_host}/api/station-status"
+        
+        payload_json = json_lib.dumps(status_payload).encode('utf-8')
+        request = urllib.request.Request(
+            url,
+            data=payload_json,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        
+        # Set timeout 3 seconds
+        with urllib.request.urlopen(request, timeout=3) as response:
+            result = response.read().decode('utf-8')
+            state = status_payload.get('state', 'unknown')
+            mp = status_payload.get('mountpoint', '?')
+            logger.info(
+                f"[CASTER SYNC] ✓ Sent {server_label} status to {caster_host}: "
+                f"{mp} → {state}"
+            )
+    except Exception as e:
+        logger.warning(
+            f"[CASTER SYNC] ✗ Failed to notify {caster_host} ({server_label}) "
+            f"for '{serial}': {e}"
+        )
+
+
+async def _on_device_status_update(device: models.Device, payload: dict | None = None) -> None:
+    """
+    Called when Agent sends device status via MQTT.
+    Detects per-server changes and notifies Casters.
+    
+    Args:
+        device: Device object from DB (để lấy config)
+        payload: Raw MQTT payload từ Agent (chứa ntrip_stream_state)
+    """
+    serial = device.serial
+    if not serial:
+        return
+    
+    # Extract status with rich data từ payload
+    new_status = _extract_per_server_status(device, payload)
+    
+    async with device_status_cache_lock:
+        old_status = device_status_cache.get(serial, {})
+        
+        # Compare if there's actual change
+        if old_status != new_status:
+            # Detect what changed
+            status_change = _status_changed(old_status, new_status)
+            
+            # Update cache
+            device_status_cache[serial] = new_status
+            
+            # Notify casters (non-blocking)
+            await _notify_casters_on_status_change(serial, device, status_change)
+
 
 async def _check_rover_blocked(username: str, mountpoint: Optional[str] = None) -> Optional[str]:
     """Kiểm tra xem rover có bị chặn trong blocklist DB không."""
