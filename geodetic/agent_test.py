@@ -3270,7 +3270,7 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
     })
     client.will_set(f"pi/devices/{MACHINE_SERIAL}/status", payload=last_will, qos=1, retain=True)
     
-    client.connect_async(MQTT_BROKER, MQTT_PORT, 60)
+    client.connect_async(MQTT_BROKER, MQTT_PORT, 30)
     client.loop_start()
     return client
 
@@ -3994,6 +3994,19 @@ async def main():
         
         # Stop MQTT
         if mqtt_client:
+            try:
+                # Explicitly publish offline status before disconnecting
+                offline_msg = json.dumps({
+                    "serial": MACHINE_SERIAL,
+                    "status": "offline",
+                    "timestamp": int(time.time()),
+                    "cleanup": True
+                })
+                mqtt_client.publish(f"pi/devices/{MACHINE_SERIAL}/status", offline_msg, qos=1, retain=True)
+                time.sleep(0.5) # Give it a moment to send
+            except Exception as e:
+                logging.error(f"Failed to send final offline status: {e}")
+
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
         

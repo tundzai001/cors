@@ -27,6 +27,7 @@ if SECRET_KEY == "JSAjW2vXUwYPhMM4-djWW9h-THKTq9jKbd-8MzCxhlQ":
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+ACCESS_TOKEN_REMEMBER_ME_EXPIRE_MINUTES = 60 * 24 * 365 # 1 year
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 security = HTTPBearer()

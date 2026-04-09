@@ -6,6 +6,7 @@ import logging
 import uuid
 import json
 import asyncio
+from datetime import timedelta
 import gc
 import sys
 import traceback
@@ -27,12 +28,12 @@ from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect, Depends, 
     HTTPException, Request, Query, status, Body
 )
-from fastapi.responses import PlainTextResponse
-
+from fastapi.responses import PlainTextResponse, FileResponse, StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, HTMLResponse
+from fastapi.exception_handlers import http_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, update, delete, func
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -132,16 +133,21 @@ def disable_windows_quick_edit_mode() -> None:
 disable_windows_quick_edit_mode()
 
 # === SECURITY GATE (CHẶN QUÉT BOT RÁC) ===
-# Cấu trúc: 
-# - Bắt đầu bằng "." -> kiểm tra phần mở rộng (ví dụ .php, .env)
-# - Bắt đầu bằng "/" -> kiểm tra đoạn path chính xác (ví dụ /wp-admin)
-# - Khác -> kiểm tra chuỗi con (substring) nhưng thận trọng
+ALLOWED_HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}
+
 SECURITY_BLACKLIST_PATTERNS = {
-    ".env", ".php", ".git", ".jsp", ".asp", ".bak", ".swp",
-    "wp-admin", "wp-login", "phpmyadmin", "server-status", "cgi-bin",
-    "config.php", "config.bak", "setup.php", "mysql-admin", "/administrator/",
-    "public/.env", "backend/.env"
+    ".env", ".php", ".git", ".jsp", ".asp", ".aspx", ".bak", ".swp", ".sql", ".exe", ".cgi",
+    "wp-admin", "wp-login", "phpmyadmin", "server-status", "cgi-bin", "xmlrpc.php",
+    "config.php", "config.bak", "setup.php", "mysql-admin", "administrator",
+    "info.php", "test.php", ".htaccess", ".htpasswd", ".DS_Store", "public/.env", "backend/.env"
 }
+
+# --- IP REPUTATION SYSTEM ---
+VIOLATION_THRESHOLD = 5  # Số lần vi phạm tối đa trước khi BAN
+BAN_DURATION = 3600      # Thời gian BAN (giây) - 1 giờ
+security_rep_scores: Dict[str, int] = {} # IP -> score
+banned_ips: Dict[str, float] = {}        # IP -> ban_expiry_timestamp
+
 
 BATCH_SIZE = 20  
 BATCH_TIMEOUT = 2.0 
@@ -193,17 +199,6 @@ def _read_caster_config_from_env() -> tuple[list[str], dict]:
             logger.warning("Invalid CASTER_PORT in .env: %s", raw_port)
 
     return hosts, config
-
-
-def _persist_caster_config_to_env(host: str, port: int) -> None:
-    set_key(str(ENV_FILE_PATH), "CASTER_HOST", host, quote_mode="never")
-    set_key(str(ENV_FILE_PATH), "CASTER_PORT", str(port), quote_mode="never")
-
-    # Keep runtime settings consistent without requiring process restart.
-    os.environ["CASTER_HOST"] = host
-    os.environ["CASTER_PORT"] = str(port)
-    settings.CASTER_HOST = host
-    settings.CASTER_PORT = port
 
 # Metrics for buffer performance tracking
 buffer_metrics = {
@@ -1261,24 +1256,58 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
     Middleware bảo mật: Chặn các yêu cầu quét tự động (bots) có chứa pattern nhạy cảm.
     """
     async def dispatch(self, request: Request, call_next):
+        method = request.method.upper()
         path = request.url.path.lower()
-        
-        # Kiểm tra nhanh xem path có chứa bất kỳ mẫu nào bị cấm không
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+
+        # 1. Kiểm tra xem IP có đang bị BAN không
+        if client_ip in banned_ips:
+            if now < banned_ips[client_ip]:
+                # Vẫn đang bị BAN
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Your IP has been temporarily banned due to multiple security violations."}
+                )
+            else:
+                # Đã hết hạn BAN -> Xóa khỏi danh sách để bắt đầu lại (ân xá)
+                del banned_ips[client_ip]
+                security_rep_scores[client_ip] = 0
+
+        # Helper để ghi nhận vi phạm và thực hiện BAN nếu cần
+        def record_violation():
+            if client_ip == "unknown": return
+            score = security_rep_scores.get(client_ip, 0) + 1
+            security_rep_scores[client_ip] = score
+            if score >= VIOLATION_THRESHOLD:
+                banned_ips[client_ip] = now + BAN_DURATION
+                logger.critical(f"🚨 AUTOMATIC BAN: IP {client_ip} has been BANNED for {BAN_DURATION}s after {score} violations.")
+
+        # 2. Chặn Method lạ (Linh tinh)
+        if method not in ALLOWED_HTTP_METHODS:
+            logger.warning(f"🚫 SECURITY BLOCK (METHOD): IP {client_ip} used forbidden method {method} on {path}")
+            record_violation()
+            return JSONResponse(
+                status_code=403,
+                content={"detail": f"Method {method} is not allowed."}
+            )
+
+        # 3. Chặn các pattern nhạy cảm (Bots scanning)
         for pattern in SECURITY_BLACKLIST_PATTERNS:
             blocked = False
             if pattern.startswith("."):
-                if path.endswith(pattern) or f"{pattern}?" in path:
+                if path.endswith(pattern) or f"{pattern}?" in path or f"{pattern}/" in path:
                     blocked = True
-            elif pattern.startswith("/"):
-                if path.startswith(pattern) or f"{pattern}/" in path:
+            elif "/" in pattern: # Check path substring
+                if pattern in path:
                     blocked = True
             else:
                 if pattern in path:
                     blocked = True
             
             if blocked:
-                client_ip = request.client.host
-                logger.warning(f"⚠️ SECURITY BLOCK: IP {client_ip} tried suspicious path: {path} (Pattern: {pattern})")
+                logger.warning(f"⚠️ SECURITY BLOCK (PATH): IP {client_ip} tried suspicious path: {path} (Pattern: {pattern})")
+                record_violation()
                 return JSONResponse(
                     status_code=403, 
                     content={"detail": "Access Forbidden: Security Gate Blocked this request."}
@@ -1772,6 +1801,14 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
         async with device_session_scope() as db:
             serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
             device = await crud.get_device_by_serial(db, serial)
+            if not device:
+                return PlainTextResponse(f"ERROR: Trạm {serial} không tồn tại")
+            
+            # Kiểm tra trạng thái trạm
+            if str(getattr(device, 'status', '')).lower() == 'offline':
+                logger.warning(f"[NTRIP Wake] Station '{serial}' is OFFLINE. Cannot wake up.")
+                return PlainTextResponse(f"ERROR: Trạm {device.name or serial} đang offline")
+
             name = device.name if device else serial
             cfg = dict(getattr(device, "service_config", None) or {}) if device else {}
             selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
@@ -1838,18 +1875,12 @@ async def send_command_to_pi(serial: str, command: dict) -> dict:
 
 # --- CASTER CLIENT FACTORY ---
 async def get_caster_client(db: AsyncSession) -> CasterClient:
-    """Helper để khởi tạo Caster Client an toàn từ .env hoặc DB"""
-    system_settings = {}
-    try:
-        system_settings = await crud.get_system_settings(db)
-    except Exception as e:
-        logger.debug(f"[CASTER] system_settings table not available: {e}")
-
+    """Helper để khởi tạo Caster Client an toàn từ .env hoặc settings"""
     hosts, env_cfg = _read_caster_config_from_env()
     
-    # Ưu tiên .env -> settings -> DB -> default
-    host = str(env_cfg["host"] or settings.CASTER_HOST or system_settings.get('caster_host', 'aitogy.com.vn'))
-    port = int(env_cfg["port"] or settings.CASTER_PORT or system_settings.get('caster_port', 2101))
+    # Ưu tiên .env -> settings -> default
+    host = str(env_cfg["host"] or settings.CASTER_HOST or 'aitogy.com.vn')
+    port = int(env_cfg["port"] or settings.CASTER_PORT or 2101)
     user = str(env_cfg["user"] or "admin")
     password = str(env_cfg["pass"] or "12345")
     
@@ -1953,8 +1984,13 @@ async def login(
         is_success=True
     )
     
+    expires_delta = None
+    if getattr(login_data, "remember_me", False):
+        expires_delta = timedelta(minutes=auth.ACCESS_TOKEN_REMEMBER_ME_EXPIRE_MINUTES)
+    
     access_token = auth.create_access_token(
-        data={"sub": user.username, "role": user.role}
+        data={"sub": user.username, "role": user.role},
+        expires_delta=expires_delta
     )
 
     await log_system_event(
@@ -2769,12 +2805,7 @@ async def get_system_settings(
 ):
     """Lấy trạng thái hiện tại của các cÃ i đặt bảo mật."""
     settings_data = await crud.get_system_settings(db)
-    _, env_cfg = _read_caster_config_from_env()
-    env_host, env_port = env_cfg["host"], env_cfg["port"]
-    if env_host:
-        settings_data["caster_host"] = env_host
-    if env_port:
-        settings_data["caster_port"] = env_port
+
     return settings_data
 
 @app.post("/api/admin/settings")
@@ -2784,25 +2815,7 @@ async def update_system_settings(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     """Cập nhật cÃ i đặt bảo mật."""
-    caster_host = settings_data.get("caster_host")
-    caster_port = settings_data.get("caster_port")
-    if caster_host is not None or caster_port is not None:
-        _, env_cfg = _read_caster_config_from_env()
-        env_host, env_port = env_cfg["host"], env_cfg["port"]
-        resolved_host = str(caster_host).strip() if caster_host is not None else env_host
-        resolved_port = caster_port if caster_port is not None else env_port
 
-        if not resolved_host:
-            raise HTTPException(status_code=400, detail="caster_host không hợp lệ")
-
-        try:
-            resolved_port_int = int(resolved_port)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="caster_port không hợp lệ")
-
-        _persist_caster_config_to_env(resolved_host, resolved_port_int)
-        settings_data["caster_host"] = resolved_host
-        settings_data["caster_port"] = resolved_port_int
 
     await crud.update_system_settings(db, settings_data)
     logger.info(f"Admin '{current_user.username}' updated system settings: {settings_data}")
@@ -3108,39 +3121,7 @@ async def delete_user(
     
     return {"status": "deleted", "user_id": user_id}
 
-#=== CASTER CONFIGURATION ===
-@app.put("/api/admin/caster-config")
-async def update_caster_config(
-    config: schemas.CasterConfig,
-    db: AsyncSession = Depends(get_auth_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
-):
-    """Cập nhật Host/Port của NTRIP Caster"""
-    settings_data = {
-        "caster_host": config.host.strip(),
-        "caster_port": config.port
-    }
 
-    _persist_caster_config_to_env(settings_data["caster_host"], int(settings_data["caster_port"]))
-    await crud.update_system_settings(db, settings_data)
-    return {"status": "success", "config": settings_data}
-
-@app.get("/api/admin/caster-config")
-async def get_caster_config_endpoint(
-    db: AsyncSession = Depends(get_auth_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
-):
-    system_settings = await crud.get_system_settings(db)
-    _, env_cfg = _read_caster_config_from_env()
-    env_host, env_port = env_cfg["host"], env_cfg["port"]
-
-    host = env_host or settings.CASTER_HOST or system_settings.get('caster_host', '')
-    port = env_port or settings.CASTER_PORT or system_settings.get('caster_port', 2101)
-
-    return {
-        "host": host,
-        "port": int(port)
-    }
 
 # === LICENSE ===
 @app.post("/api/license/pi", response_model=schemas.LicenseResponse)
@@ -3551,6 +3532,62 @@ async def delete_rover(
     success = await crud.delete_rover_account(db, rover_id=rover_id)
     
     return {"status": "deleted", "rover_id": rover_id}
+
+# === CASTER USER MANAGEMENT (For non-DB users) ===
+@app.delete("/api/caster/users/{username}")
+async def delete_caster_user_endpoint(
+    username: str,
+    db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    # 1. Kiểm tra quyền ADMIN
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(
+            status_code=403, 
+            detail="Chỉ Administrator mới có quyền xóa tài khoản ngoại lai trực tiếp trên Caster."
+        )
+
+    # 2. Xóa trên toàn bộ Caster được cấu hình
+    hosts, config = _read_caster_config_from_env()
+    if not hosts:
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống.")
+
+    results_log = []
+    errors = []
+    port = config.get("port") or 2101
+    
+    for host in hosts:
+        try:
+            from app.caster_client import CasterClient
+            caster = CasterClient(host, port)
+            # Dùng 'admin' hoặc current_user.username làm identifier cho lệnh deluser
+            await caster.delete_user(identifier='admin', username=username)
+            results_log.append(host)
+        except Exception as e:
+            logger.error(f"Failed to delete user '{username}' on caster {host}: {e}")
+            errors.append(f"{host}: {str(e)}")
+
+    if errors and not results_log:
+        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {'; '.join(errors)}")
+    
+    # Track the event
+    try:
+        from .crud import log_system_event
+        await log_system_event(
+            db=db,
+            type="warning",
+            message=f"Xóa tài khoản ngoại lai '{username}' khỏi Caster bởi {current_user.username}",
+            user_id=current_user.id
+        )
+    except Exception:
+        pass
+
+    return {
+        "status": "deleted",
+        "username": username,
+        "casters": results_log,
+        "errors": errors
+    }
 
 # === ROVER MANAGEMENT - GLOBAL VIEW ===
 @app.get("/api/rovers/all", response_model=list[schemas.RoverAccountResponse])
@@ -4424,14 +4461,9 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
         # Device state (name, config, etc.) will be inferred by UI from last known state or loaded separately.
         offline_payload = {
             "serial": serial,
-            "name": None,  # Will be filled by UI from previous cached state
             "status": "offline",
             "ntrip_connected": False,
             "bps": 0,
-            "detected_chip_type": None,
-            "base_config": None,
-            "service_config": None,
-            "is_provisioned": None,
             "ntrip_status": {
                 "server1": {"connected": False, "bps": 0},
                 "server2": {"connected": False, "bps": 0}
@@ -4476,6 +4508,27 @@ async def global_exception_handler(request: Request, exc: Exception):
             "timestamp": time.time()
         }
     )
+
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Xử lý 404 cho API và các lỗi HTTP khác"""
+    if exc.status_code == 404 and request.url.path.startswith("/api/"):
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"🚫 SECURITY BLOCK (API 404): IP {client_ip} probed non-existent API: {request.url.path}")
+        
+        # Ghi nhận vi phạm
+        if client_ip != "unknown":
+            score = security_rep_scores.get(client_ip, 0) + 1
+            security_rep_scores[client_ip] = score
+            if score >= VIOLATION_THRESHOLD:
+                banned_ips[client_ip] = time.time() + BAN_DURATION
+                logger.critical(f"🚨 AUTOMATIC BAN (API PROBE): IP {client_ip} BANNED after {score} violations.")
+
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Access Forbidden: API endpoint not found and blocked for security."}
+        )
+    return await http_exception_handler(request, exc)
 
 # ============================================================================
 # HEALTH MONITORING ENDPOINTS
@@ -4657,9 +4710,7 @@ async def get_caster_config(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
 ):
     """Return the list of configured caster hosts and system version."""
-    env_cfg = _read_caster_config_from_env()
-    _env_host = env_cfg.get("host")
-    hosts = [_env_host] if _env_host else []
+    hosts, env_cfg = _read_caster_config_from_env()
     if not hosts:
         # Fallback to single host from settings
         hosts = [str(settings.CASTER_HOST or "localhost")]

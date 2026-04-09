@@ -332,19 +332,27 @@ function updateGlobalDevices(newDeviceData) {
 
         // Giữ chip/config đã biết khi bản tin realtime chỉ là partial update (đặc biệt lúc offline).
         if (existingDevice) {
+            // Chip Type
             if (!newDevice.detected_chip_type || newDevice.detected_chip_type === 'UNKNOWN') {
                 if (existingDevice.detected_chip_type && existingDevice.detected_chip_type !== 'UNKNOWN') {
                     newDevice.detected_chip_type = existingDevice.detected_chip_type;
                 }
             }
-            // Only fallback when key is truly missing in partial updates.
-            // If backend explicitly sends {}, we must respect it (e.g. reset flow).
-            if (!hasOwn(newDevice, 'base_config') && hasData(existingDevice.base_config)) {
+            
+            // Name
+            if (!newDevice.name && existingDevice.name) {
+                newDevice.name = existingDevice.name;
+            }
+
+            // Configs: Fallback if key is missing OR if value is null/empty
+            if ((!hasOwn(newDevice, 'base_config') || !hasData(newDevice.base_config)) && hasData(existingDevice.base_config)) {
                 newDevice.base_config = existingDevice.base_config;
             }
-            if (!hasOwn(newDevice, 'service_config') && hasData(existingDevice.service_config)) {
+            if ((!hasOwn(newDevice, 'service_config') || !hasData(newDevice.service_config)) && hasData(existingDevice.service_config)) {
                 newDevice.service_config = existingDevice.service_config;
             }
+            
+            // Provisioned status
             if (typeof newDevice.is_provisioned === 'undefined' && typeof existingDevice.is_provisioned !== 'undefined') {
                 newDevice.is_provisioned = existingDevice.is_provisioned;
             }

@@ -369,9 +369,20 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
     # Chỉ cập nhật nếu device gửi config hợp lệ với dữ liệu thực tế
     if new_base_config and existing_device.base_config != new_base_config:
-        update_values["base_config"] = new_base_config
-        update_values["is_synced"] = False
-        should_update = True
+        # 🔥 CẢI TIẾN: Bảo vệ tọa độ tránh bị "ghosting" khi agent gửi bản tin thiếu
+        old_config = existing_device.base_config or {}
+        old_coords = old_config.get('coords')
+        new_coords = new_base_config.get('coords')
+        old_method = old_config.get('base_setup_method')
+        new_method = new_base_config.get('base_setup_method')
+
+        # Nếu DB đã có tọa độ mà status mới không có (nhưng cùng method), giữ nguyên DB
+        if old_coords and not new_coords and old_method == new_method:
+            pass 
+        else:
+            update_values["base_config"] = new_base_config
+            update_values["is_synced"] = False
+            should_update = True
 
     # ✅ KIỂM TRA SERVICE CONFIG
     # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng

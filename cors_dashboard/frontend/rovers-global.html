@@ -3,6 +3,15 @@
 <html lang="vi" data-bs-theme="dark">
 
 <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-G5RWFTRMJG"></script>
+    <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-G5RWFTRMJG');
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>Rover & Connection Manager</title>
@@ -261,234 +270,107 @@
         </div>
 
         <div class="main-card">
-            <!-- Tabs Header -->
-            <ul class="nav nav-tabs px-3 pt-2" id="managementTabs" role="tablist">
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link active" id="rovers-tab" data-bs-toggle="tab" data-bs-target="#rovers-pane"
-                        type="button" role="tab">
-                        <i class="bi bi-person-badge-fill me-2"></i>Tài khoản Rover
-                    </button>
-                </li>
-                <!-- TAB CASTER ROVER: Admin Only -->
-                <li class="nav-item d-none" id="caster-rover-tab-li" role="presentation">
-                    <button class="nav-link" id="caster-rover-tab" data-bs-toggle="tab" data-bs-target="#caster-rover-pane"
-                        type="button" role="tab">
-                        <i class="bi bi-shield-lock me-2"></i>Quản lý Rover Caster
-                    </button>
-                </li>
-                <!-- TAB CASTER CONFIG: Admin Only -->
-                <li class="nav-item d-none" id="caster-tab-li" role="presentation">
-                    <button class="nav-link" id="caster-tab" data-bs-toggle="tab" data-bs-target="#caster-pane"
-                        type="button" role="tab">
-                        <i class="bi bi-server me-2"></i>Cấu hình Caster
-                    </button>
-                </li>
-            </ul>
-
-            <!-- Tabs Content -->
-            <div class="tab-content tab-content-wrapper" id="managementTabsContent">
-
-                <!-- 1. ROVER PANEL -->
-                <div class="tab-pane fade show active" id="rovers-pane" role="tabpanel">
-                    <!-- Toolbar -->
-                    <div class="row g-2 mb-4">
-                        <div class="col-md-4">
-                            <div class="input-group">
-                                <span class="input-group-text bg-dark border-secondary text-secondary"><i
-                                        class="bi bi-search"></i></span>
-                                <input type="text" id="search-box" class="form-control"
-                                    placeholder="Tìm username, serial trạm...">
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <select id="filter-station" class="form-select">
-                                <option value="">Tất cả trạm Base</option>
-                                <!-- JS Populate -->
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <select id="filter-status" class="form-select">
-                                <option value="">Tất cả trạng thái</option>
-                                <option value="true">Active (Hoạt động)</option>
-                                <option value="false">Expired (Hết hạn)</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3 text-end">
-                            <button id="refresh-btn" class="btn btn-dark border-secondary me-2" title="Tải lại dữ liệu">
-                                <i class="bi bi-arrow-clockwise"></i>
-                            </button>
-                            <button class="btn btn-primary px-3" data-bs-toggle="modal"
-                                data-bs-target="#createRoverModal">
-                                <i class="bi bi-plus-lg me-2"></i>Tạo Mới
-                            </button>
+            <!-- 1. STAT CARDS (ADMIN ONLY) -->
+            <div id="admin-stats-container" class="px-4 pt-4 d-none">
+                <div class="row g-3">
+                    <div class="col-6 col-md-3">
+                        <div class="stat-card">
+                            <div class="stat-value text-white" id="stat-total">-</div>
+                            <div class="stat-label">Tổng trên Caster</div>
                         </div>
                     </div>
-
-                    <!-- Table -->
-                    <div class="table-responsive rounded border border-secondary border-opacity-25">
-                        <table class="table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Username</th>
-                                    <th>Mật khẩu</th>
-                                    <th>Thông tin Trạm (Base)</th>
-                                    <th class="text-center">Trạng thái</th>
-                                    <th>Ngày tạo</th>
-                                    <th class="text-end">Hành động</th>
-                                </tr>
-                            </thead>
-                            <tbody id="rovers-table-body">
-                                <!-- JS Populated -->
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="mt-3 text-muted small">
-                        Hiển thị <span id="displayed-count" class="fw-bold text-white">0</span> / <span
-                            id="total-rovers">0</span> tài khoản
-                    </div>
-                </div>
-
-                <!-- 2. CASTER ROVER MANAGEMENT (ADMIN ONLY) -->
-                <div class="tab-pane fade" id="caster-rover-pane" role="tabpanel">
-                    <!-- Stat Cards -->
-                    <div class="row g-3 mb-4">
-                        <div class="col-6 col-md-3">
-                            <div class="stat-card">
-                                <div class="stat-value text-white" id="stat-total">-</div>
-                                <div class="stat-label">Tổng trên Caster</div>
-                            </div>
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <div class="stat-card">
-                                <div class="stat-value" style="color:#38bdf8" id="stat-indb">-</div>
-                                <div class="stat-label">Có trong DB</div>
-                            </div>
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <div class="stat-card">
-                                <div class="stat-value" style="color:#fbbf24" id="stat-unknown">-</div>
-                                <div class="stat-label">Không có DB</div>
-                            </div>
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <div class="stat-card">
-                                <div class="stat-value" style="color:#fb7185" id="stat-blocked">-</div>
-                                <div class="stat-label">Đang bị chặn</div>
-                            </div>
+                    <div class="col-6 col-md-3">
+                        <div class="stat-card">
+                            <div class="stat-value" style="color:#38bdf8" id="stat-indb">-</div>
+                            <div class="stat-label">Có trong DB</div>
                         </div>
                     </div>
-
-                    <!-- Toolbar -->
-                    <div class="row g-2 mb-3">
-                        <div class="col-md-5">
-                            <div class="input-group">
-                                <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
-                                <input type="text" id="caster-search-box" class="form-control" placeholder="Tìm username, mountpoint...">
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <select id="caster-filter-status" class="form-select">
-                                <option value="">Tất cả trạng thái</option>
-                                <option value="blocked">Đang bị chặn</option>
-                                <option value="active">Hoạt động</option>
-                                <option value="unknown">Không có trong DB</option>
-                                <option value="indb">Có trong DB</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4 text-end">
-                            <button id="caster-refresh-btn" class="btn btn-dark border-secondary" title="Tải lại từ Caster">
-                                <i class="bi bi-arrow-clockwise"></i>
-                            </button>
+                    <div class="col-6 col-md-3">
+                        <div class="stat-card">
+                            <div class="stat-value" style="color:#fbbf24" id="stat-unknown">-</div>
+                            <div class="stat-label">Không có DB</div>
                         </div>
                     </div>
-
-                    <!-- Caster Auth Check Info -->
-                    <div class="alert alert-dark border-secondary d-flex align-items-start small mb-3">
-                        <i class="bi bi-info-circle-fill text-info fs-5 me-2 mt-1"></i>
-                        <div>
-                            <strong>Cách hoạt động:</strong> Khi Caster gửi lệnh wake-up, hệ thống tự kiểm tra blocklist.
-                            Nếu user bị chặn → response <code>BLOCKED</code> cho Caster → Caster không mở luồng.
-                            Nếu không bị chặn → response <code>OK</code> → Caster mở luồng bình thường.
-                            <br><span class="text-muted">Auth endpoint: <code>GET /api/ntrip/auth-check?user=xxx&mountpoint=yyy</code></span>
-                        </div>
-                    </div>
-
-                    <!-- Table -->
-                    <div class="table-responsive rounded border border-secondary border-opacity-25">
-                        <table class="table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Username</th>
-                                    <th>Mountpoints</th>
-                                    <th class="text-center">Server</th>
-                                    <th class="text-center">Nguồn</th>
-                                    <th class="text-center">Trạng thái</th>
-                                    <th class="text-center">Clients</th>
-                                    <th class="text-end">Hành động</th>
-                                </tr>
-                            </thead>
-                            <tbody id="caster-table-body">
-                                <tr><td colspan="6" class="text-center py-5 text-muted">
-                                    <div class="spinner-border spinner-border-sm me-2"></div> Đang tải dữ liệu từ Caster...
-                                </td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="mt-3 text-muted small">
-                        Hiển thị <span id="caster-displayed-count" class="fw-bold text-white">0</span> / <span id="caster-total-count">0</span> user trên Caster
-                    </div>
-                </div>
-
-                <!-- 3. CASTER CONFIG PANEL (ADMIN ONLY) -->
-                <div class="tab-pane fade" id="caster-pane" role="tabpanel">
-                    <div class="row justify-content-center">
-                        <div class="col-lg-8 col-xl-6">
-                            <div class="config-box">
-                                <h5 class="mb-3 text-white border-bottom border-secondary pb-2">
-                                    <i class="bi bi-sliders me-2 text-primary"></i>Kết nối NTRIP Caster
-                                </h5>
-                                <div class="alert alert-dark border-secondary d-flex align-items-start small mb-4">
-                                    <i class="bi bi-info-circle-fill text-info fs-5 me-2"></i>
-                                    <div>
-                                        Đây là cấu hình kết nối TCP Admin đến phần mềm NTRIP Caster (SNIP, RTK2GO...).
-                                        Hệ thống sẽ dùng thông tin này để tự động tạo/xóa user trên Caster khi bạn thao
-                                        tác trên Web.
-                                    </div>
-                                </div>
-
-                                <form id="caster-form">
-                                    <div class="mb-3">
-                                        <label class="form-label text-muted small fw-bold">HOST / IP ADDRESS</label>
-                                        <div class="input-group">
-                                            <span class="input-group-text bg-dark border-secondary text-secondary"><i
-                                                    class="bi bi-globe"></i></span>
-                                            <input type="text" class="form-control" id="caster-host"
-                                                placeholder="e.g., aitogy.com.vn" required>
-                                        </div>
-                                    </div>
-                                    <div class="mb-4">
-                                        <label class="form-label text-muted small fw-bold">ADMIN PORT (TCP)</label>
-                                        <div class="input-group">
-                                            <span class="input-group-text bg-dark border-secondary text-secondary"><i
-                                                    class="bi bi-door-open"></i></span>
-                                            <input type="number" class="form-control" id="caster-port"
-                                                placeholder="e.g., 2101" required>
-                                        </div>
-                                        <div class="form-text text-secondary opacity-75">
-                                            Lưu ý: Đây là cổng quản trị Admin, thường khác với cổng NTRIP Client.
-                                        </div>
-                                    </div>
-                                    <div class="d-grid">
-                                        <button type="submit" class="btn btn-success py-2 fw-bold">
-                                            <i class="bi bi-check-circle-fill me-2"></i>Lưu Cấu Hình
-                                        </button>
-                                    </div>
-                                </form>
-                            </div>
+                    <div class="col-6 col-md-3">
+                        <div class="stat-card">
+                            <div class="stat-value" style="color:#fb7185" id="stat-blocked">-</div>
+                            <div class="stat-label">Đang bị chặn</div>
                         </div>
                     </div>
                 </div>
             </div>
+
+            <div class="tab-content-wrapper p-4">
+                <!-- Toolbar -->
+                <div class="row g-2 mb-4">
+                    <div class="col-md-4">
+                        <div class="input-group">
+                            <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
+                            <input type="text" id="search-box" class="form-control" placeholder="Tìm username, serial trạm, host...">
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <select id="filter-station" class="form-select">
+                            <option value="">Tất cả trạm Base</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select id="filter-status" class="form-select">
+                            <option value="">Tất cả trạng thái</option>
+                            <option value="active">Active (Hoạt động)</option>
+                            <option value="blocked">Blocked (Bị chặn)</option>
+                            <option value="online">Online (Đang kết nối)</option>
+                            <option value="unknown">Unknown (Ngoại lai)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <button id="refresh-btn" class="btn btn-dark border-secondary me-2" title="Tải lại dữ liệu">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button class="btn btn-primary px-3" data-bs-toggle="modal" data-bs-target="#createRoverModal">
+                            <i class="bi bi-plus-lg me-2"></i>Tạo Mới
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Caster Auth Check Info (Small) -->
+                <div id="admin-info-alert" class="alert alert-dark border-secondary py-2 px-3 small mb-3 d-none">
+                    <i class="bi bi-info-circle-fill text-info me-2"></i>
+                    <span class="text-muted">Hệ thống tự động kiểm tra blocklist khi Caster wake-up: <code>OK</code> mở luồng, <code>BLOCKED</code> chặn luồng.</span>
+                </div>
+
+                <!-- Unified Table -->
+                <div class="table-responsive rounded border border-secondary border-opacity-25">
+                    <table class="table mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th>Username / Account</th>
+                                <th>Mật khẩu</th>
+                                <th>Trạm / Mountpoints</th>
+                                <th class="text-center">Caster Status</th>
+                                <th class="text-center">Server</th>
+                                <th class="text-end">Hành động</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rovers-table-body">
+                            <tr>
+                                <td colspan="6" class="text-center py-5 text-muted">
+                                    <div class="spinner-border spinner-border-sm me-2"></div> Đang tải dữ liệu...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-3 d-flex justify-content-between align-items-center">
+                    <div class="text-muted small">
+                        Hiển thị <span id="displayed-count" class="fw-bold text-white">0</span> / <span id="total-rovers">0</span> tài khoản
+                    </div>
+                    <div class="text-muted small" id="caster-sync-time">
+                        Last sync: --:--:--
+                    </div>
+                </div>
+            </div>
+        </div>
         </div>
     </main>
 

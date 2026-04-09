@@ -1,4 +1,5 @@
 # geotek_aitogy_working.py
+RELAY_VERSION = "V1.1.0"
 
 import json
 import logging
@@ -141,6 +142,7 @@ class RelayWorker(threading.Thread):
         
         self.name = f"Relay-{self.cfg['target_mp']}"
         self.desired_active = False
+        self.wakeup_event = threading.Event()
         self.socket_lock = threading.Lock()
         self._source_sock = None
         self._target_sock = None
@@ -156,6 +158,7 @@ class RelayWorker(threading.Thread):
             "serial": self.serial,
             "name": self.cfg['target_mp'],
             "status": "online" if self.desired_active else "sleep",
+            "version": RELAY_VERSION,
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
@@ -191,7 +194,7 @@ class RelayWorker(threading.Thread):
         self.desired_active = bool(active)
         if not self.desired_active:
             self._close_live_sockets()
-            # Xóa dòng gán False = 0 ở đây, giữ nguyên trạng thái cũ chờ run loop nạp BPS ảo
+        self.wakeup_event.set()
         self.publish_status()
 
     def _close_live_sockets(self):
@@ -327,6 +330,8 @@ class RelayWorker(threading.Thread):
                             except: break
                 
                 self.log("INFO", f"Source loop ended, reconnecting in {RECONNECT_INTERVAL}s...")
+                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                self.wakeup_event.clear()
                 
             except Exception as e:
                 self.log("WARNING", f"Connection error: {e}")
@@ -367,6 +372,7 @@ class MonitorWorker(threading.Thread):
         
         self.name = f"Monitor-{self.cfg['mountpoint']}"
         self.desired_active = False
+        self.wakeup_event = threading.Event()
         self.socket_lock = threading.Lock()
         self._sock = None
     
@@ -381,6 +387,7 @@ class MonitorWorker(threading.Thread):
             "serial": self.serial,
             "name": self.cfg['mountpoint'],
             "status": "online" if self.is_connected else "offline",
+            "version": RELAY_VERSION,
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
@@ -416,6 +423,7 @@ class MonitorWorker(threading.Thread):
         self.desired_active = bool(active)
         if not self.desired_active:
             self._close_live_socket()
+        self.wakeup_event.set()
         self.publish_status()
 
     def _close_live_socket(self):
@@ -489,14 +497,9 @@ class MonitorWorker(threading.Thread):
                 self.is_connected = False
                 self.current_bps = 0
                 self.publish_status()
-                time.sleep(RECONNECT_INTERVAL)
-                
-            except Exception as e:
-                self.log("WARNING", f"Monitor connection error: {e}")
-                self.is_connected = False
-                self.current_bps = 0
                 self.publish_status()
-                time.sleep(RECONNECT_INTERVAL)
+                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                self.wakeup_event.clear()
             finally:
                 self.is_connected = False
                 self.current_bps = 0

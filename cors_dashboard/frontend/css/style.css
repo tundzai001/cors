@@ -167,7 +167,8 @@ html {
 }
 
 .status-bar.offline {
-    background: linear-gradient(180deg, #868e96 0%, #495057 100%);
+    background: linear-gradient(180deg, #ff6b6b 0%, #fa5252 100%);
+    box-shadow: 0 0 12px rgba(250, 82, 82, 0.4);
 }
 
 .status-bar.awaiting_license {
@@ -317,11 +318,13 @@ html {
     font-size: 0.75rem;
 }
 
-.server-status-item.connected {
+.server-status-item.connected,
+.server-status-item.online {
     border-color: rgba(81, 207, 102, 0.3);
 }
 
-.server-status-item.connected .server-label {
+.server-status-item.connected .server-label,
+.server-status-item.online .server-label {
     color: #51cf66;
 }
 
@@ -365,7 +368,8 @@ html {
     transition: color 0.3s ease;
 }
 
-.server-status-item.connected .server-bps {
+.server-status-item.connected .server-bps,
+.server-status-item.online .server-bps {
     color: #51cf66;
     text-shadow: 0 0 8px rgba(81, 207, 102, 0.4);
 }

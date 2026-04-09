@@ -85,55 +85,60 @@ const isPreferredHost = (hostValue) => {
 
 const getMapEffectiveStatus = (device) => {
     const rawStatus = String(device?.status || '').toLowerCase();
-    if (['offline', 'locked', 'awaiting_license', 'unprovisioned', 'rebooting', 'rebooting_for_reset', 'initializing', 'configuring'].includes(rawStatus) || rawStatus.startsWith('auto_setup')) {
-        return 'offline';
-    }
-
-    const cfg = device?.service_config || {};
-    const hasS1Enabled = Object.prototype.hasOwnProperty.call(cfg, 'server1_enabled');
-    const hasS2Enabled = Object.prototype.hasOwnProperty.call(cfg, 'server2_enabled');
-    const s1Enabled = hasS1Enabled ? parseBoolCompat(cfg.server1_enabled, false) : isServerConfiguredCompat(cfg, 1);
-    const s2Enabled = hasS2Enabled ? parseBoolCompat(cfg.server2_enabled, false) : isServerConfiguredCompat(cfg, 2);
-
-    const enabledServers = [];
-    if (s1Enabled) enabledServers.push(1);
-    if (s2Enabled) enabledServers.push(2);
-
-    // Virtual monitor-only mode: no output server enabled, but inbound RTCM means online on map.
+    
     const ntripStats = device?.ntrip_stats || {};
     const virtualRtcmInBps = Number(ntripStats.rtcm_input_bps || ntripStats.rtcm_in_bps || 0);
     const isVirtualStation = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
-    if (enabledServers.length === 0) {
+    // 1. FORCED OFFLINE: Only if status indicates the agent is truly disconnected
+    if (!['online', 'streaming', 'sleep', 'starting'].includes(rawStatus)) {
         if (isVirtualStation && virtualRtcmInBps > 0) {
-            return 'online';
+            // Keep going for virtual
+        } else {
+            return 'offline';
         }
-        return 'offline';
     }
 
-    const prioritizedServers = enabledServers.filter((sid) => isPreferredHost(cfg[`serverhost${sid}`]));
-    const targetServers = prioritizedServers.length > 0 ? prioritizedServers : enabledServers;
+    const cfg = device?.service_config || {};
+    const s1Enabled = parseBoolCompat(cfg.server1_enabled, isServerConfiguredCompat(cfg, 1));
+    const s2Enabled = parseBoolCompat(cfg.server2_enabled, isServerConfiguredCompat(cfg, 2));
 
-    let hasPushing = false;
-    let hasSleeping = false;
+    if (!s1Enabled && !s2Enabled) {
+        return (isVirtualStation && virtualRtcmInBps > 0) ? 'online' : 'offline';
+    }
 
-    targetServers.forEach((sid) => {
-        const onDemand = parseBoolCompat(cfg[`server${sid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
-        const active = onDemand
-            ? parseBoolCompat(cfg[`server${sid}_stream_active`], parseBoolCompat(cfg.stream_active, false))
-            : true;
+    // 2. PRIMARY SERVER LOGIC: Handle aitogy.com.vn with optional ports
+    const s1Host = String(cfg.serverhost1 || '').trim().toLowerCase();
+    const s2Host = String(cfg.serverhost2 || '').trim().toLowerCase();
+    const preferred = 'aitogy.com.vn';
+    
+    let primarySid = 1;
+    if (s1Host.includes(preferred)) primarySid = 1;
+    else if (s2Host.includes(preferred)) primarySid = 2;
+    else primarySid = 1; 
 
-        if (!onDemand || active) {
-            hasPushing = true;
-        } else {
-            hasSleeping = true;
-        }
-    });
+    // 3. PRIMARY STATUS (Sleep on primary > Traffic on primary > Online)
+    const ntripStatusMap = device?.ntrip_status || {};
+    const primaryBps = Number(ntripStatusMap[`server${primarySid}`]?.bps || 0);
+    const onDemand = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
+    const active = onDemand ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
+    const isSleep = onDemand && !active;
+    
+    let result = 'online';
+    if (isSleep) {
+        result = 'sleep';
+    } else if (primaryBps > 0) {
+        result = 'online';
+    } else {
+        result = 'online';
+    }
 
-    // No mixed state on map: prioritize effective target group result.
-    if (hasPushing) return 'online';
-    if (hasSleeping) return 'sleep';
-    return 'offline';
+
+    // SAFETY GUARD: If agent is online/sleep, NEVER show Red
+    if (result === 'offline' && okStatuses.includes(rawStatus)) {
+        result = 'online';
+    }
+    return result;
 };
 
 
@@ -250,54 +255,73 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
         const isVirtualStation = chipUpper === 'VIRTUAL';
         const isVirtualMonitorOnly = isVirtualStation && !s1Enabled && !s2Enabled;
 
-        // --- CALCULATE STATUS COLOR WITH DOMAIN PRIORITY ---
-        const prioritizedServers = [1, 2].filter(sid => 
-            (sid === 1 ? s1Enabled : s2Enabled) && 
-            isPreferredHost(config[`serverhost${sid}`])
-        );
-        
-        const serversToCheck = prioritizedServers.length > 0 ? prioritizedServers : (s1Enabled || s2Enabled ? [1, 2] : []);
-        
+        // --- CALCULATE STATUS COLOR WITH STRICT PRIMARY SERVER PRIORITY ---
+        const rawStatus = String(device?.status || 'offline').toLowerCase();
         let effectiveStatus = 'offline';
-        if (isVirtualMonitorOnly) {
-            effectiveStatus = hasInputTraffic ? 'online' : 'offline';
-        } else if (serversToCheck.length > 0) {
-            let hasPushingInCheckGroup = false;
-            let hasSleepingInCheckGroup = false;
-            
-            serversToCheck.forEach(sid => {
-                const isEnabled = sid === 1 ? s1Enabled : s2Enabled;
-                if (!isEnabled) return;
+        
+        const okStatuses = ['online', 'streaming', 'sleep', 'starting'];
+        if (okStatuses.includes(rawStatus) || (isVirtualStation && hasInputTraffic)) {
+            // 1. TRUST AGENT STATUS FIRST (Especially for 'sleep')
+            if (rawStatus === 'sleep') {
+                effectiveStatus = 'sleep';
+            } else if (rawStatus === 'starting') {
+                effectiveStatus = 'starting';
+            } else {
+                // 2. PRIMARY SERVER LOGIC: aitogy.com.vn (partial match for ports) > S1
+                const s1Host = String(config.serverhost1 || '').trim().toLowerCase();
+                const s2Host = String(config.serverhost2 || '').trim().toLowerCase();
+                const preferred = 'aitogy.com.vn';
                 
-                const serverBps = sid === 1 ? s1.bps : s2.bps;
-                const isSleep = sid === 1 ? s1SleepMode : s2SleepMode;
+                let primarySid = 1;
+                if (s1Host.includes(preferred)) primarySid = 1;
+                else if (s2Host.includes(preferred)) primarySid = 2;
+                else primarySid = 1; // Default to S1
                 
-                if (isSleep) {
-                    hasSleepingInCheckGroup = true;
-                } else if (serverBps > 0) {
-                    hasPushingInCheckGroup = true;
+                const pBps = primarySid === 1 ? s1.bps : s2.bps;
+                const pSleep = primarySid === 1 ? s1SleepMode : s2SleepMode;
+                const pEnabled = primarySid === 1 ? s1Enabled : s2Enabled;
+
+                if (pEnabled) {
+                    if (pSleep) {
+                        effectiveStatus = 'sleep';
+                    } else if (pBps > 0) {
+                        effectiveStatus = 'online';
+                    } else {
+                        effectiveStatus = 'online';
+                    }
+                } else {
+                    // Fallback to ANY enabled server if primary is disabled
+                    if (hasAnyOutputTraffic) {
+                        effectiveStatus = 'online';
+                    } else if (hasAnySleepOnly) {
+                        effectiveStatus = 'sleep';
+                    } else {
+                        effectiveStatus = (isVirtualStation && hasInputTraffic) ? 'online' : 'offline';
+                    }
                 }
-            });
-            
-            if (hasPushingInCheckGroup) effectiveStatus = 'online';
-            else if (hasSleepingInCheckGroup) effectiveStatus = 'sleep';
-            else {
-                // Fallback: If prioritized servers are not configurationally active, but SOME other server is pushing
-                if (hasAnyOutputTraffic) effectiveStatus = 'online';
-                else if (hasAnySleepOnly) effectiveStatus = 'sleep';
             }
+        }
+
+        // SAFETY GUARD: If agent reports as Online/Sleep/Starting, use that as fallback if logic fails
+        if (effectiveStatus === 'offline' && okStatuses.includes(rawStatus)) {
+            effectiveStatus = rawStatus === 'offline' ? 'online' : rawStatus;
         }
 
         const statusColorClass = effectiveStatus;
 
-        const rawStatus = String(device?.status || 'offline').toLowerCase();
+        // Use the rawStatus declared above at line 265
         const statusText = STATUS_TEXT_MAP[rawStatus] || String(device?.status || 'UNKNOWN').toUpperCase();
         const statusBadgeClass = STATUS_CLASS_MAP[rawStatus] || 'bg-secondary';
         const hideStatusBadge = ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(rawStatus);
 
+        // Per-server individual color: sleep=blue, pushing=green, idle=disconnected
+        const s1StatusClass = s1SleepMode ? 'sleep' : (s1.bps > 0 ? 'online' : 'disconnected');
+        const s2StatusClass = s2SleepMode ? 'sleep' : (s2.bps > 0 ? 'online' : 'disconnected');
+
         return {
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(s1UseRtcmSleepUi ? rtcmInputBps : s1.bps),
             s2Enabled, s2SleepMode, s2UseRtcmSleepUi, s2Speed: formatSpeed(s2UseRtcmSleepUi ? rtcmInputBps : s2.bps),
+            s1StatusClass, s2StatusClass,
             statusColorClass, statusText, statusBadgeClass, hideStatusBadge, isVirtualStation, rtcmInputBps
         };
     }, [device, device.ntrip_status, device.service_config, device.ntrip_stats]);
@@ -340,10 +364,10 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
                 )}
             </div>
 
-            {(metrics.s1Enabled || metrics.s2Enabled) && (
+            {(metrics.statusColorClass === 'online' || metrics.statusColorClass === 'sleep') && (metrics.s1Enabled || metrics.s2Enabled) && (
                 <div className="server-indicators">
                     {metrics.s1Enabled && (
-                        <div className={`server-status-item ${metrics.s1SleepMode ? 'sleep' : (displayStatus.s1Connected ? 'connected' : 'disconnected')}`}>
+                        <div className={`server-status-item ${metrics.s1StatusClass}`}>
                             <div className="server-label">
                                 <i className={`bi ${metrics.s1UseRtcmSleepUi ? 'bi-cpu-fill' : 'bi-hdd-network-fill'}`}></i>
                                 {metrics.s1UseRtcmSleepUi ? 'S1 RTCM' : 'S1'}
@@ -356,7 +380,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
                     )}
 
                     {metrics.s2Enabled && (
-                        <div className={`server-status-item ${metrics.s2SleepMode ? 'sleep' : (displayStatus.s2Connected ? 'connected' : 'disconnected')}`}>
+                        <div className={`server-status-item ${metrics.s2StatusClass}`}>
                             <div className="server-label">
                                 <i className={`bi ${metrics.s2UseRtcmSleepUi ? 'bi-cpu-fill' : 'bi-hdd-network-fill'}`}></i>
                                 {metrics.s2UseRtcmSleepUi ? 'S2 RTCM' : 'S2'}
@@ -2407,6 +2431,22 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
     const [satStats, setSatStats] = useState({ total: 0, tracking: 0, bySystem: {} });
 
+    // Clean up satellite buffers when switching devices
+    useEffect(() => {
+        if (satelliteBufferRef.current) satelliteBufferRef.current.clear();
+        lastSatelliteDataRef.current = null;
+        
+        // Clear canvases immediately
+        if (satCanvasRef.current) {
+            const ctx = satCanvasRef.current.getContext('2d');
+            ctx.clearRect(0, 0, satCanvasRef.current.width, satCanvasRef.current.height);
+        }
+        if (signalBarsContainerRef.current) {
+            signalBarsContainerRef.current.innerHTML = '';
+        }
+        setSatStats({ total: 0, tracking: 0, bySystem: {} });
+    }, [device?.serial]);
+
     // 🆕 METRIC TRACKING STATE
     const [metrics, setMetrics] = useState({
         fixQuality: { value: 0, history: [] },
@@ -2731,16 +2771,12 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
             // Canvas & Bars Updates
             if (now - lastCanvasUpdate.current >= CANVAS_INTERVAL) {
-                if (satellites && Object.keys(satellites).length > 0) {
-                    drawSkyplotSatellites(Object.values(satellites));
-                }
+                drawSkyplotSatellites(Object.values(satellites || {}));
                 lastCanvasUpdate.current = now;
             }
 
             if (now - lastBarsUpdate.current >= BARS_INTERVAL) {
-                if (satellites && Object.keys(satellites).length > 0) {
-                    drawSignalBars(Object.values(satellites));
-                }
+                drawSignalBars(Object.values(satellites || {}));
                 lastBarsUpdate.current = now;
             }
 

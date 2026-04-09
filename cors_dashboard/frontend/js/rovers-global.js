@@ -33,13 +33,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if(document.getElementById('user-avatar-text')) document.getElementById('user-avatar-text').textContent = currentUser.username.charAt(0).toUpperCase();
 
         if (currentUser.permissions?.includes('manage:caster')) {
-            const casterTab = document.getElementById('caster-tab-li');
-            if (casterTab) casterTab.classList.remove('d-none');
-
             const casterRoverTab = document.getElementById('caster-rover-tab-li');
             if (casterRoverTab) casterRoverTab.classList.remove('d-none');
-
-            loadCasterConfig();
         }
 
         initData();
@@ -53,13 +48,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function initData() {
         await fetchCasterConfig(); // Load available servers first
         await fetchDevices();
-        await fetchRovers();
-        // Load caster users khi tab được click lần đầu
-        const casterRoverTab = document.getElementById('caster-rover-tab');
-        if (casterRoverTab) {
-            casterRoverTab.addEventListener('shown.bs.tab', () => {
-                if (casterUsers.length === 0) fetchCasterUsers();
-            });
+        
+        // Parallel load DB and Caster data
+        try {
+            const results = await Promise.allSettled([
+                fetchRovers(),
+                fetchCasterUsers()
+            ]);
+            
+            // If admin, show stats and info
+            if (currentUser.permissions?.includes('manage:caster')) {
+                document.getElementById('admin-stats-container')?.classList.remove('d-none');
+                document.getElementById('admin-info-alert')?.classList.remove('d-none');
+            }
+            
+            // Periodic sync (every 30s)
+            setInterval(syncData, 30000);
+            
+        } catch (e) {
+            console.error("Init data error", e);
+        }
+    }
+
+    async function syncData() {
+        const syncTimeEl = document.getElementById('caster-sync-time');
+        if (syncTimeEl) syncTimeEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Syncing...';
+        
+        await Promise.allSettled([fetchRovers(), fetchCasterUsers()]);
+        
+        if (syncTimeEl) {
+            const now = new Date();
+            syncTimeEl.textContent = `Last sync: ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
         }
     }
 
@@ -116,19 +135,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             allRovers = await res.json();
             renderTable();
         } catch (error) {
-            showToast(error.message, 'danger');
+            console.error("Rovers fetch error", error);
         }
     }
 
     // === CASTER USERS MANAGEMENT ===
     async function fetchCasterUsers() {
-        const tbody = document.getElementById('caster-table-body');
-        if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">
-                <div class="spinner-border spinner-border-sm me-2"></div> Đang tải dữ liệu từ Caster...
-            </td></tr>`;
-        }
-
         try {
             const res = await fetch('/api/caster/users', { headers: API_HEADERS });
             if (!res.ok) {
@@ -144,14 +156,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 blocked_count: data.blocked_count || 0,
             };
             updateCasterStats();
-            renderCasterTable();
+            renderTable(); // Call unified render
         } catch (error) {
-            showToast(error.message, 'danger');
-            if (tbody) {
-                tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-danger">
-                    <i class="bi bi-exclamation-triangle me-2"></i>${error.message}
-                </td></tr>`;
-            }
+            console.error("Caster users fetch error", error);
         }
     }
 
@@ -167,134 +174,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function renderCasterTable() {
-        const tbody = document.getElementById('caster-table-body');
-        if (!tbody) return;
-
-        const searchTerm = (document.getElementById('caster-search-box')?.value || '').toLowerCase();
-        const statusFilter = document.getElementById('caster-filter-status')?.value || '';
-
-        tbody.innerHTML = '';
-
-        const filtered = casterUsers.filter(u => {
-            // Search
-            const matchSearch = !searchTerm ||
-                u.username.toLowerCase().includes(searchTerm) ||
-                u.mountpoints.some(mp => mp.toLowerCase().includes(searchTerm));
-
-            // Status filter
-            let matchStatus = true;
-            if (statusFilter === 'blocked') matchStatus = u.is_blocked;
-            else if (statusFilter === 'active') matchStatus = !u.is_blocked;
-            else if (statusFilter === 'unknown') matchStatus = !u.in_db;
-            else if (statusFilter === 'indb') matchStatus = u.in_db;
-
-            return matchSearch && matchStatus;
-        });
-
-        const countEl = document.getElementById('caster-displayed-count');
-        const totalEl = document.getElementById('caster-total-count');
-        if (countEl) countEl.textContent = filtered.length;
-        if (totalEl) totalEl.textContent = casterUsers.length;
-
-        if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy user nào.</td></tr>`;
-            return;
-        }
-
-        filtered.forEach(u => {
-            const tr = document.createElement('tr');
-
-            // Source badge
-            const sourceBadge = u.in_db
-                ? '<span class="badge badge-indb rounded-pill"><i class="bi bi-database-check me-1"></i>IN DB</span>'
-                : '<span class="badge badge-unknown rounded-pill"><i class="bi bi-question-circle me-1"></i>UNKNOWN</span>';
-
-            // Status badge  
-            let statusBadge;
-            if (u.is_blocked) {
-                statusBadge = '<span class="badge badge-blocked rounded-pill"><i class="bi bi-shield-x me-1"></i>BỊ CHẶN</span>';
-            } else {
-                statusBadge = '<span class="badge badge-active rounded-pill"><i class="bi bi-check-circle me-1"></i>ACTIVE</span>';
-            }
-
-            // Mountpoints display
-            const mpsDisplay = u.mountpoints.length > 0
-                ? u.mountpoints.map(mp => `<code class="text-info small">${mp}</code>`).join(' ')
-                : '<span class="text-muted small">N/A</span>';
-
-            // Block reason
-            const reasonHtml = u.is_blocked && u.blocked_reason
-                ? `<div class="block-reason mt-1"><i class="bi bi-info-circle me-1"></i>${u.blocked_reason}</div>`
-                : '';
-
-            // Blocked timestamp
-            const blockedTimeHtml = u.is_blocked && u.blocked_at
-                ? `<div class="text-muted" style="font-size:0.7rem">${new Date(u.blocked_at * 1000).toLocaleString('vi-VN')}</div>`
-                : '';
-
-            // Action buttons
-            let actionHtml;
-            if (u.is_blocked) {
-                actionHtml = `
-                    <button class="btn btn-sm btn-outline-success border-0 caster-unblock-btn" 
-                        data-username="${u.username}" title="Mở khóa user">
-                        <i class="bi bi-unlock-fill me-1"></i>Mở khóa
-                    </button>`;
-            } else {
-                actionHtml = `
-                    <button class="btn btn-sm btn-outline-danger border-0 caster-block-btn" 
-                        data-username="${u.username}" 
-                        data-mountpoints="${u.mountpoints.join(',')}"
-                        title="Chặn user">
-                        <i class="bi bi-shield-lock-fill me-1"></i>Chặn
-                    </button>`;
-            }
-
-            // Version check tick
-            let versionTick = '';
-            if (u.nclient > 0) {
-                // If the user has clients, they are "Online"
-                // Check if we can match the station version (this is a bit theoretical for rovers, 
-                // but we follow user's UI request for a tick next to online)
-                versionTick = ` <i class="bi bi-patch-check-fill text-info ms-1" title="Version Synced: ${globalAppVersion}"></i>`;
-            }
-
-            tr.innerHTML = `
-                <td>
-                    <div class="d-flex align-items-center">
-                        <div class="${u.is_blocked ? 'bg-danger' : 'bg-success'} bg-opacity-10 ${u.is_blocked ? 'text-danger' : 'text-success'} rounded-circle p-2 me-2">
-                            <i class="bi bi-person-fill"></i>
-                        </div>
-                        <div>
-                            <span class="fw-bold text-light">${u.username}</span>
-                            ${reasonHtml}
-                        </div>
-                    </div>
-                </td>
-                <td>${mpsDisplay}</td>
-                <td class="text-center text-muted small">${u.server || 'default'}</td>
-                <td class="text-center">${sourceBadge}</td>
-                <td class="text-center">
-                    ${statusBadge}
-                    ${versionTick}
-                    ${blockedTimeHtml}
-                </td>
-                <td class="text-center">
-                    <span class="text-white fw-bold">${u.nclient}</span>
-                    <span class="text-muted">/ ${u.maxclient}</span>
-                </td>
-                <td class="text-end">${actionHtml}</td>
-            `;
-            tbody.appendChild(tr);
-        });
-
-        // Bind events
-        document.querySelectorAll('.caster-block-btn').forEach(btn => {
-            btn.addEventListener('click', handleBlockUser);
-        });
-        document.querySelectorAll('.caster-unblock-btn').forEach(btn => {
-            btn.addEventListener('click', handleUnblockUser);
-        });
+        // Redundant - functionality merged into renderTable
     }
 
     let blockModal = null;
@@ -481,83 +361,175 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // === RENDER TABLE (CÓ NÚT EDIT) ===
+    // === UNIFIED RENDER TABLE ===
     function renderTable() {
         const tbody = document.getElementById('rovers-table-body');
-        const searchTerm = document.getElementById('search-box').value.toLowerCase();
-        const stationFilter = document.getElementById('filter-station').value;
-        const statusFilter = document.getElementById('filter-status').value;
+        if (!tbody) return;
+
+        const searchTerm = document.getElementById('search-box')?.value.toLowerCase() || '';
+        const stationFilter = document.getElementById('filter-station')?.value || '';
+        const statusFilter = document.getElementById('filter-status')?.value || '';
 
         tbody.innerHTML = '';
 
-        const filtered = allRovers.filter(r => {
+        // 1. Prepare merged data
+        // Start with DB rovers
+        let mergedData = allRovers.map(r => ({
+            ...r,
+            type: 'db',
+            caster_info: casterUsers.find(cu => cu.username === r.username)
+        }));
+
+        // Add Caster Users NOT in DB (Unknowns)
+        casterUsers.forEach(cu => {
+            if (!allRovers.find(r => r.username === cu.username)) {
+                mergedData.push({
+                    username: cu.username,
+                    type: 'unknown',
+                    caster_info: cu,
+                    mountpoints: cu.mountpoints.join(';'),
+                    base_name: 'Unknown Caster User',
+                    is_active: false
+                });
+            }
+        });
+
+        // 2. Filtering
+        const filtered = mergedData.filter(r => {
             const matchSearch = r.username.toLowerCase().includes(searchTerm) || 
-                                r.base_serial.toLowerCase().includes(searchTerm) ||
-                                (r.base_name && r.base_name.toLowerCase().includes(searchTerm));
+                                (r.base_serial && r.base_serial.toLowerCase().includes(searchTerm)) ||
+                                (r.base_name && r.base_name.toLowerCase().includes(searchTerm)) ||
+                                (r.caster_info?.server && r.caster_info.server.toLowerCase().includes(searchTerm));
             
-            const matchStation = !stationFilter || r.base_serial.includes(stationFilter);
-            const matchStatus = !statusFilter || String(r.is_active) === statusFilter;
+            const matchStation = !stationFilter || (r.base_serial && r.base_serial.includes(stationFilter));
             
+            // Status filter logic
+            let matchStatus = true;
+            if (statusFilter === 'active') matchStatus = r.type === 'db' && r.is_active;
+            else if (statusFilter === 'blocked') matchStatus = r.caster_info?.is_blocked;
+            else if (statusFilter === 'online') matchStatus = r.caster_info?.nclient > 0;
+            else if (statusFilter === 'unknown') matchStatus = r.type === 'unknown';
+
             return matchSearch && matchStation && matchStatus;
         });
 
-        document.getElementById('displayed-count').textContent = filtered.length;
-        document.getElementById('total-rovers').textContent = allRovers.length;
+        // 3. Update Counts
+        const countEl = document.getElementById('displayed-count');
+        const totalEl = document.getElementById('total-rovers');
+        if (countEl) countEl.textContent = filtered.length;
+        if (totalEl) totalEl.textContent = mergedData.length;
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy dữ liệu.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
             return;
         }
 
+        // 4. Render Rows
         filtered.forEach(r => {
             const tr = document.createElement('tr');
-            const createdDate = new Date(r.created_at * 1000).toLocaleDateString('vi-VN');
-            const statusBadge = r.is_active 
-                ? '<span class="badge badge-active rounded-pill">Active</span>' 
-                : '<span class="badge badge-expired rounded-pill">Expired</span>';
+            if (r.type === 'unknown') tr.style.backgroundColor = 'rgba(239, 68, 68, 0.03)';
+
+            const cu = r.caster_info;
+            
+            // Caster Status Badge
+            let casterStatusBadge = '<span class="badge border border-secondary text-muted rounded-pill opacity-50">Offline</span>';
+            if (cu) {
+                if (cu.is_blocked) {
+                    casterStatusBadge = '<span class="badge badge-blocked rounded-pill"><i class="bi bi-shield-x me-1"></i>BLOCKED</span>';
+                } else if (cu.nclient > 0) {
+                    casterStatusBadge = `<span class="badge badge-active rounded-pill shadow-sm"><i class="bi bi-broadcast me-1"></i>ONLINE (${cu.nclient})</span>`;
+                } else {
+                    casterStatusBadge = '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25 rounded-pill">Standby</span>';
+                }
+            }
+
+            // DB Status Indicator
+            const dbBadge = r.type === 'db' 
+                ? (r.is_active ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>' : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>')
+                : '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
+
+            // Mountpoints
+            const mps = (r.mountpoints || '').split(';').map(m => m.trim()).filter(m => m);
+            const mpsDisplay = mps.length > 0
+                ? mps.map(m => `<code class="text-info small" style="font-size:0.7rem">${m}</code>`).join(' ')
+                : '<span class="text-muted small">N/A</span>';
+
+            // Actions
+            let actionHtml = '';
+            
+            // Admin actions
+            if (currentUser.permissions?.includes('manage:caster')) {
+                // Block/Unblock toggle
+                if (cu?.is_blocked) {
+                    actionHtml += `
+                        <button class="btn btn-sm btn-outline-success border-0 caster-unblock-btn me-1" 
+                            data-username="${r.username}" title="Mở khóa">
+                            <i class="bi bi-unlock-fill"></i>
+                        </button>`;
+                } else {
+                    actionHtml += `
+                        <button class="btn btn-sm btn-outline-danger border-0 caster-block-btn me-1" 
+                            data-username="${r.username}" 
+                            data-mountpoints="${mps.join(',')}"
+                            title="Chặn truy cập">
+                            <i class="bi bi-shield-lock-fill"></i>
+                        </button>`;
+                }
+            }
+
+            // Standard Edit/Delete (Only for DB users)
+            if (r.type === 'db') {
+                actionHtml += `
+                    <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
+                        data-id="${r.id}" title="Sửa">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger delete-btn border-0" 
+                        data-id="${r.id}" data-user="${r.username}" title="Xóa">
+                        <i class="bi bi-trash3-fill"></i>
+                    </button>
+                `;
+                // For unknown users, allow direct deletion from Caster
+                actionHtml += `
+                    <button class="btn btn-sm btn-outline-danger border-0 caster-delete-btn" 
+                        data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
+                        <i class="bi bi-trash3"></i>
+                    </button>
+                `;
+            }
 
             tr.innerHTML = `
                 <td>
                     <div class="d-flex align-items-center">
-                        <div class="bg-primary bg-opacity-10 text-primary rounded-circle p-2 me-2">
+                        <div class="${r.type === 'db' ? 'bg-primary' : 'bg-danger'} bg-opacity-10 ${r.type === 'db' ? 'text-primary' : 'text-danger'} rounded-circle p-2 me-2">
                             <i class="bi bi-person-fill"></i>
                         </div>
-                        <span class="fw-bold text-light">${r.username}</span>
+                        <div class="d-flex flex-column">
+                            <span class="fw-bold text-light">${r.username} ${dbBadge}</span>
+                            <span class="text-muted" style="font-size:0.7rem">${r.type === 'db' ? 'Database Account' : 'Unknown Caster User'}</span>
+                        </div>
                     </div>
                 </td>
-                <td><code class="text-warning bg-dark px-2 py-1 rounded">${r.password}</code></td>
+                <td><code class="text-warning bg-dark px-2 py-1 rounded small">${r.password || '******'}</code></td>
                 <td>
                     <div class="d-flex flex-column">
-                        <span class="text-info fw-bold">${r.base_name || r.base_serial}</span>
-                        <span class="text-muted small mt-1">
-                            <i class="bi bi-broadcast me-1"></i>
-                            ${r.mountpoints ? r.mountpoints.split(';').map(m => m.trim()).join(',') : 'Chưa xác định'}
-                        </span>
+                        <span class="text-info fw-bold small">${r.base_name || 'N/A'}</span>
+                        <div class="mt-1">${mpsDisplay}</div>
                     </div>
                 </td>
-                <td class="text-center">${statusBadge}</td>
-                <td class="text-secondary small">${createdDate}</td>
-                <td class="text-end">
-                    <!-- NÚT SỬA -->
-                    <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
-                        data-id="${r.id}" title="Sửa thông tin">
-                        <i class="bi bi-pencil-square"></i>
-                    </button>
-                    <!-- NÚT XÓA -->
-                    <button class="btn btn-sm btn-outline-danger delete-btn border-0" 
-                        data-id="${r.id}" data-user="${r.username}" title="Xóa Rover">
-                        <i class="bi bi-trash3-fill"></i>
-                    </button>
-                </td>
+                <td class="text-center">${casterStatusBadge}</td>
+                <td class="text-center text-muted small">${cu?.server || '---'}</td>
+                <td class="text-end">${actionHtml}</td>
             `;
             tbody.appendChild(tr);
         });
 
-        // Gán sự kiện
-        document.querySelectorAll('.delete-btn').forEach(btn => btn.addEventListener('click', handleDeleteRover));
-        
-        // Gán sự kiện cho nút EDIT mới
-        document.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', handleEditRover));
+        // Re-bind events
+        document.querySelectorAll('.delete-btn').forEach(btn => btn.onclick = handleDeleteRover);
+        document.querySelectorAll('.edit-btn').forEach(btn => btn.onclick = handleEditRover);
+        document.querySelectorAll('.caster-block-btn').forEach(btn => btn.onclick = handleBlockUser);
+        document.querySelectorAll('.caster-unblock-btn').forEach(btn => btn.onclick = handleUnblockUser);
+        document.querySelectorAll('.caster-delete-btn').forEach(btn => btn.onclick = handleDeleteCasterUser);
     }
 
     // === HANDLE EDIT ROVER (LOGIC MỚI) ===
@@ -705,6 +677,36 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    // === HANDLE DELETE CASTER USER (Unknown) ===
+    async function handleDeleteCasterUser(e) {
+        const btn = e.currentTarget;
+        const username = btn.dataset.username;
+        
+        if (!confirm(`CẢNH BÁO: Tài khoản "${username}" không tồn tại trong DB nhưng đang có trên Caster.\n\nBạn có chắc muốn XÓA HOÀN TOÀN tài khoản này khỏi Caster?`)) return;
+
+        try {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            const res = await fetch(`/api/caster/users/${username}`, { 
+                method: 'DELETE', 
+                headers: API_HEADERS 
+            });
+            
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Xóa thất bại');
+            }
+
+            showToast(`Đã xóa tài khoản ngoại lai ${username} khỏi Caster`, 'warning');
+            fetchRovers(); // Refresh data
+        } catch (err) {
+            showToast(err.message, 'danger');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-trash3"></i>';
+        }
+    }
+
     // === HANDLE CREATE ROVER ===
     const createForm = document.getElementById('create-rover-form');
     if (createForm) {
@@ -774,65 +776,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // === UTILS ===
-    async function loadCasterConfig() {
-        try {
-            const res = await fetch('/api/admin/caster-config', { headers: API_HEADERS });
-            if (res.ok) {
-                const data = await res.json();
-                document.getElementById('caster-host').value = data.host;
-                document.getElementById('caster-port').value = data.port;
-            }
-        } catch (e) { console.error("Caster load error", e); }
-    }
 
-    document.getElementById('caster-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const payload = {
-            host: document.getElementById('caster-host').value,
-            port: parseInt(document.getElementById('caster-port').value)
-        };
-        try {
-            const res = await fetch('/api/admin/caster-config', {
-                method: 'PUT',
-                headers: API_HEADERS,
-                body: JSON.stringify(payload)
-            });
-            if (!res.ok) throw new Error("Lỗi lưu cấu hình");
-            showToast('Lưu cấu hình Caster thành công!', 'success');
-        } catch (err) {
-            showToast(err.message, 'danger');
-        }
-    });
-
-    // Rover tab events
+    // Rover Dashboard events
     document.getElementById('search-box').addEventListener('input', renderTable);
     document.getElementById('filter-station').addEventListener('change', renderTable);
     document.getElementById('filter-status').addEventListener('change', renderTable);
     
     document.getElementById('refresh-btn').addEventListener('click', async () => {
         const btn = document.getElementById('refresh-btn');
-        btn.querySelector('i').classList.add('spin-anim');
-        await Promise.all([fetchDevices(), fetchRovers()]);
-        btn.querySelector('i').classList.remove('spin-anim');
-        showToast('Đã cập nhật dữ liệu', 'info');
+        const icon = btn.querySelector('i');
+        if (icon) icon.classList.add('spin-anim');
+        
+        await syncData();
+        
+        if (icon) icon.classList.remove('spin-anim');
+        showToast('Đã đồng bộ dữ liệu hệ thống', 'info');
     });
-
-    // Caster Rover tab events
-    const casterSearchBox = document.getElementById('caster-search-box');
-    if (casterSearchBox) casterSearchBox.addEventListener('input', renderCasterTable);
-
-    const casterFilterStatus = document.getElementById('caster-filter-status');
-    if (casterFilterStatus) casterFilterStatus.addEventListener('change', renderCasterTable);
-
-    const casterRefreshBtn = document.getElementById('caster-refresh-btn');
-    if (casterRefreshBtn) {
-        casterRefreshBtn.addEventListener('click', async () => {
-            casterRefreshBtn.querySelector('i').classList.add('spin-anim');
-            await fetchCasterUsers();
-            casterRefreshBtn.querySelector('i').classList.remove('spin-anim');
-            showToast('Đã tải lại dữ liệu từ Caster', 'info');
-        });
-    }
 
     function showToast(msg, type = 'primary') {
         const container = document.getElementById('toast-container');
