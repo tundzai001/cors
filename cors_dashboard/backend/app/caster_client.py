@@ -105,10 +105,8 @@ class CasterClient:
         
         # THỬ 3 PHƯƠNG ÁN LỆNH KHÁC NHAU
         cmds = [
-            f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{pw}/{data_count}\r\n",
             f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{pw}/{data_count}\r\n\r\n",
             f"GET /admin/clienttable?user={user}&pass={pw}&mountpoint={mountpoint}\r\n\r\n",
-            f"GET /clienttable HTTP/1.0/id/all/password1/1000\r\n" # Lệnh Hercules chính chủ
         ]
 
         response = ""
