@@ -134,6 +134,7 @@ const getMapEffectiveStatus = (device) => {
     }
 
 
+    const okStatuses = ['online', 'streaming', 'sleep', 'starting'];
     // SAFETY GUARD: If agent is online/sleep, NEVER show Red
     if (result === 'offline' && okStatuses.includes(rawStatus)) {
         result = 'online';
@@ -2907,9 +2908,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
                     
                     {/* Premium Chart Overlay */}
-                    <div className="mt-auto pt-2 border-top border-secondary-subtle">
-                        <window.SatelliteBars satellites={safeNmeaData.satellites} />
-                    </div>
+                    {window.SatelliteBars && (
+                        <div className="mt-auto pt-2 border-top border-secondary-subtle">
+                            <window.SatelliteBars satellites={safeNmeaData.satellites} />
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -2923,7 +2926,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                 <span className="badge bg-primary">{metrics.satellites.value}</span>
                             </div>
                             <div className="card-body p-2">
-                                <window.MetricLineChart label="Count" data={metrics.satellites.history} color="#0dcaf0" />
+                                {window.MetricLineChart ? (
+                                    <window.MetricLineChart label="Count" data={metrics.satellites.history} color="#0dcaf0" />
+                                ) : (
+                                    <div className="text-muted small text-center p-3">Component Missing</div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -2934,7 +2941,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                 <span className="badge bg-warning text-dark">{metrics.hdop.value.toFixed(2)}</span>
                             </div>
                             <div className="card-body p-2">
-                                <window.MetricLineChart label="HDOP" data={metrics.hdop.history} color="#ffc107" />
+                                {window.MetricLineChart ? (
+                                    <window.MetricLineChart label="HDOP" data={metrics.hdop.history} color="#ffc107" />
+                                ) : (
+                                    <div className="text-muted small text-center p-3">Component Missing</div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -2945,7 +2956,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                 <span className="badge bg-success">{(metrics.throughput.value / 1024).toFixed(1)} KB/s</span>
                             </div>
                             <div className="card-body p-2">
-                                <window.MetricLineChart label="BPS" data={metrics.throughput.history} color="#198754" unit=" Bps" />
+                                {window.MetricLineChart ? (
+                                    <window.MetricLineChart label="BPS" data={metrics.throughput.history} color="#198754" unit=" Bps" />
+                                ) : (
+                                    <div className="text-muted small text-center p-3">Component Missing</div>
+                                )}
                             </div>
                         </div>
                     </div>

@@ -196,6 +196,10 @@ function renderDashboard() {
     
     // Render Device List
     if (deviceListNeedsUpdate && deviceListRoot) {
+        if (!window.DeviceList) {
+            console.warn("[Main] window.DeviceList is undefined. Deferring render.");
+            return;
+        }
         deviceListRoot.render(
             React.createElement(window.DeviceList, {
                 devices: filteredDevices,
@@ -213,6 +217,10 @@ function renderDashboard() {
 
     // Render Details Panel
     if (detailsPanelNeedsUpdate && detailsPanelRoot) {
+        if (!window.DetailsPanel) {
+            console.warn("[Main] window.DetailsPanel is undefined. Deferring render.");
+            return;
+        }
         const selectedDevice = globalState.devices.find(d => String(d.serial) === String(globalState.selectedDeviceSerial));
         detailsPanelRoot.render(
             React.createElement(window.DetailsPanel, {
@@ -241,6 +249,11 @@ function renderDashboard() {
 
 function renderMap() {
     if (!mapNeedsUpdate || !mapRoot) return;
+    
+    if (!window.AllStationsMap) {
+        console.warn("[Main] window.AllStationsMap is undefined. Deferring map render.");
+        return;
+    }
     
     mapRoot.render(
         React.createElement(window.AllStationsMap, {

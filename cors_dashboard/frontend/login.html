@@ -913,7 +913,7 @@
     </div>
 
     <!-- Map Modal -->
-    <div class="modal fade" id="mapModal" tabindex="-1" aria-hidden="true">
+    <div class="modal fade" id="mapModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header border-secondary">
@@ -973,18 +973,33 @@
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span><span>Đang xử lý...</span>';
             
             try {
+                const loginPayload = { 
+                    username: user, 
+                    password: pass,
+                    remember_me: document.getElementById('rememberMe').checked
+                };
+                console.log("🚀 Sending login request:", loginPayload);
+
                 const res = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        username: user, 
-                        password: pass,
-                        remember_me: document.getElementById('rememberMe').checked
-                    })
+                    body: JSON.stringify(loginPayload)
                 });
                 
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Đăng nhập thất bại');
+                if (!res.ok) {
+                    console.error("❌ Login failed:", data);
+                    let msg = data.detail;
+                    if (Array.isArray(msg)) {
+                        msg = msg.map(e => {
+                            const field = e.loc ? e.loc.join('.') : 'unknown';
+                            return `${field}: ${e.msg}`;
+                        }).join('\n');
+                    } else if (typeof msg === 'object') {
+                        msg = JSON.stringify(msg);
+                    }
+                    throw new Error(msg || 'Đăng nhập thất bại');
+                }
                 
                 localStorage.setItem('access_token', data.access_token);
                 btn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i><span>Thành công!</span>';
@@ -1103,7 +1118,7 @@
                 }
 
                 // SAFETY GUARD: If agent reports as Online/Sleep/Starting, the marker must NEVER be Red
-                if (result === 'offline' && ['online', 'streaming', 'sleep', 'starting'].includes(rawStatus)) {
+                if (result === 'offline' && ['online', 'streaming', 'sleep', 'starting'].includes(raw)) {
                     result = 'online';
                 }
                 return result;

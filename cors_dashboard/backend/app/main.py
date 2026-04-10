@@ -28,6 +28,7 @@ from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect, Depends, 
     HTTPException, Request, Query, status, Body
 )
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse, FileResponse, StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
@@ -1764,6 +1765,19 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Xử lý lỗi 422 validation từ Pydantic và log ra chi tiết lỗi để debug.
+    """
+    exc_str = f"{exc}".replace("\n", " ").replace("   ", " ")
+    logging.error(f"❌ Validation Error: {exc_str} | Payload: {await request.body()}")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors(), "body": str(exc.body)},
+    )
+
 app.add_middleware(SecurityGateMiddleware) # SECURITY FIRST
 app.add_middleware(RequestIDMiddleware) 
 
@@ -2269,11 +2283,13 @@ async def track_visitors_endpoint(websocket: WebSocket):
 # === AUTHENTICATION ===
 @app.post("/api/auth/login", response_model=schemas.Token)
 async def login(
-    login_data: schemas.LoginRequest, 
-    request: Request,
+    login_data: schemas.LoginRequest = Body(...), 
+    request: Request = None,
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db)  
 ):
+    # Log login attempt
+    logger.info(f"🔑 Login attempt for user: '{login_data.username}' from {request.client.host if request else 'unknown'}")
     user = await crud.get_user_by_username(auth_db, username=login_data.username)
     user_role = user.role if user else None
     

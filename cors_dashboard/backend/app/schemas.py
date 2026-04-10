@@ -21,13 +21,6 @@ class DeviceBase(BaseModel):
             return {}
         return v or {}
 
-    @validator("system_info", pre=True)
-    def ensure_dict_system(cls, v):
-        # 🔥 FIX: Nếu DB chứa list [] thay vì dict {}, tự động chuyển về {}
-        if isinstance(v, list):
-            return {}
-        return v or {}
-
 class Device(DeviceBase):
     bps: int | None = 0
     detected_chip_type: str | None = "UNKNOWN"
