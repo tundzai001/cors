@@ -14,6 +14,20 @@ class DeviceBase(BaseModel):
     class Config:
         from_attributes = True
 
+    @validator("system_info", pre=True)
+    def ensure_dict_system(cls, v):
+        # 🔥 FIX: Nếu DB chứa list [] thay vì dict {}, tự động chuyển về {}
+        if isinstance(v, list):
+            return {}
+        return v or {}
+
+    @validator("system_info", pre=True)
+    def ensure_dict_system(cls, v):
+        # 🔥 FIX: Nếu DB chứa list [] thay vì dict {}, tự động chuyển về {}
+        if isinstance(v, list):
+            return {}
+        return v or {}
+
 class Device(DeviceBase):
     bps: int | None = 0
     detected_chip_type: str | None = "UNKNOWN"
@@ -27,6 +41,13 @@ class Device(DeviceBase):
     is_locked: bool | None = False
 
     is_synced: bool | None = True
+
+    @validator("base_config", "service_config", "ntrip_status", pre=True)
+    def ensure_dict_device(cls, v):
+        # 🔥 FIX: Nếu DB chứa list [] thay vì dict {}, tự động chuyển về {}
+        if isinstance(v, list):
+            return {}
+        return v or {}
 
 class Command(BaseModel):
     command: str

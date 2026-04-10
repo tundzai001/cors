@@ -855,7 +855,17 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
             rs = await db.execute(select(models.Device.serial, models.Device.service_config))
             for row in rs.all():
                 serial = str(row[0])
-                cfg = dict(row[1] or {})
+                
+                # 🔥 FIX: Xử lý an toàn service_config (có thể là dict hoặc string)
+                raw_cfg = row[1]
+                if isinstance(raw_cfg, dict):
+                    cfg = raw_cfg
+                elif isinstance(raw_cfg, str):
+                    try: cfg = json.loads(raw_cfg)
+                    except: cfg = {}
+                else:
+                    cfg = {}
+                
                 for sid in (1, 2):
                     mp = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
                     if mp:
@@ -2024,6 +2034,14 @@ async def _send_status_to_caster(caster_host: str, status_payload: dict, server_
         import urllib.request
         import json as json_lib
         
+        # 🔥 FILTER: Chỉ gửi sync status tới aitogy.com.vn hoặc aitogy.click
+        target_host_lower = str(caster_host or "").lower()
+        is_allowed_domain = "aitogy.com.vn" in target_host_lower or "aitogy.click" in target_host_lower
+        
+        if not is_allowed_domain:
+            # logger.debug(f"[CASTER SYNC] Skipping unauthorized domain: {caster_host}")
+            return
+
         # Build URL (caster_host có thể là "aitogy.com.vn" hoặc "aitogy.com.vn:2101")
         if "://" not in caster_host:
             url = f"http://{caster_host}/api/station-status"
@@ -2043,7 +2061,8 @@ async def _send_status_to_caster(caster_host: str, status_payload: dict, server_
             result = response.read().decode('utf-8')
             state = status_payload.get('state', 'unknown')
             mp = status_payload.get('mountpoint', '?')
-            logger.info(
+            # 📉 Thay đổi từ logger.info sang logger.debug để giảm rác log theo yêu cầu
+            logger.debug(
                 f"[CASTER SYNC] ✓ Sent {server_label} status to {caster_host}: "
                 f"{mp} → {state}"
             )

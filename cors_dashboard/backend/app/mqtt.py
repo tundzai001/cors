@@ -209,6 +209,11 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
         # ==================== 2. XỬ LÝ STATUS UPDATE ====================
         try:
             data = json.loads(payload.decode())
+            # 🔥 FIX: Đảm bảo data là dict, nếu là list hoặc kiểu khác thì bỏ qua
+            if not isinstance(data, dict):
+                logging.warning(f"⚠️ Received non-dict payload on topic {topic}: {type(data)}")
+                return
+
             if 'rtk_fix_status' not in data:
                 # Fallback: Dựa vào status cũ (nếu agent chưa update)
                 if data.get('status') in ['online', 'sleep']:

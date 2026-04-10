@@ -14,6 +14,12 @@ import asyncio
 import re
 
 logger = logging.getLogger(__name__)
+ 
+def _ensure_dict(val) -> dict:
+    """Đảm bảo trả về dict để tránh lỗi 'list' object has no attribute 'get'"""
+    if isinstance(val, dict):
+        return val
+    return {}
 
 async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> int:
     """
@@ -47,6 +53,10 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
             unique_devices_map = {}
             
             for device in devices_data:
+                # 🔥 FIX: Đảm bảo item trong list là dict
+                if not isinstance(device, dict):
+                    continue
+                    
                 serial = device.get('serial')
                 if not serial:
                     continue
@@ -54,7 +64,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                 # --- Tự động tính toán lại ntrip_status nếu thiếu ---
                 # (Phòng trường hợp payload chỉ có ntrip_stats thô)
                 if 'ntrip_status' not in device and 'ntrip_stats' in device:
-                    raw_stats = device.get('ntrip_stats', {})
+                    raw_stats = _ensure_dict(device.get('ntrip_stats'))
                     try:
                         s1_bps = int(raw_stats.get('server1_bps', 0))
                         s2_bps = int(raw_stats.get('server2_bps', 0))
@@ -284,6 +294,10 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         return None  # Từ chối xử lý serial không hợp lệ
 
     def normalize_base_config(base_config: dict) -> dict:
+        # 🔥 FIX: Phòng thủ trường hợp base_config là list [] thay vì dict {}
+        if not isinstance(base_config, dict):
+            return {}
+            
         if not base_config or 'coords' in base_config:
             return base_config or {}
         
@@ -316,7 +330,14 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     new_is_synced = device_data.get("is_synced", True)
     
     def build_ntrip_status(device_data: dict, service_config: dict) -> dict:
+        # 🔥 FIX: Phòng thủ trường hợp device_data hoặc service_config là list
+        if not isinstance(device_data, dict):
+            return {}
+        
         ntrip_stats = device_data.get("ntrip_stats", {})
+        if not isinstance(ntrip_stats, dict):
+            ntrip_stats = {}
+            
         ntrip_status = {}
         
         # 🔥 FIX: Defensive check for service_config type
@@ -403,15 +424,15 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     # ✅ KIỂM TRA BASE CONFIG
     # 🔥 FIX: Nếu đang OUT OF SYNC, không cho phép status từ device ghi đè Target Config trong DB
     if is_out_of_sync:
-        if new_base_config and existing_device.base_config != new_base_config:
+        if new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
             logger.debug(f"ℹ️ [{serial}] Config diff ignored: Waiting for sync to apply target config.")
-    elif new_base_config and existing_device.base_config != new_base_config:
+    elif new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
         # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
         # Chỉ cập nhật nếu device gửi config hợp lệ với dữ liệu thực tế
         # 🔥 CẢI TIẾN: Bảo vệ tọa độ tránh bị "ghosting" khi agent gửi bản tin thiếu
-        old_config = existing_device.base_config or {}
-        old_coords = old_config.get('coords')
-        new_coords = new_base_config.get('coords')
+        old_config = _ensure_dict(existing_device.base_config)
+        old_coords = _ensure_dict(old_config.get('coords'))
+        new_coords = _ensure_dict(new_base_config.get('coords'))
         old_method = old_config.get('base_setup_method')
         new_method = new_base_config.get('base_setup_method')
 
@@ -425,7 +446,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
 
     # ✅ KIỂM TRA SERVICE CONFIG
     # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
-    if not is_out_of_sync and new_service_config and existing_device.service_config != new_service_config:
+    if not is_out_of_sync and new_service_config and _ensure_dict(existing_device.service_config) != new_service_config:
         update_values["service_config"] = new_service_config
         should_update = True
     
@@ -445,11 +466,11 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         should_update = True
 
     # NTRIP status
-    current_service_config = new_service_config if new_service_config else existing_device.service_config
-    new_ntrip_status = build_ntrip_status(device_data, current_service_config or {})
+    current_service_config = new_service_config if new_service_config else _ensure_dict(existing_device.service_config)
+    new_ntrip_status = build_ntrip_status(device_data, current_service_config)
     
     if new_ntrip_status:
-        old_ntrip_status = existing_device.ntrip_status or {}
+        old_ntrip_status = _ensure_dict(existing_device.ntrip_status)
         if old_ntrip_status != new_ntrip_status:
             update_values["ntrip_status"] = new_ntrip_status
             should_update = True
@@ -460,15 +481,20 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         should_update = True
 
     # System info
-    new_system_info = device_data.get("system_info")
+    new_system_info = _ensure_dict(device_data.get("system_info"))
     if new_system_info:
         # Logic so sánh đơn giản để giảm update DB không cần thiết
-        old_info = existing_device.system_info or {}
-        old_cpu = old_info.get('cpu', {}).get('usage_percent', 0)
-        new_cpu = new_system_info.get('cpu', {}).get('usage_percent', 0)
+        old_info = _ensure_dict(existing_device.system_info)
+        
+        # 🔥 FIX: Thêm bảo vệ sâu hơn cho các trường lồng nhau
+        old_cpu_dict = _ensure_dict(old_info.get('cpu'))
+        new_cpu_dict = _ensure_dict(new_system_info.get('cpu'))
+        
+        old_cpu = old_cpu_dict.get('usage_percent', 0)
+        new_cpu = new_cpu_dict.get('usage_percent', 0)
         
         # Chỉ update nếu CPU thay đổi > 5% hoặc chưa có info
-        if not old_info or abs(float(old_cpu) - float(new_cpu)) > 5:
+        if not old_info or abs(float(old_cpu or 0) - float(new_cpu or 0)) > 5:
             update_values["system_info"] = new_system_info
             should_update = True
 
