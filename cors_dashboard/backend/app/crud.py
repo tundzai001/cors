@@ -3,8 +3,8 @@
 # ==============================================================================
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, func, and_, delete
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import update, func, and_, or_, delete, case
+from sqlalchemy.dialects.postgresql import insert as pg_insert, JSONB
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from . import models, schemas
 from .database import settings
@@ -38,7 +38,8 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
             def _normalize_optional_json(value):
                 if value is None:
                     return None
-                if isinstance(value, dict) and len(value) == 0:
+                # 🔥 FIX: Nếu là List (do migration JSONB hoặc lỗi Agent), chuyển về None để tránh lỗi .get() sau này
+                if isinstance(value, list) or (isinstance(value, dict) and len(value) == 0):
                     return None
                 return value
 
@@ -121,10 +122,36 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     'ntrip_status': func.coalesce(stmt.excluded.ntrip_status, models.Device.ntrip_status),
                     'ntrip_connected': func.coalesce(stmt.excluded.ntrip_connected, models.Device.ntrip_connected),
                     # Không cho UNKNOWN ghi đè chip type hợp lệ đã lưu trước đó.
-                    'detected_chip_type': func.coalesce(func.nullif(stmt.excluded.detected_chip_type, 'UNKNOWN'), models.Device.detected_chip_type),
-                    'base_config': func.coalesce(stmt.excluded.base_config, models.Device.base_config),
-                    'service_config': func.coalesce(stmt.excluded.service_config, models.Device.service_config),
-                    'system_info': func.coalesce(stmt.excluded.system_info, models.Device.system_info),
+                    # RÀO CHẮN (IMPORTANT): Chỉ cập nhật Chip Type nếu đang Synced hoặc đang chờ kích hoạt lần đầu.
+                    'detected_chip_type': case(
+                        (or_(models.Device.is_synced == True, models.Device.detected_chip_type == 'UNKNOWN'), 
+                         func.coalesce(func.nullif(stmt.excluded.detected_chip_type, 'UNKNOWN'), models.Device.detected_chip_type)),
+                        else_=models.Device.detected_chip_type
+                    ),
+                    
+                    # 🔥 FIX: Sử dụng JSONB merge (||) để gộp config thay vì ghi đè toàn bộ.
+                    # RÀO CHẮN (IMPORTANT): Nếu trạm đang OUT OF SYNC (is_synced=False), KHÔNG cho phép status đè lên cấu hình mục tiêu.
+                    'base_config': case(
+                        (models.Device.is_synced == False, models.Device.base_config), 
+                        (and_(models.Device.base_config != None, stmt.excluded.base_config != None), 
+                         models.Device.base_config.op('||')(stmt.excluded.base_config)),
+                        (stmt.excluded.base_config != None, stmt.excluded.base_config),
+                        else_=models.Device.base_config
+                    ),
+                    'service_config': case(
+                        (models.Device.is_synced == False, models.Device.service_config),
+                        (and_(models.Device.service_config != None, stmt.excluded.service_config != None), 
+                         models.Device.service_config.op('||')(stmt.excluded.service_config)),
+                        (stmt.excluded.service_config != None, stmt.excluded.service_config),
+                        else_=models.Device.service_config
+                    ),
+                    'system_info': case(
+                        (and_(models.Device.system_info != None, stmt.excluded.system_info != None), 
+                         models.Device.system_info.op('||')(stmt.excluded.system_info)),
+                        (stmt.excluded.system_info != None, stmt.excluded.system_info),
+                        else_=models.Device.system_info
+                    ),
+                    
                     # Chỉ update name nếu có dữ liệu
                     'name': func.coalesce(func.nullif(func.btrim(stmt.excluded.name), ''), models.Device.name),
                     'is_provisioned': func.coalesce(stmt.excluded.is_provisioned, models.Device.is_provisioned),
@@ -291,6 +318,11 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     def build_ntrip_status(device_data: dict, service_config: dict) -> dict:
         ntrip_stats = device_data.get("ntrip_stats", {})
         ntrip_status = {}
+        
+        # 🔥 FIX: Defensive check for service_config type
+        if not isinstance(service_config, dict):
+            return {}
+
         if service_config.get("server1_enabled"):
             s1_bps = ntrip_stats.get("server1_bps", 0)
             ntrip_status["server1"] = {"connected": s1_bps > 0, "bps": s1_bps}
@@ -365,10 +397,17 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         update_values["version"] = new_version
         should_update = True
 
+    # ✅ KIỂM TRA BẢO VỆ CẤU HÌNH KHI OUT OF SYNC
+    is_out_of_sync = existing_device.is_synced is False
+
     # ✅ KIỂM TRA BASE CONFIG
-    # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
-    # Chỉ cập nhật nếu device gửi config hợp lệ với dữ liệu thực tế
-    if new_base_config and existing_device.base_config != new_base_config:
+    # 🔥 FIX: Nếu đang OUT OF SYNC, không cho phép status từ device ghi đè Target Config trong DB
+    if is_out_of_sync:
+        if new_base_config and existing_device.base_config != new_base_config:
+            logger.debug(f"ℹ️ [{serial}] Config diff ignored: Waiting for sync to apply target config.")
+    elif new_base_config and existing_device.base_config != new_base_config:
+        # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
+        # Chỉ cập nhật nếu device gửi config hợp lệ với dữ liệu thực tế
         # 🔥 CẢI TIẾN: Bảo vệ tọa độ tránh bị "ghosting" khi agent gửi bản tin thiếu
         old_config = existing_device.base_config or {}
         old_coords = old_config.get('coords')
@@ -386,7 +425,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
 
     # ✅ KIỂM TRA SERVICE CONFIG
     # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
-    if new_service_config and existing_device.service_config != new_service_config:
+    if not is_out_of_sync and new_service_config and existing_device.service_config != new_service_config:
         update_values["service_config"] = new_service_config
         should_update = True
     

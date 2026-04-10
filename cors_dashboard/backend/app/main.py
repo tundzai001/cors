@@ -1281,12 +1281,12 @@ class IgnoreSocketErrorsFilter(logging.Filter):
 logging.getLogger("asyncio").addFilter(IgnoreSocketErrorsFilter())
 
 class RequestIDFilter(logging.Filter):
-    """Filter thêm request_id vÃ o mọi log"""
+    """Filter thêm request_id vào mọi log"""
     def filter(self, record):
         record.request_id = getattr(record, 'request_id', 'N/A')
         return True
 
-# Thêm filter vÃ o root logger
+# Thêm filter vào root logger
 for handler in logging.root.handlers:
     handler.addFilter(RequestIDFilter())
 
@@ -1820,7 +1820,17 @@ def _extract_per_server_status(device: models.Device, payload: dict | None = Non
         "server2": {...}
     }
     """
-    cfg = device.service_config or {}
+    # 🔥 FIX: Robustly handle service_config type (handle list or string from migration)
+    raw_cfg = getattr(device, "service_config", None)
+    if isinstance(raw_cfg, dict):
+        cfg = raw_cfg
+    elif isinstance(raw_cfg, str):
+        import json
+        try: cfg = json.loads(raw_cfg)
+        except: cfg = {}
+    else:
+        cfg = {}
+    
     device_status = str(device.status or "").lower()
     payload = payload or {}
     
@@ -1925,7 +1935,17 @@ async def _notify_casters_on_status_change(serial: str, device: models.Device, s
     - offline → gửi cho cả 2
     """
     try:
-        cfg = device.service_config or {}
+        # 🔥 FIX: Robustly handle service_config type
+        raw_cfg = getattr(device, "service_config", None)
+        if isinstance(raw_cfg, dict):
+            cfg = raw_cfg
+        elif isinstance(raw_cfg, str):
+            import json
+            try: cfg = json.loads(raw_cfg)
+            except: cfg = {}
+        else:
+            cfg = {}
+
         device_status = str(device.status or "").lower()
         
         # Build common payload
@@ -1937,44 +1957,53 @@ async def _notify_casters_on_status_change(serial: str, device: models.Device, s
         
         # Offline → notify both casters
         if device_status == "offline":
-            s1_host = cfg.get("serverhost1", "").strip()
-            s2_host = cfg.get("serverhost2", "").strip()
+            s1_host = cfg.get("serverhost1", "").strip() if isinstance(cfg, dict) else ""
+            s1_port = cfg.get("port1") if isinstance(cfg, dict) else None
+            s1_full = f"{s1_host}:{s1_port}" if s1_host and s1_port and ":" not in s1_host else s1_host
             
-            if s1_host and cfg.get("mountpoint1"):
+            s2_host = cfg.get("serverhost2", "").strip() if isinstance(cfg, dict) else ""
+            s2_port = cfg.get("port2") if isinstance(cfg, dict) else None
+            s2_full = f"{s2_host}:{s2_port}" if s2_host and s2_port and ":" not in s2_host else s2_host
+            
+            if s1_full and cfg.get("mountpoint1"):
                 payload["mountpoint"] = cfg.get("mountpoint1")
                 payload["state"] = "offline"
                 payload["enabled"] = bool(cfg.get("server1_enabled"))
-                asyncio.create_task(_send_status_to_caster(s1_host, payload, "S1", serial))
+                asyncio.create_task(_send_status_to_caster(s1_full, payload, "S1", serial))
             
-            if s2_host and cfg.get("mountpoint2"):
+            if s2_full and cfg.get("mountpoint2"):
                 payload["mountpoint"] = cfg.get("mountpoint2")
                 payload["state"] = "offline"
                 payload["enabled"] = bool(cfg.get("server2_enabled"))
-                asyncio.create_task(_send_status_to_caster(s2_host, payload, "S2", serial))
+                asyncio.create_task(_send_status_to_caster(s2_full, payload, "S2", serial))
             
             return
         
         # Notify S1 if changed
         if status_change["server1"]["changed"] and cfg.get("server1_enabled"):
             s1_host = cfg.get("serverhost1", "").strip()
+            s1_port = cfg.get("port1")
+            s1_full = f"{s1_host}:{s1_port}" if s1_host and s1_port and ":" not in s1_host else s1_host
             s1_mp = cfg.get("mountpoint1", "").strip()
-            if s1_host and s1_mp:
+            if s1_full and s1_mp:
                 s1_info = status_change["server1"]["new"]
                 payload["mountpoint"] = s1_mp
                 payload["state"] = s1_info.get("state", "offline")
                 payload["enabled"] = s1_info.get("enabled", False)
-                asyncio.create_task(_send_status_to_caster(s1_host, payload, "S1", serial))
+                asyncio.create_task(_send_status_to_caster(s1_full, payload, "S1", serial))
         
         # Notify S2 if changed
         if status_change["server2"]["changed"] and cfg.get("server2_enabled"):
             s2_host = cfg.get("serverhost2", "").strip()
+            s2_port = cfg.get("port2")
+            s2_full = f"{s2_host}:{s2_port}" if s2_host and s2_port and ":" not in s2_host else s2_host
             s2_mp = cfg.get("mountpoint2", "").strip()
-            if s2_host and s2_mp:
+            if s2_full and s2_mp:
                 s2_info = status_change["server2"]["new"]
                 payload["mountpoint"] = s2_mp
                 payload["state"] = s2_info.get("state", "offline")
                 payload["enabled"] = s2_info.get("enabled", False)
-                asyncio.create_task(_send_status_to_caster(s2_host, payload, "S2", serial))
+                asyncio.create_task(_send_status_to_caster(s2_full, payload, "S2", serial))
     
     except Exception as e:
         logger.error(f"[CASTER SYNC] Error notifying casters for '{serial}': {e}")
@@ -2103,7 +2132,17 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                 return PlainTextResponse(f"ERROR: Trạm {device.name or serial} đang offline")
 
             name = device.name if device else serial
-            cfg = dict(getattr(device, "service_config", None) or {}) if device else {}
+            
+            # 🔥 FIX: Robustly handle service_config type to avoid 'length 29; 2 is required' error
+            raw_cfg = getattr(device, "service_config", None)
+            if isinstance(raw_cfg, dict):
+                cfg = raw_cfg
+            elif isinstance(raw_cfg, str):
+                import json
+                try: cfg = json.loads(raw_cfg)
+                except: cfg = {}
+            else:
+                cfg = {}
             selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
             selected_server_host = ""
             if selected_server_id in (1, 2):
@@ -4083,6 +4122,9 @@ async def configure_chip_endpoint(
         await db.commit()
         await db.refresh(device_in_db)
         
+        # 🔥 FIX: Invalidate sync cache để background task không check dữ liệu cũ
+        mqtt_handler.invalidate_device_cache(serial)
+        
         logging.info(f"✓ Saved base config for {serial} to database: Chip={sensor_type}, Method={method}, Marked as UNSYNCED")
         
         await ui_manager.broadcast({
@@ -4246,6 +4288,10 @@ async def configure_service_endpoint(
         device_in_db.service_config = payload.model_dump()
         await db.commit()
         await db.refresh(device_in_db)
+        
+        # 🔥 FIX: Invalidate sync cache
+        mqtt_handler.invalidate_device_cache(serial)
+        
         logging.info(f"✓ Saved service_config for {serial} to database.")
     except Exception as e:
         await db.rollback()
@@ -4300,6 +4346,10 @@ async def reset_pi_device(
     device.bps = 0
     
     await db.commit()
+    
+    # 🔥 FIX: Invalidate sync cache on reset
+    mqtt_handler.invalidate_device_cache(serial)
+    
     # 5. Broadcast để UI cập nhật ngay
     await ui_manager.broadcast({
         "type": "status_update",

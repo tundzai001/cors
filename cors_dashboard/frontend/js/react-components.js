@@ -2452,7 +2452,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         fixQuality: { value: 0, history: [] },
         satellites: { value: 0, history: [] },
         hdop: { value: 0, history: [] },
-        signalStrength: { value: 0, history: [] }
+        signalStrength: { value: 0, history: [] },
+        throughput: { value: 0, history: [] }
     });
 
     const satelliteBufferRef = useRef(new Map());
@@ -2493,7 +2494,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             setMetrics(prev => ({
                 fixQuality: {
                     value: gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1,
-                    history: [...prev.fixQuality.history, prev.fixQuality.value].slice(-30)
+                    history: [...prev.fixQuality.history, gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1].slice(-30)
                 },
                 satellites: {
                     value: gga.satellites || 0,
@@ -2506,6 +2507,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 signalStrength: {
                     value: avgSnr.toFixed(1),
                     history: [...prev.signalStrength.history, avgSnr].slice(-30)
+                },
+                throughput: {
+                    value: device.bps || 0,
+                    history: [...prev.throughput.history, device.bps || 0].slice(-30)
                 }
             }));
         }, 2000);
@@ -2900,6 +2905,50 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         </div>
                     </div>
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
+                    
+                    {/* Premium Chart Overlay */}
+                    <div className="mt-auto pt-2 border-top border-secondary-subtle">
+                        <window.SatelliteBars satellites={safeNmeaData.satellites} />
+                    </div>
+                </div>
+            </div>
+
+            {/* REAL-TIME CHARTS SECTION */}
+            <div className="mt-4">
+                <div className="row g-3">
+                    <div className="col-md-4">
+                        <div className="card bg-dark border-secondary-subtle h-100">
+                            <div className="card-header py-1 bg-transparent border-secondary-subtle d-flex justify-content-between align-items-center">
+                                <span className="small text-muted fw-bold"><i className="bi bi-broadcast me-1"></i>SATELLITES</span>
+                                <span className="badge bg-primary">{metrics.satellites.value}</span>
+                            </div>
+                            <div className="card-body p-2">
+                                <window.MetricLineChart label="Count" data={metrics.satellites.history} color="#0dcaf0" />
+                            </div>
+                        </div>
+                    </div>
+                    <div className="col-md-4">
+                        <div className="card bg-dark border-secondary-subtle h-100">
+                            <div className="card-header py-1 bg-transparent border-secondary-subtle d-flex justify-content-between align-items-center">
+                                <span className="small text-muted fw-bold"><i className="bi bi-activity me-1"></i>HDOP ACCURACY</span>
+                                <span className="badge bg-warning text-dark">{metrics.hdop.value.toFixed(2)}</span>
+                            </div>
+                            <div className="card-body p-2">
+                                <window.MetricLineChart label="HDOP" data={metrics.hdop.history} color="#ffc107" />
+                            </div>
+                        </div>
+                    </div>
+                    <div className="col-md-4">
+                        <div className="card bg-dark border-secondary-subtle h-100">
+                            <div className="card-header py-1 bg-transparent border-secondary-subtle d-flex justify-content-between align-items-center">
+                                <span className="small text-muted fw-bold"><i className="bi bi-speedometer2 me-1"></i>THROUGHPUT</span>
+                                <span className="badge bg-success">{(metrics.throughput.value / 1024).toFixed(1)} KB/s</span>
+                            </div>
+                            <div className="card-body p-2">
+                                <window.MetricLineChart label="BPS" data={metrics.throughput.history} color="#198754" unit=" Bps" />
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

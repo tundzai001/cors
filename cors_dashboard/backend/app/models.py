@@ -3,6 +3,7 @@
 # ==============================================================================
 
 from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index
+from sqlalchemy.dialects.postgresql import JSONB
 from .database import Base, AuthBase 
 
 class Device(Base):
@@ -15,13 +16,13 @@ class Device(Base):
     bps = Column(Integer, default=0)
     detected_chip_type = Column(String, default="UNKNOWN")
     user_id = Column(Integer, nullable=True, index=True)
-    base_config = Column(JSON, nullable=True)
-    service_config = Column(JSON, nullable=True)
+    base_config = Column(JSONB, nullable=True)
+    service_config = Column(JSONB, nullable=True)
     ntrip_connected = Column(Boolean, default=False)
-    ntrip_status = Column(JSON, nullable=True)
+    ntrip_status = Column(JSONB, nullable=True)
     is_locked = Column(Boolean, default=False)
     is_provisioned = Column(Boolean, default=False)
-    system_info = Column(JSON, nullable=True)
+    system_info = Column(JSONB, nullable=True)
     rtk_fix_status = Column(String, default="NO_FIX")  
     base_mode_active = Column(Boolean, default=False)  
     version = Column(String, nullable=True)

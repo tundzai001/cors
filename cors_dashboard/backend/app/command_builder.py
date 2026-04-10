@@ -10,9 +10,9 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         # Byte 8: Mode = 1 (Survey-In)
         message[8] = 1
         
-        # Chuyển đổi duration và accuracy
+        # Chuyển đổi duration và accuracy (ép kiểu float đề phòng dữ liệu là string)
         svinMinDur_bytes = int(duration).to_bytes(4, byteorder='little')
-        svinAccLimit_bytes = int(accuracy * 10000).to_bytes(4, byteorder='little')
+        svinAccLimit_bytes = int(float(accuracy) * 10000).to_bytes(4, byteorder='little')
         
         # Ghi vào vị trí đúng
         for i in range(4):
@@ -109,28 +109,34 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         # Byte 9: LLA mode = 1
         message[9] = 1
         
+        # Ép kiểu float cho tọa độ (đề phòng trường hợp đầu vào là string để giữ precision)
+        f_lat = float(lat)
+        f_lon = float(lon)
+        f_alt = float(alt)
+        f_acc = float(accuracy)
+
         multiplier = 10000000  # LLA multiplier
         
         # === XỬ LÝ LATITUDE ===
-        XOrLat_int = int(lat * multiplier)
-        XOrLat_hp_value = int((lat * multiplier - XOrLat_int) * 100)
+        XOrLat_int = int(f_lat * multiplier)
+        XOrLat_hp_value = int((f_lat * multiplier - XOrLat_int) * 100)
         XOrLat_hp_bytes = XOrLat_hp_value.to_bytes(1, byteorder='little', signed=True)
         XOrLat_bytes = XOrLat_int.to_bytes(4, byteorder='little', signed=True)
         
         # === XỬ LÝ LONGITUDE ===
-        YOrLon_int = int(lon * multiplier)
-        YOrLon_hp_value = int((lon * multiplier - YOrLon_int) * 100)
+        YOrLon_int = int(f_lon * multiplier)
+        YOrLon_hp_value = int((f_lon * multiplier - YOrLon_int) * 100)
         YOrLon_hp_bytes = YOrLon_hp_value.to_bytes(1, byteorder='little', signed=True)
         YOrLon_bytes = YOrLon_int.to_bytes(4, byteorder='little', signed=True)
         
         # === XỬ LÝ ALTITUDE ===
-        ZOrAlt_int = int(alt * 100)
-        ZOrAlt_hp_value = int((alt * 100 - ZOrAlt_int) * 100)
+        ZOrAlt_int = int(f_alt * 100)
+        ZOrAlt_hp_value = int((f_alt * 100 - ZOrAlt_int) * 100)
         ZOrAlt_hp_bytes = ZOrAlt_hp_value.to_bytes(1, byteorder='little', signed=True)
         ZOrAlt_bytes = ZOrAlt_int.to_bytes(4, byteorder='little', signed=True)
         
         # Fixed Position Accuracy
-        fixedPosAcc_bytes = int(accuracy * 10000).to_bytes(4, byteorder='little')
+        fixedPosAcc_bytes = int(f_acc * 10000).to_bytes(4, byteorder='little')
         
         # Ghi vào message
         for i in range(4):

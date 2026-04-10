@@ -40,6 +40,13 @@ DB_WRITE_INTERVAL = 120.0    # Ghi DB định kỳ 2 phút/lần nếu không c�
 IS_SHUTTING_DOWN = False 
 external_command_handler: Optional[Callable[[str, bytes], Awaitable[None]]] = None
 
+def invalidate_device_cache(serial: str):
+    """Xóa cache của thiết bị để buộc background worker fetch lại từ DB."""
+    device_sync_cache.pop(serial, None)
+    device_last_sync_check.pop(serial, None)
+    device_write_cache.pop(serial, None)
+    logging.info(f"♻️ Cache invalidated for device {serial}")
+
 # ==============================================================================
 # MQTT CALLBACKS
 # ==============================================================================
