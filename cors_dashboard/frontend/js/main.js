@@ -728,7 +728,14 @@ async function handleUnlockDevice(serial) {
 // ===============================================================================
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/updates`;
+    let host = window.location.host;
+
+    // 🔥 Force correct domain if hitting via legacy/monitoring host
+    if (host.includes('monitoring.')) {
+        host = 'cors.aitogy.com';
+    }
+
+    const wsUrl = `${protocol}//${host}/ws/updates`;
     
     ws = new WebSocket(wsUrl);
     

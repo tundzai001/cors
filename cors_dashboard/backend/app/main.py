@@ -2283,8 +2283,8 @@ async def track_visitors_endpoint(websocket: WebSocket):
 # === AUTHENTICATION ===
 @app.post("/api/auth/login", response_model=schemas.Token)
 async def login(
+    request: Request,
     login_data: schemas.LoginRequest = Body(...), 
-    request: Request = None,
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db)  
 ):

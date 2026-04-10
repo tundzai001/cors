@@ -1202,7 +1202,14 @@
         // === 🆕 VISITOR TRACKING ===
         function connectVisitorTracker() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/track-visitors`;
+            let host = window.location.host;
+            
+            // 🔥 Force correct domain if hitting via legacy/monitoring host
+            if (host.includes('monitoring.')) {
+                host = 'cors.aitogy.com';
+            }
+            
+            const wsUrl = `${protocol}//${host}/ws/track-visitors`;
             
             const trackerWs = new WebSocket(wsUrl);
             
