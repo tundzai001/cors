@@ -636,9 +636,9 @@ const VirtualStationFormPanel = memo(function VirtualStationFormPanel({ currentU
 
         const payload = {
             name: formState.name.trim(),
-            lat,
-            lon,
-            alt: Number.isFinite(alt) ? alt : 0,
+            lat: String(formState.lat).trim(),
+            lon: String(formState.lon).trim(),
+            alt: String(formState.alt || '0').trim(),
             service_config: {
                 ncomport: formState.ncomport || null,
                 reconnectioninterval: formState.reconnectioninterval ? parseInt(formState.reconnectioninterval, 10) : 10,
@@ -1251,9 +1251,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
             if (method === 'FIXED_LLA') {
                 params.coords = {
-                    lat: parseFloat(latitude),
-                    lon: parseFloat(longitude),
-                    alt: parseFloat(altitude)
+                    lat: String(latitude).trim(),
+                    lon: String(longitude).trim(),
+                    alt: String(altitude).trim()
                 };
                 // Fixed: Input là mm -> Chia 1000 để thành m gửi cho backend
                 params.accuracy = parseFloat(fixedAccuracyMm) / 1000.0;

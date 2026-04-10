@@ -389,10 +389,10 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
             return "false"
         if s == "none" or s == "null": 
             return ""
-        # Xử lý số float: làm tròn về 5 chữ số thập phân để so sánh
+        # Xử lý số float: làm tròn về 9 chữ số thập phân để so sánh
         try:
             f = float(s)
-            return round(f, 5) 
+            return round(f, 9) 
         except ValueError:
             return s
 

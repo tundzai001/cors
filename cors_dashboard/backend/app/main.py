@@ -3294,9 +3294,9 @@ async def create_virtual_station(
         base_config={
             "base_setup_method": "FIXED_LLA",
             "coords": {
-                "lat": float(payload.lat),
-                "lon": float(payload.lon),
-                "alt": float(payload.alt or 0.0),
+                "lat": str(payload.lat),
+                "lon": str(payload.lon),
+                "alt": str(payload.alt or 0.0),
             },
             "auto_configured": True,
         },

@@ -72,9 +72,9 @@ class ServiceConfig(BaseModel):
 
 class VirtualStationCreate(BaseModel):
     name: str
-    lat: float
-    lon: float
-    alt: float = 0.0
+    lat: Any
+    lon: Any
+    alt: Any = 0.0
     serial: str | None = None
     service_config: ServiceConfig = Field(default_factory=ServiceConfig)
 

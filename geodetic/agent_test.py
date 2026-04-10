@@ -105,6 +105,8 @@ LAST_HPPOSLLH_COORD = None
 LAST_HPPOSLLH_TS = 0.0
 LAST_UBX_NUMSV = None
 LAST_UBX_NUMSV_TS = 0.0
+BEST_SATS_COUNT = None
+BEST_SATS_TS = 0.0
 
 @dataclass
 class EllipPara:
@@ -807,8 +809,15 @@ def _normalize_gga_for_ntrip(raw_gga: str) -> str | None:
         if len(parts) < 15:
             return s
 
+        # Priority: UBX numsv (high accuracy) > Generic BEST_SATS_COUNT
         numsv = globals().get("LAST_UBX_NUMSV")
         numsv_ts = float(globals().get("LAST_UBX_NUMSV_TS") or 0.0)
+        
+        if numsv is None or (time.time() - numsv_ts) > 2.5:
+            # Fallback to generic sats count (NMEA GSA/GSV)
+            numsv = globals().get("BEST_SATS_COUNT")
+            numsv_ts = float(globals().get("BEST_SATS_TS") or 0.0)
+
         if numsv is not None and (time.time() - numsv_ts) <= 2.5:
             try:
                 n = int(numsv)
@@ -847,6 +856,8 @@ def _mark_gnss_data_stale():
     globals()['LAST_HPPOSLLH_TS'] = 0.0
     globals()['LAST_UBX_NUMSV'] = None
     globals()['LAST_UBX_NUMSV_TS'] = 0.0
+    globals()['BEST_SATS_COUNT'] = None
+    globals()['BEST_SATS_TS'] = 0.0
 
 def _crc24q(data: bytes) -> int:
     crc = 0
@@ -1449,11 +1460,55 @@ def dispatch_nmea_data(data):
                     raw_line = next((l.strip() for l in raw_line.split('\n') if 'GGA' in l), raw_line)
                 globals()['LAST_RAW_GGA'] = raw_line
                 globals()['LAST_RAW_GGA_TS'] = time.time()
+                
+                # Also extract sats from GGA if they are non-zero
+                parts = raw_line.split(',')
+                if len(parts) > 7 and parts[7]:
+                    try:
+                        n = int(parts[7])
+                        if n > 0:
+                            globals()['BEST_SATS_COUNT'] = n
+                            globals()['BEST_SATS_TS'] = time.time()
+                    except: pass
+
                 ag = globals().get('agent')
                 if ag and hasattr(ag, 'last_gga_fix_status'):
                     ag.last_gga_fix_status = new_status
             except Exception:
                 pass
+        
+        elif s and '$G' in s and 'GSA' in s[:10]:
+            # Count satellites in use from GSA
+            try:
+                parts = s.strip().split(',')
+                if len(parts) >= 15:
+                    count = 0
+                    for i in range(3, 15):
+                        if parts[i]: count += 1
+                    if count > 0:
+                        # GSA doesn't give total across all constellations easily without more logic,
+                        # but we can use it as a minimum.
+                        current = globals().get('BEST_SATS_COUNT') or 0
+                        globals()['BEST_SATS_COUNT'] = max(current, count)
+                        globals()['BEST_SATS_TS'] = time.time()
+            except: pass
+
+        elif s and '$G' in s and 'GSV' in s[:10]:
+            # Total satellites in view from GSV (Field 3)
+            try:
+                parts = s.strip().split(',')
+                if len(parts) >= 4 and parts[3]:
+                    count = int(parts[3])
+                    if count > 0:
+                        # GSV also constellation specific, but usually the first GSV of a constellation
+                        # gives the total for that constellation.
+                        current = globals().get('BEST_SATS_COUNT') or 0
+                        # We use a simple max here to get the largest constellation's count at least,
+                        # or better, sum them if we tracked constellation IDs.
+                        # For now, max() is better than 0.
+                        globals()['BEST_SATS_COUNT'] = max(current, count)
+                        globals()['BEST_SATS_TS'] = time.time()
+            except: pass
     except Exception:
         pass
 
@@ -3041,7 +3096,8 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
 
             port = agent.detected_chip.get("port")
             chip_type = agent.detected_chip.get("type", "UNKNOWN")
-            await _apply_base_mode_to_chip(chip_type, port, local_lat, local_lon, local_alt, gnss_reader)
+            baudrate = agent.detected_chip.get("baud", DEFAULT_BAUDRATE)
+            await _apply_base_mode_to_chip(chip_type, port, local_lat, local_lon, local_alt, gnss_reader, baudrate=baudrate)
 
             base_cfg["coords"] = {"lat": local_lat, "lon": local_lon, "alt": local_alt}
             base_cfg["itrf_vn2000_transform_applied"] = True
@@ -3079,7 +3135,8 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                     await asyncio.sleep(1.0)
                 
                 try:
-                    with serial_port_lock, serial.Serial(port, DEFAULT_BAUDRATE, timeout=2) as ser:
+                    baudrate = agent.detected_chip.get("baud", DEFAULT_BAUDRATE)
+                    with serial_port_lock, serial.Serial(port, baudrate, timeout=2) as ser:
                         for cmd_b64 in commands_b64:
                             decoded_cmd = base64.b64decode(cmd_b64)
                             
@@ -3179,7 +3236,8 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             port = agent.detected_chip.get("port")
             if port and agent.detected_chip.get("type") == "Unicorecomm":
                 try:
-                    with serial_port_lock, serial.Serial(port, DEFAULT_BAUDRATE, timeout=2) as ser:
+                    baudrate = agent.detected_chip.get("baud", DEFAULT_BAUDRATE)
+                    with serial_port_lock, serial.Serial(port, baudrate, timeout=2) as ser:
                         # Get base station status
                         logging.info("Checking UM982 base mode status...")
                         ser.write(b'mode\r\n')
@@ -3404,7 +3462,7 @@ def _plain_mean(values):
         return None
     return sum(vals) / len(vals)
 
-async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: float, alt: float, gnss_reader: GNSSReader):
+async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: float, alt: float, gnss_reader: GNSSReader, baudrate: int = DEFAULT_BAUDRATE):
     if not port:
         raise RuntimeError("No GNSS port")
 
@@ -3413,7 +3471,7 @@ async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: f
         await asyncio.sleep(1.0)
 
     try:
-        with serial_port_lock, serial.Serial(port, DEFAULT_BAUDRATE, timeout=2) as ser:
+        with serial_port_lock, serial.Serial(port, baudrate, timeout=2) as ser:
             if chip_type == "Ublox":
                 accuracy = 0.01
                 msg = bytearray(b'\xb5\x62\x06\x71\x28\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
@@ -3499,8 +3557,28 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         await asyncio.sleep(1.0)
         
     try:
-        with serial_port_lock, serial.Serial(port, DEFAULT_BAUDRATE, timeout=2) as ser:
+        baudrate = agent.detected_chip.get("baud", DEFAULT_BAUDRATE)
+        with serial_port_lock, serial.Serial(port, baudrate, timeout=2) as ser:
             if chip_type == "Ublox":
+                # Enhanced Ublox ROVER mode: Send UBX-CFG-VALSET for CFG-TMODE-MODE=0 (Rover/Disabled)
+                # Key: 0x20110001
+                def send_valset(key_id, value_byte):
+                    v_msg = bytearray(b'\xb5\x62\x06\x8a\x09\x00\x00\x07\x00\x00')
+                    v_msg.extend(key_id.to_bytes(4, 'little'))
+                    v_msg.append(value_byte)
+                    v_msg.extend([0, 0]) # Checksum placeholders
+                    v_a, v_b = 0, 0
+                    for j in range(2, 15):
+                        v_a = (v_a + v_msg[j]) & 0xFF
+                        v_b = (v_b + v_a) & 0xFF
+                    v_msg[15] = v_a
+                    v_msg[16] = v_b
+                    ser.write(v_msg)
+
+                # Set TMODE to 0 (Disabled/Rover)
+                send_valset(0x20110001, 0)
+                
+                # Optional: Send legacy CFG-TMODE3 Disabled just in case
                 msg = bytearray(b'\xb5\x62\x06\x71\x28\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
                 CK_A, CK_B = 0, 0
                 for i in range (2, 46):
@@ -3509,16 +3587,33 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
                 msg[46] = CK_A
                 msg[47] = CK_B
                 ser.write(msg)
+                
+                # Ensure NMEA 4.10 for better compatibility (Key: 0x20930001)
+                send_valset(0x20930001, 0x29)
+                
+                # Save configuration
                 ser.write(b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab')
                 ser.flush()
-                logging.info("AutoBase: Ublox ROVER mode set")
+                logging.info("AutoBase: Enhanced Ublox ROVER mode set (VALSET + TMODE3)")
             elif chip_type in ("Unicorecomm", "RTCM3_Source"):
-                ser.write(b'MODE ROVER\r\n')
+                # First, clear any stale logs (especially base config logs)
+                ser.write(b'unlogall\r\n')
                 ser.flush()
                 await asyncio.sleep(0.5)
-                ser.write(b'SAVECONFIG\r\n')
+                
+                # Set to ROVER explicitly
+                ser.write(b'mode rover\r\n')
                 ser.flush()
-                logging.info(f"AutoBase: {chip_type} ROVER mode set (MODE ROVER + SAVECONFIG)")
+                await asyncio.sleep(0.5)
+                
+                # Request GGA at 1Hz (standard NMEA)
+                ser.write(b'log gpgga ontime 1\r\n')
+                ser.write(b'log gngga ontime 1\r\n')
+                ser.flush()
+                
+                ser.write(b'saveconfig\r\n')
+                ser.flush()
+                logging.info(f"AutoBase: {chip_type} ROVER mode set (MODE ROVER + UNLOGALL + SAVECONFIG)")
             else:
                 logging.warning(f"AutoBase: Unknown chip type '{chip_type}', trying Unicorecomm commands...")
                 ser.write(b'MODE ROVER\r\n')
@@ -3801,7 +3896,8 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
     await send_status(agent, mqtt_client)
     
     try:
-        await _apply_base_mode_to_chip(chip_type, port, avg_lat, avg_lon, avg_alt, gnss_reader)
+        baudrate = agent.detected_chip.get("baud", DEFAULT_BAUDRATE)
+        await _apply_base_mode_to_chip(chip_type, port, avg_lat, avg_lon, avg_alt, gnss_reader, baudrate=baudrate)
     except Exception as e:
         logging.error(f"AutoBase: Failed to set BASE mode: {e}")
              

@@ -1633,7 +1633,8 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                     await asyncio.sleep(1.0)
                 
                 try:
-                    with serial_port_lock, serial.Serial(port, DEFAULT_BAUDRATE, timeout=2) as ser:
+                    baudrate = agent.detected_chip.get("baud", DEFAULT_BAUDRATE)
+                    with serial_port_lock, serial.Serial(port, baudrate, timeout=2) as ser:
                         for cmd_b64 in commands_b64:
                             decoded_cmd = base64.b64decode(cmd_b64)
                             
@@ -1699,7 +1700,8 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             port = agent.detected_chip.get("port")
             if port and agent.detected_chip.get("type") == "Unicorecomm":
                 try:
-                    with serial_port_lock, serial.Serial(port, DEFAULT_BAUDRATE, timeout=2) as ser:
+                    baudrate = agent.detected_chip.get("baud", DEFAULT_BAUDRATE)
+                    with serial_port_lock, serial.Serial(port, baudrate, timeout=2) as ser:
                         # Get base station status
                         logging.info("Checking UM982 base mode status...")
                         ser.write(b'mode\r\n')
