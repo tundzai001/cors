@@ -86,14 +86,24 @@ class CasterClient:
                             "password": parts[2].strip(),
                             "mountpoints": [mp.strip() for mp in parts[3].split(',') if mp.strip()],
                             "datacount": int(parts[4]) if parts[4].isdigit() else 0,
-                            "status": int(parts[5]) if parts[5].isdigit() else 0
+                            "status": int(parts[5]) if parts[5].isdigit() else 0,
+                            "show_position": parts[9].strip() == "1" if len(parts) > 9 else True
                         })
             return users
         except Exception: return []
 
-    async def create_user(self, creator: str, username: str, password: str, mountpoints: str, expiry_seconds: int = 31536000, max_users: int = 1) -> bool:
+    async def create_user(self, creator: str, username: str, password: str, mountpoints: str, expiry_seconds: int = 31536000, max_users: int = 1, show_position: bool = True) -> bool:
         clean_mps = mountpoints.replace(";", ",").replace(" ", "").strip()
-        cmd = f"GET /genuser HTTP/1.0/{creator}/{username}/{password}/{clean_mps}/{expiry_seconds}/{max_users}\r\n\r\n"
+        show_pos_val = "1" if show_position else "0"
+        # Định dạng dài (>= 12 parts) để hỗ trợ show_position ở cuối
+        # GET /genuser HTTP/1.0/creator/username/password/mounts/expiry/max/status/maxclient/showpos
+        cmd = f"GET /genuser HTTP/1.0/{creator}/{username}/{password}/{clean_mps}/-1/-1/{expiry_seconds}/{max_users}/{show_pos_val}\r\n\r\n"
+        await self._send_command(cmd)
+        return True
+
+    async def toggle_show_pos(self, identifier: str, username: str, enabled: bool) -> bool:
+        val = "1" if enabled else "0"
+        cmd = f"GET /showpos HTTP/1.0/{identifier}/{username}/{val}\r\n\r\n"
         await self._send_command(cmd)
         return True
 
@@ -147,6 +157,7 @@ class CasterClient:
                     "longitude": float(parts[5]) if parts[5] else None,
                     "status": int(parts[6]) if parts[6].isdigit() else 1,
                     "nsv": int(parts[7]) if parts[7].isdigit() else 0,
+                    "uptime": int(parts[8]) if len(parts) > 8 and parts[8].isdigit() else 0,
                     "client_id": parts[9].strip() if len(parts) > 9 else "",
                 })
             except: continue

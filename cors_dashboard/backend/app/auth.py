@@ -118,10 +118,12 @@ ROLE_PERMISSIONS = {
     Role.COORDINATOR: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,
         Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME, 
+        Permission.MANAGE_CASTER,
     ],
     Role.OPERATOR: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,
         Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME,
+        Permission.MANAGE_CASTER,
     ],
     Role.VIEWER: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG,

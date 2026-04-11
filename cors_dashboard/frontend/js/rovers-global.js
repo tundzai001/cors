@@ -97,24 +97,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function renderCasterCheckboxes() {
-        const container = document.getElementById('target-caster-container');
-        if (!container) return;
+        const createContainer = document.getElementById('target-caster-container');
+        const editContainer = document.getElementById('edit-target-caster-container');
         
-        container.innerHTML = '';
-        if (availableCasters.length === 0) {
-            container.innerHTML = '<div class="text-muted small">Không tìm thấy caster nào.</div>';
-            return;
+        if (createContainer) {
+            createContainer.innerHTML = '';
+            if (availableCasters.length === 0) {
+                createContainer.innerHTML = '<div class="text-muted small">Không tìm thấy caster nào.</div>';
+            } else {
+                availableCasters.forEach(host => {
+                    const div = document.createElement('div');
+                    div.className = 'form-check form-check-inline mb-0';
+                    div.innerHTML = `
+                        <input class="form-check-input caster-target-check" type="checkbox" value="${host}" id="target-${host}" checked>
+                        <label class="form-check-label text-white small" for="target-${host}">${host}</label>
+                    `;
+                    createContainer.appendChild(div);
+                });
+            }
         }
 
-        availableCasters.forEach(host => {
-            const div = document.createElement('div');
-            div.className = 'form-check form-check-inline mb-0';
-            div.innerHTML = `
-                <input class="form-check-input caster-target-check" type="checkbox" value="${host}" id="target-${host}" checked>
-                <label class="form-check-label text-white small" for="target-${host}">${host}</label>
-            `;
-            container.appendChild(div);
-        });
+        if (editContainer) {
+            editContainer.innerHTML = '';
+            if (availableCasters.length === 0) {
+                editContainer.innerHTML = '<div class="text-muted small">Không tìm thấy caster nào.</div>';
+            } else {
+                availableCasters.forEach(host => {
+                    const div = document.createElement('div');
+                    div.className = 'form-check form-check-inline mb-0';
+                    div.innerHTML = `
+                        <input class="form-check-input edit-caster-target-check" type="checkbox" value="${host}" id="edit-target-${host}">
+                        <label class="form-check-label text-white small" for="edit-target-${host}">${host}</label>
+                    `;
+                    editContainer.appendChild(div);
+                });
+            }
+        }
     }
 
     async function fetchDevices() {
@@ -361,6 +379,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function formatDuration(seconds) {
+        if (!seconds || seconds <= 0) return '0s';
+        
+        // Caster uptime might be in minutes sometimes, but typically it's seconds or minutes
+        // We'll treat it as seconds for precision, if it's > 1 month it might be minutes
+        
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+
+        if (h > 0) {
+            return `${h}h ${m}m ${s}s`;
+        } else if (m > 0) {
+            return `${m}m ${s}s`;
+        } else {
+            return `${s}s`;
+        }
+    }
+
+    function normalizeUsername(username) {
+        return String(username || '').trim().toLowerCase();
+    }
+
+    function parseCasterHosts(rawValue) {
+        if (Array.isArray(rawValue)) {
+            return Array.from(new Set(rawValue.map(h => String(h || '').trim()).filter(Boolean)));
+        }
+        return Array.from(
+            new Set(
+                String(rawValue || '')
+                    .split(/[;,]/)
+                    .map(h => h.trim())
+                    .filter(Boolean)
+            )
+        );
+    }
+
+    function getCasterInfosForUsername(username) {
+        const key = normalizeUsername(username);
+        if (!key) return [];
+        return casterUsers.filter(cu => normalizeUsername(cu.username) === key);
+    }
+
     // === UNIFIED RENDER TABLE ===
     function renderTable() {
         const tbody = document.getElementById('rovers-table-body');
@@ -377,12 +438,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         let mergedData = allRovers.map(r => ({
             ...r,
             type: 'db',
-            caster_info: casterUsers.find(cu => cu.username === r.username)
+            // Aggregated info from ALL possible casters
+            caster_infos: getCasterInfosForUsername(r.username)
         }));
 
         // Add Caster Users NOT in DB (Unknowns)
         casterUsers.forEach(cu => {
-            if (!allRovers.find(r => r.username === cu.username)) {
+            if (!allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(cu.username))) {
                 mergedData.push({
                     username: cu.username,
                     type: 'unknown',
@@ -398,8 +460,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const filtered = mergedData.filter(r => {
             const matchSearch = r.username.toLowerCase().includes(searchTerm) || 
                                 (r.base_serial && r.base_serial.toLowerCase().includes(searchTerm)) ||
-                                (r.base_name && r.base_name.toLowerCase().includes(searchTerm)) ||
-                                (r.caster_info?.server && r.caster_info.server.toLowerCase().includes(searchTerm));
+                                (r.base_name && r.base_name.toLowerCase().includes(searchTerm));
             
             const matchStation = !stationFilter || (r.base_serial && r.base_serial.includes(stationFilter));
             
@@ -413,6 +474,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             return matchSearch && matchStation && matchStatus;
         });
 
+        // 2.5 Sorting: Online first
+        filtered.sort((a, b) => {
+            const aOnline = (a.caster_infos || [a.caster_info]).some(ci => ci && ci.nclient > 0);
+            const bOnline = (b.caster_infos || [b.caster_info]).some(ci => ci && ci.nclient > 0);
+            if (aOnline && !bOnline) return -1;
+            if (!aOnline && bOnline) return 1;
+            return 0;
+        });
+
         // 3. Update Counts
         const countEl = document.getElementById('displayed-count');
         const totalEl = document.getElementById('total-rovers');
@@ -420,7 +490,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (totalEl) totalEl.textContent = mergedData.length;
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
             return;
         }
 
@@ -429,30 +499,83 @@ document.addEventListener('DOMContentLoaded', async () => {
             const tr = document.createElement('tr');
             if (r.type === 'unknown') tr.style.backgroundColor = 'rgba(239, 68, 68, 0.03)';
 
-            const cu = r.caster_info;
+            const infos = r.caster_infos || [r.caster_info].filter(i => i);
+            const isBlocked = infos.some(i => i.is_blocked);
+            const isOnline = infos.some(i => i.nclient > 0);
+            const totalClients = infos.reduce((sum, i) => sum + (i.nclient || 0), 0);
             
             // Caster Status Badge
             let casterStatusBadge = '<span class="badge border border-secondary text-muted rounded-pill opacity-50">Offline</span>';
-            if (cu) {
-                if (cu.is_blocked) {
-                    casterStatusBadge = '<span class="badge badge-blocked rounded-pill"><i class="bi bi-shield-x me-1"></i>BLOCKED</span>';
-                } else if (cu.nclient > 0) {
-                    casterStatusBadge = `<span class="badge badge-active rounded-pill shadow-sm"><i class="bi bi-broadcast me-1"></i>ONLINE (${cu.nclient})</span>`;
-                } else {
-                    casterStatusBadge = '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25 rounded-pill">Standby</span>';
-                }
+            if (isBlocked) {
+                casterStatusBadge = '<span class="badge badge-blocked rounded-pill"><i class="bi bi-shield-x me-1"></i>BLOCKED</span>';
+            } else if (isOnline) {
+                casterStatusBadge = `<span class="badge badge-active rounded-pill shadow-sm"><i class="bi bi-broadcast me-1"></i>ONLINE (${totalClients})</span>`;
+            } else if (infos.length > 0) {
+                casterStatusBadge = '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25 rounded-pill">Standby</span>';
             }
 
-            // DB Status Indicator
             const dbBadge = r.type === 'db' 
                 ? (r.is_active ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>' : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>')
                 : '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
 
-            // Mountpoints
+            // Caster Badge (Show which servers it belongs to)
+            const targetHosts = parseCasterHosts(r.target_casters);
+            let serverBadges = '';
+            if (targetHosts.length > 0) {
+                serverBadges = targetHosts.map(h => {
+                    const isPresent = infos.some(i => i.server === h);
+                    const color = isPresent ? 'text-success' : 'text-danger fw-bold';
+                    const icon = isPresent ? 'bi-server' : 'bi-exclamation-triangle';
+                    
+                    // Show full host instead of shortening
+                    return `<span class="badge bg-dark border border-secondary text-muted me-1 mb-1 d-inline-flex align-items-center" style="font-size:0.65rem" title="${h}">
+                                <i class="bi ${icon} ${color} me-1"></i>
+                                ${h}
+                            </span>`;
+                }).join('');
+            } else if (infos.length > 0) {
+                // Fallback for Legacy (No target_casters in DB but found on some servers)
+                serverBadges = infos.map(i => {
+                    return `<span class="badge bg-dark border border-secondary text-muted me-1 mb-1 d-inline-flex align-items-center" style="font-size:0.65rem" title="${i.server}">
+                                <i class="bi bi-server text-warning me-1"></i>
+                                ${i.server}
+                            </span>`;
+                }).join('');
+            }
+
+            // Show Position Status Icon: Prefer live data from Caster if available
+            const actualShowPos = infos.length > 0 ? infos[0].show_position : r.show_position;
+            const showPosIcon = actualShowPos 
+                ? '<i class="bi bi-eye-fill text-primary ms-1" title="Vị trí đang HIỆN (Live)"></i>' 
+                : '<i class="bi bi-eye-slash text-muted ms-1" title="Vị trí đang ẨN (Live)"></i>';
+
             const mps = (r.mountpoints || '').split(';').map(m => m.trim()).filter(m => m);
             const mpsDisplay = mps.length > 0
-                ? mps.map(m => `<code class="text-info small" style="font-size:0.7rem">${m}</code>`).join(' ')
+                ? mps.map(m => `<code class="text-info small" style="font-size:0.75rem">${m}</code>`).join(' ')
                 : '<span class="text-muted small">N/A</span>';
+
+            // Active Connections
+            let activeConnsHtml = '<span class="text-muted small">---</span>';
+            const allActiveConns = [];
+            infos.forEach(i => {
+                if (i.active_connections) {
+                    i.active_connections.forEach(conn => {
+                        allActiveConns.push({ ...conn, server: i.server });
+                    });
+                }
+            });
+
+            if (allActiveConns.length > 0) {
+                activeConnsHtml = allActiveConns.map(conn => {
+                    const dur = formatDuration(conn.uptime);
+                    const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${conn.server.split('.')[0]}]</span>` : '';
+                    return `<div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 me-1" style="font-size: 0.7rem;">${conn.mountpoint}</span>
+                                ${serverLabel}
+                                <span class="text-muted" style="font-size: 0.75rem;"><i class="bi bi-clock me-1"></i>${dur}</span>
+                            </div>`;
+                }).join('');
+            }
 
             // Actions
             let actionHtml = '';
@@ -460,7 +583,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Admin actions
             if (currentUser.permissions?.includes('manage:caster')) {
                 // Block/Unblock toggle
-                if (cu?.is_blocked) {
+                if (isBlocked) {
                     actionHtml += `
                         <button class="btn btn-sm btn-outline-success border-0 caster-unblock-btn me-1" 
                             data-username="${r.username}" title="Mở khóa">
@@ -481,7 +604,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (r.type === 'db') {
                 actionHtml += `
                     <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
-                        data-id="${r.id}" title="Sửa">
+                        data-id="${r.id}" data-username="${r.username}" title="Sửa">
                         <i class="bi bi-pencil-square"></i>
                     </button>
                     <button class="btn btn-sm btn-outline-danger delete-btn border-0" 
@@ -489,8 +612,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <i class="bi bi-trash3-fill"></i>
                     </button>
                 `;
-                // For unknown users, allow direct deletion from Caster
+            } else if (r.type === 'unknown') {
+                // Allow Edit and Block for Unknowns from primary casters
                 actionHtml += `
+                    <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
+                        data-id="0" data-username="${r.username}" title="Chỉnh sửa và Đồng bộ về Web">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
                     <button class="btn btn-sm btn-outline-danger border-0 caster-delete-btn" 
                         data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
                         <i class="bi bi-trash3"></i>
@@ -505,20 +633,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <i class="bi bi-person-fill"></i>
                         </div>
                         <div class="d-flex flex-column">
-                            <span class="fw-bold text-light">${r.username} ${dbBadge}</span>
-                            <span class="text-muted" style="font-size:0.7rem">${r.type === 'db' ? 'Database Account' : 'Unknown Caster User'}</span>
+                            <span class="fw-bold text-light">${r.username} ${dbBadge} ${showPosIcon}</span>
+                            <span class="text-muted mt-1" style="font-size:0.7rem">${r.type === 'db' ? 'Database Account' : 'Unknown Caster User'}</span>
                         </div>
                     </div>
                 </td>
                 <td><code class="text-warning bg-dark px-2 py-1 rounded small">${r.password || '******'}</code></td>
                 <td>
                     <div class="d-flex flex-column">
-                        <span class="text-info fw-bold small">${r.base_name || 'N/A'}</span>
-                        <div class="mt-1">${mpsDisplay}</div>
+                        <span class="text-info fw-bold small" style="font-size:0.8rem">${r.base_name || 'N/A'}</span>
+                        <div class="mt-1 d-flex flex-wrap gap-1">${mpsDisplay}</div>
                     </div>
                 </td>
+                <td>
+                    <div>${activeConnsHtml}</div>
+                </td>
                 <td class="text-center">${casterStatusBadge}</td>
-                <td class="text-center text-muted small">${cu?.server || '---'}</td>
+                <td class="text-center">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
                 <td class="text-end">${actionHtml}</td>
             `;
             tbody.appendChild(tr);
@@ -535,7 +666,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     // === HANDLE EDIT ROVER (LOGIC MỚI) ===
     function handleEditRover(e) {
         const id = parseInt(e.currentTarget.dataset.id);
-        const rover = allRovers.find(r => r.id === id);
+        const username = e.currentTarget.dataset.username;
+        
+        let rover = allRovers.find(r => r.id === id);
+        if (!rover && username) {
+            rover = allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(username));
+        }
+        
+        // Nếu không có ID trong DB (Unknown), tìm trong danh sách Caster
+        if (!rover && username) {
+            const cu = casterUsers.find(u => u.username === username);
+            if (cu) {
+                rover = {
+                    id: 0,
+                    username: cu.username,
+                    password: cu.password,
+                    mountpoints: cu.mountpoints.join(';'),
+                    show_position: cu.show_position,
+                    max_connections: 1
+                };
+            }
+        }
         
         if (!rover) return;
 
@@ -544,6 +695,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('edit-username').value = rover.username;
         document.getElementById('edit-password').value = ''; 
         document.getElementById('edit-expiry').value = ''; 
+        document.getElementById('edit-max-connections').value = rover.max_connections || 1;
+        
+        // Load show_position
+        const showPosToggle = document.getElementById('edit-show-position');
+        if (showPosToggle) {
+            showPosToggle.checked = rover.show_position !== false; // Mặc định true
+        }
+
+        // 1.5 Load Target Casters
+        let targetCasters = parseCasterHosts(rover.target_casters);
+        if (targetCasters.length === 0) {
+            targetCasters = Array.from(
+                new Set(
+                    getCasterInfosForUsername(rover.username)
+                        .map(i => String(i?.server || '').trim())
+                        .filter(Boolean)
+                )
+            );
+        }
+        document.querySelectorAll('.edit-caster-target-check').forEach(cb => {
+            cb.checked = targetCasters.includes(cb.value);
+        });
 
         // 2. XỬ LÝ CHECKLIST TRẠM
         const container = document.getElementById('edit-station-checklist');
@@ -615,18 +788,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             // --------------------------------
 
             const payload = {
-                mountpoints: finalMountpoints
+                mountpoints: finalMountpoints,
+                show_position: document.getElementById('edit-show-position').checked,
+                target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value)
             };
             if (newPass) payload.password = newPass;
             if (newExpiry) payload.expiry_days = parseInt(newExpiry);
+            const maxConn = document.getElementById('edit-max-connections')?.value;
+            if (maxConn) payload.max_connections = parseInt(maxConn);
 
             try {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = true;
                 submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang lưu...';
 
-                // GỌI API PUT
-                const res = await fetch(`/api/rovers/${roverId}`, {
+                // GỌI API THÔNG MINH (PUT)
+                const url = roverId == "0" 
+                    ? `/api/rovers/sync/by-username/${document.getElementById('edit-username').value}`
+                    : `/api/rovers/${roverId}`;
+                
+                const res = await fetch(url, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -659,23 +840,132 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // === HANDLE DELETE ROVER ===
+    // === HANDLE DELETE ROVER (MODAL MỚI) ===
     async function handleDeleteRover(e) {
         const btn = e.currentTarget;
-        const id = btn.dataset.id;
-        const username = btn.dataset.user;
+        const id = parseInt(btn.dataset.id);
+        const username = btn.dataset.username || btn.dataset.user;
         
-        if (!confirm(`Bạn có chắc muốn xóa Rover "${username}"?`)) return;
+        let rover = allRovers.find(r => r.id === id);
+        if (!rover && username) {
+            rover = allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(username));
+        }
+        // Nếu là Unknown (id=0), tạo đối tượng giả lập để Modal vẫn chạy
+        if (!rover && id === 0) {
+            rover = {
+                id: 0,
+                username: username,
+                target_casters: "",
+                caster_infos: getCasterInfosForUsername(username)
+            };
+        }
+        
+        if (!rover) return;
+
+        document.getElementById('delete-rover-id').value = id;
+        
+        // Mặc định là TÍCH CHỌN xóa khỏi DB (trừ khi là tài khoản ngoại lai id=0)
+        const dbCheck = document.getElementById('delete-from-db');
+        dbCheck.checked = (id !== 0);
+        
+        // Ẩn vùng xóa DB nếu là tài khoản ngoại lai
+        const dbSection = dbCheck.closest('.mb-2');
+        if (id === 0) {
+            dbSection.style.display = 'none';
+        } else {
+            dbSection.style.display = 'block';
+        }
+
+        // Populate server list
+        const serverList = document.getElementById('delete-server-list');
+        serverList.innerHTML = '';
+        
+        // Lấy danh sách server: Ưu tiên target_casters, nếu trống thì lấy thực tế từ caster_infos
+        let hosts = parseCasterHosts(rover.target_casters);
+        let relatedCasterInfos = Array.isArray(rover.caster_infos) ? rover.caster_infos : [];
+        if (relatedCasterInfos.length === 0) {
+            relatedCasterInfos = getCasterInfosForUsername(username || rover.username);
+        }
+        if (hosts.length === 0 && relatedCasterInfos.length > 0) {
+            hosts = Array.from(new Set(relatedCasterInfos.map(i => String(i?.server || '').trim()).filter(Boolean)));
+        }
+        
+        if (hosts.length === 0) {
+            serverList.innerHTML = '<div class="text-muted small">Không tìm thấy server nào liên quan.</div>';
+        } else {
+            hosts.forEach(host => {
+                const div = document.createElement('div');
+                div.className = 'form-check form-check-inline me-3 mb-2';
+                div.innerHTML = `
+                    <input class="form-check-input delete-host-check" type="checkbox" value="${host}" id="del-check-${host}" checked>
+                    <label class="form-check-label small" for="del-check-${host}">${host}</label>
+                `;
+                serverList.appendChild(div);
+            });
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('confirmDeleteModal'));
+        modal.show();
+    }
+
+    // Nút thực thi xóa trong Modal
+    document.getElementById('executeDeleteBtn').onclick = async function() {
+        const roverId = document.getElementById('delete-rover-id').value;
+        const deleteFromDb = document.getElementById('delete-from-db').checked;
+        const checkedHosts = Array.from(document.querySelectorAll('.delete-host-check:checked')).map(cb => cb.value);
+        const allHosts = Array.from(document.querySelectorAll('.delete-host-check')).map(cb => cb.value);
+        
+        const btn = this;
+        const originalHtml = btn.innerHTML;
 
         try {
-            const res = await fetch(`/api/rovers/${id}`, { method: 'DELETE', headers: API_HEADERS });
-            if (!res.ok) throw new Error('Xóa thất bại');
-            showToast(`Đã xóa tài khoản ${username}`, 'success');
-            fetchRovers();
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang xử lý...';
+
+            if (deleteFromDb) {
+                // TRƯỜNG HỢP 1: Xóa trắng hoàn toàn
+                const res = await fetch(`/api/rovers/${roverId}`, { 
+                    method: 'DELETE', 
+                    headers: API_HEADERS 
+                });
+                if (!res.ok) throw new Error(await res.text() || 'Xóa hoàn toàn thất bại');
+                showToast(`Đã xóa vĩnh viễn tài khoản khỏi hệ thống`, 'success');
+            } else {
+                // TRƯỜNG HỢP 2: Chỉ gỡ trên một số server (Partial Cleanup)
+                // Những server BỊ TÍCH trong modal delete là những server CHÚNG TA MUỐN XÓA.
+                // Vậy danh sách target_casters CÒN LẠI = Tổng - Bị tích.
+                const remainingHosts = allHosts.filter(h => !checkedHosts.includes(h));
+                
+                if (checkedHosts.length === 0) {
+                    showToast('Bạn chưa chọn server nào để gỡ bỏ!', 'warning');
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                    return;
+                }
+
+                const res = await fetch(`/api/rovers/${roverId}`, {
+                    method: 'PUT',
+                    headers: API_HEADERS,
+                    body: JSON.stringify({
+                        target_casters: remainingHosts
+                    })
+                });
+
+                if (!res.ok) throw new Error(await res.text() || 'Cập nhật gỡ bỏ thất bại');
+                showToast(`Đã gỡ bỏ tài khoản khỏi ${checkedHosts.length} server`, 'success');
+            }
+
+            // Đóng modal và refresh
+            bootstrap.Modal.getInstance(document.getElementById('confirmDeleteModal')).hide();
+            initData(); // Tải lại toàn bộ dữ liệu
         } catch (err) {
-            showToast(err.message, 'danger');
+            console.error(err);
+            showToast(`Lỗi: ${err.message}`, 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
         }
-    }
+    };
 
     // === HANDLE DELETE CASTER USER (Unknown) ===
     async function handleDeleteCasterUser(e) {
@@ -739,7 +1029,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 expiry_days: parseInt(document.getElementById('new-expiry').value),
                 selected_serials: selectedSerials,
                 mountpoint_override: mpOverride,
-                target_casters: targetCasters
+                target_casters: targetCasters,
+                max_connections: parseInt(document.getElementById('new-max-connections')?.value || 1),
+                show_position: document.getElementById('new-show-position').checked
             };
 
             try {
