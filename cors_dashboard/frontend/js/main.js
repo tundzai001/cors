@@ -899,10 +899,14 @@ async function apiFetch(url, options = {}, retries = 3) {
         const response = await fetch(url, { ...options, headers, signal: controller.signal });
         clearTimeout(timeoutId);
 
-        if (response.status === 401) {
-            localStorage.removeItem('access_token');
-            sessionStorage.removeItem('access_token');
-            window.location.href = '/login.html';
+        if (response.status === 401 || response.status === 403) {
+            if (typeof NavigationManager !== 'undefined') {
+                NavigationManager.forceLogout();
+            } else {
+                localStorage.removeItem('access_token');
+                sessionStorage.removeItem('access_token');
+                window.location.href = '/login.html';
+            }
             throw new Error('Unauthorized');
         }
 
@@ -1098,7 +1102,13 @@ function setupEventListeners() {
 // === ENTRY POINT ===
 document.addEventListener('DOMContentLoaded', async () => {
     if (!localStorage.getItem('access_token') && !sessionStorage.getItem('access_token')) {
-        window.location.href = '/login.html';
+        if (typeof NavigationManager !== 'undefined') {
+            NavigationManager.forceLogout();
+        } else {
+            localStorage.removeItem('access_token');
+            sessionStorage.removeItem('access_token');
+            window.location.href = '/login.html';
+        }
         return;
     }
 

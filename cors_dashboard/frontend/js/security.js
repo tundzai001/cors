@@ -5,6 +5,8 @@
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
+        localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
         window.location.href = '/login.html';
         return;
     }
@@ -34,9 +36,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     window.location.href = '/';
                 } else {
                     alert('[SESSION EXPIRED]');
-                    localStorage.removeItem('access_token');
-                    sessionStorage.removeItem('access_token');
-                    window.location.href = '/login.html';
+                    if (typeof NavigationManager !== 'undefined') {
+                        NavigationManager.forceLogout();
+                    } else {
+                        localStorage.removeItem('access_token');
+                        sessionStorage.removeItem('access_token');
+                        window.location.href = '/login.html';
+                    }
                 }
                 throw new Error('Unauthorized');
             }

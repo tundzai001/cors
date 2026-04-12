@@ -2462,11 +2462,16 @@ async def get_caster_clienttable(
     async with global_caster_cache_lock:
         for cache_data in global_caster_data_cache.values():
             host = cache_data.get("host", "unknown")
+            users = cache_data.get("users", [])
+            user_visibility_map = {u.get("username", "").strip().lower(): u.get("show_position", True) for u in users}
+            
             clients = cache_data.get("clients", [])
             for c in clients:
-                # Add server info for UI
+                u_lower = str(c.get("username", "")).strip().lower()
+                # Add server info and visibility for UI
                 c_copy = dict(c)
                 c_copy["server"] = host
+                c_copy["show_position"] = user_visibility_map.get(u_lower, True)
                 all_clients.append(c_copy)
                 
     # Keep all clients; frontend will decide visibility by valid coordinates.
@@ -2652,7 +2657,8 @@ async def get_caster_users(
             blocked_at=blocked_at,
             server=server_host,
             version=device_versions.get(str(db_rovers_map[username_lower].base_serial or "").strip().upper()) if in_db and db_rovers_map[username_lower].base_serial else None,
-            active_connections=active_conns
+            active_connections=active_conns,
+            show_position=cu.get("show_position", True)
         ))
 
     return schemas.CasterUsersResponse(

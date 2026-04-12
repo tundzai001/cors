@@ -305,6 +305,7 @@ class CasterRoverItem(BaseModel):
     server: Optional[str] = None
     version: Optional[str] = None
     active_connections: List[dict] = Field(default_factory=list) # List of {mountpoint, uptime}
+    show_position: bool = True
 
 
 class CasterUsersResponse(BaseModel):

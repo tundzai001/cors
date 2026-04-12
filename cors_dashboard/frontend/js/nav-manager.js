@@ -15,7 +15,8 @@ const NavigationManager = {
         try {
             const token = this.getToken();
             if (!token) {
-                window.location.href = '/login.html';
+                console.warn('⚠️ No token found, redirecting to login');
+                this.forceLogout();
                 return;
             }
 
@@ -49,11 +50,10 @@ const NavigationManager = {
         });
 
         if (!response.ok) {
-            if (response.status === 401) {
-                localStorage.removeItem('access_token');
-                sessionStorage.removeItem('access_token');
-                window.location.href = '/login.html';
-                throw new Error('Unauthorized');
+            if (response.status === 401 || response.status === 403) {
+                console.error(`🔴 Session ${response.status === 401 ? 'expired' : 'forbidden'}, clearing state`);
+                this.forceLogout();
+                return;
             }
             throw new Error('Failed to load user info');
         }
@@ -227,11 +227,17 @@ const NavigationManager = {
         console.log('✓ Logout button configured');
     },
 
+    forceLogout() {
+        localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
+        // Xóa các thông tin state khác nếu có
+        this.currentUser = null;
+        window.location.href = '/login.html';
+    },
+
     handleLogout() {
         if (confirm('Bạn có chắc muốn đăng xuất không?')) {
-            localStorage.removeItem('access_token');
-            sessionStorage.removeItem('access_token');
-            window.location.href = '/login.html';
+            this.forceLogout();
         }
     },
 

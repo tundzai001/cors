@@ -1,10 +1,16 @@
 // rovers-global.js
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Kiểm tra Token
+    // 1. Kiểm tra Token (Hỗ trợ cả Local và Session Storage)
     const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
-        window.location.href = '/login.html';
+        if (typeof NavigationManager !== 'undefined') {
+            NavigationManager.forceLogout();
+        } else {
+            localStorage.removeItem('access_token');
+            sessionStorage.removeItem('access_token');
+            window.location.href = '/login.html';
+        }
         return;
     }
 
@@ -24,7 +30,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // === 2. AUTH & PERMISSIONS CHECK ===
     try {
         const userRes = await fetch('/api/auth/me', { headers: API_HEADERS });
-        if (!userRes.ok) throw new Error("Unauthorized");
+        if (!userRes.ok) {
+            if (userRes.status === 401 || userRes.status === 403) {
+                throw new Error("Unauthorized");
+            }
+            throw new Error(`Server error: ${userRes.status}`);
+        }
         currentUser = await userRes.json();
 
         // Cập nhật UI Navbar
@@ -40,8 +51,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         initData();
 
     } catch (e) {
-        console.error("Auth error:", e);
-        window.location.href = '/login.html';
+        console.error("Initialization error:", e);
+        if (e.message === "Unauthorized") {
+            if (typeof NavigationManager !== 'undefined') {
+                NavigationManager.forceLogout();
+            } else {
+                localStorage.removeItem('access_token');
+                sessionStorage.removeItem('access_token');
+                window.location.href = '/login.html';
+            }
+        } else {
+            // Hiển thị thông báo lỗi thay vì văng ra login nếu chỉ là lỗi mạng/server
+            if (typeof showToast === 'function') {
+                showToast("Lỗi kết nối hệ thống. Vui lòng tải lại trang.", "danger");
+            } else {
+                alert("Lỗi khởi tạo dữ liệu. Vui lòng tải lại trang.");
+            }
+        }
     }
 
     // === 3. DATA LOADING ===
@@ -560,11 +586,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }).join('');
             }
 
-            // Show Position Status Icon: Prefer live data from Caster if available
-            const actualShowPos = infos.length > 0 ? infos[0].show_position : r.show_position;
+            // Show Position Status Icon: Live data from Caster
+            const actualShowPos = (infos.length > 0 && typeof infos[0].show_position !== 'undefined') ? infos[0].show_position : r.show_position;
             const showPosIcon = actualShowPos 
                 ? '<i class="bi bi-eye-fill text-primary ms-1" title="Vị trí đang HIỆN (Live)"></i>' 
-                : '<i class="bi bi-eye-slash text-muted ms-1" title="Vị trí đang ẨN (Live)"></i>';
+                : '<i class="bi bi-eye-slash text-muted opacity-50 ms-1" title="Vị trí đang ẨN (Live)"></i>';
 
             const mps = (r.mountpoints || '').split(';').map(m => m.trim()).filter(m => m);
             const mpsDisplay = mps.length > 0
