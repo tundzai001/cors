@@ -1,7 +1,7 @@
 // frontend/js/users.js
 
 document.addEventListener('DOMContentLoaded', () => {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
         window.location.href = '/login.html';
         return;

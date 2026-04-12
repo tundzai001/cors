@@ -2377,9 +2377,11 @@ async def login(
         is_success=True
     )
     
-    expires_delta = None
+    # 🔥 FIX: Mặc định 24h nếu không chọn remember_me, 1 năm nếu có chọn
     if getattr(login_data, "remember_me", False):
         expires_delta = timedelta(minutes=auth.ACCESS_TOKEN_REMEMBER_ME_EXPIRE_MINUTES)
+    else:
+        expires_delta = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
     
     access_token = auth.create_access_token(
         data={"sub": user.username, "role": user.role},
@@ -4062,6 +4064,11 @@ async def update_rover(
         "show_position": target_show_pos,
         "target_casters": ";".join(updated_target_hosts)
     }
+    
+    # 🔥 FIX: Cập nhật base_serial nếu client gửi lên danh sách trạm mới
+    if update_req.selected_serials:
+        update_data["base_serial"] = ",".join(update_req.selected_serials)
+        
     updated_rover = await crud.update_rover_account(db, rover_id, update_data)
     
     return updated_rover
@@ -4202,7 +4209,7 @@ async def get_all_rovers_global(
     
     # Cache devices để tránh query DB quá nhiều lần trong vòng lặp
     all_devices_result = await devices_db.execute(select(models.Device))
-    all_devices = {d.serial: d.name for d in all_devices_result.scalars().all()}
+    all_devices = {d.serial.strip().upper(): d.name for d in all_devices_result.scalars().all() if d.serial}
 
     for rover in rovers:
         rover_dict = schemas.RoverAccountResponse.from_orm(rover).model_dump()
@@ -4274,6 +4281,10 @@ async def sync_rover_by_username(
         if update_req.show_position is not None: update_data["show_position"] = update_req.show_position
         
         if update_data:
+            # 🔥 FIX: Cập nhật base_serial nếu có gửi trạm đích
+            if update_req.selected_serials:
+                update_data["base_serial"] = ",".join(update_req.selected_serials)
+                
             rover = await crud.update_rover_account(db, rover.id, update_data)
 
     # 5. ĐỒNG BỘ SANG CASTER

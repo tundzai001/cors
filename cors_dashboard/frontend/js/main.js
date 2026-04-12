@@ -888,7 +888,7 @@ function handleWebSocketMessage(message) {
 // ===============================================================================
 
 async function apiFetch(url, options = {}, retries = 3) {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     const headers = { 'Content-Type': 'application/json', ...options.headers };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -901,6 +901,7 @@ async function apiFetch(url, options = {}, retries = 3) {
 
         if (response.status === 401) {
             localStorage.removeItem('access_token');
+            sessionStorage.removeItem('access_token');
             window.location.href = '/login.html';
             throw new Error('Unauthorized');
         }
@@ -1017,6 +1018,7 @@ async function loadCurrentUser() {
         }
     } catch (error) {
         localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
         window.location.href = '/login.html';
     }
 }
@@ -1095,7 +1097,7 @@ function setupEventListeners() {
 
 // === ENTRY POINT ===
 document.addEventListener('DOMContentLoaded', async () => {
-    if (!localStorage.getItem('access_token')) {
+    if (!localStorage.getItem('access_token') && !sessionStorage.getItem('access_token')) {
         window.location.href = '/login.html';
         return;
     }

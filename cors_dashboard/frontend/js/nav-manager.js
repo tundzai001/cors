@@ -6,9 +6,14 @@ const NavigationManager = {
     currentUser: null,
     currentPage: '',
 
+    // Helper: Lấy token từ cả local hoặc session
+    getToken() {
+        return localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    },
+
     async init() {
         try {
-            const token = localStorage.getItem('access_token');
+            const token = this.getToken();
             if (!token) {
                 window.location.href = '/login.html';
                 return;
@@ -35,7 +40,7 @@ const NavigationManager = {
     },
 
     async loadCurrentUser() {
-        const token = localStorage.getItem('access_token');
+        const token = this.getToken();
         const response = await fetch('/api/auth/me', {
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -46,6 +51,7 @@ const NavigationManager = {
         if (!response.ok) {
             if (response.status === 401) {
                 localStorage.removeItem('access_token');
+                sessionStorage.removeItem('access_token');
                 window.location.href = '/login.html';
                 throw new Error('Unauthorized');
             }
@@ -224,6 +230,7 @@ const NavigationManager = {
     handleLogout() {
         if (confirm('Bạn có chắc muốn đăng xuất không?')) {
             localStorage.removeItem('access_token');
+            sessionStorage.removeItem('access_token');
             window.location.href = '/login.html';
         }
     },

@@ -3,7 +3,7 @@
 // ==============================================================================
 
 const API_HEADERS = {
-    'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+    'Authorization': `Bearer ${localStorage.getItem('access_token') || sessionStorage.getItem('access_token')}`,
     'Content-Type': 'application/json'
 };
 

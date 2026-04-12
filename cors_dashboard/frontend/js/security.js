@@ -3,7 +3,7 @@
 // ============================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
         window.location.href = '/login.html';
         return;
@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     alert('[SESSION EXPIRED]');
                     localStorage.removeItem('access_token');
+                    sessionStorage.removeItem('access_token');
                     window.location.href = '/login.html';
                 }
                 throw new Error('Unauthorized');

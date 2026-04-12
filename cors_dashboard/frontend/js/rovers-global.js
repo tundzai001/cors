@@ -2,7 +2,7 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
     // 1. Kiểm tra Token
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
         window.location.href = '/login.html';
         return;
@@ -62,8 +62,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 document.getElementById('admin-info-alert')?.classList.remove('d-none');
             }
             
-            // Periodic sync (every 30s)
-            setInterval(syncData, 30000);
+            // Periodic sync (every 5s for smoother status updates)
+            setInterval(syncData, 5000);
+            
+            // Live-tick for connection durations (every 1s)
+            setInterval(updateLiveClocks, 1000);
             
         } catch (e) {
             console.error("Init data error", e);
@@ -215,7 +218,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         container.innerHTML = ""; // Clear
 
         // 1. Lấy danh sách mountpoint Rover này đang dùng
-        const allMps = new Set([...currentMps, ...MOUNTPOINT_EXAMPLES]);
+        const allMps = new Set([...currentMps]);
         
         allMps.forEach(mp => {
             if (!mp) return;
@@ -318,6 +321,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-unlock-fill me-1"></i>Mở khóa';
         }
+    }
+
+    function updateLiveClocks() {
+        const now = Date.now();
+        document.querySelectorAll('.live-clock').forEach(el => {
+            const baseUptime = parseInt(el.dataset.uptime || 0);
+            const fetchTime = parseInt(el.dataset.fetchTime || now);
+            const diffSeconds = Math.floor((now - fetchTime) / 1000);
+            const currentUptime = baseUptime + diffSeconds;
+            
+            if (currentUptime > 0) {
+                el.textContent = formatDuration(currentUptime);
+            }
+        });
     }
 
     // === UI POPULATION (FILTER & CHECKLIST) ===
@@ -566,13 +583,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             if (allActiveConns.length > 0) {
+                const fetchTime = Date.now();
                 activeConnsHtml = allActiveConns.map(conn => {
-                    const dur = formatDuration(conn.uptime);
+                    const durText = formatDuration(conn.uptime);
                     const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${conn.server.split('.')[0]}]</span>` : '';
                     return `<div class="d-flex align-items-center mb-1">
                                 <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 me-1" style="font-size: 0.7rem;">${conn.mountpoint}</span>
                                 ${serverLabel}
-                                <span class="text-muted" style="font-size: 0.75rem;"><i class="bi bi-clock me-1"></i>${dur}</span>
+                                <span class="text-muted" style="font-size: 0.75rem;">
+                                    <i class="bi bi-clock me-1"></i>
+                                    <span class="live-clock" data-uptime="${conn.uptime}" data-fetch-time="${fetchTime}">${durText}</span>
+                                </span>
                             </div>`;
                 }).join('');
             }
@@ -772,8 +793,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             // --- LẤY DỮ LIỆU TỪ CHECKLIST ---
             const checkedBoxes = document.querySelectorAll('.edit-station-check:checked');
             let allMps = new Set(); // Dùng Set để tránh trùng lặp
+            let selectedSerials = [];
             
             checkedBoxes.forEach(cb => {
+                selectedSerials.push(cb.value);
                 const mps = cb.dataset.mps.split(';');
                 mps.forEach(mp => { if(mp) allMps.add(mp); });
             });
@@ -785,10 +808,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast('Vui lòng chọn ít nhất một trạm phát!', 'danger');
                 return;
             }
-            // --------------------------------
 
             const payload = {
                 mountpoints: finalMountpoints,
+                selected_serials: selectedSerials, // 🔥 FIX: Gửi kèm danh sách serial trạm
                 show_position: document.getElementById('edit-show-position').checked,
                 target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value)
             };
@@ -811,7 +834,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                        'Authorization': `Bearer ${localStorage.getItem('access_token') || sessionStorage.getItem('access_token')}`
                     },
                     body: JSON.stringify(payload)
                 });
