@@ -61,14 +61,29 @@ from .caster_client import CasterClient
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+# --- Cấu hình Logging ---
+log_file = 'app.log'
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+# Tạo FileHandler một lần để dùng chung
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setFormatter(logging.Formatter(log_format))
+
+# Cấu hình Root Logger
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format=log_format,
     handlers=[
-        logging.FileHandler('app.log', encoding='utf-8'), 
+        file_handler,
         logging.StreamHandler()
     ]
 )
+
+# Chèn FileHandler vào log của Uvicorn để bắt lỗi startup/server
+for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    l = logging.getLogger(logger_name)
+    l.addHandler(file_handler)
+    l.propagate = False # Tránh bị lặp log ra console vì basicConfig đã bắt root rồi
 
 
 def _fix_ntrip_pos_typo(data: bytes) -> bytes:
@@ -1778,6 +1793,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors(), "body": str(exc.body)},
     )
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Bắt mọi lỗi không mong muốn, ghi log kèm Traceback chi tiết vào app.log.
+    """
+    logging.error(f"❌ Global Unhandled Exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Lỗi hệ thống nội bộ. Vui lòng kiểm tra app.log để biết chi tiết."}
+    )
+
 app.add_middleware(SecurityGateMiddleware) # SECURITY FIRST
 app.add_middleware(RequestIDMiddleware) 
 
@@ -2351,9 +2377,11 @@ async def login(
         is_success=True
     )
     
-    expires_delta = None
+    # 🔥 FIX: Mặc định 24h nếu không chọn remember_me, 1 năm nếu có chọn
     if getattr(login_data, "remember_me", False):
         expires_delta = timedelta(minutes=auth.ACCESS_TOKEN_REMEMBER_ME_EXPIRE_MINUTES)
+    else:
+        expires_delta = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
     
     access_token = auth.create_access_token(
         data={"sub": user.username, "role": user.role},
@@ -2425,6 +2453,7 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
 @app.get("/api/caster/clienttable")
 async def get_caster_clienttable(
     db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
     """Aggregate clienttable from all scanned casters to show on map."""
@@ -2433,15 +2462,41 @@ async def get_caster_clienttable(
     async with global_caster_cache_lock:
         for cache_data in global_caster_data_cache.values():
             host = cache_data.get("host", "unknown")
+            users = cache_data.get("users", [])
+            user_visibility_map = {u.get("username", "").strip().lower(): u.get("show_position", True) for u in users}
+            
             clients = cache_data.get("clients", [])
             for c in clients:
-                # Add server info for UI
+                u_lower = str(c.get("username", "")).strip().lower()
+                # Add server info and visibility for UI
                 c_copy = dict(c)
                 c_copy["server"] = host
+                c_copy["show_position"] = user_visibility_map.get(u_lower, True)
                 all_clients.append(c_copy)
                 
-    # Filter NSV > 0 for map
-    filtered_clients = [c for c in all_clients if c.get("nsv") != 0]
+    # Keep all clients; frontend will decide visibility by valid coordinates.
+    filtered_clients = list(all_clients)
+
+    # --- PHÂN QUYỀN HIỂN THỊ TRÊN MAP ---
+    if current_user.role != auth.Role.ADMIN:
+        # 1. Lấy danh sách trạm mà user quản lý
+        managed_devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
+        managed_serials = {d.serial.upper().strip() for d in managed_devices}
+
+        # 2. Lấy danh sách rover mà user tạo ra
+        my_rovers = await crud.get_all_rovers_by_user(db, current_user.id, current_user.role)
+        
+        # 3. Lọc: Rover vừa do user tạo, vừa được gán vào trạm user quản lý
+        allowed_usernames = set()
+        for r in my_rovers:
+            # base_serial có thể là "SN1, SN2"
+            r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
+            # Nếu có ít nhất 1 trạm của coordinator trong danh sách trạm của rover
+            if any(s in managed_serials for s in r_serials):
+                allowed_usernames.add(str(r.username).strip().lower())
+
+        # 4. Chỉ giữ lại những client trên map thuộc danh sách allowed
+        filtered_clients = [c for c in filtered_clients if str(c.get("username", "")).strip().lower() in allowed_usernames]
     
     return {
         "count": len(filtered_clients),
@@ -2452,6 +2507,7 @@ async def get_caster_clienttable(
 @app.get("/api/caster/users", response_model=schemas.CasterUsersResponse)
 async def get_caster_users(
     auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
     """Aggregate total users from all scanned casters with enrichment."""
@@ -2466,9 +2522,29 @@ async def get_caster_users(
                 u_copy["server"] = host # Tag with server
                 all_caster_users.append(u_copy)
 
+    # --- PHÂN QUYỀN HIỂN THỊ (ĐỒNG BỘ VỚI MAP) ---
+    if current_user.role != auth.Role.ADMIN:
+        # 1. Lấy danh sách trạm mà user quản lý
+        managed_devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
+        managed_serials = {d.serial.upper().strip() for d in managed_devices}
+
+        # 2. Lấy danh sách rover mà user tạo ra
+        my_rovers = await crud.get_all_rovers_by_user(auth_db, current_user.id, current_user.role)
+        
+        # 3. Lọc: Rover vừa do user tạo, vừa được gán vào trạm user quản lý
+        allowed_usernames = set()
+        for r in my_rovers:
+            r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
+            if any(s in managed_serials for s in r_serials):
+                allowed_usernames.add(str(r.username).strip().lower())
+
+        # 4. Lọc lại danh sách toàn bộ caster users
+        all_caster_users = [u for u in all_caster_users if str(u.get("username", "")).strip().lower() in allowed_usernames]
+
+
     # Local DB Lookups
     db_rovers_rs = await auth_db.execute(select(models.RoverAccount))
-    db_rovers_map = {str(r.username).lower(): r for r in db_rovers_rs.scalars().all()}
+    db_rovers_map = {str(r.username).strip().lower(): r for r in db_rovers_rs.scalars().all()}
 
     blocklist_rs = await auth_db.execute(select(models.RoverBlocklist))
     blocklist_items = blocklist_rs.scalars().all()
@@ -2484,6 +2560,35 @@ async def get_caster_users(
         res_devices = await db.execute(select(models.Device.serial, models.Device.version))
         device_versions = {str(d.serial).upper(): d.version for d in res_devices.all()}
 
+    # 1. Active Sessions Lookup Map (from Caster Cache)
+    active_sessions_map = {} # (server, username) -> [ {mp, uptime} ]
+    
+    async with global_caster_cache_lock:
+        for cache_data in global_caster_data_cache.values():
+            host = cache_data.get("host", "unknown")
+            clients = cache_data.get("clients", [])
+            for c in clients:
+                user_key = (host, str(c.get("username", "")).strip().lower())
+                if user_key not in active_sessions_map:
+                    active_sessions_map[user_key] = []
+                active_sessions_map[user_key].append({
+                    "mountpoint": c.get("mountpoint"),
+                    "uptime": c.get("uptime", 0),
+                    "client_id": c.get("client_id", "")
+                })
+
+    # 2. Sync with internal RTCM sessions for better duration accuracy
+    internal_sessions = {}
+    try:
+        now_ts = int(time.time())
+        # FIX: Query from devices_db instead of auth_db
+        sessions_rs = await devices_db.execute(select(models.RTCMStreamSession))
+        for sess in sessions_rs.scalars().all():
+            key = (sess.client_id, sess.mountpoint)
+            internal_sessions[key] = now_ts - sess.created_at
+    except Exception as e:
+        logger.warning(f"Failed to fetch internal sessions for duration fallback: {e}")
+
     enriched_items = []
     in_db_count = 0
     blocked_count = 0
@@ -2491,6 +2596,7 @@ async def get_caster_users(
     for cu in all_caster_users:
         username = str(cu.get("username", "")).strip()
         username_lower = username.lower()
+        server_host = cu.get("server")
 
         in_db = username_lower in db_rovers_map
         is_blocked = False
@@ -2515,6 +2621,27 @@ async def get_caster_users(
         if in_db: in_db_count += 1
         if is_blocked: blocked_count += 1
 
+        # Match active connections
+        active_key = (server_host, username_lower)
+        active_conns_raw = active_sessions_map.get(active_key, [])
+        active_conns = []
+        for ac in active_conns_raw:
+            # Try to match with internal sessions for precise duration
+            # Client ID on caster often matches the dashboard client ID
+            cid = ac.get("client_id")
+            mp = ac.get("mountpoint")
+            
+            # Use internal duration if available, else caster uptime
+            best_uptime = ac.get("uptime", 0)
+            internal_dur = internal_sessions.get((cid, mp))
+            if internal_dur is not None and internal_dur > best_uptime:
+                best_uptime = internal_dur
+                
+            active_conns.append({
+                "mountpoint": mp,
+                "uptime": best_uptime
+            })
+
         enriched_items.append(schemas.CasterRoverItem(
             username=username,
             password=str(cu.get("password", "")),
@@ -2528,8 +2655,10 @@ async def get_caster_users(
             is_blocked=is_blocked,
             blocked_reason=blocked_reason,
             blocked_at=blocked_at,
-            server=cu.get("server"),
-            version=device_versions.get(str(db_rovers_map[username_lower].base_serial).upper()) if in_db and db_rovers_map[username_lower].base_serial else None
+            server=server_host,
+            version=device_versions.get(str(db_rovers_map[username_lower].base_serial or "").strip().upper()) if in_db and db_rovers_map[username_lower].base_serial else None,
+            active_connections=active_conns,
+            show_position=cu.get("show_position", True)
         ))
 
     return schemas.CasterUsersResponse(
@@ -3783,7 +3912,8 @@ async def create_rover_for_base(
         username=rover_data.username,
         password=rover_data.password,
         base_serial=serial,
-        creator_id=current_user.id
+        creator_id=current_user.id,
+        show_position=rover_data.show_position
     )
     
     return new_rover
@@ -3827,29 +3957,124 @@ async def update_rover(
     if update_req.expiry_days:
         duration_seconds = update_req.expiry_days * 86400
     
-    # 4. GỌI CASTER ĐỂ CẬP NHẬT (Ghi đè user cũ)
+    # 4. GỌI CASTER ĐỂ CẬP NHẬT
     try:
-        caster = await get_caster_client(db)
+        from app.caster_client import CasterClient
         creator_identifier = current_user.username 
+        new_max_connections = update_req.max_connections if update_req.max_connections is not None else rover.max_connections
+        target_show_pos = update_req.show_position if update_req.show_position is not None else rover.show_position
         
-        # HÃ m create_user của Caster thường hoạt động như "Upsert" (Tạo mới hoặc Ghi đè)
-        await caster.create_user(
-            creator=creator_identifier,
-            username=rover.username, # Username không đổi
-            password=new_password,
-            mountpoints=new_mountpoints, 
-            expiry_seconds=duration_seconds, 
-            max_users=1
-        )
+        # Determine updated target casters
+        # If request provides target_casters, use it. Otherwise use what's in DB.
+        old_hosts_str = rover.target_casters if rover.target_casters else ""
+        old_hosts_set = set(h.strip() for h in old_hosts_str.split(";") if h.strip())
+        
+        # Resolve hosts where this rover actually exists from live caster cache.
+        live_hosts_set = set()
+        try:
+            rover_key = str(rover.username or "").strip().lower()
+            async with global_caster_cache_lock:
+                for cache_data in global_caster_data_cache.values():
+                    host = str(cache_data.get("host", "") or "").strip()
+                    if not host:
+                        continue
+                    for u in (cache_data.get("users") or []):
+                        if str(u.get("username", "") or "").strip().lower() == rover_key:
+                            live_hosts_set.add(host)
+                            break
+        except Exception as e:
+            logger.warning(f"Failed to resolve live caster hosts for '{rover.username}': {e}")
+
+        if update_req.target_casters is not None:
+            requested_hosts = [str(h).strip() for h in update_req.target_casters if str(h).strip()]
+            if requested_hosts:
+                updated_target_hosts = requested_hosts
+            else:
+                # Frontend legacy case: empty selection should not cause no-op update.
+                updated_target_hosts = list(old_hosts_set or live_hosts_set)
+        else:
+            # Load from DB first, then from live cache.
+            updated_target_hosts = list(old_hosts_set or live_hosts_set)
+
+        if not updated_target_hosts:
+            # Last fallback to default configured host
+            env_hosts, env_cfg = _read_caster_config_from_env()
+            default_h = str(env_cfg.get("host") or settings.CASTER_HOST or "").strip()
+            if default_h:
+                updated_target_hosts = [default_h]
+            elif env_hosts:
+                updated_target_hosts = [str(env_hosts[0]).strip()]
+
+        # Keep order and deduplicate
+        seen_hosts = set()
+        updated_target_hosts = [h for h in updated_target_hosts if h and not (h in seen_hosts or seen_hosts.add(h))]
+        
+        new_hosts_set = set(updated_target_hosts)
+        removed_hosts = old_hosts_set - new_hosts_set
+        
+        port = int(settings.CASTER_PORT or 2101)
+        results_log = []
+        creator_user = await crud.get_user_by_id(db, rover.created_by_user_id)
+        creator_username = creator_user.username if creator_user else "admin"
+        id_candidates = []
+        for ident in (creator_username, creator_identifier, "admin", "id"):
+            ident_s = str(ident or "").strip()
+            if ident_s and ident_s not in id_candidates:
+                id_candidates.append(ident_s)
+
+        # 4a. Update/Create on selected hosts
+        for host in updated_target_hosts:
+            try:
+                caster = CasterClient(host, port)
+                await caster.create_user(
+                    creator=creator_username,
+                    username=rover.username,
+                    password=new_password,
+                    mountpoints=new_mountpoints, 
+                    expiry_seconds=duration_seconds, 
+                    max_users=new_max_connections,
+                    show_position=target_show_pos
+                )
+                # Ensure show_position is synced on legacy caster variants.
+                for ident in id_candidates:
+                    await caster.toggle_show_pos(
+                        identifier=ident,
+                        username=rover.username,
+                        enabled=target_show_pos
+                    )
+                results_log.append(host)
+            except Exception as e:
+                logger.error(f"Failed to update rover on caster {host}: {e}")
+
+        # 4b. Cleanup removed hosts
+        for host in removed_hosts:
+            try:
+                caster = CasterClient(host, port)
+                await caster.delete_user(
+                    identifier=creator_username,
+                    username=rover.username
+                )
+                logger.info(f"✓ Cleaned up (deleted) rover '{rover.username}' from removed caster {host}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup rover from removed caster {host}: {e}")
+
     except Exception as e:
-        logger.error(f"Caster Update Error: {e}")
+        logger.error(f"Caster Multi-Update Error: {e}")
         raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(e)}")
 
     # 5. Cập nhật DB Local
     update_data = {
         "password": new_password,
-        "mountpoints": new_mountpoints
+        "mountpoints": new_mountpoints,
+        "max_connections": new_max_connections,
+        "show_position": target_show_pos,
+        "target_casters": ";".join(updated_target_hosts)
     }
+    
+    # 🔥 FIX: Cập nhật base_serial nếu client gửi lên danh sách trạm mới
+    if update_req.selected_serials:
+        update_data["base_serial"] = ",".join(update_req.selected_serials)
+        
     updated_rover = await crud.update_rover_account(db, rover_id, update_data)
     
     return updated_rover
@@ -3990,7 +4215,7 @@ async def get_all_rovers_global(
     
     # Cache devices để tránh query DB quá nhiều lần trong vòng lặp
     all_devices_result = await devices_db.execute(select(models.Device))
-    all_devices = {d.serial: d.name for d in all_devices_result.scalars().all()}
+    all_devices = {d.serial.strip().upper(): d.name for d in all_devices_result.scalars().all() if d.serial}
 
     for rover in rovers:
         rover_dict = schemas.RoverAccountResponse.from_orm(rover).model_dump()
@@ -4000,7 +4225,7 @@ async def get_all_rovers_global(
         station_names = []
         
         for sn in serials:
-            s_name = all_devices.get(sn.strip())
+            s_name = all_devices.get(sn.strip().upper())
             if s_name:
                 station_names.append(s_name)
             else:
@@ -4010,7 +4235,97 @@ async def get_all_rovers_global(
         rover_dict['base_name'] = ", ".join(station_names)
          
         enriched_rovers.append(rover_dict)
+    
     return enriched_rovers
+@app.put("/api/rovers/sync/by-username/{username}", response_model=schemas.RoverAccountResponse)
+async def sync_rover_by_username(
+    username: str,
+    update_req: schemas.RoverUpdate,
+    db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """
+    Thông minh: Đồng bộ rover bằng username. 
+    Nếu rover chưa có trong DB, nó sẽ tự động tạo mới (Link/Adopt).
+    Nếu đã có, nó cập nhật thông tin.
+    """
+    # 1. Kiểm tra Admin/Creator
+    is_admin = current_user.role == auth.Role.ADMIN
+    if not is_admin and not (current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover.")
+
+    # 2. Tìm trong DB
+    rover = await crud.get_rover_by_username(db, username)
+    
+    # 3. TRƯỜNG HỢP: USER CHƯA CÓ TRONG DB (Unknown)
+    if not rover:
+        if not update_req.selected_serials:
+            raise HTTPException(status_code=400, detail="Vui lòng chọn trạm để đồng bộ tài khoản này vào hệ thống.")
+        
+        # Tạo mới trong DB
+        combined_serials = ",".join(update_req.selected_serials)
+        rover = await crud.create_rover_account(
+            db,
+            username=username,
+            password=update_req.password or "123456", # Mặc định nếu không cung cấp
+            base_serial=combined_serials,
+            mountpoints=update_req.mountpoints,
+            creator_id=current_user.id,
+            max_connections=update_req.max_connections or 1,
+            show_position=update_req.show_position if update_req.show_position is not None else True
+        )
+        logger.info(f"âœ“ Adopted unknown rover '{username}' into DB")
+    
+    # 4. TRƯỜNG HỢP: USER ĐÃ CÓ - CẬP NHẬT
+    else:
+        # Cập nhật DB
+        update_data = {}
+        if update_req.password: update_data["password"] = update_req.password
+        if update_req.mountpoints: update_data["mountpoints"] = update_req.mountpoints
+        if update_req.max_connections is not None: update_data["max_connections"] = update_req.max_connections
+        if update_req.show_position is not None: update_data["show_position"] = update_req.show_position
+        
+        if update_data:
+            # 🔥 FIX: Cập nhật base_serial nếu có gửi trạm đích
+            if update_req.selected_serials:
+                update_data["base_serial"] = ",".join(update_req.selected_serials)
+                
+            rover = await crud.update_rover_account(db, rover.id, update_data)
+
+    # 5. ĐỒNG BỘ SANG CASTER
+    try:
+        caster = await get_caster_client(db)
+        
+        # Tính toán thời hạn
+        duration_seconds = 315360000 # Default 10 years
+        if update_req.expiry_days:
+            duration_seconds = update_req.expiry_days * 86400
+
+        # Nếu CHỈ thay đổi show_position, hãy dùng lệnh nhẹ toggle_show_pos để tránh ghi đè MP
+        # Nhưng thường khi Edit, Dashboard sẽ gửi full payload. 
+        # CasterClient.create_user thực hiện ghi đè toàn bộ bản ghi USERTABLE.
+        
+        await caster.create_user(
+            creator=current_user.username,
+            username=username,
+            password=update_req.password or rover.password,
+            mountpoints=update_req.mountpoints or rover.mountpoints,
+            expiry_seconds=duration_seconds,
+            max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
+            show_position=update_req.show_position if update_req.show_position is not None else rover.show_position
+        )
+        
+        # Sync show_position again specifically to be safe
+        if update_req.show_position is not None:
+            await caster.toggle_show_pos(current_user.username, username, update_req.show_position)
+            
+    except Exception as e:
+        logger.error(f"Sync Caster Error for '{username}': {e}")
+        # Không raise lỗi 500 nếu DB đã lưu xong, chỉ cảnh báo
+        
+    return rover
+
 
 @app.post("/api/rovers/create-multi", response_model=schemas.RoverAccountResponse)
 async def create_multi_base_rover(
@@ -4088,7 +4403,8 @@ async def create_multi_base_rover(
                     password=request.password,
                     mountpoints=target_mountpoints, 
                     expiry_seconds=duration_seconds, 
-                    max_users=1
+                    max_users=request.max_connections,
+                    show_position=request.show_position
                 )
                 results_log.append(host)
             except Exception as e:
@@ -4112,7 +4428,9 @@ async def create_multi_base_rover(
         password=request.password,
         base_serial=combined_serials,   # Lưu: "SN1,SN2"
         mountpoints=target_mountpoints, # Lưu: "MP1;MP2" (Cột mới)
-        creator_id=current_user.id
+        creator_id=current_user.id,
+        max_connections=request.max_connections,
+        target_casters=";".join(results_log) # Lưu chính xác những server đã tạo thành công
     )
     
     return new_rover

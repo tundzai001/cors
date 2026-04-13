@@ -42,7 +42,11 @@ class RoverAccount(AuthBase):
     mountpoints = Column(String, nullable=True) 
     created_by_user_id = Column(Integer)
     is_active = Column(Boolean, default=True)
+    max_connections = Column(Integer, default=1)
+    show_position = Column(Boolean, default=True)
+    target_casters = Column(String, nullable=True) # Semicolon separated hosts
     created_at = Column(Integer)
+
     
 class User(AuthBase):
     __tablename__ = "users"

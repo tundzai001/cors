@@ -378,9 +378,9 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
     """
     errors = []
     
-    if config1 is None: 
+    if not isinstance(config1, dict): 
         config1 = {}
-    if config2 is None: 
+    if not isinstance(config2, dict): 
         config2 = {}
 
     ignore_fields = {

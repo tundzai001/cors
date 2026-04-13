@@ -954,7 +954,9 @@
         const errorAlert = document.getElementById('errorAlert');
         const errorMsg = document.getElementById('errorMsg');
 
-        if (localStorage.getItem('access_token')) window.location.href = '/';
+        if (localStorage.getItem('access_token') || sessionStorage.getItem('access_token')) {
+            window.location.href = '/';
+        }
 
         function showError(msg) {
             errorMsg.textContent = msg;
@@ -1001,7 +1003,14 @@
                     throw new Error(msg || 'Đăng nhập thất bại');
                 }
                 
-                localStorage.setItem('access_token', data.access_token);
+                // 🔥 FIX: Lưu vào kho lưu trữ phù hợp
+                if (document.getElementById('rememberMe').checked) {
+                    localStorage.setItem('access_token', data.access_token);
+                    sessionStorage.removeItem('access_token'); // Dọn dẹp nếu có bản cũ ở session
+                } else {
+                    sessionStorage.setItem('access_token', data.access_token);
+                    localStorage.removeItem('access_token'); // Dọn dẹp nếu có bản cũ ở local
+                }
                 btn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i><span>Thành công!</span>';
                 setTimeout(() => window.location.href = '/', 500);
             } catch (err) {

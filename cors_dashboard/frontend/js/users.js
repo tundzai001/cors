@@ -1,8 +1,10 @@
 // frontend/js/users.js
 
 document.addEventListener('DOMContentLoaded', () => {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
+        localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
         window.location.href = '/login.html';
         return;
     }
@@ -29,7 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/users', { headers: API_HEADERS });
             if (!response.ok) {
-                 if (response.status === 401 || response.status === 403) window.location.href = '/login.html';
+                 if (response.status === 401 || response.status === 403) {
+                     localStorage.removeItem('access_token');
+                     sessionStorage.removeItem('access_token');
+                     window.location.href = '/login.html';
+                 }
                  throw new Error('Không thể lấy danh sách người dùng.');
             }
             const users = await response.json();

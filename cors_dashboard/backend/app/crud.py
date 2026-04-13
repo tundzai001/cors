@@ -592,7 +592,10 @@ async def create_rover_account(
     password: str, 
     base_serial: str, 
     creator_id: int,
-    mountpoints: str = None 
+    mountpoints: str = None,
+    max_connections: int = 1,
+    show_position: bool = True,
+    target_casters: str = None
 ) -> models.RoverAccount:
     db_rover = models.RoverAccount(
         username=username, 
@@ -601,6 +604,9 @@ async def create_rover_account(
         mountpoints=mountpoints, 
         created_by_user_id=creator_id, 
         is_active=True, 
+        max_connections=max_connections,
+        show_position=show_position,
+        target_casters=target_casters,
         created_at=int(time.time())
     )
     db.add(db_rover)

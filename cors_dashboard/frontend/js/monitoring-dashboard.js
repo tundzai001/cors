@@ -3,7 +3,7 @@
 // ==============================================================================
 
 const API_HEADERS = {
-    'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+    'Authorization': `Bearer ${localStorage.getItem('access_token') || sessionStorage.getItem('access_token')}`,
     'Content-Type': 'application/json'
 };
 
@@ -88,15 +88,25 @@ async function fetchHealthData() {
     healthFetchInFlight = true;
     try {
         const response = await fetch('/api/health/detailed', { headers: API_HEADERS });
+        
         if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+                if (typeof NavigationManager !== 'undefined') {
+                    NavigationManager.forceLogout();
+                } else {
+                    localStorage.removeItem('access_token');
+                    sessionStorage.removeItem('access_token');
+                    window.location.href = '/login.html';
+                }
+                return;
+            }
             console.error("Health API Error:", response.status);
             return;
         }
-        
+
         const data = await response.json();
         updateUI(data);
         updateCharts(data);
-        
     } catch (error) {
         console.error('Error fetching health data:', error);
     } finally {
@@ -163,6 +173,19 @@ function stopMonitoringPolling() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Top-level Auth Check
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    if (!token) {
+        if (typeof NavigationManager !== 'undefined') {
+            NavigationManager.forceLogout();
+        } else {
+            localStorage.removeItem('access_token');
+            sessionStorage.removeItem('access_token');
+            window.location.href = '/login.html';
+        }
+        return;
+    }
+
     initCharts();
     startMonitoringPolling();
     document.addEventListener('visibilitychange', () => {

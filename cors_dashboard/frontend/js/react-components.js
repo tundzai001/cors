@@ -4295,7 +4295,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             ? filteredRoverClients.filter((rover) => {
                 const lat = Number(rover.latitude);
                 const lon = Number(rover.longitude);
-                return Number.isFinite(lat) && Number.isFinite(lon) && viewBounds.contains([lat, lon]);
+                const isVisible = rover.show_position !== false; // Default to true if undefined
+                return Number.isFinite(lat) && Number.isFinite(lon) && viewBounds.contains([lat, lon]) && isVisible;
             })
             : [];
 

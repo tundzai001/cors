@@ -172,6 +172,9 @@ class RoverAccountResponse(RoverAccountBase):
     created_at: int
     base_name: str | None = None
     mountpoints: str | None = None 
+    max_connections: int = 1
+    show_position: bool = True
+    target_casters: str | None = None
     
     class Config: from_attributes = True
 
@@ -181,12 +184,18 @@ class RoverMultiCreate(BaseModel):
     expiry_days: int = 365
     selected_serials: List[str] # Danh sách serial các trạm đã chọn
     mountpoint_override: str    # Chuỗi Mountpoint (người dùng chốt)
-    target_casters: Optional[List[str]] = Field(default_factory=list) # Danh sách Host muốn add user
+    target_casters: Optional[List[str]] = Field(default_factory=list)
+    max_connections: int = 1
+    show_position: bool = True
     
 class RoverUpdate(BaseModel):
     password: str | None = None
     mountpoints: str | None = None # Cho phép sửa chuỗi mountpoint
     expiry_days: int | None = None # Cho phép gia hạn lại
+    max_connections: int | None = None
+    show_position: bool | None = None
+    selected_serials: list[str] | None = None # For syncing unknown users
+    target_casters: list[str] | None = None
     
 class Token(BaseModel):
     access_token: str
@@ -295,6 +304,8 @@ class CasterRoverItem(BaseModel):
     blocked_at: Optional[int] = None
     server: Optional[str] = None
     version: Optional[str] = None
+    active_connections: List[dict] = Field(default_factory=list) # List of {mountpoint, uptime}
+    show_position: bool = True
 
 
 class CasterUsersResponse(BaseModel):
