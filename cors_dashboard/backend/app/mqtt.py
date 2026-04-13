@@ -277,14 +277,25 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             data['is_synced'] = is_synced
             data['sync_errors'] = sync_errors
 
-            # --- 2.4. BẢO VỆ TÊN TRẠM ---
-            # Bản tin LWT (offline) không kèm tên → lấy từ DB trước khi broadcast
-            if not data.get('name'):
+            # --- 2.4. BẢO VỆ TÊN & CONFIG TRẠM ---
+            # Bản tin LWT (offline) không kèm tên/config -> lấy từ DB trước khi broadcast
+            new_status = data.get('status')
+            if not data.get('name') or new_status == 'offline':
                 try:
                     async with device_session_scope() as _db:
                         _dev = await crud.get_device_by_serial(_db, serial)
-                        if _dev and _dev.name:
-                            data['name'] = _dev.name
+                        if _dev:
+                            if not data.get('name') and _dev.name:
+                                data['name'] = _dev.name
+                            # FIX: Khi offline, ghép config từ DB vào broadcast
+                            # để UI/map không mất vị trí trạm
+                            if new_status == 'offline':
+                                if not data.get('base_config') and _dev.base_config:
+                                    data['base_config'] = _dev.base_config
+                                if not data.get('service_config') and _dev.service_config:
+                                    data['service_config'] = _dev.service_config
+                                if not data.get('detected_chip_type') and _dev.detected_chip_type:
+                                    data['detected_chip_type'] = _dev.detected_chip_type
                 except Exception:
                     pass  # Không tên vẫn broadcast được, không chặn luồng
 

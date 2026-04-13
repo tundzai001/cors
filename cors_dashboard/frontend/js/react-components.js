@@ -4198,7 +4198,11 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
         if (showCors) {
             devices.forEach(device => {
-                const coords = device.base_config?.coords;
+                const coords = device.base_config?.coords || (
+                    device.base_config?.lat !== undefined && device.base_config?.lon !== undefined
+                        ? { lat: device.base_config.lat, lon: device.base_config.lon, alt: device.base_config.alt }
+                        : null
+                );
                 if (coords && coords.lat && coords.lon) {
                     validCorsKeys.add(device.serial);
                     const lat = parseFloat(coords.lat);
@@ -4421,11 +4425,16 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     };
 
     const findNearestFromCoords = (lat, lon, locationName = "Vị trí của bạn") => {
+        // Helper: extract coords from device consistently
+        const getDeviceCoords = (d) => {
+            const bc = d?.base_config;
+            if (!bc) return null;
+            if (bc.coords && bc.coords.lat && bc.coords.lon) return bc.coords;
+            if (bc.lat !== undefined && bc.lon !== undefined) return { lat: bc.lat, lon: bc.lon, alt: bc.alt };
+            return null;
+        };
         // Lấy tất cả các trạm có tọa độ
-        const validDevices = devices.filter(d => 
-            d.base_config && d.base_config.coords && 
-            d.base_config.coords.lat && d.base_config.coords.lon
-        );
+        const validDevices = devices.filter(d => getDeviceCoords(d) !== null);
 
         if (validDevices.length === 0) {
             if (window.showError) window.showError("Không có trạm CORS nào có tọa độ hợp lệ trên hệ thống.");
@@ -4443,7 +4452,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
         // Hàm tính khoảng cách
         const calcDist = (d) => {
-            const coords = d.base_config.coords;
+            const coords = getDeviceCoords(d);
             return window.getDistanceMeters 
                 ? window.getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon)) 
                 : getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon));

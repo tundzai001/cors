@@ -5212,9 +5212,12 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
         logging.info(f"Pi '{serial}' disconnected.")
         pi_manager.disconnect(serial)
 
-        # Lightweight offline payload: no DB lookup on disconnect to avoid pool exhaustion.
-        # Device state (name, config, etc.) will be inferred by UI from last known state or loaded separately.
-        offline_payload = {
+        now_ts = int(time.time())
+
+        # FIX: Read device from DB to get full config (name, base_config, service_config)
+        # then broadcast FULL payload to UI so the map doesn't lose station position.
+        # Only write status-related fields to DB, do NOT touch config.
+        ui_broadcast_payload = {
             "serial": serial,
             "status": "offline",
             "ntrip_connected": False,
@@ -5223,18 +5226,41 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
                 "server1": {"connected": False, "bps": 0},
                 "server2": {"connected": False, "bps": 0}
             },
-            "timestamp": int(time.time())
+            "timestamp": now_ts
         }
-        
-        # 1. Báo UI ngay (non-blocking, via queue)
+
+        try:
+            async with device_session_scope() as offline_db:
+                device = await crud.get_device_by_serial(offline_db, serial)
+                if device:
+                    # Include config in broadcast payload so UI keeps full data
+                    ui_broadcast_payload["name"] = device.name
+                    ui_broadcast_payload["base_config"] = device.base_config or {}
+                    ui_broadcast_payload["service_config"] = device.service_config or {}
+                    ui_broadcast_payload["detected_chip_type"] = device.detected_chip_type
+                    ui_broadcast_payload["is_provisioned"] = device.is_provisioned
+                    ui_broadcast_payload["version"] = device.version
+                    ui_broadcast_payload["is_synced"] = device.is_synced if device.is_synced is not None else True
+
+                    # Only update status-related fields, do NOT touch config
+                    device.status = "offline"
+                    device.bps = 0
+                    device.ntrip_connected = False
+                    device.ntrip_status = {
+                        "server1": {"connected": False, "bps": 0},
+                        "server2": {"connected": False, "bps": 0}
+                    }
+                    device.timestamp = now_ts
+                    await offline_db.commit()
+                    logger.info(f"Device '{serial}' set to offline (config preserved in DB)")
+        except Exception as e:
+            logger.warning(f"[OFFLINE] DB lookup/update failed for '{serial}': {e}")
+
+        # Broadcast FULL payload (with config) to UI so map keeps station
         await enqueue_ui_broadcast({
             "type": "status_update",
-            "data": offline_payload
+            "data": ui_broadcast_payload
         })
-        
-        # 2. Đẩy vÃ o buffer -> Background flush task sẽ lưu DB sau 1s
-        async with device_update_buffer_lock:
-            device_update_buffer.append(offline_payload)
     
     except Exception as e:
         logging.error(f"WS Error '{serial}': {e}")
