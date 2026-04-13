@@ -2404,23 +2404,41 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
         # Lấy tất cả thiết bị
         result = await db.execute(select(models.Device))
         devices = result.scalars().all()
+
+        def _dict_or_empty(value: Any) -> dict:
+            return value if isinstance(value, dict) else {}
+
+        def _extract_public_map_coords(dev: models.Device) -> tuple[Optional[Any], Optional[Any]]:
+            candidate_sources = []
+
+            base_config = _dict_or_empty(getattr(dev, "base_config", None))
+            if base_config:
+                candidate_sources.append(base_config)
+
+            base_coords = getattr(dev, "base_coords", None)
+            if isinstance(base_coords, dict):
+                candidate_sources.append(base_coords)
+
+            for source in candidate_sources:
+                coords = _dict_or_empty(source.get("coords"))
+                lat = coords.get("lat")
+                lon = coords.get("lon")
+
+                if lat is None or lon is None:
+                    lat = source.get("lat")
+                    lon = source.get("lon")
+
+                if lat is not None and lon is not None:
+                    return lat, lon
+
+            return None, None
         
         public_data = []
+        skipped_devices = 0
         
         for dev in devices:
-            base_config = dev.base_config or {}
-            
-            # === TRY FORMAT 1: NESTED (Trạm thật) ===
-            coords = base_config.get('coords', {})
-            lat = coords.get('lat')
-            lon = coords.get('lon')
-            
-            # === TRY FORMAT 2: FLAT (Relay/Virtual) ===
-            if lat is None or lon is None:
-                lat = base_config.get('lat')
-                lon = base_config.get('lon')
-            
-            # Chỉ thêm vào danh sách nếu có đủ tọa độ hợp lệ
+            lat, lon = _extract_public_map_coords(dev)
+
             if lat is not None and lon is not None:
                 try:
                     public_data.append({
@@ -2438,10 +2456,15 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                     })
                 except (ValueError, TypeError) as e:
                     logging.warning(f"⚠️ Invalid coordinates for {dev.name}: {e}")
+                    skipped_devices += 1
                     continue
+            else:
+                skipped_devices += 1
         
-        logging.info(f"✓ Public map API: found {len(devices)} devices, returning {len(public_data)} with valid coords")
-        return public_data
+        logging.info(
+            f"✓ Public map API: found {len(devices)} devices, returning {len(public_data)} with valid coords, "
+            f"skipped {skipped_devices} without usable coords"
+        )
         return public_data
         
     except Exception as e:
@@ -4026,7 +4049,7 @@ async def update_rover(
         for host in updated_target_hosts:
             try:
                 caster = CasterClient(host, port)
-                await caster.create_user(
+                created_ok = await caster.create_user(
                     creator=creator_username,
                     username=rover.username,
                     password=new_password,
@@ -4035,13 +4058,21 @@ async def update_rover(
                     max_users=new_max_connections,
                     show_position=target_show_pos
                 )
+                if not created_ok:
+                    logger.warning(f"Caster {host} did not confirm create/update for rover '{rover.username}'")
+
                 # Ensure show_position is synced on legacy caster variants.
+                toggle_ok = False
                 for ident in id_candidates:
-                    await caster.toggle_show_pos(
+                    if await caster.toggle_show_pos(
                         identifier=ident,
                         username=rover.username,
                         enabled=target_show_pos
-                    )
+                    ):
+                        toggle_ok = True
+                        break
+                if not toggle_ok:
+                    logger.warning(f"Caster {host} did not confirm show_position toggle for rover '{rover.username}'")
                 results_log.append(host)
             except Exception as e:
                 logger.error(f"Failed to update rover on caster {host}: {e}")
@@ -4050,10 +4081,12 @@ async def update_rover(
         for host in removed_hosts:
             try:
                 caster = CasterClient(host, port)
-                await caster.delete_user(
+                deleted_ok = await caster.delete_user(
                     identifier=creator_username,
                     username=rover.username
                 )
+                if not deleted_ok:
+                    logger.warning(f"Caster {host} did not confirm delete for rover '{rover.username}'")
                 logger.info(f"✓ Cleaned up (deleted) rover '{rover.username}' from removed caster {host}")
             except Exception as e:
                 logger.warning(f"Failed to cleanup rover from removed caster {host}: {e}")
@@ -4306,7 +4339,7 @@ async def sync_rover_by_username(
         # Nhưng thường khi Edit, Dashboard sẽ gửi full payload. 
         # CasterClient.create_user thực hiện ghi đè toàn bộ bản ghi USERTABLE.
         
-        await caster.create_user(
+        created_ok = await caster.create_user(
             creator=current_user.username,
             username=username,
             password=update_req.password or rover.password,
@@ -4315,10 +4348,24 @@ async def sync_rover_by_username(
             max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
             show_position=update_req.show_position if update_req.show_position is not None else rover.show_position
         )
+        if not created_ok:
+            logger.warning(f"Sync-by-username did not get caster confirmation for '{username}'")
         
         # Sync show_position again specifically to be safe
         if update_req.show_position is not None:
-            await caster.toggle_show_pos(current_user.username, username, update_req.show_position)
+            toggle_id_candidates = []
+            for ident in (current_user.username, "admin", "id"):
+                ident_s = str(ident or "").strip()
+                if ident_s and ident_s not in toggle_id_candidates:
+                    toggle_id_candidates.append(ident_s)
+
+            toggle_ok = False
+            for ident in toggle_id_candidates:
+                if await caster.toggle_show_pos(ident, username, update_req.show_position):
+                    toggle_ok = True
+                    break
+            if not toggle_ok:
+                logger.warning(f"Sync-by-username could not confirm show_position toggle for '{username}'")
             
     except Exception as e:
         logger.error(f"Sync Caster Error for '{username}': {e}")
@@ -4468,8 +4515,18 @@ async def configure_chip_endpoint(
     try:
         if sensor_type:
             device_in_db.detected_chip_type = sensor_type
-        if params:
-            device_in_db.base_config = params
+        if isinstance(params, dict) and params:
+            normalized_params = crud.normalize_base_config(params)
+            if normalized_params:
+                device_in_db.base_config = normalized_params
+            else:
+                current_base_config = device_in_db.base_config if isinstance(device_in_db.base_config, dict) else {}
+                merged_base_config = dict(current_base_config)
+                for key, value in params.items():
+                    if key != "coords":
+                        merged_base_config[key] = value
+                if merged_base_config:
+                    device_in_db.base_config = merged_base_config
         device_in_db.is_synced = False
         
         await db.commit()

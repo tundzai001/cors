@@ -67,6 +67,57 @@ class CasterClient:
                 try: await writer.wait_closed()
                 except: pass
 
+    @staticmethod
+    def _parse_bool_token(raw_value, default: bool = True) -> bool:
+        if raw_value is None:
+            return default
+        token = str(raw_value).strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+        return default
+
+    @classmethod
+    def _extract_show_position(cls, parts: list[str], default: bool = True) -> bool:
+        # Some caster variants place show_position at different indexes.
+        # Prefer common indexes first, then scan from tail for a boolean-like token.
+        candidate_indexes = [9, 8]
+        for idx in candidate_indexes:
+            if idx < len(parts):
+                token = str(parts[idx]).strip()
+                if token.lower() in {"0", "1", "true", "false", "yes", "no", "on", "off"}:
+                    return cls._parse_bool_token(token, default)
+
+        for token in reversed(parts):
+            normalized = str(token).strip().lower()
+            if normalized in {"0", "1", "true", "false", "yes", "no", "on", "off"}:
+                return cls._parse_bool_token(normalized, default)
+
+        return default
+
+    @staticmethod
+    def _is_success_response(response: str) -> bool:
+        text = str(response or "").strip().lower()
+        if not text:
+            return False
+        if "error" in text or "denied" in text or "failed" in text:
+            return False
+        positive_tokens = (
+            "200",
+            "ok",
+            "success",
+            "have been added",
+            "have been updated",
+            "have been deleted",
+        )
+        return any(token in text for token in positive_tokens)
+
+    @staticmethod
+    def _is_no_change_warning(response: str) -> bool:
+        text = str(response or "").strip().lower()
+        return "warning: no matching user updated" in text
+
     async def get_users(self) -> List[dict]:
         cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/password1/9999\r\n\r\n"
         try:
@@ -87,7 +138,7 @@ class CasterClient:
                             "mountpoints": [mp.strip() for mp in parts[3].split(',') if mp.strip()],
                             "datacount": int(parts[4]) if parts[4].isdigit() else 0,
                             "status": int(parts[5]) if parts[5].isdigit() else 0,
-                            "show_position": parts[9].strip() == "1" if len(parts) > 9 else True
+                            "show_position": self._extract_show_position(parts, default=True)
                         })
             return users
         except Exception: return []
@@ -98,14 +149,14 @@ class CasterClient:
         # Định dạng dài (>= 12 parts) để hỗ trợ show_position ở cuối
         # GET /genuser HTTP/1.0/creator/username/password/mounts/expiry/max/status/maxclient/showpos
         cmd = f"GET /genuser HTTP/1.0/{creator}/{username}/{password}/{clean_mps}/-1/-1/{expiry_seconds}/{max_users}/{show_pos_val}\r\n\r\n"
-        await self._send_command(cmd)
-        return True
+        response = await self._send_command(cmd)
+        return self._is_success_response(response)
 
     async def toggle_show_pos(self, identifier: str, username: str, enabled: bool) -> bool:
         val = "1" if enabled else "0"
         cmd = f"GET /showpos HTTP/1.0/{identifier}/{username}/{val}\r\n\r\n"
-        await self._send_command(cmd)
-        return True
+        response = await self._send_command(cmd)
+        return self._is_success_response(response) or self._is_no_change_warning(response)
 
     async def get_clienttable(
         self, mountpoint: str = "all", password: str = None, data_count: int = 1000, admin_user: str = None
@@ -166,5 +217,5 @@ class CasterClient:
 
     async def delete_user(self, identifier: str, username: str) -> bool:
         cmd = f"GET /deluser HTTP/1.0/{identifier}/{username}\r\n\r\n"
-        await self._send_command(cmd)
-        return True
+        response = await self._send_command(cmd)
+        return self._is_success_response(response)

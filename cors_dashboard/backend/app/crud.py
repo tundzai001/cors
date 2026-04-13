@@ -21,6 +21,46 @@ def _ensure_dict(val) -> dict:
         return val
     return {}
 
+
+def _has_usable_value(value) -> bool:
+    if value is None:
+        return False
+    return str(value).strip() != ""
+
+
+def normalize_base_config(base_config: dict | None) -> dict:
+    """Normalize base_config to the canonical nested coords shape.
+
+    Returns an empty dict when the payload does not contain usable coordinates,
+    so callers can treat partial/offline payloads as no-ops instead of wiping
+    an existing stored configuration.
+    """
+    if not isinstance(base_config, dict):
+        return {}
+
+    coords = _ensure_dict(base_config.get("coords"))
+    lat = coords.get("lat", base_config.get("lat"))
+    lon = coords.get("lon", base_config.get("lon"))
+    alt = coords.get("alt", base_config.get("alt"))
+
+    if not _has_usable_value(lat) or not _has_usable_value(lon):
+        return {}
+
+    normalized = {
+        "base_setup_method": base_config.get("base_setup_method", "FIXED_LLA"),
+        "coords": {
+            "lat": lat,
+            "lon": lon,
+            "alt": alt if _has_usable_value(alt) else 0.0,
+        },
+    }
+
+    for key, value in base_config.items():
+        if key not in ["lat", "lon", "alt", "base_setup_method", "coords"]:
+            normalized[key] = value
+
+    return normalized
+
 async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> int:
     """
     Cập nhật hàng loạt thiết bị (Batch Update) sử dụng PostgreSQL UPSERT.
@@ -41,12 +81,15 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                 text = str(value).strip()
                 return text if text else None
 
-            def _normalize_optional_json(value):
+            def _normalize_optional_json(value, *, require_coords: bool = False):
                 if value is None:
                     return None
                 # 🔥 FIX: Nếu là List (do migration JSONB hoặc lỗi Agent), chuyển về None để tránh lỗi .get() sau này
                 if isinstance(value, list) or (isinstance(value, dict) and len(value) == 0):
                     return None
+                if require_coords:
+                    normalized = normalize_base_config(value)
+                    return normalized or None
                 return value
 
             # 1. Deduplication: Chỉ giữ lại update mới nhất cho mỗi Serial
@@ -82,7 +125,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                 # Lưu ý: Dùng .get(key, default) để tránh lỗi KeyError
                 normalized_name = _normalize_optional_text(device.get('name'))
                 normalized_chip_type = _normalize_optional_text(device.get('detected_chip_type'))
-                normalized_base_config = _normalize_optional_json(device.get('base_config'))
+                normalized_base_config = _normalize_optional_json(device.get('base_config'), require_coords=True)
                 normalized_service_config = _normalize_optional_json(device.get('service_config'))
                 normalized_system_info = _normalize_optional_json(device.get('system_info'))
 
@@ -293,30 +336,6 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         )
         return None  # Từ chối xử lý serial không hợp lệ
 
-    def normalize_base_config(base_config: dict) -> dict:
-        # 🔥 FIX: Phòng thủ trường hợp base_config là list [] thay vì dict {}
-        if not isinstance(base_config, dict):
-            return {}
-            
-        if not base_config or 'coords' in base_config:
-            return base_config or {}
-        
-        lat = base_config.get('lat')
-        lon = base_config.get('lon')
-        alt = base_config.get('alt')
-        
-        if lat and lon:
-            normalized = {
-                "base_setup_method": base_config.get('base_setup_method', 'FIXED_LLA'),
-                "coords": {"lat": lat, "lon": lon, "alt": alt or 0.0}
-            }
-            for key, value in base_config.items():
-                if key not in ['lat', 'lon', 'alt', 'base_setup_method']:
-                    normalized[key] = value
-            return normalized
-        
-        return base_config
-
     existing_device = await get_device_by_serial(db, serial)
 
     new_base_config = normalize_base_config(device_data.get("base_config", {}))
@@ -427,9 +446,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         if new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
             logger.debug(f"ℹ️ [{serial}] Config diff ignored: Waiting for sync to apply target config.")
     elif new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
-        # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
-        # Chỉ cập nhật nếu device gửi config hợp lệ với dữ liệu thực tế
-        # 🔥 CẢI TIẾN: Bảo vệ tọa độ tránh bị "ghosting" khi agent gửi bản tin thiếu
+        # Chỉ cập nhật khi payload có tọa độ thực sự; payload partial/offline
+        # không được làm rơi config đã lưu trong DB.
         old_config = _ensure_dict(existing_device.base_config)
         old_coords = _ensure_dict(old_config.get('coords'))
         new_coords = _ensure_dict(new_base_config.get('coords'))
@@ -437,8 +455,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         new_method = new_base_config.get('base_setup_method')
 
         # Nếu DB đã có tọa độ mà status mới không có (nhưng cùng method), giữ nguyên DB
-        if old_coords and not new_coords and old_method == new_method:
-            pass 
+        if old_coords and not new_coords:
+            pass
         else:
             update_values["base_config"] = new_base_config
             update_values["is_synced"] = False
