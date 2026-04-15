@@ -4,6 +4,108 @@
 
 const { useState, useEffect, memo, useRef } = React;
 
+// === PREMIUM UI COMPONENTS ===
+const MetricLineChart = memo(function MetricLineChart({ label, data = [], color, unit = "" }) {
+    const max = Math.max(...data, 1);
+    const min = Math.min(...data, 0);
+    const range = max - min || 1;
+    
+    const points = data.map((d, i) => {
+        const x = (i / Math.max(data.length - 1, 1)) * 100;
+        const y = 30 - ((d - min) / range) * 30;
+        return `${x},${y}`;
+    }).join(' ');
+
+    return (
+        <div style={{ padding: '0 8px' }}>
+            <div className="d-flex justify-content-between align-items-center mb-1">
+                <span className="small text-muted">{label}</span>
+                <span className="fw-bold" style={{ color }}>
+                    {data.length > 0 ? data[data.length - 1] : 0}{unit}
+                </span>
+            </div>
+            <svg width="100%" height="30" viewBox="0 0 100 30" preserveAspectRatio="none">
+                <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+        </div>
+    );
+});
+window.MetricLineChart = MetricLineChart;
+
+const MetricCard = memo(function MetricCard({ title, value, unit, trend, sparklineData = [], color, icon }) {
+    const max = Math.max(...sparklineData, 1);
+    const min = Math.min(...sparklineData, 0);
+    const range = max - min || 1;
+    
+    const points = sparklineData.map((d, i) => {
+        const x = (i / Math.max(sparklineData.length - 1, 1)) * 100;
+        const y = 20 - ((d - min) / range) * 20;
+        return `${x},${y}`;
+    }).join(' ');
+
+    return (
+        <div className="card bg-dark border-secondary-subtle">
+            <div className="card-body p-2 d-flex flex-column">
+                <div className="d-flex justify-content-between mb-2">
+                    <div className="text-muted small fw-bold">
+                        <span className="me-1">{icon}</span>{title}
+                    </div>
+                </div>
+                <div className="d-flex justify-content-between align-items-end">
+                    <div className="fs-4 fw-bold" style={{ color, lineHeight: 1 }}>
+                        {value}<span className="fs-6 ms-1 text-muted">{unit}</span>
+                    </div>
+                    {sparklineData.length > 0 && (
+                        <svg width="40" height="20" viewBox="0 0 100 20" preserveAspectRatio="none">
+                            <polyline points={points} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+});
+window.MetricCard = MetricCard;
+
+const SatelliteBars = memo(function SatelliteBars({ satellites }) {
+    if (!satellites) return null;
+    const sats = Object.values(satellites);
+    if (sats.length === 0) return null;
+
+    const counts = {};
+    const snrs = {};
+    sats.forEach(sat => {
+        let sys = "UN";
+        const prnStr = String(sat.prn || "");
+        if (prnStr.startsWith('G')) sys = "US";
+        else if (prnStr.startsWith('R')) sys = "RU";
+        else if (prnStr.startsWith('E')) sys = "EU";
+        else if (prnStr.startsWith('B')) sys = "CN";
+        else if (prnStr.startsWith('Q')) sys = "JP";
+        
+        counts[sys] = (counts[sys] || 0) + 1;
+        snrs[sys] = (snrs[sys] || 0) + (Number(sat.snr) || 0);
+    });
+
+    const systems = Object.keys(counts).map(sys => ({
+        sys: sys, count: counts[sys], avgSnr: snrs[sys] / counts[sys]
+    }));
+
+    return (
+        <div className="d-flex justify-content-around small text-muted">
+            {systems.map(s => (
+                <div key={s.sys} className="text-center">
+                    <div className="fw-bold" style={{ color: s.avgSnr > 35 ? '#00ff88' : '#ffc107' }}>
+                        {s.avgSnr.toFixed(0)} dB
+                    </div>
+                    <div style={{ fontSize: '0.7rem' }}>{s.sys} ({s.count})</div>
+                </div>
+            ))}
+        </div>
+    );
+});
+window.SatelliteBars = SatelliteBars;
+
 // === CONSTANTS ===
 const STATUS_TEXT_MAP = {
     'online': 'ONLINE',
@@ -2452,6 +2554,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const [metrics, setMetrics] = useState({
         fixQuality: { value: 0, history: [] },
         satellites: { value: 0, history: [] },
+        accuracy: { value: undefined, history: [] },
         hdop: { value: 0, history: [] },
         signalStrength: { value: 0, history: [] },
         throughput: { value: 0, history: [] }
@@ -2486,11 +2589,18 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         const interval = setInterval(() => {
             const gga = nmeaData.gga || {};
             const gsa = nmeaData.gsa || {};
-            const sats = Object.values(nmeaData.satellites || {});
+            const sats = Object.values(nmeaData.satellites || {}).filter(s => s.snr > 0);
 
             const avgSnr = sats.length > 0
                 ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length
                 : 0;
+
+            let currentHacc = undefined;
+            if (device.hacc !== undefined) {
+                currentHacc = device.hacc / 1000;
+            } else if (nmeaData.hacc !== undefined) {
+                currentHacc = nmeaData.hacc / 1000;
+            }
 
             setMetrics(prev => ({
                 fixQuality: {
@@ -2498,8 +2608,12 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     history: [...prev.fixQuality.history, gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1].slice(-30)
                 },
                 satellites: {
-                    value: gga.satellites || 0,
-                    history: [...prev.satellites.history, gga.satellites || 0].slice(-30)
+                    value: sats.length || 0,
+                    history: [...prev.satellites.history, sats.length || 0].slice(-30)
+                },
+                accuracy: {
+                    value: currentHacc,
+                    history: [...(prev.accuracy?.history || []), currentHacc !== undefined ? currentHacc : 0].slice(-30)
                 },
                 hdop: {
                     value: gsa.hdop || 0,
@@ -2764,7 +2878,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 if (satCountEl) satCountEl.textContent = gga?.satellites || 0;
 
                 const dopEl = document.getElementById('db-dop');
-                if (dopEl) dopEl.textContent = `${gsa?.hdop?.toFixed(2) || '0.0'} / ${gsa?.pdop?.toFixed(2) || '0.0'}`;
+                if (dopEl) {
+                    const hText = gsa?.hdop >= 99 ? 'N/A' : (gsa?.hdop?.toFixed(2) || '0.0');
+                    const pText = gsa?.pdop >= 99 ? 'N/A' : (gsa?.pdop?.toFixed(2) || '0.0');
+                    dopEl.textContent = `${hText} / ${pText}`;
+                }
 
                 const latEl = document.getElementById('db-lat');
                 if (latEl) latEl.textContent = gga?.latitude?.toFixed(8) || '0.0';
@@ -2831,14 +2949,33 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const fixInfo = FIX_STATUS_MAP[rtk_status] || FIX_STATUS_MAP['NO_FIX'];
     */
 
+    const acc = metrics.accuracy?.value;
+    let accDisplayValue = "--";
+    let accUnit = "m";
+    let accColor = "#ff6b6b";
+
+    if (typeof acc === "number" && !isNaN(acc)) {
+        if (acc < 1) {
+            accDisplayValue = (acc * 100).toFixed(1);
+            accUnit = "cm";
+        } else {
+            accDisplayValue = acc.toFixed(2);
+            accUnit = "m";
+        }
+
+        if (acc < 0.02) accColor = "#51cf66";
+        else if (acc < 0.05) accColor = "#94d82d";
+        else if (acc < 0.1) accColor = "#ffd43b";
+    }
+
     return (
         <div className="dashboard-master">
             {/* 🆕 METRIC CARDS WITH SPARKLINES (Nếu có component MetricCard) */}
             {window.MetricCard && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                    <window.MetricCard title="Fix Quality" value={metrics.fixQuality.value} unit="/5" trend={0} sparklineData={metrics.fixQuality.history} color="#51cf66" icon="🎯" />
-                    <window.MetricCard title="Satellites" value={metrics.satellites.value} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
-                    <window.MetricCard title="HDOP" value={metrics.hdop.value.toFixed(2)} unit="" trend={0} sparklineData={metrics.hdop.history} color="#ffd43b" icon="📡" />
+                    <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
+                    <window.MetricCard title="Active Sats" value={metrics.satellites.value} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
+                    <window.MetricCard title="hAcc" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
                     <window.MetricCard title="Avg SNR" value={metrics.signalStrength.value} unit="dB" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
                 </div>
             )}
@@ -2889,7 +3026,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>
                         <i className="bi bi-radar"></i><span>Sky View</span>
-                        <span className="badge bg-primary-subtle text-primary ms-auto">{Object.keys(safeNmeaData.satellites || {}).length} Sats</span>
+                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} Sats</span>
                     </div>
                     <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
@@ -2916,56 +3053,6 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 </div>
             </div>
 
-            {/* REAL-TIME CHARTS SECTION */}
-            <div className="mt-4">
-                <div className="row g-3">
-                    <div className="col-md-4">
-                        <div className="card bg-dark border-secondary-subtle h-100">
-                            <div className="card-header py-1 bg-transparent border-secondary-subtle d-flex justify-content-between align-items-center">
-                                <span className="small text-muted fw-bold"><i className="bi bi-broadcast me-1"></i>SATELLITES</span>
-                                <span className="badge bg-primary">{metrics.satellites.value}</span>
-                            </div>
-                            <div className="card-body p-2">
-                                {window.MetricLineChart ? (
-                                    <window.MetricLineChart label="Count" data={metrics.satellites.history} color="#0dcaf0" />
-                                ) : (
-                                    <div className="text-muted small text-center p-3">Component Missing</div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="col-md-4">
-                        <div className="card bg-dark border-secondary-subtle h-100">
-                            <div className="card-header py-1 bg-transparent border-secondary-subtle d-flex justify-content-between align-items-center">
-                                <span className="small text-muted fw-bold"><i className="bi bi-activity me-1"></i>HDOP ACCURACY</span>
-                                <span className="badge bg-warning text-dark">{metrics.hdop.value.toFixed(2)}</span>
-                            </div>
-                            <div className="card-body p-2">
-                                {window.MetricLineChart ? (
-                                    <window.MetricLineChart label="HDOP" data={metrics.hdop.history} color="#ffc107" />
-                                ) : (
-                                    <div className="text-muted small text-center p-3">Component Missing</div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="col-md-4">
-                        <div className="card bg-dark border-secondary-subtle h-100">
-                            <div className="card-header py-1 bg-transparent border-secondary-subtle d-flex justify-content-between align-items-center">
-                                <span className="small text-muted fw-bold"><i className="bi bi-speedometer2 me-1"></i>THROUGHPUT</span>
-                                <span className="badge bg-success">{(metrics.throughput.value / 1024).toFixed(1)} KB/s</span>
-                            </div>
-                            <div className="card-body p-2">
-                                {window.MetricLineChart ? (
-                                    <window.MetricLineChart label="BPS" data={metrics.throughput.history} color="#198754" unit=" Bps" />
-                                ) : (
-                                    <div className="text-muted small text-center p-3">Component Missing</div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     );
 });
