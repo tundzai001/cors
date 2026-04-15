@@ -2584,11 +2584,12 @@ async def get_caster_users(
         device_versions = {str(d.serial).upper(): d.version for d in res_devices.all()}
 
     # 1. Active Sessions Lookup Map (from Caster Cache)
-    active_sessions_map = {} # (server, username) -> [ {mp, uptime} ]
-    
+    active_sessions_map = {}  # (server, username) -> [ {mp, uptime} ]
+
     async with global_caster_cache_lock:
         for cache_data in global_caster_data_cache.values():
             host = cache_data.get("host", "unknown")
+            last_update = int(cache_data.get("last_update") or time.time())
             clients = cache_data.get("clients", [])
             for c in clients:
                 user_key = (host, str(c.get("username", "")).strip().lower())
@@ -2596,21 +2597,10 @@ async def get_caster_users(
                     active_sessions_map[user_key] = []
                 active_sessions_map[user_key].append({
                     "mountpoint": c.get("mountpoint"),
-                    "uptime": c.get("uptime", 0),
-                    "client_id": c.get("client_id", "")
+                    "uptime": int(c.get("uptime", 0) or 0),
+                    "client_id": str(c.get("client_id", "") or "").strip(),
+                    "last_update": last_update,
                 })
-
-    # 2. Sync with internal RTCM sessions for better duration accuracy
-    internal_sessions = {}
-    try:
-        now_ts = int(time.time())
-        # FIX: Query from devices_db instead of auth_db
-        sessions_rs = await devices_db.execute(select(models.RTCMStreamSession))
-        for sess in sessions_rs.scalars().all():
-            key = (sess.client_id, sess.mountpoint)
-            internal_sessions[key] = now_ts - sess.created_at
-    except Exception as e:
-        logger.warning(f"Failed to fetch internal sessions for duration fallback: {e}")
 
     enriched_items = []
     in_db_count = 0
@@ -2649,20 +2639,16 @@ async def get_caster_users(
         active_conns_raw = active_sessions_map.get(active_key, [])
         active_conns = []
         for ac in active_conns_raw:
-            # Try to match with internal sessions for precise duration
-            # Client ID on caster often matches the dashboard client ID
-            cid = ac.get("client_id")
-            mp = ac.get("mountpoint")
-            
-            # Use internal duration if available, else caster uptime
-            best_uptime = ac.get("uptime", 0)
-            internal_dur = internal_sessions.get((cid, mp))
-            if internal_dur is not None and internal_dur > best_uptime:
-                best_uptime = internal_dur
-                
+            uptime = int(ac.get("uptime", 0) or 0)
+            last_update = int(ac.get("last_update") or time.time())
+            started_at = last_update - uptime if uptime > 0 else None
             active_conns.append({
-                "mountpoint": mp,
-                "uptime": best_uptime
+                "mountpoint": ac.get("mountpoint"),
+                "uptime": uptime,
+                "duration_seconds": uptime,
+                "client_id": ac.get("client_id", ""),
+                "started_at": started_at,
+                "last_seen_at": last_update,
             })
 
         enriched_items.append(schemas.CasterRoverItem(
@@ -3827,7 +3813,16 @@ async def create_virtual_station(
         "data": schemas.Device.from_orm(device).model_dump()
     })
 
-    await _refresh_virtual_runtime()
+    runtime_manager = globals().get("virtual_runtime_manager")
+    if runtime_manager is not None:
+        for method_name in ("refresh", "reconcile", "reconcile_all", "sync", "reload", "refresh_all"):
+            method = getattr(runtime_manager, method_name, None)
+            if not callable(method):
+                continue
+            result = method()
+            if asyncio.iscoroutine(result):
+                await result
+            break
 
     return device
 
@@ -4830,7 +4825,16 @@ async def delete_device_from_list(
     })
 
     if deleted_chip_type == "VIRTUAL":
-        await _refresh_virtual_runtime()
+        runtime_manager = globals().get("virtual_runtime_manager")
+        if runtime_manager is not None:
+            for method_name in ("refresh", "reconcile", "reconcile_all", "sync", "reload", "refresh_all"):
+                method = getattr(runtime_manager, method_name, None)
+                if not callable(method):
+                    continue
+                result = method()
+                if asyncio.iscoroutine(result):
+                    await result
+                break
     
     await log_system_event(
         db=db,

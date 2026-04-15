@@ -449,6 +449,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function formatDateTime(value) {
+        if (!value) return 'N/A';
+        const date = new Date(value * 1000);
+        if (Number.isNaN(date.getTime())) return 'N/A';
+        return date.toLocaleString('vi-VN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+    }
+
     function normalizeUsername(username) {
         return String(username || '').trim().toLowerCase();
     }
@@ -543,14 +558,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (allActiveConns.length > 0) {
             const fetchTime = Date.now();
             activeConnsHtml = allActiveConns.map(conn => {
-                const durText = formatDuration(conn.uptime);
+                const durSeconds = Number(conn.duration_seconds ?? conn.uptime ?? 0);
+                const durText = formatDuration(durSeconds);
+                const startedAtText = formatDateTime(conn.started_at);
+                const clientIdText = conn.client_id ? String(conn.client_id) : 'N/A';
                 const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${conn.server.split('.')[0]}]</span>` : '';
                 return `<div class="d-flex align-items-center mb-1">
                             <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 me-1" style="font-size: 0.7rem;">${conn.mountpoint}</span>
                             ${serverLabel}
                             <span class="text-muted" style="font-size: 0.75rem;">
                                 <i class="bi bi-clock me-1"></i>
-                                <span class="live-clock" data-uptime="${conn.uptime}" data-fetch-time="${fetchTime}">${durText}</span>
+                                <span class="live-clock" data-uptime="${durSeconds}" data-fetch-time="${fetchTime}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
+                                <span class="ms-1 small text-muted opacity-75" style="font-size: 0.65rem;">(${startedAtText})</span>
                             </span>
                         </div>`;
             }).join('');
