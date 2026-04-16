@@ -6,11 +6,11 @@
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-G5RWFTRMJG"></script>
     <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
 
-    gtag('config', 'G-G5RWFTRMJG');
+        gtag('config', 'G-G5RWFTRMJG');
     </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
@@ -195,15 +195,18 @@
             text-align: center;
             transition: transform 0.2s, border-color 0.2s;
         }
+
         .stat-card:hover {
             transform: translateY(-2px);
             border-color: var(--primary-color);
         }
+
         .stat-card .stat-value {
             font-size: 1.8rem;
             font-weight: 700;
             line-height: 1.2;
         }
+
         .stat-card .stat-label {
             font-size: 0.75rem;
             text-transform: uppercase;
@@ -220,9 +223,15 @@
         }
 
         @keyframes spin-anim {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
+
         .spin-anim {
             animation: spin-anim 0.6s linear infinite;
         }
@@ -305,8 +314,10 @@
                 <div class="row g-2 mb-4">
                     <div class="col-md-4">
                         <div class="input-group">
-                            <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
-                            <input type="text" id="search-box" class="form-control" placeholder="Tìm username, serial trạm, host...">
+                            <span class="input-group-text bg-dark border-secondary text-secondary"><i
+                                    class="bi bi-search"></i></span>
+                            <input type="text" id="search-box" class="form-control"
+                                placeholder="Tìm username, serial trạm, host...">
                         </div>
                     </div>
                     <div class="col-md-2">
@@ -336,7 +347,8 @@
                 <!-- Caster Auth Check Info (Small) -->
                 <div id="admin-info-alert" class="alert alert-dark border-secondary py-2 px-3 small mb-3 d-none">
                     <i class="bi bi-info-circle-fill text-info me-2"></i>
-                    <span class="text-muted">Hệ thống tự động kiểm tra blocklist khi Caster wake-up: <code>OK</code> mở luồng, <code>BLOCKED</code> chặn luồng.</span>
+                    <span class="text-muted">Hệ thống tự động kiểm tra blocklist khi Caster wake-up: <code>OK</code> mở
+                        luồng, <code>BLOCKED</code> chặn luồng.</span>
                 </div>
 
                 <!-- Unified Table -->
@@ -364,7 +376,8 @@
                 </div>
                 <div class="mt-3 d-flex justify-content-between align-items-center">
                     <div class="text-muted small">
-                        Hiển thị <span id="displayed-count" class="fw-bold text-white">0</span> / <span id="total-rovers">0</span> tài khoản
+                        Hiển thị <span id="displayed-count" class="fw-bold text-white">0</span> / <span
+                            id="total-rovers">0</span> tài khoản
                     </div>
                     <div class="text-muted small" id="caster-sync-time">
                         Last sync: --:--:--
@@ -399,17 +412,22 @@
 
                         <!-- PHẦN MOUNTPOINT (HIỆN RÕ, CHO PHÉP SỬA) -->
                         <div class="mb-3">
-                            <label class="form-label small text-muted fw-bold">Allowed Mountpoints (Các luồng được phép)</label>
+                            <label class="form-label small text-muted fw-bold">Allowed Mountpoints (Các luồng được
+                                phép)</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-dark border-secondary"><i class="bi bi-broadcast"></i></span>
-                                <input type="text" class="form-control" id="new-mountpoints" required placeholder="Sẽ tự động điền khi chọn trạm...">
+                                <span class="input-group-text bg-dark border-secondary"><i
+                                        class="bi bi-broadcast"></i></span>
+                                <input type="text" class="form-control" id="new-mountpoints" required
+                                    placeholder="Sẽ tự động điền khi chọn trạm...">
                             </div>
                         </div>
 
                         <!-- PHẦN CHỌN SERVER (TARGET CASTERS) -->
                         <div class="mb-3">
-                            <label class="form-label small text-muted fw-bold">Target Servers (Chọn server muốn cấp tài khoản)</label>
-                            <div id="target-caster-container" class="d-flex flex-wrap gap-2 p-2 border rounded bg-dark-subtle">
+                            <label class="form-label small text-muted fw-bold">Target Servers (Chọn server muốn cấp tài
+                                khoản)</label>
+                            <div id="target-caster-container"
+                                class="d-flex flex-wrap gap-2 p-2 border rounded bg-dark-subtle">
                                 <!-- JS will populate this -->
                                 <div class="text-muted small">Đang tải danh sách server...</div>
                             </div>
@@ -440,8 +458,10 @@
                             <div class="col-6">
                                 <label class="form-label small text-muted fw-bold">Số kết nối tối đa</label>
                                 <div class="input-group">
-                                    <span class="input-group-text bg-dark border-secondary"><i class="bi bi-person-plus"></i></span>
-                                    <input type="number" class="form-control" id="new-max-connections" value="1" min="1" max="100">
+                                    <span class="input-group-text bg-dark border-secondary"><i
+                                            class="bi bi-person-plus"></i></span>
+                                    <input type="number" class="form-control" id="new-max-connections" value="1" min="1"
+                                        max="100">
                                 </div>
                             </div>
                         </div>
@@ -453,7 +473,42 @@
                                     <i class="bi bi-geo-alt-fill me-1 text-primary"></i> Hiển thị vị trí trên bản đồ
                                 </label>
                             </div>
-                            <div class="form-text text-secondary x-small">Tắt nếu bạn muốn ẩn tọa độ của Rover này.</div>
+                            <div class="form-text text-secondary x-small">Tắt nếu bạn muốn ẩn tọa độ của Rover này.
+                            </div>
+                        </div>
+
+                        <!-- NEW: RTCM Cycle Control -->
+                        <div class="mb-4 p-3 border rounded bg-dark-subtle">
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="new-rtcm-cycle-enabled">
+                                <label class="form-check-label small text-white fw-bold" for="new-rtcm-cycle-enabled">
+                                    <i class="bi bi-arrow-repeat me-1 text-warning"></i> Thiết lập lại luồng RTCM định kỳ (Force Re-FIX)
+                                </label>
+                            </div>
+                            <div class="form-text text-secondary x-small mb-2">Tạm ngưng luồng dữ liệu RTCM theo chu kỳ để yêu cầu bộ thu Rover thiết lập lại trạng thái giải điểm (Clear Ambiguity), giúp khắc phục lỗi trôi dạt do mạng chập chờn.</div>
+
+                            <div id="rtcm-cycle-interval-group" class="d-none">
+                                <label class="form-label small text-muted fw-bold">Chu kỳ hoạt động (giây)</label>
+                                <div class="input-group mb-1">
+                                    <span class="input-group-text bg-dark border-secondary"><i
+                                            class="bi bi-play-circle"></i></span>
+                                    <input type="number" class="form-control" id="new-rtcm-disconnect-interval"
+                                        value="300" min="30" max="3600" step="30">
+                                    <span class="input-group-text bg-dark border-secondary text-muted">giây (5 phút mặc
+                                        định)</span>
+                                </div>
+                                <div class="form-text text-secondary x-small mt-1 mb-3">Thời lượng cấp phát dữ liệu RTCM liên tục trước khi kích hoạt quy trình ngắt tạm thời.</div>
+
+                                <label class="form-label small text-muted fw-bold">Thời gian tạm ngắt luồng (giây)</label>
+                                <div class="input-group mb-1">
+                                    <span class="input-group-text bg-dark border-secondary"><i
+                                            class="bi bi-pause-circle text-danger"></i></span>
+                                    <input type="number" class="form-control border-danger"
+                                        id="new-rtcm-disconnect-duration" value="10" min="1" max="60" step="1">
+                                    <span class="input-group-text bg-dark border-secondary text-muted">giây</span>
+                                </div>
+                                <div class="form-text text-secondary x-small mt-1">Khoảng thời gian hệ thống tạm ngưng cung cấp dữ liệu RTCM để buộc Rover thiết lập lại trạng thái.</div>
+                            </div>
                         </div>
 
                         <div class="alert alert-danger d-none py-2 small" id="create-error-msg"></div>
@@ -513,7 +568,8 @@
 
                         <div class="row g-3 mb-3">
                             <div class="col-8">
-                                <label class="form-label small text-muted fw-bold">Gia hạn thêm (Tính từ hôm nay)</label>
+                                <label class="form-label small text-muted fw-bold">Gia hạn thêm (Tính từ hôm
+                                    nay)</label>
                                 <select class="form-select" id="edit-expiry">
                                     <option value="">-- Giữ nguyên thời hạn cũ --</option>
                                     <option value="30">1 Tháng</option>
@@ -523,14 +579,17 @@
                             </div>
                             <div class="col-4">
                                 <label class="form-label small text-muted fw-bold">Kết nối</label>
-                                <input type="number" class="form-control" id="edit-max-connections" value="1" min="1" max="100">
+                                <input type="number" class="form-control" id="edit-max-connections" value="1" min="1"
+                                    max="100">
                             </div>
                         </div>
 
                         <!-- PHẦN CHỌN SERVER (EDIT TARGET CASTERS) -->
                         <div class="mb-3">
-                            <label class="form-label small text-muted fw-bold">Target Servers (Chọn server muốn cấp tài khoản)</label>
-                            <div id="edit-target-caster-container" class="d-flex flex-wrap gap-2 p-2 border rounded bg-dark-subtle">
+                            <label class="form-label small text-muted fw-bold">Target Servers (Chọn server muốn cấp tài
+                                khoản)</label>
+                            <div id="edit-target-caster-container"
+                                class="d-flex flex-wrap gap-2 p-2 border rounded bg-dark-subtle">
                                 <!-- JS will populate this -->
                                 <div class="text-muted small text-center w-100">Đang tải danh sách server...</div>
                             </div>
@@ -542,6 +601,39 @@
                                 <label class="form-check-label small text-white fw-bold" for="edit-show-position">
                                     <i class="bi bi-geo-alt-fill me-1 text-warning"></i> Hiển thị vị trí
                                 </label>
+                            </div>
+                        </div>
+
+                        <!-- RTCM Cycle Control (Edit) -->
+                        <div class="mb-4 p-3 border rounded bg-dark-subtle">
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="edit-rtcm-cycle-enabled">
+                                <label class="form-check-label small text-white fw-bold" for="edit-rtcm-cycle-enabled">
+                                    <i class="bi bi-arrow-repeat me-1 text-warning"></i> Thiết lập lại luồng RTCM định kỳ (Force Re-FIX)
+                                </label>
+                            </div>
+                            <div class="form-text text-secondary x-small mb-2">Tạm ngưng luồng dữ liệu RTCM theo chu kỳ để yêu cầu bộ thu Rover thiết lập lại trạng thái giải điểm (Clear Ambiguity), giúp khắc phục lỗi trôi dạt do mạng chập chờn.</div>
+
+                            <div id="edit-rtcm-cycle-interval-group" class="d-none">
+                                <label class="form-label small text-muted fw-bold">Chu kỳ hoạt động (giây)</label>
+                                <div class="input-group mb-1">
+                                    <span class="input-group-text bg-dark border-secondary"><i
+                                            class="bi bi-play-circle"></i></span>
+                                    <input type="number" class="form-control" id="edit-rtcm-disconnect-interval"
+                                        value="300" min="30" max="3600" step="30">
+                                    <span class="input-group-text bg-dark border-secondary text-muted">giây</span>
+                                </div>
+                                <div class="form-text text-secondary x-small mt-1 mb-3">Thời lượng cấp phát dữ liệu RTCM liên tục trước khi kích hoạt quy trình ngắt tạm thời.</div>
+
+                                <label class="form-label small text-muted fw-bold">Thời gian tạm ngắt luồng (giây)</label>
+                                <div class="input-group mb-1">
+                                    <span class="input-group-text bg-dark border-secondary"><i
+                                            class="bi bi-pause-circle text-danger"></i></span>
+                                    <input type="number" class="form-control border-danger"
+                                        id="edit-rtcm-disconnect-duration" value="10" min="1" max="60" step="1">
+                                    <span class="input-group-text bg-dark border-secondary text-muted">giây</span>
+                                </div>
+                                <div class="form-text text-secondary x-small mt-1">Khoảng thời gian hệ thống tạm ngưng cung cấp dữ liệu RTCM để buộc Rover thiết lập lại trạng thái.</div>
                             </div>
                         </div>
 
@@ -564,32 +656,40 @@
         <div class="modal-dialog modal-lg">
             <div class="modal-content bg-dark border-secondary text-light">
                 <div class="modal-header border-secondary">
-                    <h5 class="modal-title"><i class="bi bi-shield-lock-fill me-2 text-danger"></i>Chặn Rover Access</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h5 class="modal-title"><i class="bi bi-shield-lock-fill me-2 text-danger"></i>Chặn Rover Access
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <form id="blockUserForm">
                         <input type="hidden" id="blockModalUsername">
-                        
+
                         <div class="mb-4">
-                            <label class="form-label text-secondary small text-uppercase fw-bold">1. Chọn trạm cần chặn</label>
+                            <label class="form-label text-secondary small text-uppercase fw-bold">1. Chọn trạm cần
+                                chặn</label>
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <span class="small text-info" id="blockInfoText">Đang tải danh sách trạm...</span>
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" id="selectAllMps">
-                                    <label class="form-check-label small" for="selectAllMps">Chặn TOÀN BỘ hệ thống</label>
+                                    <label class="form-check-label small" for="selectAllMps">Chặn TOÀN BỘ hệ
+                                        thống</label>
                                 </div>
                             </div>
-                            
+
                             <!-- Đây là khu vực chứa các "ô box" (Chip/Checkbox) -->
-                            <div id="mountpointSelector" class="p-3 bg-black rounded border border-secondary d-flex flex-wrap gap-2" style="max-height: 250px; overflow-y: auto;">
+                            <div id="mountpointSelector"
+                                class="p-3 bg-black rounded border border-secondary d-flex flex-wrap gap-2"
+                                style="max-height: 250px; overflow-y: auto;">
                                 <!-- Chips sẽ được render ở đây -->
                             </div>
                         </div>
 
                         <div class="mb-3">
-                            <label for="blockReason" class="form-label text-secondary small text-uppercase fw-bold">2. Lý do chặn</label>
-                            <input type="text" class="form-control bg-dark border-secondary text-light" id="blockReason" placeholder="Ví dụ: Quá hạn sử dụng, User lậu..." value="Quá hạn sử dụng">
+                            <label for="blockReason" class="form-label text-secondary small text-uppercase fw-bold">2.
+                                Lý do chặn</label>
+                            <input type="text" class="form-control bg-dark border-secondary text-light" id="blockReason"
+                                placeholder="Ví dụ: Quá hạn sử dụng, User lậu..." value="Quá hạn sử dụng">
                         </div>
                     </form>
                 </div>
@@ -609,16 +709,20 @@
             <div class="modal-content bg-dark border-secondary text-light">
                 <div class="modal-header border-secondary">
                     <h5 class="modal-title"><i class="bi bi-trash3-fill me-2 text-danger"></i>Xác nhận xóa Rover</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <input type="hidden" id="delete-rover-id">
                     <div class="mb-3">
-                        <label class="form-label text-secondary small text-uppercase fw-bold">Chọn các Server muốn xóa tài khoản:</label>
-                        <div id="delete-server-list" class="p-3 bg-black rounded border border-secondary d-flex flex-wrap gap-2">
+                        <label class="form-label text-secondary small text-uppercase fw-bold">Chọn các Server muốn xóa
+                            tài khoản:</label>
+                        <div id="delete-server-list"
+                            class="p-3 bg-black rounded border border-secondary d-flex flex-wrap gap-2">
                             <!-- JS will populate checkboxes here -->
                         </div>
-                        <div class="form-text text-muted small mt-2">Gợi ý: Chỉ gỡ trên server nếu bạn muốn giữ lại tài khoản trong Database.</div>
+                        <div class="form-text text-muted small mt-2">Gợi ý: Chỉ gỡ trên server nếu bạn muốn giữ lại tài
+                            khoản trong Database.</div>
                     </div>
 
                     <hr class="border-secondary my-4">
@@ -630,7 +734,8 @@
                                 Xóa vĩnh viễn khỏi Database
                             </label>
                         </div>
-                        <div class="form-text text-danger small">Cảnh báo: Tùy chọn này sẽ xóa hoàn toàn mọi thông tin của Rover này khỏi hệ thống.</div>
+                        <div class="form-text text-danger small">Cảnh báo: Tùy chọn này sẽ xóa hoàn toàn mọi thông tin
+                            của Rover này khỏi hệ thống.</div>
                     </div>
                 </div>
                 <div class="modal-footer border-secondary">

@@ -613,7 +613,10 @@ async def create_rover_account(
     mountpoints: str = None,
     max_connections: int = 1,
     show_position: bool = True,
-    target_casters: str = None
+    target_casters: str = None,
+    rtcm_cycle_enabled: bool = False,
+    rtcm_disconnect_interval_seconds: int = 300,
+    rtcm_disconnect_duration_seconds: int = 10
 ) -> models.RoverAccount:
     db_rover = models.RoverAccount(
         username=username, 
@@ -625,7 +628,10 @@ async def create_rover_account(
         max_connections=max_connections,
         show_position=show_position,
         target_casters=target_casters,
-        created_at=int(time.time())
+        created_at=int(time.time()),
+        rtcm_cycle_enabled=rtcm_cycle_enabled,
+        rtcm_disconnect_interval_seconds=rtcm_disconnect_interval_seconds,
+        rtcm_disconnect_duration_seconds=rtcm_disconnect_duration_seconds
     )
     db.add(db_rover)
     await db.commit()

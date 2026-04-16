@@ -1589,7 +1589,12 @@ async def lifespan(app: FastAPI):
             logger.info("âœ“ Device database initialized")
             
             async with auth_engine.begin() as conn:
-                await conn.run_sync(AuthBase.metadata.create_all) 
+                await conn.run_sync(AuthBase.metadata.create_all)
+                try:
+                    await conn.execute(text("ALTER TABLE rover_accounts ADD COLUMN IF NOT EXISTS rtcm_cycle_enabled BOOLEAN DEFAULT FALSE;"))
+                    await conn.execute(text("ALTER TABLE rover_accounts ADD COLUMN IF NOT EXISTS rtcm_disconnect_interval_seconds INTEGER DEFAULT 300;"))
+                except Exception as e_mig_auth:
+                    logger.warning(f"Auth auto-migration failed (ignored on fresh DBs): {e_mig_auth}")
             logger.info("âœ“ Auth database initialized")
         except Exception as e:
             logger.critical(f"Database initialization failed: {e}", exc_info=True)
@@ -2817,6 +2822,9 @@ async def unblock_caster_user(
                     mountpoints=rover_mps,
                     expiry_seconds=315360000,  # 10 năm
                     max_users=1,
+                    show_position=bool(rover.show_position),
+                    rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False)),
+                    rtcm_disconnect_interval_seconds=int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300),
                 )
                 recreated_count += 1
                 logger.info(f"[CASTER MGMT] Re-created user '{username}' on caster {host}")
@@ -3916,7 +3924,11 @@ async def create_rover_for_base(
             password=rover_data.password,
             mountpoints=target_mountpoint, 
             expiry_seconds=duration_seconds, 
-            max_users=1
+            max_users=1,
+            show_position=rover_data.show_position,
+            rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
+            rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
+            rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds,
         )
         logger.info(f"âœ“ Created Rover '{rover_data.username}' for MP '{target_mountpoint}'")
         
@@ -3931,7 +3943,10 @@ async def create_rover_for_base(
         password=rover_data.password,
         base_serial=serial,
         creator_id=current_user.id,
-        show_position=rover_data.show_position
+        show_position=rover_data.show_position,
+        rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
+        rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
+        rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds
     )
     
     return new_rover
@@ -3981,6 +3996,9 @@ async def update_rover(
         creator_identifier = current_user.username 
         new_max_connections = update_req.max_connections if update_req.max_connections is not None else rover.max_connections
         target_show_pos = update_req.show_position if update_req.show_position is not None else rover.show_position
+        target_rtcm_cycle_enabled = update_req.rtcm_cycle_enabled if update_req.rtcm_cycle_enabled is not None else bool(getattr(rover, "rtcm_cycle_enabled", False))
+        target_rtcm_cycle_interval = update_req.rtcm_disconnect_interval_seconds if update_req.rtcm_disconnect_interval_seconds is not None else int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300)
+        target_rtcm_cycle_duration = update_req.rtcm_disconnect_duration_seconds if update_req.rtcm_disconnect_duration_seconds is not None else int(getattr(rover, "rtcm_disconnect_duration_seconds", 10) or 10)
         
         # Determine updated target casters
         # If request provides target_casters, use it. Otherwise use what's in DB.
@@ -4051,7 +4069,10 @@ async def update_rover(
                     mountpoints=new_mountpoints, 
                     expiry_seconds=duration_seconds, 
                     max_users=new_max_connections,
-                    show_position=target_show_pos
+                    show_position=target_show_pos,
+                    rtcm_cycle_enabled=bool(target_rtcm_cycle_enabled),
+                    rtcm_disconnect_interval_seconds=int(target_rtcm_cycle_interval),
+                    rtcm_disconnect_duration_seconds=int(target_rtcm_cycle_duration),
                 )
                 if not created_ok:
                     logger.warning(f"Caster {host} did not confirm create/update for rover '{rover.username}'")
@@ -4096,6 +4117,9 @@ async def update_rover(
         "mountpoints": new_mountpoints,
         "max_connections": new_max_connections,
         "show_position": target_show_pos,
+        "rtcm_cycle_enabled": bool(target_rtcm_cycle_enabled),
+        "rtcm_disconnect_interval_seconds": int(target_rtcm_cycle_interval),
+        "rtcm_disconnect_duration_seconds": int(target_rtcm_cycle_duration),
         "target_casters": ";".join(updated_target_hosts)
     }
     
@@ -4301,7 +4325,9 @@ async def sync_rover_by_username(
             mountpoints=update_req.mountpoints,
             creator_id=current_user.id,
             max_connections=update_req.max_connections or 1,
-            show_position=update_req.show_position if update_req.show_position is not None else True
+            show_position=update_req.show_position if update_req.show_position is not None else True,
+            rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
+            rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300)
         )
         logger.info(f"âœ“ Adopted unknown rover '{username}' into DB")
     
@@ -4313,6 +4339,8 @@ async def sync_rover_by_username(
         if update_req.mountpoints: update_data["mountpoints"] = update_req.mountpoints
         if update_req.max_connections is not None: update_data["max_connections"] = update_req.max_connections
         if update_req.show_position is not None: update_data["show_position"] = update_req.show_position
+        if update_req.rtcm_cycle_enabled is not None: update_data["rtcm_cycle_enabled"] = update_req.rtcm_cycle_enabled
+        if update_req.rtcm_disconnect_interval_seconds is not None: update_data["rtcm_disconnect_interval_seconds"] = update_req.rtcm_disconnect_interval_seconds
         
         if update_data:
             # 🔥 FIX: Cập nhật base_serial nếu có gửi trạm đích
@@ -4341,7 +4369,9 @@ async def sync_rover_by_username(
             mountpoints=update_req.mountpoints or rover.mountpoints,
             expiry_seconds=duration_seconds,
             max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
-            show_position=update_req.show_position if update_req.show_position is not None else rover.show_position
+            show_position=update_req.show_position if update_req.show_position is not None else rover.show_position,
+            rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False) if update_req.rtcm_cycle_enabled is None else update_req.rtcm_cycle_enabled),
+            rtcm_disconnect_interval_seconds=int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) if update_req.rtcm_disconnect_interval_seconds is None else update_req.rtcm_disconnect_interval_seconds),
         )
         if not created_ok:
             logger.warning(f"Sync-by-username did not get caster confirmation for '{username}'")
@@ -4446,7 +4476,10 @@ async def create_multi_base_rover(
                     mountpoints=target_mountpoints, 
                     expiry_seconds=duration_seconds, 
                     max_users=request.max_connections,
-                    show_position=request.show_position
+                    show_position=request.show_position,
+                    rtcm_cycle_enabled=bool(getattr(request, "rtcm_cycle_enabled", False)),
+                    rtcm_disconnect_interval_seconds=int(getattr(request, "rtcm_disconnect_interval_seconds", 300) or 300),
+                    rtcm_disconnect_duration_seconds=int(getattr(request, "rtcm_disconnect_duration_seconds", 10) or 10),
                 )
                 results_log.append(host)
             except Exception as e:
@@ -4472,7 +4505,10 @@ async def create_multi_base_rover(
         mountpoints=target_mountpoints, # Lưu: "MP1;MP2" (Cột mới)
         creator_id=current_user.id,
         max_connections=request.max_connections,
-        target_casters=";".join(results_log) # Lưu chính xác những server đã tạo thành công
+        target_casters=";".join(results_log), # Lưu chính xác những server đã tạo thành công
+        rtcm_cycle_enabled=getattr(request, 'rtcm_cycle_enabled', False),
+        rtcm_disconnect_interval_seconds=getattr(request, 'rtcm_disconnect_interval_seconds', 300),
+        rtcm_disconnect_duration_seconds=getattr(request, 'rtcm_disconnect_duration_seconds', 10)
     )
     
     return new_rover

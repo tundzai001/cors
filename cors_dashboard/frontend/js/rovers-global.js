@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let casterStats = {};  // Stats từ API
     let globalAppVersion = null;
     let availableCasters = [];
+    let syncInProgress = false;
 
     // === 2. AUTH & PERMISSIONS CHECK ===
     try {
@@ -78,9 +79,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Parallel load DB and Caster data
         try {
             const results = await Promise.allSettled([
-                fetchRovers(),
-                fetchCasterUsers()
+                fetchRovers({ render: false }),
+                fetchCasterUsers({ render: false })
             ]);
+            renderTable();
             
             // If admin, show stats and info
             if (currentUser.permissions?.includes('manage:caster')) {
@@ -99,21 +101,48 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function isAnyRoverModalOpen() {
+        const modalIds = ['editRoverModal', 'createRoverModal', 'blockUserModal'];
+        return modalIds.some(id => document.getElementById(id)?.classList.contains('show'));
+    }
+
     async function syncData() {
+        if (syncInProgress) {
+            return;
+        }
+
         const syncTimeEl = document.getElementById('caster-sync-time');
-        if (syncTimeEl) syncTimeEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Syncing...';
-        
-        await Promise.allSettled([fetchRovers(), fetchCasterUsers()]);
-        
-        if (syncTimeEl) {
-            const now = new Date();
-            syncTimeEl.textContent = `Last sync: ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+        if (isAnyRoverModalOpen()) {
+            if (syncTimeEl) syncTimeEl.textContent = 'Sync tạm dừng khi đang chỉnh sửa...';
+            return;
+        }
+
+        syncInProgress = true;
+        try {
+            if (syncTimeEl) syncTimeEl.textContent = 'Syncing...';
+
+            await Promise.allSettled([
+                fetchRovers({ render: false }),
+                fetchCasterUsers({ render: false })
+            ]);
+            renderTable();
+
+            if (syncTimeEl) {
+                const now = new Date();
+                syncTimeEl.textContent = `Last sync: ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            }
+        } finally {
+            syncInProgress = false;
         }
     }
 
     async function refreshDataInPlace() {
         const currentScrollY = window.scrollY || 0;
-        await Promise.allSettled([fetchRovers(), fetchCasterUsers()]);
+        await Promise.allSettled([
+            fetchRovers({ render: false }),
+            fetchCasterUsers({ render: false })
+        ]);
+        renderTable();
         window.requestAnimationFrame(() => {
             window.scrollTo({ top: currentScrollY, behavior: 'auto' });
         });
@@ -183,19 +212,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (e) { console.error("Device fetch error", e); }
     }
 
-    async function fetchRovers() {
+    async function fetchRovers({ render = true } = {}) {
         try {
             const res = await fetch('/api/rovers/all', { headers: API_HEADERS });
             if (!res.ok) throw new Error('Không thể tải danh sách Rover');
             allRovers = await res.json();
-            renderTable();
+            if (render) renderTable();
         } catch (error) {
             console.error("Rovers fetch error", error);
         }
     }
 
     // === CASTER USERS MANAGEMENT ===
-    async function fetchCasterUsers() {
+    async function fetchCasterUsers({ render = true } = {}) {
         try {
             const res = await fetch('/api/caster/users', { headers: API_HEADERS });
             if (!res.ok) {
@@ -211,7 +240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 blocked_count: data.blocked_count || 0,
             };
             updateCasterStats();
-            renderTable(); // Call unified render
+            if (render) renderTable(); // Call unified render
         } catch (error) {
             console.error("Caster users fetch error", error);
         }
@@ -358,14 +387,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function updateLiveClocks() {
-        const now = Date.now();
+        const nowSec = Math.floor(Date.now() / 1000);
         document.querySelectorAll('.live-clock').forEach(el => {
-            const baseUptime = parseInt(el.dataset.uptime || 0);
-            const fetchTime = parseInt(el.dataset.fetchTime || now);
-            const diffSeconds = Math.floor((now - fetchTime) / 1000);
-            const currentUptime = baseUptime + diffSeconds;
-            
-            if (currentUptime > 0) {
+            const startedAt = parseInt(el.dataset.startedAt || 0);
+            if (startedAt > 0) {
+                const currentUptime = Math.max(0, nowSec - startedAt);
                 el.textContent = formatDuration(currentUptime);
             }
         });
@@ -568,7 +594,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             ${serverLabel}
                             <span class="text-muted" style="font-size: 0.75rem;">
                                 <i class="bi bi-clock me-1"></i>
-                                <span class="live-clock" data-uptime="${durSeconds}" data-fetch-time="${fetchTime}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
+                                <span class="live-clock" data-started-at="${conn.started_at}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
                                 <span class="ms-1 small text-muted opacity-75" style="font-size: 0.65rem;">(${startedAtText})</span>
                             </span>
                         </div>`;
@@ -800,7 +826,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('edit-expiry').value = ''; 
         document.getElementById('edit-max-connections').value = rover.max_connections || 1;
         
-        // Load show_position
         const showPosToggle = document.getElementById('edit-show-position');
         if (showPosToggle) {
             const liveInfos = getCasterInfosForUsername(rover.username);
@@ -809,6 +834,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ? liveInfos.every(i => i?.show_position !== false)
                 : rover.show_position;
             showPosToggle.checked = effectiveShowPos !== false;
+        }
+
+        // Load RTCM fields
+        const rtcmCycleToggle = document.getElementById('edit-rtcm-cycle-enabled');
+        if (rtcmCycleToggle) {
+            rtcmCycleToggle.checked = rover.rtcm_cycle_enabled || false;
+            const intervalGroup = document.getElementById('edit-rtcm-cycle-interval-group');
+            if (intervalGroup) {
+                if (rtcmCycleToggle.checked) {
+                    intervalGroup.classList.remove('d-none');
+                } else {
+                    intervalGroup.classList.add('d-none');
+                }
+            }
+        }
+        const rtcmIntervalInput = document.getElementById('edit-rtcm-disconnect-interval');
+        if (rtcmIntervalInput) {
+            rtcmIntervalInput.value = rover.rtcm_disconnect_interval_seconds || 300;
+        }
+        const rtcmDurationInput = document.getElementById('edit-rtcm-disconnect-duration');
+        if (rtcmDurationInput) {
+            rtcmDurationInput.value = rover.rtcm_disconnect_duration_seconds || 10;
         }
 
         // 1.5 Load Target Casters
@@ -900,7 +947,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 mountpoints: finalMountpoints,
                 selected_serials: selectedSerials, // 🔥 FIX: Gửi kèm danh sách serial trạm
                 show_position: document.getElementById('edit-show-position').checked,
-                target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value)
+                target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value),
+                rtcm_cycle_enabled: document.getElementById('edit-rtcm-cycle-enabled')?.checked || false,
+                rtcm_disconnect_interval_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-interval')?.value || 300),
+                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10)
             };
             if (newPass) payload.password = newPass;
             if (newExpiry) payload.expiry_days = parseInt(newExpiry);
@@ -1144,7 +1194,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 mountpoint_override: mpOverride,
                 target_casters: targetCasters,
                 max_connections: parseInt(document.getElementById('new-max-connections')?.value || 1),
-                show_position: document.getElementById('new-show-position').checked
+                show_position: document.getElementById('new-show-position').checked,
+                rtcm_cycle_enabled: document.getElementById('new-rtcm-cycle-enabled').checked,
+                rtcm_disconnect_interval_seconds: parseInt(document.getElementById('new-rtcm-disconnect-interval').value || 300),
+                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('new-rtcm-disconnect-duration').value || 10)
             };
 
             try {
@@ -1181,6 +1234,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // === UTILS ===
+
+    // Toggle RTCM cycle interval visibility
+    const rtcmCycleToggle = document.getElementById('new-rtcm-cycle-enabled');
+    if (rtcmCycleToggle) {
+        rtcmCycleToggle.addEventListener('change', (e) => {
+            const intervalGroup = document.getElementById('rtcm-cycle-interval-group');
+            if (intervalGroup) {
+                if (e.target.checked) {
+                    intervalGroup.classList.remove('d-none');
+                } else {
+                    intervalGroup.classList.add('d-none');
+                }
+            }
+        });
+    }
+
+    const editRtcmCycleToggle = document.getElementById('edit-rtcm-cycle-enabled');
+    if (editRtcmCycleToggle) {
+        editRtcmCycleToggle.addEventListener('change', (e) => {
+            const intervalGroup = document.getElementById('edit-rtcm-cycle-interval-group');
+            if (intervalGroup) {
+                if (e.target.checked) {
+                    intervalGroup.classList.remove('d-none');
+                } else {
+                    intervalGroup.classList.add('d-none');
+                }
+            }
+        });
+    }
 
     // Rover Dashboard events
     document.getElementById('search-box').addEventListener('input', renderTable);

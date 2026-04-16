@@ -143,29 +143,50 @@ class CasterClient:
             return users
         except Exception: return []
 
-    async def create_user(self, creator: str, username: str, password: str, mountpoints: str, expiry_seconds: int = 31536000, max_users: int = 1, show_position: bool = True) -> bool:
+    async def create_user(
+        self,
+        creator: str,
+        username: str,
+        password: str,
+        mountpoints: str,
+        expiry_seconds: int = 31536000,
+        max_users: int = 1,
+        show_position: bool = True,
+        rtcm_cycle_enabled: bool = False,
+        rtcm_disconnect_interval_seconds: int = 300,
+        rtcm_disconnect_duration_seconds: int = 10,
+    ) -> bool:
         clean_mps = mountpoints.replace(";", ",").replace(" ", "").strip()
         show_pos_val = "1" if show_position else "0"
-        # Định dạng dài (>= 12 parts) để hỗ trợ show_position ở cuối
-        # GET /genuser HTTP/1.0/creator/username/password/mounts/expiry/max/status/maxclient/showpos
-        cmd = f"GET /genuser HTTP/1.0/{creator}/{username}/{password}/{clean_mps}/-1/-1/{expiry_seconds}/{max_users}/{show_pos_val}\r\n\r\n"
+        rtcm_cycle_val = "1" if rtcm_cycle_enabled else "0"
+        safe_cycle_interval = max(30, int(rtcm_disconnect_interval_seconds or 300))
+        safe_cycle_duration = max(1, int(rtcm_disconnect_duration_seconds or 10))
+        # Định dạng dài (>= 15 parts) để hỗ trợ show_position + rtcm_cycle fields ở cuối.
+        # GET /genuser HTTP/1.0/creator/username/password/mounts/expiry/max/status/maxclient/showpos/rtcm_cycle_enabled/rtcm_cycle_interval/rtcm_cycle_duration
+        cmd = (
+            f"GET /genuser HTTP/1.0/{creator}/{username}/{password}/{clean_mps}/-1/-1/"
+            f"{expiry_seconds}/{max_users}/{show_pos_val}/{rtcm_cycle_val}/{safe_cycle_interval}/{safe_cycle_duration}\r\n\r\n"
+        )
         response = await self._send_command(cmd)
         return self._is_success_response(response)
 
     async def toggle_show_pos(self, identifier: str, username: str, enabled: bool) -> bool:
         val = "1" if enabled else "0"
         cmd = f"GET /showpos HTTP/1.0/{identifier}/{username}/{val}\r\n\r\n"
-        response = await self._send_command(cmd)
+        rtcm_disconnect_duration_seconds: Optional[int] = None,
         return self._is_success_response(response) or self._is_no_change_warning(response)
 
     async def get_clienttable(
         self, mountpoint: str = "all", password: str = None, data_count: int = 1000, admin_user: str = None
     ) -> Optional[List[dict]]:
+        safe_cycle_duration = int(rtcm_disconnect_duration_seconds or safe_cycle_interval)
+        if safe_cycle_duration < 1:
+            safe_cycle_duration = 1
         user = admin_user or self.admin_user
         pw = password or self.admin_password
         
         # THỬ 3 PHƯƠNG ÁN LỆNH KHÁC NHAU
-        cmds = [
+            f"{expiry_seconds}/{max_users}/{show_pos_val}/{rtcm_cycle_val}/{safe_cycle_interval}/{safe_cycle_duration}\r\n\r\n"
             f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{pw}/{data_count}\r\n\r\n",
             f"GET /admin/clienttable?user={user}&pass={pw}&mountpoint={mountpoint}\r\n\r\n",
         ]

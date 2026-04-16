@@ -46,8 +46,9 @@ class RoverAccount(AuthBase):
     show_position = Column(Boolean, default=True)
     target_casters = Column(String, nullable=True) # Semicolon separated hosts
     created_at = Column(Integer)
-
-    
+    rtcm_cycle_enabled = Column(Boolean, default=False)  # Enable periodic RTCM disconnect/reconnect
+    rtcm_disconnect_interval_seconds = Column(Integer, default=300)  # Default 5 minutes
+    rtcm_disconnect_duration_seconds = Column(Integer, default=10) # Pause duration
 class User(AuthBase):
     __tablename__ = "users"
 

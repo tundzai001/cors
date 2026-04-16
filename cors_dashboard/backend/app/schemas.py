@@ -164,6 +164,10 @@ class RoverAccountBase(BaseModel):
 class RoverAccountCreate(RoverAccountBase):
     mountpoint_allow: str | None = None
     expiry_days: int = 365
+    show_position: bool = True
+    rtcm_cycle_enabled: bool = False
+    rtcm_disconnect_interval_seconds: int = 300  # Default 5 minutes (300 seconds)
+    rtcm_disconnect_duration_seconds: int = 10
 
 class RoverAccountResponse(RoverAccountBase):
     id: int
@@ -175,6 +179,9 @@ class RoverAccountResponse(RoverAccountBase):
     max_connections: int = 1
     show_position: bool = True
     target_casters: str | None = None
+    rtcm_cycle_enabled: bool = False
+    rtcm_disconnect_interval_seconds: int = 300
+    rtcm_disconnect_duration_seconds: int = 10
     
     class Config: from_attributes = True
 
@@ -187,6 +194,9 @@ class RoverMultiCreate(BaseModel):
     target_casters: Optional[List[str]] = Field(default_factory=list)
     max_connections: int = 1
     show_position: bool = True
+    rtcm_cycle_enabled: bool = False
+    rtcm_disconnect_interval_seconds: int = 300
+    rtcm_disconnect_duration_seconds: int = 10
     
 class RoverUpdate(BaseModel):
     password: str | None = None
@@ -194,6 +204,9 @@ class RoverUpdate(BaseModel):
     expiry_days: int | None = None # Cho phép gia hạn lại
     max_connections: int | None = None
     show_position: bool | None = None
+    rtcm_cycle_enabled: bool | None = None
+    rtcm_disconnect_interval_seconds: int | None = None
+    rtcm_disconnect_duration_seconds: int | None = None
     selected_serials: list[str] | None = None # For syncing unknown users
     target_casters: list[str] | None = None
     
