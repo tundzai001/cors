@@ -27,6 +27,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let globalAppVersion = null;
     let availableCasters = [];
     let syncInProgress = false;
+    let currentRenderedConnectionKeys = new Set();
+    const connectionClockCache = new Map();
 
     // === 2. AUTH & PERMISSIONS CHECK ===
     try {
@@ -581,20 +583,48 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
+        const getConnectionClockKey = (conn) => {
+            const server = String(conn?.server || '').trim().toLowerCase();
+            const username = String(r.username || '').trim().toLowerCase();
+            const mountpoint = String(conn?.mountpoint || '').trim().toLowerCase();
+            const clientId = String(conn?.client_id || '').trim().toLowerCase();
+            return [server, username, mountpoint, clientId].join('|');
+        };
+
+        const getStableStartedAt = (conn) => {
+            const key = getConnectionClockKey(conn);
+            const snapshotStartedAt = Number(conn?.started_at || 0);
+            const cached = connectionClockCache.get(key);
+
+            if (cached && Number.isFinite(cached.startedAt) && cached.startedAt > 0) {
+                cached.lastSeenAt = Date.now();
+                return cached.startedAt;
+            }
+
+            connectionClockCache.set(key, {
+                startedAt: snapshotStartedAt > 0 ? snapshotStartedAt : null,
+                lastSeenAt: Date.now(),
+            });
+
+            return snapshotStartedAt > 0 ? snapshotStartedAt : 0;
+        };
+
         if (allActiveConns.length > 0) {
             const fetchTime = Date.now();
             activeConnsHtml = allActiveConns.map(conn => {
+                const stableStartedAt = getStableStartedAt(conn);
                 const durSeconds = Number(conn.duration_seconds ?? conn.uptime ?? 0);
                 const durText = formatDuration(durSeconds);
                 const startedAtText = formatDateTime(conn.started_at);
                 const clientIdText = conn.client_id ? String(conn.client_id) : 'N/A';
                 const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${conn.server.split('.')[0]}]</span>` : '';
+                currentRenderedConnectionKeys.add(getConnectionClockKey(conn));
                 return `<div class="d-flex align-items-center mb-1">
                             <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 me-1" style="font-size: 0.7rem;">${conn.mountpoint}</span>
                             ${serverLabel}
                             <span class="text-muted" style="font-size: 0.75rem;">
                                 <i class="bi bi-clock me-1"></i>
-                                <span class="live-clock" data-started-at="${conn.started_at}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
+                                <span class="live-clock" data-started-at="${stableStartedAt}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
                                 <span class="ms-1 small text-muted opacity-75" style="font-size: 0.65rem;">(${startedAtText})</span>
                             </span>
                         </div>`;
@@ -712,6 +742,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const tbody = document.getElementById('rovers-table-body');
         if (!tbody) return;
 
+        currentRenderedConnectionKeys = new Set();
+
         const searchTerm = document.getElementById('search-box')?.value.toLowerCase() || '';
         const stationFilter = document.getElementById('filter-station')?.value || '';
         const statusFilter = document.getElementById('filter-status')?.value || '';
@@ -783,6 +815,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         filtered.forEach(r => {
             tbody.appendChild(createRoverRowElement(r));
         });
+
+        for (const key of Array.from(connectionClockCache.keys())) {
+            if (!currentRenderedConnectionKeys.has(key)) {
+                connectionClockCache.delete(key);
+            }
+        }
 
         // Re-bind events
         document.querySelectorAll('.delete-btn').forEach(btn => btn.onclick = handleDeleteRover);

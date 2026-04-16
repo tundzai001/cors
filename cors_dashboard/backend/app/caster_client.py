@@ -173,20 +173,17 @@ class CasterClient:
     async def toggle_show_pos(self, identifier: str, username: str, enabled: bool) -> bool:
         val = "1" if enabled else "0"
         cmd = f"GET /showpos HTTP/1.0/{identifier}/{username}/{val}\r\n\r\n"
-        rtcm_disconnect_duration_seconds: Optional[int] = None,
+        response = await self._send_command(cmd)
         return self._is_success_response(response) or self._is_no_change_warning(response)
 
     async def get_clienttable(
         self, mountpoint: str = "all", password: str = None, data_count: int = 1000, admin_user: str = None
     ) -> Optional[List[dict]]:
-        safe_cycle_duration = int(rtcm_disconnect_duration_seconds or safe_cycle_interval)
-        if safe_cycle_duration < 1:
-            safe_cycle_duration = 1
         user = admin_user or self.admin_user
         pw = password or self.admin_password
         
         # THỬ 3 PHƯƠNG ÁN LỆNH KHÁC NHAU
-            f"{expiry_seconds}/{max_users}/{show_pos_val}/{rtcm_cycle_val}/{safe_cycle_interval}/{safe_cycle_duration}\r\n\r\n"
+        cmds = [
             f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{pw}/{data_count}\r\n\r\n",
             f"GET /admin/clienttable?user={user}&pass={pw}&mountpoint={mountpoint}\r\n\r\n",
         ]
