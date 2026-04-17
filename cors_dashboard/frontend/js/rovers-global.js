@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let casterStats = {};  // Stats từ API
     let globalAppVersion = null;
     let availableCasters = [];
+    let casterSourcesCache = null;
     let syncInProgress = false;
     let currentRenderedConnectionKeys = new Set();
     const connectionClockCache = new Map();
@@ -49,6 +50,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentUser.permissions?.includes('manage:caster')) {
             const casterRoverTab = document.getElementById('caster-rover-tab-li');
             if (casterRoverTab) casterRoverTab.classList.remove('d-none');
+        }
+
+        // Mountpoints tab is strictly admin-only.
+        if (String(currentUser.role || '').toLowerCase() === 'admin') {
+            const mountpointsTab = document.getElementById('tab-mountpoints-li');
+            if (mountpointsTab) mountpointsTab.classList.remove('d-none');
         }
 
         initData();
@@ -84,7 +91,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 fetchRovers({ render: false }),
                 fetchCasterUsers({ render: false })
             ]);
+            if (currentUser?.role === 'admin') {
+                await fetchCasterSources({ force: true });
+            }
             renderTable();
+            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                renderAdminLiveMountpoints();
+            } else {
+                document.getElementById('admin-live-mountpoints-box')?.classList.add('d-none');
+            }
             
             // If admin, show stats and info
             if (currentUser.permissions?.includes('manage:caster')) {
@@ -246,6 +261,106 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (error) {
             console.error("Caster users fetch error", error);
         }
+    }
+
+    async function fetchCasterSources({ force = false } = {}) {
+        if (casterSourcesCache && !force) return casterSourcesCache;
+        try {
+            const res = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Không thể tải mountpoints từ Caster');
+            }
+            casterSourcesCache = await res.json();
+            return casterSourcesCache;
+        } catch (error) {
+            console.error('[Caster sources]', error);
+            return null;
+        }
+    }
+
+    function getAllCasterSources() {
+        if (!casterSourcesCache) return [];
+        return Array.isArray(casterSourcesCache.all) ? casterSourcesCache.all : [];
+    }
+
+    function normalizeMountpointList(value) {
+        return Array.from(new Set(
+            String(value || '')
+                .split(/[;,\n]/)
+                .map(v => v.trim())
+                .filter(Boolean)
+        ));
+    }
+
+    function renderAdminLiveMountpoints() {
+        const box = document.getElementById('admin-live-mountpoints-box');
+        const list = document.getElementById('admin-live-mountpoints-list');
+        const searchInput = document.getElementById('live-mp-search');
+        const hostFilter = document.getElementById('live-mp-host-filter');
+        if (!box || !list) return;
+
+        const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+        if (!isAdmin) {
+            box.classList.add('d-none');
+            return;
+        }
+
+        const sources = getAllCasterSources();
+        if (!sources.length) {
+            box.classList.remove('d-none');
+            list.innerHTML = '<div class="text-muted small text-center">Không có mountpoint nào từ Caster</div>';
+            return;
+        }
+
+        const uniqueHosts = Array.from(new Set(sources.map(s => String(s.host || '').trim()).filter(Boolean))).sort();
+        if (hostFilter) {
+            const prev = hostFilter.value || 'all';
+            hostFilter.innerHTML = '<option value="all">Tất cả host</option>'
+                + uniqueHosts.map(h => `<option value="${h}">${h}</option>`).join('');
+            if (uniqueHosts.includes(prev)) hostFilter.value = prev;
+        }
+
+        box.classList.remove('d-none');
+        list.innerHTML = sources.map((src, idx) => `
+            <div class="form-check mb-1 live-mp-item" data-host="${src.host || ''}" data-search="${String(src.mountpoint || '').toLowerCase()} ${String(src.identifier || '').toLowerCase()} ${String(src.host || '').toLowerCase()}">
+                <input class="form-check-input live-mp-check" type="checkbox" id="live-mp-${idx}" value="${src.mountpoint || ''}" data-host="${src.host || ''}">
+                <label class="form-check-label small text-white" for="live-mp-${idx}">
+                    <code class="text-info">${src.mountpoint || ''}</code>
+                    <span class="text-muted ms-1">(${src.identifier || src.host || ''})</span>
+                </label>
+            </div>
+        `).join('');
+
+        const applyLiveMpFilter = () => {
+            const q = String(searchInput?.value || '').trim().toLowerCase();
+            const h = String(hostFilter?.value || 'all').trim();
+            list.querySelectorAll('.live-mp-item').forEach(item => {
+                const text = item.dataset.search || '';
+                const host = item.dataset.host || '';
+                const matchText = !q || text.includes(q);
+                const matchHost = h === 'all' || host === h;
+                item.style.display = (matchText && matchHost) ? '' : 'none';
+            });
+        };
+
+        if (searchInput) searchInput.addEventListener('input', applyLiveMpFilter);
+        if (hostFilter) hostFilter.addEventListener('change', applyLiveMpFilter);
+        applyLiveMpFilter();
+    }
+
+    function applySelectedLiveMountpoints() {
+        const checked = Array.from(document.querySelectorAll('.live-mp-check:checked')).map(cb => cb.value);
+        if (!checked.length) {
+            showToast('Vui lòng chọn ít nhất 1 mountpoint live', 'warning');
+            return;
+        }
+
+        const current = normalizeMountpointList(document.getElementById('new-mountpoints')?.value || '');
+        const merged = Array.from(new Set([...current, ...checked]));
+        const target = document.getElementById('new-mountpoints');
+        if (target) target.value = merged.join(';');
+        showToast('Đã đưa mountpoint live vào Allowed Mountpoints', 'success');
     }
 
     function updateCasterStats() {
@@ -573,6 +688,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? mps.map(m => `<code class="text-info small" style="font-size:0.75rem">${m}</code>`).join(' ')
             : '<span class="text-muted small">N/A</span>';
 
+        const hasBoundBase = String(r.base_name || '').trim().length > 0;
+        const baseDisplay = hasBoundBase
+            ? String(r.base_name)
+            : (mps.length > 0
+                ? '<span class="text-warning">Live MP (khong bind tram)</span>'
+                : 'N/A');
+
         let activeConnsHtml = '<span class="text-muted small">---</span>';
         const allActiveConns = [];
         infos.forEach(i => {
@@ -689,7 +811,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <td><code class="text-warning bg-dark px-2 py-1 rounded small">${r.password || '******'}</code></td>
             <td>
                 <div class="d-flex flex-column">
-                    <span class="text-info fw-bold small" style="font-size:0.8rem">${r.base_name || 'N/A'}</span>
+                    <span class="text-info fw-bold small" style="font-size:0.8rem">${baseDisplay}</span>
                     <div class="mt-1 d-flex flex-wrap gap-1">${mpsDisplay}</div>
                 </div>
             </td>
@@ -1209,7 +1331,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const checkedBoxes = document.querySelectorAll('.station-check:checked');
             const selectedSerials = Array.from(checkedBoxes).map(cb => cb.value);
 
-            if (selectedSerials.length === 0) {
+            const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+
+            if (selectedSerials.length === 0 && !isAdmin) {
                 msgEl.textContent = "Vui lòng chọn ít nhất một trạm.";
                 msgEl.classList.remove('d-none');
                 return;
@@ -1306,6 +1430,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('search-box').addEventListener('input', renderTable);
     document.getElementById('filter-station').addEventListener('change', renderTable);
     document.getElementById('filter-status').addEventListener('change', renderTable);
+
+    const applyLiveMountpointsBtn = document.getElementById('apply-live-mountpoints-btn');
+    if (applyLiveMountpointsBtn) {
+        applyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
+    }
+
+    const reloadLiveMountpointsBtn = document.getElementById('reload-live-mountpoints-btn');
+    if (reloadLiveMountpointsBtn) {
+        reloadLiveMountpointsBtn.addEventListener('click', async () => {
+            await fetchCasterSources({ force: true });
+            renderAdminLiveMountpoints();
+            showToast('Đã tải lại mountpoints live', 'info');
+        });
+    }
+    
+    // ✅ ADMIN ONLY: Tab Mountpoints
+    const mountpointsTab = document.getElementById('tab-mountpoints');
+    if (mountpointsTab) {
+        mountpointsTab.addEventListener('shown.bs.tab', async () => {
+            await loadAndRenderMountpoints();
+        });
+    }
     
     document.getElementById('refresh-btn').addEventListener('click', async () => {
         const btn = document.getElementById('refresh-btn');
@@ -1317,6 +1463,258 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (icon) icon.classList.remove('spin-anim');
         showToast('Đã đồng bộ dữ liệu hệ thống', 'info');
     });
+
+    // ✅ Load and render mountpoints into tab
+    async function loadAndRenderMountpoints() {
+        const container = document.getElementById('mountpoints-container');
+        if (!container) return;
+
+        container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
+
+        try {
+            const res = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
+            if (!res.ok) throw new Error('Failed to fetch sources');
+            
+            const data = await res.json();
+            const domains = Object.keys(data.by_domain || {}).sort();
+            const sources = data.all || [];
+            const hostOptions = Object.keys(data.by_host || {}).sort();
+
+            if (sources.length === 0) {
+                container.innerHTML = '<div class="alert alert-warning text-center mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Không có mountpoint nào</div>';
+                return;
+            }
+
+            let html = `
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                    <button type="button" class="btn btn-success btn-sm" id="toggle-create-mp-btn">
+                        <i class="bi bi-plus-circle me-1"></i>Tạo mountpoint
+                    </button>
+                    <div class="input-group input-group-sm flex-grow-1" style="max-width: 420px;">
+                        <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control" id="mountpoints-search" placeholder="Tìm mountpoint, identifier, host...">
+                    </div>
+                </div>
+
+                <div class="card bg-dark-subtle border-secondary mb-3 d-none" id="create-mp-panel">
+                    <div class="card-body">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label small text-muted fw-bold mb-1">Host</label>
+                                <select class="form-select form-select-sm" id="create-mp-host">
+                                    ${hostOptions.map(h => `<option value="${h}">${h}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small text-muted fw-bold mb-1">Identifier</label>
+                                <input type="text" class="form-control form-control-sm" id="create-mp-identifier" placeholder="AitogyGNSS">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small text-muted fw-bold mb-1">Mountpoint</label>
+                                <input type="text" class="form-control form-control-sm" id="create-mp-name" placeholder="ATG.NEW">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small text-muted fw-bold mb-1">Password</label>
+                                <input type="text" class="form-control form-control-sm" id="create-mp-password" value="12345">
+                            </div>
+                            <div class="col-md-1 d-grid">
+                                <button type="button" class="btn btn-sm btn-success" id="create-mp-btn">Tạo</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="domain-filter" id="domain-all" value="all" checked>
+                        <label class="btn btn-outline-primary" for="domain-all">📊 Tất cả (${sources.length})</label>
+                        ${domains.map(d => `
+                            <input type="radio" class="btn-check" name="domain-filter" id="domain-${d}" value="${d}">
+                            <label class="btn btn-outline-info" for="domain-${d}">🌐 ${d} (${(data.by_domain[d] || []).length})</label>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="table-responsive rounded border border-secondary border-opacity-25 shadow-sm">
+                    <table class="table table-dark table-hover table-sm mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th>Mountpoint</th>
+                                <th>Identifier</th>
+                                <th>Domain / Host</th>
+                                <th>Password</th>
+                                <th>Data</th>
+                                <th>Position</th>
+                                <th>Format</th>
+                                <th>Auth</th>
+                                <th>GGA</th>
+                                <th>ShowPos</th>
+                                <th class="text-end">Hành động</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mountpoints-table-body">
+                            ${sources.map((src, idx) => `
+                                <tr class="small" data-domain="${src.domain || src.host || ''}">
+                                    <td>
+                                        <code class="text-info">${src.mountpoint}</code>
+                                        <button type="button" class="btn btn-sm btn-outline-success ms-2 copy-mp" data-mp="${src.mountpoint}" title="Copy">📋</button>
+                                    </td>
+                                    <td><small class="text-muted">${src.identifier}</small></td>
+                                    <td><span class="badge bg-secondary">${src.domain || src.host}</span></td>
+                                    <td><small class="text-warning">${src.password || '-'}</small></td>
+                                    <td><small>${Number(src.datacount || 0)}</small></td>
+                                    <td>${src.latitude && src.longitude ? `<small>${src.latitude.toFixed(4)}, ${src.longitude.toFixed(4)}</small>` : '<span class="text-muted">N/A</span>'}</td>
+                                    <td><small>${src.format}</small></td>
+                                    <td>
+                                        <span class="badge ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? 'bg-warning text-dark' : 'bg-success'}">
+                                            ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? '🔒 Required' : '🟢 Open'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? 'bg-danger' : 'bg-info'}">
+                                            ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? '✅ Required' : '❌ No'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? 'bg-primary' : 'bg-secondary'}">
+                                            ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? '👁️ On' : '🚫 Off'}
+                                        </span>
+                                    </td>
+                                    <td class="text-end">
+                                        <button type="button" class="btn btn-sm btn-outline-danger delete-mp" data-host="${src.host || ''}" data-identifier="${src.identifier || ''}" data-mountpoint="${src.mountpoint || ''}">Xóa</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3 p-2 bg-dark-subtle rounded small text-muted">
+                    <strong>💡 Tips:</strong>
+                    <ul class="mb-0 ms-3">
+                        <li>Click 📋 để copy mountpoint name</li>
+                        <li>Dùng các mountpoint này khi tạo Rover mới</li>
+                        <li>Admin có thể tạo/xóa mountpoint ngay tại đây</li>
+                    </ul>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+            
+            const toggleCreateMpBtn = container.querySelector('#toggle-create-mp-btn');
+            const createMpPanel = container.querySelector('#create-mp-panel');
+            if (toggleCreateMpBtn && createMpPanel) {
+                toggleCreateMpBtn.addEventListener('click', () => {
+                    createMpPanel.classList.toggle('d-none');
+                });
+            }
+
+            const mountpointsSearch = container.querySelector('#mountpoints-search');
+            const getSelectedDomain = () => {
+                const checked = container.querySelector('input[name="domain-filter"]:checked');
+                return checked ? checked.value : 'all';
+            };
+            const filterRows = () => {
+                const q = String(mountpointsSearch?.value || '').trim().toLowerCase();
+                const selectedDomain = getSelectedDomain();
+                container.querySelectorAll('#mountpoints-table-body tr').forEach(row => {
+                    const text = row.textContent.toLowerCase();
+                    const rowDomain = String(row.dataset.domain || '').trim();
+                    const matchText = !q || text.includes(q);
+                    const matchDomain = selectedDomain === 'all' || rowDomain === selectedDomain;
+                    row.style.display = (matchText && matchDomain) ? '' : 'none';
+                });
+            };
+            if (mountpointsSearch) {
+                mountpointsSearch.addEventListener('input', filterRows);
+            }
+
+            // Add copy button handlers
+            container.querySelectorAll('.copy-mp').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const mp = btn.dataset.mp;
+                    navigator.clipboard.writeText(mp);
+                    showToast(`Copied: ${mp}`, 'success');
+                });
+            });
+
+            const createMpBtn = container.querySelector('#create-mp-btn');
+            if (createMpBtn) {
+                createMpBtn.addEventListener('click', async () => {
+                    const host = container.querySelector('#create-mp-host')?.value?.trim();
+                    const identifier = container.querySelector('#create-mp-identifier')?.value?.trim();
+                    const mountpoint = container.querySelector('#create-mp-name')?.value?.trim();
+                    const password = container.querySelector('#create-mp-password')?.value?.trim() || '12345';
+                    if (!identifier || !mountpoint) {
+                        showToast('Vui lòng nhập identifier và mountpoint', 'warning');
+                        return;
+                    }
+
+                    try {
+                        createMpBtn.disabled = true;
+                        createMpBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                        const res = await fetch('/api/admin/caster-sources', {
+                            method: 'POST',
+                            headers: API_HEADERS,
+                            body: JSON.stringify({ host, identifier, mountpoint, password, counter: 0 })
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.detail || 'Không thể tạo mountpoint');
+                        showToast(`Đã tạo mountpoint ${mountpoint}`, 'success');
+                        await fetchCasterSources({ force: true });
+                        await loadAndRenderMountpoints();
+                        renderAdminLiveMountpoints();
+                    } catch (err) {
+                        showToast(err.message, 'danger');
+                    } finally {
+                        createMpBtn.disabled = false;
+                        createMpBtn.textContent = 'Tạo';
+                    }
+                });
+            }
+
+            container.querySelectorAll('.delete-mp').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const host = btn.dataset.host;
+                    const identifier = btn.dataset.identifier;
+                    const mountpoint = btn.dataset.mountpoint;
+                    if (!mountpoint) return;
+                    if (!confirm(`Xóa mountpoint "${mountpoint}" trên caster?`)) return;
+
+                    try {
+                        btn.disabled = true;
+                        const res = await fetch('/api/admin/caster-sources', {
+                            method: 'DELETE',
+                            headers: API_HEADERS,
+                            body: JSON.stringify({ host, identifier, mountpoint })
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.detail || 'Không thể xóa mountpoint');
+                        showToast(`Đã xóa mountpoint ${mountpoint}`, 'warning');
+                        await fetchCasterSources({ force: true });
+                        await loadAndRenderMountpoints();
+                        renderAdminLiveMountpoints();
+                    } catch (err) {
+                        showToast(err.message, 'danger');
+                    } finally {
+                        btn.disabled = false;
+                    }
+                });
+            });
+
+            // Add domain filter handlers
+            container.querySelectorAll('input[name="domain-filter"]').forEach(radio => {
+                radio.addEventListener('change', filterRows);
+            });
+
+            // Apply default filter state once after render.
+            filterRows();
+
+        } catch (e) {
+            console.error("[Mountpoints]", e);
+            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải mountpoints: ${e.message}</div>`;
+        }
+    }
 
     function showToast(msg, type = 'primary') {
         const container = document.getElementById('toast-container');

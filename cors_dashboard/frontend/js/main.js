@@ -1134,6 +1134,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         modalRoot.render(React.createElement(window.CasterConfigModal));
     }
     
+    if (window.CasterSourcesModal) {
+        const sourcesContainer = document.createElement('div');
+        document.body.appendChild(sourcesContainer);
+        const sourcesRoot = ReactDOM.createRoot(sourcesContainer);
+        sourcesRoot.render(React.createElement(window.CasterSourcesModal));
+    }
+    
 
     await loadInitialDevices();
     connectWebSocket();

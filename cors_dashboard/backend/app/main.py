@@ -2684,6 +2684,130 @@ async def get_caster_users(
     )
 
 
+@app.get("/api/admin/caster-sources")
+async def get_admin_caster_sources(
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    """
+    ✅ ADMIN ONLY: Fetch all available mountpoints/sources from NTRIP Caster(s).
+    Separated by domain (aitogy.com.vn, aitogy.click, etc.).
+    """
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ ADMIN mới có quyền xem toàn bộ mountpoints từ Caster")
+
+    from app.caster_client import CasterClient
+    
+    hosts, env_cfg = _read_caster_config_from_env()
+    if not hosts:
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
+
+    port = env_cfg.get("port") or 2101
+    sources_by_host = {}
+    all_sources = []
+
+    for host in hosts:
+        try:
+            caster = CasterClient(host, port)
+            sources = await caster.get_sources()
+            
+            if sources:
+                # Tag each source with its host for UI filtering
+                for src in sources:
+                    src["host"] = host
+                    src["domain"] = _extract_domain(host)  # aitogy.com.vn or aitogy.click
+                
+                sources_by_host[host] = sources
+                all_sources.extend(sources)
+                logger.info(f"[CASTER] Fetched {len(sources)} sources from {host}")
+            else:
+                sources_by_host[host] = []
+                logger.warning(f"[CASTER] No sources fetched from {host}")
+        except Exception as e:
+            logger.error(f"[CASTER] Failed to fetch sources from {host}: {e}")
+            sources_by_host[host] = []
+
+    # Group by domain for frontend
+    grouped_by_domain = {}
+    for src in all_sources:
+        domain = src.get("domain", "unknown")
+        if domain not in grouped_by_domain:
+            grouped_by_domain[domain] = []
+        grouped_by_domain[domain].append(src)
+
+    return {
+        "total": len(all_sources),
+        "by_host": sources_by_host,
+        "by_domain": grouped_by_domain,
+        "all": all_sources,
+    }
+
+
+@app.post("/api/admin/caster-sources")
+async def create_admin_caster_source(
+    req: schemas.CasterSourceCreateRequest,
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ ADMIN mới có quyền tạo mountpoint trên Caster")
+
+    from app.caster_client import CasterClient
+
+    hosts, env_cfg = _read_caster_config_from_env()
+    target_host = (req.host or (hosts[0] if hosts else None) or env_cfg.get("host") or settings.CASTER_HOST or "").strip()
+    if not target_host:
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
+
+    port = env_cfg.get("port") or int(settings.CASTER_PORT or 2101)
+    caster = CasterClient(target_host, port)
+    ok = await caster.create_source(req.identifier, req.mountpoint, req.password, req.counter)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Không thể tạo mountpoint '{req.mountpoint}' trên caster {target_host}")
+
+    return {"status": "ok", "host": target_host, "mountpoint": req.mountpoint, "identifier": req.identifier}
+
+
+@app.delete("/api/admin/caster-sources")
+async def delete_admin_caster_source(
+    req: schemas.CasterSourceDeleteRequest,
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ ADMIN mới có quyền xóa mountpoint trên Caster")
+
+    from app.caster_client import CasterClient
+
+    hosts, env_cfg = _read_caster_config_from_env()
+    target_host = (req.host or (hosts[0] if hosts else None) or env_cfg.get("host") or settings.CASTER_HOST or "").strip()
+    if not target_host:
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
+
+    port = env_cfg.get("port") or int(settings.CASTER_PORT or 2101)
+    caster = CasterClient(target_host, port)
+    ok = await caster.delete_source(req.identifier, req.mountpoint)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Không thể xóa mountpoint '{req.mountpoint}' trên caster {target_host}")
+
+    return {"status": "ok", "host": target_host, "mountpoint": req.mountpoint, "identifier": req.identifier}
+
+
+def _extract_domain(host: str) -> str:
+    """Extract domain from hostname (e.g., 'aitogy.com.vn' from 'caster.aitogy.com.vn')"""
+    h = str(host or "").strip().lower()
+    
+    # Match known domains
+    if "aitogy.com.vn" in h:
+        return "aitogy.com.vn"
+    if "aitogy.click" in h:
+        return "aitogy.click"
+    if "localhost" in h or "127.0.0.1" in h:
+        return "localhost"
+    if "localhost" in h or h.startswith("127."):
+        return "localhost"
+    
+    # Return as-is for unknown domains
+    return h
+
+
 @app.post("/api/caster/block-user")
 async def block_caster_user(
     req: schemas.BlockRoverRequest,
@@ -4438,11 +4562,12 @@ async def create_multi_base_rover(
     duration_seconds = request.expiry_days * 86400
     target_mountpoints = request.mountpoint_override.strip()
     
-    if not request.selected_serials:
-         raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm.")
+    selected_serials = list(request.selected_serials or [])
+    if not selected_serials and not is_admin:
+        raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm.")
     
-    # Gộp serial lại thành chuỗi để lưu vào base_serial
-    combined_serials = ",".join(request.selected_serials)
+    # Admin can create from live mountpoints without binding to a local station.
+    combined_serials = ",".join(selected_serials) if selected_serials else ""
 
     # 4. GỌI CASTER (Tạo user thật)
     try:

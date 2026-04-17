@@ -99,6 +99,20 @@ class LicenseResponse(BaseModel):
     serial: str
     license_key: str
 
+
+class CasterSourceCreateRequest(BaseModel):
+    host: Optional[str] = None
+    identifier: str
+    mountpoint: str
+    password: str = "12345"
+    counter: int = 0
+
+
+class CasterSourceDeleteRequest(BaseModel):
+    host: Optional[str] = None
+    identifier: str
+    mountpoint: str
+
 # --- USER SCHEMAS ---
 class UserBase(BaseModel):
     username: str

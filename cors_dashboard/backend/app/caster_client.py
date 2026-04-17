@@ -49,9 +49,10 @@ class CasterClient:
                     break
                 chunks.append(chunk)
                 
-                # Thoát sớm nếu thấy dấu hiệu kết thúc (Tăng tốc Polling)
+                # Thoát sớm chỉ khi gặp marker kết thúc thật sự của response.
+                # Không dừng ở chữ SOURCETABLE vì nó xuất hiện ngay trong header "SOURCETABLE 200 OK".
                 partial_resp = chunk.decode('utf-8', errors='ignore')
-                if "ENDCLIENTTABLE" in partial_resp or "END USERTABLE" in partial_resp or "SOURCETABLE" in partial_resp:
+                if "ENDCLIENTTABLE" in partial_resp or "ENDUSERTABLE" in partial_resp or "ENDSOURCETABLE" in partial_resp:
                     break
             
             return b"".join(chunks).decode('utf-8', errors='ignore')
@@ -117,6 +118,22 @@ class CasterClient:
     def _is_no_change_warning(response: str) -> bool:
         text = str(response or "").strip().lower()
         return "warning: no matching user updated" in text
+
+    @staticmethod
+    def _parse_int(value, default: int = 0) -> int:
+        try:
+            token = str(value).strip()
+            return int(token) if token else default
+        except Exception:
+            return default
+
+    @staticmethod
+    def _parse_float(value, default: float = 0.0) -> float:
+        try:
+            token = str(value).strip()
+            return float(token) if token else default
+        except Exception:
+            return default
 
     async def get_users(self) -> List[dict]:
         cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/password1/9999\r\n\r\n"
@@ -237,3 +254,113 @@ class CasterClient:
         cmd = f"GET /deluser HTTP/1.0/{identifier}/{username}\r\n\r\n"
         response = await self._send_command(cmd)
         return self._is_success_response(response)
+
+    async def create_source(self, identifier: str, mountpoint: str, password: str = "12345", counter: int = 0) -> bool:
+        safe_identifier = str(identifier or "").strip()
+        safe_mountpoint = str(mountpoint or "").strip()
+        safe_password = str(password or "12345").strip()
+        safe_counter = int(counter or 0)
+        cmd = f"GET /gensource HTTP/1.0/{safe_identifier}/{safe_mountpoint}/{safe_password}/{safe_counter}\r\n\r\n"
+        response = await self._send_command(cmd)
+        return self._is_success_response(response)
+
+    async def delete_source(self, identifier: str, mountpoint: str) -> bool:
+        safe_identifier = str(identifier or "").strip()
+        safe_mountpoint = str(mountpoint or "").strip()
+        cmd = f"GET /delsource HTTP/1.0/{safe_identifier}/{safe_mountpoint}\r\n\r\n"
+        response = await self._send_command(cmd)
+        return self._is_success_response(response)
+
+    async def get_sources(self) -> Optional[List[dict]]:
+        """
+        Fetch all available mountpoints/sources from NTRIP Caster via /sourcetable.
+        Returns list of sources with mountpoint, identifier, lat/lon, auth required, etc.
+        """
+        cmd = f"GET /sourcetable HTTP/1.0\r\n\r\n"
+        try:
+            response = await self._send_command(cmd)
+            if not response or "SOURCETABLE 200 OK" not in response:
+                logger.warning(f"Invalid sourcetable response from {self.host}:{self.port}")
+                return None
+
+            sources = []
+            for line in response.splitlines():
+                line = line.strip()
+                if "STR;" not in line:
+                    continue
+                
+                # Skip end marker
+                if "ENDSOURCETABLE" in line:
+                    break
+                
+                # Clean up trash bytes before STR; if any
+                if not line.startswith("STR;"):
+                    idx = line.find("STR;")
+                    if idx >= 0:
+                        line = line[idx:]
+                    else:
+                        continue
+
+                parts = [p.strip() for p in line.split(";")]
+
+                # Current caster variant returns:
+                # STR;Identifier;Mountpoint;Password;Datacount;Latitude;Longitude;AuthRequired;GGARequired;ShowPos
+                # Some older variants may return the full NTRIP sourcetable layout.
+                try:
+                    if len(parts) >= 10 and (parts[7].lower() in {"true", "false", "0", "1", "yes", "no", "on", "off"}):
+                        sources.append({
+                            "identifier": parts[1],
+                            "mountpoint": parts[2],
+                            "password": parts[3] if len(parts) > 3 else "",
+                            "datacount": self._parse_int(parts[4], 0),
+                            "latitude": self._parse_float(parts[5], 0.0),
+                            "longitude": self._parse_float(parts[6], 0.0),
+                            "auth_required": self._parse_bool_token(parts[7], default=True),
+                            "gga_required": self._parse_bool_token(parts[8], default=False),
+                            "show_position": self._parse_bool_token(parts[9], default=True),
+                            "host": self.host,
+                            "domain": self.host,
+                            "format": "",
+                            "format_details": "",
+                            "carrier": 0,
+                            "nav_system": "",
+                            "network": "",
+                            "country": "",
+                        })
+                        continue
+
+                    # Fallback to full NTRIP table layout
+                    if len(parts) >= 15:
+                        sources.append({
+                            "mountpoint": parts[1],
+                            "identifier": parts[2],
+                            "password": "",
+                            "datacount": 0,
+                            "format": parts[3],
+                            "format_details": parts[4],
+                            "carrier": self._parse_int(parts[5], 0),
+                            "nav_system": parts[6],
+                            "network": parts[7],
+                            "country": parts[8],
+                            "latitude": self._parse_float(parts[9], 0.0),
+                            "longitude": self._parse_float(parts[10], 0.0),
+                            "gga_required": self._parse_bool_token(parts[11], default=False),
+                            "show_position": True,
+                            "single_base_solution": self._parse_bool_token(parts[12], default=True),
+                            "generator": parts[13],
+                            "compression": parts[14] if len(parts) > 14 else "",
+                            "auth_required": parts[15] if len(parts) > 15 else "N",
+                            "fee": parts[16] if len(parts) > 16 else "N",
+                            "bitrate": parts[17] if len(parts) > 17 else "",
+                            "misc": parts[18] if len(parts) > 18 else "",
+                            "host": self.host,
+                            "domain": self.host,
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to parse source line: {line[:80]}, error: {e}")
+                    continue
+
+            return sources
+        except Exception as e:
+            logger.error(f"Error fetching sources from {self.host}:{self.port}: {e}")
+            return None
