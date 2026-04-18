@@ -827,18 +827,30 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
         cooldown_elapsed = now - last_ts
         is_cooling_down = cooldown_elapsed < 30 # 30 seconds debounce
 
+        wake_status = "joined-existing"
         if should_activate or not getattr(device, 'ntrip_connected', False):
             if is_cooling_down:
                 logger.info(
                     f"[RTCM] Skipping redundant activation for {serial} (mp={selected_mountpoint}) "
                     f"- Command storm protection active ({int(cooldown_elapsed)}s elapsed)"
                 )
+                wake_status = "cooldown-skip"
             else:
                 logger.info(f"[RTCM] Triggering activation for {serial} (mp={selected_mountpoint})")
                 last_station_activation_ts[serial] = now
                 await _set_station_stream(serial, active=True, mountpoint=selected_mountpoint, requested_address=requested_address)
+                wake_status = "activation-sent"
         else:
             logger.info(f"[RTCM] Joined existing pool for {serial} (mp={selected_mountpoint}, count={active_before_same_mp + 1})")
+
+        return {
+            "wake_status": wake_status,
+            "connected": bool(getattr(device, "ntrip_connected", False)),
+            "selected_mountpoint": str(selected_mountpoint),
+            "cooldown_elapsed": int(cooldown_elapsed),
+            "should_activate": bool(should_activate),
+            "active_sessions_same_mountpoint": int(active_before_same_mp + 1),
+        }
 
 
 def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bool:
@@ -2180,7 +2192,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
     if reason:
         msg = f"BLOCKED: {reason}"
         logger.warning(f"[NTRIP Wake] {msg} for {client_id}@{mountpoint}")
-        return PlainTextResponse(msg)
+        return PlainTextResponse(f"WAKE_STATUS: blocked\n{msg}")
 
     # 2. Bật trạm nếu hợp lệ
     try:
@@ -2188,12 +2200,12 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
             serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
             device = await crud.get_device_by_serial(db, serial)
             if not device:
-                return PlainTextResponse(f"ERROR: Trạm {serial} không tồn tại")
+                return PlainTextResponse(f"WAKE_STATUS: error\nERROR: Trạm {serial} không tồn tại")
             
             # Kiểm tra trạng thái trạm
             if str(getattr(device, 'status', '')).lower() == 'offline':
                 logger.warning(f"[NTRIP Wake] Station '{serial}' is OFFLINE. Cannot wake up.")
-                return PlainTextResponse(f"ERROR: Trạm {device.name or serial} đang offline")
+                return PlainTextResponse(f"WAKE_STATUS: offline\nERROR: Trạm {device.name or serial} đang offline")
 
             name = device.name if device else serial
             
@@ -2212,7 +2224,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
             if selected_server_id in (1, 2):
                 selected_server_host = str(cfg.get(f"serverhost{selected_server_id}", "") or "").strip()
             
-            await _ntrip_mqtt_start(
+            wake_result = await _ntrip_mqtt_start(
                 serial=serial,
                 mountpoint=mountpoint,
                 client_instance_id=client_id,
@@ -2221,22 +2233,40 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                 caster_host=selected_server_host
             )
 
+            wake_status = str(wake_result.get("wake_status", "unknown"))
+            connected_now = bool(wake_result.get("connected", False))
+            selected_mp = str(wake_result.get("selected_mountpoint", mountpoint) or mountpoint)
+            stream_hint = "streaming" if connected_now else "pending"
+
+            if wake_status == "activation-sent":
+                wake_note = "đã gửi lệnh bật trạm"
+            elif wake_status == "cooldown-skip":
+                wake_note = "bỏ qua lệnh bật do chống bão reconnect"
+            elif wake_status == "joined-existing":
+                wake_note = "đã ghép vào phiên đang hoạt động"
+            else:
+                wake_note = "đã xử lý yêu cầu wake"
+
             if selected_server_id in (1, 2):
                 logger.info(
                     f"[NTRIP Wake] route serial={serial} mountpoint={mountpoint} "
                     f"server_id={selected_server_id} host={selected_server_host or 'unknown'}"
                 )
 
-            # --- PHẢN HỒI SIÊU TỐC (FIRE & FORGET) ---
-            # Gửi lệnh xong là trả về OK ngay để tránh Caster chờ lâu gây Slow Request/Retry.
-            # Trạng thái trạm sẽ được cập nhật ngầm qua Agent status sau.
-            msg = f"OK bật trạm thành công {name}"
-            return PlainTextResponse(f"Lắng nghe thành công\n{msg}")
+            # Trả trạng thái rõ ràng để caster phân biệt "đã gửi lệnh" và "đang streaming".
+            response_lines = [
+                f"WAKE_STATUS: {wake_status}",
+                f"STREAM_HINT: {stream_hint}",
+                f"MOUNTPOINT: {selected_mp}",
+                "Lắng nghe thành công",
+                f"OK bật trạm thành công ({wake_note}) {name}",
+            ]
+            return PlainTextResponse("\n".join(response_lines))
             
     except Exception as e:
         msg = f"ERROR: {e}"
         logger.error(f"[NTRIP Wake ERR] {msg}")
-        return PlainTextResponse(msg, status_code=200)
+        return PlainTextResponse(f"WAKE_STATUS: error\n{msg}", status_code=200)
 
 
 # (Old single-instance Caster Rover Management API removed to prevent shadowing multi-instance logic)
