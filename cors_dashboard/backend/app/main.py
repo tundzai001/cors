@@ -2789,7 +2789,21 @@ async def create_admin_caster_source(
 
     port = env_cfg.get("port") or int(settings.CASTER_PORT or 2101)
     caster = CasterClient(target_host, port)
-    ok = await caster.create_source(req.identifier, req.mountpoint, req.password, req.counter)
+    ok = await caster.create_source(
+        req.identifier,
+        req.mountpoint,
+        req.password,
+        req.counter,
+        req.index,
+        req.latitude,
+        req.longitude,
+        req.auth_required,
+        req.gga_required,
+        req.show_position,
+        req.overlap_data,
+        req.re_positioning,
+        req.storing_data,
+    )
     if not ok:
         raise HTTPException(status_code=502, detail=f"Không thể tạo mountpoint '{req.mountpoint}' trên caster {target_host}")
 

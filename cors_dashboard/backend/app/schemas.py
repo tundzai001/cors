@@ -106,6 +106,15 @@ class CasterSourceCreateRequest(BaseModel):
     mountpoint: str
     password: str = "12345"
     counter: int = 0
+    index: Optional[int] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    auth_required: bool = True
+    gga_required: bool = False
+    show_position: bool = False
+    overlap_data: bool = False
+    re_positioning: bool = False
+    storing_data: bool = False
 
 
 class CasterSourceDeleteRequest(BaseModel):

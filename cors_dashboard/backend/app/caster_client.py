@@ -22,8 +22,12 @@ class CasterClient:
     def __init__(self, host: str, port: int, admin_user: str = "admin", admin_password: str = "12345"):
         self.host = host
         self.port = port
-        self.admin_user = admin_user
-        self.admin_password = admin_password
+        env_master_user = _get_env_preferring_dotenv("CASTER_MASTER_USER", "").strip()
+        env_master_password = _get_env_preferring_dotenv("CASTER_MASTER_PASSWORD", "").strip()
+
+        # Prefer explicit arguments first; if missing, use optional master credentials from env.
+        self.admin_user = str(admin_user or env_master_user or "admin").strip()
+        self.admin_password = str(admin_password or env_master_password or "12345").strip()
 
     async def _send_command(self, command: str) -> str:
         reader, writer = None, None
@@ -255,12 +259,41 @@ class CasterClient:
         response = await self._send_command(cmd)
         return self._is_success_response(response)
 
-    async def create_source(self, identifier: str, mountpoint: str, password: str = "12345", counter: int = 0) -> bool:
+    async def create_source(
+        self,
+        identifier: str,
+        mountpoint: str,
+        password: str = "12345",
+        counter: int = 0,
+        index: int | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        auth_required: bool = True,
+        gga_required: bool = False,
+        show_position: bool = False,
+        overlap_data: bool = False,
+        re_positioning: bool = False,
+        storing_data: bool = False,
+    ) -> bool:
         safe_identifier = str(identifier or "").strip()
         safe_mountpoint = str(mountpoint or "").strip()
         safe_password = str(password or "12345").strip()
         safe_counter = int(counter or 0)
-        cmd = f"GET /gensource HTTP/1.0/{safe_identifier}/{safe_mountpoint}/{safe_password}/{safe_counter}\r\n\r\n"
+        safe_index = int(index) if index is not None else -1
+        safe_latitude = float(latitude) if latitude is not None else 21.0717
+        safe_longitude = float(longitude) if longitude is not None else 105.7735
+        safe_auth = 1 if auth_required else 0
+        safe_gga = 1 if gga_required else 0
+        safe_show_pos = 1 if show_position else 0
+        safe_overlap = 1 if overlap_data else 0
+        safe_re_positioning = 1 if re_positioning else 0
+        safe_storing_data = 1 if storing_data else 0
+
+        cmd = (
+            f"GET /gensource HTTP/1.0/{safe_identifier}/{safe_mountpoint}/{safe_password}/{safe_counter}/"
+            f"{safe_index}/{safe_latitude}/{safe_longitude}/{safe_auth}/{safe_gga}/{safe_show_pos}/{safe_overlap}/"
+            f"{safe_re_positioning}/{safe_storing_data}\r\n\r\n"
+        )
         response = await self._send_command(cmd)
         return self._is_success_response(response)
 

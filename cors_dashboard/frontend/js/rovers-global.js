@@ -1479,6 +1479,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             const domains = Object.keys(data.by_domain || {}).sort();
             const sources = data.all || [];
             const hostOptions = Object.keys(data.by_host || {}).sort();
+            let noSortAsc = true;
+
+            const getRenderedSources = () => {
+                if (noSortAsc) return sources;
+                return [...sources].reverse();
+            };
 
             if (sources.length === 0) {
                 container.innerHTML = '<div class="alert alert-warning text-center mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Không có mountpoint nào</div>';
@@ -1498,12 +1504,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 <div class="card bg-dark-subtle border-secondary mb-3 d-none" id="create-mp-panel">
                     <div class="card-body">
-                        <div class="row g-2 align-items-end">
+                        <div class="row g-2 align-items-end mb-2">
                             <div class="col-md-3">
                                 <label class="form-label small text-muted fw-bold mb-1">Host</label>
                                 <select class="form-select form-select-sm" id="create-mp-host">
                                     ${hostOptions.map(h => `<option value="${h}">${h}</option>`).join('')}
                                 </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small text-muted fw-bold mb-1">No (ID)</label>
+                                <input type="number" class="form-control form-control-sm" id="create-mp-index" min="1" placeholder="Auto">
                             </div>
                             <div class="col-md-3">
                                 <label class="form-label small text-muted fw-bold mb-1">Identifier</label>
@@ -1513,10 +1523,36 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 <label class="form-label small text-muted fw-bold mb-1">Mountpoint</label>
                                 <input type="text" class="form-control form-control-sm" id="create-mp-name" placeholder="ATG.NEW">
                             </div>
-                            <div class="col-md-2">
+                            <div class="col-md-1">
                                 <label class="form-label small text-muted fw-bold mb-1">Password</label>
                                 <input type="text" class="form-control form-control-sm" id="create-mp-password" value="12345">
                             </div>
+                        </div>
+                        <div class="row g-2 align-items-end mb-2">
+                            <div class="col-md-2">
+                                <label class="form-label small text-muted fw-bold mb-1">Status</label>
+                                <input type="number" class="form-control form-control-sm" id="create-mp-status" value="0" min="0" step="1">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small text-muted fw-bold mb-1">Latitude</label>
+                                <input type="number" class="form-control form-control-sm" id="create-mp-lat" value="21.0717" step="0.000001">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small text-muted fw-bold mb-1">Longitude</label>
+                                <input type="number" class="form-control form-control-sm" id="create-mp-lon" value="105.7735" step="0.000001">
+                            </div>
+                            <div class="col-md-4">
+                                <div class="d-flex flex-wrap gap-3 small text-muted pt-2">
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-auth" checked>AuthRequired</label>
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-gga">GGA Required</label>
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-showpos">Show Position</label>
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-overlap">Overlap Data</label>
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-recal">Calculating Position</label>
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-store">Storing Data</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row g-2 align-items-end">
                             <div class="col-md-1 d-grid">
                                 <button type="button" class="btn btn-sm btn-success" id="create-mp-btn">Tạo</button>
                             </div>
@@ -1539,6 +1575,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <table class="table table-dark table-hover table-sm mb-0 align-middle">
                         <thead>
                             <tr>
+                                <th style="width: 70px;">
+                                    <button type="button" class="btn btn-link btn-sm text-decoration-none p-0" id="sort-no-btn" title="Sắp xếp theo No">
+                                        No <span id="sort-no-indicator">↑</span>
+                                    </button>
+                                </th>
                                 <th>Mountpoint</th>
                                 <th>Identifier</th>
                                 <th>Domain / Host</th>
@@ -1553,8 +1594,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             </tr>
                         </thead>
                         <tbody id="mountpoints-table-body">
-                            ${sources.map((src, idx) => `
+                            ${getRenderedSources().map((src, idx) => `
                                 <tr class="small" data-domain="${src.domain || src.host || ''}">
+                                    <td><span class="text-muted fw-semibold">${idx + 1}</span></td>
                                     <td>
                                         <code class="text-info">${src.mountpoint}</code>
                                         <button type="button" class="btn btn-sm btn-outline-success ms-2 copy-mp" data-mp="${src.mountpoint}" title="Copy">📋</button>
@@ -1629,6 +1671,92 @@ document.addEventListener('DOMContentLoaded', async () => {
                 mountpointsSearch.addEventListener('input', filterRows);
             }
 
+            const sortNoBtn = container.querySelector('#sort-no-btn');
+            const mountpointsBody = container.querySelector('#mountpoints-table-body');
+            const sortNoIndicator = container.querySelector('#sort-no-indicator');
+            if (sortNoBtn && mountpointsBody) {
+                sortNoBtn.addEventListener('click', () => {
+                    noSortAsc = !noSortAsc;
+                    const renderedSources = getRenderedSources();
+                    mountpointsBody.innerHTML = renderedSources.map((src, idx) => `
+                        <tr class="small" data-domain="${src.domain || src.host || ''}">
+                            <td><span class="text-muted fw-semibold">${idx + 1}</span></td>
+                            <td>
+                                <code class="text-info">${src.mountpoint}</code>
+                                <button type="button" class="btn btn-sm btn-outline-success ms-2 copy-mp" data-mp="${src.mountpoint}" title="Copy">📋</button>
+                            </td>
+                            <td><small class="text-muted">${src.identifier}</small></td>
+                            <td><span class="badge bg-secondary">${src.domain || src.host}</span></td>
+                            <td><small class="text-warning">${src.password || '-'}</small></td>
+                            <td><small>${Number(src.datacount || 0)}</small></td>
+                            <td>${src.latitude && src.longitude ? `<small>${src.latitude.toFixed(4)}, ${src.longitude.toFixed(4)}</small>` : '<span class="text-muted">N/A</span>'}</td>
+                            <td><small>${src.format}</small></td>
+                            <td>
+                                <span class="badge ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? 'bg-warning text-dark' : 'bg-success'}">
+                                    ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? '🔒 Required' : '🟢 Open'}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? 'bg-danger' : 'bg-info'}">
+                                    ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? '✅ Required' : '❌ No'}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? 'bg-primary' : 'bg-secondary'}">
+                                    ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? '👁️ On' : '🚫 Off'}
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                <button type="button" class="btn btn-sm btn-outline-danger delete-mp" data-host="${src.host || ''}" data-identifier="${src.identifier || ''}" data-mountpoint="${src.mountpoint || ''}">Xóa</button>
+                            </td>
+                        </tr>
+                    `).join('');
+
+                    if (sortNoIndicator) {
+                        sortNoIndicator.textContent = noSortAsc ? '↑' : '↓';
+                    }
+
+                    filterRows();
+
+                    container.querySelectorAll('.copy-mp').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            const mp = btn.dataset.mp;
+                            navigator.clipboard.writeText(mp);
+                            showToast(`Copied: ${mp}`, 'success');
+                        });
+                    });
+
+                    container.querySelectorAll('.delete-mp').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const host = btn.dataset.host;
+                            const identifier = btn.dataset.identifier;
+                            const mountpoint = btn.dataset.mountpoint;
+                            if (!mountpoint) return;
+                            if (!confirm(`Xóa mountpoint "${mountpoint}" trên caster?`)) return;
+
+                            try {
+                                btn.disabled = true;
+                                const res = await fetch('/api/admin/caster-sources', {
+                                    method: 'DELETE',
+                                    headers: API_HEADERS,
+                                    body: JSON.stringify({ host, identifier, mountpoint })
+                                });
+                                const data = await res.json().catch(() => ({}));
+                                if (!res.ok) throw new Error(data.detail || 'Không thể xóa mountpoint');
+                                showToast(`Đã xóa mountpoint ${mountpoint}`, 'warning');
+                                await fetchCasterSources({ force: true });
+                                await loadAndRenderMountpoints();
+                                renderAdminLiveMountpoints();
+                            } catch (err) {
+                                showToast(err.message, 'danger');
+                            } finally {
+                                btn.disabled = false;
+                            }
+                        });
+                    });
+                });
+            }
+
             // Add copy button handlers
             container.querySelectorAll('.copy-mp').forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -1642,11 +1770,47 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (createMpBtn) {
                 createMpBtn.addEventListener('click', async () => {
                     const host = container.querySelector('#create-mp-host')?.value?.trim();
+                    const indexRaw = container.querySelector('#create-mp-index')?.value?.trim();
                     const identifier = container.querySelector('#create-mp-identifier')?.value?.trim();
                     const mountpoint = container.querySelector('#create-mp-name')?.value?.trim();
                     const password = container.querySelector('#create-mp-password')?.value?.trim() || '12345';
+                    const statusRaw = container.querySelector('#create-mp-status')?.value?.trim();
+                    const latRaw = container.querySelector('#create-mp-lat')?.value?.trim();
+                    const lonRaw = container.querySelector('#create-mp-lon')?.value?.trim();
+                    const authRequired = Boolean(container.querySelector('#create-mp-auth')?.checked);
+                    const ggaRequired = Boolean(container.querySelector('#create-mp-gga')?.checked);
+                    const showPosition = Boolean(container.querySelector('#create-mp-showpos')?.checked);
+                    const overlapData = Boolean(container.querySelector('#create-mp-overlap')?.checked);
+                    const rePositioning = Boolean(container.querySelector('#create-mp-recal')?.checked);
+                    const storingData = Boolean(container.querySelector('#create-mp-store')?.checked);
+
+                    const index = indexRaw ? parseInt(indexRaw, 10) : null;
+                    const counter = statusRaw ? parseInt(statusRaw, 10) : 0;
+                    const latitude = latRaw ? parseFloat(latRaw) : null;
+                    const longitude = lonRaw ? parseFloat(lonRaw) : null;
+
                     if (!identifier || !mountpoint) {
                         showToast('Vui lòng nhập identifier và mountpoint', 'warning');
+                        return;
+                    }
+
+                    if (!Number.isFinite(counter) || counter < 0) {
+                        showToast('Status phải là số nguyên >= 0', 'warning');
+                        return;
+                    }
+
+                    if (index !== null && (!Number.isFinite(index) || index <= 0)) {
+                        showToast('No (ID) phải là số nguyên > 0', 'warning');
+                        return;
+                    }
+
+                    if (latitude !== null && !Number.isFinite(latitude)) {
+                        showToast('Latitude không hợp lệ', 'warning');
+                        return;
+                    }
+
+                    if (longitude !== null && !Number.isFinite(longitude)) {
+                        showToast('Longitude không hợp lệ', 'warning');
                         return;
                     }
 
@@ -1656,7 +1820,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                         const res = await fetch('/api/admin/caster-sources', {
                             method: 'POST',
                             headers: API_HEADERS,
-                            body: JSON.stringify({ host, identifier, mountpoint, password, counter: 0 })
+                            body: JSON.stringify({
+                                host,
+                                identifier,
+                                mountpoint,
+                                password,
+                                counter,
+                                index,
+                                latitude,
+                                longitude,
+                                auth_required: authRequired,
+                                gga_required: ggaRequired,
+                                show_position: showPosition,
+                                overlap_data: overlapData,
+                                re_positioning: rePositioning,
+                                storing_data: storingData,
+                            })
                         });
                         const data = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(data.detail || 'Không thể tạo mountpoint');
