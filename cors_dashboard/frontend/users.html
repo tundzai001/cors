@@ -109,8 +109,24 @@
                             </label>
                         </div>
                         <hr>
+                        <div id="extra-mountpoints-section" class="d-none">
+                            <hr>
+                            <h5 class="mb-3">MountPoints bổ sung (Caster only)</h5>
+                            <div class="mb-2">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                    <input type="text" class="form-control" id="search-extra-mps" placeholder="Tìm nhanh MountPoint...">
+                                </div>
+                            </div>
+                            <div id="extra-mps-checklist" class="p-3 border rounded bg-dark-subtle" style="max-height: 200px; overflow-y: auto;">
+                                <!-- Checkbox các MP từ Caster sẽ được chèn vào đây -->
+                                <div class="text-center text-muted small py-2">Đang tải danh sách từ Caster...</div>
+                            </div>
+                        </div>
+
                         <!-- PHẦN GÁN TRẠM (CHỈ HIỆN KHI LÀ COORDINATOR) -->
                         <div id="device-assignment-section" class="d-none">
+                             <hr>
                              <h5 class="mb-3">Gán Trạm cho Coordinator</h5>
                              <p class="small text-muted">Chọn các trạm mà người dùng này có quyền xem và chỉnh sửa.</p>
                              <div id="device-checklist" class="p-3 border rounded" style="max-height: 200px; overflow-y: auto;">

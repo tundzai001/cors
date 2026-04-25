@@ -60,6 +60,7 @@ class User(AuthBase):
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(BigInteger, nullable=False)
     can_create_rovers = Column(Boolean, default=False, nullable=False)
+    extra_mountpoints = Column(String, nullable=True) # Danh sÃ¡ch MP bÃ´Ì‰ sung (dÃ¢Ì u ; ngÄƒn caÌ ch)
 
 class IpSecurityLog(AuthBase):
     __tablename__ = 'ip_security_logs'

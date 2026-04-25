@@ -23,8 +23,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const deviceAssignmentSection = document.getElementById('device-assignment-section');
     const roverPermissionSection = document.getElementById('rover-permission-section');
     const deviceChecklist = document.getElementById('device-checklist');
+    const extraMountpointsSection = document.getElementById('extra-mountpoints-section');
+    const extraMpsChecklist = document.getElementById('extra-mps-checklist');
+    const searchExtraMpsInput = document.getElementById('search-extra-mps');
     
     let allDevices = []; // Lưu danh sách tất cả các trạm
+    let allCasterSources = []; // Lưu danh sách MP từ Caster
 
     // Hàm lấy danh sách users và hiển thị
     async function fetchAndDisplayUsers() {
@@ -54,6 +58,20 @@ document.addEventListener('DOMContentLoaded', () => {
             allDevices = await response.json();
         } catch (error) {
             console.error(error);
+        }
+    }
+
+    async function fetchCasterSources() {
+        try {
+            const response = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
+            if (!response.ok) throw new Error('Không thể lấy danh sách MountPoint từ Caster.');
+            const data = await response.json();
+            // Lấy danh sách MP duy nhất từ tất cả các host
+            allCasterSources = data.all || [];
+            return allCasterSources;
+        } catch (error) {
+            console.error(error);
+            return [];
         }
     }
 
@@ -95,7 +113,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // ==========================
 
         deviceAssignmentSection.classList.add('d-none');
+        extraMountpointsSection.classList.add('d-none'); 
         renderDeviceChecklist();
+        renderExtraMpsChecklist();
     });
     
     // Mở modal để sửa user
@@ -129,16 +149,23 @@ document.addEventListener('DOMContentLoaded', () => {
             modalTitle.textContent = `Sửa User: ${user.username}`;
             document.getElementById('can_create_rovers').checked = user.can_create_rovers;
             
-            // Hiển thị phần gán trạm nếu là coordinator
+            // Hiển thị các phần cấu hình nếu là coordinator/operator
             if(user.role === 'coordinator' || user.role === 'operator') {
                 deviceAssignmentSection.classList.remove('d-none');
                 roverPermissionSection.classList.remove('d-none');
+                extraMountpointsSection.classList.remove('d-none');
+                
                 // Lấy danh sách serial của các trạm đã gán
                 const assignedSerials = userDevices.map(d => d.serial);
                 renderDeviceChecklist(assignedSerials);
+                
+                // Parse danh sách MP bổ sung
+                const extraMps = (user.extra_mountpoints || "").split(/[;,\s\n]+/).map(m => m.trim()).filter(Boolean);
+                renderExtraMpsChecklist(extraMps);
             } else {
                 deviceAssignmentSection.classList.add('d-none');
                 roverPermissionSection.classList.add('d-none');
+                extraMountpointsSection.classList.add('d-none');
             }
 
             userModal.show();
@@ -196,7 +223,8 @@ document.addEventListener('DOMContentLoaded', () => {
             full_name: document.getElementById('full_name').value,
             role: document.getElementById('role').value,
             is_active: document.getElementById('is_active').checked,
-            can_create_rovers: false 
+            can_create_rovers: false,
+            extra_mountpoints: ""
         };
         
         if (password) {
@@ -208,6 +236,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                             .map(cb => cb.value);
             
             payload.can_create_rovers = document.getElementById('can_create_rovers').checked;
+            
+            // Thu thập MountPoints bổ sung
+            payload.extra_mountpoints = Array.from(extraMpsChecklist.querySelectorAll('input[type="checkbox"]:checked'))
+                                             .map(cb => cb.value)
+                                             .join(';');
         }
 
         const method = userId ? 'PUT' : 'POST';
@@ -247,13 +280,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.value === 'coordinator' || e.target.value === 'operator') {
             deviceAssignmentSection.classList.remove('d-none');
             roverPermissionSection.classList.remove('d-none');
+            extraMountpointsSection.classList.remove('d-none');
             // Lấy danh sách các trạm đã được gán hiện tại để hiển thị đúng checkbox
             const assignedSerials = Array.from(deviceChecklist.querySelectorAll('input[type="checkbox"]:checked'))
                                          .map(cb => cb.value);
             renderDeviceChecklist(assignedSerials);
+            
+            const extraMps = Array.from(extraMpsChecklist.querySelectorAll('input[type="checkbox"]:checked'))
+                                  .map(cb => cb.value);
+            renderExtraMpsChecklist(extraMps);
         } else {    
             deviceAssignmentSection.classList.add('d-none');
             roverPermissionSection.classList.add('d-none');
+            extraMountpointsSection.classList.add('d-none');
         }
     });
 
@@ -282,6 +321,57 @@ document.addEventListener('DOMContentLoaded', () => {
             deviceChecklist.appendChild(div);
         });
     }
+
+    // Render danh sách checkbox các MP từ Caster
+    function renderExtraMpsChecklist(assignedMps = []) {
+        extraMpsChecklist.innerHTML = '<div class="text-center text-muted small py-2">Đang tải danh sách...</div>';
+        
+        // Nếu đã có dữ liệu rồi thì render luôn, không thì fetch
+        if (allCasterSources.length > 0) {
+            doRender();
+        } else {
+            fetchCasterSources().then(() => doRender());
+        }
+
+        function doRender() {
+            extraMpsChecklist.innerHTML = '';
+            if (allCasterSources.length === 0) {
+                extraMpsChecklist.innerHTML = '<div class="text-center text-muted small py-2">Không tìm thấy MountPoint nào trên Caster.</div>';
+                return;
+            }
+
+            // Lấy danh sách MP duy nhất và sắp xếp
+            const uniqueMps = Array.from(new Set(allCasterSources.map(s => s.mountpoint))).sort();
+
+            uniqueMps.forEach(mp => {
+                const isChecked = assignedMps.includes(mp);
+                const div = document.createElement('div');
+                div.className = 'form-check extra-mp-item';
+                div.dataset.mountpoint = mp.toLowerCase();
+                div.innerHTML = `
+                    <input class="form-check-input" type="checkbox" value="${mp}" id="extra-mp-${mp}" ${isChecked ? 'checked' : ''}>
+                    <label class="form-check-label" for="extra-mp-${mp}">
+                        <code class="text-info">${mp}</code>
+                    </label>
+                `;
+                extraMpsChecklist.appendChild(div);
+            });
+        }
+    }
+
+    // Xử lý tìm kiếm MP bổ sung
+    searchExtraMpsInput.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        const items = extraMpsChecklist.querySelectorAll('.extra-mp-item');
+        
+        items.forEach(item => {
+            if (item.dataset.mountpoint.includes(query)) {
+                item.classList.remove('d-none');
+            } else {
+                item.classList.add('d-none');
+            }
+        });
+    });
 
     function getRoleBadgeClass(role) {
         if (role === 'admin') return 'bg-danger';

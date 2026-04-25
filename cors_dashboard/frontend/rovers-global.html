@@ -616,6 +616,43 @@
                             </div>
                         </div>
 
+                        <!-- MOUNTPOINT MANUAL (GIỐNG CREATE) -->
+                        <div class="mb-3">
+                            <label class="form-label small text-muted fw-bold">Allowed Mountpoints (Các luồng được phép)</label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-dark border-secondary"><i class="bi bi-broadcast"></i></span>
+                                <input type="text" class="form-control" id="edit-mountpoints" required placeholder="...">
+                            </div>
+                        </div>
+
+                        <div id="edit-admin-live-mountpoints-box" class="mb-3 d-none">
+                            <label class="form-label small text-muted fw-bold">MountPoints bổ sung (Được cấp)</label>
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-8">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="edit-live-mp-search" placeholder="Tìm mountpoint, identifier, host...">
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <select class="form-select form-select-sm" id="edit-live-mp-host-filter">
+                                        <option value="all">Tất cả host</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="border rounded p-2 bg-dark-subtle" style="max-height: 180px; overflow-y: auto;" id="edit-admin-live-mountpoints-list">
+                                <div class="text-muted small text-center">Đang tải danh sách mountpoints...</div>
+                            </div>
+                            <div class="d-flex gap-2 mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-info" id="edit-apply-live-mountpoints-btn">
+                                    <i class="bi bi-plus-circle me-1"></i>Đưa vào Allowed Mountpoints
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="edit-reload-live-mountpoints-btn">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Tải lại
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="row g-3 mb-3">
                             <div class="col-12">
                                 <label class="form-label small text-muted fw-bold">Mật khẩu mới (Để trống nếu không

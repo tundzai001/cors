@@ -563,13 +563,15 @@ async def get_all_users(db: AsyncSession) -> list[models.User]:
     result = await db.execute(select(models.User).order_by(models.User.username))
     return result.scalars().all()
 
-async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None) -> models.User:
+async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, extra_mountpoints: str | None = None) -> models.User:
     db_user = models.User(
         username=username, 
         hashed_password=hashed_password, 
         full_name=full_name, 
         role=role, 
-        is_active=True, 
+        is_active=is_active, 
+        can_create_rovers=can_create_rovers,
+        extra_mountpoints=extra_mountpoints,
         created_at=int(time.time())
     )
     db.add(db_user)

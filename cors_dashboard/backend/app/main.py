@@ -15,6 +15,7 @@ import io
 import os
 import time
 import csv
+import re
 import psutil
 import secrets
 import ctypes
@@ -2589,9 +2590,17 @@ async def get_caster_users(
         # 2. Lấy danh sách rover mà user tạo ra
         my_rovers = await crud.get_all_rovers_by_user(auth_db, current_user.id, current_user.role)
         
-        # 3. Lọc: Rover vừa do user tạo, vừa được gán vào trạm user quản lý
+        # 3. Lọc: 
+        # - Cho phép những Rover do chính User tạo ra (đã lấy ở bước 2)
+        # - HOẶC Rover thuộc trạm mà User quản lý
         allowed_usernames = set()
         for r in my_rovers:
+            # Luôn cho phép nếu chính user là người tạo (bao gồm cả Caster-only MP)
+            if r.created_by_user_id == current_user.id:
+                allowed_usernames.add(str(r.username).strip().lower())
+                continue
+                
+            # Nếu không phải người tạo, kiểm tra xem có thuộc trạm mình quản lý không
             r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
             if any(s in managed_serials for s in r_serials):
                 allowed_usernames.add(str(r.username).strip().lower())
@@ -3660,8 +3669,14 @@ async def create_user(
     # -----------------------------------------------------------
         
     new_user = await crud.create_user(
-        auth_db, username=user_data.username, hashed_password=hashed_password,
-        role=user_data.role, full_name=user_data.full_name
+        auth_db, 
+        username=user_data.username, 
+        hashed_password=hashed_password,
+        role=user_data.role, 
+        full_name=user_data.full_name,
+        is_active=user_data.is_active,
+        can_create_rovers=user_data.can_create_rovers,
+        extra_mountpoints=user_data.extra_mountpoints
     )
     
     if user_data.assigned_devices and new_user.role == 'coordinator':
@@ -4070,10 +4085,17 @@ async def create_rover_for_base(
     # Lọc giá trị None/Rỗng
     valid_mps = [mp for mp in valid_mps if mp]
 
+    # Gộp thêm extra mountpoints của user (nếu có)
+    if current_user.extra_mountpoints:
+        extra_list = [mp.strip() for mp in re.split(r'[;,\s\n]+', current_user.extra_mountpoints) if mp.strip()]
+        valid_mps.extend(extra_list)
+
     if not valid_mps:
         target_mountpoint = f"MP_{serial}"
     elif target_mountpoint not in valid_mps:
-        target_mountpoint = valid_mps[0]
+        # Nếu là Admin hoặc MP nằm trong danh sách hợp lệ mở rộng thì cho qua
+        if not is_admin and target_mountpoint not in valid_mps:
+            target_mountpoint = valid_mps[0]
 
     duration_seconds = 315360000 # 10 năm mặc định
     
@@ -4145,7 +4167,11 @@ async def update_rover(
         owned_serials = set(owned_res.scalars().all())
         
         for sn in serials:
-            if sn.strip() not in owned_serials:
+            sn_clean = sn.strip()
+            # Nếu trạm ảo (serial trống) và là người tạo thì cho qua
+            if sn_clean == "" and is_creator:
+                continue
+            if sn_clean not in owned_serials:
                 raise HTTPException(status_code=403, detail=f"Bạn không có quyền quản lý Rover thuộc trạm '{sn}'.")
 
 
@@ -4324,7 +4350,11 @@ async def delete_rover(
         owned_serials = set(owned_res.scalars().all())
         
         for sn in serials:
-            if sn.strip() not in owned_serials:
+            sn_clean = sn.strip()
+            # Nếu trạm ảo (serial trống) và là người tạo thì cho qua
+            if sn_clean == "" and is_creator:
+                continue
+            if sn_clean not in owned_serials:
                 raise HTTPException(status_code=403, detail=f"Bạn không có quyền quản lý Rover thuộc trạm '{sn}'.")
 
     
@@ -4607,10 +4637,42 @@ async def create_multi_base_rover(
     target_mountpoints = request.mountpoint_override.strip()
     
     selected_serials = list(request.selected_serials or [])
-    if not selected_serials and not is_admin:
-        raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm.")
     
-    # Admin can create from live mountpoints without binding to a local station.
+    # 3. Xác định danh sÃ¡ch Mountpoint hợp lệ (Đặc biệt cho Coordinator)
+    if current_user.role == auth.Role.COORDINATOR:
+        valid_mps = set()
+        
+        # 1. MP từ cÃ¡c trạm vật lÃ½ được chọn
+        if request.selected_serials:
+            for serial in request.selected_serials:
+                dev = await crud.get_device_by_serial(devices_db, serial)
+                if dev and dev.user_id == current_user.id:
+                    sc = dev.service_config or {}
+                    if sc.get('server1_enabled') and sc.get('mountpoint1'): 
+                        valid_mps.add(sc.get('mountpoint1'))
+                    if sc.get('server2_enabled') and sc.get('mountpoint2'): 
+                        valid_mps.add(sc.get('mountpoint2'))
+        
+        # 2. MP bổ sung được gÃ¡n rÃªng
+        if current_user.extra_mountpoints:
+            extras = [mp.strip() for mp in re.split(r'[;,\s\n]+', current_user.extra_mountpoints) if mp.strip()]
+            valid_mps.update(extras)
+            
+        # 3. Kiểm tra Mountpoint yÃªu cầu
+        requested = [mp.strip() for mp in re.split(r'[;,\s\n]+', request.mountpoint_override) if mp.strip()]
+        if not requested:
+             raise HTTPException(status_code=400, detail="Mountpoint không được để trống.")
+             
+        for mp in requested:
+            if mp not in valid_mps:
+                raise HTTPException(status_code=403, detail=f"Mountpoint '{mp}' không thuộc quyền quản lý của bạn.")
+
+    # 4. Nới lỏng yêu cầu chọn trạm: 
+    # Nếu là Coordinator vÃ  đã có mountpoint_override (hợp lệ) thì khÃ´ng bắt buộc chọn trạm vật lÃ½.
+    if not selected_serials and not is_admin:
+        if current_user.role != auth.Role.COORDINATOR or not target_mountpoints:
+            raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm hoặc Mountpoint bổ sung.")
+
     combined_serials = ",".join(selected_serials) if selected_serials else ""
 
     # 4. GỌI CASTER (Tạo user thật)
@@ -5752,7 +5814,7 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
 app.add_middleware(MonitoringMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://cors.aitogy.com"],  # âš ï¸ Trong production, hãy chỉ định origins cụ thể
+    allow_origins=["https://cors.aitogy.com, http://118.70.171.179:8000"],  # âš ï¸ Trong production, hãy chỉ định origins cụ thể
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

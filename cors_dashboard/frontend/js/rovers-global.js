@@ -97,6 +97,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderTable();
             if (String(currentUser?.role || '').toLowerCase() === 'admin') {
                 renderAdminLiveMountpoints();
+            } else if (currentUser?.extra_mountpoints) {
+                 renderCoordinatorExtraMountpoints();
             } else {
                 document.getElementById('admin-live-mountpoints-box')?.classList.add('d-none');
             }
@@ -198,6 +200,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     createContainer.appendChild(div);
                 });
             }
+            // Add listeners
+            document.querySelectorAll('.caster-target-check').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    applyLiveMpFilter('');
+                    updateMountpointInput('');
+                });
+            });
         }
 
         if (editContainer) {
@@ -215,6 +224,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     editContainer.appendChild(div);
                 });
             }
+            // Add listeners
+            document.querySelectorAll('.edit-caster-target-check').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    applyLiveMpFilter('edit-');
+                    updateMountpointInput('edit-');
+                });
+            });
         }
     }
 
@@ -293,18 +309,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         ));
     }
 
-    function renderAdminLiveMountpoints() {
-        const box = document.getElementById('admin-live-mountpoints-box');
-        const list = document.getElementById('admin-live-mountpoints-list');
-        const searchInput = document.getElementById('live-mp-search');
-        const hostFilter = document.getElementById('live-mp-host-filter');
+    async function renderAdminLiveMountpoints(prefix = '') {
+        const box = document.getElementById(`${prefix}admin-live-mountpoints-box`);
+        const list = document.getElementById(`${prefix}admin-live-mountpoints-list`);
+        const searchInput = document.getElementById(`${prefix}live-mp-search`);
+        const hostFilter = document.getElementById(`${prefix}live-mp-host-filter`);
         if (!box || !list) return;
 
         const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
-        if (!isAdmin) {
-            box.classList.add('d-none');
-            return;
-        }
+        if (!isAdmin && prefix === '') return; // For create, only admins see this logic. Edit might be different.
+        
+        const label = box.querySelector('.form-label');
+        if (label) label.textContent = 'Mountpoints Live từ Caster (Admin)';
 
         const sources = getAllCasterSources();
         if (!sources.length) {
@@ -324,41 +340,102 @@ document.addEventListener('DOMContentLoaded', async () => {
         box.classList.remove('d-none');
         list.innerHTML = sources.map((src, idx) => `
             <div class="form-check mb-1 live-mp-item" data-host="${src.host || ''}" data-search="${String(src.mountpoint || '').toLowerCase()} ${String(src.identifier || '').toLowerCase()} ${String(src.host || '').toLowerCase()}">
-                <input class="form-check-input live-mp-check" type="checkbox" id="live-mp-${idx}" value="${src.mountpoint || ''}" data-host="${src.host || ''}">
-                <label class="form-check-label small text-white" for="live-mp-${idx}">
+                <input class="form-check-input live-mp-check" type="checkbox" id="${prefix}live-mp-${idx}" value="${src.mountpoint || ''}" data-host="${src.host || ''}">
+                <label class="form-check-label small text-white" for="${prefix}live-mp-${idx}">
                     <code class="text-info">${src.mountpoint || ''}</code>
                     <span class="text-muted ms-1">(${src.identifier || src.host || ''})</span>
                 </label>
             </div>
         `).join('');
 
-        const applyLiveMpFilter = () => {
-            const q = String(searchInput?.value || '').trim().toLowerCase();
-            const h = String(hostFilter?.value || 'all').trim();
-            list.querySelectorAll('.live-mp-item').forEach(item => {
-                const text = item.dataset.search || '';
-                const host = item.dataset.host || '';
-                const matchText = !q || text.includes(q);
-                const matchHost = h === 'all' || host === h;
-                item.style.display = (matchText && matchHost) ? '' : 'none';
-            });
-        };
-
-        if (searchInput) searchInput.addEventListener('input', applyLiveMpFilter);
-        if (hostFilter) hostFilter.addEventListener('change', applyLiveMpFilter);
-        applyLiveMpFilter();
+        if (searchInput) searchInput.oninput = () => applyLiveMpFilter(prefix);
+        if (hostFilter) hostFilter.onchange = () => applyLiveMpFilter(prefix);
+        applyLiveMpFilter(prefix);
     }
 
-    function applySelectedLiveMountpoints() {
-        const checked = Array.from(document.querySelectorAll('.live-mp-check:checked')).map(cb => cb.value);
-        if (!checked.length) {
-            showToast('Vui lòng chọn ít nhất 1 mountpoint live', 'warning');
+    async function renderCoordinatorExtraMountpoints(prefix = '') {
+        const box = document.getElementById(`${prefix}admin-live-mountpoints-box`);
+        const list = document.getElementById(`${prefix}admin-live-mountpoints-list`);
+        const searchInput = document.getElementById(`${prefix}live-mp-search`);
+        const hostFilterLabel = document.getElementById(`${prefix}live-mp-host-filter`);
+        if (!box || !list) return;
+
+        const extraMps = (currentUser.extra_mountpoints || "").split(';').map(m => m.trim()).filter(Boolean);
+        if (extraMps.length === 0) {
+            box.classList.add('d-none');
             return;
         }
 
-        const current = normalizeMountpointList(document.getElementById('new-mountpoints')?.value || '');
+        const label = box.querySelector('.form-label');
+        if (label) label.textContent = 'MountPoints bổ sung (Được cấp)';
+        if (hostFilterLabel) hostFilterLabel.parentElement.classList.add('d-none');
+
+        // Map extra MPs to hosts if possible from cache
+        const sources = getAllCasterSources();
+        const mpToHost = {};
+        sources.forEach(s => {
+            if (s.mountpoint) mpToHost[s.mountpoint] = s.host;
+        });
+
+        box.classList.remove('d-none');
+        list.innerHTML = extraMps.map((mp, idx) => {
+            const host = mpToHost[mp] || '';
+            return `
+                <div class="form-check mb-1 live-mp-item" data-host="${host}" data-search="${mp.toLowerCase()}">
+                    <input class="form-check-input live-mp-check" type="checkbox" id="${prefix}extra-mp-${idx}" value="${mp}" data-host="${host}">
+                    <label class="form-check-label small text-white" for="${prefix}extra-mp-${idx}">
+                        <code class="text-info">${mp}</code>
+                        ${host ? `<span class="text-muted ms-1 small">(${host})</span>` : ''}
+                    </label>
+                </div>
+            `;
+        }).join('');
+
+        if (searchInput) searchInput.oninput = () => applyLiveMpFilter(prefix);
+        applyLiveMpFilter(prefix);
+    }
+
+    function applyLiveMpFilter(prefix = '') {
+        const list = document.getElementById(`${prefix}admin-live-mountpoints-list`);
+        const searchInput = document.getElementById(`${prefix}live-mp-search`);
+        const hostFilter = document.getElementById(`${prefix}live-mp-host-filter`);
+        if (!list) return;
+
+        const q = String(searchInput?.value || '').trim().toLowerCase();
+        const h = String(hostFilter?.value || 'all').trim();
+        
+        const targetChecks = document.querySelectorAll(`.${prefix === 'edit-' ? 'edit-caster-target-check' : 'caster-target-check'}:checked`);
+        const targetHosts = Array.from(targetChecks).map(cb => cb.value);
+
+        list.querySelectorAll('.live-mp-item').forEach(item => {
+            const text = item.dataset.search || '';
+            const host = item.dataset.host || '';
+            const matchText = !q || text.includes(q);
+            const matchHost = h === 'all' || host === h;
+            const matchTarget = targetHosts.length === 0 || !host || targetHosts.includes(host);
+
+            item.style.display = (matchText && matchHost && matchTarget) ? '' : 'none';
+        });
+    }
+
+    function applySelectedLiveMountpoints() {
+        const isEdit = this.id.startsWith('edit-');
+        const prefix = isEdit ? 'edit-' : '';
+        
+        const checked = Array.from(document.querySelectorAll(`#${prefix}admin-live-mountpoints-list .live-mp-check:checked`))
+            .filter(cb => cb.closest('.live-mp-item').style.display !== 'none')
+            .map(cb => cb.value);
+
+        if (!checked.length) {
+            showToast('Vui lòng chọn ít nhất 1 mountpoint', 'warning');
+            return;
+        }
+
+        const targetId = isEdit ? 'edit-mountpoints' : 'new-mountpoints';
+        const target = document.getElementById(targetId);
+        const current = normalizeMountpointList(target?.value || '');
         const merged = Array.from(new Set([...current, ...checked]));
-        const target = document.getElementById('new-mountpoints');
+        
         if (target) target.value = merged.join(';');
         showToast('Đã đưa mountpoint live vào Allowed Mountpoints', 'success');
     }
@@ -527,20 +604,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         allDevices.forEach(d => {
             const sConf = d.service_config || {};
-            let mps = [];
-            if (sConf.server1_enabled && sConf.mountpoint1) mps.push(sConf.mountpoint1);
-            if (sConf.server2_enabled && sConf.mountpoint2) mps.push(sConf.mountpoint2);
+            let mpsWithHosts = []; // Format: "mp:host"
+            if (sConf.server1_enabled && sConf.mountpoint1) {
+                mpsWithHosts.push(`${sConf.mountpoint1}:${String(sConf.serverhost1 || '').trim()}`);
+            }
+            if (sConf.server2_enabled && sConf.mountpoint2) {
+                mpsWithHosts.push(`${sConf.mountpoint2}:${String(sConf.serverhost2 || '').trim()}`);
+            }
 
-            if (mps.length > 0) {
+            if (mpsWithHosts.length > 0) {
                 const div = document.createElement('div');
                 div.className = 'form-check';
                 div.innerHTML = `
                     <input class="form-check-input station-check" type="checkbox" 
                         value="${d.serial}" 
                         id="check-${d.serial}"
-                        data-mps="${mps.join(';')}">
+                        data-mps="${mpsWithHosts.join(';')}">
                     <label class="form-check-label text-white small" for="check-${d.serial}">
-                        ${d.name} <span class="text-muted">(${mps.join(',')})</span>
+                        ${d.name} <span class="text-muted">(${mpsWithHosts.map(m => m.split(':')[0]).join(',')})</span>
                     </label>
                 `;
                 container.appendChild(div);
@@ -548,18 +629,45 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         document.querySelectorAll('.station-check').forEach(cb => {
-            cb.addEventListener('change', updateMountpointInput);
+            cb.addEventListener('change', () => updateMountpointInput(''));
         });
     }
 
-    function updateMountpointInput() {
-        const checkedBoxes = document.querySelectorAll('.station-check:checked');
-        let allMps = new Set();
-        checkedBoxes.forEach(cb => {
-            const mps = cb.dataset.mps.split(';');
-            mps.forEach(mp => { if(mp) allMps.add(mp); });
+    function updateMountpointInput(prefix = '') {
+        const targetId = prefix === 'edit-' ? 'edit-mountpoints' : 'new-mountpoints';
+        const targetInput = document.getElementById(targetId);
+        if (!targetInput) return;
+
+        const checkedStations = document.querySelectorAll(`.${prefix === 'edit-' ? 'edit-station-check' : 'station-check'}:checked`);
+        const targetChecks = document.querySelectorAll(`.${prefix === 'edit-' ? 'edit-caster-target-check' : 'caster-target-check'}:checked`);
+        const targetHosts = Array.from(targetChecks).map(cb => cb.value);
+
+        // 1. Identify all possible station mountpoints to distinguish from manual entries
+        const allStationMps = new Set();
+        document.querySelectorAll(`.${prefix === 'edit-' ? 'edit-station-check' : 'station-check'}`).forEach(cb => {
+            (cb.dataset.mps || '').split(';').forEach(s => {
+                const mp = s.split(':')[0];
+                if (mp) allStationMps.add(mp);
+            });
         });
-        document.getElementById('new-mountpoints').value = Array.from(allMps).join(';');
+
+        // 2. Preserve manual entries (those not found in any station's mp list)
+        const currentMps = normalizeMountpointList(targetInput.value);
+        const manualMps = currentMps.filter(mp => !allStationMps.has(mp));
+
+        // 3. Get mountpoints from currently checked stations, filtered by target server
+        const stationMps = new Set();
+        checkedStations.forEach(cb => {
+            (cb.dataset.mps || '').split(';').forEach(s => {
+                const [mp, host] = s.split(':');
+                if (targetHosts.length === 0 || !host || targetHosts.includes(host)) {
+                    if (mp) stationMps.add(mp);
+                }
+            });
+        });
+
+        const final = Array.from(new Set([...manualMps, ...stationMps]));
+        targetInput.value = final.join(';');
     }
 
     function populateFilterStation() {
@@ -683,17 +791,32 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? '<i class="bi bi-eye-fill text-primary ms-1" title="Vị trí đang HIỆN (Live)"></i>'
             : '<i class="bi bi-eye-slash text-muted opacity-50 ms-1" title="Vị trí đang ẨN (Live)"></i>';
 
-        const mps = (r.mountpoints || '').split(';').map(m => m.trim()).filter(m => m);
+        const mps = normalizeMountpointList(r.mountpoints);
         const mpsDisplay = mps.length > 0
-            ? mps.map(m => `<code class="text-info small" style="font-size:0.75rem">${m}</code>`).join(' ')
+            ? mps.map(m => `<code class="text-info small" style="font-size:0.75rem">${m}</code>`).join(', ')
             : '<span class="text-muted small">N/A</span>';
 
-        const hasBoundBase = String(r.base_name || '').trim().length > 0;
-        const baseDisplay = hasBoundBase
-            ? String(r.base_name)
-            : (mps.length > 0
-                ? '<span class="text-warning">Live MP (khong bind tram)</span>'
-                : 'N/A');
+        // Identify "orphan" mountpoints (those not belonging to any physical station)
+        const stationMps = new Set();
+        allDevices.forEach(d => {
+            const s = d.service_config || {};
+            if (s.mountpoint1) stationMps.add(s.mountpoint1);
+            if (s.mountpoint2) stationMps.add(s.mountpoint2);
+        });
+
+        const manualMps = mps.filter(m => !stationMps.has(m));
+        
+        let displayItems = [];
+        if (r.base_name && r.base_name.trim()) {
+            displayItems.push(r.base_name);
+        }
+        manualMps.forEach(m => {
+            if (!displayItems.includes(m)) displayItems.push(m);
+        });
+
+        const baseDisplay = displayItems.length > 0 
+            ? displayItems.join(', ')
+            : (mps.length > 0 ? mps[0] : 'N/A');
 
         let activeConnsHtml = '<span class="text-muted small">---</span>';
         const allActiveConns = [];
@@ -1037,20 +1160,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         const container = document.getElementById('edit-station-checklist');
         container.innerHTML = ''; 
         
-        const currentRoverMps = (rover.mountpoints || '').split(';');
+        const currentRoverMps = normalizeMountpointList(rover.mountpoints);
+        document.getElementById('edit-mountpoints').value = (rover.mountpoints || '');
 
         if (allDevices.length === 0) {
             container.innerHTML = '<div class="text-center small text-muted">Không có trạm nào khả dụng.</div>';
         } else {
             allDevices.forEach(d => {
-                // Lấy các mountpoint thực tế của trạm này
                 const sConf = d.service_config || {};
-                let deviceMps = [];
-                if (sConf.server1_enabled && sConf.mountpoint1) deviceMps.push(sConf.mountpoint1);
-                if (sConf.server2_enabled && sConf.mountpoint2) deviceMps.push(sConf.mountpoint2);
+                let mpsWithHosts = [];
+                if (sConf.server1_enabled && sConf.mountpoint1) {
+                    mpsWithHosts.push(`${sConf.mountpoint1}:${String(sConf.serverhost1 || '').trim()}`);
+                }
+                if (sConf.server2_enabled && sConf.mountpoint2) {
+                    mpsWithHosts.push(`${sConf.mountpoint2}:${String(sConf.serverhost2 || '').trim()}`);
+                }
 
-                if (deviceMps.length > 0) {
-                    const isChecked = deviceMps.some(mp => currentRoverMps.includes(mp));
+                if (mpsWithHosts.length > 0) {
+                    const deviceMpsOnly = mpsWithHosts.map(m => m.split(':')[0]);
+                    const isChecked = deviceMpsOnly.some(mp => currentRoverMps.includes(mp));
                     
                     const div = document.createElement('div');
                     div.className = 'form-check';
@@ -1059,14 +1187,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                             value="${d.serial}" 
                             id="edit-check-${d.serial}"
                             ${isChecked ? 'checked' : ''} 
-                            data-mps="${deviceMps.join(';')}">
+                            data-mps="${mpsWithHosts.join(';')}">
                         <label class="form-check-label text-white small" for="edit-check-${d.serial}">
-                            ${d.name} <span class="text-muted">(${deviceMps.join(',')})</span>
+                            ${d.name} <span class="text-muted">(${deviceMpsOnly.join(',')})</span>
                         </label>
                     `;
                     container.appendChild(div);
                 }
             });
+            // Add listeners
+            document.querySelectorAll('.edit-station-check').forEach(cb => {
+                cb.addEventListener('change', () => updateMountpointInput('edit-'));
+            });
+        }
+
+        // 2.5 LOAD LIVE MOUNTPOINTS FOR EDIT
+        if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+            renderAdminLiveMountpoints('edit-');
+        } else if (currentUser?.extra_mountpoints) {
+            renderCoordinatorExtraMountpoints('edit-');
+        } else {
+            document.getElementById('edit-admin-live-mountpoints-box')?.classList.add('d-none');
         }
 
         // 3. Hiện Modal
@@ -1084,22 +1225,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             const newPass = document.getElementById('edit-password').value;
             const newExpiry = document.getElementById('edit-expiry').value;
 
-            // --- LẤY DỮ LIỆU TỪ CHECKLIST ---
-            const checkedBoxes = document.querySelectorAll('.edit-station-check:checked');
-            let allMps = new Set(); // Dùng Set để tránh trùng lặp
-            let selectedSerials = [];
+            // --- LẤY DỮ LIỆU TỪ CHECKLIST & TEXT BOX ---
+            const checkedStations = document.querySelectorAll('.edit-station-check:checked');
+            let selectedSerials = Array.from(checkedStations).map(cb => cb.value);
             
-            checkedBoxes.forEach(cb => {
-                selectedSerials.push(cb.value);
-                const mps = cb.dataset.mps.split(';');
-                mps.forEach(mp => { if(mp) allMps.add(mp); });
-            });
-            
-            // Chuyển Set thành chuỗi ngăn cách bởi dấu chấm phẩy
-            const finalMountpoints = Array.from(allMps).join(';');
+            // finalMountpoints is now taken from the text box (which is updated by checklist and manual input)
+            const finalMountpoints = document.getElementById('edit-mountpoints').value.trim();
 
             if (!finalMountpoints) {
-                showToast('Vui lòng chọn ít nhất một trạm phát!', 'danger');
+                showToast('Vui lòng chọn ít nhất một trạm phát hoặc nhập mountpoint!', 'danger');
                 return;
             }
 
@@ -1331,15 +1465,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             const checkedBoxes = document.querySelectorAll('.station-check:checked');
             const selectedSerials = Array.from(checkedBoxes).map(cb => cb.value);
 
+            const mpOverride = document.getElementById('new-mountpoints')?.value || '';
             const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
 
-            if (selectedSerials.length === 0 && !isAdmin) {
-                msgEl.textContent = "Vui lòng chọn ít nhất một trạm.";
+            if (selectedSerials.length === 0 && !isAdmin && !mpOverride.trim()) {
+                msgEl.textContent = "Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.";
                 msgEl.classList.remove('d-none');
                 return;
             }
 
-            const mpOverride = document.getElementById('new-mountpoints').value;
             if (!mpOverride.trim()) {
                 msgEl.textContent = "Mountpoint không được để trống.";
                 msgEl.classList.remove('d-none');
@@ -1436,11 +1570,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         applyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
     }
 
+    const editApplyLiveMountpointsBtn = document.getElementById('edit-apply-live-mountpoints-btn');
+    if (editApplyLiveMountpointsBtn) {
+        editApplyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
+    }
+
     const reloadLiveMountpointsBtn = document.getElementById('reload-live-mountpoints-btn');
     if (reloadLiveMountpointsBtn) {
         reloadLiveMountpointsBtn.addEventListener('click', async () => {
             await fetchCasterSources({ force: true });
-            renderAdminLiveMountpoints();
+            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                renderAdminLiveMountpoints('');
+            } else {
+                renderCoordinatorExtraMountpoints('');
+            }
+            showToast('Đã tải lại mountpoints live', 'info');
+        });
+    }
+
+    const editReloadLiveMountpointsBtn = document.getElementById('edit-reload-live-mountpoints-btn');
+    if (editReloadLiveMountpointsBtn) {
+        editReloadLiveMountpointsBtn.addEventListener('click', async () => {
+            await fetchCasterSources({ force: true });
+            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                renderAdminLiveMountpoints('edit-');
+            } else {
+                renderCoordinatorExtraMountpoints('edit-');
+            }
             showToast('Đã tải lại mountpoints live', 'info');
         });
     }
