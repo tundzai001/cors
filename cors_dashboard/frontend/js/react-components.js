@@ -249,7 +249,7 @@ const getMapEffectiveStatus = (device) => {
 // === DEVICE LIST COMPONENTS
 // ===============================================================================
 
-const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSelect, onDelete, currentUser }) {
+const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelected, onSelect, onDelete, currentUser }) {
     const isAdmin = currentUser?.role === 'admin';
     const canDelete = currentUser?.role === 'admin' ||
         (currentUser?.role === 'coordinator' && device.user_id === currentUser.id);
@@ -435,7 +435,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, isSelected, onSele
     };
 
     return (
-        <div className={`device-card ${isSelected ? 'active' : ''}`} onClick={() => onSelect(device.serial)}>
+        <div className={`device-card animate-fade-in-up ${isSelected ? 'active' : ''}`} style={{ animationDelay: `${index * 0.05}s` }} onClick={() => onSelect(device.serial)}>
             <div className={`status-bar ${metrics.statusColorClass}`}></div>
 
             <div className="d-flex justify-content-between align-items-start mb-1 ps-2">
@@ -574,15 +574,31 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             {/* List */}
             <div className="flex-grow-1 overflow-auto custom-scrollbar p-2">
                 {devices.length === 0 ? (
-                    <div className="text-center mt-5 text-muted">
-                        <i className="bi bi-inbox display-4 opacity-25"></i>
-                        <p className="mt-2 small">Không tìm thấy dữ liệu</p>
-                    </div>
+                    localSearchTerm ? (
+                        <div className="text-center mt-5 text-muted animate-fade-in-up">
+                            <i className="bi bi-search display-4 opacity-25"></i>
+                            <p className="mt-2 small">Không tìm thấy trạm nào.</p>
+                        </div>
+                    ) : (
+                        <div className="d-flex flex-column gap-2">
+                            {[1, 2, 3, 4, 5].map((n, i) => (
+                                <div key={n} className="device-card skeleton p-3 border border-secondary border-opacity-25" style={{ animationDelay: `${i * 0.05}s`, opacity: 0, animation: `fadeInUp 0.4s forwards, shimmer 2s infinite linear forwards` }}>
+                                    <div className="d-flex justify-content-between mb-2">
+                                        <div className="skeleton-title"></div>
+                                        <div className="skeleton-badge"></div>
+                                    </div>
+                                    <div className="skeleton-text"></div>
+                                    <div className="skeleton-text short"></div>
+                                </div>
+                            ))}
+                        </div>
+                    )
                 ) : (
-                    devices.map(device => (
+                    devices.map((device, index) => (
                         <DeviceListItem
                             key={device.serial}
                             device={device}
+                            index={index}
                             isSelected={device.serial === selectedDeviceSerial}
                             onSelect={onSelect}
                             onDelete={onDelete}

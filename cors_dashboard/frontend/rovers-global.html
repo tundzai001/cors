@@ -223,17 +223,75 @@
         }
 
         @keyframes spin-anim {
-            0% {
-                transform: rotate(0deg);
-            }
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .spin-anim { animation: spin-anim 0.6s linear infinite; }
 
-            100% {
-                transform: rotate(360deg);
-            }
+        /* === PREMIUM UX ANIMATIONS === */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .animate-fade-in-up {
+            animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+            opacity: 0;
+            will-change: transform, opacity;
         }
 
-        .spin-anim {
-            animation: spin-anim 0.6s linear infinite;
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        
+        .badge.bg-success, .badge-active, .status-bar.online {
+            animation: pulseGlow 2.5s infinite;
+        }
+
+        /* Shimmer / Skeleton Loading */
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+        
+        .skeleton {
+            background: #252a36;
+            background-image: linear-gradient(to right, #252a36 0%, #333a4a 20%, #252a36 40%, #252a36 100%);
+            background-repeat: no-repeat;
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite linear forwards;
+            border-radius: 4px;
+        }
+        
+        .skeleton-title { height: 18px; width: 60%; margin-bottom: 8px; }
+        .skeleton-text { height: 14px; margin-bottom: 6px; width: 100%; }
+        .skeleton-text.short { width: 40%; }
+        .skeleton-badge { height: 22px; width: 70px; border-radius: 12px; }
+
+        /* Modal Blur & Transitions */
+        .modal-backdrop.show {
+            backdrop-filter: blur(4px) !important;
+            background-color: rgba(0, 0, 0, 0.5) !important;
+            opacity: 1 !important;
+        }
+        
+        .modal.show .modal-dialog {
+            animation: fadeInUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        /* Interactive Elements */
+        .btn { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn:active { transform: scale(0.95); }
+        
+        .device-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .device-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.3) !important;
+            border-color: rgba(59, 130, 246, 0.5) !important;
         }
     </style>
 </head>
@@ -414,7 +472,6 @@
                     </div><!-- End tab-mountpoints-content -->
                 </div><!-- End tab-content -->
             </div>
-        </div>
         </div>
     </main>
 
@@ -744,7 +801,7 @@
     </div>
 
     <!-- Toast Container -->
-    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" style="z-index: 1055;"></div>
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" style="z-index: 1090;"></div>
 
     <!-- Block User Modal -->
     <div class="modal fade" id="blockUserModal" tabindex="-1" aria-hidden="true">

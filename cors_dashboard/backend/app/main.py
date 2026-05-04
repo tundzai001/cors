@@ -5769,7 +5769,7 @@ async def get_caster_config(
     
     return {
         "hosts": list(set(hosts)),
-        "version": os.getenv("APP_VERSION", "V1.0.0")
+        "version": os.getenv("APP_VERSION", "V1.1.1")
     }
 
 # === STATIC FILES ===
