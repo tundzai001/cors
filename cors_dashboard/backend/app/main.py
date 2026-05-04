@@ -5243,8 +5243,10 @@ async def export_devices_to_csv(
             coordinator_name = coordinator_map.get(int(device.user_id), "")
         
         # === CẤU HÌNH BASE ===
-        base_config = device.base_config or {}
+        base_config = device.base_config if isinstance(device.base_config, dict) else {}
         coords = base_config.get('coords', {})
+        if not isinstance(coords, dict):
+            coords = {}
         base_method = base_config.get('base_setup_method', '')
         base_lat = coords.get('lat', base_config.get('lat', ''))
         base_lon = coords.get('lon', base_config.get('lon', ''))
@@ -5252,7 +5254,7 @@ async def export_devices_to_csv(
         base_accuracy = base_config.get('accuracy', base_config.get('acc', ''))
         
         # === CẤU HÌNH SERVICE ===
-        service_config = device.service_config or {}
+        service_config = device.service_config if isinstance(device.service_config, dict) else {}
         
         # --- SERVER 1 ---
         s1_enabled = service_config.get('server1_enabled', False)
