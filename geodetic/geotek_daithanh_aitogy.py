@@ -193,9 +193,22 @@ class RelayWorker(threading.Thread):
     def set_stream_active(self, active: bool):
         self.desired_active = bool(active)
         if not self.desired_active:
-            self._close_live_sockets()
+            self._close_target_socket()
         self.wakeup_event.set()
         self.publish_status()
+
+    def _close_target_socket(self):
+        with self.socket_lock:
+            if self._target_sock:
+                try:
+                    self._target_sock.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    self._target_sock.close()
+                except Exception:
+                    pass
+            self._target_sock = None
 
     def _close_live_sockets(self):
         with self.socket_lock:
@@ -255,23 +268,32 @@ class RelayWorker(threading.Thread):
                     # 1. KẾT NỐI TARGET NẾU TRẠM BẬT (desired_active = True) MÀ CHƯA KẾT NỐI
                     if self.desired_active and target_sock is None:
                         self.log("INFO", f"Connecting TARGET: {TARGET_HOST}/{self.cfg['target_mp']} (v1.0)")
-                        target_sock = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
-                        with self.socket_lock:
-                            self._target_sock = target_sock
-                        
-                        target_request = (
-                            f"SOURCE {TARGET_PASS} /{self.cfg['target_mp']}\r\n"
-                            f"Source-Agent: NTRIP NtripSource/1.0\r\n\r\n"
-                        )
-                        target_sock.sendall(target_request.encode())
-                        response = target_sock.recv(4096)
-                        if not (b"ICY 200" in response or b"200 OK" in response):
-                            raise Exception(f"Target rejected: {response.decode(errors='ignore')[:100]}")
-                        
-                        self.log("SUCCESS", f"✅ RELAY ACTIVE: {self.cfg['source_mp']} → {self.cfg['target_mp']}")
-                        if leftover:
-                            target_sock.sendall(leftover)
-                            leftover = None
+                        try:
+                            target_sock = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
+                            with self.socket_lock:
+                                self._target_sock = target_sock
+                            
+                            target_request = (
+                                f"SOURCE {TARGET_PASS} /{self.cfg['target_mp']}\r\n"
+                                f"Source-Agent: NTRIP NtripSource/1.0\r\n\r\n"
+                            )
+                            target_sock.sendall(target_request.encode())
+                            response = target_sock.recv(4096)
+                            if not (b"ICY 200" in response or b"200 OK" in response):
+                                raise Exception(f"Target rejected: {response.decode(errors='ignore')[:100]}")
+                            
+                            self.log("SUCCESS", f"✅ RELAY ACTIVE: {self.cfg['source_mp']} → {self.cfg['target_mp']}")
+                            if leftover:
+                                target_sock.sendall(leftover)
+                                leftover = None
+                        except Exception as e:
+                            self.log("WARNING", f"Target connection failed: {e}")
+                            if target_sock:
+                                try: target_sock.close()
+                                except: pass
+                                target_sock = None
+                                with self.socket_lock:
+                                    self._target_sock = None
                     
                     # 2. NGẮT TARGET NẾU TRẠM TẮT (desired_active = False)
                     if not self.desired_active and target_sock is not None:
@@ -305,7 +327,15 @@ class RelayWorker(threading.Thread):
                             
                             # 4. CHỈ GỬI ĐI NẾU ĐANG BẬT TARGET
                             if target_sock is not None:
-                                target_sock.sendall(data)
+                                try:
+                                    target_sock.sendall(data)
+                                except Exception as e:
+                                    self.log("WARNING", f"Error sending to target: {e}")
+                                    try: target_sock.close()
+                                    except: pass
+                                    target_sock = None
+                                    with self.socket_lock:
+                                        self._target_sock = None
                             
                             self.bytes_sent += len(data)
                             
@@ -314,7 +344,7 @@ class RelayWorker(threading.Thread):
                             if now - self.last_stat_update >= 1.0:
                                 self.current_bps = int(self.bytes_sent / (now - self.last_stat_update))
                                 if self.current_bps > 0:
-                                    self.log("INFO", f"📊 {self.current_bps} B/s")
+                                    self.log("INFO", f"📊 [SOURCE] {self.current_bps} B/s")
                                 self.bytes_sent = 0
                                 self.last_stat_update = now
                                 self.publish_status()
@@ -327,7 +357,12 @@ class RelayWorker(threading.Thread):
                     else:
                         if target_sock is not None:
                             try: target_sock.sendall(b'\r\n')
-                            except: break
+                            except: 
+                                try: target_sock.close()
+                                except: pass
+                                target_sock = None
+                                with self.socket_lock:
+                                    self._target_sock = None
                 
                 self.log("INFO", f"Source loop ended, reconnecting in {RECONNECT_INTERVAL}s...")
                 self.wakeup_event.wait(RECONNECT_INTERVAL)
@@ -335,6 +370,8 @@ class RelayWorker(threading.Thread):
                 
             except Exception as e:
                 self.log("WARNING", f"Connection error: {e}")
+                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                self.wakeup_event.clear()
                 
             finally:
                 self.is_connected = False
@@ -441,6 +478,12 @@ class MonitorWorker(threading.Thread):
     
     def run(self):
         while not self.stop_event.is_set():
+            if not self.desired_active:
+                self.log("INFO", "Zzz... Monitor is OFF. Sleeping...")
+                self.wakeup_event.wait()
+                self.wakeup_event.clear()
+                continue
+                
             sock = None
             try:
                 self.log("INFO", f"Connecting MONITOR: {TARGET_HOST}:{TARGET_PORT}/{self.cfg['mountpoint']}")
@@ -466,7 +509,7 @@ class MonitorWorker(threading.Thread):
                 self.last_stat_update = time.time()
                 
                 sock.settimeout(10.0)
-                while not self.stop_event.is_set():
+                while not self.stop_event.is_set() and self.desired_active:
                     try:
                         data = sock.recv(4096)
                         if not data:
@@ -493,13 +536,17 @@ class MonitorWorker(threading.Thread):
                         self.log("WARNING", f"Data error: {e}")
                         break
                         
-                self.log("INFO", f"Monitor disconnected, reconnecting in {RECONNECT_INTERVAL}s...")
-                self.is_connected = False
-                self.current_bps = 0
-                self.publish_status()
-                self.publish_status()
-                self.wakeup_event.wait(RECONNECT_INTERVAL)
-                self.wakeup_event.clear()
+                if not self.desired_active:
+                    self.log("INFO", "Monitor deactivated, closing connection and sleeping...")
+                else:
+                    self.log("INFO", f"Monitor disconnected, reconnecting in {RECONNECT_INTERVAL}s...")
+                    self.wakeup_event.wait(RECONNECT_INTERVAL)
+                    self.wakeup_event.clear()
+            except Exception as e:
+                self.log("WARNING", f"Connection error: {e}")
+                if self.desired_active:
+                    self.wakeup_event.wait(RECONNECT_INTERVAL)
+                    self.wakeup_event.clear()
             finally:
                 self.is_connected = False
                 self.current_bps = 0
