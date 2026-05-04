@@ -408,7 +408,7 @@ class MonitorWorker(threading.Thread):
         self.current_bps = 0
         
         self.name = f"Monitor-{self.cfg['mountpoint']}"
-        self.desired_active = False
+        self.desired_active = True
         self.wakeup_event = threading.Event()
         self.socket_lock = threading.Lock()
         self._sock = None
@@ -423,7 +423,7 @@ class MonitorWorker(threading.Thread):
         status = {
             "serial": self.serial,
             "name": self.cfg['mountpoint'],
-            "status": "online" if self.is_connected else "offline",
+            "status": "online" if self.current_bps > 0 else "offline",
             "version": RELAY_VERSION,
             "timestamp": int(time.time()),
             "base_config": {
@@ -441,9 +441,9 @@ class MonitorWorker(threading.Thread):
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['mountpoint'],
                 "serverhost1": TARGET_HOST,
-                "stream_on_demand": True,
-                "stream_active": bool(self.desired_active),
-                "active_mountpoint": self.cfg['mountpoint'] if self.desired_active else None
+                "stream_on_demand": False,
+                "stream_active": True,
+                "active_mountpoint": self.cfg['mountpoint']
             },
             "source_mountpoint": self.cfg['mountpoint'],
             "rtk_fix_status": "FIXED",
@@ -457,11 +457,8 @@ class MonitorWorker(threading.Thread):
             pass
 
     def set_stream_active(self, active: bool):
-        self.desired_active = bool(active)
-        if not self.desired_active:
-            self._close_live_socket()
-        self.wakeup_event.set()
-        self.publish_status()
+        # Ignore for MonitorWorker, it always runs
+        pass
 
     def _close_live_socket(self):
         with self.socket_lock:
@@ -478,12 +475,6 @@ class MonitorWorker(threading.Thread):
     
     def run(self):
         while not self.stop_event.is_set():
-            if not self.desired_active:
-                self.log("INFO", "Zzz... Monitor is OFF. Sleeping...")
-                self.wakeup_event.wait()
-                self.wakeup_event.clear()
-                continue
-                
             sock = None
             try:
                 self.log("INFO", f"Connecting MONITOR: {TARGET_HOST}:{TARGET_PORT}/{self.cfg['mountpoint']}")
@@ -509,7 +500,7 @@ class MonitorWorker(threading.Thread):
                 self.last_stat_update = time.time()
                 
                 sock.settimeout(10.0)
-                while not self.stop_event.is_set() and self.desired_active:
+                while not self.stop_event.is_set():
                     try:
                         data = sock.recv(4096)
                         if not data:
@@ -536,17 +527,13 @@ class MonitorWorker(threading.Thread):
                         self.log("WARNING", f"Data error: {e}")
                         break
                         
-                if not self.desired_active:
-                    self.log("INFO", "Monitor deactivated, closing connection and sleeping...")
-                else:
-                    self.log("INFO", f"Monitor disconnected, reconnecting in {RECONNECT_INTERVAL}s...")
-                    self.wakeup_event.wait(RECONNECT_INTERVAL)
-                    self.wakeup_event.clear()
+                self.log("INFO", f"Monitor disconnected, reconnecting in {RECONNECT_INTERVAL}s...")
+                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                self.wakeup_event.clear()
             except Exception as e:
                 self.log("WARNING", f"Connection error: {e}")
-                if self.desired_active:
-                    self.wakeup_event.wait(RECONNECT_INTERVAL)
-                    self.wakeup_event.clear()
+                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                self.wakeup_event.clear()
             finally:
                 self.is_connected = False
                 self.current_bps = 0
