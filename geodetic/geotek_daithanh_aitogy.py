@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V1.1.0"
+RELAY_VERSION = "V1.1.1"
 
 import json
 import logging
@@ -23,7 +23,7 @@ if os.name == 'nt':
         hStdIn = kernel32.GetStdHandle(STD_INPUT_HANDLE)
         mode = ctypes.c_uint32()
         kernel32.GetConsoleMode(hStdIn, ctypes.byref(mode))
-        mode.value &= ~0x0040 # Táº¯t ENABLE_QUICK_EDIT_MODE
+        mode.value &= ~0x0040 
         kernel32.SetConsoleMode(hStdIn, mode)
     except Exception:
         pass
@@ -35,7 +35,7 @@ except ValueError:
     pass
 
 # ==============================================================================
-# === Cáº¤U HÃŒNH ===
+# === CONFIGURATION ===
 # ==============================================================================
 STATION_LIST = [
     {"source_mp": "YBI_XuanAI",       "lat": 21.850058284, "lon": 104.705661679, "alt": 30.8801, "target_mp": "YB.VanYen"},
@@ -447,7 +447,7 @@ class MonitorWorker(threading.Thread):
             },
             "source_mountpoint": self.cfg['mountpoint'],
             "rtk_fix_status": "FIXED",
-            "detected_chip_type": "ublox",
+            "detected_chip_type": "Ublox",
             "is_provisioned": True
         }
         
