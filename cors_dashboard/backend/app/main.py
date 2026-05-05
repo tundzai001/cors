@@ -3679,12 +3679,15 @@ async def create_user(
         extra_mountpoints=user_data.extra_mountpoints
     )
     
-    if user_data.assigned_devices and new_user.role == 'coordinator':
-        for serial in user_data.assigned_devices:
-            device = await crud.get_device_by_serial(devices_db, serial)
-            if device:
-                device.user_id = new_user.id
-        await devices_db.commit()
+    if user_data.assigned_devices:
+        if new_user.role in ('coordinator', 'operator'):
+            for serial in user_data.assigned_devices:
+                device = await crud.get_device_by_serial(devices_db, serial)
+                if device:
+                    device.user_id = new_user.id
+            await devices_db.commit()
+        elif new_user.role == 'viewer':
+            await crud.update_system_settings(auth_db, {f'viewer_devices_{new_user.id}': user_data.assigned_devices})
     
     permissions = auth.get_user_permissions(new_user)
     user_response = schemas.UserResponse.from_orm(new_user)
@@ -3718,10 +3721,12 @@ async def update_user(
     assigned_serials = update_dict.pop("assigned_devices", None)
     
     if assigned_serials is not None:
-        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user nÃ y
+        target_role = update_dict.get('role', user_to_update.role)
+        
+        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user nÃ y (chủ sở hữu)
         current_devices = await crud.get_devices_by_user_id(devices_db, user_id)
         
-        # 2. Gỡ bỏ tất cả trước (Reset về None)
+        # 2. Gỡ bỏ tất cả ownership trước (Reset về None)
         for dev in current_devices:
             dev.user_id = None
             # Broadcast cập nhật UI: Trạm này đã bị gỡ
@@ -3730,12 +3735,10 @@ async def update_user(
                 "data": schemas.Device.from_orm(dev).model_dump()
             })
         
-        # 3. Nếu user là Coordinator -> Gán danh sách mới
-        if user_to_update.role == 'coordinator' or user_data.role == 'coordinator':
+        # 3. Áp dụng gán mới tùy theo vai trò
+        if target_role in ('coordinator', 'operator'):
             for serial in assigned_serials:
                 device = await crud.get_device_by_serial(devices_db, serial)
-                # Chỉ gán nếu trạm chưa có chủ hoặc chủ chính là user này (đề phòng tranh chấp)
-                # Hoặc Admin có quyền ghi đè (tùy logic, ở đây cho phép ghi đè để tiện quản lý)
                 if device:
                     device.user_id = user_id
                     # Broadcast cập nhật UI: Trạm nÃ y đã có chủ mới
@@ -3743,8 +3746,28 @@ async def update_user(
                         "type": "status_update",
                         "data": schemas.Device.from_orm(device).model_dump()
                     })
-
-        await devices_db.commit()
+            await devices_db.commit()
+            
+            from sqlalchemy import delete
+            from . import models
+            # Xóa cấu hình viewer cũ nếu có
+            await auth_db.execute(delete(models.SystemSetting).where(models.SystemSetting.key == f'viewer_devices_{user_id}'))
+            await auth_db.commit()
+            
+        elif target_role == 'viewer':
+            await devices_db.commit() # commit việc gỡ ownership
+            await crud.update_system_settings(auth_db, {f'viewer_devices_{user_id}': assigned_serials})
+            # Broadcast để UI Viewer cập nhật ngay lập tức
+            await ui_manager.broadcast({
+                "type": "user_assignment_updated",
+                "data": {
+                    "user_id": user_id,
+                    "role": "viewer",
+                    "assigned_devices": assigned_serials
+                }
+            })
+        else:
+            await devices_db.commit()
     # ===================================================================
 
     if 'password' in update_dict and update_dict['password']:
@@ -3848,34 +3871,41 @@ async def generate_pi_license(
 async def get_initial_devices(
     user_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)) 
 ):
-    """
-    âœ… CHỐNG IDOR: Backend LUÔN ƯU TIÊN current_user.id từ JWT token
-    """
-    
-    # ðŸ”’ COORDINATOR: Bỏ qua mọi tham số user_id (CHỐNG IDOR)
-    if current_user.role == auth.Role.COORDINATOR:
-        logging.info(
-            f"Coordinator '{current_user.username}' requested devices. "
-            f"Ignoring user_id parameter (if any) and using id={current_user.id}"
-        )
-        return await crud.get_devices_by_user_id(db, user_id=current_user.id)
-    
-    # ðŸ”’ ADMIN: Cho phép filter, nhưng validate
+    target_user_id = current_user.id
+    target_role = current_user.role
+
     if user_id is not None:
         if current_user.role != auth.Role.ADMIN:
             logging.warning(
-                f"âš ï¸ IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
+                f"IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
                 f"tried to filter by user_id={user_id}"
             )
             raise HTTPException(
                 status_code=403, 
                 detail="Only admins can filter devices by user_id"
             )
-        return await crud.get_devices_by_user_id(db, user_id=user_id)
+        target_user_id = user_id
+        user_info = await crud.get_user_by_id(auth_db, target_user_id)
+        if user_info:
+            target_role = user_info.role
+
+    if target_role in (auth.Role.COORDINATOR, auth.Role.OPERATOR):
+        return await crud.get_devices_by_user_id(db, user_id=target_user_id)
+    elif target_role == 'viewer':
+        from sqlalchemy import select
+        from . import models
+        result = await auth_db.execute(select(models.SystemSetting).filter_by(key=f'viewer_devices_{target_user_id}'))
+        setting = result.scalars().first()
+        viewer_serials = setting.value if setting and isinstance(setting.value, list) else []
+        if not viewer_serials:
+            return []
+        
+        result = await db.execute(select(models.Device).where(models.Device.serial.in_(viewer_serials)).order_by(models.Device.name))
+        return result.scalars().all()
     
-    # Mặc định: Admin vÃ  Viewer xem tất cả
     return await crud.get_all_devices(db)
 
 @app.post("/api/devices/{serial}/command")

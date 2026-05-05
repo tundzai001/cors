@@ -778,28 +778,26 @@ function handleWebSocketMessage(message) {
     
     if (type === 'status_update') {
         const statusSerial = serial || data?.serial;
-        // --- LOGIC CHẶN TRẠM LẠ CHO COORDINATOR ---
-        if (globalState.currentUser?.role === 'coordinator') {
+        // --- LOGIC CHẶN TRẠM LẠ CHO ROLES BỊ GIỚI HẠN (COORDINATOR, OPERATOR, VIEWER) ---
+        if (globalState.currentUser && ['coordinator', 'operator', 'viewer'].includes(globalState.currentUser.role)) {
             
-            // Trường hợp 1: Admin vừa gán/thu hồi quyền (Bản tin có chứa user_id)
+            // Trường hợp 1: Admin vừa gán/thu hồi quyền sở hữu (Bản tin có chứa user_id)
+            // Lưu ý: Viewers không dựa trên user_id ownership nên sẽ rơi vào Trường hợp 2
             if (data.user_id !== undefined && data.user_id !== null) {
-                // Nếu user_id không phải của mình -> Xóa khỏi list (nếu đang hiển thị) và Chặn
                 if (data.user_id !== globalState.currentUser.id) {
                     const exists = globalState.devices.some(d => d.serial === statusSerial);
                     if (exists) {
                         console.log(`Removed unassigned device: ${statusSerial}`);
                         removeDeviceLocal(statusSerial);
                     }
-                    return; // Dừng lại, không update
+                    return; 
                 }
             } 
             
-            // Trường hợp 2: Trạm gửi Heartbeat/Status (Bản tin KHÔNG có user_id)
+            // Trường hợp 2: Trạm gửi Heartbeat/Status hoặc các bản tin khác
             else {
-                // Kiểm tra xem trạm này có nằm trong danh sách "của mình" (đã load từ API ban đầu) hay không
+                // Kiểm tra xem trạm này có nằm trong danh sách đang hiển thị hay không
                 const isMyDevice = globalState.devices.some(d => d.serial === statusSerial);
-                
-                // Nếu trạm này chưa từng tồn tại trong danh sách của mình -> Đây là trạm của người khác -> Bỏ qua
                 if (!isMyDevice) {
                     return;
                 }
@@ -811,6 +809,20 @@ function handleWebSocketMessage(message) {
         if (statusSerial === globalState.selectedDeviceSerial && data.base_coords) {
             currentNmeaData.base_coords = data.base_coords;
             requestDetailsPanelUpdate('high');
+        }
+    }
+    
+    if (type === 'user_assignment_updated') {
+        // Nếu chính mình là user bị thay đổi gán trạm -> Load lại toàn bộ devices
+        if (data.user_id === globalState.currentUser?.id) {
+            console.log("Assignment updated for current user. Reloading devices...");
+            // Gọi lại hàm lấy danh sách trạm ban đầu
+            if (window.fetchInitialDevices) {
+                window.fetchInitialDevices();
+            } else {
+                // Fallback: Reload trang nếu không tìm thấy hàm
+                window.location.reload();
+            }
         }
     }
     
@@ -1142,6 +1154,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
 
+    window.fetchInitialDevices = loadInitialDevices;
     await loadInitialDevices();
     connectWebSocket();
     

@@ -114,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         deviceAssignmentSection.classList.add('d-none');
         extraMountpointsSection.classList.add('d-none'); 
-        renderDeviceChecklist();
+        renderDeviceChecklist([], '');
         renderExtraMpsChecklist();
     });
     
@@ -149,15 +149,15 @@ document.addEventListener('DOMContentLoaded', () => {
             modalTitle.textContent = `Sửa User: ${user.username}`;
             document.getElementById('can_create_rovers').checked = user.can_create_rovers;
             
-            // Hiển thị các phần cấu hình nếu là coordinator/operator
-            if(user.role === 'coordinator' || user.role === 'operator') {
+            // Hiển thị các phần cấu hình nếu là coordinator/operator/viewer
+            if(user.role === 'coordinator' || user.role === 'operator' || user.role === 'viewer') {
                 deviceAssignmentSection.classList.remove('d-none');
                 roverPermissionSection.classList.remove('d-none');
                 extraMountpointsSection.classList.remove('d-none');
                 
                 // Lấy danh sách serial của các trạm đã gán
                 const assignedSerials = userDevices.map(d => d.serial);
-                renderDeviceChecklist(assignedSerials);
+                renderDeviceChecklist(assignedSerials, user.role);
                 
                 // Parse danh sách MP bổ sung
                 const extraMps = (user.extra_mountpoints || "").split(/[;,\s\n]+/).map(m => m.trim()).filter(Boolean);
@@ -231,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
             payload.password = password;
         }
         
-        if (payload.role === 'coordinator' || payload.role === 'operator') {
+        if (payload.role === 'coordinator' || payload.role === 'operator' || payload.role === 'viewer') {
             payload.assigned_devices = Array.from(deviceChecklist.querySelectorAll('input[type="checkbox"]:checked'))
                                             .map(cb => cb.value);
             
@@ -277,14 +277,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // Hiển thị/ẩn phần gán trạm khi vai trò thay đổi trong modal
     roleSelect.addEventListener('change', (e) => {
-        if (e.target.value === 'coordinator' || e.target.value === 'operator') {
+        if (e.target.value === 'coordinator' || e.target.value === 'operator' || e.target.value === 'viewer') {
             deviceAssignmentSection.classList.remove('d-none');
             roverPermissionSection.classList.remove('d-none');
             extraMountpointsSection.classList.remove('d-none');
             // Lấy danh sách các trạm đã được gán hiện tại để hiển thị đúng checkbox
             const assignedSerials = Array.from(deviceChecklist.querySelectorAll('input[type="checkbox"]:checked'))
                                          .map(cb => cb.value);
-            renderDeviceChecklist(assignedSerials);
+            renderDeviceChecklist(assignedSerials, e.target.value);
             
             const extraMps = Array.from(extraMpsChecklist.querySelectorAll('input[type="checkbox"]:checked'))
                                   .map(cb => cb.value);
@@ -298,7 +298,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     
     // Render danh sách checkbox các trạm
-    function renderDeviceChecklist(assignedSerials = []) {
+    function renderDeviceChecklist(assignedSerials = [], targetRole = '') {
         deviceChecklist.innerHTML = '';
         if (allDevices.length === 0) {
             deviceChecklist.innerHTML = '<p class="text-muted">Không có trạm nào để gán.</p>';
@@ -306,8 +306,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         allDevices.forEach(device => {
-            // Chỉ hiển thị các trạm chưa được gán, hoặc đã được gán cho chính user này
-            const isAssignedToOther = device.user_id && !assignedSerials.includes(device.serial);
+            // Coordinator/Operator: Chỉ được gán trạm chưa có chủ hoặc chủ chính là mình
+            // Viewer: Được phép gán BẤT KỲ trạm nào (vì Viewer không chiếm quyền sở hữu user_id)
+            let isAssignedToOther = false;
+            if (targetRole === 'coordinator' || targetRole === 'operator') {
+                isAssignedToOther = device.user_id && !assignedSerials.includes(device.serial);
+            }
+
             const isChecked = assignedSerials.includes(device.serial);
 
             const div = document.createElement('div');
