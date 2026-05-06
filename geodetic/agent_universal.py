@@ -3322,8 +3322,8 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
         try:
             async with websockets.connect(
                 ws_uri,
-                ping_interval=20,
-                ping_timeout=10,
+                ping_interval=30,
+                ping_timeout=60,
                 close_timeout=10,
                 open_timeout=30  
             ) as websocket:
