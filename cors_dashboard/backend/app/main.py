@@ -2874,51 +2874,37 @@ async def block_caster_user(
     3. Cập nhật RoverAccount.is_active = False (nếu user có trong DB)
     """
     username = req.username.strip()
-    mountpoint = req.mountpoint.strip() if req.mountpoint else None
+    target_mps = req.mountpoints if req.mountpoints else [None]
     now = int(time.time())
 
-    # 1. Thêm vào blocklist DB
-    # Check xem đã block chưa (tránh duplicate)
-    existing_block_q = select(models.RoverBlocklist).where(
-        models.RoverBlocklist.username == username,
-    )
-    if mountpoint:
-        existing_block_q = existing_block_q.where(
-            models.RoverBlocklist.mountpoint == mountpoint
+    blocks_created = 0
+    for mp in target_mps:
+        mountpoint = mp.strip() if mp else None
+        
+        # Check duplicate
+        existing_block_q = select(models.RoverBlocklist).where(models.RoverBlocklist.username == username)
+        if mountpoint:
+            existing_block_q = existing_block_q.where(models.RoverBlocklist.mountpoint == mountpoint)
+        else:
+            existing_block_q = existing_block_q.where(models.RoverBlocklist.mountpoint.is_(None))
+        
+        existing_block_rs = await auth_db.execute(existing_block_q)
+        if existing_block_rs.scalars().first():
+            continue
+
+        new_block = models.RoverBlocklist(
+            username=username,
+            mountpoint=mountpoint,
+            blocked_at=now,
+            blocked_by=current_user.username,
+            reason=req.reason or "Blocked by admin",
         )
-    else:
-        existing_block_q = existing_block_q.where(
-            models.RoverBlocklist.mountpoint.is_(None)
-        )
-
-    existing_block_rs = await auth_db.execute(existing_block_q)
-    if existing_block_rs.scalars().first():
-        return {
-            "status": "already_blocked",
-            "username": username,
-            "message": f"User '{username}' đã bị chặn trước đó."
-        }
-
-    new_block = models.RoverBlocklist(
-        username=username,
-        mountpoint=mountpoint,
-        blocked_at=now,
-        blocked_by=current_user.username,
-        reason=req.reason or "Blocked by admin",
-    )
-    auth_db.add(new_block)
-
-    # 2. Nếu user có trong DB local → set is_active = False
-    rover = await crud.get_rover_by_username(auth_db, username)
-    if rover:
-        rover.is_active = False
-
-    await auth_db.commit()
+        auth_db.add(new_block)
+        blocks_created += 1
 
     # 3. Gọi các caster TCP để xóa user (kick ngay lập tức trên tất cả server)
-    env_cfg = _read_caster_config_from_env()
-    _env_host = env_cfg.get("host")
-    target_hosts = [_env_host] if _env_host else [str(settings.CASTER_HOST or "localhost")]
+    hosts, env_cfg = _read_caster_config_from_env()
+    target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
     port = int(settings.CASTER_PORT or 2101)
     
     deleted_count_caster = 0
@@ -2938,10 +2924,20 @@ async def block_caster_user(
     return {
         "status": "blocked",
         "username": username,
-        "mountpoint": mountpoint,
+        "blocks_created": blocks_created,
         "casters_affected": deleted_count_caster,
-        "message": f"Đã chặn user '{username}' trên toàn hệ thống ({deleted_count_caster} server affected)."
+        "message": f"Đã chặn user '{username}' ({blocks_created} mountpoints) trên toàn hệ thống ({deleted_count_caster} server affected)."
     }
+
+
+@app.get("/api/caster/blocklist")
+async def get_caster_blocklist(
+    db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    """Fetch all active block rules."""
+    rs = await db.execute(select(models.RoverBlocklist).order_by(models.RoverBlocklist.blocked_at.desc()))
+    return rs.scalars().all()
 
 
 @app.post("/api/caster/unblock-user")
@@ -2972,8 +2968,6 @@ async def unblock_caster_user(
     result = await auth_db.execute(del_q)
     deleted_count = result.rowcount
 
-    # 2. Nếu user có trong DB local → set is_active = True
-    rover = await crud.get_rover_by_username(auth_db, username)
     caster_recreated = False
 
     if rover:
@@ -2981,9 +2975,8 @@ async def unblock_caster_user(
         await auth_db.commit()
 
         # 3. Tạo lại user trên TẤT CẢ caster
-        env_cfg = _read_caster_config_from_env()
-        _env_host = env_cfg.get("host")
-        target_hosts = [_env_host] if _env_host else [str(settings.CASTER_HOST or "localhost")]
+        hosts, env_cfg = _read_caster_config_from_env()
+        target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
         port = int(settings.CASTER_PORT or 2101)
         
         recreated_count = 0
@@ -3011,13 +3004,6 @@ async def unblock_caster_user(
         caster_recreated = (recreated_count > 0)
     else:
         await auth_db.commit()
-
-    if deleted_count == 0:
-        return {
-            "status": "not_found",
-            "username": username,
-            "message": f"User '{username}' không có trong danh sách chặn."
-        }
 
     return {
         "status": "unblocked",

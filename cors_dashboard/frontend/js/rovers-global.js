@@ -496,21 +496,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Xử lý Select All
-    document.getElementById('selectAllMps').addEventListener('change', (e) => {
-        const checked = e.target.checked;
-        document.querySelectorAll('.mp-checkbox').forEach(cb => {
-            cb.checked = checked;
+    const selectAllMps = document.getElementById('selectAllMps');
+    if (selectAllMps) {
+        selectAllMps.addEventListener('change', (e) => {
+            const checked = e.target.checked;
+            document.querySelectorAll('.mp-checkbox').forEach(cb => {
+                cb.checked = checked;
+            });
+            const container = document.getElementById('mountpointSelector');
+            if (container) {
+                container.style.opacity = checked ? "0.5" : "1";
+                container.style.pointerEvents = checked ? "none" : "auto";
+            }
         });
-        const container = document.getElementById('mountpointSelector');
-        container.style.opacity = checked ? "0.5" : "1";
-        container.style.pointerEvents = checked ? "none" : "auto";
-    });
+    }
 
     // Xác nhận chặn
-    document.getElementById('confirmBlockBtn').addEventListener('click', async () => {
+    const confirmBlockBtn = document.getElementById('confirmBlockBtn');
+    if (confirmBlockBtn) {
+        confirmBlockBtn.addEventListener('click', async () => {
         const username = document.getElementById('blockModalUsername').value;
         const reason = document.getElementById('blockReason').value;
-        const selectAll = document.getElementById('selectAllMps').checked;
+        const selectAllInput = document.getElementById('selectAllMps');
+        const selectAll = selectAllInput ? selectAllInput.checked : false;
         
         let targetMps = [];
         if (!selectAll) {
@@ -550,7 +558,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-shield-lock-fill me-1"></i>Xác nhận chặn';
         }
-    });
+        });
+    }
 
     async function handleUnblockUser(e) {
         const username = e.currentTarget.dataset.username;
@@ -996,15 +1005,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         tbody.innerHTML = '';
 
         // 1. Prepare merged data
-        // Start with DB rovers
         let mergedData = allRovers.map(r => ({
             ...r,
             type: 'db',
-            // Aggregated info from ALL possible casters
             caster_infos: getCasterInfosForUsername(r.username)
         }));
 
-        // Add Caster Users NOT in DB (Unknowns)
         casterUsers.forEach(cu => {
             if (!allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(cu.username))) {
                 mergedData.push({
@@ -1012,7 +1018,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     type: 'unknown',
                     caster_info: cu,
                     mountpoints: cu.mountpoints.join(';'),
-                    base_name: 'Unknown Caster User',
+                    base_name: 'Caster Only User',
                     is_active: false
                 });
             }
@@ -1026,33 +1032,27 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             const matchStation = !stationFilter || (r.base_serial && r.base_serial.includes(stationFilter));
             
-            // Status filter logic
             let matchStatus = true;
             if (statusFilter === 'active') matchStatus = r.type === 'db' && r.is_active;
-            else if (statusFilter === 'blocked') matchStatus = r.caster_info?.is_blocked;
-            else if (statusFilter === 'online') matchStatus = r.caster_info?.nclient > 0;
-            else if (statusFilter === 'unknown') matchStatus = r.type === 'unknown';
+            else if (statusFilter === 'blocked') matchStatus = (r.caster_infos || [r.caster_info]).some(i => i?.is_blocked);
+            else if (statusFilter === 'standby') matchStatus = !(r.caster_infos || [r.caster_info]).some(i => i?.nclient > 0 || i?.is_blocked);
 
             return matchSearch && matchStation && matchStatus;
         });
 
-        // 2.5 Sorting: Online first
-        filtered.sort((a, b) => {
-            const aOnline = (a.caster_infos || [a.caster_info]).some(ci => ci && ci.nclient > 0);
-            const bOnline = (b.caster_infos || [b.caster_info]).some(ci => ci && ci.nclient > 0);
-            if (aOnline && !bOnline) return -1;
-            if (!aOnline && bOnline) return 1;
-            return 0;
-        });
+        // 3. Update Counts & Stats
+        if (document.getElementById('displayed-count')) document.getElementById('displayed-count').textContent = filtered.length;
+        if (document.getElementById('total-rovers')) document.getElementById('total-rovers').textContent = mergedData.length;
 
-        // 3. Update Counts
-        const countEl = document.getElementById('displayed-count');
-        const totalEl = document.getElementById('total-rovers');
-        if (countEl) countEl.textContent = filtered.length;
-        if (totalEl) totalEl.textContent = mergedData.length;
+        // Premium Stats
+        if (document.getElementById('stat-total')) document.getElementById('stat-total').textContent = mergedData.length;
+        if (document.getElementById('stat-indb')) document.getElementById('stat-indb').textContent = allRovers.length;
+        if (document.getElementById('stat-unknown')) document.getElementById('stat-unknown').textContent = mergedData.filter(r => r.type === 'unknown').length;
+        if (document.getElementById('stat-blocked')) document.getElementById('stat-blocked').textContent = mergedData.filter(r => (r.caster_infos || [r.caster_info]).some(i => i?.is_blocked)).length;
+
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="7" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
             return;
         }
 
@@ -1361,14 +1361,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
 
-        const modal = new bootstrap.Modal(document.getElementById('confirmDeleteModal'));
-        modal.show();
+        const modalEl = document.getElementById('deleteRoverModal');
+        if (modalEl) {
+            const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+            modal.show();
+        } else {
+            console.error("Modal deleteRoverModal not found!");
+        }
     }
 
     // Nút thực thi xóa trong Modal
-    document.getElementById('executeDeleteBtn').onclick = async function() {
-        const roverId = document.getElementById('delete-rover-id').value;
-        const deleteFromDb = document.getElementById('delete-from-db').checked;
+    const executeDeleteBtn = document.getElementById('executeDeleteBtn');
+    if (executeDeleteBtn) {
+        executeDeleteBtn.onclick = async function() {
+            const roverIdInput = document.getElementById('delete-rover-id');
+            const deleteDbCheck = document.getElementById('delete-from-db');
+            if (!roverIdInput || !deleteDbCheck) return;
+
+            const roverId = roverIdInput.value;
+            const deleteFromDb = deleteDbCheck.checked;
         const checkedHosts = Array.from(document.querySelectorAll('.delete-host-check:checked')).map(cb => cb.value);
         const allHosts = Array.from(document.querySelectorAll('.delete-host-check')).map(cb => cb.value);
         
@@ -1413,7 +1424,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             // Đóng modal và refresh
-            bootstrap.Modal.getInstance(document.getElementById('confirmDeleteModal')).hide();
+            const modalEl = document.getElementById('deleteRoverModal');
+            if (modalEl) {
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+            }
             await refreshDataInPlace();
         } catch (err) {
             console.error(err);
@@ -1423,6 +1438,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             btn.innerHTML = originalHtml;
         }
     };
+}
 
     // === HANDLE DELETE CASTER USER (Unknown) ===
     async function handleDeleteCasterUser(e) {
@@ -1561,9 +1577,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Rover Dashboard events
-    document.getElementById('search-box').addEventListener('input', renderTable);
-    document.getElementById('filter-station').addEventListener('change', renderTable);
-    document.getElementById('filter-status').addEventListener('change', renderTable);
+    const searchBox = document.getElementById('search-box');
+    if (searchBox) searchBox.addEventListener('input', renderTable);
+    
+    const filterStation = document.getElementById('filter-station');
+    if (filterStation) filterStation.addEventListener('change', renderTable);
+    
+    const filterStatus = document.getElementById('filter-status');
+    if (filterStatus) filterStatus.addEventListener('change', renderTable);
 
     const applyLiveMountpointsBtn = document.getElementById('apply-live-mountpoints-btn');
     if (applyLiveMountpointsBtn) {
@@ -1602,15 +1623,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     // ✅ ADMIN ONLY: Tab Mountpoints
-    const mountpointsTab = document.getElementById('tab-mountpoints');
+    const mountpointsTab = document.getElementById('tab-mountpoints-li');
     if (mountpointsTab) {
         mountpointsTab.addEventListener('shown.bs.tab', async () => {
             await loadAndRenderMountpoints();
         });
     }
+
+    // ✅ ADMIN ONLY: Tab Blocklist
+    const blocklistTab = document.getElementById('tab-blocklist-tab');
+    if (blocklistTab) {
+        blocklistTab.addEventListener('shown.bs.tab', async () => {
+            if (typeof renderBlocklistMapping === 'function') {
+                await renderBlocklistMapping();
+            }
+        });
+    }
     
     document.getElementById('refresh-btn').addEventListener('click', async () => {
         const btn = document.getElementById('refresh-btn');
+        if (!btn) return;
         const icon = btn.querySelector('i');
         if (icon) icon.classList.add('spin-anim');
         
@@ -1620,12 +1652,116 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast('Đã đồng bộ dữ liệu hệ thống', 'info');
     });
 
+    // ✅ Load and render blocklist relationships
+    async function renderBlocklistMapping() {
+        const container = document.getElementById('blocklist-mapping-container');
+        if (!container) return;
+
+        container.innerHTML = `
+            <div class="text-center py-5">
+                <div class="spinner-border spinner-border-sm text-info me-2"></div>
+                <span class="text-muted">Đang tải danh sách quan hệ chặn...</span>
+            </div>
+        `;
+
+        try {
+            const res = await fetch('/api/caster/blocklist', { headers: API_HEADERS });
+            if (!res.ok) throw new Error('Không thể tải blocklist');
+            const data = await res.json();
+
+            if (data.length === 0) {
+                container.innerHTML = `
+                    <div class="premium-alert mb-4">
+                        <div class="alert-content">
+                            <i class="bi bi-info-circle-fill"></i>
+                            <span class="alert-text">Hệ thống đang hiển thị các quy tắc chặn động dựa trên IP và Mountpoint. Các quy tắc này được đồng bộ 5s/lần từ Core Caster.</span>
+                        </div>
+                    </div>
+                    <div class="text-center py-5 opacity-50">
+                        <i class="bi bi-shield-lock d-block mb-3 h1"></i>
+                        <p class="mb-0">Hiện tại không có quy tắc chặn chủ động nào được thiết lập.</p>
+                        <small>Các tài khoản bị Block sẽ hiển thị trạng thái BLOCKED trong danh sách Rover.</small>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div class="premium-alert mb-4">
+                    <div class="alert-content">
+                        <i class="bi bi-shield-fill-check text-success"></i>
+                        <span class="alert-text">Có <strong>${data.length}</strong> quy tắc chặn đang hoạt động. Các tài khoản này sẽ bị từ chối kết nối ngay lập tức.</span>
+                    </div>
+                </div>
+                <div class="premium-table-card border-0 bg-transparent">
+                    <table class="premium-table">
+                        <thead>
+                            <tr>
+                                <th>Tài khoản</th>
+                                <th>Mountpoint</th>
+                                <th>Ngày chặn</th>
+                                <th>Người chặn</th>
+                                <th>Lý do</th>
+                                <th class="text-end">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.map(bl => `
+                                <tr>
+                                    <td><span class="text-white fw-bold">${bl.username}</span></td>
+                                    <td><span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-2 py-1">${bl.mountpoint || 'TẤT CẢ'}</span></td>
+                                    <td><span class="text-muted small">${new Date(bl.blocked_at * 1000).toLocaleString('vi-VN')}</span></td>
+                                    <td><span class="text-secondary small">${bl.blocked_by || 'System'}</span></td>
+                                    <td><span class="text-muted small">${bl.reason || '--'}</span></td>
+                                    <td class="text-end">
+                                        <button class="btn btn-sm btn-outline-success unblock-direct-btn py-1 px-3 rounded-pill" 
+                                            data-username="${bl.username}" data-mountpoint="${bl.mountpoint || ''}">
+                                            <i class="bi bi-unlock-fill me-1"></i> Mở khóa
+                                        </button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            container.innerHTML = html;
+
+            // Bind events
+            container.querySelectorAll('.unblock-direct-btn').forEach(btn => {
+                btn.onclick = async () => {
+                    const { username, mountpoint } = btn.dataset;
+                    if (!confirm(`Xác nhận mở khóa cho tài khoản "${username}"?`)) return;
+                    
+                    try {
+                        btn.disabled = true;
+                        const res = await fetch('/api/caster/unblock-user', {
+                            method: 'POST',
+                            headers: API_HEADERS,
+                            body: JSON.stringify({ username, mountpoint: mountpoint || null })
+                        });
+                        if (!res.ok) throw new Error('Mở khóa thất bại');
+                        showToast(`Đã mở khóa tài khoản ${username}`, 'success');
+                        renderBlocklistMapping(); // Refresh this tab
+                        syncData(); // Refresh main list
+                    } catch (err) {
+                        showToast(err.message, 'danger');
+                        btn.disabled = false;
+                    }
+                };
+            });
+
+        } catch (e) {
+            container.innerHTML = `<div class="alert alert-danger">Lỗi: ${e.message}</div>`;
+        }
+    }
+
     // ✅ Load and render mountpoints into tab
     async function loadAndRenderMountpoints() {
         const container = document.getElementById('mountpoints-container');
         if (!container) return;
 
-        container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
+        container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
 
         try {
             const res = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
@@ -1635,12 +1771,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             const domains = Object.keys(data.by_domain || {}).sort();
             const sources = data.all || [];
             const hostOptions = Object.keys(data.by_host || {}).sort();
-            let noSortAsc = true;
-
-            const getRenderedSources = () => {
-                if (noSortAsc) return sources;
-                return [...sources].reverse();
-            };
 
             if (sources.length === 0) {
                 container.innerHTML = '<div class="alert alert-warning text-center mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Không có mountpoint nào</div>';
@@ -1648,138 +1778,88 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             let html = `
-                <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-                    <button type="button" class="btn btn-success btn-sm" id="toggle-create-mp-btn">
-                        <i class="bi bi-plus-circle me-1"></i>Tạo mountpoint
-                    </button>
-                    <div class="input-group input-group-sm flex-grow-1" style="max-width: 420px;">
-                        <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
-                        <input type="text" class="form-control" id="mountpoints-search" placeholder="Tìm mountpoint, identifier, host...">
+                <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-premium-primary btn-sm px-3" data-bs-toggle="modal" data-bs-target="#createMountpointModal">
+                            <i class="bi bi-plus-circle me-1"></i> Tạo mountpoint
+                        </button>
+                    </div>
+                    <div class="search-input-wrapper" style="max-width: 400px;">
+                        <i class="bi bi-search"></i>
+                        <input type="text" class="form-control premium-input" id="mountpoints-search" placeholder="Tìm tên, identifier, host...">
                     </div>
                 </div>
 
-                <div class="card bg-dark-subtle border-secondary mb-3 d-none" id="create-mp-panel">
-                    <div class="card-body">
-                        <div class="row g-2 align-items-end mb-2">
-                            <div class="col-md-3">
-                                <label class="form-label small text-muted fw-bold mb-1">Host</label>
-                                <select class="form-select form-select-sm" id="create-mp-host">
-                                    ${hostOptions.map(h => `<option value="${h}">${h}</option>`).join('')}
-                                </select>
-                            </div>
-                            <div class="col-md-2">
-                                <label class="form-label small text-muted fw-bold mb-1">No (ID)</label>
-                                <input type="number" class="form-control form-control-sm" id="create-mp-index" min="1" placeholder="Auto">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label small text-muted fw-bold mb-1">Identifier</label>
-                                <input type="text" class="form-control form-control-sm" id="create-mp-identifier" placeholder="AitogyGNSS">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label small text-muted fw-bold mb-1">Mountpoint</label>
-                                <input type="text" class="form-control form-control-sm" id="create-mp-name" placeholder="ATG.NEW">
-                            </div>
-                            <div class="col-md-1">
-                                <label class="form-label small text-muted fw-bold mb-1">Password</label>
-                                <input type="text" class="form-control form-control-sm" id="create-mp-password" value="12345">
-                            </div>
-                        </div>
-                        <div class="row g-2 align-items-end mb-2">
-                            <div class="col-md-2">
-                                <label class="form-label small text-muted fw-bold mb-1">Status</label>
-                                <input type="number" class="form-control form-control-sm" id="create-mp-status" value="0" min="0" step="1">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label small text-muted fw-bold mb-1">Latitude</label>
-                                <input type="number" class="form-control form-control-sm" id="create-mp-lat" value="21.0717" step="0.000001">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label small text-muted fw-bold mb-1">Longitude</label>
-                                <input type="number" class="form-control form-control-sm" id="create-mp-lon" value="105.7735" step="0.000001">
-                            </div>
-                            <div class="col-md-4">
-                                <div class="d-flex flex-wrap gap-3 small text-muted pt-2">
-                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-auth" checked>AuthRequired</label>
-                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-gga">GGA Required</label>
-                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-showpos">Show Position</label>
-                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-overlap">Overlap Data</label>
-                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-recal">Calculating Position</label>
-                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="create-mp-store">Storing Data</label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row g-2 align-items-end">
-                            <div class="col-md-1 d-grid">
-                                <button type="button" class="btn btn-sm btn-success" id="create-mp-btn">Tạo</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mb-3">
-                    <div class="btn-group w-100" role="group">
-                        <input type="radio" class="btn-check" name="domain-filter" id="domain-all" value="all" checked>
-                        <label class="btn btn-outline-primary" for="domain-all">📊 Tất cả (${sources.length})</label>
+                <div class="mb-4">
+                    <div class="premium-tabs nav nav-pills" id="domain-filter-pills" role="tablist">
+                        <button class="nav-link active" data-domain="all">
+                            <i class="bi bi-grid-fill me-1"></i> Tất cả <span class="badge bg-white bg-opacity-25 ms-1">${sources.length}</span>
+                        </button>
                         ${domains.map(d => `
-                            <input type="radio" class="btn-check" name="domain-filter" id="domain-${d}" value="${d}">
-                            <label class="btn btn-outline-info" for="domain-${d}">🌐 ${d} (${(data.by_domain[d] || []).length})</label>
+                            <button class="nav-link" data-domain="${d}">
+                                <i class="bi bi-hdd-network me-1"></i> ${d} <span class="badge bg-white bg-opacity-25 ms-1">${(data.by_domain[d] || []).length}</span>
+                            </button>
                         `).join('')}
                     </div>
                 </div>
 
-                <div class="table-responsive rounded border border-secondary border-opacity-25 shadow-sm">
-                    <table class="table table-dark table-hover table-sm mb-0 align-middle">
+                <div class="premium-table-card">
+                    <table class="premium-table table-hover">
                         <thead>
                             <tr>
-                                <th style="width: 70px;">
-                                    <button type="button" class="btn btn-link btn-sm text-decoration-none p-0" id="sort-no-btn" title="Sắp xếp theo No">
-                                        No <span id="sort-no-indicator">↑</span>
-                                    </button>
-                                </th>
+                                <th style="width: 60px;" class="text-center">#</th>
                                 <th>Mountpoint</th>
                                 <th>Identifier</th>
-                                <th>Domain / Host</th>
-                                <th>Password</th>
-                                <th>Data</th>
+                                <th>Caster Host</th>
+                                <th>Auth / GGA</th>
                                 <th>Position</th>
-                                <th>Format</th>
-                                <th>Auth</th>
-                                <th>GGA</th>
-                                <th>ShowPos</th>
-                                <th class="text-end">Hành động</th>
+                                <th>Stats</th>
+                                <th class="text-end">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="mountpoints-table-body">
-                            ${getRenderedSources().map((src, idx) => `
-                                <tr class="small" data-domain="${src.domain || src.host || ''}">
-                                    <td><span class="text-muted fw-semibold">${idx + 1}</span></td>
+                            ${sources.map((src, idx) => `
+                                <tr data-domain="${src.domain || src.host || ''}">
+                                    <td class="text-center"><span class="text-muted small">${idx + 1}</span></td>
                                     <td>
-                                        <code class="text-info">${src.mountpoint}</code>
-                                        <button type="button" class="btn btn-sm btn-outline-success ms-2 copy-mp" data-mp="${src.mountpoint}" title="Copy">📋</button>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="name text-info font-monospace fw-bold">${src.mountpoint || '--'}</span>
+                                            <button type="button" class="btn btn-xs btn-link text-secondary p-0 copy-mp" data-mp="${src.mountpoint}" title="Copy">
+                                                <i class="bi bi-clipboard"></i>
+                                            </button>
+                                        </div>
                                     </td>
-                                    <td><small class="text-muted">${src.identifier}</small></td>
-                                    <td><span class="badge bg-secondary">${src.domain || src.host}</span></td>
-                                    <td><small class="text-warning">${src.password || '-'}</small></td>
-                                    <td><small>${Number(src.datacount || 0)}</small></td>
-                                    <td>${src.latitude && src.longitude ? `<small>${src.latitude.toFixed(4)}, ${src.longitude.toFixed(4)}</small>` : '<span class="text-muted">N/A</span>'}</td>
-                                    <td><small>${src.format}</small></td>
+                                    <td><span class="text-white small">${src.identifier || '--'}</span></td>
+                                    <td><span class="badge bg-dark border border-secondary text-secondary fw-normal px-2 py-1">${src.domain || src.host || '--'}</span></td>
                                     <td>
-                                        <span class="badge ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? 'bg-warning text-dark' : 'bg-success'}">
-                                            ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? '🔒 Required' : '🟢 Open'}
-                                        </span>
+                                        <div class="d-flex gap-2">
+                                            <span class="badge-status ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? 'blocked' : 'ok'}" style="font-size:10px">
+                                                ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? 'AUTH' : 'OPEN'}
+                                            </span>
+                                            <span class="badge-status ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? 'blocked' : 'ok'}" style="font-size:10px">
+                                                GGA
+                                            </span>
+                                        </div>
                                     </td>
                                     <td>
-                                        <span class="badge ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? 'bg-danger' : 'bg-info'}">
-                                            ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? '✅ Required' : '❌ No'}
-                                        </span>
+                                        <div class="d-flex flex-column">
+                                            <span class="small ${src.latitude && src.longitude ? 'text-white' : 'text-muted'}">
+                                                ${src.latitude && src.longitude ? `${src.latitude.toFixed(4)}, ${src.longitude.toFixed(4)}` : '--'}
+                                            </span>
+                                            <span class="badge-status ${src.show_position ? 'ok' : 'blocked'} mt-1" style="width:fit-content; font-size:9px;">
+                                                SHOW POS: ${src.show_position ? 'ON' : 'OFF'}
+                                            </span>
+                                        </div>
                                     </td>
                                     <td>
-                                        <span class="badge ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? 'bg-primary' : 'bg-secondary'}">
-                                            ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? '👁️ On' : '🚫 Off'}
-                                        </span>
+                                        <div class="small">
+                                            <span class="text-secondary">Data:</span> <span class="text-success fw-bold">${Number(src.datacount || 0)}</span>
+                                        </div>
                                     </td>
                                     <td class="text-end">
-                                        <button type="button" class="btn btn-sm btn-outline-danger delete-mp" data-host="${src.host || ''}" data-identifier="${src.identifier || ''}" data-mountpoint="${src.mountpoint || ''}">Xóa</button>
+                                        <button type="button" class="action-btn text-danger delete-mp" data-host="${src.host || ''}" data-identifier="${src.identifier || ''}" data-mountpoint="${src.mountpoint || ''}" title="Delete">
+                                            <i class="bi bi-trash3"></i>
+                                        </button>
                                     </td>
                                 </tr>
                             `).join('')}
@@ -1787,234 +1867,70 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </table>
                 </div>
 
-                <div class="mt-3 p-2 bg-dark-subtle rounded small text-muted">
-                    <strong>💡 Tips:</strong>
-                    <ul class="mb-0 ms-3">
-                        <li>Click 📋 để copy mountpoint name</li>
-                        <li>Dùng các mountpoint này khi tạo Rover mới</li>
-                        <li>Admin có thể tạo/xóa mountpoint ngay tại đây</li>
+                <div class="mt-4 p-3 bg-dark-subtle rounded border border-secondary border-opacity-25 small">
+                    <div class="d-flex align-items-center gap-2 text-info mb-2">
+                        <i class="bi bi-lightbulb"></i>
+                        <span class="fw-bold text-uppercase" style="letter-spacing: 0.5px">Hướng dẫn nhanh</span>
+                    </div>
+                    <ul class="text-muted mb-0 ps-3">
+                        <li>Sử dụng cột <strong>Mountpoint</strong> khi cấu hình quyền truy cập cho tài khoản Rover.</li>
+                        <li>Trạng thái <strong>AUTH</strong> hiển thị các luồng yêu cầu xác thực tài khoản.</li>
+                        <li>Nhấn vào biểu tượng 📋 để sao chép nhanh tên Mountpoint.</li>
                     </ul>
                 </div>
             `;
-            
+
             container.innerHTML = html;
-            
-            const toggleCreateMpBtn = container.querySelector('#toggle-create-mp-btn');
-            const createMpPanel = container.querySelector('#create-mp-panel');
-            if (toggleCreateMpBtn && createMpPanel) {
-                toggleCreateMpBtn.addEventListener('click', () => {
-                    createMpPanel.classList.toggle('d-none');
-                });
+
+            // --- Modal Host Population ---
+            const modalHostSelect = document.getElementById('create-mp-host');
+            if (modalHostSelect) {
+                modalHostSelect.innerHTML = hostOptions.map(h => `<option value="${h}">${h}</option>`).join('');
             }
 
-            const mountpointsSearch = container.querySelector('#mountpoints-search');
-            const getSelectedDomain = () => {
-                const checked = container.querySelector('input[name="domain-filter"]:checked');
-                return checked ? checked.value : 'all';
-            };
+            // --- LISTENERS ---
+            const searchInput = document.getElementById('mountpoints-search');
+            const tableBody = document.getElementById('mountpoints-table-body');
+            const rows = tableBody.querySelectorAll('tr');
+
             const filterRows = () => {
-                const q = String(mountpointsSearch?.value || '').trim().toLowerCase();
-                const selectedDomain = getSelectedDomain();
-                container.querySelectorAll('#mountpoints-table-body tr').forEach(row => {
-                    const text = row.textContent.toLowerCase();
-                    const rowDomain = String(row.dataset.domain || '').trim();
-                    const matchText = !q || text.includes(q);
-                    const matchDomain = selectedDomain === 'all' || rowDomain === selectedDomain;
-                    row.style.display = (matchText && matchDomain) ? '' : 'none';
+                const term = (searchInput?.value || '').toLowerCase().trim();
+                const activePill = document.querySelector('#domain-filter-pills .nav-link.active');
+                const selectedDomain = activePill?.getAttribute('data-domain') || 'all';
+
+                rows.forEach(row => {
+                    const txt = row.textContent.toLowerCase();
+                    const rowDomain = row.getAttribute('data-domain');
+                    const matchSearch = !term || txt.includes(term);
+                    const matchDomain = (selectedDomain === 'all' || rowDomain === selectedDomain);
+                    row.classList.toggle('d-none', !(matchSearch && matchDomain));
                 });
             };
-            if (mountpointsSearch) {
-                mountpointsSearch.addEventListener('input', filterRows);
-            }
 
-            const sortNoBtn = container.querySelector('#sort-no-btn');
-            const mountpointsBody = container.querySelector('#mountpoints-table-body');
-            const sortNoIndicator = container.querySelector('#sort-no-indicator');
-            if (sortNoBtn && mountpointsBody) {
-                sortNoBtn.addEventListener('click', () => {
-                    noSortAsc = !noSortAsc;
-                    const renderedSources = getRenderedSources();
-                    mountpointsBody.innerHTML = renderedSources.map((src, idx) => `
-                        <tr class="small" data-domain="${src.domain || src.host || ''}">
-                            <td><span class="text-muted fw-semibold">${idx + 1}</span></td>
-                            <td>
-                                <code class="text-info">${src.mountpoint}</code>
-                                <button type="button" class="btn btn-sm btn-outline-success ms-2 copy-mp" data-mp="${src.mountpoint}" title="Copy">📋</button>
-                            </td>
-                            <td><small class="text-muted">${src.identifier}</small></td>
-                            <td><span class="badge bg-secondary">${src.domain || src.host}</span></td>
-                            <td><small class="text-warning">${src.password || '-'}</small></td>
-                            <td><small>${Number(src.datacount || 0)}</small></td>
-                            <td>${src.latitude && src.longitude ? `<small>${src.latitude.toFixed(4)}, ${src.longitude.toFixed(4)}</small>` : '<span class="text-muted">N/A</span>'}</td>
-                            <td><small>${src.format}</small></td>
-                            <td>
-                                <span class="badge ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? 'bg-warning text-dark' : 'bg-success'}">
-                                    ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? '🔒 Required' : '🟢 Open'}
-                                </span>
-                            </td>
-                            <td>
-                                <span class="badge ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? 'bg-danger' : 'bg-info'}">
-                                    ${(src.gga_required === true || String(src.gga_required).toLowerCase() === 'true' || src.gga_required === 1 || String(src.gga_required) === '1') ? '✅ Required' : '❌ No'}
-                                </span>
-                            </td>
-                            <td>
-                                <span class="badge ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? 'bg-primary' : 'bg-secondary'}">
-                                    ${(src.show_position === true || String(src.show_position).toLowerCase() === 'true' || src.show_position === 1 || String(src.show_position) === '1') ? '👁️ On' : '🚫 Off'}
-                                </span>
-                            </td>
-                            <td class="text-end">
-                                <button type="button" class="btn btn-sm btn-outline-danger delete-mp" data-host="${src.host || ''}" data-identifier="${src.identifier || ''}" data-mountpoint="${src.mountpoint || ''}">Xóa</button>
-                            </td>
-                        </tr>
-                    `).join('');
+            searchInput?.addEventListener('input', filterRows);
 
-                    if (sortNoIndicator) {
-                        sortNoIndicator.textContent = noSortAsc ? '↑' : '↓';
-                    }
-
+            document.querySelectorAll('#domain-filter-pills .nav-link').forEach(pill => {
+                pill.addEventListener('click', () => {
+                    document.querySelectorAll('#domain-filter-pills .nav-link').forEach(p => p.classList.remove('active'));
+                    pill.classList.add('active');
                     filterRows();
-
-                    container.querySelectorAll('.copy-mp').forEach(btn => {
-                        btn.addEventListener('click', () => {
-                            const mp = btn.dataset.mp;
-                            navigator.clipboard.writeText(mp);
-                            showToast(`Copied: ${mp}`, 'success');
-                        });
-                    });
-
-                    container.querySelectorAll('.delete-mp').forEach(btn => {
-                        btn.addEventListener('click', async () => {
-                            const host = btn.dataset.host;
-                            const identifier = btn.dataset.identifier;
-                            const mountpoint = btn.dataset.mountpoint;
-                            if (!mountpoint) return;
-                            if (!confirm(`Xóa mountpoint "${mountpoint}" trên caster?`)) return;
-
-                            try {
-                                btn.disabled = true;
-                                const res = await fetch('/api/admin/caster-sources', {
-                                    method: 'DELETE',
-                                    headers: API_HEADERS,
-                                    body: JSON.stringify({ host, identifier, mountpoint })
-                                });
-                                const data = await res.json().catch(() => ({}));
-                                if (!res.ok) throw new Error(data.detail || 'Không thể xóa mountpoint');
-                                showToast(`Đã xóa mountpoint ${mountpoint}`, 'warning');
-                                await fetchCasterSources({ force: true });
-                                await loadAndRenderMountpoints();
-                                renderAdminLiveMountpoints();
-                            } catch (err) {
-                                showToast(err.message, 'danger');
-                            } finally {
-                                btn.disabled = false;
-                            }
-                        });
-                    });
-                });
-            }
-
-            // Add copy button handlers
-            container.querySelectorAll('.copy-mp').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const mp = btn.dataset.mp;
-                    navigator.clipboard.writeText(mp);
-                    showToast(`Copied: ${mp}`, 'success');
                 });
             });
 
-            const createMpBtn = container.querySelector('#create-mp-btn');
-            if (createMpBtn) {
-                createMpBtn.addEventListener('click', async () => {
-                    const host = container.querySelector('#create-mp-host')?.value?.trim();
-                    const indexRaw = container.querySelector('#create-mp-index')?.value?.trim();
-                    const identifier = container.querySelector('#create-mp-identifier')?.value?.trim();
-                    const mountpoint = container.querySelector('#create-mp-name')?.value?.trim();
-                    const password = container.querySelector('#create-mp-password')?.value?.trim() || '12345';
-                    const statusRaw = container.querySelector('#create-mp-status')?.value?.trim();
-                    const latRaw = container.querySelector('#create-mp-lat')?.value?.trim();
-                    const lonRaw = container.querySelector('#create-mp-lon')?.value?.trim();
-                    const authRequired = Boolean(container.querySelector('#create-mp-auth')?.checked);
-                    const ggaRequired = Boolean(container.querySelector('#create-mp-gga')?.checked);
-                    const showPosition = Boolean(container.querySelector('#create-mp-showpos')?.checked);
-                    const overlapData = Boolean(container.querySelector('#create-mp-overlap')?.checked);
-                    const rePositioning = Boolean(container.querySelector('#create-mp-recal')?.checked);
-                    const storingData = Boolean(container.querySelector('#create-mp-store')?.checked);
+            // Action: Copy
+            container.querySelectorAll('.copy-mp').forEach(btn => {
+                btn.onclick = () => {
+                    const mp = btn.dataset.mp;
+                    navigator.clipboard.writeText(mp);
+                    showToast(`Đã copy: ${mp}`, 'success');
+                };
+            });
 
-                    const index = indexRaw ? parseInt(indexRaw, 10) : null;
-                    const counter = statusRaw ? parseInt(statusRaw, 10) : 0;
-                    const latitude = latRaw ? parseFloat(latRaw) : null;
-                    const longitude = lonRaw ? parseFloat(lonRaw) : null;
-
-                    if (!identifier || !mountpoint) {
-                        showToast('Vui lòng nhập identifier và mountpoint', 'warning');
-                        return;
-                    }
-
-                    if (!Number.isFinite(counter) || counter < 0) {
-                        showToast('Status phải là số nguyên >= 0', 'warning');
-                        return;
-                    }
-
-                    if (index !== null && (!Number.isFinite(index) || index <= 0)) {
-                        showToast('No (ID) phải là số nguyên > 0', 'warning');
-                        return;
-                    }
-
-                    if (latitude !== null && !Number.isFinite(latitude)) {
-                        showToast('Latitude không hợp lệ', 'warning');
-                        return;
-                    }
-
-                    if (longitude !== null && !Number.isFinite(longitude)) {
-                        showToast('Longitude không hợp lệ', 'warning');
-                        return;
-                    }
-
-                    try {
-                        createMpBtn.disabled = true;
-                        createMpBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-                        const res = await fetch('/api/admin/caster-sources', {
-                            method: 'POST',
-                            headers: API_HEADERS,
-                            body: JSON.stringify({
-                                host,
-                                identifier,
-                                mountpoint,
-                                password,
-                                counter,
-                                index,
-                                latitude,
-                                longitude,
-                                auth_required: authRequired,
-                                gga_required: ggaRequired,
-                                show_position: showPosition,
-                                overlap_data: overlapData,
-                                re_positioning: rePositioning,
-                                storing_data: storingData,
-                            })
-                        });
-                        const data = await res.json().catch(() => ({}));
-                        if (!res.ok) throw new Error(data.detail || 'Không thể tạo mountpoint');
-                        showToast(`Đã tạo mountpoint ${mountpoint}`, 'success');
-                        await fetchCasterSources({ force: true });
-                        await loadAndRenderMountpoints();
-                        renderAdminLiveMountpoints();
-                    } catch (err) {
-                        showToast(err.message, 'danger');
-                    } finally {
-                        createMpBtn.disabled = false;
-                        createMpBtn.textContent = 'Tạo';
-                    }
-                });
-            }
-
+            // Action: Delete
             container.querySelectorAll('.delete-mp').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const host = btn.dataset.host;
-                    const identifier = btn.dataset.identifier;
-                    const mountpoint = btn.dataset.mountpoint;
-                    if (!mountpoint) return;
-                    if (!confirm(`Xóa mountpoint "${mountpoint}" trên caster?`)) return;
+                btn.onclick = async () => {
+                    const { host, identifier, mountpoint } = btn.dataset;
+                    if (!mountpoint || !confirm(`Bạn có chắc chắn muốn xóa Mountpoint "${mountpoint}"?`)) return;
 
                     try {
                         btn.disabled = true;
@@ -2023,31 +1939,68 @@ document.addEventListener('DOMContentLoaded', async () => {
                             headers: API_HEADERS,
                             body: JSON.stringify({ host, identifier, mountpoint })
                         });
-                        const data = await res.json().catch(() => ({}));
-                        if (!res.ok) throw new Error(data.detail || 'Không thể xóa mountpoint');
-                        showToast(`Đã xóa mountpoint ${mountpoint}`, 'warning');
+                        if (!res.ok) throw new Error((await res.json())?.detail || 'Lỗi khi xóa');
+                        showToast('Đã xóa Mountpoint thành công', 'warning');
                         await fetchCasterSources({ force: true });
-                        await loadAndRenderMountpoints();
-                        renderAdminLiveMountpoints();
+                        loadAndRenderMountpoints();
+                    } catch (err) {
+                        showToast(err.message, 'danger');
+                        btn.disabled = false;
+                    }
+                };
+            });
+
+            // --- Create MP Form Handler (attached once) ---
+            const createForm = document.getElementById('create-mp-form');
+            if (createForm && !createForm.dataset.listenerAttached) {
+                createForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const btn = document.getElementById('create-mp-btn');
+                    const payload = {
+                        host: document.getElementById('create-mp-host').value,
+                        mountpoint: document.getElementById('create-mp-name').value.trim(),
+                        password: document.getElementById('create-mp-password').value.trim(),
+                        identifier: document.getElementById('create-mp-identifier').value.trim(),
+                        latitude: parseFloat(document.getElementById('create-mp-lat').value) || 0,
+                        longitude: parseFloat(document.getElementById('create-mp-lon').value) || 0,
+                        auth_required: document.getElementById('create-mp-auth').checked,
+                        gga_required: document.getElementById('create-mp-gga').checked,
+                        show_position: document.getElementById('create-mp-showpos').checked,
+                        storing_data: true,
+                        overlap_data: false,
+                        re_positioning: false
+                    };
+
+                    try {
+                        btn.disabled = true;
+                        const res = await fetch('/api/admin/caster-sources', {
+                            method: 'POST',
+                            headers: API_HEADERS,
+                            body: JSON.stringify(payload)
+                        });
+                        if (!res.ok) throw new Error((await res.json())?.detail || 'Lỗi khi tạo');
+                        
+                        showToast('Đã tạo Mountpoint thành công', 'success');
+                        const modalEl = document.getElementById('createMountpointModal');
+                        if (modalEl) {
+                            const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+                            modal.hide();
+                        }
+                        createForm.reset();
+                        await fetchCasterSources({ force: true });
+                        loadAndRenderMountpoints();
                     } catch (err) {
                         showToast(err.message, 'danger');
                     } finally {
                         btn.disabled = false;
                     }
                 });
-            });
-
-            // Add domain filter handlers
-            container.querySelectorAll('input[name="domain-filter"]').forEach(radio => {
-                radio.addEventListener('change', filterRows);
-            });
-
-            // Apply default filter state once after render.
-            filterRows();
+                createForm.dataset.listenerAttached = "true";
+            }
 
         } catch (e) {
             console.error("[Mountpoints]", e);
-            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải mountpoints: ${e.message}</div>`;
+            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải dữ liệu: ${e.message}</div>`;
         }
     }
 
@@ -2067,4 +2020,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         t.show();
         el.addEventListener('hidden.bs.toast', () => el.remove());
     }
+
+    // === Premium UI Interaction ===
+    document.addEventListener('click', (e) => {
+        // Password Toggle
+        if (e.target.classList.contains('toggle-password')) {
+            const cell = e.target.closest('.password-cell');
+            const masked = cell.querySelector('.pw-masked');
+            const password = cell.dataset.password;
+            const icon = e.target;
+
+            if (masked.textContent === '••••••••') {
+                masked.textContent = password || '******';
+                icon.classList.replace('bi-eye', 'bi-eye-slash');
+            } else {
+                masked.textContent = '••••••••';
+                icon.classList.replace('bi-eye-slash', 'bi-eye');
+            }
+        }
+    });
 });
