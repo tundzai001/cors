@@ -911,7 +911,7 @@ async function apiFetch(url, options = {}, retries = 3) {
         const response = await fetch(url, { ...options, headers, signal: controller.signal });
         clearTimeout(timeoutId);
 
-        if (response.status === 401 || response.status === 403) {
+        if (response.status === 401) {
             if (typeof NavigationManager !== 'undefined') {
                 NavigationManager.forceLogout();
             } else {
@@ -1042,9 +1042,6 @@ async function loadCurrentUser() {
 async function loadInitialDevices() {
     try {
         let apiUrl = '/api/devices';
-        if (globalState.currentUser?.role === 'coordinator' || globalState.currentUser?.role === 'operator') {
-            apiUrl = `/api/devices?user_id=${globalState.currentUser.id}`;
-        }
         
         const response = await apiFetch(apiUrl);
         if (!response.ok) throw new Error('Failed to load devices');

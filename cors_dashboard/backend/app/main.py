@@ -3878,7 +3878,7 @@ async def get_initial_devices(
     target_role = current_user.role
 
     if user_id is not None:
-        if current_user.role != auth.Role.ADMIN:
+        if current_user.role != auth.Role.ADMIN and user_id != current_user.id:
             logging.warning(
                 f"IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
                 f"tried to filter by user_id={user_id}"
@@ -3893,19 +3893,27 @@ async def get_initial_devices(
             target_role = user_info.role
 
     if target_role in (auth.Role.COORDINATOR, auth.Role.OPERATOR):
-        return await crud.get_devices_by_user_id(db, user_id=target_user_id)
-    elif target_role == 'viewer':
-        from sqlalchemy import select
-        from . import models
-        result = await auth_db.execute(select(models.SystemSetting).filter_by(key=f'viewer_devices_{target_user_id}'))
+        devices = await crud.get_devices_by_user_id(db, user_id=target_user_id)
+        logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → {len(devices)} devices by user_id={target_user_id}")
+        return devices
+    elif target_role == auth.Role.VIEWER:
+        from sqlalchemy import select as _select
+        from . import models as _models
+        setting_key = f'viewer_devices_{target_user_id}'
+        result = await auth_db.execute(_select(_models.SystemSetting).filter_by(key=setting_key))
         setting = result.scalars().first()
         viewer_serials = setting.value if setting and isinstance(setting.value, list) else []
+        logger.info(f"[DEVICES] Viewer '{current_user.username}' (id={target_user_id}) → setting_key='{setting_key}', found={setting is not None}, serials={viewer_serials}")
         if not viewer_serials:
             return []
         
-        result = await db.execute(select(models.Device).where(models.Device.serial.in_(viewer_serials)).order_by(models.Device.name))
-        return result.scalars().all()
+        result = await db.execute(_select(_models.Device).where(_models.Device.serial.in_(viewer_serials)).order_by(_models.Device.name))
+        devices = result.scalars().all()
+        logger.info(f"[DEVICES] Viewer '{current_user.username}' → returning {len(devices)} devices")
+        return devices
     
+    # Fallback: Admin sees all
+    logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → returning ALL devices")
     return await crud.get_all_devices(db)
 
 @app.post("/api/devices/{serial}/command")
