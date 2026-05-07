@@ -12,9 +12,39 @@ const EnterpriseStationDetail = ({ device }) => {
         { label: 'RTK Status', value: device.rtk_fix_status || 'FIX', icon: 'bi-check-circle-fill' }
     ];
 
+    const isOffline = device.status === 'offline';
+    const [snrData, setSnrData] = React.useState(Array(24).fill(0));
+
+    React.useEffect(() => {
+        if (isOffline) {
+            setSnrData(Array(24).fill(0));
+            return;
+        }
+        
+        // Initialize with random base values
+        setSnrData(Array(24).fill(0).map(() => Math.floor(Math.random() * 20) + 35));
+        
+        // Simulate real-time SNR fluctuation
+        const interval = setInterval(() => {
+            setSnrData(prev => prev.map(val => {
+                let next = val + (Math.random() * 4 - 2);
+                if (next < 30) next = 30;
+                if (next > 60) next = 60;
+                return next;
+            }));
+        }, 1000);
+        
+        return () => clearInterval(interval);
+    }, [isOffline]);
+
     return (
         <div className="enterprise-station-detail animate__animated animate__fadeIn">
             {/* Header Section */}
+            <div className="mb-4">
+                <a href="/" className="btn btn-sm btn-outline-cyan rounded-pill px-3" style={{ border: '1px solid var(--glass-border)', background: 'rgba(0, 242, 255, 0.05)' }}>
+                    <i className="bi bi-arrow-left me-2"></i> Trở về trang chủ
+                </a>
+            </div>
             <div className="d-flex justify-content-between align-items-center mb-5">
                 <div>
                     <h1 className="display-4 fw-bold mb-0" style={{ color: 'var(--primary-cyan)' }}>
@@ -29,7 +59,9 @@ const EnterpriseStationDetail = ({ device }) => {
                 </div>
                 <div className="text-end">
                     <div className="text-muted small">MOUNTPOINT</div>
-                    <div className="h4 fw-mono text-white">{device.serial}</div>
+                    <div className="h4 fw-bold text-white">{device.name || 'N/A'}</div>
+                    <div className="text-muted small mt-2">DEVICE SERIAL</div>
+                    <div className="h6 fw-mono text-white opacity-50 mb-0">{device.serial}</div>
                 </div>
             </div>
 
@@ -59,17 +91,15 @@ const EnterpriseStationDetail = ({ device }) => {
                             </div>
                         </div>
                         <div style={{ height: '300px', display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
-                            {[...Array(24)].map((_, i) => {
-                                const height = Math.floor(Math.random() * 60) + 30;
-                                return (
-                                    <div key={i} className="flex-grow-1" style={{ 
-                                        height: `${height}%`, 
-                                        background: 'linear-gradient(to top, rgba(0, 242, 255, 0.1), var(--primary-cyan))',
-                                        borderRadius: '4px 4px 0 0',
-                                        opacity: 0.8
-                                    }}></div>
-                                )
-                            })}
+                            {snrData.map((height, i) => (
+                                <div key={i} className="flex-grow-1" style={{ 
+                                    height: `${isOffline ? 5 : height}%`, 
+                                    background: isOffline ? 'rgba(255,255,255,0.05)' : 'linear-gradient(to top, rgba(0, 242, 255, 0.1), var(--primary-cyan))',
+                                    borderRadius: '4px 4px 0 0',
+                                    opacity: isOffline ? 0.3 : 0.8,
+                                    transition: 'height 0.5s ease-in-out'
+                                }}></div>
+                            ))}
                         </div>
                     </div>
                 </div>

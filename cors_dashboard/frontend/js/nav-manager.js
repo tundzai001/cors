@@ -245,7 +245,7 @@ const NavigationManager = {
         sessionStorage.removeItem('access_token');
         // Xóa các thông tin state khác nếu có
         this.currentUser = null;
-        window.location.href = '/login.html';
+        window.location.href = '/';
     },
 
     handleLogout() {

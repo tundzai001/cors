@@ -428,7 +428,7 @@ document.addEventListener('click', (e) => {
     if (!target) return;
     if (target.id === 'login-btn' || (target.closest && target.closest('#login-btn'))) {
         e.preventDefault();
-        window.location.href = '/login.html';
+        window.location.href = '/';
     }
     if (target.id === 'back-home-btn' || (target.closest && target.closest('#back-home-btn'))) {
         e.preventDefault();
@@ -993,7 +993,7 @@ async function apiFetch(url, options = {}, retries = 3) {
             } else {
                 localStorage.removeItem('access_token');
                 sessionStorage.removeItem('access_token');
-                window.location.href = '/login.html';
+                window.location.href = '/';
             }
             throw new Error('Unauthorized');
         }
@@ -1111,7 +1111,7 @@ async function loadCurrentUser() {
     } catch (error) {
         localStorage.removeItem('access_token');
         sessionStorage.removeItem('access_token');
-        window.location.href = '/login.html';
+        window.location.href = '/';
     }
 }
 
@@ -1224,7 +1224,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             localStorage.removeItem('access_token');
             sessionStorage.removeItem('access_token');
-            window.location.href = '/login.html';
+            window.location.href = '/';
         }
         return;
     }
@@ -1260,10 +1260,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (window.homepageRoot) {
                 renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices }, 'Homepage component is not loaded');
             }
+        } else if (currentPath === '/network-status') {
+            switchView('homepage');
+            const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 5000);
+            if (window.homepageRoot) {
+                renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices }, 'Homepage component is not loaded');
+            }
         } else if (currentPath.startsWith('/blog')) {
             switchView('blog');
             const slug = currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
-            window.renderBlog(slug);
+            if (window.blogRoot) {
+                const blogComponent = await waitForGlobalComponent('BlogSystem', 5000);
+                renderReactComponent(window.blogRoot, blogComponent, { slug }, 'Blog component is not loaded');
+            }
+
         } else if (currentPath.startsWith('/station/')) {
              const serial = currentPath.split('/').pop();
              switchView('station-detail');
@@ -1323,16 +1333,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.appendChild(modalContainer);
     const modalRoot = ReactDOM.createRoot(modalContainer);
 
-    if (window.CasterConfigModal) {
-        renderReactComponent(modalRoot, window.CasterConfigModal, {}, 'Caster config modal is not loaded');
-    }
+    // Async load - Babel may not have transpiled these yet
+    waitForGlobalComponent('CasterConfigModal', 8000).then(comp => {
+        renderReactComponent(modalRoot, comp, {}, 'Caster config modal is not loaded');
+    }).catch(() => {});
 
-    if (window.CasterSourcesModal) {
+    waitForGlobalComponent('CasterSourcesModal', 8000).then(comp => {
         const sourcesContainer = document.createElement('div');
         document.body.appendChild(sourcesContainer);
         const sourcesRoot = ReactDOM.createRoot(sourcesContainer);
-        renderReactComponent(sourcesRoot, window.CasterSourcesModal, {}, 'Caster sources modal is not loaded');
-    }
+        renderReactComponent(sourcesRoot, comp, {}, 'Caster sources modal is not loaded');
+    }).catch(() => {});
 
 
     window.fetchInitialDevices = loadInitialDevices;

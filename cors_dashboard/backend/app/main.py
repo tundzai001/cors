@@ -5831,6 +5831,7 @@ async def serve_security():
 @app.get("/blog", include_in_schema=False)
 @app.get("/blog/{rest_of_path:path}", include_in_schema=False)
 @app.get("/station/{rest_of_path:path}", include_in_schema=False)
+@app.get("/api/docs", include_in_schema=False)
 async def serve_spa():
     return FileResponse("../frontend/index.html")
 
