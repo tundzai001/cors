@@ -270,7 +270,6 @@ function renderMap() {
     if (!mapNeedsUpdate || !mapRoot) return;
 
     if (!window.AllStationsMap) {
-        console.warn("[Main] window.AllStationsMap is undefined. Deferring map render.");
         return;
     }
 
@@ -1334,15 +1333,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const modalRoot = ReactDOM.createRoot(modalContainer);
 
     // Async load - Babel may not have transpiled these yet
-    waitForGlobalComponent('CasterConfigModal', 8000).then(comp => {
-        renderReactComponent(modalRoot, comp, {}, 'Caster config modal is not loaded');
+    waitForGlobalComponent('CasterConfigModal', 30000).then(comp => {
+        if (comp) renderReactComponent(modalRoot, comp, {}, 'Caster config modal is not loaded');
     }).catch(() => {});
 
-    waitForGlobalComponent('CasterSourcesModal', 8000).then(comp => {
-        const sourcesContainer = document.createElement('div');
-        document.body.appendChild(sourcesContainer);
-        const sourcesRoot = ReactDOM.createRoot(sourcesContainer);
-        renderReactComponent(sourcesRoot, comp, {}, 'Caster sources modal is not loaded');
+    waitForGlobalComponent('CasterSourcesModal', 30000).then(comp => {
+        if (comp) {
+            const sourcesContainer = document.createElement('div');
+            document.body.appendChild(sourcesContainer);
+            const sourcesRoot = ReactDOM.createRoot(sourcesContainer);
+            renderReactComponent(sourcesRoot, comp, {}, 'Caster sources modal is not loaded');
+        }
     }).catch(() => {});
 
 
@@ -1374,11 +1375,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             setTimeout(() => clearInterval(checkAndRender), 10000);
         }
     } else if (currentPath === '/network-status') {
-        switchView('network-status');
+        switchView('homepage');
+        waitForGlobalComponent('HomePageEnterprise', 5000).then((homeComp) => {
+            if (homeComp && window.homepageRoot) {
+                renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices }, 'Homepage component is not loaded');
+            }
+        });
     } else if (currentPath.startsWith('/blog')) {
         switchView('blog');
         const slug = currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
-        window.renderBlog(slug);
+        if (window.blogRoot) {
+            waitForGlobalComponent('BlogSystem', 5000).then((blogComponent) => {
+                renderReactComponent(window.blogRoot, blogComponent, { slug }, 'Blog component is not loaded');
+            });
+        }
         return;
     } else if (currentPath === '/api/docs') {
         switchView('api-docs');

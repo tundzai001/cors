@@ -58,8 +58,8 @@
 
 /* Stats Typography */
 .stat-value {
-    font-size: 2.5rem; font-weight: 800; color: var(--primary-cyan);
-    text-shadow: 0 0 20px rgba(0, 242, 255, 0.3);
+    font-size: 1.1rem; font-weight: 800; color: var(--primary-cyan);
+    text-shadow: 0 0 10px rgba(0, 242, 255, 0.3);
 }
 .stat-label {
     text-transform: uppercase; letter-spacing: 2px;

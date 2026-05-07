@@ -5826,6 +5826,10 @@ async def serve_users():
 async def serve_security():
     return FileResponse("../frontend/security.html")
 
+@app.get("/rovers-global", include_in_schema=False)
+async def serve_rovers_global():
+    return FileResponse("../frontend/rovers-global.html")
+
 @app.get("/network-status", include_in_schema=False)
 @app.get("/coverage", include_in_schema=False)
 @app.get("/blog", include_in_schema=False)
