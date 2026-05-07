@@ -554,32 +554,13 @@ async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[st
     if mountpoint:
         payload["mountpoint"] = str(mountpoint)
 
-    is_virtual_station = False
-    try:
-        async with device_session_scope() as db:
-            _device = await crud.get_device_by_serial(db, serial)
-            is_virtual_station = str(getattr(_device, "detected_chip_type", "") or "").upper() == "VIRTUAL"
-            if _device and requested_mp_norm:
-                cfg_preview = dict(getattr(_device, "service_config", None) or {})
-                if bool(active) or requested_address:
-                    preferred_sid = _resolve_preferred_server_id_for_mountpoint(cfg_preview, requested_mp_norm, requested_address)
-                    if preferred_sid in (1, 2):
-                        payload["server_id"] = preferred_sid
-                        # Include the host address so the agent can match precisely
-                        host_key = f"serverhost{preferred_sid}"
-                        if host_key in cfg_preview:
-                            payload["address"] = str(cfg_preview[host_key] or "").strip()
-    except Exception:
-        is_virtual_station = False
-
-    if not is_virtual_station:
-        await send_command_to_pi(
-            serial,
-            {
-                "command": "SET_RTCM_STREAM_ACTIVE",
-                "payload": payload,
-            },
-        )
+    await send_command_to_pi(
+        serial,
+        {
+            "command": "SET_RTCM_STREAM_ACTIVE",
+            "payload": payload,
+        },
+    )
 
     # Keep DB service_config in sync with control-plane intent to avoid stale
     # stream_active/active_mountpoint values until the next agent status heartbeat.
@@ -1578,7 +1559,6 @@ async def lifespan(app: FastAPI):
     """
     Lifespan context với proper error handling, khởi động MQTT vÃ  Rate Limiter.
     """
-    global virtual_runtime_manager
     logger.info("ðŸš€ Application starting...")
     
     # List để track tất cả background tasks
@@ -1798,6 +1778,162 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
+
+# === SEO & DYNAMIC ROUTING FOR GNSS PLATFORM ===
+@app.get("/station/{serial}")
+async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
+    """
+    ENTERPRISE SEO ENGINE: Renders a high-performance, crawler-optimized page
+    with deep JSON-LD structured data for GNSS stations.
+    """
+    device = await crud.get_device_by_serial(db, serial)
+    index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
+    
+    if not index_path.exists():
+        return HTMLResponse(content="<h1>System Error: Frontend missing</h1>", status_code=500)
+
+    try:
+        with open(index_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+
+        if device:
+            # 1. DATA EXTRACTION
+            station_name = device.name or serial
+            status_text = "Online" if device.status == "online" else "Offline"
+            
+            # Extract Coordinates
+            base_cfg = device.base_config or {}
+            coords = base_cfg.get("coords", {})
+            lat = coords.get("lat") or base_cfg.get("lat", 0.0)
+            lon = coords.get("lon") or base_cfg.get("lon", 0.0)
+            alt = coords.get("alt") or base_cfg.get("alt", 0.0)
+            
+            # 2. BUILD DYNAMIC SEO TAGS
+            title = f"{station_name} GNSS CORS Station | RTK Network Vietnam | Aitogy"
+            desc = f"Trạm CORS {station_name} ({serial}) tại {lat}, {lon}. Trạng thái: {status_text}. Theo dõi tín hiệu vệ tinh GPS/GLONASS/BDS và độ trễ RTK thời gian thực."
+            
+            # 3. BUILD DEEP JSON-LD (Schema.org)
+            json_ld = {
+                "@context": "https://schema.org",
+                "@type": "Place",
+                "name": f"GNSS CORS Station {station_name}",
+                "description": desc,
+                "identifier": serial,
+                "geo": {
+                    "@type": "GeoCoordinates",
+                    "latitude": lat,
+                    "longitude": lon,
+                    "elevation": alt
+                },
+                "additionalType": "https://en.wikipedia.org/wiki/GNSS_augmentation",
+                "provider": {
+                    "@type": "Organization",
+                    "name": "Aitogy Infrastructure Technology JSC",
+                    "url": "https://cors.aitogy.com"
+                }
+            }
+            json_ld_script = f'<script type="application/ld+json">{json.dumps(json_ld)}</script>'
+
+            # 4. SERVER-SIDE INJECTION
+            # Inject standard meta
+            html_content = html_content.replace("<title>Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{title}</title>")
+            html_content = html_content.replace('name="description" content="Aitogy CORS Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (CORS) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{desc}"')
+            
+            # Inject OG Tags
+            html_content = html_content.replace('property="og:title" content="Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao"', f'property="og:title" content="{title}"')
+            html_content = html_content.replace('property="og:description" content="Quản lý và vận hành mạng lưới trạm CORS Aitogy. Giải pháp định vị chính xác cao hàng đầu."', f'property="og:description" content="{desc}"')
+            
+            # Inject JSON-LD before head closing
+            html_content = html_content.replace("</head>", f"{json_ld_script}\n</head>")
+
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        logging.error(f"❌ Professional SEO Injection Failed: {e}")
+        return FileResponse(index_path)
+
+@app.get("/sitemap.xml")
+async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Generates a dynamic XML sitemap listing the homepage and all active CORS stations.
+    This ensures Google always has an up-to-date list of every station page.
+    """
+    base_url = "https://cors.aitogy.com"
+    
+    # Fetch all station serials from DB
+    result = await db.execute(select(models.Device.serial))
+    serials = [row[0] for row in result.all()]
+    
+    xml_content = f'<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml_content += f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    
+    # 1. Main Pages
+    for path in ["/", "/login.html", "/network-status", "/coverage", "/blog"]:
+        xml_content += f'  <url>\n    <loc>{base_url}{path}</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n'
+    
+    # 2. Dynamic Station Pages
+    for serial in serials:
+        xml_content += f'  <url>\n    <loc>{base_url}/station/{serial}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n'
+        
+    xml_content += f'</urlset>'
+    
+    return Response(content=xml_content, media_type="application/xml")
+
+@app.get("/blog/{slug}")
+async def get_blog_post_seo(slug: str, request: Request):
+    """
+    Renders index.html with server-side SEO for individual blog posts.
+    Each technical article becomes a landing page for Google Search.
+    """
+    index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
+    
+    # Mock data for SEO injection (In a real system, this would come from a Blog DB table)
+    blog_metadata = {
+        "ntrip-caster-la-gi": {
+            "title": "NTRIP Caster là gì? Hướng dẫn toàn tập về giao thức RTK | Aitogy",
+            "desc": "Tìm hiểu về NTRIP Caster, vai trò của nó trong mạng lưới CORS và cách kết nối đầu thu GNSS để đạt độ chính xác centimet."
+        },
+        "huong-dan-ket-noi-cors": {
+            "title": "Cách kết nối trạm CORS Aitogy cho Drone và Máy công trình",
+            "desc": "Hướng dẫn chi tiết từng bước cấu hình tài khoản NTRIP để nhận tín hiệu hiệu chỉnh RTK từ hệ thống trạm CORS Aitogy."
+        }
+    }
+
+    meta = blog_metadata.get(slug, {
+        "title": "Blog Kỹ thuật GNSS/RTK | Aitogy Knowledge Base",
+        "desc": "Kiến thức chuyên sâu về công nghệ định vị vệ tinh, hạ tầng CORS và giải pháp RTK chính xác cao."
+    })
+
+    try:
+        with open(index_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+
+        # Inject Blog Meta
+        html_content = html_content.replace("<title>Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{meta['title']}</title>")
+        html_content = html_content.replace('name="description" content="Aitogy CORS Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (CORS) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{meta["desc"]}"')
+        
+        # Article Schema
+        article_schema = {
+            "@context": "https://schema.org",
+            "@type": "TechArticle",
+            "headline": meta['title'],
+            "description": meta['desc'],
+            "author": {"@type": "Organization", "name": "Aitogy"},
+            "publisher": {"@type": "Organization", "name": "Aitogy", "logo": "https://cors.aitogy.com/img/aitogy.png"},
+            "mainEntityOfPage": {"@type": "WebPage", "@id": f"https://cors.aitogy.com/blog/{slug}"}
+        }
+        html_content = html_content.replace("</head>", f'<script type="application/ld+json">{json.dumps(article_schema)}</script>\n</head>')
+
+        return HTMLResponse(content=html_content)
+    except Exception:
+        return FileResponse(index_path)
+
+@app.get("/network-status")
+@app.get("/coverage")
+@app.get("/blog")
+async def get_public_pages():
+    """Catch-all for other public SEO pages to serve index.html."""
+    index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
+    return FileResponse(index_path)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -3927,119 +4063,6 @@ async def send_generic_command(
     return await send_command_to_pi(serial, command.model_dump())
 
 
-@app.post("/api/admin/virtual-stations", response_model=schemas.Device)
-async def create_virtual_station(
-    payload: schemas.VirtualStationCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
-):
-    if current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admin can create virtual stations.")
-
-    station_name = str(payload.name or "").strip()
-    if not station_name:
-        raise HTTPException(status_code=400, detail="Station name is required.")
-
-    serial = str(payload.serial).strip() if payload.serial else f"VIRTUAL_{uuid.uuid4().hex[:10].upper()}"
-    existing = await crud.get_device_by_serial(db, serial)
-    if existing:
-        raise HTTPException(status_code=409, detail=f"Serial '{serial}' already exists.")
-
-    service_cfg = payload.service_config.model_dump()
-    # Ensure virtual station defaults are sensible for map/display and runtime compatibility.
-    service_cfg.setdefault("stream_on_demand", False)
-    service_cfg.setdefault("stream_active", True)
-
-    # Virtual station policy: if any output server is enabled, rover input must be configured.
-    s1_enabled = bool(service_cfg.get("server1_enabled", False))
-    s2_enabled = bool(service_cfg.get("server2_enabled", False))
-    any_output_enabled = s1_enabled or s2_enabled
-    rtcm_enabled = bool(service_cfg.get("rtcm_enabled", False))
-
-    if any_output_enabled and not rtcm_enabled:
-        raise HTTPException(
-            status_code=400,
-            detail="Virtual station requires RTCM input (rover account) before relaying to CORS output."
-        )
-
-    required_input_fields = ["rtcmserver1", "rtcmport1", "rtcmmountpoint1", "rtcmusername1", "rtcmpassword1"]
-    if rtcm_enabled and any(not str(service_cfg.get(k) or "").strip() for k in required_input_fields):
-        raise HTTPException(
-            status_code=400,
-            detail="Missing RTCM input configuration: host/port/mountpoint/username/password are required."
-        )
-
-    required_output_fields_s1 = ["serverhost1", "port1", "mountpoint1"]
-    if s1_enabled and any(not str(service_cfg.get(k) or "").strip() for k in required_output_fields_s1):
-        raise HTTPException(
-            status_code=400,
-            detail="Missing CORS output configuration: serverhost1/port1/mountpoint1 are required."
-        )
-
-    required_output_fields_s2 = ["serverhost2", "port2", "mountpoint2"]
-    if s2_enabled and any(not str(service_cfg.get(k) or "").strip() for k in required_output_fields_s2):
-        raise HTTPException(
-            status_code=400,
-            detail="Missing CORS output configuration: serverhost2/port2/mountpoint2 are required."
-        )
-
-    device = models.Device(
-        serial=serial,
-        name=station_name,
-        status="online",
-        timestamp=int(time.time()),
-        bps=0,
-        detected_chip_type="VIRTUAL",
-        user_id=current_user.id,
-        base_config={
-            "base_setup_method": "FIXED_LLA",
-            "coords": {
-                "lat": str(payload.lat),
-                "lon": str(payload.lon),
-                "alt": str(payload.alt or 0.0),
-            },
-            "auto_configured": True,
-        },
-        service_config=service_cfg,
-        ntrip_connected=False,
-        ntrip_status={
-            "server1": {"connected": False, "bps": 0},
-            "server2": {"connected": False, "bps": 0},
-        },
-        is_locked=False,
-        is_provisioned=True,
-        is_synced=True,
-    )
-
-    db.add(device)
-    await db.commit()
-    await db.refresh(device)
-
-    await log_system_event(
-        db=db,
-        type="info",
-        message=f"Virtual station '{device.name}' created by {current_user.username}",
-        user_id=current_user.id,
-        serial=device.serial,
-    )
-
-    await ui_manager.broadcast({
-        "type": "status_update",
-        "data": schemas.Device.from_orm(device).model_dump()
-    })
-
-    runtime_manager = globals().get("virtual_runtime_manager")
-    if runtime_manager is not None:
-        for method_name in ("refresh", "reconcile", "reconcile_all", "sync", "reload", "refresh_all"):
-            method = getattr(runtime_manager, method_name, None)
-            if not callable(method):
-                continue
-            result = method()
-            if asyncio.iscoroutine(result):
-                await result
-            break
-
-    return device
 
 # --- CÁC ENDPOINT CHO QUẢN LÝ ROVER ---
 @app.get("/api/bases/{serial}/rovers", response_model=list[schemas.RoverAccountResponse])
@@ -5115,17 +5138,6 @@ async def delete_device_from_list(
         "serial": serial
     })
 
-    if deleted_chip_type == "VIRTUAL":
-        runtime_manager = globals().get("virtual_runtime_manager")
-        if runtime_manager is not None:
-            for method_name in ("refresh", "reconcile", "reconcile_all", "sync", "reload", "refresh_all"):
-                method = getattr(runtime_manager, method_name, None)
-                if not callable(method):
-                    continue
-                result = method()
-                if asyncio.iscoroutine(result):
-                    await result
-                break
     
     await log_system_event(
         db=db,
@@ -5797,6 +5809,30 @@ async def get_caster_config(
         "hosts": list(set(hosts)),
         "version": os.getenv("APP_VERSION", "V1.1.1")
     }
+
+@app.get("/login", include_in_schema=False)
+async def serve_login():
+    return FileResponse("../frontend/login.html")
+
+@app.get("/monitoring", include_in_schema=False)
+async def serve_monitoring():
+    return FileResponse("../frontend/monitoring.html")
+
+@app.get("/users", include_in_schema=False)
+async def serve_users():
+    return FileResponse("../frontend/users.html")
+
+@app.get("/security", include_in_schema=False)
+async def serve_security():
+    return FileResponse("../frontend/security.html")
+
+@app.get("/network-status", include_in_schema=False)
+@app.get("/coverage", include_in_schema=False)
+@app.get("/blog", include_in_schema=False)
+@app.get("/blog/{rest_of_path:path}", include_in_schema=False)
+@app.get("/station/{rest_of_path:path}", include_in_schema=False)
+async def serve_spa():
+    return FileResponse("../frontend/index.html")
 
 # === STATIC FILES ===
 app.mount("/img", StaticFiles(directory="../frontend/img"), name="images")

@@ -6,15 +6,28 @@ const NavigationManager = {
     currentUser: null,
     currentPage: '',
 
+    publicRoutes: ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'],
+
     // Helper: Lấy token từ cả local hoặc session
     getToken() {
         return localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    },
+
+    isPublicRoute(pathname = window.location.pathname) {
+        return this.publicRoutes.some(route =>
+            route === '/' ? pathname === '/' : pathname.startsWith(route)
+        );
     },
 
     async init() {
         try {
             const token = this.getToken();
             if (!token) {
+                if (this.isPublicRoute()) {
+                    console.info('No token on public route, skipping auth navigation init');
+                    return;
+                }
+
                 console.warn('⚠️ No token found, redirecting to login');
                 this.forceLogout();
                 return;

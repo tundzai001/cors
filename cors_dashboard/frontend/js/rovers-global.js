@@ -758,13 +758,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const isOnline = infos.some(i => i.nclient > 0);
         const totalClients = infos.reduce((sum, i) => sum + (i.nclient || 0), 0);
 
-        let casterStatusBadge = '<span class="badge border border-secondary text-muted rounded-pill opacity-50">Offline</span>';
+        let casterStatusBadge = '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill opacity-75">OFFLINE</span>';
         if (isBlocked) {
             casterStatusBadge = '<span class="badge badge-blocked rounded-pill"><i class="bi bi-shield-x me-1"></i>BLOCKED</span>';
         } else if (isOnline) {
             casterStatusBadge = `<span class="badge badge-active rounded-pill shadow-sm"><i class="bi bi-broadcast me-1"></i>ONLINE (${totalClients})</span>`;
         } else if (infos.length > 0) {
-            casterStatusBadge = '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25 rounded-pill">Standby</span>';
+            casterStatusBadge = '<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill">STANDBY</span>';
         }
 
         const dbBadge = r.type === 'db'
@@ -1476,7 +1476,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         createForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const msgEl = document.getElementById('create-error-msg');
-            msgEl.classList.add('d-none');
+            if (msgEl) msgEl.classList.add('d-none');
             
             const checkedBoxes = document.querySelectorAll('.station-check:checked');
             const selectedSerials = Array.from(checkedBoxes).map(cb => cb.value);
@@ -1485,14 +1485,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
 
             if (selectedSerials.length === 0 && !isAdmin && !mpOverride.trim()) {
-                msgEl.textContent = "Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.";
-                msgEl.classList.remove('d-none');
+                if (msgEl) {
+                    msgEl.textContent = "Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.";
+                    msgEl.classList.remove('d-none');
+                }
                 return;
             }
 
             if (!mpOverride.trim()) {
-                msgEl.textContent = "Mountpoint không được để trống.";
-                msgEl.classList.remove('d-none');
+                if (msgEl) {
+                    msgEl.textContent = "Mountpoint không được để trống.";
+                    msgEl.classList.remove('d-none');
+                }
                 return;
             }
 
@@ -1535,8 +1539,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await refreshDataInPlace();
 
             } catch (err) {
-                msgEl.textContent = err.message;
-                msgEl.classList.remove('d-none');
+                if (msgEl) {
+                    msgEl.textContent = err.message;
+                    msgEl.classList.remove('d-none');
+                }
             } finally {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = false;

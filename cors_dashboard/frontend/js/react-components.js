@@ -9,7 +9,7 @@ const MetricLineChart = memo(function MetricLineChart({ label, data = [], color,
     const max = Math.max(...data, 1);
     const min = Math.min(...data, 0);
     const range = max - min || 1;
-    
+
     const points = data.map((d, i) => {
         const x = (i / Math.max(data.length - 1, 1)) * 100;
         const y = 30 - ((d - min) / range) * 30;
@@ -36,7 +36,7 @@ const MetricCard = memo(function MetricCard({ title, value, unit, trend, sparkli
     const max = Math.max(...sparklineData, 1);
     const min = Math.min(...sparklineData, 0);
     const range = max - min || 1;
-    
+
     const points = sparklineData.map((d, i) => {
         const x = (i / Math.max(sparklineData.length - 1, 1)) * 100;
         const y = 20 - ((d - min) / range) * 20;
@@ -82,7 +82,7 @@ const SatelliteBars = memo(function SatelliteBars({ satellites }) {
         else if (prnStr.startsWith('E')) sys = "EU";
         else if (prnStr.startsWith('B')) sys = "CN";
         else if (prnStr.startsWith('Q')) sys = "JP";
-        
+
         counts[sys] = (counts[sys] || 0) + 1;
         snrs[sys] = (snrs[sys] || 0) + (Number(sat.snr) || 0);
     });
@@ -150,10 +150,10 @@ const getStatusColor = (status) => {
         case 'sleep': return '#0dcaf0';   // info
         case 'streaming': return '#198754'; // success
         case 'starting': return '#ffc107';  // warning
-        case 'unprovisioned': return '#ffc107'; 
+        case 'unprovisioned': return '#ffc107';
         case 'configuring': return '#0d6efd';
         case 'locked': return '#dc3545';
-        default: 
+        default:
             if (status && status.startsWith('auto_setup')) return '#0dcaf0';
             return '#6c757d'; // secondary
     }
@@ -187,37 +187,24 @@ const isPreferredHost = (hostValue) => {
 
 const getMapEffectiveStatus = (device) => {
     const rawStatus = String(device?.status || '').toLowerCase();
-    
-    const ntripStats = device?.ntrip_stats || {};
-    const virtualRtcmInBps = Number(ntripStats.rtcm_input_bps || ntripStats.rtcm_in_bps || 0);
-    const isVirtualStation = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
-
-    // 1. FORCED OFFLINE: Only if status indicates the agent is truly disconnected
-    if (!['online', 'streaming', 'sleep', 'starting'].includes(rawStatus)) {
-        if (isVirtualStation && virtualRtcmInBps > 0) {
-            // Keep going for virtual
-        } else {
-            return 'offline';
-        }
-    }
 
     const cfg = device?.service_config || {};
     const s1Enabled = parseBoolCompat(cfg.server1_enabled, isServerConfiguredCompat(cfg, 1));
     const s2Enabled = parseBoolCompat(cfg.server2_enabled, isServerConfiguredCompat(cfg, 2));
 
     if (!s1Enabled && !s2Enabled) {
-        return (isVirtualStation && virtualRtcmInBps > 0) ? 'online' : 'offline';
+        return 'offline';
     }
 
     // 2. PRIMARY SERVER LOGIC: Handle aitogy.com.vn with optional ports
     const s1Host = String(cfg.serverhost1 || '').trim().toLowerCase();
     const s2Host = String(cfg.serverhost2 || '').trim().toLowerCase();
     const preferred = 'aitogy.com.vn';
-    
+
     let primarySid = 1;
     if (s1Host.includes(preferred)) primarySid = 1;
     else if (s2Host.includes(preferred)) primarySid = 2;
-    else primarySid = 1; 
+    else primarySid = 1;
 
     // 3. PRIMARY STATUS (Sleep on primary > Traffic on primary > Online)
     const ntripStatusMap = device?.ntrip_status || {};
@@ -225,7 +212,7 @@ const getMapEffectiveStatus = (device) => {
     const onDemand = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
     const active = onDemand ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
     const isSleep = onDemand && !active;
-    
+
     let result = 'online';
     if (isSleep) {
         result = 'sleep';
@@ -301,7 +288,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const ntripStatus = device.ntrip_status || {};
         const ntripStats = device.ntrip_stats || {};
         const streamState = device.ntrip_stream_state || {};
-        
+
         const toBool = (value, defaultValue = false) => {
             if (value === null || value === undefined) return defaultValue;
             if (typeof value === 'boolean') return value;
@@ -333,7 +320,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
 
         const s1Enabled = toBool(config.server1_enabled, isServerConfigured(1));
         const s2Enabled = toBool(config.server2_enabled, isServerConfigured(2));
-        
+
         const rtcmInputBps = Number(ntripStats.rtcm_input_bps || ntripStats.rtcm_in_bps || 0);
         const hasRtcmInputMetric = Object.prototype.hasOwnProperty.call(ntripStats, 'rtcm_input_bps') || Object.prototype.hasOwnProperty.call(ntripStats, 'rtcm_in_bps');
 
@@ -355,15 +342,13 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
 
         const serialUpper = String(device?.serial || '').toUpperCase();
         const chipUpper = String(device?.detected_chip_type || '').toUpperCase();
-        const isVirtualStation = chipUpper === 'VIRTUAL';
-        const isVirtualMonitorOnly = isVirtualStation && !s1Enabled && !s2Enabled;
 
         // --- CALCULATE STATUS COLOR WITH STRICT PRIMARY SERVER PRIORITY ---
         const rawStatus = String(device?.status || 'offline').toLowerCase();
         let effectiveStatus = 'offline';
-        
+
         const okStatuses = ['online', 'streaming', 'sleep', 'starting'];
-        if (okStatuses.includes(rawStatus) || (isVirtualStation && hasInputTraffic)) {
+        if (okStatuses.includes(rawStatus)) {
             // 1. TRUST AGENT STATUS FIRST (Especially for 'sleep')
             if (rawStatus === 'sleep') {
                 effectiveStatus = 'sleep';
@@ -374,12 +359,12 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                 const s1Host = String(config.serverhost1 || '').trim().toLowerCase();
                 const s2Host = String(config.serverhost2 || '').trim().toLowerCase();
                 const preferred = 'aitogy.com.vn';
-                
+
                 let primarySid = 1;
                 if (s1Host.includes(preferred)) primarySid = 1;
                 else if (s2Host.includes(preferred)) primarySid = 2;
                 else primarySid = 1; // Default to S1
-                
+
                 const pBps = primarySid === 1 ? s1.bps : s2.bps;
                 const pSleep = primarySid === 1 ? s1SleepMode : s2SleepMode;
                 const pEnabled = primarySid === 1 ? s1Enabled : s2Enabled;
@@ -399,7 +384,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                     } else if (hasAnySleepOnly) {
                         effectiveStatus = 'sleep';
                     } else {
-                        effectiveStatus = (isVirtualStation && hasInputTraffic) ? 'online' : 'offline';
+                        effectiveStatus = 'offline';
                     }
                 }
             }
@@ -425,7 +410,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(s1UseRtcmSleepUi ? rtcmInputBps : s1.bps),
             s2Enabled, s2SleepMode, s2UseRtcmSleepUi, s2Speed: formatSpeed(s2UseRtcmSleepUi ? rtcmInputBps : s2.bps),
             s1StatusClass, s2StatusClass,
-            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, isVirtualStation, rtcmInputBps
+            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps
         };
     }, [device, device.ntrip_status, device.service_config, device.ntrip_stats]);
 
@@ -458,13 +443,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                     {isAdmin && <div className="device-meta">{device.serial}</div>}
                 </div>
 
-                {metrics.isVirtualStation ? (
-                    <span className="badge bg-info text-dark" title="Trạm ảo - Nhận RTCM từ Cục và phát lại">
-                        <i className="bi bi-cloud-check-fill me-1"></i>VIRTUAL
-                    </span>
-                ) : (
                     <span className="badge">{device.detected_chip_type || 'UNK'}</span>
-                )}
             </div>
 
             {(metrics.statusColorClass === 'online' || metrics.statusColorClass === 'sleep') && (metrics.s1Enabled || metrics.s2Enabled) && (
@@ -508,7 +487,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
 
 window.DeviceListItem = DeviceListItem;
 
-const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, onOpenVirtualStationForm, searchTerm, onSearch, currentUser }) {
+const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
     const searchTimeoutRef = useRef(null);
     const isAdmin = currentUser?.role === 'admin';
@@ -533,16 +512,6 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                 <div className="d-flex justify-content-between align-items-center mb-2">
                     <h6 className="text-white mb-0 fw-bold">Trạm ({devices.length})</h6>
                     <div className="d-flex align-items-center gap-2">
-                        {isAdmin && (
-                            <button
-                                type="button"
-                                className="btn btn-sm btn-outline-info py-0 px-2"
-                                onClick={() => onOpenVirtualStationForm && onOpenVirtualStationForm()}
-                                title="Thêm trạm ảo"
-                            >
-                                <i className="bi bi-plus-circle me-1"></i>Virtual
-                            </button>
-                        )}
                         <button className="btn btn-sm btn-link text-muted text-decoration-none p-0">
                             <i className="bi bi-filter-right fs-5"></i>
                         </button>
@@ -611,474 +580,6 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
     );
 });
 window.DeviceList = DeviceList;
-
-const VirtualStationFormPanel = memo(function VirtualStationFormPanel({ currentUser, onCreateVirtualStation, onCancel }) {
-    const [isCreatingVirtual, setIsCreatingVirtual] = useState(false);
-    const [formState, setFormState] = useState({
-        virtual_mode: 'relay_share',
-        name: '',
-        lat: '',
-        lon: '',
-        alt: '0',
-        ncomport: '',
-        reconnectioninterval: '10',
-        stream_on_demand: true,
-        stream_active: false,
-        server1_enabled: true,
-        server1_stream_on_demand: true,
-        server1_stream_active: false,
-        ntrip_version1: 1,
-        serverhost1: '',
-        port1: '2101',
-        mountpoint1: '',
-        username1: 'source',
-        password1: '',
-        server2_enabled: false,
-        server2_stream_on_demand: true,
-        server2_stream_active: false,
-        ntrip_version2: 1,
-        serverhost2: '',
-        port2: '2101',
-        mountpoint2: '',
-        username2: 'source',
-        password2: '',
-        rtcm_enabled: true,
-        rtcmntripversion1: 1,
-        rtcmserver1: '',
-        rtcmport1: '2101',
-        rtcmmountpoint1: '',
-        rtcmusername1: '',
-        rtcmpassword1: ''
-    });
-
-    const isAdmin = currentUser?.role === 'admin';
-
-    const toBool = (value, defaultValue = false) => {
-        if (value === null || value === undefined) return defaultValue;
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'number') return value !== 0;
-        if (typeof value === 'string') {
-            const v = value.trim().toLowerCase();
-            if (['true', '1', 'yes', 'on'].includes(v)) return true;
-            if (['false', '0', 'no', 'off'].includes(v)) return false;
-        }
-        return Boolean(value);
-    };
-
-    const handleChange = (e) => {
-        const { name, value, type, checked } = e.target;
-        const inputValue = type === 'checkbox' ? checked : value;
-        setFormState((prev) => {
-            const next = { ...prev, [name]: inputValue };
-
-            if (name === 'virtual_mode') {
-                if (value === 'monitor_only') {
-                    next.server1_enabled = false;
-                    next.server2_enabled = false;
-                } else if (!toBool(prev.server1_enabled, false) && !toBool(prev.server2_enabled, false)) {
-                    next.server1_enabled = true;
-                }
-            }
-
-            if (name === 'server1_stream_on_demand') {
-                next.server1_stream_active = !checked;
-            }
-            if (name === 'server2_stream_on_demand') {
-                next.server2_stream_active = !checked;
-            }
-
-            return next;
-        });
-    };
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (!isAdmin || !onCreateVirtualStation) return;
-
-        const lat = parseFloat(formState.lat);
-        const lon = parseFloat(formState.lon);
-        const alt = parseFloat(formState.alt || '0');
-
-        if (!formState.name.trim()) return window.showError('Nhập tên trạm ảo');
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return window.showError('Tọa độ không hợp lệ');
-
-        const isRelayShareMode = formState.virtual_mode === 'relay_share';
-
-        const s1Enabled = toBool(formState.server1_enabled, false);
-        const s2Enabled = toBool(formState.server2_enabled, false);
-
-        const hasS1 = Boolean(
-            String(formState.serverhost1 || '').trim() &&
-            String(formState.port1 || '').trim() &&
-            String(formState.mountpoint1 || '').trim()
-        );
-        const hasS2 = Boolean(
-            String(formState.serverhost2 || '').trim() &&
-            String(formState.port2 || '').trim() &&
-            String(formState.mountpoint2 || '').trim()
-        );
-        const hasEnabledOutput = (s1Enabled && hasS1) || (s2Enabled && hasS2);
-        const hasRtcm = Boolean(
-            formState.rtcm_enabled &&
-            String(formState.rtcmserver1 || '').trim() &&
-            String(formState.rtcmport1 || '').trim() &&
-            String(formState.rtcmmountpoint1 || '').trim() &&
-            String(formState.rtcmusername1 || '').trim() &&
-            String(formState.rtcmpassword1 || '').trim()
-        );
-
-        if (!hasRtcm) {
-            return window.showError('Pipeline bắt buộc có RTCM Input (tài khoản rover + mountpoint input).');
-        }
-
-        if (isRelayShareMode && !hasEnabledOutput) {
-            return window.showError('Chế độ nhận và đẩy lên bắt buộc bật ít nhất 1 output server hợp lệ (Host/Port/Mountpoint).');
-        }
-
-        if (s1Enabled && !hasS1) {
-            return window.showError('Server 1 đã bật nhưng thiếu cấu hình Host/Port/Mountpoint.');
-        }
-        if (s2Enabled && !hasS2) {
-            return window.showError('Server 2 đã bật nhưng thiếu cấu hình Host/Port/Mountpoint.');
-        }
-
-        const s1CanPush = !toBool(formState.server1_stream_on_demand, true) || !!formState.server1_stream_active;
-        const s2CanPush = !toBool(formState.server2_stream_on_demand, true) || !!formState.server2_stream_active;
-
-        const hasAnyEnabledServer = s1Enabled || s2Enabled;
-        const derivedGlobalOnDemand = hasAnyEnabledServer
-            ? ((s1Enabled && !!formState.server1_stream_on_demand) || (s2Enabled && !!formState.server2_stream_on_demand))
-            : !!formState.server1_stream_on_demand;
-        const derivedGlobalActive = hasAnyEnabledServer
-            ? ((s1Enabled && s1CanPush) || (s2Enabled && s2CanPush))
-            : !derivedGlobalOnDemand;
-
-        const payload = {
-            name: formState.name.trim(),
-            lat: String(formState.lat).trim(),
-            lon: String(formState.lon).trim(),
-            alt: String(formState.alt || '0').trim(),
-            service_config: {
-                ncomport: formState.ncomport || null,
-                reconnectioninterval: formState.reconnectioninterval ? parseInt(formState.reconnectioninterval, 10) : 10,
-                stream_on_demand: derivedGlobalOnDemand,
-                stream_active: derivedGlobalActive,
-                server1_enabled: s1Enabled,
-                server1_stream_on_demand: !!formState.server1_stream_on_demand,
-                server1_stream_active: !!s1CanPush,
-                ntrip_version1: 1,
-                serverhost1: formState.serverhost1 || null,
-                port1: formState.port1 ? parseInt(formState.port1, 10) : null,
-                mountpoint1: formState.mountpoint1 || null,
-                username1: formState.username1 || null,
-                password1: formState.password1 || null,
-                server2_enabled: s2Enabled,
-                server2_stream_on_demand: !!formState.server2_stream_on_demand,
-                server2_stream_active: !!s2CanPush,
-                ntrip_version2: 1,
-                serverhost2: formState.serverhost2 || null,
-                port2: formState.port2 ? parseInt(formState.port2, 10) : null,
-                mountpoint2: formState.mountpoint2 || null,
-                username2: formState.username2 || null,
-                password2: formState.password2 || null,
-                rtcm_enabled: hasRtcm,
-                rtcmntripversion1: parseInt(formState.rtcmntripversion1, 10) === 2 ? 2 : 1,
-                rtcmserver1: formState.rtcmserver1 || null,
-                rtcmport1: formState.rtcmport1 ? parseInt(formState.rtcmport1, 10) : null,
-                rtcmmountpoint1: formState.rtcmmountpoint1 || null,
-                rtcmusername1: formState.rtcmusername1 || null,
-                rtcmpassword1: formState.rtcmpassword1 || null
-            }
-        };
-
-        setIsCreatingVirtual(true);
-        try {
-            await onCreateVirtualStation(payload);
-        } finally {
-            setIsCreatingVirtual(false);
-        }
-    };
-
-    const isRelayShareMode = formState.virtual_mode === 'relay_share';
-    const server1Enabled = !!formState.server1_enabled;
-    const server2Enabled = !!formState.server2_enabled;
-    const rtcmEnabled = !!formState.rtcm_enabled;
-
-    if (!isAdmin) {
-        return <div className="alert alert-warning">Bạn không có quyền tạo trạm ảo.</div>;
-    }
-
-    return (
-        <form onSubmit={handleSubmit}>
-            <div
-                className="p-3 p-md-4 rounded-4 mb-3"
-                style={{
-                    background: 'linear-gradient(120deg, rgba(13,110,253,0.14) 0%, rgba(25,135,84,0.14) 100%)',
-                    border: '1px solid rgba(13,110,253,0.25)'
-                }}
-            >
-                <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-                    <div>
-                        <h5 className="mb-1">Tạo Trạm Ảo CORS</h5>
-                        <p className="small text-muted mb-0">Điền input rover trước, sau đó chọn các server output cần đẩy dữ liệu.</p>
-                    </div>
-                    <span className={`badge ${isRelayShareMode ? 'bg-primary-subtle text-primary-emphasis' : 'bg-secondary-subtle text-secondary-emphasis'}`}>
-                        {isRelayShareMode ? 'Mode: Relay + Share' : 'Mode: Monitor Only'}
-                    </span>
-                </div>
-                <div className="d-flex flex-wrap gap-2 small">
-                    <span className={`badge rounded-pill ${server1Enabled ? 'text-bg-success' : 'text-bg-secondary'}`}>Server 1 {server1Enabled ? 'ON' : 'OFF'}</span>
-                    <span className={`badge rounded-pill ${server2Enabled ? 'text-bg-success' : 'text-bg-secondary'}`}>Server 2 {server2Enabled ? 'ON' : 'OFF'}</span>
-                    <span className={`badge rounded-pill ${rtcmEnabled ? 'text-bg-info' : 'text-bg-secondary'}`}>RTCM Input {rtcmEnabled ? 'ON' : 'OFF'}</span>
-                </div>
-            </div>
-
-            <div className="card border-0 shadow-sm mb-3">
-                <div className="card-body">
-                    <h6 className="fw-bold mb-3">1) Cài đặt chung</h6>
-                    <div className="row g-3">
-                        <div className="col-md-6">
-                            <label className="form-label">Kiểu trạm ảo</label>
-                            <select className="form-select" name="virtual_mode" value={formState.virtual_mode} onChange={handleChange}>
-                                <option value="relay_share">Nhận dữ liệu và đẩy lên mountpoint của mình</option>
-                                <option value="monitor_only">Chỉ nhận dữ liệu để hiển thị web (không đẩy lên)</option>
-                            </select>
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Kết nối lại (giây)</label>
-                            <input className="form-control" name="reconnectioninterval" value={formState.reconnectioninterval} onChange={handleChange} />
-                        </div>
-                        <div className="col-md-8">
-                            <label className="form-label">Tên trạm</label>
-                            <input className="form-control" name="name" value={formState.name} onChange={handleChange} required />
-                        </div>
-                        <div className="col-md-4">
-                            <label className="form-label">Định danh Trạm (ID)</label>
-                            <input className="form-control" name="ncomport" value={formState.ncomport} onChange={handleChange} placeholder="TRAM_HN_01" />
-                        </div>
-                        <div className="col-md-4">
-                            <label className="form-label">Latitude</label>
-                            <input className="form-control" name="lat" value={formState.lat} onChange={handleChange} required />
-                        </div>
-                        <div className="col-md-4">
-                            <label className="form-label">Longitude</label>
-                            <input className="form-control" name="lon" value={formState.lon} onChange={handleChange} required />
-                        </div>
-                        <div className="col-md-4">
-                            <label className="form-label">Altitude</label>
-                            <input className="form-control" name="alt" value={formState.alt} onChange={handleChange} />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div className="card border-0 shadow-sm mb-3">
-                <div className="card-body">
-                    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-                        <h6 className="fw-bold mb-0">2) NTRIP Caster Output - Server 1</h6>
-                        <div className="form-check form-switch mb-0">
-                            <input
-                                className="form-check-input"
-                                type="checkbox"
-                                role="switch"
-                                id="virtual_server1_enabled"
-                                name="server1_enabled"
-                                checked={server1Enabled}
-                                onChange={handleChange}
-                                disabled={!isRelayShareMode}
-                            />
-                            <label className="form-check-label" htmlFor="virtual_server1_enabled">Kích hoạt Server 1</label>
-                        </div>
-                    </div>
-                    <div className="row g-3">
-                        <div className="col-md-6">
-                            <label className="form-label">Chế độ stream</label>
-                            <div className="form-check form-switch pt-2">
-                                <input
-                                    className="form-check-input"
-                                    type="checkbox"
-                                    role="switch"
-                                    id="virtual_server1_stream_on_demand"
-                                    name="server1_stream_on_demand"
-                                    checked={!!formState.server1_stream_on_demand}
-                                    onChange={handleChange}
-                                    disabled={!server1Enabled || !isRelayShareMode}
-                                />
-                                <label className="form-check-label" htmlFor="virtual_server1_stream_on_demand">
-                                    {formState.server1_stream_on_demand ? 'Ngủ (On-Demand)' : 'Luôn mở (Always-On)'}
-                                </label>
-                            </div>
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Host / IP</label>
-                            <input className="form-control" name="serverhost1" value={formState.serverhost1} onChange={handleChange} disabled={!server1Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-4">
-                            <label className="form-label">Port</label>
-                            <input className="form-control" name="port1" value={formState.port1} onChange={handleChange} disabled={!server1Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-8">
-                            <label className="form-label">Mountpoint</label>
-                            <input className="form-control" name="mountpoint1" value={formState.mountpoint1} onChange={handleChange} disabled={!server1Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Username</label>
-                            <input className="form-control" name="username1" value={formState.username1} onChange={handleChange} disabled={!server1Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Password</label>
-                            <input className="form-control" type="password" name="password1" value={formState.password1} onChange={handleChange} disabled={!server1Enabled || !isRelayShareMode} />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div className="card border-0 shadow-sm mb-3">
-                <div className="card-body">
-                    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-                        <h6 className="fw-bold mb-0">3) NTRIP Caster Output - Server 2</h6>
-                        <div className="form-check form-switch mb-0">
-                            <input
-                                className="form-check-input"
-                                type="checkbox"
-                                role="switch"
-                                id="virtual_server2_enabled"
-                                name="server2_enabled"
-                                checked={server2Enabled}
-                                onChange={handleChange}
-                                disabled={!isRelayShareMode}
-                            />
-                            <label className="form-check-label" htmlFor="virtual_server2_enabled">Kích hoạt Server 2</label>
-                        </div>
-                    </div>
-                    <div className="row g-3">
-                        <div className="col-md-6">
-                            <label className="form-label">Chế độ stream</label>
-                            <div className="form-check form-switch pt-2">
-                                <input
-                                    className="form-check-input"
-                                    type="checkbox"
-                                    role="switch"
-                                    id="virtual_server2_stream_on_demand"
-                                    name="server2_stream_on_demand"
-                                    checked={!!formState.server2_stream_on_demand}
-                                    onChange={handleChange}
-                                    disabled={!server2Enabled || !isRelayShareMode}
-                                />
-                                <label className="form-check-label" htmlFor="virtual_server2_stream_on_demand">
-                                    {formState.server2_stream_on_demand ? 'Ngủ (On-Demand)' : 'Luôn mở (Always-On)'}
-                                </label>
-                            </div>
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Host / IP</label>
-                            <input className="form-control" name="serverhost2" value={formState.serverhost2} onChange={handleChange} disabled={!server2Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-4">
-                            <label className="form-label">Port</label>
-                            <input className="form-control" name="port2" value={formState.port2} onChange={handleChange} disabled={!server2Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-8">
-                            <label className="form-label">Mountpoint</label>
-                            <input className="form-control" name="mountpoint2" value={formState.mountpoint2} onChange={handleChange} disabled={!server2Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Username</label>
-                            <input className="form-control" name="username2" value={formState.username2} onChange={handleChange} disabled={!server2Enabled || !isRelayShareMode} />
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Password</label>
-                            <input className="form-control" type="password" name="password2" value={formState.password2} onChange={handleChange} disabled={!server2Enabled || !isRelayShareMode} />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div className="card border-0 shadow-sm mb-4">
-                <div className="card-body">
-                    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-                        <h6 className="fw-bold mb-0">4) RTCM Input (Rover)</h6>
-                        <div className="form-check form-switch mb-0">
-                            <input
-                                className="form-check-input"
-                                type="checkbox"
-                                role="switch"
-                                id="virtual_rtcm_enabled"
-                                name="rtcm_enabled"
-                                checked={rtcmEnabled}
-                                onChange={handleChange}
-                            />
-                            <label className="form-check-label" htmlFor="virtual_rtcm_enabled">Bật luồng input rover</label>
-                        </div>
-                    </div>
-                    <div className="row g-3">
-                        <div className="col-12">
-                            <label className="form-label d-block">NTRIP Version</label>
-                            <div className="btn-group" role="group" aria-label="RTCM NTRIP Version">
-                                <input
-                                    type="radio"
-                                    className="btn-check"
-                                    name="rtcmntripversion1"
-                                    id="virtual_rtcm_ntrip_v1"
-                                    value="1"
-                                    checked={parseInt(formState.rtcmntripversion1, 10) === 1}
-                                    onChange={handleChange}
-                                    disabled={!rtcmEnabled}
-                                />
-                                <label className="btn btn-outline-secondary" htmlFor="virtual_rtcm_ntrip_v1">NTRIP v1</label>
-                                <input
-                                    type="radio"
-                                    className="btn-check"
-                                    name="rtcmntripversion1"
-                                    id="virtual_rtcm_ntrip_v2"
-                                    value="2"
-                                    checked={parseInt(formState.rtcmntripversion1, 10) === 2}
-                                    onChange={handleChange}
-                                    disabled={!rtcmEnabled}
-                                />
-                                <label className="btn btn-outline-secondary" htmlFor="virtual_rtcm_ntrip_v2">NTRIP v2</label>
-                            </div>
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Input Host / IP</label>
-                            <input className="form-control" name="rtcmserver1" value={formState.rtcmserver1} onChange={handleChange} disabled={!rtcmEnabled} />
-                        </div>
-                        <div className="col-md-2">
-                            <label className="form-label">Input Port</label>
-                            <input className="form-control" name="rtcmport1" value={formState.rtcmport1} onChange={handleChange} disabled={!rtcmEnabled} />
-                        </div>
-                        <div className="col-md-4">
-                            <label className="form-label">Input Mountpoint</label>
-                            <input className="form-control" name="rtcmmountpoint1" value={formState.rtcmmountpoint1} onChange={handleChange} disabled={!rtcmEnabled} />
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Input Username</label>
-                            <input className="form-control" name="rtcmusername1" value={formState.rtcmusername1} onChange={handleChange} disabled={!rtcmEnabled} />
-                        </div>
-                        <div className="col-md-6">
-                            <label className="form-label">Input Password</label>
-                            <input className="form-control" type="password" name="rtcmpassword1" value={formState.rtcmpassword1} onChange={handleChange} disabled={!rtcmEnabled} />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {!isRelayShareMode && (
-                <div className="alert alert-secondary small">
-                    Mode Monitor Only đang bật: Server Output sẽ không được sử dụng, trạm chỉ nhận dữ liệu để hiển thị.
-                </div>
-            )}
-
-            <div className="d-flex justify-content-end gap-2">
-                <button type="button" className="btn btn-outline-secondary" onClick={onCancel} disabled={isCreatingVirtual}>Hủy</button>
-                <button type="submit" className="btn btn-primary" disabled={isCreatingVirtual}>
-                    {isCreatingVirtual ? 'Đang tạo...' : 'Tạo trạm ảo'}
-                </button>
-            </div>
-        </form>
-    );
-});
-window.VirtualStationFormPanel = VirtualStationFormPanel;
 
 // ===============================================================================
 // === FORM COMPONENTS
@@ -2394,7 +1895,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
             mapInstanceRef.current.setView([lat, lon], 16);
             if (markerRef.current) markerRef.current.setLatLng([lat, lon]);
         }
-        
+
         // Cập nhật lớp bản đồ nếu thay đổi
         if (tileLayerRef.current) {
             tileLayerRef.current.setUrl(`https://mt1.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`);
@@ -2447,15 +1948,15 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
                 <div className="d-flex align-items-center">
                     <h6 className="mb-0 me-3">Vị trí trạm Base (Lưu cứng)</h6>
                     <div className="btn-group btn-group-sm" role="group">
-                        <button 
-                            type="button" 
+                        <button
+                            type="button"
                             className={`btn ${mapType === 'm' ? 'btn-primary' : 'btn-outline-primary'}`}
                             onClick={() => setMapType('m')}
                         >
                             Giao thông
                         </button>
-                        <button 
-                            type="button" 
+                        <button
+                            type="button"
                             className={`btn ${mapType === 'y' ? 'btn-primary' : 'btn-outline-primary'}`}
                             onClick={() => setMapType('y')}
                         >
@@ -2554,7 +2055,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     useEffect(() => {
         if (satelliteBufferRef.current) satelliteBufferRef.current.clear();
         lastSatelliteDataRef.current = null;
-        
+
         // Clear canvases immediately
         if (satCanvasRef.current) {
             const ctx = satCanvasRef.current.getContext('2d');
@@ -3059,7 +2560,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         </div>
                     </div>
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
-                    
+
                     {/* Premium Chart Overlay */}
                     {window.SatelliteBars && (
                         <div className="mt-auto pt-2 border-top border-secondary-subtle">
@@ -3472,7 +2973,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
 
     // Get domains from by_domain
     const domains = Object.keys(sources.by_domain || {}).sort();
-    
+
     // Filter sources based on selected domain
     let displayedSources = sources.all || [];
     if (selectedDomain !== "all") {
@@ -3489,19 +2990,19 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                     </div>
                     <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
                         {loading && <div className="text-center"><span className="spinner-border spinner-border-sm me-2"></span>Đang tải...</div>}
-                        
+
                         {!loading && sources && (
                             <>
                                 {/* Domain Filter Tabs */}
                                 <div className="mb-3">
                                     <div className="btn-group w-100" role="group">
-                                        <input type="radio" className="btn-check" name="domain" id="domain-all" 
+                                        <input type="radio" className="btn-check" name="domain" id="domain-all"
                                             value="all" checked={selectedDomain === "all"}
                                             onChange={() => setSelectedDomain("all")} />
                                         <label className="btn btn-outline-primary" htmlFor="domain-all">
                                             📊 Tất cả ({sources.total})
                                         </label>
-                                        
+
                                         {domains.map(domain => (
                                             <span key={domain}>
                                                 <input type="radio" className="btn-check" name="domain" id={`domain-${domain}`}
@@ -3535,7 +3036,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                                                     <tr key={idx} className="small">
                                                         <td>
                                                             <code className="text-info">{src.mountpoint}</code>
-                                                            <button 
+                                                            <button
                                                                 type="button"
                                                                 className="btn btn-sm btn-outline-success ms-2 copy-mp-btn"
                                                                 onClick={() => {
@@ -3762,15 +3263,12 @@ console.log('✓ SystemInfoPanel component loaded');
 const DetailsPanel = memo(function DetailsPanel({
     device,
     currentUser,
-    showVirtualStationForm,
     nmeaData,
     onReset,
     onProvision,
     onConfigureChip,
     onDeployLicense,
     onConfigureService,
-    onCreateVirtualStation,
-    onCloseVirtualStationForm,
     onLock,
     onUnlock
 }) {
@@ -3840,22 +3338,6 @@ const DetailsPanel = memo(function DetailsPanel({
     };
 
     if (!device) {
-        if (showVirtualStationForm && isAdmin) {
-            return (
-                <div className="card bg-dark-tertiary h-100 d-flex flex-column" style={{ maxHeight: '100vh', overflowX: 'hidden' }}>
-                    <div className="card-header bg-dark d-flex justify-content-between align-items-center">
-                        <h4 className="mb-0 text-info"><i className="bi bi-cloud-plus-fill me-2"></i>Tạo Trạm Ảo</h4>
-                    </div>
-                    <div className="card-body overflow-auto">
-                        <VirtualStationFormPanel
-                            currentUser={currentUser}
-                            onCreateVirtualStation={onCreateVirtualStation}
-                            onCancel={onCloseVirtualStationForm}
-                        />
-                    </div>
-                </div>
-            );
-        }
 
         return (
             <div className="card bg-dark-tertiary h-100">
@@ -3877,9 +3359,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const serialUpper = String(device?.serial || '').toUpperCase();
     const chipUpper = String(device?.detected_chip_type || '').toUpperCase();
     const isRelayLikeStation =
-        serialUpper.startsWith('RELAY_') ||
-        serialUpper.startsWith('MONITOR_') ||
-        chipUpper === 'VIRTUAL';
+        serialUpper.startsWith('MONITOR_');
 
     const canEdit = role === 'admin' ||
         (role === 'coordinator' && device.user_id === currentUser.id);
@@ -4019,7 +3499,7 @@ const DetailsPanel = memo(function DetailsPanel({
                             </div>
                         )}
 
-                         {/* Badge trạng thái (luôn hiển thị) */}
+                        {/* Badge trạng thái (luôn hiển thị) */}
                         <div className="d-flex align-items-center gap-1">
                             <span className={`badge ${STATUS_CLASS_MAP[device.status] || 'bg-secondary'}`}>
                                 {STATUS_TEXT_MAP[device.status] || device.status}
@@ -4031,12 +3511,6 @@ const DetailsPanel = memo(function DetailsPanel({
                             )}
                         </div>
 
-                        {/* 3. BADGE LOẠI CHÍNH (Hiện VIRTUAL nếu là trạm ảo) */}
-                        {device.detected_chip_type === 'VIRTUAL' && (
-                            <span className="badge bg-info text-dark">
-                                <i className="bi bi-cloud-check-fill me-1"></i>TRẠM ẢO
-                            </span>
-                        )}
 
                         {/* Badge LOCKED (luôn hiển thị nếu bị khóa) */}
                         {isDeviceLocked && (
@@ -4717,18 +4191,18 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
         // Tách riêng trạm kết nối (online hoặc có BPS > 0) và offline
         // BPS > 0 có nghĩa là trạm vẫn truyền dữ liệu (kể cả khi sleep)
-        const connectedDevices = validDevices.filter(d => 
+        const connectedDevices = validDevices.filter(d =>
             d.status === 'online' || (d.bps && d.bps > 0)
         );
-        const offlineDevices = validDevices.filter(d => 
+        const offlineDevices = validDevices.filter(d =>
             d.status !== 'online' && (!d.bps || d.bps === 0)
         );
 
         // Hàm tính khoảng cách
         const calcDist = (d) => {
             const coords = getDeviceCoords(d);
-            return window.getDistanceMeters 
-                ? window.getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon)) 
+            return window.getDistanceMeters
+                ? window.getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon))
                 : getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon));
         };
 
@@ -4753,8 +4227,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         // Thông báo kết quả
         const textPrefix = locationName === "Vị trí của bạn" ? "Trạm gần nhất" : `Gần ${locationName.split(',')[0]} nhất`;
         let msg = [];
-        if (nearestConnected) msg.push(`🟢 CONNECTED: ${nearestConnected.device.name || nearestConnected.device.serial} (${(nearestConnected.dist/1000).toFixed(2)} km)`);
-        if (nearestOffline) msg.push(`🔴 OFFLINE: ${nearestOffline.device.name || nearestOffline.device.serial} (${(nearestOffline.dist/1000).toFixed(2)} km)`);
+        if (nearestConnected) msg.push(`🟢 CONNECTED: ${nearestConnected.device.name || nearestConnected.device.serial} (${(nearestConnected.dist / 1000).toFixed(2)} km)`);
+        if (nearestOffline) msg.push(`🔴 OFFLINE: ${nearestOffline.device.name || nearestOffline.device.serial} (${(nearestOffline.dist / 1000).toFixed(2)} km)`);
         if (window.showSuccess) window.showSuccess(`${textPrefix} — ${msg.join(' | ')}`);
 
         const map = mapInstanceRef.current;

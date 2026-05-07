@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Allow: /login.html
+Allow: /img/
+Allow: /css/
+Allow: /js/
+Disallow: /api/
+Disallow: /admin/
+
+Sitemap: https://cors.aitogy.com/sitemap.xml

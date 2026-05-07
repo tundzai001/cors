@@ -285,7 +285,6 @@ def is_valid_serial(serial: str) -> bool:
     - Ublox: 10000000xxxxxxxx (16 ký tự hex)
     - LoRa Pi: LP_xxxxxxxxxxxx (MAC address)
     - Relay: RELAY_xxxxxxx
-    - Virtual: VIRTUAL_xxxxxxx
     - Monitor: MONITOR_xxxxxxx
     
     KHÔNG HỢP LỆ:
@@ -308,9 +307,6 @@ def is_valid_serial(serial: str) -> bool:
     if serial.startswith('RELAY_'):
         return True
 
-    # Pattern 4: Virtual station (VIRTUAL_XXX)
-    if serial.startswith('VIRTUAL_'):
-        return True
 
     # Pattern 5: Monitor station (MONITOR_XXX)
     if serial.startswith('MONITOR_'):
@@ -373,7 +369,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     
     # ✅ BƯỚC 2: TỰ ĐỘNG TẠO CHO RELAY / VIRTUAL / MONITOR
     if not existing_device:
-        is_relay_like = serial.startswith(('RELAY_', 'VIRTUAL_', 'MONITOR_'))
+        is_relay_like = serial.startswith(('RELAY_', 'MONITOR_'))
         
         if is_relay_like:
             # Initialize with defaults if missing to prevent sync errors

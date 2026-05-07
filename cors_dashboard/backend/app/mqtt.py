@@ -147,7 +147,7 @@ async def batch_sync_checker():
                     db_base = device.base_config or {}
                     db_service = device.service_config or {}
                     
-                    is_relay_like = serial.startswith(("RELAY_", "MONITOR_", "VIRTUAL_"))
+                    is_relay_like = serial.startswith(("RELAY_", "MONITOR_"))
                     
                     # So sánh
                     base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
@@ -231,7 +231,6 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             is_relay_like = (
                 serial_upper.startswith("RELAY_")
                 or serial_upper.startswith("MONITOR_")
-                or serial_upper.startswith("VIRTUAL_")
             )
 
             # MQTT retained snapshots from old publishers can resurrect phantom relay rows.

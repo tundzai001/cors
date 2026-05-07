@@ -181,7 +181,7 @@ class RelayWorker(threading.Thread):
             },
             "source_mountpoint": self.cfg['source_mp'],
             "rtk_fix_status": "FIXED",
-            "detected_chip_type": "VIRTUAL_RELAY",
+            "detected_chip_type": "RELAY",
             "is_provisioned": True
         }
         

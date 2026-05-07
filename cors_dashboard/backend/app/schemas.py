@@ -84,13 +84,6 @@ class ServiceConfig(BaseModel):
     rtcmpassword1: str | None = None
 
 
-class VirtualStationCreate(BaseModel):
-    name: str
-    lat: Any
-    lon: Any
-    alt: Any = 0.0
-    serial: str | None = None
-    service_config: ServiceConfig = Field(default_factory=ServiceConfig)
 
 class LicenseRequest(BaseModel):
     serial: str
