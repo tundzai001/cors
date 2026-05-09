@@ -451,6 +451,8 @@ class MonitorWorker(threading.Thread):
         self.is_connected = False
         self.bytes_received = 0
         self.last_stat_update = time.time()
+        self.last_data_received_at = 0.0
+        self.max_no_data_seconds = 12.0
         self.current_bps = 0
         
         self.name = f"Monitor-{self.cfg['mountpoint']}"
@@ -493,7 +495,7 @@ class MonitorWorker(threading.Thread):
                 "mountpoint1": self.cfg['mountpoint'],
                 "serverhost1": TARGET_HOST,
                 "stream_on_demand": True,
-                "stream_active": bool(self.current_bps > 0),
+                "stream_active": bool(self.is_connected and self.current_bps > 0),
                 "active_mountpoint": self.cfg['mountpoint']
             },
             "source_mountpoint": self.cfg['mountpoint'],
@@ -549,6 +551,7 @@ class MonitorWorker(threading.Thread):
                 
                 self.bytes_received = 0
                 self.last_stat_update = time.time()
+                self.last_data_received_at = time.time()
                 
                 sock.settimeout(10.0)
                 while not self.stop_event.is_set():
@@ -560,6 +563,7 @@ class MonitorWorker(threading.Thread):
                         
                         self.bytes_received += len(data)
                         now = time.time()
+                        self.last_data_received_at = now
                         if now - self.last_stat_update >= 1.0:
                             self.current_bps = int(self.bytes_received / (now - self.last_stat_update))
                             if self.current_bps > 0:
@@ -570,9 +574,15 @@ class MonitorWorker(threading.Thread):
                             self.publish_status()
                             
                     except socket.timeout:
-                        self.log("WARNING", "Monitor socket timeout (no data)")
                         self.current_bps = 0
-                        self.is_connected = True # Still connected, just timeout
+                        no_data_for = time.time() - self.last_data_received_at
+                        # If source has no RTCM data for too long, treat it as offline and force reconnect.
+                        if no_data_for >= self.max_no_data_seconds:
+                            self.is_connected = False
+                            self.publish_status()
+                            self.log("WARNING", f"No RTCM data for {no_data_for:.1f}s -> mark OFFLINE and reconnect")
+                            break
+                        self.is_connected = True
                         self.publish_status()
                     except Exception as e:
                         self.log("WARNING", f"Data error: {e}")
