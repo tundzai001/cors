@@ -247,7 +247,7 @@ function renderDashboard() {
         detailsPanelRoot.render(
             React.createElement(window.DetailsPanel, {
                 device: selectedDevice,
-                nmeaData: currentNmeaData,
+                nmeaData: { ...currentNmeaData },
                 currentUser: globalState.currentUser,
                 onReset: handleResetDevice,
                 onDeployLicense: handleDeployLicense,
@@ -273,12 +273,13 @@ function renderMap() {
         return;
     }
 
-    mapRoot.render(
-        React.createElement(window.AllStationsMap, {
-            devices: globalState.devices,
-            currentUser: globalState.currentUser
-        })
-    );
+        window.publicMapInstance.setView(VIETNAM_CENTER, VIETNAM_DEFAULT_ZOOM);
+        mapRoot.render(
+            React.createElement(window.AllStationsMap, {
+                devices: globalState.devices,
+                currentUser: globalState.currentUser
+            })
+        );
     mapNeedsUpdate = false;
 }
 
@@ -286,12 +287,10 @@ function updateStaticUI() {
     const deviceCount = document.getElementById('device-count');
     if (deviceCount) deviceCount.textContent = globalState.devices.length;
 
-    if (globalState.currentUser) {
         const userInfoEl = document.getElementById('user-info');
         if (userInfoEl) {
             userInfoEl.textContent = `${globalState.currentUser.full_name || globalState.currentUser.username} (${globalState.currentUser.role.toUpperCase()})`;
         }
-    }
 }
 
 // === MEMOIZED HANDLERS ===
@@ -938,14 +937,7 @@ function handleWebSocketMessage(message) {
     if (type === 'nmea_update' && serial === globalState.selectedDeviceSerial) {
         const nmeaType = data.type;
 
-        // PERFORMANCE: Batch high-frequency updates using requestAnimationFrame
-        if (!window.pendingNmeaUpdates) window.pendingNmeaUpdates = [];
-        window.pendingNmeaUpdates.push(data);
-        
-        if (window.pendingNmeaUpdates.length > 5) {
-             requestDetailsPanelUpdate('low'); // Reduced priority for massive streams
-        }
-        else if (nmeaType === 'GSA') {
+        if (nmeaType === 'GSA') {
             currentNmeaData.gsa = data;
             if (data.active_sats && currentNmeaData.satellites) {
                 Object.values(currentNmeaData.satellites).forEach(sat => {
@@ -962,6 +954,10 @@ function handleWebSocketMessage(message) {
                     lastSeen: Date.now()
                 };
             });
+            requestDetailsPanelUpdate('high');
+        }
+        else if (nmeaType === 'GGA') {
+            currentNmeaData.gga = data;
             requestDetailsPanelUpdate('high');
         }
     }
@@ -1417,37 +1413,67 @@ console.log(`✓ App initialized with Performance Optimization (view: ${initialV
 window.openPublicMap = async function() {
     const modalEl = document.getElementById('publicMapModal');
     if (!modalEl) return;
-    const modal = new bootstrap.Modal(modalEl);
-    modal.show();
 
-    if (window.publicMapInstance) {
-        setTimeout(() => window.publicMapInstance.invalidateSize(), 100);
+    const leaflet = window.Leaflet || window.L;
+    if (!leaflet || typeof leaflet.map !== 'function') {
+        console.error('Leaflet namespace is not available or has been replaced');
         return;
     }
 
-    // === SHARED CONSTANTS (Sync with dashboard) ===
+    const fitPublicMap = () => {
+        if (!window.publicMapInstance) return;
+        window.publicMapInstance.invalidateSize();
+        if (window.publicMapBounds?.length) {
+            window.publicMapInstance.fitBounds(window.publicMapBounds, { padding: [50, 50], maxZoom: 12 });
+        } else {
+            window.publicMapInstance.setView([16.0471, 108.2068], 6);
+        }
+    };
+
+    const waitForModalShown = () => new Promise((resolve) => {
+        if (modalEl.classList.contains('show')) {
+            setTimeout(resolve, 150);
+            return;
+        }
+        modalEl.addEventListener('shown.bs.modal', () => setTimeout(resolve, 150), { once: true });
+    });
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    await waitForModalShown();
+
+    if (window.publicMapInstance) {
+        setTimeout(fitPublicMap, 50);
+        setTimeout(fitPublicMap, 300);
+        return;
+    }
+
     const STATUS_TEXT_MAP = {
-        'online': 'ONLINE', 'offline': 'OFFLINE', 'unprovisioned': 'CHƯA KÍCH HOẠT',
-        'awaiting_license': 'CHỜ LICENSE', 'configuring': 'ĐANG CẤU HÌNH',
-        'rebooting': 'KHỞI ĐỘNG LẠI', 'rebooting_for_reset': 'ĐANG RESET',
-        'locked': 'BỊ KHÓA', 'sleep': 'CHẾ ĐỘ NGỦ', 'streaming': 'ĐANG PHÁT',
-        'starting': 'ĐANG KHỞI CHẠY'
+        online: 'ONLINE', offline: 'OFFLINE', unprovisioned: 'CHUA KICH HOAT',
+        awaiting_license: 'CHO LICENSE', configuring: 'DANG CAU HINH',
+        rebooting: 'KHOI DONG LAI', rebooting_for_reset: 'DANG RESET',
+        locked: 'BI KHOA', sleep: 'CHE DO NGU', streaming: 'DANG PHAT',
+        starting: 'DANG KHOI CHAY'
     };
 
     const STATUS_CLASS_MAP = {
-        'online': 'bg-success', 'offline': 'bg-danger', 'unprovisioned': 'bg-warning text-dark',
-        'awaiting_license': 'bg-info text-dark', 'configuring': 'bg-primary',
-        'rebooting': 'bg-warning text-dark', 'rebooting_for_reset': 'bg-danger',
-        'locked': 'bg-danger', 'sleep': 'bg-info', 'streaming': 'bg-success',
-        'starting': 'bg-warning text-dark'
+        online: 'bg-success', offline: 'bg-danger', unprovisioned: 'bg-warning text-dark',
+        awaiting_license: 'bg-info text-dark', configuring: 'bg-primary',
+        rebooting: 'bg-warning text-dark', rebooting_for_reset: 'bg-danger',
+        locked: 'bg-danger', sleep: 'bg-info', streaming: 'bg-success',
+        starting: 'bg-warning text-dark'
     };
 
     const getStatusColor = (status) => {
         switch (status) {
-            case 'online': return '#198754'; case 'offline': return '#dc3545';
-            case 'sleep': return '#0dcaf0'; case 'streaming': return '#198754';
-            case 'starting': return '#ffc107'; case 'unprovisioned': return '#ffc107'; 
-            case 'configuring': return '#0d6efd'; case 'locked': return '#dc3545';
+            case 'online': return '#198754';
+            case 'offline': return '#dc3545';
+            case 'sleep': return '#0dcaf0';
+            case 'streaming': return '#198754';
+            case 'starting': return '#ffc107';
+            case 'unprovisioned': return '#ffc107';
+            case 'configuring': return '#0d6efd';
+            case 'locked': return '#dc3545';
             default: return '#6c757d';
         }
     };
@@ -1477,91 +1503,82 @@ window.openPublicMap = async function() {
         const isVirtual = String(dev?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
         if (!['online', 'streaming', 'sleep', 'starting'].includes(raw)) {
-            if (isVirtual && rtcmIn > 0) {} else return 'offline';
+            if (!(isVirtual && rtcmIn > 0)) return 'offline';
         }
 
         const cfg = dev?.service_config || {};
         const s1Enabled = parseBoolCompat(cfg.server1_enabled, isServerConfigured(cfg, 1));
         const s2Enabled = parseBoolCompat(cfg.server2_enabled, isServerConfigured(cfg, 2));
-
-        const enabledServers = []; if (s1Enabled) enabledServers.push(1); if (s2Enabled) enabledServers.push(2);
-
+        const enabledServers = [];
+        if (s1Enabled) enabledServers.push(1);
+        if (s2Enabled) enabledServers.push(2);
         if (enabledServers.length === 0) return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
 
         const s1h = String(cfg.serverhost1 || '').trim().toLowerCase();
         const s2h = String(cfg.serverhost2 || '').trim().toLowerCase();
         const pref = 'aitogy.com.vn';
-        
-        let primarySid = 1;
-        if (s1h.includes(pref)) primarySid = 1;
-        else if (s2h.includes(pref)) primarySid = 2;
-        else primarySid = 1;
-
+        const primarySid = s1h.includes(pref) ? 1 : (s2h.includes(pref) ? 2 : 1);
         const primaryBps = Number(dev?.ntrip_status?.[`server${primarySid}`]?.bps || 0);
-        
-        let result = 'online';
-        if (primaryBps > 0) {
-            result = 'online';
-        } else {
-            const od = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
-            const ac = od ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
-            result = (!od || ac) ? 'online' : 'sleep';
-        }
+        if (primaryBps > 0) return 'online';
 
-        if (result === 'offline' && ['online', 'streaming', 'sleep', 'starting'].includes(raw)) {
-            result = 'online';
-        }
-        return result;
+        const od = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
+        const ac = od ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
+        return (!od || ac) ? 'online' : 'sleep';
     };
 
-    window.publicMapInstance = L.map('publicMapContainer', {
-        center: [21.0285, 105.8542],
+    const normalizeVietnamCoords = (rawLat, rawLon) => {
+        let lat = Number(rawLat);
+        let lon = Number(rawLon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) return null;
+        const inVietnam = (a, b) => a >= 8 && a <= 24.5 && b >= 102 && b <= 110.5;
+        if (inVietnam(lat, lon)) return [lat, lon];
+        if (inVietnam(lon, lat)) return [lon, lat];
+        return null;
+    };
+
+    window.publicMapInstance = leaflet.map('publicMapContainer', {
+        center: [16.0471, 108.2068],
         zoom: 6,
         zoomControl: true
     });
 
-    const googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+    const googleHybrid = leaflet.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
         maxZoom: 20,
         attribution: 'Google Hybrid'
     });
-    const googleTerrain = L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+    const googleTerrain = leaflet.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
         maxZoom: 20,
         attribution: 'Google Terrain'
     });
-    const googleStreets = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+    const googleStreets = leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
         maxZoom: 20,
         attribution: 'Google Streets'
     });
 
     googleHybrid.addTo(window.publicMapInstance);
-
-    const baseMaps = {
-        "Vệ tinh": googleHybrid,
-        "Địa hình": googleTerrain,
-        "Đường phố": googleStreets
-    };
-
-    L.control.layers(baseMaps, null, { position: 'topright' }).addTo(window.publicMapInstance);
+    leaflet.control.layers({
+        'Ve tinh': googleHybrid,
+        'Dia hinh': googleTerrain,
+        'Duong pho': googleStreets
+    }, null, { position: 'topright' }).addTo(window.publicMapInstance);
 
     try {
         const res = await fetch('/api/public/map-stations');
-        if (!res.ok) throw new Error("Không tải được dữ liệu");
+        if (!res.ok) throw new Error('Cannot load station data');
         const stations = await res.json();
         const bounds = [];
-        
-        stations.forEach(st => {
+
+        stations.forEach((st) => {
+            const coords = normalizeVietnamCoords(st.lat, st.lon);
+            if (!coords) return;
+            const [stLat, stLon] = coords;
             const effectiveStatus = getMapEffectiveStatus(st);
             const color = getStatusColor(effectiveStatus);
             const label = STATUS_TEXT_MAP[effectiveStatus] || effectiveStatus.toUpperCase();
             const badgeClass = STATUS_CLASS_MAP[effectiveStatus] || 'bg-secondary';
             const isVirtual = String(st.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
-            const stLat = Number(st.lat);
-            const stLon = Number(st.lon);
-
-            if (isNaN(stLat) || isNaN(stLon) || stLat === 0 || stLon === 0) return;
-
-            const icon = L.divIcon({
+            const icon = leaflet.divIcon({
                 className: 'custom-div-icon',
                 html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.5)"></div>`,
                 iconSize: [14, 14],
@@ -1569,19 +1586,20 @@ window.openPublicMap = async function() {
             });
 
             const popup = `<div style="color:#333;min-width:180px;font-family:sans-serif;">
-                <strong style="font-size:1.1em;display:block;margin-bottom:5px;">${st.name}</strong>
-                <div class="mb-2">
-                    <span class="badge ${badgeClass}">${label}</span>
-                    ${isVirtual ? '<span class="badge bg-info text-dark ms-1">VIRTUAL</span>' : ''}
-                </div>
+                <strong style="font-size:1.1em;display:block;margin-bottom:5px;">${st.name || st.serial || 'Station'}</strong>
+                <div class="mb-2"><span class="badge ${badgeClass}">${label}</span>${isVirtual ? '<span class="badge bg-info text-dark ms-1">VIRTUAL</span>' : ''}</div>
+                <div class="small text-muted">Lat: ${stLat.toFixed(6)} | Lon: ${stLon.toFixed(6)}</div>
             </div>`;
 
-            L.marker([stLat, stLon], { icon }).addTo(window.publicMapInstance).bindPopup(popup);
+            leaflet.marker([stLat, stLon], { icon }).addTo(window.publicMapInstance).bindPopup(popup);
             bounds.push([stLat, stLon]);
         });
 
-        if (bounds.length > 0) window.publicMapInstance.fitBounds(bounds, { padding: [50, 50] });
+        window.publicMapBounds = bounds;
+        setTimeout(fitPublicMap, 50);
+        setTimeout(fitPublicMap, 300);
     } catch (err) {
-        console.error("Map error:", err);
+        console.error('Map error:', err);
+        setTimeout(fitPublicMap, 50);
     }
 };

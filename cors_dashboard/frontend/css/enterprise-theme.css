@@ -184,6 +184,20 @@
     to { transform: rotate(360deg); }
 }
 
+/* Flying Satellites (scroll-driven by GSAP) */
+.flying-satellite {
+    position: absolute;
+    pointer-events: none;
+    will-change: transform;
+    transition: none;
+}
+.flying-flag {
+    position: absolute;
+    pointer-events: none;
+    will-change: transform, opacity;
+    transition: none;
+}
+
 /* === LANDING NAVBAR === */
 .landing-navbar {
     position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
@@ -595,4 +609,510 @@
     .login-panel-body { padding: 20px 20px; }
     .login-panel-header { padding: 24px 20px 0; }
     .login-panel-footer { padding: 12px 20px 20px; }
+}
+
+/* ============================================================
+   CINEMATIC SCROLL ANIMATION SYSTEM (VIP PRO)
+   ============================================================ */
+
+/* Lenis Smooth Scroll */
+html.lenis, html.lenis body {
+    height: auto;
+}
+.lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+    overflow: hidden;
+}
+
+/* === GSAP INITIAL STATES === */
+.gsap-hero-content {
+    will-change: transform, opacity;
+}
+
+/* Vietnam Map - Make it animatable across sections */
+.hero-map-wrapper {
+    position: absolute;
+    right: clamp(40px, 8vw, 130px);
+    top: 52vh;
+    width: clamp(300px, 28vw, 430px);
+    height: auto;
+    pointer-events: none;
+    z-index: 40;
+    will-change: transform, opacity;
+}
+.vietnam-map-bg {
+    position: static;
+    display: block;
+    width: 100%; height: auto; opacity: 0.88;
+    filter: brightness(2.55) saturate(1.9) drop-shadow(0 0 34px rgba(0, 242, 255, 0.52));
+    animation: vietnamGlow 6s ease-in-out infinite;
+    will-change: transform, opacity, filter;
+    transform-origin: center center;
+}
+
+.network-map-slot {
+    position: absolute;
+    left: 50%;
+    top: 60%;
+    width: min(72%, 390px);
+    height: 430px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.network-map-slot::before,
+.network-map-slot::after {
+    content: '';
+    position: absolute;
+    inset: 8%;
+    border: 1px dashed rgba(0, 242, 255, 0.16);
+    border-radius: 50%;
+    animation: orbitSpin 28s linear infinite;
+}
+
+.network-map-slot::after {
+    inset: 20%;
+    border-color: rgba(255, 213, 79, 0.16);
+    animation-duration: 38s;
+    animation-direction: reverse;
+}
+
+.vietnam-origin-badge {
+    position: absolute;
+    right: 2%;
+    top: 12%;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border: 1px solid rgba(255, 213, 79, 0.32);
+    border-radius: 999px;
+    background: rgba(10, 25, 47, 0.72);
+    color: #ffd54f;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    box-shadow: 0 0 22px rgba(255, 213, 79, 0.16);
+}
+
+.vietnam-origin-badge img,
+.flying-flag img {
+    width: 24px;
+    height: 16px;
+    object-fit: cover;
+    border-radius: 2px;
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.35);
+}
+
+.map-scan-ring {
+    position: absolute;
+    left: 48%;
+    top: 48%;
+    width: 58%;
+    aspect-ratio: 1;
+    border: 1px solid rgba(0, 242, 255, 0.18);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    animation: mapPulse 3.5s ease-out infinite;
+}
+
+.map-scan-ring-2 {
+    width: 80%;
+    animation-delay: 1.4s;
+}
+
+.map-node {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #51cf66;
+    box-shadow: 0 0 14px #51cf66, 0 0 30px rgba(81, 207, 102, 0.35);
+}
+
+.map-node-hn { left: 43%; top: 24%; }
+.map-node-dn { left: 52%; top: 53%; }
+.map-node-hcm { left: 58%; top: 78%; }
+
+@keyframes mapPulse {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.45); }
+    35% { opacity: 0.75; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.25); }
+}
+
+.flying-satellite {
+    position: fixed;
+    z-index: 12;
+    pointer-events: none;
+    font-size: clamp(1.1rem, 1.5vw, 2.1rem);
+    opacity: 0.72;
+    animation: satelliteDrift 16s ease-in-out infinite;
+    will-change: transform, opacity;
+}
+
+.flying-satellite i {
+    display: block;
+}
+
+.sat-cyan { color: #00f2ff; filter: drop-shadow(0 0 14px rgba(0, 242, 255, 0.65)); }
+.sat-blue { color: #4facfe; filter: drop-shadow(0 0 14px rgba(79, 172, 254, 0.62)); }
+.sat-purple { color: #cc5de8; filter: drop-shadow(0 0 14px rgba(204, 93, 232, 0.58)); }
+.sat-green { color: #51cf66; filter: drop-shadow(0 0 14px rgba(81, 207, 102, 0.56)); }
+.sat-red { color: #ff6b6b; filter: drop-shadow(0 0 14px rgba(255, 107, 107, 0.55)); }
+
+@keyframes satelliteDrift {
+    0%, 100% { transform: translate3d(-18px, 10px, 0) rotate(-8deg); opacity: 0.45; }
+    50% { transform: translate3d(26px, -18px, 0) rotate(12deg); opacity: 0.95; }
+}
+
+.flying-flag {
+    position: fixed;
+    right: 7vw;
+    top: 22vh;
+    z-index: 13;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(78, 12, 12, 0.5);
+    border: 1px solid rgba(255, 213, 79, 0.24);
+    color: #ffd54f;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    pointer-events: none;
+    box-shadow: 0 0 24px rgba(255, 0, 0, 0.12);
+}
+
+@media (max-width: 768px) {
+    .hero-map-wrapper {
+        display: none;
+    }
+
+    .network-map-slot {
+        width: min(78vw, 300px);
+        height: 320px;
+    }
+}
+
+/* Hero Section - Full viewport for pinning */
+.hero-section {
+    position: relative; padding: 140px 0 80px; z-index: 1;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+}
+
+/* Stats - Override for scroll reveal */
+.landing-stats {
+    position: relative; z-index: 2; padding: 60px 0;
+    overflow: hidden;
+}
+
+/* Features - Override for scroll reveal */
+.landing-features {
+    position: relative; z-index: 2; padding: 80px 0;
+    overflow: hidden;
+}
+
+/* === CINEMATIC SECTION TRANSITIONS === */
+.cinematic-section {
+    position: relative;
+    overflow: hidden;
+}
+
+/* Reveal line - decorative element */
+.section-reveal-line {
+    width: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--primary-cyan), transparent);
+    margin: 0 auto 40px;
+    transition: width 1s ease;
+}
+.section-reveal-line.active {
+    width: 200px;
+}
+
+/* === MAGNETIC HOVER BUTTONS === */
+.btn-magnetic {
+    transition: transform 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* === STAGGER REVEAL CARDS === */
+.reveal-card {
+    will-change: transform, opacity;
+}
+
+/* === FLOATING LABEL ON SCROLL === */
+.scroll-indicator {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: rgba(0, 242, 255, 0.5);
+    font-size: 0.72rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    font-weight: 600;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.5s;
+}
+.scroll-indicator.hidden {
+    opacity: 0;
+}
+.scroll-indicator-line {
+    width: 1px;
+    height: 40px;
+    background: linear-gradient(to bottom, rgba(0, 242, 255, 0.5), transparent);
+    animation: scrollPulse 2s ease-in-out infinite;
+}
+@keyframes scrollPulse {
+    0%, 100% { transform: scaleY(1); opacity: 0.5; }
+    50% { transform: scaleY(1.3); opacity: 1; }
+}
+
+/* === ENHANCED STAT CARD GLOW ON REVEAL === */
+.landing-stat-card.revealed {
+    border-color: rgba(0, 242, 255, 0.25);
+}
+.landing-stat-card.revealed::before {
+    opacity: 1;
+}
+
+/* === FEATURE CARD TILT ON SCROLL === */
+.landing-feature-card {
+    perspective: 1000px;
+    transform-style: preserve-3d;
+}
+
+/* === COUNTER GLOW EFFECT === */
+.landing-stat-value.counting {
+    animation: countGlow 0.3s ease;
+}
+@keyframes countGlow {
+    0% { filter: drop-shadow(0 0 8px rgba(0, 242, 255, 0.15)); }
+    50% { filter: drop-shadow(0 0 20px rgba(0, 242, 255, 0.5)); }
+    100% { filter: drop-shadow(0 0 8px rgba(0, 242, 255, 0.15)); }
+}
+
+/* === STATION DIRECTORY WATERFALL === */
+.station-dir-item {
+    will-change: transform, opacity;
+}
+
+/* ============================================================
+   HOW IT WORKS - TIMELINE SECTION
+   ============================================================ */
+.hiw-section {
+    position: relative; z-index: 2; padding: 100px 0;
+}
+.hiw-section .section-title {
+    font-size: 2.2rem; font-weight: 900; color: #fff;
+    letter-spacing: -1px; text-align: center; margin-bottom: 8px;
+}
+.hiw-section .section-sub {
+    color: #6a8aaa; text-align: center; margin-bottom: 60px; font-size: 0.95rem;
+}
+.hiw-timeline {
+    position: relative; max-width: 900px; margin: 0 auto;
+}
+.hiw-timeline::before {
+    content: ''; position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 2px; background: linear-gradient(to bottom, transparent, rgba(0,242,255,0.3), transparent);
+    transform: translateX(-50%);
+}
+.hiw-step {
+    display: flex; align-items: flex-start; margin-bottom: 80px;
+    position: relative;
+}
+.hiw-step:nth-child(even) { flex-direction: row-reverse; }
+.hiw-step-content {
+    width: 45%; padding: 32px;
+    background: rgba(10, 25, 47, 0.6); backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 242, 255, 0.1); border-radius: 20px;
+    transition: all 0.4s;
+}
+.hiw-step-content:hover {
+    border-color: rgba(0, 242, 255, 0.4);
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+.hiw-step-number {
+    position: absolute; left: 50%; top: 0;
+    transform: translateX(-50%);
+    width: 56px; height: 56px; border-radius: 50%;
+    background: linear-gradient(135deg, #00f2ff, #0066ff);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem; font-weight: 900; color: #0a192f;
+    box-shadow: 0 0 30px rgba(0, 242, 255, 0.4);
+    z-index: 2;
+}
+.hiw-step-title {
+    font-size: 1.2rem; font-weight: 700; color: #fff; margin-bottom: 8px;
+}
+.hiw-step-desc {
+    font-size: 0.88rem; color: #8892b0; line-height: 1.7;
+}
+.hiw-step-icon {
+    font-size: 2rem; margin-bottom: 12px;
+    background: linear-gradient(135deg, #00f2ff, #0088ff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* ============================================================
+   LIVE DATA STREAM VISUALIZATION
+   ============================================================ */
+.livedata-section {
+    position: relative; z-index: 2; padding: 100px 0; overflow: hidden;
+}
+.livedata-bars {
+    display: flex; align-items: flex-end; justify-content: center;
+    gap: 6px; height: 120px; margin-top: 40px;
+}
+.livedata-bar {
+    width: 8px; border-radius: 4px 4px 0 0;
+    background: linear-gradient(to top, rgba(0,242,255,0.2), rgba(0,242,255,0.8));
+    animation: barPulse 1.5s ease-in-out infinite;
+    transform-origin: bottom;
+}
+@keyframes barPulse {
+    0%, 100% { transform: scaleY(0.3); opacity: 0.5; }
+    50% { transform: scaleY(1); opacity: 1; }
+}
+.livedata-label {
+    text-align: center; margin-top: 16px;
+    font-size: 0.75rem; color: #4a6a8a; letter-spacing: 2px; text-transform: uppercase;
+}
+.livedata-card {
+    background: rgba(10, 25, 47, 0.6); backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 242, 255, 0.1); border-radius: 20px;
+    padding: 40px 32px; text-align: center;
+    transition: all 0.4s;
+}
+.livedata-card:hover {
+    border-color: rgba(0, 242, 255, 0.3);
+    box-shadow: 0 0 40px rgba(0, 242, 255, 0.08);
+}
+.livedata-big {
+    font-size: 3rem; font-weight: 900;
+    background: linear-gradient(135deg, #fff 30%, #00f2ff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* ============================================================
+   TECHNOLOGY MARQUEE
+   ============================================================ */
+.tech-marquee-section {
+    position: relative; z-index: 2; padding: 60px 0; overflow: hidden;
+}
+.tech-marquee-track {
+    display: flex; gap: 60px; animation: marqueeScroll 25s linear infinite;
+    width: max-content;
+}
+@keyframes marqueeScroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+.tech-marquee-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 28px; border-radius: 60px;
+    background: rgba(10, 25, 47, 0.5);
+    border: 1px solid rgba(0, 242, 255, 0.08);
+    white-space: nowrap; font-size: 0.9rem; font-weight: 600;
+    color: #b0c4de; transition: all 0.3s;
+}
+.tech-marquee-item:hover {
+    border-color: rgba(0, 242, 255, 0.3);
+    color: #fff;
+}
+.tech-marquee-item i {
+    font-size: 1.4rem; color: var(--primary-cyan);
+}
+
+/* ============================================================
+   CTA (CALL TO ACTION) SECTION
+   ============================================================ */
+.cta-section {
+    position: relative; z-index: 2; padding: 100px 0; text-align: center;
+}
+.cta-box {
+    max-width: 700px; margin: 0 auto; padding: 60px 40px;
+    background: linear-gradient(135deg, rgba(0, 242, 255, 0.05), rgba(0, 100, 255, 0.05));
+    border: 1px solid rgba(0, 242, 255, 0.15);
+    border-radius: 28px; position: relative; overflow: hidden;
+}
+.cta-box::before {
+    content: ''; position: absolute; top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background: conic-gradient(from 0deg, transparent, rgba(0,242,255,0.05), transparent, rgba(0,242,255,0.05));
+    animation: ctaRotate 10s linear infinite;
+}
+@keyframes ctaRotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.cta-title {
+    font-size: 2rem; font-weight: 900; color: #fff;
+    position: relative; z-index: 1; margin-bottom: 16px;
+}
+.cta-desc {
+    font-size: 1rem; color: #8892b0; max-width: 500px; margin: 0 auto 32px;
+    position: relative; z-index: 1; line-height: 1.7;
+}
+
+/* ============================================================
+   SECTION DIVIDERS
+   ============================================================ */
+.section-divider {
+    width: 100%; height: 1px; position: relative; z-index: 2;
+    background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.2), transparent);
+    margin: 0;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 768px) {
+    .scroll-indicator { display: none; }
+    .hero-section { min-height: auto; }
+    .hiw-timeline::before { left: 24px; }
+    .hiw-step, .hiw-step:nth-child(even) { flex-direction: column; padding-left: 60px; }
+    .hiw-step-content { width: 100%; }
+    .hiw-step-number { left: 24px; transform: translateX(-50%); }
+    .livedata-big { font-size: 2rem; }
+    .cta-box { padding: 40px 24px; }
+}
+
+/* VIP Flag Ripple Effect */
+.flag-ripple {
+    position: absolute;
+    width: 40px; height: 40px;
+    background: rgba(0, 242, 255, 0.4);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 1;
+    animation: flagRipple 2s ease-out infinite;
+}
+
+@keyframes flagRipple {
+    0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; }
 }

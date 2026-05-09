@@ -2081,6 +2081,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const SATELLITE_TIMEOUT = 5000;
     const FADE_DURATION = 2000;
     const safeNmeaData = nmeaData || { gga: null, gsa: null, satellites: {} };
+    const safeNmeaDataRef = useRef(safeNmeaData);
+    useEffect(() => {
+        safeNmeaDataRef.current = safeNmeaData;
+    }, [safeNmeaData]);
     const fallbackBaseCoords = device?.base_config?.coords || (
         device?.base_config?.lat !== undefined && device?.base_config?.lon !== undefined
             ? {
@@ -2386,7 +2390,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
         const animate = () => {
             const now = Date.now();
-            const { gga, gsa, satellites } = safeNmeaData;
+            const { gga, gsa, satellites } = safeNmeaDataRef.current;
 
             // Text Stats Updates
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
@@ -2452,7 +2456,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             window.removeEventListener('resize', handleResize);
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
         };
-    }, [nmeaData]);
+    }, []);
     /*
     const FIX_STATUS_MAP = {
         'RTK_FIXED': { label: 'RTK FIXED', color: '#00ff00', icon: '🎯', priority: 5 },
