@@ -4,6 +4,11 @@
 
 const { useState, useEffect, memo, useRef } = React;
 
+function getLeaflet() {
+    const leaflet = window.Leaflet || window.L;
+    return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
+}
+
 // === PREMIUM UI COMPONENTS ===
 const MetricLineChart = memo(function MetricLineChart({ label, data = [], color, unit = "" }) {
     const max = Math.max(...data, 1);
@@ -1874,21 +1879,22 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
 
         // Kiểm tra Leaflet đã load chưa
-        if (typeof L === 'undefined') {
+        const leaflet = getLeaflet();
+        if (!leaflet) {
             console.error('Leaflet chưa được load!');
             return;
         }
 
         // Khởi tạo Map
         if (!mapInstanceRef.current) {
-            mapInstanceRef.current = L.map(mapContainerRef.current).setView([lat, lon], 16);
+            mapInstanceRef.current = leaflet.map(mapContainerRef.current).setView([lat, lon], 16);
 
-            tileLayerRef.current = L.tileLayer(`https://mt1.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`, {
+            tileLayerRef.current = leaflet.tileLayer(`https://mt1.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`, {
                 maxZoom: 20,
                 attribution: 'Google Maps'
             }).addTo(mapInstanceRef.current);
 
-            markerRef.current = L.marker([lat, lon]).addTo(mapInstanceRef.current)
+            markerRef.current = leaflet.marker([lat, lon]).addTo(mapInstanceRef.current)
                 .bindPopup(`<b>Vị trí Base</b><br>Lat: ${lat}<br>Lon: ${lon}`)
                 .openPopup();
         } else {
@@ -1933,7 +1939,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         );
     }
 
-    if (typeof L === 'undefined') {
+    if (!getLeaflet()) {
         console.error('[Map] ❌ LEAFLET CHƯA ĐƯỢC LOAD!');
         return (
             <div className="alert alert-danger" style={{ height: '250px' }}>
@@ -3649,7 +3655,9 @@ window.DetailsPanel = DetailsPanel;
 // === ALL STATIONS MAP COMPONENT
 // ===============================================================================
 const createColoredIcon = (color) => {
-    return L.divIcon({
+    const leaflet = getLeaflet();
+    if (!leaflet) return null;
+    return leaflet.divIcon({
         className: 'custom-div-icon',
         html: `<div style="background-color: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 4px black;"></div>`,
         iconSize: [12, 12],
@@ -3665,12 +3673,14 @@ const getRoverStatusMeta = (status) => {
 };
 
 const createRoverIcon = (color) => {
+    const leaflet = getLeaflet();
+    if (!leaflet) return null;
     const svg = `
         <svg fill="${color}" stroke="white" stroke-width="2" viewBox="0 0 24 24" width="24" height="24" style="filter: drop-shadow(0px 2px 3px rgba(0,0,0,0.8));">
             <path d="M12 2 L22 20 L2 20 Z" />
         </svg>
     `;
-    return L.divIcon({
+    return leaflet.divIcon({
         className: 'custom-div-icon',
         html: svg,
         iconSize: [24, 24],
@@ -3679,7 +3689,9 @@ const createRoverIcon = (color) => {
 };
 
 const createRoverMarker = (lat, lon, color) => {
-    return L.marker([lat, lon], {
+    const leaflet = getLeaflet();
+    if (!leaflet) return null;
+    return leaflet.marker([lat, lon], {
         icon: createRoverIcon(color),
         riseOnHover: true,
         keyboard: false
@@ -3871,26 +3883,37 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     }, [canViewRovers]);
 
     useEffect(() => {
-        if (!mapInstanceRef.current) {
-            const map = L.map(mapContainerRef.current).setView([21.0285, 105.8542], 6);
+        const leaflet = getLeaflet();
+        if (!leaflet || !mapContainerRef.current) {
+            console.error('Leaflet namespace is not available or has been replaced');
+            return;
+        }
 
-            tileLayerRef.current = L.tileLayer(`https://{s}.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`, {
+        if (!mapInstanceRef.current) {
+            const map = leaflet.map(mapContainerRef.current).setView([21.0285, 105.8542], 6);
+
+            tileLayerRef.current = leaflet.tileLayer(`https://{s}.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`, {
                 maxZoom: 20,
                 subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
             }).addTo(map);
 
-            if (L.markerClusterGroup) {
-                roverClusterRef.current = L.markerClusterGroup({
-                    chunkedLoading: true,
-                    chunkInterval: 40,
-                    chunkDelay: 40,
-                    removeOutsideVisibleBounds: true,
-                    showCoverageOnHover: false,
-                    spiderfyOnMaxZoom: false,
-                    maxClusterRadius: 45,
-                    disableClusteringAtZoom: 14
-                });
-                map.addLayer(roverClusterRef.current);
+            if (typeof leaflet.markerClusterGroup === 'function' && typeof leaflet.MarkerClusterGroup === 'function') {
+                try {
+                    roverClusterRef.current = leaflet.markerClusterGroup({
+                        chunkedLoading: true,
+                        chunkInterval: 40,
+                        chunkDelay: 40,
+                        removeOutsideVisibleBounds: true,
+                        showCoverageOnHover: false,
+                        spiderfyOnMaxZoom: false,
+                        maxClusterRadius: 45,
+                        disableClusteringAtZoom: 14
+                    });
+                    map.addLayer(roverClusterRef.current);
+                } catch (error) {
+                    console.warn('Leaflet marker cluster unavailable, falling back to plain rover markers:', error);
+                    roverClusterRef.current = null;
+                }
             }
 
             const handleViewportChanged = () => {
@@ -3941,6 +3964,9 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     }, [mapType]);
 
     useEffect(() => {
+        const leaflet = getLeaflet();
+        if (!leaflet) return;
+
         const map = mapInstanceRef.current;
         if (!map) return;
 
@@ -3979,7 +4005,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                         corsMarkers[device.serial].setIcon(createColoredIcon(getStatusColor(mapEffectiveStatus)));
                         corsMarkers[device.serial].setPopupContent(popupContent);
                     } else {
-                        const marker = L.marker([lat, lon], {
+                        const marker = leaflet.marker([lat, lon], {
                             icon: createColoredIcon(getStatusColor(mapEffectiveStatus))
                         }).addTo(map).bindPopup(popupContent);
 
@@ -4007,6 +4033,9 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     }, [devices, currentUser, showCors]);
 
     useEffect(() => {
+        const leaflet = getLeaflet();
+        if (!leaflet) return;
+
         const map = mapInstanceRef.current;
         if (!map) return;
 
@@ -4235,8 +4264,9 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         if (nearestOffline) msg.push(`🔴 OFFLINE: ${nearestOffline.device.name || nearestOffline.device.serial} (${(nearestOffline.dist / 1000).toFixed(2)} km)`);
         if (window.showSuccess) window.showSuccess(`${textPrefix} — ${msg.join(' | ')}`);
 
+        const leaflet = getLeaflet();
         const map = mapInstanceRef.current;
-        if (map) {
+        if (leaflet && map) {
             // Xóa các đường cũ
             if (userMarkerRef.current) map.removeLayer(userMarkerRef.current);
             polylinesRef.current.forEach(item => {
@@ -4249,8 +4279,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             const iconHtml = locationName === "Vị trí của bạn"
                 ? `<div style="background-color: #007bff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`
                 : `<div style="background-color: #ffc107; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`;
-            const userIcon = L.divIcon({ className: 'custom-div-icon', html: iconHtml, iconSize: [16, 16], iconAnchor: [8, 8] });
-            userMarkerRef.current = L.marker([lat, lon], { icon: userIcon }).addTo(map)
+            const userIcon = leaflet.divIcon({ className: 'custom-div-icon', html: iconHtml, iconSize: [16, 16], iconAnchor: [8, 8] });
+            userMarkerRef.current = leaflet.marker([lat, lon], { icon: userIcon }).addTo(map)
                 .bindPopup(`<b>${locationName.split('(')[0]}</b>`).openPopup();
 
             // Hàm vẽ 1 đường nối
@@ -4261,7 +4291,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 const distKm = (target.dist / 1000).toFixed(2);
                 const stationName = target.device.name || target.device.serial;
 
-                const line = L.polyline([[lat, lon], [tLat, tLon]], {
+                const line = leaflet.polyline([[lat, lon], [tLat, tLon]], {
                     color: color,
                     weight: 5,
                     opacity: 1.0,
@@ -4289,7 +4319,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             if (offlineLine) polylinesRef.current.push(offlineLine);
 
             // Zoom bao trọn tất cả đường nối
-            const allBounds = L.latLngBounds([[lat, lon]]);
+            const allBounds = leaflet.latLngBounds([[lat, lon]]);
             if (nearestConnected) allBounds.extend([parseFloat(nearestConnected.device.base_config.coords.lat), parseFloat(nearestConnected.device.base_config.coords.lon)]);
             if (nearestOffline) allBounds.extend([parseFloat(nearestOffline.device.base_config.coords.lat), parseFloat(nearestOffline.device.base_config.coords.lon)]);
             map.flyToBounds(allBounds, { padding: [60, 60], maxZoom: 14, duration: 1.5 });

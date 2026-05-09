@@ -38,6 +38,21 @@ except ValueError:
 # === CONFIGURATION ===
 # ==============================================================================
 STATION_LIST = [
+    {
+        "source_host": "aitogy.com.vn",
+        "source_port": 2101,
+        "source_user": "daithanh_webcors",
+        "source_pass": "12345",
+        "source_mp": "ATGDT",
+        "target_host": "aitogy.com.vn",
+        "target_port": 2101,
+        "target_pass": "12345",
+        "target_mp": "ATG_DT",
+        "lat": 19.848627810,
+        "lon": 105.482040020,
+        "alt": 0.0,
+        "source_on_demand": False
+    },
     {"source_mp": "YBI_XuanAI",       "lat": 21.850058284, "lon": 104.705661679, "alt": 30.8801, "target_mp": "YB.VanYen"},
     {"source_mp": "TNN_VoNhai",       "lat": 21.75413356,  "lon": 106.07747532,  "alt": 61.9418, "target_mp": "TN.VoNhai"},
     {"source_mp": "TNN_TPThaiNguyen", "lat": 21.573653528, "lon": 105.840291958, "alt": 11.1829, "target_mp": "TN.TP"},
@@ -49,16 +64,7 @@ STATION_LIST = [
     {"source_mp": "HB.TP",            "lat": 20.806464,    "lon": 105.358762,   "alt": 0.0,     "target_mp": "HB.TP"},
 ]
 
-MONITOR_LIST = [
-    {
-        "mountpoint": "ATGDT", 
-        "lat": 19.848627810, 
-        "lon": 105.482040020, 
-        "alt": 0.0,
-        "rover_user": "daithanh_webcors",
-        "rover_pass": "12345"
-    }
-]
+MONITOR_LIST = []
 
 # MQTT
 MQTT_BROKER = "45.117.179.134"
@@ -146,6 +152,27 @@ class RelayWorker(threading.Thread):
         self.socket_lock = threading.Lock()
         self._source_sock = None
         self._target_sock = None
+
+    def _source_host(self):
+        return self.cfg.get('source_host', SOURCE_HOST)
+
+    def _source_port(self):
+        return int(self.cfg.get('source_port', SOURCE_PORT))
+
+    def _source_user(self):
+        return self.cfg.get('source_user', SOURCE_USER)
+
+    def _source_pass(self):
+        return self.cfg.get('source_pass', SOURCE_PASS)
+
+    def _target_host(self):
+        return self.cfg.get('target_host', TARGET_HOST)
+
+    def _target_port(self):
+        return int(self.cfg.get('target_port', TARGET_PORT))
+
+    def _target_pass(self):
+        return self.cfg.get('target_pass', TARGET_PASS)
     
     def log(self, level, msg):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['target_mp']}] {msg}")
@@ -174,7 +201,7 @@ class RelayWorker(threading.Thread):
             "service_config": {
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['target_mp'],
-                "serverhost1": TARGET_HOST,
+                "serverhost1": self._target_host(),
                 "stream_on_demand": True,
                 "stream_active": bool(self.desired_active),
                 "active_mountpoint": self.cfg['target_mp'] if self.desired_active else None
@@ -193,7 +220,10 @@ class RelayWorker(threading.Thread):
     def set_stream_active(self, active: bool):
         self.desired_active = bool(active)
         if not self.desired_active:
-            self._close_target_socket()
+            if self.cfg.get("source_on_demand"):
+                self._close_live_sockets()
+            else:
+                self._close_target_socket()
         self.wakeup_event.set()
         self.publish_status()
 
@@ -230,16 +260,32 @@ class RelayWorker(threading.Thread):
             source_sock = None
             target_sock = None
             try:
+                if self.cfg.get("source_on_demand") and not self.desired_active:
+                    self.is_connected = False
+                    self.current_bps = 0
+                    self.publish_status()
+                    self.log("INFO", "Relay is sleeping; waiting for wake command before connecting SOURCE.")
+                    self.wakeup_event.wait(RECONNECT_INTERVAL)
+                    self.wakeup_event.clear()
+                    continue
+
+                source_host = self._source_host()
+                source_port = self._source_port()
+                source_user = self._source_user()
+                source_pass = self._source_pass()
+                target_host = self._target_host()
+                target_port = self._target_port()
+                target_pass = self._target_pass()
                 # === LUÔN KẾT NỐI SOURCE VÀ LẤY DATA (Kể cả khi bị OFF trên web) ===
-                self.log("INFO", f"Connecting SOURCE: {SOURCE_HOST}/{self.cfg['source_mp']}")
-                source_sock = socket.create_connection((SOURCE_HOST, SOURCE_PORT), timeout=10)
+                self.log("INFO", f"Connecting SOURCE: {source_host}:{source_port}/{self.cfg['source_mp']}")
+                source_sock = socket.create_connection((source_host, source_port), timeout=10)
                 with self.socket_lock:
                     self._source_sock = source_sock
                 
-                auth = base64.b64encode(f"{SOURCE_USER}:{SOURCE_PASS}".encode()).decode()
+                auth = base64.b64encode(f"{source_user}:{source_pass}".encode()).decode()
                 source_request = (
                     f"GET /{self.cfg['source_mp']} HTTP/1.1\r\n"
-                    f"Host: {SOURCE_HOST}\r\n"
+                    f"Host: {source_host}\r\n"
                     f"Authorization: Basic {auth}\r\n"
                     f"User-Agent: NTRIP Relay/1.0\r\n"
                     f"Connection: close\r\n\r\n"
@@ -267,14 +313,14 @@ class RelayWorker(threading.Thread):
                 while not self.stop_event.is_set():
                     # 1. KẾT NỐI TARGET NẾU TRẠM BẬT (desired_active = True) MÀ CHƯA KẾT NỐI
                     if self.desired_active and target_sock is None:
-                        self.log("INFO", f"Connecting TARGET: {TARGET_HOST}/{self.cfg['target_mp']} (v1.0)")
+                        self.log("INFO", f"Connecting TARGET: {target_host}:{target_port}/{self.cfg['target_mp']} (v1.0)")
                         try:
-                            target_sock = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
+                            target_sock = socket.create_connection((target_host, target_port), timeout=10)
                             with self.socket_lock:
                                 self._target_sock = target_sock
                             
                             target_request = (
-                                f"SOURCE {TARGET_PASS} /{self.cfg['target_mp']}\r\n"
+                                f"SOURCE {target_pass} /{self.cfg['target_mp']}\r\n"
                                 f"Source-Agent: NTRIP NtripSource/1.0\r\n\r\n"
                             )
                             target_sock.sendall(target_request.encode())
@@ -419,11 +465,16 @@ class MonitorWorker(threading.Thread):
     def publish_status(self):
         if not self.mqtt_client or not self.mqtt_client.is_connected():
             return
+
+        if self.is_connected:
+            current_status = "online" if self.current_bps > 0 else "sleep"
+        else:
+            current_status = "offline"
         
         status = {
             "serial": self.serial,
             "name": self.cfg['mountpoint'],
-            "status": "online" if self.current_bps > 0 else "offline",
+            "status": current_status,
             "version": RELAY_VERSION,
             "timestamp": int(time.time()),
             "base_config": {
@@ -441,8 +492,8 @@ class MonitorWorker(threading.Thread):
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['mountpoint'],
                 "serverhost1": TARGET_HOST,
-                "stream_on_demand": False,
-                "stream_active": True,
+                "stream_on_demand": True,
+                "stream_active": bool(self.current_bps > 0),
                 "active_mountpoint": self.cfg['mountpoint']
             },
             "source_mountpoint": self.cfg['mountpoint'],
@@ -675,4 +726,3 @@ if __name__ == "__main__":
             mqtt_client.disconnect()
         
         print("âœ… Done")
-

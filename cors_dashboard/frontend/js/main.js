@@ -273,13 +273,16 @@ function renderMap() {
         return;
     }
 
+    if (window.publicMapInstance) {
         window.publicMapInstance.setView(VIETNAM_CENTER, VIETNAM_DEFAULT_ZOOM);
-        mapRoot.render(
-            React.createElement(window.AllStationsMap, {
-                devices: globalState.devices,
-                currentUser: globalState.currentUser
-            })
-        );
+    }
+    
+    mapRoot.render(
+        React.createElement(window.AllStationsMap, {
+            devices: globalState.devices,
+            currentUser: globalState.currentUser
+        })
+    );
     mapNeedsUpdate = false;
 }
 
