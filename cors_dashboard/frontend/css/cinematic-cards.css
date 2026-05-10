@@ -1,0 +1,104 @@
+/* ============================================================
+   CINEMATIC FEATURE CARD v5 — GSAP POWERED
+   Fly to Center + 180 Flip + Scale
+   ============================================================ */
+
+/* Overlay backdrop */
+.feature-cinematic-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at center, rgba(0, 10, 20, 0.85) 0%, rgba(0, 0, 0, 0.95) 100%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 9000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+.feature-cinematic-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Wrapper in grid */
+.landing-feature-card-wrapper {
+    position: relative;
+    height: 320px;
+    margin-bottom: 20px;
+    cursor: pointer;
+    perspective: 1200px;
+}
+
+/* The inner container - GSAP will control this */
+.landing-feature-card-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    will-change: transform;
+}
+
+/* Front and back faces */
+.landing-feature-card-front,
+.landing-feature-card-back {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    border-radius: 24px;
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(0, 242, 255, 0.15);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.landing-feature-card-front {
+    background: rgba(10, 25, 47, 0.95);
+    z-index: 2; /* Still helpful for non-3D browsers */
+}
+
+.landing-feature-card-back {
+    background: linear-gradient(135deg, #05101f 0%, #0a2a4a 100%);
+    transform: rotateY(180deg);
+    z-index: 1;
+    border-color: rgba(0, 242, 255, 0.4);
+    box-shadow: 0 0 40px rgba(0, 242, 255, 0.1);
+}
+
+/* Icon / Title styles */
+.landing-feature-icon {
+    width: 60px; height: 60px; border-radius: 18px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; margin-bottom: 18px;
+    border: 1px solid rgba(0, 242, 255, 0.2);
+}
+.feature-icon-blue { background: rgba(0, 136, 255, 0.15); color: #4facfe; }
+.feature-icon-green { background: rgba(0, 200, 100, 0.15); color: #51cf66; }
+.feature-icon-purple { background: rgba(150, 100, 255, 0.15); color: #cc5de8; }
+.feature-icon-cyan { background: rgba(0, 242, 255, 0.15); color: #00f2ff; }
+
+.landing-feature-title {
+    font-size: 1.3rem; font-weight: 800; color: #fff; margin-bottom: 12px;
+    background: linear-gradient(to right, #fff, #00f2ff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.landing-feature-desc, .landing-feature-long-desc {
+    font-size: 0.92rem; color: #8892b0; line-height: 1.6;
+}
+.landing-feature-long-desc {
+    color: #c0cfe0;
+    margin-top: 15px; padding-top: 15px;
+    border-top: 1px solid rgba(0, 242, 255, 0.1);
+}
+
+.back-badge {
+    position: absolute; top: 20px; right: 20px;
+    background: rgba(0, 242, 255, 0.15); color: #00f2ff;
+    font-size: 0.6rem; font-weight: 800; padding: 4px 12px;
+    border-radius: 20px; text-transform: uppercase; letter-spacing: 1px;
+    border: 1px solid rgba(0, 242, 255, 0.2);
+}

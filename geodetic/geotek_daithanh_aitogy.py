@@ -38,21 +38,21 @@ except ValueError:
 # === CONFIGURATION ===
 # ==============================================================================
 STATION_LIST = [
-    {
-        "source_host": "aitogy.com.vn",
-        "source_port": 2101,
-        "source_user": "daithanh_webcors",
-        "source_pass": "12345",
-        "source_mp": "ATGDT",
-        "target_host": "aitogy.com.vn",
-        "target_port": 2101,
-        "target_pass": "12345",
-        "target_mp": "ATG_DT",
-        "lat": 19.848627810,
-        "lon": 105.482040020,
-        "alt": 0.0,
-        "source_on_demand": False
-    },
+#    {
+#        "source_host": "aitogy.com.vn",
+#        "source_port": 2101,
+#        "source_user": "daithanh_webcors",
+#        "source_pass": "12345",
+#        "source_mp": "ATGDT",
+#        "target_host": "aitogy.com.vn",
+#        "target_port": 2101,
+#        "target_pass": "12345",
+#        "target_mp": "ATG_DT",
+#        "lat": 19.848627810,
+#        "lon": 105.482040020,
+#        "alt": 0.0,
+#        "source_on_demand": False
+#    },
     {"source_mp": "YBI_XuanAI",       "lat": 21.850058284, "lon": 104.705661679, "alt": 30.8801, "target_mp": "YB.VanYen"},
     {"source_mp": "TNN_VoNhai",       "lat": 21.75413356,  "lon": 106.07747532,  "alt": 61.9418, "target_mp": "TN.VoNhai"},
     {"source_mp": "TNN_TPThaiNguyen", "lat": 21.573653528, "lon": 105.840291958, "alt": 11.1829, "target_mp": "TN.TP"},

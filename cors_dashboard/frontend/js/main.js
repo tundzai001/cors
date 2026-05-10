@@ -290,10 +290,12 @@ function updateStaticUI() {
     const deviceCount = document.getElementById('device-count');
     if (deviceCount) deviceCount.textContent = globalState.devices.length;
 
-        const userInfoEl = document.getElementById('user-info');
-        if (userInfoEl) {
-            userInfoEl.textContent = `${globalState.currentUser.full_name || globalState.currentUser.username} (${globalState.currentUser.role.toUpperCase()})`;
-        }
+    const userInfoEl = document.getElementById('user-info');
+    if (userInfoEl && globalState.currentUser) {
+        userInfoEl.textContent = `${globalState.currentUser.full_name || globalState.currentUser.username} (${globalState.currentUser.role.toUpperCase()})`;
+    } else if (userInfoEl) {
+        userInfoEl.textContent = ''; // Clear for guest
+    }
 }
 
 // === MEMOIZED HANDLERS ===
@@ -1230,7 +1232,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // SPECIAL HANDLING FOR PUBLIC HOMEPAGE/STATION/BLOG (NO LOGIN REQUIRED)
     if (isPublicRoute && !localStorage.getItem('access_token') && !sessionStorage.getItem('access_token')) {
         console.log("Serving Public Content...");
-        await loadInitialDevices(); // Needed for stats
+        
+        // Parallelize initial device loading and root creation
+        const initialLoadPromise = loadInitialDevices();
 
         const homepageContainer = document.getElementById('homepage-root');
         if (homepageContainer && !window.homepageRoot) {
@@ -1252,15 +1256,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.apiDocsRoot = ReactDOM.createRoot(apiDocsContainer);
         }
         
+        await initialLoadPromise; // Wait for devices before rendering components that need them
+
         if (currentPath === '/') {
             switchView('homepage');
-            const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 5000);
+            const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 15000);
             if (window.homepageRoot) {
                 renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices }, 'Homepage component is not loaded');
             }
         } else if (currentPath === '/network-status') {
             switchView('homepage');
-            const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 5000);
+            const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 15000);
             if (window.homepageRoot) {
                 renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices }, 'Homepage component is not loaded');
             }
@@ -1268,7 +1274,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             switchView('blog');
             const slug = currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
             if (window.blogRoot) {
-                const blogComponent = await waitForGlobalComponent('BlogSystem', 5000);
+                const blogComponent = await waitForGlobalComponent('BlogSystem', 15000);
                 renderReactComponent(window.blogRoot, blogComponent, { slug }, 'Blog component is not loaded');
             }
 
@@ -1277,21 +1283,29 @@ document.addEventListener('DOMContentLoaded', async () => {
              switchView('station-detail');
              const device = globalState.devices.find(d => d.serial === serial);
              if (device && window.enterpriseDetailRoot) {
-                 const stationComponent = await waitForGlobalComponent('EnterpriseStationDetail', 5000);
+                 const stationComponent = await waitForGlobalComponent('EnterpriseStationDetail', 15000);
                  renderReactComponent(window.enterpriseDetailRoot, stationComponent, { device }, 'Station detail component is not loaded');
              }
         } else if (currentPath === '/api/docs') {
             switchView('api-docs');
             if (window.apiDocsRoot) {
-                const apiDocsComponent = await waitForGlobalComponent('ApiDocs', 5000);
+                const apiDocsComponent = await waitForGlobalComponent('ApiDocs', 15000);
                 renderReactComponent(window.apiDocsRoot, apiDocsComponent, {}, 'API docs component is not loaded');
             }
         }
         return; // CRITICAL: Stop here for public visitors!
     }
 
-    await loadCurrentUser();
-    if (!globalState.currentUser) return;
+    // Parallel load User info and Initial Devices to boost speed
+    const [userResponse, devicesResponse] = await Promise.allSettled([
+        loadCurrentUser(),
+        loadInitialDevices()
+    ]);
+
+    if (!globalState.currentUser) {
+        console.warn("[Main] Failed to load current user, stopping authenticated init.");
+        return;
+    }
 
     setupUIbasedOnPermissions();
     setupEventListeners();
@@ -1347,7 +1361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
     window.fetchInitialDevices = loadInitialDevices;
-    await loadInitialDevices();
+    // Note: loadInitialDevices already called in Promise.all above
     connectWebSocket();
 
     // 2. Dynamic Routing Handler (Clean URLs)
@@ -1363,7 +1377,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const checkAndRender = setInterval(() => {
                 const device = globalState.devices.find(d => d.serial === serial);
                 if (device && window.enterpriseDetailRoot) {
-                    waitForGlobalComponent('EnterpriseStationDetail', 5000).then((stationComponent) => {
+                    waitForGlobalComponent('EnterpriseStationDetail', 15000).then((stationComponent) => {
                         renderReactComponent(window.enterpriseDetailRoot, stationComponent, { device }, 'Station detail component is not loaded');
                         clearInterval(checkAndRender);
                     });
@@ -1375,7 +1389,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     } else if (currentPath === '/network-status') {
         switchView('homepage');
-        waitForGlobalComponent('HomePageEnterprise', 5000).then((homeComp) => {
+        waitForGlobalComponent('HomePageEnterprise', 15000).then((homeComp) => {
             if (homeComp && window.homepageRoot) {
                 renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices }, 'Homepage component is not loaded');
             }
@@ -1384,7 +1398,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         switchView('blog');
         const slug = currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
         if (window.blogRoot) {
-            waitForGlobalComponent('BlogSystem', 5000).then((blogComponent) => {
+            waitForGlobalComponent('BlogSystem', 15000).then((blogComponent) => {
                 renderReactComponent(window.blogRoot, blogComponent, { slug }, 'Blog component is not loaded');
             });
         }
@@ -1392,7 +1406,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (currentPath === '/api/docs') {
         switchView('api-docs');
         if (window.apiDocsRoot) {
-            waitForGlobalComponent('ApiDocs', 5000).then((apiDocsComponent) => {
+            waitForGlobalComponent('ApiDocs', 15000).then((apiDocsComponent) => {
                 renderReactComponent(window.apiDocsRoot, apiDocsComponent, {}, 'API docs component is not loaded');
             });
         }

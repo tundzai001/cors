@@ -191,10 +191,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 createContainer.innerHTML = '<div class="text-muted small">Không tìm thấy caster nào.</div>';
             } else {
                 availableCasters.forEach(host => {
+                    const isDefault = host.toLowerCase().includes('aitogy.com.vn');
                     const div = document.createElement('div');
                     div.className = 'form-check form-check-inline mb-0';
                     div.innerHTML = `
-                        <input class="form-check-input caster-target-check" type="checkbox" value="${host}" id="target-${host}" checked>
+                        <input class="form-check-input caster-target-check" type="checkbox" value="${host}" id="target-${host}" ${isDefault ? 'checked' : ''}>
                         <label class="form-check-label text-white small" for="target-${host}">${host}</label>
                     `;
                     createContainer.appendChild(div);
@@ -1354,7 +1355,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const div = document.createElement('div');
                 div.className = 'form-check form-check-inline me-3 mb-2';
                 div.innerHTML = `
-                    <input class="form-check-input delete-host-check" type="checkbox" value="${host}" id="del-check-${host}" checked>
+                    <input class="form-check-input delete-host-check" type="checkbox" value="${host}" id="del-check-${host}">
                     <label class="form-check-label small" for="del-check-${host}">${host}</label>
                 `;
                 serverList.appendChild(div);
@@ -1400,12 +1401,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast(`Đã xóa vĩnh viễn tài khoản khỏi hệ thống`, 'success');
             } else {
                 // TRƯỜNG HỢP 2: Chỉ gỡ trên một số server (Partial Cleanup)
-                // Những server BỊ TÍCH trong modal delete là những server CHÚNG TA MUỐN XÓA.
-                // Vậy danh sách target_casters CÒN LẠI = Tổng - Bị tích.
+                // Những server ĐƯỢC TÍCH trong modal delete là những server MUỐN GỠ BỎ.
+                // Danh sách target_casters CÒN LẠI = Tổng - Đã tích gỡ.
                 const remainingHosts = allHosts.filter(h => !checkedHosts.includes(h));
                 
                 if (checkedHosts.length === 0) {
-                    showToast('Bạn chưa chọn server nào để gỡ bỏ!', 'warning');
+                    showToast('Vui lòng tích chọn ít nhất 1 server để gỡ bỏ (hoặc chọn Xóa khỏi DB)', 'warning');
                     btn.disabled = false;
                     btn.innerHTML = originalHtml;
                     return;

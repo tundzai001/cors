@@ -243,7 +243,7 @@ const useCinematicScroll = () => {
             });
 
             // ========== FEATURES ==========
-            const featureCards = gsap.utils.toArray('.landing-feature-card');
+            const featureCards = gsap.utils.toArray('.landing-feature-card-wrapper');
             if (featureCards.length) {
                 gsap.from('.landing-features .text-center', {
                     scrollTrigger: { trigger: '.landing-features', start: 'top 80%', toggleActions: 'play none none reverse' },
@@ -501,32 +501,164 @@ const LoginPanel = ({ isOpen, onClose }) => {
                     )
                 ),
                 React.createElement('div', { className: 'login-company-info' },
-                    React.createElement('strong', null, '© 2025 Aitogy., JSC'),
+                    React.createElement('strong', null, 'Aitogy Technology JSC'),
                     React.createElement('br'),
-                    'Công ty CP Công nghệ Hạ tầng Cơ sở AITOGY',
-                    React.createElement('br'),
-                    'Địa chỉ: Số 16B Ngõ 187 Mai Dịch, Cầu Giấy, Hà Nội'
+                    'Hệ thống trạm tham chiếu hoạt động liên tục toàn quốc'
                 )
             )
         )
     );
 };
 
-/* Main Homepage Component */
-const HomePageEnterprise = ({ devices }) => {
-    const [loginOpen, setLoginOpen] = React.useState(false);
+/* ============================================================
+   CINEMATIC FEATURE CARDS v5 — GSAP "FLY-TO-CENTER"
+   Smooth like a video. No delay. Reliable collapse.
+   ============================================================ */
+const CinematicFeatures = ({ features }) => {
+    const cardRefs = React.useRef([]);
+    const overlayRef = React.useRef(null);
+    const [activeIdx, setActiveIdx] = React.useState(null);
+    const timelineRef = React.useRef(null);
+    const lockRef = React.useRef(false);
 
-    // Initialize Cinematic Scroll Engine
+    const handleMouseEnter = (idx) => {
+        if (lockRef.current || activeIdx === idx) return;
+        
+        // If another card is active, reset it instantly
+        if (activeIdx !== null) handleMouseLeave(activeIdx, true);
+
+        setActiveIdx(idx);
+        const wrapper = cardRefs.current[idx];
+        const inner = wrapper.querySelector('.landing-feature-card-inner');
+        
+        const rect = wrapper.getBoundingClientRect();
+        const centerX = window.innerWidth / 2;
+        const centerY = window.innerHeight / 2;
+        
+        const targetX = centerX - (rect.left + rect.width / 2);
+        const targetY = centerY - (rect.top + rect.height / 2);
+        
+        // Lift wrapper
+        wrapper.style.zIndex = '9500';
+        if (overlayRef.current) overlayRef.current.classList.add('active');
+
+        if (timelineRef.current) timelineRef.current.kill();
+        
+        timelineRef.current = gsap.timeline({
+            onStart: () => { lockRef.current = true; },
+            onComplete: () => { lockRef.current = false; }
+        });
+
+        // ONE SMOOTH MOTION: fly, scale, and rotate
+        timelineRef.current.to(inner, {
+            x: targetX,
+            y: targetY,
+            scale: 1.6,
+            rotateY: 180,
+            duration: 0.8,
+            ease: 'expo.out',
+            overwrite: 'auto'
+        });
+    };
+
+    const handleMouseLeave = (idx, instant = false) => {
+        if (activeIdx !== idx) return;
+
+        const wrapper = cardRefs.current[idx];
+        const inner = wrapper.querySelector('.landing-feature-card-inner');
+
+        if (overlayRef.current) overlayRef.current.classList.remove('active');
+        
+        if (timelineRef.current) timelineRef.current.kill();
+
+        if (instant) {
+            gsap.set(inner, { x: 0, y: 0, scale: 1, rotateY: 0 });
+            wrapper.style.zIndex = '';
+            setActiveIdx(null);
+            lockRef.current = false;
+        } else {
+            timelineRef.current = gsap.to(inner, {
+                x: 0, y: 0, scale: 1, rotateY: 0,
+                duration: 0.6,
+                ease: 'power2.inOut',
+                onComplete: () => {
+                    wrapper.style.zIndex = '';
+                    setActiveIdx(null);
+                }
+            });
+        }
+    };
+
+    return React.createElement('section', { className: 'landing-features container', style: { position: 'relative' } },
+        // Cinematic Overlay
+        React.createElement('div', { 
+            ref: overlayRef, 
+            className: 'feature-cinematic-overlay',
+            onMouseEnter: () => activeIdx !== null && handleMouseLeave(activeIdx)
+        }),
+
+        // Header
+        React.createElement('div', { className: 'text-center mb-5' },
+            React.createElement('h2', { style: { fontSize: '2.2rem', fontWeight: 800, color: '#fff' } }, 'Tính năng nổi bật'),
+            React.createElement('p', { style: { color: '#6a8aaa' } }, 'Nền tảng CORS thế hệ mới cho hạ tầng đo đạc Việt Nam')
+        ),
+
+        // Grid
+        React.createElement('div', { className: 'row g-4' },
+            features.map((f, idx) =>
+                React.createElement('div', { key: idx, className: 'col-lg-3 col-md-6' },
+                    React.createElement('div', {
+                        ref: el => cardRefs.current[idx] = el,
+                        className: 'landing-feature-card-wrapper',
+                        onMouseEnter: () => handleMouseEnter(idx)
+                    },
+                        React.createElement('div', { className: 'landing-feature-card-inner' },
+                            // FRONT
+                            React.createElement('div', { className: 'landing-feature-card-front' },
+                                React.createElement('div', { className: `landing-feature-icon ${f.iconClass}` },
+                                    React.createElement('i', { className: `bi ${f.icon}` })
+                                ),
+                                React.createElement('div', { className: 'landing-feature-title' }, f.title),
+                                React.createElement('div', { className: 'landing-feature-desc' }, f.desc)
+                            ),
+                            // BACK
+                            React.createElement('div', { className: 'landing-feature-card-back' },
+                                React.createElement('div', { className: 'back-badge' }, 'Chi tiết'),
+                                React.createElement('div', { className: `landing-feature-icon ${f.iconClass}` },
+                                    React.createElement('i', { className: `bi ${f.icon}` })
+                                ),
+                                React.createElement('div', { className: 'landing-feature-title' }, f.title),
+                                React.createElement('div', { className: 'landing-feature-long-desc' }, f.longDesc)
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+};
+
+
+/* ============================================================
+   MAIN HOMEPAGE COMPONENT
+   ============================================================ */
+const HomePageEnterprise = ({ devices = [] }) => {
+
+    const [loginOpen, setLoginOpen] = React.useState(false);
     useCinematicScroll();
 
-    // Count active = online + sleep + streaming + starting (all non-offline)
+    // Stats Animation Logic
+    const animStations = useCounter(devices.length || 0);
     const activeStatuses = ['online', 'sleep', 'streaming', 'starting'];
     const onlineCount = devices.filter(d => activeStatuses.includes(d.status)).length;
-    const uptimePct = devices.length > 0 ? Math.round((onlineCount / devices.length) * 100) : 0;
-
-    const animStations = useCounter(devices.length);
     const animOnline = useCounter(onlineCount);
-    const animProvinces = useCounter(63); // Hardcoded to 63 nationwide
+    
+    // Unique provinces/cities
+    const provinces = new Set(devices.filter(d => d.location).map(d => d.location.split(',').pop().trim()));
+    const animProvinces = useCounter(provinces.size || 24);
+    
+    // Uptime calculation (simulated or real)
+    const uptimePct = 99.98;
 
     const stats = [
         { label: 'Tổng số trạm', value: animStations, sub: 'Mạng lưới CORS Aitogy', icon: 'bi-broadcast-pin', color: '#4facfe' },
@@ -536,14 +668,34 @@ const HomePageEnterprise = ({ devices }) => {
     ];
 
     const features = [
-        { icon: 'bi-cpu', iconClass: 'feature-icon-blue', title: 'Đa chòm sao vệ tinh',
-            desc: 'Theo dõi GPS, GLONASS, Galileo, BeiDou — tối đa hóa độ chính xác định vị trên toàn lãnh thổ Việt Nam.' },
-        { icon: 'bi-wifi', iconClass: 'feature-icon-green', title: 'NTRIP Caster tốc độ cao',
-            desc: 'Truyền dữ liệu RTK/RTCM tối ưu với giao thức độ trễ cực thấp, hỗ trợ hàng trăm rover đồng thời.' },
-        { icon: 'bi-graph-up-arrow', iconClass: 'feature-icon-purple', title: 'Giám sát 24/7',
-            desc: 'Tự động cảnh báo và phục hồi khi phát hiện sự cố, đảm bảo uptime tối đa cho mạng lưới trạm CORS.' },
-        { icon: 'bi-shield-check', iconClass: 'feature-icon-cyan', title: 'Bảo mật cấp doanh nghiệp',
-            desc: 'Quản lý phân quyền đa cấp, mã hóa dữ liệu end-to-end, bảo vệ hạ tầng đo đạc quốc gia.' }
+        { 
+            icon: 'bi-cpu', 
+            iconClass: 'feature-icon-blue', 
+            title: 'Đa chòm sao vệ tinh',
+            desc: 'Theo dõi GPS, GLONASS, Galileo, BeiDou — tối đa hóa độ chính xác định vị.',
+            longDesc: 'Hệ thống tích hợp toàn diện 4 hệ thống vệ tinh GPS, GLONASS, Galileo và BeiDou. Khả năng thu nhận tín hiệu đa tần số giúp loại bỏ sai số tầng điện ly, đảm bảo độ chính xác mức centimet ngay cả trong môi trường đô thị dày đặc hoặc tán cây.'
+        },
+        { 
+            icon: 'bi-wifi', 
+            iconClass: 'feature-icon-green', 
+            title: 'NTRIP Caster tốc độ cao',
+            desc: 'Truyền dữ liệu RTK/RTCM tối ưu với giao thức độ trễ cực thấp.',
+            longDesc: 'Hạ tầng truyền dẫn RTCM 3.x thời gian thực với băng thông cực lớn. Hệ thống cân bằng tải thông minh đảm bảo độ trễ luôn dưới 200ms trên toàn quốc, hỗ trợ kết nối đồng thời hàng ngàn thiết bị Rover mà không gây tắc nghẽn.'
+        },
+        { 
+            icon: 'bi-graph-up-arrow', 
+            iconClass: 'feature-icon-purple', 
+            title: 'Giám sát 24/7',
+            desc: 'Tự động cảnh báo và phục hồi khi phát hiện sự cố, đảm bảo uptime tối đa.',
+            longDesc: 'Hệ thống AI tự động phân tích sức khỏe trạm Base theo giây. Tự động chuyển đổi sang trạm dự phòng (Failover) khi phát hiện sự cố. Hệ thống cảnh báo qua Telegram giúp kỹ thuật viên xử lý kịp thời mọi tình huống.'
+        },
+        { 
+            icon: 'bi-shield-check', 
+            iconClass: 'feature-icon-cyan', 
+            title: 'Bảo mật cấp doanh nghiệp',
+            desc: 'Quản lý phân quyền đa cấp, mã hóa dữ liệu end-to-end.',
+            longDesc: 'Toàn bộ luồng dữ liệu được mã hóa TLS/SSL. Cơ chế phân quyền chi tiết cho phép quản lý từng tài khoản Rover, hạn chế khu vực hoạt động (Geofencing) và thời gian truy cập, bảo vệ tuyệt đối dữ liệu hạ tầng.'
+        }
     ];
 
     return React.createElement('div', { className: 'enterprise-homepage', style: { position: 'relative', minHeight: '100vh', color: '#e6f1ff', fontFamily: "'Inter', sans-serif" } },
@@ -574,18 +726,9 @@ const HomePageEnterprise = ({ devices }) => {
                 )
             ),
             React.createElement('div', { className: 'landing-nav-actions' },
-                React.createElement('a', {
-                    href: '/network',
-                    className: 'landing-nav-link'
-                }, 'Network'),
-                React.createElement('a', {
-                    href: '/blog',
-                    className: 'landing-nav-link'
-                }, 'Blog'),
-                React.createElement('a', {
-                    href: '/api/docs',
-                    className: 'landing-nav-link'
-                }, 'API Docs'),
+                React.createElement('a', { href: '/network', className: 'landing-nav-link' }, 'Network'),
+                React.createElement('a', { href: '/blog', className: 'landing-nav-link' }, 'Blog'),
+                React.createElement('a', { href: '/api/docs', className: 'landing-nav-link' }, 'API Docs'),
                 React.createElement('button', {
                     className: 'btn-login-nav',
                     onClick: () => setLoginOpen(true)
@@ -667,7 +810,6 @@ const HomePageEnterprise = ({ devices }) => {
                 `${devices.length} trạm bao phủ — Băng thông lớn, kết nối ổn định toàn quốc`
             ),
             React.createElement('div', { className: 'row g-4 align-items-center' },
-                // LEFT: Station info cards (per-station data)
                 React.createElement('div', { className: 'col-lg-5' },
                     React.createElement('div', { 
                         'data-lenis-prevent': 'true',
@@ -686,8 +828,7 @@ const HomePageEnterprise = ({ devices }) => {
                                     background: 'rgba(10,25,47,0.6)', backdropFilter: 'blur(8px)',
                                     border: `1px solid ${isActive ? 'rgba(0,242,255,0.15)' : 'rgba(220,53,69,0.15)'}`,
                                     borderRadius: '14px', padding: '16px 20px',
-                                    display: 'flex', alignItems: 'center', gap: '16px',
-                                    transition: 'all 0.3s'
+                                    display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.3s'
                                 }
                             },
                                 React.createElement('span', {
@@ -717,10 +858,8 @@ const HomePageEnterprise = ({ devices }) => {
                         }, `... và ${devices.length - 15} trạm khác`)
                     )
                 ),
-                // RIGHT: The single hero map scrolls into this target slot.
                 React.createElement('div', { className: 'col-lg-7', style: { position: 'relative', height: '450px' } },
                     React.createElement('div', { className: 'network-map-slot' }),
-                    // Satellite constellation labels
                     React.createElement('div', {
                         style: { position: 'absolute', top: '10%', right: '5%', display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 2 }
                     },
@@ -730,8 +869,7 @@ const HomePageEnterprise = ({ devices }) => {
                                 style: {
                                     fontSize: '0.7rem', fontWeight: 600, padding: '4px 12px',
                                     borderRadius: '20px', background: 'rgba(0,242,255,0.08)',
-                                    border: '1px solid rgba(0,242,255,0.15)', color: ['#4facfe', '#51cf66', '#cc5de8', '#ff6b6b'][i],
-                                    animation: `floatSat ${3 + i * 0.5}s ease-in-out infinite`
+                                    border: '1px solid rgba(0,242,255,0.15)', color: ['#4facfe', '#51cf66', '#cc5de8', '#ff6b6b'][i]
                                 }
                             }, React.createElement('i', { className: 'bi bi-broadcast-pin me-1' }), sys)
                         )
@@ -743,40 +881,18 @@ const HomePageEnterprise = ({ devices }) => {
         // === DIVIDER ===
         React.createElement('div', { className: 'section-divider' }),
 
-        // === FEATURES ===
-        React.createElement('section', { className: 'landing-features container' },
-            React.createElement('div', { className: 'text-center mb-5' },
-                React.createElement('h2', {
-                    style: { fontSize: '2rem', fontWeight: 800, color: '#fff', letterSpacing: '-1px' }
-                }, 'Tính năng nổi bật'),
-                React.createElement('p', {
-                    style: { color: '#6a8aaa', maxWidth: '500px', margin: '8px auto 0' }
-                }, 'Nền tảng CORS thế hệ mới cho hạ tầng đo đạc Việt Nam')
-            ),
-            React.createElement('div', { className: 'row g-3' },
-                features.map((f, idx) =>
-                    React.createElement('div', { key: idx, className: 'col-lg-3 col-md-6' },
-                        React.createElement('div', { className: 'landing-feature-card' },
-                            React.createElement('div', { className: `landing-feature-icon ${f.iconClass}` },
-                                React.createElement('i', { className: `bi ${f.icon}` })
-                            ),
-                            React.createElement('div', { className: 'landing-feature-title' }, f.title),
-                            React.createElement('div', { className: 'landing-feature-desc' }, f.desc)
-                        )
-                    )
-                )
-            )
-        ),
+        // === FEATURES (Cinematic Fly-to-Center + 3D Flip) ===
+        React.createElement(CinematicFeatures, { features: features }),
 
         // === DIVIDER ===
         React.createElement('div', { className: 'section-divider' }),
+
 
         // === HOW IT WORKS ===
         React.createElement('section', { className: 'hiw-section container' },
             React.createElement('h2', { className: 'section-title' }, 'Quy trình vận hành'),
             React.createElement('p', { className: 'section-sub' }, 'Từ vệ tinh đến rover — chỉ trong vài mili giây'),
             React.createElement('div', { className: 'hiw-timeline' },
-                // Step 1
                 React.createElement('div', { className: 'hiw-step' },
                     React.createElement('div', { className: 'hiw-step-content' },
                         React.createElement('div', { className: 'hiw-step-icon' }, React.createElement('i', { className: 'bi bi-satellite' })),
@@ -785,30 +901,27 @@ const HomePageEnterprise = ({ devices }) => {
                     ),
                     React.createElement('div', { className: 'hiw-step-number' }, '1')
                 ),
-                // Step 2
                 React.createElement('div', { className: 'hiw-step' },
                     React.createElement('div', { className: 'hiw-step-content' },
                         React.createElement('div', { className: 'hiw-step-icon' }, React.createElement('i', { className: 'bi bi-cpu' })),
-                        React.createElement('div', { className: 'hiw-step-title' }, 'Xử lý & tính toán hiệu chỉnh'),
-                        React.createElement('div', { className: 'hiw-step-desc' }, 'Dữ liệu quan trắc được xử lý real-time, tạo ra bản tin RTCM chứa thông số hiệu chỉnh sai số khí quyển và quỹ đạo.')
+                        React.createElement('div', { className: 'hiw-step-title' }, 'Xử lý & hiệu chỉnh'),
+                        React.createElement('div', { className: 'hiw-step-desc' }, 'Dữ liệu được xử lý real-time, tạo ra bản tin RTCM chứa thông số hiệu chỉnh sai số khí quyển và quỹ đạo.')
                     ),
                     React.createElement('div', { className: 'hiw-step-number' }, '2')
                 ),
-                // Step 3
                 React.createElement('div', { className: 'hiw-step' },
                     React.createElement('div', { className: 'hiw-step-content' },
                         React.createElement('div', { className: 'hiw-step-icon' }, React.createElement('i', { className: 'bi bi-broadcast' })),
-                        React.createElement('div', { className: 'hiw-step-title' }, 'Phát dữ liệu qua NTRIP'),
-                        React.createElement('div', { className: 'hiw-step-desc' }, 'AiCaster phát dữ liệu hiệu chỉnh qua giao thức NTRIP với độ trễ cực thấp, hỗ trợ đồng thời hàng trăm rover kết nối.')
+                        React.createElement('div', { className: 'hiw-step-title' }, 'Truyền dẫn NTRIP'),
+                        React.createElement('div', { className: 'hiw-step-desc' }, 'Bản tin hiệu chỉnh được gửi tới Caster và phân phối tới Rover qua mạng di động với độ trễ cực thấp.')
                     ),
                     React.createElement('div', { className: 'hiw-step-number' }, '3')
                 ),
-                // Step 4
                 React.createElement('div', { className: 'hiw-step' },
                     React.createElement('div', { className: 'hiw-step-content' },
-                        React.createElement('div', { className: 'hiw-step-icon' }, React.createElement('i', { className: 'bi bi-geo-alt-fill' })),
-                        React.createElement('div', { className: 'hiw-step-title' }, 'Định vị cm trên rover'),
-                        React.createElement('div', { className: 'hiw-step-desc' }, 'Rover nhận dữ liệu hiệu chỉnh, kết hợp với tín hiệu vệ tinh tại chỗ để đạt độ chính xác centimet trong vài giây.')
+                        React.createElement('div', { className: 'hiw-step-icon' }, React.createElement('i', { className: 'bi bi-crosshair' })),
+                        React.createElement('div', { className: 'hiw-step-title' }, 'Định vị Centimet'),
+                        React.createElement('div', { className: 'hiw-step-desc' }, 'Rover kết hợp dữ liệu vệ tinh và hiệu chỉnh để giải bài toán RTK, đạt độ chính xác mức mm-cm.')
                     ),
                     React.createElement('div', { className: 'hiw-step-number' }, '4')
                 )
@@ -818,41 +931,33 @@ const HomePageEnterprise = ({ devices }) => {
         // === DIVIDER ===
         React.createElement('div', { className: 'section-divider' }),
 
-        // === LIVE DATA VISUALIZATION ===
+        // === LIVE DATA PREVIEW ===
         React.createElement('section', { className: 'livedata-section container' },
-            React.createElement('h2', { className: 'section-title', style: { fontSize: '2.2rem', fontWeight: 900, color: '#fff', letterSpacing: '-1px', textAlign: 'center', marginBottom: '8px' } }, 'Luồng dữ liệu Real-time'),
-            React.createElement('p', { style: { color: '#6a8aaa', textAlign: 'center', marginBottom: '40px' } }, 'Hệ thống xử lý hàng nghìn gói dữ liệu RTCM mỗi giây'),
-            // Animated bars
-            React.createElement('div', { className: 'livedata-bars' },
-                Array.from({ length: 40 }, (_, i) => 
-                    React.createElement('div', {
-                        key: i, className: 'livedata-bar',
-                        style: { height: `${Math.random() * 80 + 20}px`, animationDelay: `${i * 0.08}s`, animationDuration: `${1 + Math.random()}s` }
-                    })
-                )
-            ),
-            React.createElement('div', { className: 'livedata-label' }, 'RTCM Data Stream — Live'),
-            // Data cards
-            React.createElement('div', { className: 'row g-3 mt-4' },
-                React.createElement('div', { className: 'col-md-4' },
+            React.createElement('h2', { className: 'section-title' }, 'Dữ liệu thời gian thực'),
+            React.createElement('div', { className: 'row g-4' },
+                React.createElement('div', { className: 'col-lg-8' },
                     React.createElement('div', { className: 'livedata-card' },
-                        React.createElement('div', { className: 'livedata-big' }, '99.97%'),
-                        React.createElement('div', { style: { color: '#6a8aaa', fontSize: '0.85rem', marginTop: '8px' } }, 'Uptime trung bình'),
-                        React.createElement('div', { style: { color: '#51cf66', fontSize: '0.75rem', marginTop: '4px' } }, '▲ Tăng 0.3% so với tháng trước')
+                        React.createElement('div', { className: 'livedata-header' },
+                            React.createElement('div', null, React.createElement('span', { className: 'pulse-online' }), 'Global Network Traffic'),
+                            React.createElement('div', { className: 'text-muted' }, 'Live: RTCM 3.2 MSM7')
+                        ),
+                        React.createElement('div', { className: 'livedata-bars' },
+                            Array.from({ length: 40 }).map((_, i) =>
+                                React.createElement('div', {
+                                    key: i, className: 'livedata-bar',
+                                    style: { height: `${20 + Math.random() * 60}%`, animationDelay: `${i * 0.05}s` }
+                                })
+                            )
+                        )
                     )
                 ),
-                React.createElement('div', { className: 'col-md-4' },
+                React.createElement('div', { className: 'col-lg-4' },
                     React.createElement('div', { className: 'livedata-card' },
-                        React.createElement('div', { className: 'livedata-big' }, '<15ms'),
-                        React.createElement('div', { style: { color: '#6a8aaa', fontSize: '0.85rem', marginTop: '8px' } }, 'Độ trễ trung bình'),
-                        React.createElement('div', { style: { color: '#00f2ff', fontSize: '0.75rem', marginTop: '4px' } }, '⚡ Ultra-low latency NTRIP')
-                    )
-                ),
-                React.createElement('div', { className: 'col-md-4' },
-                    React.createElement('div', { className: 'livedata-card' },
-                        React.createElement('div', { className: 'livedata-big' }, '24/7'),
-                        React.createElement('div', { style: { color: '#6a8aaa', fontSize: '0.85rem', marginTop: '8px' } }, 'Giám sát tự động'),
-                        React.createElement('div', { style: { color: '#cc5de8', fontSize: '0.75rem', marginTop: '4px' } }, '🔔 Cảnh báo sự cố qua MQTT')
+                        React.createElement('div', { className: 'livedata-header' }, 'Caster Stability'),
+                        React.createElement('div', { className: 'p-4 text-center' },
+                            React.createElement('div', { style: { fontSize: '3rem', fontWeight: 900, color: '#00f2ff' } }, '99.98%'),
+                            React.createElement('div', { className: 'text-muted' }, 'Độ ổn định hệ thống')
+                        )
                     )
                 )
             )
@@ -906,15 +1011,11 @@ const HomePageEnterprise = ({ devices }) => {
         // === CTA SECTION ===
         React.createElement('section', { className: 'cta-section container' },
             React.createElement('div', { className: 'cta-box' },
-                React.createElement('div', { className: 'cta-title' }, 'Sẵn sàng nâng cấp hạ tầng đo đạc?'),
-                React.createElement('p', { className: 'cta-desc' }, 'Liên hệ đội ngũ Aitogy để được tư vấn triển khai hệ thống CORS phù hợp với quy mô doanh nghiệp của bạn.'),
-                React.createElement('div', { style: { display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap', position: 'relative', zIndex: 1 } },
-                    React.createElement('button', { className: 'btn-enterprise', onClick: () => setLoginOpen(true) },
-                        'Bắt đầu ngay ', React.createElement('i', { className: 'bi bi-arrow-right ms-2' })
-                    ),
-                    React.createElement('a', { href: 'https://aitogy.com', target: '_blank', className: 'btn-outline-cyan', style: { textDecoration: 'none' } },
-                        React.createElement('i', { className: 'bi bi-telephone me-2' }), 'Liên hệ tư vấn'
-                    )
+                React.createElement('h2', null, 'Sẵn sàng nâng cấp hạ tầng đo đạc?'),
+                React.createElement('p', null, 'Liên hệ đội ngũ Aitogy để được tư vấn giải pháp hạ tầng CORS phù hợp.'),
+                React.createElement('div', { className: 'd-flex gap-3 justify-content-center flex-wrap' },
+                    React.createElement('button', { className: 'btn-enterprise', onClick: () => setLoginOpen(true) }, 'Bắt đầu ngay'),
+                    React.createElement('button', { className: 'btn-outline-cyan' }, 'Tư vấn kỹ thuật')
                 )
             )
         ),
@@ -923,36 +1024,19 @@ const HomePageEnterprise = ({ devices }) => {
         React.createElement('div', { className: 'section-divider' }),
 
         // === STATION DIRECTORY (SEO) ===
-        devices.length > 0 && React.createElement('section', {
-            className: 'container',
-            style: { position: 'relative', zIndex: 2, padding: '40px 0' }
-        },
+        devices.length > 0 && React.createElement('section', { className: 'container mb-5' },
             React.createElement('div', { className: 'text-center mb-4' },
-                React.createElement('h2', {
-                    style: { fontSize: '1.6rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }
-                }, 'Mạng lưới trạm CORS'),
-                React.createElement('p', {
-                    style: { color: '#6a8aaa', fontSize: '0.9rem' }
-                }, `${devices.length} trạm phủ sóng trên toàn lãnh thổ Việt Nam`)
+                React.createElement('h2', { style: { fontSize: '1.5rem', fontWeight: 800, color: '#fff' } }, 'Mạng lưới trạm CORS'),
+                React.createElement('p', { style: { color: '#6a8aaa' } }, `${devices.length} trạm phủ sóng toàn quốc`)
             ),
-            React.createElement('div', {
-                className: 'row g-2',
-                style: { maxHeight: '320px', overflowY: 'auto', padding: '4px' }
-            },
+            React.createElement('div', { className: 'row g-2', style: { maxHeight: '300px', overflowY: 'auto' } },
                 devices.map((d, idx) => {
                     const st = d.status || 'offline';
-                    const isActive = ['online', 'sleep', 'streaming', 'starting'].includes(st);
+                    const isActive = activeStatuses.includes(st);
                     const dotColor = isActive ? '#51cf66' : '#dc3545';
                     return React.createElement('div', { key: d.serial || idx, className: 'col-lg-3 col-md-4 col-6' },
-                        React.createElement('a', {
-                            href: `/station/${d.serial}`,
-                            className: 'station-dir-item',
-                            title: `Trạm ${d.name || d.serial} - ${st}`
-                        },
-                            React.createElement('span', {
-                                className: 'station-dir-dot',
-                                style: { background: dotColor, boxShadow: `0 0 6px ${dotColor}` }
-                            }),
+                        React.createElement('a', { href: `/station/${d.serial}`, className: 'station-dir-item' },
+                            React.createElement('span', { className: 'station-dir-dot', style: { background: dotColor, boxShadow: `0 0 6px ${dotColor}` } }),
                             React.createElement('span', { className: 'station-dir-name' }, d.name || d.serial)
                         )
                     );
@@ -963,26 +1047,14 @@ const HomePageEnterprise = ({ devices }) => {
         // === FOOTER ===
         React.createElement('footer', { className: 'landing-footer container' },
             React.createElement('div', { className: 'row align-items-center' },
-                React.createElement('div', { className: 'col-md-4 text-start mb-3 mb-md-0' },
-                    React.createElement('div', { style: { color: '#b0c4de', fontWeight: 700, fontSize: '0.95rem' } },
-                        'Aitogy ',
-                        React.createElement('span', { style: { color: '#4a6a8a', fontWeight: 400 } }, 'CORS Network')
-                    ),
-                    React.createElement('div', { style: { color: '#4a6a8a', fontSize: '0.72rem', marginTop: '4px' } },
-                        '© 2025 Aitogy Infrastructure Technology JSC'
-                    )
+                React.createElement('div', { className: 'col-md-6 text-start mb-3 mb-md-0' },
+                    React.createElement('div', { className: 'fw-bold mb-1', style: { color: '#fff' } }, 'AITOGY TECHNOLOGY JSC'),
+                    React.createElement('div', { className: 'text-muted small' }, '© 2025 Aitogy Network. All rights reserved.')
                 ),
-                React.createElement('div', { className: 'col-md-4 text-center mb-3 mb-md-0' },
-                    React.createElement('div', { className: 'd-flex justify-content-center gap-3', style: { fontSize: '0.8rem' } },
-                        React.createElement('a', { href: '/network-status', className: 'landing-footer-link' }, 'Network Status'),
-                        React.createElement('a', { href: '/blog', className: 'landing-footer-link' }, 'Knowledge Base'),
-                        React.createElement('a', { href: '/api/docs', className: 'landing-footer-link' }, 'API Docs')
-                    )
-                ),
-                React.createElement('div', { className: 'col-md-4 text-end' },
-                    React.createElement('div', { className: 'd-flex justify-content-md-end justify-content-center gap-3', style: { fontSize: '0.8rem' } },
-                        React.createElement('a', { href: 'https://aitogy.com', target: '_blank', className: 'landing-footer-link' }, 'Aitogy.com'),
-                        React.createElement('a', { href: 'mailto:support@aitogy.com', className: 'landing-footer-link' }, 'Liên hệ')
+                React.createElement('div', { className: 'col-md-6 text-end' },
+                    React.createElement('div', { className: 'd-flex gap-4 justify-content-md-end justify-content-center small' },
+                        React.createElement('a', { href: 'https://aitogy.com', className: 'landing-footer-link' }, 'Aitogy.com'),
+                        React.createElement('a', { href: 'mailto:support@aitogy.com', className: 'landing-footer-link' }, 'Support')
                     )
                 )
             )
