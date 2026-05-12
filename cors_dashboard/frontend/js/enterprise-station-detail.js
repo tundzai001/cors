@@ -4,6 +4,8 @@
  */
 const EnterpriseStationDetail = ({ device }) => {
     if (!device) return null;
+    const currentRole = window.globalState?.currentUser?.role || null;
+    const canViewSerial = currentRole === 'admin';
 
     const stats = [
         { label: 'Satellites', value: device.system_info?.satellites || 0, icon: 'bi-satellite' },
@@ -60,8 +62,12 @@ const EnterpriseStationDetail = ({ device }) => {
                 <div className="text-end">
                     <div className="text-muted small">MOUNTPOINT</div>
                     <div className="h4 fw-bold text-white">{device.name || 'N/A'}</div>
-                    <div className="text-muted small mt-2">DEVICE SERIAL</div>
-                    <div className="h6 fw-mono text-white opacity-50 mb-0">{device.serial}</div>
+                    {canViewSerial && (
+                        <>
+                            <div className="text-muted small mt-2">DEVICE SERIAL</div>
+                            <div className="h6 fw-mono text-white opacity-50 mb-0">{device.serial}</div>
+                        </>
+                    )}
                 </div>
             </div>
 

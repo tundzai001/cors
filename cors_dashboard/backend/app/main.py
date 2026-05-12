@@ -16,6 +16,7 @@ import os
 import time
 import csv
 import re
+import unicodedata
 import psutil
 import secrets
 import ctypes
@@ -1786,7 +1787,23 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
     ENTERPRISE SEO ENGINE: Renders a high-performance, crawler-optimized page
     with deep JSON-LD structured data for GNSS stations.
     """
-    device = await crud.get_device_by_serial(db, serial)
+    def _station_slug(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value or "")
+        ascii_text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        slug = re.sub(r"[^a-zA-Z0-9._-]+", ".", ascii_text).strip(".")
+        slug = re.sub(r"\.{2,}", ".", slug)
+        return slug.lower()
+
+    token = (serial or "").strip()
+    token_slug = _station_slug(token)
+
+    device = await crud.get_device_by_serial(db, token)
+    if not device:
+        all_devices = (await db.execute(select(models.Device))).scalars().all()
+        for item in all_devices:
+            if _station_slug(item.name or item.serial or "") == token_slug:
+                device = item
+                break
     index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
     
     if not index_path.exists():
@@ -1798,7 +1815,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
 
         if device:
             # 1. DATA EXTRACTION
-            station_name = device.name or serial
+            station_name = device.name or token
             status_text = "Online" if device.status == "online" else "Offline"
             
             # Extract Coordinates
@@ -1859,9 +1876,16 @@ async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_d
     """
     base_url = "https://cors.aitogy.com"
     
-    # Fetch all station serials from DB
-    result = await db.execute(select(models.Device.serial))
-    serials = [row[0] for row in result.all()]
+    def _station_slug(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value or "")
+        ascii_text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        slug = re.sub(r"[^a-zA-Z0-9._-]+", ".", ascii_text).strip(".")
+        slug = re.sub(r"\.{2,}", ".", slug)
+        return slug.lower()
+
+    # Fetch public station names from DB and build slug URLs (no serial leakage)
+    result = await db.execute(select(models.Device.name, models.Device.serial))
+    stations = result.all()
     
     xml_content = f'<?xml version="1.0" encoding="UTF-8"?>\n'
     xml_content += f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
@@ -1871,8 +1895,11 @@ async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_d
         xml_content += f'  <url>\n    <loc>{base_url}{path}</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n'
     
     # 2. Dynamic Station Pages
-    for serial in serials:
-        xml_content += f'  <url>\n    <loc>{base_url}/station/{serial}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n'
+    for station_name, station_serial in stations:
+        station_slug = _station_slug(station_name or station_serial or "")
+        if not station_slug:
+            continue
+        xml_content += f'  <url>\n    <loc>{base_url}/station/{station_slug}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n'
         
     xml_content += f'</urlset>'
     

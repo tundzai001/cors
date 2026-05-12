@@ -69,6 +69,33 @@ async function waitForGlobalComponent(componentName, timeoutMs = 5000, intervalM
     return null;
 }
 
+function toStationSlug(value) {
+    return String(value || '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9._-]+/g, '.')
+        .replace(/\.{2,}/g, '.')
+        .replace(/^\.+|\.+$/g, '')
+        .toLowerCase();
+}
+
+function resolveDeviceFromStationPath(segment) {
+    const token = decodeURIComponent(String(segment || '')).trim();
+    if (!token) return null;
+    const tokenSlug = toStationSlug(token);
+    return globalState.devices.find((d) => {
+        const serialMatch = String(d.serial || '') === token;
+        const nameSlugMatch = toStationSlug(d.name || '') === tokenSlug;
+        return serialMatch || nameSlugMatch;
+    }) || null;
+}
+
+function buildPublicStationPath(device) {
+    const fallback = String(device?.serial || '').trim();
+    const slug = toStationSlug(device?.name || fallback);
+    return `/station/${encodeURIComponent(slug || fallback)}`;
+}
+
 // Batch status updates to prevent UI stalls under high websocket throughput.
 const STATUS_FLUSH_INTERVAL = 140;
 let pendingStatusUpdates = new Map();
@@ -1279,10 +1306,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
         } else if (currentPath.startsWith('/station/')) {
-             const serial = currentPath.split('/').pop();
+             const token = currentPath.split('/').pop();
+             const device = resolveDeviceFromStationPath(token);
              switchView('station-detail');
-             const device = globalState.devices.find(d => d.serial === serial);
              if (device && window.enterpriseDetailRoot) {
+                 const canonicalPath = buildPublicStationPath(device);
+                 if (window.location.pathname !== canonicalPath) {
+                     window.history.replaceState({}, '', canonicalPath);
+                 }
                  const stationComponent = await waitForGlobalComponent('EnterpriseStationDetail', 15000);
                  renderReactComponent(window.enterpriseDetailRoot, stationComponent, { device }, 'Station detail component is not loaded');
              }
@@ -1367,18 +1398,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 2. Dynamic Routing Handler (Clean URLs)
     let initialView = 'dashboard';
     if (currentPath.startsWith('/station/')) {
-        const serial = currentPath.split('/').pop();
-        if (serial) {
-            console.log("Routing to Station Detail:", serial);
-            globalState.selectedDeviceSerial = serial;
+        const token = currentPath.split('/').pop();
+        const device = resolveDeviceFromStationPath(token);
+        if (device) {
+            console.log("Routing to Station Detail:", token);
+            globalState.selectedDeviceSerial = device.serial;
             switchView('station-detail');
+            const canonicalPath = buildPublicStationPath(device);
+            if (window.location.pathname !== canonicalPath) {
+                window.history.replaceState({}, '', canonicalPath);
+            }
             
             // Wait for devices to load, then render
             const checkAndRender = setInterval(() => {
-                const device = globalState.devices.find(d => d.serial === serial);
-                if (device && window.enterpriseDetailRoot) {
+                const liveDevice = globalState.devices.find(d => d.serial === device.serial);
+                if (liveDevice && window.enterpriseDetailRoot) {
                     waitForGlobalComponent('EnterpriseStationDetail', 15000).then((stationComponent) => {
-                        renderReactComponent(window.enterpriseDetailRoot, stationComponent, { device }, 'Station detail component is not loaded');
+                        renderReactComponent(window.enterpriseDetailRoot, stationComponent, { device: liveDevice }, 'Station detail component is not loaded');
                         clearInterval(checkAndRender);
                     });
                 }
