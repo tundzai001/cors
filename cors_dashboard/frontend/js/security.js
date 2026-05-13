@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // security.js - v5.0 - FIXED THREAT LEVEL CALCULATION
 // ============================================================
 
@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!token) {
         localStorage.removeItem('access_token');
         sessionStorage.removeItem('access_token');
-        window.location.href = '/login.html';
+        window.location.href = '/';
         return;
     }
     
@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         localStorage.removeItem('access_token');
                         sessionStorage.removeItem('access_token');
-                        window.location.href = '/login.html';
+                        window.location.href = '/';
                     }
                 }
                 throw new Error('Unauthorized');
@@ -77,12 +77,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 apiFetch('/api/admin/settings')
             ]);
             
-            // === 🆕 KIỂM TRA NẾU API TRẢ VỀ LỖI (status: "error") ===
+            // === ðŸ†• KIá»‚M TRA Náº¾U API TRáº¢ Vá»€ Lá»–I (status: "error") ===
             if (statsData.status === 'error') {
-                console.warn('⚠️ Security stats degraded:', statsData.error);
+                console.warn('âš ï¸ Security stats degraded:', statsData.error);
                 showWarning(`Security monitoring degraded: ${statsData.error}`);
                 
-                // Vẫn hiển thị dữ liệu partial nếu có
+                // Váº«n hiá»ƒn thá»‹ dá»¯ liá»‡u partial náº¿u cÃ³
                 if (statsData.rate_limiter) {
                     updateDashboardMetrics(statsData.rate_limiter, settingsData);
                     renderBlacklistTable(statsData.rate_limiter.blacklisted_ips || []);
@@ -93,16 +93,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     handleAttackMode(statsData.rate_limiter.attack_mode || false);
                 }
                 
-                // Vẫn hiển thị system health nếu có
+                // Váº«n hiá»ƒn thá»‹ system health náº¿u cÃ³
                 if (statsData.system_health) {
                     renderSystemHealth(statsData.system_health);
                 }
                 
                 updateSwitchesState(settingsData);
-                return; // Dừng ở đây, không throw error
+                return; // Dá»«ng á»Ÿ Ä‘Ã¢y, khÃ´ng throw error
             }
             
-            // === LOGIC CŨ (Khi không có lỗi) ===
+            // === LOGIC CÅ¨ (Khi khÃ´ng cÃ³ lá»—i) ===
             updateDashboardMetrics(statsData.rate_limiter, settingsData);
             renderBlacklistTable(statsData.rate_limiter.blacklisted_ips);
             renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips);
@@ -126,27 +126,27 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
         } catch (error) {
-            console.error('❌ Failed to load security data:', error);
+            console.error('âŒ Failed to load security data:', error);
             
-            // === 🆕 XỬ LÝ LỖI NETWORK/SERVER ===
+            // === ðŸ†• Xá»¬ LÃ Lá»–I NETWORK/SERVER ===
             if (error.message === 'Unauthorized') {
-                // apiFetch đã xử lý redirect, không cần làm gì
+                // apiFetch Ä‘Ã£ xá»­ lÃ½ redirect, khÃ´ng cáº§n lÃ m gÃ¬
                 return;
             }
             
-            // Hiển thị thông báo lỗi cho user
+            // Hiá»ƒn thá»‹ thÃ´ng bÃ¡o lá»—i cho user
             showError(`[CONNECTION ERROR] ${error.message || 'Cannot reach server'}`);
             
-            // === 🆕 HIỂN thị UI "OFFLINE STATE" ===
+            // === ðŸ†• HIá»‚N thá»‹ UI "OFFLINE STATE" ===
             showOfflineState();
             
-            // === 🆕 DỪNG POLLING NẾU LỖI LIÊN TỤC ===
-            // (Tránh spam request khi server down)
+            // === ðŸ†• Dá»ªNG POLLING Náº¾U Lá»–I LIÃŠN Tá»¤C ===
+            // (TrÃ¡nh spam request khi server down)
             if (!window.securityErrorCount) window.securityErrorCount = 0;
             window.securityErrorCount++;
             
             if (window.securityErrorCount >= 3) {
-                console.warn('⚠️ Too many errors, stopping auto-refresh');
+                console.warn('âš ï¸ Too many errors, stopping auto-refresh');
                 stopPolling();
                 showError('[AUTO-REFRESH DISABLED] Click RELOAD to retry');
             }
@@ -166,7 +166,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const sys = health.system;
         const app = health.application;
 
-        // Helper đổi màu thanh progress (Xanh -> Vàng -> Đỏ)
+        // Helper Ä‘á»•i mÃ u thanh progress (Xanh -> VÃ ng -> Äá»)
         const getColor = (val) => val > 90 ? 'bg-danger' : val > 70 ? 'bg-warning' : 'bg-success';
         const setBar = (idBar, idVal, val) => {
             const elBar = document.getElementById(idBar);
@@ -175,7 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 elBar.style.width = `${val}%`;
                 elBar.className = `progress-bar ${getColor(val)}`;
                 elVal.textContent = `${val}%`;
-                // Hiệu ứng đổi màu text nếu cao
+                // Hiá»‡u á»©ng Ä‘á»•i mÃ u text náº¿u cao
                 elVal.style.color = val > 90 ? 'var(--neon-red)' : 'var(--neon-green)';
             }
         };
@@ -298,7 +298,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateDashboardMetrics(stats, settings) {
-        // --- CẬP NHẬT CÁC METRICS CƠ BẢN ---
+        // --- Cáº¬P NHáº¬T CÃC METRICS CÆ  Báº¢N ---
         document.getElementById('blocked-ips-count').textContent = stats.blocked_ips_count;
         document.getElementById('permanent-blacklist-count').textContent = stats.permanent_blacklist_count;
         document.getElementById('total-ips-tracked').textContent = stats.total_ips_tracked;
@@ -310,61 +310,61 @@ document.addEventListener('DOMContentLoaded', () => {
         updateCircularProgress('circle-permanent', stats.permanent_blacklist_count, 10);
         updateCircularProgress('circle-tracked', stats.total_ips_tracked, 100);
         
-        // --- 🔥 LOGIC TÍNH THREAT LEVEL MỚI (FIXED) ---
+        // --- ðŸ”¥ LOGIC TÃNH THREAT LEVEL Má»šI (FIXED) ---
         let threatLevel = 1;
         let statusText = 'ALL SYSTEMS NOMINAL';
         let statusClass = 'bg-success';
         let statusColor = 'var(--neon-green)';
         
-        // BƯỚC 1: Kiểm tra trạng thái các module bảo vệ
+        // BÆ¯á»šC 1: Kiá»ƒm tra tráº¡ng thÃ¡i cÃ¡c module báº£o vá»‡
         const firewallEnabled = settings.firewall_enabled;
         const vpnEnabled = settings.vpn_detection_enabled;
         const patternEnabled = settings.pattern_analysis_enabled;
         
         const activeModules = [firewallEnabled, vpnEnabled, patternEnabled].filter(Boolean).length;
         
-        // BƯỚC 2: Tính threat level dựa trên số IP bị khóa
+        // BÆ¯á»šC 2: TÃ­nh threat level dá»±a trÃªn sá»‘ IP bá»‹ khÃ³a
         if (totalThreats > 10) threatLevel = 5;
         else if (totalThreats > 5) threatLevel = 4;
         else if (totalThreats > 2) threatLevel = 3;
         else if (totalThreats > 0) threatLevel = 2;
         
-        // BƯỚC 3: 🔥 LOGIC MỚI - XỬ LÝ MODULE BỊ TẮT
+        // BÆ¯á»šC 3: ðŸ”¥ LOGIC Má»šI - Xá»¬ LÃ MODULE Bá»Š Táº®T
         if (activeModules === 0) {
-            // ⚠️ TẤT CẢ MODULE TẮT = HỆ THỐNG HOÀN TOÀN VÔ PHÒNG THỦ
+            // âš ï¸ Táº¤T Cáº¢ MODULE Táº®T = Há»† THá»NG HOÃ€N TOÃ€N VÃ” PHÃ’NG THá»¦
             threatLevel = 5;
             statusText = 'CRITICAL: ALL PROTECTION DISABLED';
             statusClass = 'bg-danger pulse-glow-danger';
             statusColor = 'var(--neon-red)';
         } else if (activeModules === 1) {
-            // ⚠️ CHỈ 1 MODULE HOẠT ĐỘNG = NGUY HIỂM
+            // âš ï¸ CHá»ˆ 1 MODULE HOáº T Äá»˜NG = NGUY HIá»‚M
             if (threatLevel < 4) threatLevel = 4;
             statusText = 'HIGH RISK: MINIMAL PROTECTION';
             statusClass = 'bg-danger';
             statusColor = 'var(--neon-red)';
         } else if (activeModules === 2) {
-            // ⚠️ 2/3 MODULE = CẢNH BÁO
+            // âš ï¸ 2/3 MODULE = Cáº¢NH BÃO
             if (threatLevel < 3) threatLevel = 3;
             statusText = 'WARNING: DEGRADED PROTECTION';
             statusClass = 'bg-warning text-dark';
             statusColor = '#ffd700';
         }
-        // Nếu cả 3 module đều bật, giữ nguyên threatLevel từ số IP bị khóa
+        // Náº¿u cáº£ 3 module Ä‘á»u báº­t, giá»¯ nguyÃªn threatLevel tá»« sá»‘ IP bá»‹ khÃ³a
         
-        // BƯỚC 4: Override status text nếu có attack mode
+        // BÆ¯á»šC 4: Override status text náº¿u cÃ³ attack mode
         if (stats.attack_mode) {
             threatLevel = 5;
-            statusText = '🚨 DDOS ATTACK IN PROGRESS';
+            statusText = 'ðŸš¨ DDOS ATTACK IN PROGRESS';
             statusClass = 'bg-danger pulse-glow-danger';
             statusColor = 'var(--neon-red)';
         }
         
-        // BƯỚC 5: Áp dụng UI
+        // BÆ¯á»šC 5: Ãp dá»¥ng UI
         updateThreatLevel(threatLevel);
         
         const statusBadge = document.getElementById('system-status-badge');
         if (statusBadge) {
-            // Override nếu chưa tính toán ở trên
+            // Override náº¿u chÆ°a tÃ­nh toÃ¡n á»Ÿ trÃªn
             if (!statusText.includes('CRITICAL') && !statusText.includes('HIGH RISK') && !stats.attack_mode) {
                 const levels = {
                     1: { text: 'ALL SYSTEMS NOMINAL', class: 'bg-success', color: 'var(--neon-green)' },
@@ -417,7 +417,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><code>${block.ip}</code></td>
-                <td style="color: #ffd700;">${minutes} phút</td>
+                <td style="color: #ffd700;">${minutes} phÃºt</td>
                 <td>${block.reason || 'N/A'}</td>
                 <td class="text-end">
                     <button class="btn btn-sm btn-hacker unblock-btn" data-ip="${block.ip}">
@@ -491,7 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     window.handleBlockSuspiciousIP = async function(ip) {
-        if (!confirm(`⚠️ Block IP ${ip}?`)) return;
+        if (!confirm(`âš ï¸ Block IP ${ip}?`)) return;
         try {
             await apiFetch('/api/admin/security/block-ip', {
                 method: 'POST',
@@ -621,23 +621,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-        // === 🆕 HÀM HIỂN THỊ CẢNH BÁO (KHÔNG PHẢI LỖI NGHIÊM TRỌNG) ===
+        // === ðŸ†• HÃ€M HIá»‚N THá»Š Cáº¢NH BÃO (KHÃ”NG PHáº¢I Lá»–I NGHIÃŠM TRá»ŒNG) ===
     function showWarning(message) { 
         showToast(message, 'warning'); 
     }
 
-    // === 🆕 HÀM HIỂN THỊ UI KHI MẤT KẾT NỐI SERVER ===
+    // === ðŸ†• HÃ€M HIá»‚N THá»Š UI KHI Máº¤T Káº¾T Ná»I SERVER ===
     function showOfflineState() {
-        // Làm mờ các metrics để báo hiệu dữ liệu cũ
+        // LÃ m má» cÃ¡c metrics Ä‘á»ƒ bÃ¡o hiá»‡u dá»¯ liá»‡u cÅ©
         const metricsCards = document.querySelectorAll('.stat-card, .security-card');
         metricsCards.forEach(card => {
             card.style.opacity = '0.5';
             card.style.filter = 'grayscale(80%)';
         });
         
-        // Hiển thị overlay cảnh báo
+        // Hiá»ƒn thá»‹ overlay cáº£nh bÃ¡o
         const existingOverlay = document.getElementById('offline-overlay');
-        if (existingOverlay) return; // Đã hiển thị rồi
+        if (existingOverlay) return; // ÄÃ£ hiá»ƒn thá»‹ rá»“i
         
         const overlay = document.createElement('div');
         overlay.id = 'offline-overlay';
@@ -668,21 +668,21 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         document.body.appendChild(overlay);
         
-        // Xử lý nút Retry
+        // Xá»­ lÃ½ nÃºt Retry
         document.getElementById('retry-connection-btn').addEventListener('click', () => {
             overlay.remove();
-            // Khôi phục UI
+            // KhÃ´i phá»¥c UI
             metricsCards.forEach(card => {
                 card.style.opacity = '1';
                 card.style.filter = 'none';
             });
-            // Reset error counter và thử lại
+            // Reset error counter vÃ  thá»­ láº¡i
             window.securityErrorCount = 0;
             startPolling();
         });
     }
 
-    // === CẬP NHẬT HÀM showToast ĐỂ HỖ TRỢ TYPE "WARNING" ===
+    // === Cáº¬P NHáº¬T HÃ€M showToast Äá»‚ Há»– TRá»¢ TYPE "WARNING" ===
     function showToast(message, type) {
         const toastContainer = document.getElementById('toast-container') || createToastContainer();
         const toastEl = document.createElement('div');
@@ -694,7 +694,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (type === 'danger') { 
             bgColor = 'var(--neon-red)'; 
             iconClass = 'bi-exclamation-triangle-fill'; 
-        } else if (type === 'warning') { // 🆕 THÊM WARNING
+        } else if (type === 'warning') { // ðŸ†• THÃŠM WARNING
             bgColor = '#ffd700'; 
             iconClass = 'bi-exclamation-circle-fill'; 
         } else { 
@@ -728,7 +728,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    // === 🆕 WEBSOCKET INTEGRATION FOR SECURITY PAGE           ===
+    // === ðŸ†• WEBSOCKET INTEGRATION FOR SECURITY PAGE           ===
     // ============================================================
     
     let wsSecurity = null;
@@ -739,14 +739,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function connectSecurityWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/updates`; // Kết nối vào kênh Admin chung
+        const wsUrl = `${protocol}//${window.location.host}/ws/updates`; // Káº¿t ná»‘i vÃ o kÃªnh Admin chung
         
         wsSecurity = new WebSocket(wsUrl);
         
         wsSecurity.onopen = () => {
             console.log('[SEC] WebSocket Connected');
             wsSecurityReconnectAttempts = 0;
-            // Gửi message hello nếu cần thiết (tùy backend)
+            // Gá»­i message hello náº¿u cáº§n thiáº¿t (tÃ¹y backend)
         };
         
         wsSecurity.onmessage = (event) => {
@@ -771,16 +771,16 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleSecurityWebSocketMessage(message) {
         const { type, count } = message;
         
-        // === 1. CẬP NHẬT SỐ LƯỢNG KHÁCH TRUY CẬP ===
+        // === 1. Cáº¬P NHáº¬T Sá» LÆ¯á»¢NG KHÃCH TRUY Cáº¬P ===
         if (type === 'visitor_update') {
             const visitorEl = document.getElementById('live-visitors-count');
             if (visitorEl) {
                 if (lastVisitorCount === count) return;
                 lastVisitorCount = count;
-                // Cập nhật số
+                // Cáº­p nháº­t sá»‘
                 visitorEl.textContent = count;
                 
-                // Hiệu ứng nháy sáng
+                // Hiá»‡u á»©ng nhÃ¡y sÃ¡ng
                 visitorEl.style.color = '#ffffff';
                 visitorEl.style.textShadow = '0 0 20px #ffffff';
                 visitorEl.style.transform = 'scale(1.2)';
@@ -790,7 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     clearTimeout(visitorPulseTimerId);
                 }
                 visitorPulseTimerId = setTimeout(() => {
-                    visitorEl.style.color = '#ff00ff'; // Trả về màu tím neon
+                    visitorEl.style.color = '#ff00ff'; // Tráº£ vá» mÃ u tÃ­m neon
                     visitorEl.style.textShadow = '0 0 10px #ff00ff';
                     visitorEl.style.transform = 'scale(1)';
                     visitorPulseTimerId = null;
@@ -798,9 +798,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        // === 2. CẬP NHẬT BIỂU ĐỒ TRAFFIC REAL-TIME (NẾU CÓ) ===
-        // Nếu Backend gửi thông tin về Traffic qua WS, bạn có thể update biểu đồ tại đây
-        // Ví dụ: if (type === 'traffic_update') { ... }
+        // === 2. Cáº¬P NHáº¬T BIá»‚U Äá»’ TRAFFIC REAL-TIME (Náº¾U CÃ“) ===
+        // Náº¿u Backend gá»­i thÃ´ng tin vá» Traffic qua WS, báº¡n cÃ³ thá»ƒ update biá»ƒu Ä‘á»“ táº¡i Ä‘Ã¢y
+        // VÃ­ dá»¥: if (type === 'traffic_update') { ... }
     }
 
 

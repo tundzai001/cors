@@ -5,6 +5,7 @@
 // === GLOBAL STATE  ===
 let globalState = {
     devices: [],
+    publicNetworkSummary: null,
     selectedDeviceSerial: null,
     currentUser: null,
     searchTerm: '',
@@ -433,7 +434,6 @@ function updateAuthButtons() {
     const loginBtn = document.getElementById('login-btn');
     const logoutBtn = document.getElementById('logout-btn');
     const backBtn = document.getElementById('back-home-btn');
-    const backBtnLeft = document.getElementById('back-home-btn-left');
 
     if (loginBtn) {
         if (token) loginBtn.classList.add('d-none'); else loginBtn.classList.remove('d-none');
@@ -447,9 +447,6 @@ function updateAuthButtons() {
     if (backBtn) {
         if (isMapView) backBtn.classList.remove('d-none'); else backBtn.classList.add('d-none');
     }
-    if (backBtnLeft) {
-        if (isMapView) backBtnLeft.classList.remove('d-none'); else backBtnLeft.classList.add('d-none');
-    }
 }
 
 // Wire auth buttons if present
@@ -461,10 +458,6 @@ document.addEventListener('click', (e) => {
         window.location.href = '/';
     }
     if (target.id === 'back-home-btn' || (target.closest && target.closest('#back-home-btn'))) {
-        e.preventDefault();
-        window.switchView('homepage');
-    }
-    if (target.id === 'back-home-btn-left' || (target.closest && target.closest('#back-home-btn-left'))) {
         e.preventDefault();
         window.switchView('homepage');
     }
@@ -1155,6 +1148,15 @@ async function loadInitialDevices() {
 
         // Public endpoint returns lean station data; normalize to the shape expected by UI components.
         if (isPublicVisitor) {
+            try {
+                const summaryResponse = await apiFetch('/api/public/network-summary');
+                if (summaryResponse.ok) {
+                    globalState.publicNetworkSummary = await summaryResponse.json();
+                }
+            } catch (summaryError) {
+                console.warn('Could not load public network summary:', summaryError);
+            }
+
             devicesFromApi = (Array.isArray(devicesFromApi) ? devicesFromApi : []).map((d) => ({
                 serial: d.serial,
                 name: d.name,
@@ -1289,13 +1291,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             switchView('homepage');
             const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 15000);
             if (window.homepageRoot) {
-                renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices }, 'Homepage component is not loaded');
+                renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
             }
         } else if (currentPath === '/network-status') {
             switchView('homepage');
             const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 15000);
             if (window.homepageRoot) {
-                renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices }, 'Homepage component is not loaded');
+                renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
             }
         } else if (currentPath.startsWith('/blog')) {
             switchView('blog');
@@ -1427,7 +1429,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         switchView('homepage');
         waitForGlobalComponent('HomePageEnterprise', 15000).then((homeComp) => {
             if (homeComp && window.homepageRoot) {
-                renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices }, 'Homepage component is not loaded');
+                renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
             }
         });
     } else if (currentPath.startsWith('/blog')) {
@@ -1554,6 +1556,10 @@ window.openPublicMap = async function() {
         const stats = dev?.ntrip_stats || {};
         const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
         const isVirtual = String(dev?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
+
+        if (raw === 'sleep') return 'sleep';
+        if (raw === 'streaming') return 'streaming';
+        if (raw === 'starting') return 'starting';
 
         if (!['online', 'streaming', 'sleep', 'starting'].includes(raw)) {
             if (!(isVirtual && rtcmIn > 0)) return 'offline';

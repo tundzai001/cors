@@ -192,16 +192,26 @@ const isPreferredHost = (hostValue) => {
 
 const getMapEffectiveStatus = (device) => {
     const rawStatus = String(device?.status || '').toLowerCase();
+    const stats = device?.ntrip_stats || {};
+    const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
+    const isVirtual = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
+
+    if (rawStatus === 'sleep') return 'sleep';
+    if (rawStatus === 'streaming') return 'streaming';
+    if (rawStatus === 'starting') return 'starting';
+
+    if (!['online', 'streaming', 'sleep', 'starting'].includes(rawStatus)) {
+        return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
+    }
 
     const cfg = device?.service_config || {};
     const s1Enabled = parseBoolCompat(cfg.server1_enabled, isServerConfiguredCompat(cfg, 1));
     const s2Enabled = parseBoolCompat(cfg.server2_enabled, isServerConfiguredCompat(cfg, 2));
 
     if (!s1Enabled && !s2Enabled) {
-        return 'offline';
+        return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
     }
 
-    // 2. PRIMARY SERVER LOGIC: Handle aitogy.com.vn with optional ports
     const s1Host = String(cfg.serverhost1 || '').trim().toLowerCase();
     const s2Host = String(cfg.serverhost2 || '').trim().toLowerCase();
     const preferred = 'aitogy.com.vn';
@@ -211,29 +221,15 @@ const getMapEffectiveStatus = (device) => {
     else if (s2Host.includes(preferred)) primarySid = 2;
     else primarySid = 1;
 
-    // 3. PRIMARY STATUS (Sleep on primary > Traffic on primary > Online)
     const ntripStatusMap = device?.ntrip_status || {};
     const primaryBps = Number(ntripStatusMap[`server${primarySid}`]?.bps || 0);
+    if (primaryBps > 0) {
+        return 'online';
+    }
+
     const onDemand = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
     const active = onDemand ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
-    const isSleep = onDemand && !active;
-
-    let result = 'online';
-    if (isSleep) {
-        result = 'sleep';
-    } else if (primaryBps > 0) {
-        result = 'online';
-    } else {
-        result = 'online';
-    }
-
-
-    const okStatuses = ['online', 'streaming', 'sleep', 'starting'];
-    // SAFETY GUARD: If agent is online/sleep, NEVER show Red
-    if (result === 'offline' && okStatuses.includes(rawStatus)) {
-        result = 'online';
-    }
-    return result;
+    return (!onDemand || active) ? 'online' : 'sleep';
 };
 
 
@@ -3897,7 +3893,18 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
             }).addTo(map);
 
-            if (typeof leaflet.markerClusterGroup === 'function' && typeof leaflet.MarkerClusterGroup === 'function') {
+            let canUseMarkerCluster = typeof leaflet.markerClusterGroup === 'function' &&
+                typeof leaflet.MarkerClusterGroup === 'function' &&
+                leaflet.MarkerClusterGroup.prototype;
+            if (canUseMarkerCluster && typeof Reflect !== 'undefined') {
+                try {
+                    Reflect.construct(function () {}, [], leaflet.MarkerClusterGroup);
+                } catch (error) {
+                    canUseMarkerCluster = false;
+                }
+            }
+
+            if (canUseMarkerCluster) {
                 try {
                     roverClusterRef.current = leaflet.markerClusterGroup({
                         chunkedLoading: true,
@@ -3911,7 +3918,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                     });
                     map.addLayer(roverClusterRef.current);
                 } catch (error) {
-                    console.warn('Leaflet marker cluster unavailable, falling back to plain rover markers:', error);
+                    console.info('Leaflet marker cluster unavailable, using plain rover markers.');
                     roverClusterRef.current = null;
                 }
             }

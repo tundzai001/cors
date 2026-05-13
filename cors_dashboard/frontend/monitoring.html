@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="vi" data-bs-theme="dark">
 <head>
     <!-- Google tag (gtag.js) -->
@@ -292,7 +292,7 @@
             }
         }
 
-        /* Tối ưu cho màn hình lớn */
+        /* Tá»‘i Æ°u cho mÃ n hÃ¬nh lá»›n */
         @media (min-width: 1400px) {
             .container-fluid {
                 max-width: 1920px;
@@ -300,7 +300,7 @@
             }
         }
 
-        /* Đảm bảo không có khoảng trống thừa */
+        /* Äáº£m báº£o khÃ´ng cÃ³ khoáº£ng trá»‘ng thá»«a */
         main.container-fluid {
             padding-left: 2rem !important;
             padding-right: 2rem !important;
@@ -472,7 +472,7 @@
         // Auth Check
         const token = localStorage.getItem('access_token');
         if (!token) {
-            window.location.href = '/login.html';
+            window.location.href = '/';
         }
 
         // User Info
@@ -484,7 +484,7 @@
                 
                 if (res.status === 401) {
                     localStorage.removeItem('access_token');
-                    window.location.href = '/login.html';
+                    window.location.href = '/';
                     return;
                 }
                 
@@ -500,7 +500,7 @@
 
         document.getElementById('logout-btn').addEventListener('click', () => {
             localStorage.removeItem('access_token');
-            window.location.href = '/login.html';
+            window.location.href = '/';
         });
 
         // Terminal Log Viewer
@@ -517,7 +517,7 @@
 
                 if (res.status === 401) {
                     localStorage.removeItem('access_token');
-                    window.location.href = '/login.html';
+                    window.location.href = '/';
                     return;
                 }
 
@@ -546,16 +546,16 @@
 
                 if (line.includes("ERROR") || line.includes("CRITICAL")) {
                     cssClass = "log-error";
-                    icon = "❌ ";
+                    icon = "âŒ ";
                 } else if (line.includes("WARNING")) {
                     cssClass = "log-warning";
-                    icon = "⚠️ ";
+                    icon = "âš ï¸ ";
                 } else if (line.includes("INFO")) {
                     cssClass = "log-info";
-                    icon = "ℹ️ ";
+                    icon = "â„¹ï¸ ";
                 } else if (line.includes("success")) {
                     cssClass = "log-success";
-                    icon = "✅ ";
+                    icon = "âœ… ";
                 }
 
                 const escaped = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

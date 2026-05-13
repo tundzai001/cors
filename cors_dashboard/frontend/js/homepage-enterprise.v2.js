@@ -4,27 +4,90 @@
  */
 
 /* Vietnam Map - Real Vector SVG (traced from high-detail source) */
-const VietnamSVG = () => (
-    React.createElement('div', { className: 'hero-map-wrapper' },
-        React.createElement('img', {
-            src: '/img/vietnam-map.svg',
-            alt: '',
-            className: 'vietnam-map-bg vietnam-map-hero',
-            'aria-hidden': 'true'
-        }),
+const InlineFlag = (props) => React.createElement('svg', {
+    width: props.w || '24', height: props.h || '16', viewBox: '0 0 30 20',
+    className: props.className || '', style: props.style || {},
+    'aria-hidden': 'true'
+},
+    React.createElement('rect', { width: '30', height: '20', fill: '#da251d' }),
+    React.createElement('polygon', {
+        points: '15,4 11.47,14.85 20.71,8.15 9.29,8.15 18.53,14.85',
+        fill: '#ff0', className: props.starClass || 'flag-star'
+    })
+);
+
+/* Vietnam Map - Inline SVG with draw-on effect */
+const VietnamSVG = () => {
+    const containerRef = React.useRef(null);
+
+    React.useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+        // Fetch the SVG and inject inline for GSAP draw-on
+        fetch('/img/vietnam-map.svg')
+            .then(r => r.text())
+            .then(svgText => {
+                const svgHolder = container.querySelector('.vietnam-map-inline');
+                if (!svgHolder) return;
+                svgHolder.innerHTML = svgText;
+                const svgEl = svgHolder.querySelector('svg');
+                if (!svgEl) return;
+                svgEl.classList.add('vietnam-map-bg', 'vietnam-map-hero');
+                svgEl.setAttribute('aria-hidden', 'true');
+                svgEl.style.width = '100%';
+                svgEl.style.height = 'auto';
+                // GSAP Draw-on: animate all paths from hidden to visible
+                const paths = svgEl.querySelectorAll('path');
+                if (typeof gsap !== 'undefined' && paths.length) {
+                    paths.forEach(p => {
+                        const len = p.getTotalLength();
+                        p.style.strokeDasharray = len;
+                        p.style.strokeDashoffset = len;
+                    });
+                    gsap.to(paths, {
+                        strokeDashoffset: 0,
+                        duration: 2.5,
+                        stagger: { each: 0.004, from: 'start' },
+                        ease: 'power2.inOut',
+                        delay: 0.5
+                    });
+                    // After draw completes, add a glow pulse
+                    gsap.to(svgEl, {
+                        filter: 'brightness(2.8) saturate(2) drop-shadow(0 0 40px rgba(0, 242, 255, 0.6))',
+                        duration: 1,
+                        delay: 3.2,
+                        ease: 'power2.out'
+                    });
+                }
+            })
+            .catch(() => {});
+    }, []);
+
+    return React.createElement('div', { className: 'hero-map-wrapper', ref: containerRef },
+        // Inline SVG container (replaces <img>)
+        React.createElement('div', { className: 'vietnam-map-inline', 'aria-hidden': 'true' }),
+        // Origin badge with inline flag SVG
         React.createElement('div', { className: 'vietnam-origin-badge' },
-            React.createElement('img', {
-                src: '/img/Flag_of_Vietnam.svg',
-                alt: '',
-                'aria-hidden': 'true'
-            }),
+            React.createElement(InlineFlag, { className: 'flag-inline-svg' }),
             React.createElement('span', null, 'Made in Vietnam')
         ),
+        // Scan rings
         React.createElement('div', { className: 'map-scan-ring map-scan-ring-1' }),
-        React.createElement('div', { className: 'map-scan-ring map-scan-ring-2' }),
-        React.createElement('div', { className: 'map-node map-node-hn' }),
-        React.createElement('div', { className: 'map-node map-node-dn' }),
-        React.createElement('div', { className: 'map-node map-node-hcm' })
+        React.createElement('div', { className: 'map-scan-ring map-scan-ring-2' })
+    );
+};
+
+/* Network Map Overlays - rendered separately (not inside hero-map-wrapper) */
+const NetworkMapOverlays = () => React.createElement(React.Fragment, null,
+    React.createElement('div', { className: 'map-radar-sweep', 'aria-hidden': 'true' }),
+    React.createElement('svg', {
+        className: 'map-connection-lines',
+        viewBox: '0 0 100 100', preserveAspectRatio: 'none', 'aria-hidden': 'true'
+    },
+        React.createElement('line', { className: 'map-data-line', x1: '43', y1: '24', x2: '52', y2: '53', stroke: 'rgba(0,242,255,0.3)', strokeWidth: '0.4', strokeDasharray: '2 3' }),
+        React.createElement('line', { className: 'map-data-line', x1: '52', y1: '53', x2: '58', y2: '78', stroke: 'rgba(0,242,255,0.3)', strokeWidth: '0.4', strokeDasharray: '2 3' }),
+        React.createElement('line', { className: 'map-data-line', x1: '43', y1: '24', x2: '50', y2: '22', stroke: 'rgba(0,242,255,0.15)', strokeWidth: '0.3', strokeDasharray: '1 4' }),
+        React.createElement('line', { className: 'map-data-line', x1: '58', y1: '78', x2: '52', y2: '84', stroke: 'rgba(0,242,255,0.15)', strokeWidth: '0.3', strokeDasharray: '1 4' })
     )
 );
 
@@ -56,11 +119,7 @@ const SatelliteField = () => {
             )
         ),
         React.createElement('div', { className: 'flying-flag' },
-            React.createElement('img', {
-                src: '/img/Flag_of_Vietnam.svg',
-                alt: '',
-                'aria-hidden': 'true'
-            }),
+            React.createElement(InlineFlag, { starClass: 'flag-star-fly' }),
             React.createElement('span', null, 'Vietnam GNSS')
         )
     );
@@ -89,6 +148,44 @@ const ParticleField = () => {
         )
     );
 };
+
+/* Why Choose Us Section */
+const WhyChooseSection = () => {
+    const items = [
+        { number: '10+', label: 'Năm kinh nghiệm', desc: 'Triển khai và vận hành hạ tầng GNSS/CORS quy mô quốc gia với đội ngũ kỹ sư chuyên sâu.', icon: 'bi-award' },
+        { number: '50+', label: 'Đối tác tin dùng', desc: 'Doanh nghiệp khảo sát, xây dựng và viễn thám trên toàn quốc đã lựa chọn nền tảng Aitogy.', icon: 'bi-people' },
+        { number: '24/7', label: 'Hỗ trợ kỹ thuật', desc: 'Đội ngũ vận hành trực 24 giờ, xử lý sự cố trong vòng 15 phút qua Telegram và hotline.', icon: 'bi-headset' }
+    ];
+    return React.createElement('section', { className: 'why-choose-section container' },
+        React.createElement('div', { className: 'text-center mb-5' },
+            React.createElement('div', { className: 'why-choose-kicker' },
+                React.createElement(InlineFlag, { w: '20', h: '14' }),
+                'Đồng hành cùng Việt Nam'
+            ),
+            React.createElement('h2', { className: 'neon-title', style: { fontSize: '2.2rem', fontWeight: 900, color: '#fff' } }, 'Tại sao chọn Aitogy?'),
+            React.createElement('p', { style: { color: '#6a8aaa', maxWidth: '600px', margin: '0 auto' } },
+                'Nền tảng CORS duy nhất được thiết kế và vận hành bởi đội ngũ kỹ sư Việt Nam, tối ưu cho điều kiện thực tế trong nước.'
+            )
+        ),
+        React.createElement('div', { className: 'why-choose-grid' },
+            items.map((item, idx) =>
+                React.createElement('div', { key: idx, className: 'why-choose-card' },
+                    React.createElement('div', { className: 'why-choose-icon' },
+                        React.createElement('i', { className: `bi ${item.icon}` })
+                    ),
+                    React.createElement('div', { className: 'why-choose-number' }, item.number),
+                    React.createElement('div', { className: 'why-choose-label' }, item.label),
+                    React.createElement('div', { className: 'why-choose-desc' }, item.desc)
+                )
+            )
+        )
+    );
+};
+
+/* Scroll Progress Bar */
+const ScrollProgressBar = () => React.createElement('div', { className: 'scroll-progress-wrap', 'aria-hidden': 'true' },
+    React.createElement('div', { className: 'scroll-progress-fill' })
+);
 
 /* Animated Counter Hook */
 const useCounter = (target, duration = 1500) => {
@@ -163,7 +260,7 @@ const useCinematicScroll = () => {
                     const slotRect = slot.getBoundingClientRect();
                     const mapRect = mapWrapper.getBoundingClientRect();
                     const slotCenterX = slotRect.left + window.scrollX + slotRect.width / 2;
-                    const slotCenterY = slotRect.top + window.scrollY + slotRect.height / 2 + 62;
+                    const slotCenterY = slotRect.top + window.scrollY + slotRect.height / 2;
                     const mapCenterX = mapRect.left + window.scrollX + mapRect.width / 2;
                     const mapCenterY = mapRect.top + window.scrollY + mapRect.height / 2;
                     return axis === 'x' ? slotCenterX - mapCenterX : slotCenterY - mapCenterY;
@@ -182,12 +279,26 @@ const useCinematicScroll = () => {
                         },
                         x: () => getMapTarget('x'),
                         y: () => getMapTarget('y'),
-                        scale: 0.82,
-                        opacity: 1,
+                        scale: 0.78,
+                        opacity: 0.96,
                         ease: 'power1.inOut',
                         immediateRender: false
                     }
                 );
+
+                // Fade out subtly after leaving network section
+                gsap.to(mapWrapper, {
+                    scrollTrigger: {
+                        trigger: '.network-map-section',
+                        start: 'bottom center',
+                        end: 'bottom top',
+                        scrub: 1,
+                        invalidateOnRefresh: true
+                    },
+                    opacity: 0,
+                    scale: 0.7,
+                    ease: 'none'
+                });
             }
 
             // ========== FLYING SATELLITES (orbit around network-map section) ==========
@@ -401,10 +512,24 @@ const useCinematicScroll = () => {
                 scrollTrigger: { trigger: '.support-tech-section', start: 'top 88%', toggleActions: 'play none none none', once: true },
                 opacity: 0, y: 24, duration: 0.65, ease: 'power3.out'
             });
-            gsap.from('.support-tech-chip', {
+            gsap.from('.support-tech-marquee', {
                 scrollTrigger: { trigger: '.support-tech-section', start: 'top 84%', toggleActions: 'play none none none', once: true },
-                opacity: 0, y: 20, scale: 0.97, duration: 0.5, stagger: 0.04, ease: 'power2.out'
+                opacity: 0, duration: 0.5, ease: 'power2.out'
             });
+            const techTrack = document.querySelector('.support-tech-track');
+            if (techTrack) {
+                gsap.killTweensOf(techTrack);
+                gsap.fromTo(techTrack,
+                    { x: () => -(techTrack.scrollWidth / 2) },
+                    {
+                        x: 0,
+                        duration: 24,
+                        repeat: -1,
+                        ease: 'none',
+                        repeatRefresh: true
+                    }
+                );
+            }
             gsap.from('.support-tech-panel', {
                 scrollTrigger: { trigger: '.support-tech-section', start: 'top 82%', toggleActions: 'play none none none', once: true },
                 opacity: 0, y: 26, duration: 0.65, stagger: 0.1, ease: 'power3.out'
@@ -431,18 +556,6 @@ const useCinematicScroll = () => {
                     }
                 );
             }
-
-            // Subtle horizontal drift on scroll for the protocol row
-            gsap.to('.support-tech-chip-grid', {
-                x: 80,
-                ease: 'none',
-                scrollTrigger: {
-                    trigger: '.support-tech-section',
-                    start: 'top bottom',
-                    end: 'bottom top',
-                    scrub: 1
-                }
-            });
 
             // ========== CTA ==========
             const ctaBox = document.querySelector('.cta-box');
@@ -493,6 +606,88 @@ const useCinematicScroll = () => {
             gsap.to('.landing-orb-2', { scrollTrigger: { scrub: true }, y: -120, ease: 'none' });
             gsap.to('.landing-orb-3', { scrollTrigger: { scrub: true }, y: -280, ease: 'none' });
             gsap.to('.landing-grid', { scrollTrigger: { scrub: true }, y: -80, ease: 'none' });
+
+            // ========== SCROLL PROGRESS BAR ==========
+            const progressFill = document.querySelector('.scroll-progress-fill');
+            if (progressFill) {
+                gsap.to(progressFill, {
+                    height: '100%',
+                    ease: 'none',
+                    scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: 0.3 }
+                });
+            }
+
+            // ========== WHY CHOOSE SECTION ==========
+            const whyCards = gsap.utils.toArray('.why-choose-card');
+            if (whyCards.length) {
+                const whyKicker = document.querySelector('.why-choose-kicker');
+                const whyTitle = document.querySelector('.why-choose-section .neon-title');
+                if (whyKicker) gsap.from(whyKicker, {
+                    scrollTrigger: { trigger: '.why-choose-section', start: 'top 82%', toggleActions: 'play none none reverse' },
+                    y: 30, opacity: 0, duration: 0.6, ease: 'power3.out'
+                });
+                if (whyTitle) gsap.from(whyTitle, {
+                    scrollTrigger: { trigger: '.why-choose-section', start: 'top 80%', toggleActions: 'play none none reverse' },
+                    y: 50, opacity: 0, duration: 0.8, delay: 0.1, ease: 'power3.out'
+                });
+                whyCards.forEach((card, i) => {
+                    gsap.from(card, {
+                        scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
+                        y: 80, opacity: 0, scale: 0.88, rotateY: i === 1 ? 0 : (i === 0 ? 12 : -12),
+                        duration: 1, delay: i * 0.15, ease: 'power3.out'
+                    });
+                });
+                gsap.utils.toArray('.why-choose-number').forEach(num => {
+                    gsap.from(num, {
+                        scrollTrigger: { trigger: num, start: 'top 85%', toggleActions: 'play none none reverse' },
+                        scale: 0.4, opacity: 0, duration: 0.9, ease: 'back.out(1.7)'
+                    });
+                });
+                gsap.utils.toArray('.why-choose-icon').forEach((icon, i) => {
+                    gsap.from(icon, {
+                        scrollTrigger: { trigger: icon, start: 'top 88%', toggleActions: 'play none none reverse' },
+                        scale: 0, rotation: -180, opacity: 0, duration: 0.7, delay: i * 0.12, ease: 'back.out(2)'
+                    });
+                });
+            }
+
+            // ========== FLAG STAR ROTATION ==========
+            gsap.to('.flag-star', {
+                rotation: 360, transformOrigin: '50% 50%',
+                duration: 20, repeat: -1, ease: 'none'
+            });
+            gsap.to('.flag-star-fly', {
+                rotation: -360, transformOrigin: '50% 50%',
+                duration: 16, repeat: -1, ease: 'none'
+            });
+
+            // ========== MAP CONNECTION LINES REVEAL ==========
+            gsap.utils.toArray('.map-data-line').forEach((line, i) => {
+                gsap.fromTo(line,
+                    { opacity: 0 },
+                    {
+                        opacity: 1,
+                        duration: 1.2,
+                        delay: 1 + i * 0.3,
+                        ease: 'power2.out',
+                        scrollTrigger: { trigger: '.network-map-section', start: 'top 70%', toggleActions: 'play none none reverse' }
+                    }
+                );
+            });
+
+            // ========== MAP RADAR SWEEP REVEAL ==========
+            const radar = document.querySelector('.map-radar-sweep');
+            if (radar) {
+                gsap.fromTo(radar,
+                    { opacity: 0, scale: 0.3 },
+                    {
+                        opacity: 0.5, scale: 1,
+                        duration: 1.5,
+                        ease: 'power2.out',
+                        scrollTrigger: { trigger: '.network-map-section', start: 'top 75%', toggleActions: 'play none none reverse' }
+                    }
+                );
+            }
 
         }, 500);
 
@@ -647,7 +842,7 @@ const LoginPanel = ({ isOpen, onClose }) => {
                     )
                 ),
                 React.createElement('div', { className: 'login-company-info' },
-                    React.createElement('strong', null, 'Aitogy Technology JSC'),
+                    React.createElement('strong', null, 'AITOGY .,JSC'),
                     React.createElement('br'),
                     'Hệ thống trạm tham chiếu hoạt động liên tục toàn quốc'
                 )
@@ -696,20 +891,22 @@ const CinematicFeatures = ({ features }) => {
 /* ============================================================
    MAIN HOMEPAGE COMPONENT
    ============================================================ */
-const HomePageEnterprise = ({ devices = [] }) => {
+const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
 
     const [loginOpen, setLoginOpen] = React.useState(false);
     useCinematicScroll();
 
     // Stats Animation Logic
-    const animStations = useCounter(devices.length || 0);
+    const stationTotal = Number(networkSummary?.total_stations || devices.length || 0);
+    const visibleStationTotal = devices.length || 0;
+    const animStations = useCounter(stationTotal);
     const activeStatuses = ['online', 'sleep', 'streaming', 'starting'];
-    const onlineCount = devices.filter(d => activeStatuses.includes(d.status)).length;
+    const onlineCount = Number(networkSummary?.active_stations || devices.filter(d => activeStatuses.includes(d.status)).length);
     const animOnline = useCounter(onlineCount);
     
     // Unique provinces/cities
     const provinces = new Set(devices.filter(d => d.location).map(d => d.location.split(',').pop().trim()));
-    const animProvinces = useCounter(provinces.size || 24);
+    const animProvinces = useCounter(Number(networkSummary?.coverage_areas || provinces.size || 24));
     
     // Uptime calculation (simulated or real)
     const uptimePct = 99.98;
@@ -720,6 +917,25 @@ const HomePageEnterprise = ({ devices = [] }) => {
         .replace(/\.{2,}/g, '.')
         .replace(/^\.+|\.+$/g, '')
         .toLowerCase();
+    const openStationMap = () => {
+        if (typeof window.openPublicMap === 'function') {
+            window.openPublicMap();
+            return;
+        }
+
+        const modalEl = document.getElementById('publicMapModal');
+        if (modalEl && window.bootstrap?.Modal) {
+            window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            return;
+        }
+
+        document.querySelector('.network-map-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    const openTechnicalConsult = () => {
+        const subject = encodeURIComponent('Tu van ky thuat CORS Aitogy');
+        const body = encodeURIComponent('Chao Aitogy,\n\nToi can tu van ve giai phap CORS/GNSS/RTK.');
+        window.location.href = `mailto:aitogyaitogy@gmail.com?subject=${subject}&body=${body}`;
+    };
 
     const stats = [
         { label: 'Tổng số trạm', value: animStations, sub: 'Mạng lưới CORS Aitogy', icon: 'bi-broadcast-pin', color: '#4facfe' },
@@ -868,7 +1084,7 @@ const HomePageEnterprise = ({ devices = [] }) => {
                 'Mạng lưới CORS Việt Nam'
             ),
             React.createElement('p', { style: { color: '#6a8aaa', textAlign: 'center', marginBottom: '48px' } },
-                `${devices.length} trạm bao phủ - Băng thông lớn, kết nối ổn định toàn quốc`
+                `${stationTotal} trạm toàn mạng - ${visibleStationTotal} trạm có tọa độ bản đồ, băng thông lớn và kết nối ổn định toàn quốc`
             ),
             React.createElement('div', { className: 'row g-4 align-items-center' },
                 React.createElement('div', { className: 'col-lg-5' },
@@ -916,11 +1132,12 @@ const HomePageEnterprise = ({ devices = [] }) => {
                         }),
                         devices.length > 15 && React.createElement('div', {
                             style: { textAlign: 'center', padding: '12px', color: '#4a6a8a', fontSize: '0.8rem' }
-                        }, `... và ${devices.length - 15} trạm khác`)
+                        }, `... và ${devices.length - 15} trạm có tọa độ khác`)
                     )
                 ),
                 React.createElement('div', { className: 'col-lg-7', style: { position: 'relative', height: '450px' } },
                     React.createElement('div', { className: 'network-map-slot' }),
+                    React.createElement(NetworkMapOverlays),
                     React.createElement('div', {
                         style: { position: 'absolute', top: '10%', right: '5%', display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 2 }
                     },
@@ -948,6 +1165,11 @@ const HomePageEnterprise = ({ devices = [] }) => {
         // === DIVIDER ===
         React.createElement('div', { className: 'section-divider' }),
 
+        // === WHY CHOOSE AITOGY ===
+        React.createElement(WhyChooseSection),
+
+        // === DIVIDER ===
+        React.createElement('div', { className: 'section-divider' }),
 
         // === HOW IT WORKS ===
         React.createElement('section', { className: 'hiw-section container' },
@@ -1038,8 +1260,9 @@ const HomePageEnterprise = ({ devices = [] }) => {
                 React.createElement('div', { className: 'support-tech-line' }),
                 React.createElement('div', { className: 'support-tech-scan' })
             ),
-            React.createElement('div', { className: 'support-tech-chip-grid' },
-                [
+            React.createElement('div', { className: 'support-tech-marquee' },
+                React.createElement('div', { className: 'support-tech-track' },
+                    [
                     { icon: 'bi-broadcast-pin', text: 'NTRIP v2.0' },
                     { icon: 'bi-hdd-network', text: 'RTCM 3.3' },
                     { icon: 'bi-globe', text: 'GPS L1/L2/L5' },
@@ -1050,10 +1273,22 @@ const HomePageEnterprise = ({ devices = [] }) => {
                     { icon: 'bi-lightning', text: 'WebSocket' },
                     { icon: 'bi-database', text: 'MQTT' },
                     { icon: 'bi-cpu', text: 'RINEX 3.x' }
-                ].map((t, i) =>
-                    React.createElement('div', { key: i, className: 'support-tech-chip' },
-                        React.createElement('i', { className: `bi ${t.icon}` }),
-                        React.createElement('span', null, t.text)
+                    ].concat([
+                        { icon: 'bi-broadcast-pin', text: 'NTRIP v2.0' },
+                        { icon: 'bi-hdd-network', text: 'RTCM 3.3' },
+                        { icon: 'bi-globe', text: 'GPS L1/L2/L5' },
+                        { icon: 'bi-radar', text: 'GLONASS' },
+                        { icon: 'bi-stars', text: 'Galileo' },
+                        { icon: 'bi-compass', text: 'BeiDou B1/B2/B3' },
+                        { icon: 'bi-shield-lock', text: 'TLS/SSL' },
+                        { icon: 'bi-lightning', text: 'WebSocket' },
+                        { icon: 'bi-database', text: 'MQTT' },
+                        { icon: 'bi-cpu', text: 'RINEX 3.x' }
+                    ]).map((t, i) =>
+                        React.createElement('div', { key: i, className: 'support-tech-chip' },
+                            React.createElement('i', { className: `bi ${t.icon}` }),
+                            React.createElement('span', null, t.text)
+                        )
                     )
                 )
             ),
@@ -1103,8 +1338,36 @@ const HomePageEnterprise = ({ devices = [] }) => {
                 React.createElement('h2', { className: 'cta-title' }, 'Sẵn sàng nâng cấp hạ tầng trắc địa?'),
                 React.createElement('p', { className: 'cta-desc' }, 'Liên hệ đội ngũ Aitogy để được tư vấn kiến trúc, hướng dẫn triển khai và hỗ trợ vận hành thực tế.'),
                 React.createElement('div', { className: 'cta-actions d-flex gap-3 justify-content-center flex-wrap' },
-                    React.createElement('button', { className: 'btn-enterprise', onClick: () => setLoginOpen(true) }, 'Bắt đầu ngay'),
-                    React.createElement('button', { className: 'btn-outline-cyan' }, 'Tư vấn kỹ thuật')
+                    React.createElement('button', { className: 'btn-enterprise', onClick: openStationMap }, 'Bắt đầu ngay'),
+                    React.createElement('button', { className: 'btn-outline-cyan', onClick: openTechnicalConsult }, 'Tư vấn kỹ thuật')
+                ),
+                React.createElement('div', { className: 'cta-contact-links' },
+                    React.createElement('a', { href: 'tel:+84912844919', className: 'cta-contact-link' },
+                        React.createElement('i', { className: 'bi bi-telephone-fill' }),
+                        React.createElement('span', null, '+84 912 844 919')
+                    ),
+                    React.createElement('a', { href: 'mailto:aitogyaitogy@gmail.com', className: 'cta-contact-link' },
+                        React.createElement('i', { className: 'bi bi-envelope-fill' }),
+                        React.createElement('span', null, 'aitogyaitogy@gmail.com')
+                    ),
+                    React.createElement('a', {
+                        href: 'https://www.facebook.com/profile.php?id=100062949955358',
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                        className: 'cta-contact-link'
+                    },
+                        React.createElement('img', { src: '/img/Facebook_icon.svg', alt: '', className: 'cta-contact-icon', 'aria-hidden': 'true' }),
+                        React.createElement('span', null, 'Facebook')
+                    ),
+                    React.createElement('a', {
+                        href: 'https://www.google.com/maps/search/?api=1&query=S%E1%BB%91%2016B%20Ng%C3%B5%20187%20ph%E1%BB%91%20Mai%20D%E1%BB%8Bch%2C%20ph%C6%B0%E1%BB%9Dng%20Mai%20D%E1%BB%8Bch%2C%20qu%E1%BA%ADn%20C%E1%BA%A7u%20Gi%E1%BA%A5y%2C%20H%C3%A0%20N%E1%BB%99i',
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                        className: 'cta-contact-link cta-contact-address'
+                    },
+                        React.createElement('i', { className: 'bi bi-geo-alt-fill' }),
+                        React.createElement('span', null, 'Số 16B Ngõ 187 phố Mai Dịch, Phường Phú Diễn, Hà Nội')
+                    )
                 )
             )
         ),
@@ -1116,7 +1379,7 @@ const HomePageEnterprise = ({ devices = [] }) => {
         devices.length > 0 && React.createElement('section', { className: 'station-directory-section container mb-5' },
             React.createElement('div', { className: 'text-center mb-4' },
                 React.createElement('h2', { className: 'station-directory-title' }, 'Danh mục trạm CORS'),
-                React.createElement('p', { className: 'station-directory-sub' }, `${devices.length} trạm trên toàn Việt Nam`)
+                React.createElement('p', { className: 'station-directory-sub' }, `${visibleStationTotal} trạm có tọa độ trên toàn Việt Nam`)
             ),
             React.createElement('div', { className: 'station-directory-grid row g-2', style: { maxHeight: '320px', overflowY: 'auto' } },
                 devices.map((d, idx) => {
@@ -1137,7 +1400,7 @@ const HomePageEnterprise = ({ devices = [] }) => {
         React.createElement('footer', { className: 'landing-footer container' },
             React.createElement('div', { className: 'footer-surface row g-4' },
                 React.createElement('div', { className: 'col-lg-5' },
-                    React.createElement('div', { className: 'fw-bold mb-2 footer-brand' }, 'AITOGY TECHNOLOGY JSC'),
+                    React.createElement('div', { className: 'fw-bold mb-2 footer-brand' }, 'AITOGY .,JSC'),
                     React.createElement('p', { className: 'footer-copy mb-0' }, 'Hạ tầng CORS quy mô quốc gia cho khảo sát, xây dựng và giám sát với độ chính xác cao, vận hành ổn định.')
                 ),
                 React.createElement('div', { className: 'col-lg-3 col-6' },
@@ -1148,8 +1411,23 @@ const HomePageEnterprise = ({ devices = [] }) => {
                 ),
                 React.createElement('div', { className: 'col-lg-4 col-6' },
                     React.createElement('div', { className: 'footer-heading' }, 'Liên hệ'),
-                    React.createElement('a', { href: 'mailto:support@aitogy.com', className: 'landing-footer-link d-block mb-2' }, 'support@aitogy.com'),
-                    React.createElement('a', { href: 'https://aitogy.com', className: 'landing-footer-link d-block mb-2' }, 'aitogy.com'),
+                    React.createElement('a', { href: 'tel:+84912844919', className: 'landing-footer-link d-block mb-2' }, '+84 912 844 919'),
+                    React.createElement('a', { href: 'mailto:aitogyaitogy@gmail.com', className: 'landing-footer-link d-block mb-2' }, 'aitogyaitogy@gmail.com'),
+                    React.createElement('a', {
+                        href: 'https://www.facebook.com/profile.php?id=100062949955358',
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                        className: 'landing-footer-link d-flex align-items-center gap-2 mb-2'
+                    },
+                        React.createElement('img', { src: '/img/Facebook_icon.svg', alt: '', className: 'cta-contact-icon', 'aria-hidden': 'true' }),
+                        React.createElement('span', null, 'Facebook')
+                    ),
+                    React.createElement('a', {
+                        href: 'https://www.google.com/maps/search/?api=1&query=S%E1%BB%91%2016B%20Ng%C3%B5%20187%20ph%E1%BB%91%20Mai%20D%E1%BB%8Bch%2C%20ph%C6%B0%E1%BB%9Dng%20Mai%20D%E1%BB%8Bch%2C%20qu%E1%BA%ADn%20C%E1%BA%A7u%20Gi%E1%BA%A5y%2C%20H%C3%A0%20N%E1%BB%99i',
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                        className: 'landing-footer-link d-block mb-2'
+                    }, 'Số 16B Ngõ 187 phố Mai Dịch, Phường Phú Diễn, Hà Nội'),
                     React.createElement('span', { className: 'footer-copy small' }, '© 2025 Aitogy Network. Bảo lưu mọi quyền.')
                 )
             )
@@ -1159,6 +1437,9 @@ const HomePageEnterprise = ({ devices = [] }) => {
             isOpen: loginOpen,
             onClose: () => setLoginOpen(false)
         }),
+
+        // === SCROLL PROGRESS BAR ===
+        React.createElement(ScrollProgressBar),
 
         // === SCROLL INDICATOR ===
         React.createElement('div', { className: 'scroll-indicator' },

@@ -1845,7 +1845,8 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
                 "additionalType": "https://en.wikipedia.org/wiki/GNSS_augmentation",
                 "provider": {
                     "@type": "Organization",
-                    "name": "Aitogy Infrastructure Technology JSC",
+                    "name": "AITOGY .,JSC",
+                    "legalName": "Aitogy Infrastructure Technology Joint Stock Company",
                     "url": "https://cors.aitogy.com"
                 }
             }
@@ -1891,7 +1892,7 @@ async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_d
     xml_content += f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
     
     # 1. Main Pages
-    for path in ["/", "/login.html", "/network-status", "/coverage", "/blog"]:
+    for path in ["/", "/network-status", "/coverage", "/blog"]:
         xml_content += f'  <url>\n    <loc>{base_url}{path}</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n'
     
     # 2. Dynamic Station Pages
@@ -2669,6 +2670,26 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logging.error(f"â Œ Error fetching public map data: {e}")
         return []
+
+
+@app.get("/api/public/network-summary")
+async def get_public_network_summary(db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(select(models.Device))
+        devices = result.scalars().all()
+        active_statuses = {"online", "sleep", "streaming", "starting"}
+        return {
+            "total_stations": len(devices),
+            "active_stations": sum(1 for dev in devices if str(dev.status or "").lower() in active_statuses),
+            "coverage_areas": len({
+                str(dev.location).split(",")[-1].strip()
+                for dev in devices
+                if getattr(dev, "location", None)
+            })
+        }
+    except Exception as e:
+        logging.error(f"Error fetching public network summary: {e}")
+        return {"total_stations": 0, "active_stations": 0, "coverage_areas": 0}
 
 
 
@@ -5839,7 +5860,7 @@ async def get_caster_config(
 
 @app.get("/login", include_in_schema=False)
 async def serve_login():
-    return FileResponse("../frontend/login.html")
+    return RedirectResponse(url="/", status_code=307)
 
 @app.get("/monitoring", include_in_schema=False)
 async def serve_monitoring():
