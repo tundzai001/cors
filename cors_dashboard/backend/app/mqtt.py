@@ -138,6 +138,8 @@ async def batch_sync_checker():
                 # Check sync cho từng device (KHÔNG mở thêm DB connection)
                 for device in devices:
                     serial = device.serial
+                    if device.name:
+                        device_name_cache[serial] = device.name
                     
                     # Lấy config từ cache (đã nhận qua MQTT)
                     agent_base = device_sync_cache.get(f"{serial}_base_config", {})
@@ -260,6 +262,16 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # 🔥 QUAN TRỌNG: Lưu config vào cache để batch checker có thể so sánh
             agent_base = data.get('base_config', {})
             agent_service = data.get('service_config', {})
+            command_source = data.get('command_source')
+            command_source_changed = False
+            if isinstance(command_source, dict):
+                system_info = data.get('system_info') if isinstance(data.get('system_info'), dict) else {}
+                system_info['command_source'] = command_source
+                data['system_info'] = system_info
+                command_cache_key = f"{serial}_command_source"
+                command_source_changed = device_sync_cache.get(command_cache_key) != command_source
+                if command_source_changed:
+                    device_sync_cache[command_cache_key] = command_source
             
             if agent_base:
                 device_sync_cache[f"{serial}_base_config"] = agent_base
@@ -275,6 +287,9 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # --- CẬP NHẬT DATA ĐỂ GỬI UI ---
             data['is_synced'] = is_synced
             data['sync_errors'] = sync_errors
+            cached_name = device_name_cache.get(serial)
+            if cached_name:
+                data['name'] = cached_name
 
             # --- 2.4. BẢO VỆ TÊN & CONFIG TRẠM ---
             # Bản tin LWT (offline) không kèm tên/config -> lấy từ DB trước khi broadcast
@@ -312,7 +327,9 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             should_write_db = False
             
             # Điều kiện 1: Trạng thái Online/Offline thay đổi
-            if new_status and new_status != last_known_status:
+            if command_source_changed:
+                should_write_db = True
+            elif new_status and new_status != last_known_status:
                 should_write_db = True
                 if last_known_status == "online" and new_status == "offline":
                     logging.warning(f"⚠️ DEVICE OFFLINE: {serial}")

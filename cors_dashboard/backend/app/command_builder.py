@@ -236,6 +236,47 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
     return commands
 
 
+def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: float = 0, lon: float = 0, alt: float = 0) -> list[bytes]:
+    """
+    Hàm chuyên biệt dành riêng cho chip Unicorecomm LTE (Geotek).
+    Sử dụng mặc định cổng COM2 và chuỗi lệnh tối ưu theo yêu cầu người dùng.
+    Trình tự: FRESET -> unlogall -> mode base -> NMEA -> RTCM -> saveconfig
+    """
+    commands = []
+    port = "com2"
+    
+    # 1. Reset vật lý chip và xóa hết log cũ
+    commands.append(b'FRESET\r\n')
+    commands.append(b'unlogall\r\n')
+    
+    # 2. Cấu hình chế độ Base (Survey-In hoặc Fixed)
+    if setup_method.upper() == 'SURVEY_IN':
+        commands.append(f'mode base time {duration}\r\n'.encode('ascii'))
+    else:
+        # Giữ nguyên độ chính xác của tọa độ
+        commands.append(f'mode base {lat} {lon} {alt}\r\n'.encode('ascii'))
+    
+    # 3. Bật các bản tin NMEA cần thiết trên COM2 (12 bản tin)
+    # Unicore LTE: chi bat GGA. GSA/GSV lam stream MQTT/RTCM khong on dinh.
+    nmea_msgs = [
+        'gpgga'
+    ]
+    for msg in nmea_msgs:
+        commands.append(f'{msg} {port} 1\r\n'.encode('ascii'))
+        
+    # 4. Bật các bản tin RTCM cần thiết trên COM2 (10 bản tin)
+    rtcm_msgs = [
+        '1006', '1033', '1074', '1124', '1084', '1094', '1042', '1019', '1020', '1045'
+    ]
+    for msg in rtcm_msgs:
+        commands.append(f'rtcm{msg} {port} 1\r\n'.encode('ascii'))
+    
+    # 5. Lưu cấu hình
+    commands.append(b'saveconfig\r\n')
+    
+    return commands
+
+
 # === HÀM DEBUG ===
 def debug_command(command_bytes: bytes) -> str:
     """In ra chuỗi byte dưới dạng hex để debug"""

@@ -311,6 +311,10 @@ def is_valid_serial(serial: str) -> bool:
     # Pattern 5: Monitor station (MONITOR_XXX)
     if serial.startswith('MONITOR_'):
         return True
+
+    # Pattern 6: LTE/MQTT bridge stations, for Geotek/Unicorecomm via 4G module.
+    if serial.startswith(('GEOTEK_LTE_', 'MQTT_')):
+        return True
     
     # Bạn có thể thêm pattern khác nếu cần
     
@@ -336,6 +340,10 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
 
     new_base_config = normalize_base_config(device_data.get("base_config", {}))
     new_service_config = device_data.get("service_config", {})
+    new_system_info = _ensure_dict(device_data.get("system_info"))
+    command_source = _ensure_dict(device_data.get("command_source"))
+    if command_source:
+        new_system_info["command_source"] = command_source
     new_chip_type = device_data.get("detected_chip_type", "UNKNOWN")
     new_name = device_data.get("name")
     
@@ -369,7 +377,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     
     # ✅ BƯỚC 2: TỰ ĐỘNG TẠO CHO RELAY / VIRTUAL / MONITOR
     if not existing_device:
-        is_relay_like = serial.startswith(('RELAY_', 'MONITOR_'))
+        is_relay_like = serial.startswith(('RELAY_', 'MONITOR_', 'GEOTEK_LTE_', 'MQTT_'))
         
         if is_relay_like:
             # Initialize with defaults if missing to prevent sync errors
@@ -392,6 +400,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
                     timestamp=current_ts,
                     base_config=new_base_config,
                     service_config=final_service_config,
+                    system_info=new_system_info or None,
                     detected_chip_type=new_chip_type,
                     version=device_data.get("version"),
                     is_synced=True
@@ -495,7 +504,6 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         should_update = True
 
     # System info
-    new_system_info = _ensure_dict(device_data.get("system_info"))
     if new_system_info:
         # Logic so sánh đơn giản để giảm update DB không cần thiết
         old_info = _ensure_dict(existing_device.system_info)
@@ -614,7 +622,8 @@ async def create_rover_account(
     target_casters: str = None,
     rtcm_cycle_enabled: bool = False,
     rtcm_disconnect_interval_seconds: int = 300,
-    rtcm_disconnect_duration_seconds: int = 10
+    rtcm_disconnect_duration_seconds: int = 10,
+    expires_at: int = None
 ) -> models.RoverAccount:
     db_rover = models.RoverAccount(
         username=username, 
@@ -629,7 +638,8 @@ async def create_rover_account(
         created_at=int(time.time()),
         rtcm_cycle_enabled=rtcm_cycle_enabled,
         rtcm_disconnect_interval_seconds=rtcm_disconnect_interval_seconds,
-        rtcm_disconnect_duration_seconds=rtcm_disconnect_duration_seconds
+        rtcm_disconnect_duration_seconds=rtcm_disconnect_duration_seconds,
+        expires_at=expires_at
     )
     db.add(db_rover)
     await db.commit()

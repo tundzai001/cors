@@ -22,34 +22,32 @@
 
 <body class="cors-manager-page">
     <div class="dashboard-bg">
-        <div class="container-wide">
-            <!-- Header -->
-            <header class="premium-header">
-                <div class="header-brand">
-                    <div class="d-flex align-items-center">
-                        <a href="/" class="back-link me-3" title="Quay lại Dashboard">
-                            <i class="bi bi-chevron-left"></i>
-                        </a>
-                        <div>
-                            <h1 class="title">CORS Manager</h1>
-                            <p class="subtitle">Rover account management</p>
-                        </div>
-                    </div>
+        <!-- Unified Navbar -->
+        <nav class="navbar navbar-expand-lg border-bottom border-secondary-subtle sticky-top bg-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand fw-bold text-light" href="/">
+                    <i class="bi bi-hdd-network-fill me-2"></i>CORS Manager
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul id="main-nav" class="navbar-nav me-auto mb-2 mb-lg-0">
+                        <!-- nav-manager.js sẽ tự động render menu -->
+                    </ul>
                 </div>
-
-                <div class="header-meta">
-                    <button type="button" class="notification-btn" aria-label="Notifications">
-                        <i class="bi bi-bell"></i>
+                <div class="d-flex align-items-center">
+                    <span id="user-info" class="navbar-text me-3 d-none d-md-inline"></span>
+                    <button id="logout-btn" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-box-arrow-right"></i>
+                        <span class="d-none d-md-inline ms-1">Đăng xuất</span>
                     </button>
-                    <div class="user-profile">
-                        <div id="user-avatar-text" class="user-avatar">A</div>
-                        <div class="ms-2 d-none d-md-block">
-                            <div id="user-info-name" class="fw-bold small text-white">Admin</div>
-                            <div id="user-info-role" class="text-muted" style="font-size: 11px;">ADMIN</div>
-                        </div>
-                    </div>
                 </div>
-            </header>
+            </div>
+        </nav>
+
+        <div class="container-wide">
 
             <!-- Stats Grid -->
             <section class="stats-grid" aria-label="Overview stats">
@@ -92,9 +90,10 @@
                         </select>
                         <select id="filter-status" class="premium-select">
                             <option value="">Tất cả Status</option>
-                            <option value="active">Active</option>
-                            <option value="standby">Standby</option>
-                            <option value="blocked">Blocked</option>
+                            <option value="active">Active (Online)</option>
+                            <option value="standby">Standby (Offline)</option>
+                            <option value="blocked">Blocked (Bị chặn)</option>
+                            <option value="expired">Expired (Hết hạn)</option>
                         </select>
                         <button type="button" id="refresh-btn" class="action-btn" title="Làm mới">
                             <i class="bi bi-arrow-clockwise"></i>
@@ -335,12 +334,13 @@
 
                                 <div class="row g-3 mb-3">
                                     <div class="col-6">
-                                        <label class="form-label small text-muted fw-bold">Gia hạn (Ngày)</label>
+                                        <label class="form-label small text-muted fw-bold">Thời hạn (Gia hạn mới)</label>
                                         <select class="form-select" id="edit-expiry">
                                             <option value="" selected>--- Giữ nguyên ---</option>
-                                            <option value="30">+ 30 Ngày</option>
-                                            <option value="180">+ 180 Ngày</option>
-                                            <option value="365">+ 1 Năm</option>
+                                            <option value="30">1 Tháng</option>
+                                            <option value="180">6 Tháng</option>
+                                            <option value="365">1 Năm</option>
+                                            <option value="3650">Vĩnh viễn</option>
                                         </select>
                                     </div>
                                     <div class="col-6">
@@ -585,7 +585,7 @@
     <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/js/nav-manager.js?v=20260507"></script>
-    <script src="/js/rovers-global.js?v=20260507"></script>
+    <script src="/js/nav-manager.js?v=20260507" charset="UTF-8"></script>
+    <script src="/js/rovers-global.js?v=20260507" charset="UTF-8"></script>
 </body>
 </html>

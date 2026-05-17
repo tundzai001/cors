@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+﻿﻿// ==============================================================================
 // monitoring-dashboard.js - UPDATED
 // ==============================================================================
 
@@ -24,7 +24,7 @@ let refreshTimer = null;
 function initCharts() {
     const ctx = document.getElementById('systemChart');
     
-    // Kiá»ƒm tra náº¿u canvas khÃ´ng tá»“n táº¡i (trÃ¡nh lá»—i can't acquire context)
+    // Kiểm tra nếu canvas không tồn tại (tránh lỗi can't acquire context)
     if (!ctx) {
         console.warn("Canvas #systemChart not found!");
         return;
@@ -48,7 +48,7 @@ function initCharts() {
                 grid: { display: false }
             }
         },
-        animation: { duration: 0 } // Táº¯t animation Ä‘á»ƒ mÆ°á»£t hÆ¡n khi update liÃªn tá»¥c
+        animation: { duration: 0 } // Tắt animation để mượt hơn khi update liên tục
     };
 
     systemChart = new Chart(ctx, {

@@ -1,7 +1,7 @@
-﻿// rovers-global.js
+// rovers-global.js
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Kiá»ƒm tra Token (Há»— trá»£ cáº£ Local vÃ  Session Storage)
+    // 1. Kiểm tra Token (Hỗ trợ cả Local và Session Storage)
     const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
         if (typeof NavigationManager !== 'undefined') {
@@ -22,8 +22,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentUser = null;
     let allRovers = [];
     let allDevices = [];
-    let casterUsers = [];  // Danh sÃ¡ch user tá»« Caster
-    let casterStats = {};  // Stats tá»« API
+    let casterUsers = [];  // Danh sách user từ Caster
+    let casterStats = {};  // Stats từ API
     let globalAppVersion = null;
     let availableCasters = [];
     let casterSourcesCache = null;
@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         currentUser = await userRes.json();
 
-        // Cáº­p nháº­t UI Navbar
+        // Cập nhật UI Navbar
         if(document.getElementById('user-info-name')) document.getElementById('user-info-name').textContent = currentUser.username;
         if(document.getElementById('user-info-role')) document.getElementById('user-info-role').textContent = currentUser.role.toUpperCase();
         if(document.getElementById('user-avatar-text')) document.getElementById('user-avatar-text').textContent = currentUser.username.charAt(0).toUpperCase();
@@ -71,11 +71,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 window.location.href = '/';
             }
         } else {
-            // Hiá»ƒn thá»‹ thÃ´ng bÃ¡o lá»—i thay vÃ¬ vÄƒng ra login náº¿u chá»‰ lÃ  lá»—i máº¡ng/server
+            // Hiển thị thông báo lỗi thay vì văng ra login nếu chỉ là lỗi mạng/server
             if (typeof showToast === 'function') {
-                showToast("Lá»—i káº¿t ná»‘i há»‡ thá»‘ng. Vui lÃ²ng táº£i láº¡i trang.", "danger");
+                showToast("Lỗi kết nối hệ thống. Vui lòng tải lại trang.", "danger");
             } else {
-                alert("Lá»—i khá»Ÿi táº¡o dá»¯ liá»‡u. Vui lÃ²ng táº£i láº¡i trang.");
+                alert("Lỗi khởi tạo dữ liệu. Vui lòng tải lại trang.");
             }
         }
     }
@@ -132,7 +132,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const syncTimeEl = document.getElementById('caster-sync-time');
         if (isAnyRoverModalOpen()) {
-            if (syncTimeEl) syncTimeEl.textContent = 'Sync táº¡m dá»«ng khi Ä‘ang chá»‰nh sá»­a...';
+            if (syncTimeEl) syncTimeEl.textContent = 'Sync tạm dừng khi đang chỉnh sửa...';
             return;
         }
 
@@ -188,7 +188,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (createContainer) {
             createContainer.innerHTML = '';
             if (availableCasters.length === 0) {
-                createContainer.innerHTML = '<div class="text-muted small">KhÃ´ng tÃ¬m tháº¥y caster nÃ o.</div>';
+                createContainer.innerHTML = '<div class="text-muted small">Không tìm thấy caster nào.</div>';
             } else {
                 availableCasters.forEach(host => {
                     const isDefault = host.toLowerCase().includes('aitogy.com.vn');
@@ -213,7 +213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (editContainer) {
             editContainer.innerHTML = '';
             if (availableCasters.length === 0) {
-                editContainer.innerHTML = '<div class="text-muted small">KhÃ´ng tÃ¬m tháº¥y caster nÃ o.</div>';
+                editContainer.innerHTML = '<div class="text-muted small">Không tìm thấy caster nào.</div>';
             } else {
                 availableCasters.forEach(host => {
                     const div = document.createElement('div');
@@ -249,7 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function fetchRovers({ render = true } = {}) {
         try {
             const res = await fetch('/api/rovers/all', { headers: API_HEADERS });
-            if (!res.ok) throw new Error('KhÃ´ng thá»ƒ táº£i danh sÃ¡ch Rover');
+            if (!res.ok) throw new Error('Không thể tải danh sách Rover');
             allRovers = await res.json();
             if (render) renderTable();
         } catch (error) {
@@ -263,7 +263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const res = await fetch('/api/caster/users', { headers: API_HEADERS });
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.detail || 'KhÃ´ng thá»ƒ táº£i danh sÃ¡ch user tá»« Caster');
+                throw new Error(err.detail || 'Không thể tải danh sách user từ Caster');
             }
             const data = await res.json();
             casterUsers = data.items || [];
@@ -286,7 +286,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const res = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                throw new Error(err.detail || 'KhÃ´ng thá»ƒ táº£i mountpoints tá»« Caster');
+                throw new Error(err.detail || 'Không thể tải mountpoints từ Caster');
             }
             casterSourcesCache = await res.json();
             return casterSourcesCache;
@@ -321,19 +321,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!isAdmin && prefix === '') return; // For create, only admins see this logic. Edit might be different.
         
         const label = box.querySelector('.form-label');
-        if (label) label.textContent = 'Mountpoints Live tá»« Caster (Admin)';
+        if (label) label.textContent = 'Mountpoints Live từ Caster (Admin)';
 
         const sources = getAllCasterSources();
         if (!sources.length) {
             box.classList.remove('d-none');
-            list.innerHTML = '<div class="text-muted small text-center">KhÃ´ng cÃ³ mountpoint nÃ o tá»« Caster</div>';
+            list.innerHTML = '<div class="text-muted small text-center">Không có mountpoint nào từ Caster</div>';
             return;
         }
 
         const uniqueHosts = Array.from(new Set(sources.map(s => String(s.host || '').trim()).filter(Boolean))).sort();
         if (hostFilter) {
             const prev = hostFilter.value || 'all';
-            hostFilter.innerHTML = '<option value="all">Táº¥t cáº£ host</option>'
+            hostFilter.innerHTML = '<option value="all">Tất cả host</option>'
                 + uniqueHosts.map(h => `<option value="${h}">${h}</option>`).join('');
             if (uniqueHosts.includes(prev)) hostFilter.value = prev;
         }
@@ -368,7 +368,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         const label = box.querySelector('.form-label');
-        if (label) label.textContent = 'MountPoints bá»• sung (ÄÆ°á»£c cáº¥p)';
+        if (label) label.textContent = 'MountPoints bổ sung (Được cấp)';
         if (hostFilterLabel) hostFilterLabel.parentElement.classList.add('d-none');
 
         // Map extra MPs to hosts if possible from cache
@@ -428,7 +428,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             .map(cb => cb.value);
 
         if (!checked.length) {
-            showToast('Vui lÃ²ng chá»n Ã­t nháº¥t 1 mountpoint', 'warning');
+            showToast('Vui lòng chọn ít nhất 1 mountpoint', 'warning');
             return;
         }
 
@@ -438,7 +438,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const merged = Array.from(new Set([...current, ...checked]));
         
         if (target) target.value = merged.join(';');
-        showToast('ÄÃ£ Ä‘Æ°a mountpoint live vÃ o Allowed Mountpoints', 'success');
+        showToast('Đã đưa mountpoint live vào Allowed Mountpoints', 'success');
     }
 
     function updateCasterStats() {
@@ -469,13 +469,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         document.getElementById('blockModalUsername').value = username;
-        document.getElementById('blockReason').value = "QuÃ¡ háº¡n sá»­ dá»¥ng";
+        document.getElementById('blockReason').value = "Quá hạn sử dụng";
         document.getElementById('selectAllMps').checked = false;
         
         const container = document.getElementById('mountpointSelector');
         container.innerHTML = ""; // Clear
 
-        // 1. Láº¥y danh sÃ¡ch mountpoint Rover nÃ y Ä‘ang dÃ¹ng
+        // 1. Lấy danh sách mountpoint Rover này đang dùng
         const allMps = new Set([...currentMps]);
         
         allMps.forEach(mp => {
@@ -492,11 +492,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             container.appendChild(chip);
         });
 
-        document.getElementById('blockInfoText').innerText = `Cháº·n ${username} (${currentMps.length} tráº¡m hiá»‡n táº¡i)`;
+        document.getElementById('blockInfoText').innerText = `Chặn ${username} (${currentMps.length} trạm hiện tại)`;
         blockModal.show();
     }
 
-    // Xá»­ lÃ½ Select All
+    // Xử lý Select All
     const selectAllMps = document.getElementById('selectAllMps');
     if (selectAllMps) {
         selectAllMps.addEventListener('change', (e) => {
@@ -512,7 +512,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // XÃ¡c nháº­n cháº·n
+    // Xác nhận chặn
     const confirmBlockBtn = document.getElementById('confirmBlockBtn');
     if (confirmBlockBtn) {
         confirmBlockBtn.addEventListener('click', async () => {
@@ -527,14 +527,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 targetMps.push(cb.value);
             });
             if (targetMps.length === 0) {
-                showToast("Vui lÃ²ng chá»n Ã­t nháº¥t 1 tráº¡m hoáº·c tÃ­ch 'Cháº·n toÃ n bá»™'", "warning");
+                showToast("Vui lòng chọn ít nhất 1 trạm hoặc tích 'Chặn toàn bộ'", "warning");
                 return;
             }
         }
 
         const btn = document.getElementById('confirmBlockBtn');
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Äang cháº·n...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang chặn...';
 
         try {
             const res = await fetch('/api/caster/block-user', {
@@ -548,23 +548,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Cháº·n tháº¥t báº¡i');
+            if (!res.ok) throw new Error(data.detail || 'Chặn thất bại');
 
-            showToast(`ðŸ”’ ${data.message}`, 'success');
+            showToast(`🔒 ${data.message}`, 'success');
             blockModal.hide();
             await fetchCasterUsers(); // Reload table
         } catch (err) {
             showToast(err.message, 'danger');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-shield-lock-fill me-1"></i>XÃ¡c nháº­n cháº·n';
+            btn.innerHTML = '<i class="bi bi-shield-lock-fill me-1"></i>Xác nhận chặn';
         }
         });
     }
 
     async function handleUnblockUser(e) {
         const username = e.currentTarget.dataset.username;
-        if (!confirm(`Báº¡n cÃ³ cháº¯c muá»‘n má»Ÿ khÃ³a user "${username}"?`)) return;
+        if (!confirm(`Bạn có chắc muốn mở khóa user "${username}"?`)) return;
 
         const btn = e.currentTarget;
         btn.disabled = true;
@@ -578,15 +578,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Má»Ÿ khÃ³a tháº¥t báº¡i');
+            if (!res.ok) throw new Error(data.detail || 'Mở khóa thất bại');
 
-            showToast(`ðŸ”“ ${data.message}`, 'success');
+            showToast(`🔓 ${data.message}`, 'success');
             await fetchCasterUsers(); // Reload
         } catch (err) {
             showToast(err.message, 'danger');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-unlock-fill me-1"></i>Má»Ÿ khÃ³a';
+            btn.innerHTML = '<i class="bi bi-unlock-fill me-1"></i>Mở khóa';
         }
     }
 
@@ -599,6 +599,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                 el.textContent = formatDuration(currentUptime);
             }
         });
+        document.querySelectorAll('.live-countdown').forEach(el => {
+            const initialRemaining = parseInt(el.dataset.remainingSeconds || 0);
+            const fetchedAt = parseInt(el.dataset.fetchedAt || 0);
+            if (initialRemaining > 0 && fetchedAt > 0) {
+                const elapsed = nowSec - fetchedAt;
+                const newRemaining = Math.max(0, initialRemaining - elapsed);
+                if (newRemaining <= 0) {
+                    el.className = 'badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill';
+                    el.textContent = 'HẾT HẠN';
+                } else {
+                    el.textContent = formatDuration(newRemaining);
+                }
+            }
+        });
     }
 
     // === UI POPULATION (FILTER & CHECKLIST) ===
@@ -608,7 +622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         container.innerHTML = '';
         if (allDevices.length === 0) {
-            container.innerHTML = '<div class="text-center small text-muted">KhÃ´ng cÃ³ tráº¡m nÃ o kháº£ dá»¥ng.</div>';
+            container.innerHTML = '<div class="text-center small text-muted">Không có trạm nào khả dụng.</div>';
             return;
         }
 
@@ -682,7 +696,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function populateFilterStation() {
         const select = document.getElementById('filter-station');
-        select.innerHTML = '<option value="">Táº¥t cáº£ tráº¡m Base</option>';
+        select.innerHTML = '<option value="">Tất cả trạm Base</option>';
         allDevices.forEach(d => {
              const opt = document.createElement('option');
              opt.value = d.serial;
@@ -694,20 +708,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     function formatDuration(seconds) {
         if (!seconds || seconds <= 0) return '0s';
         
-        // Caster uptime might be in minutes sometimes, but typically it's seconds or minutes
-        // We'll treat it as seconds for precision, if it's > 1 month it might be minutes
-        
-        const h = Math.floor(seconds / 3600);
+        const d = Math.floor(seconds / 86400);
+        const h = Math.floor((seconds % 86400) / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = seconds % 60;
 
-        if (h > 0) {
-            return `${h}h ${m}m ${s}s`;
-        } else if (m > 0) {
-            return `${m}m ${s}s`;
-        } else {
-            return `${s}s`;
-        }
+        let parts = [];
+        if (d > 0) parts.push(`${d}d`);
+        if (h > 0 || d > 0) parts.push(`${h}h`);
+        if (m > 0 || h > 0 || d > 0) parts.push(`${m}m`);
+        parts.push(`${s}s`);
+
+        return parts.join(' ');
     }
 
     function formatDateTime(value) {
@@ -765,12 +777,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else if (isOnline) {
             casterStatusBadge = `<span class="badge badge-active rounded-pill shadow-sm"><i class="bi bi-broadcast me-1"></i>ONLINE (${totalClients})</span>`;
         } else if (infos.length > 0) {
-            casterStatusBadge = '<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill">STANDBY</span>';
+            const remainingSeconds = infos[0].status || 0;
+            if (remainingSeconds <= 0) {
+                casterStatusBadge = '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill">HẾT HẠN</span>';
+            } else if (remainingSeconds >= 315360000) {
+                casterStatusBadge = '<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill">VĨNH VIỄN</span>';
+            } else {
+                const nowSec = Math.floor(Date.now() / 1000);
+                casterStatusBadge = `<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill live-countdown" data-remaining-seconds="${remainingSeconds}" data-fetched-at="${nowSec}">${formatDuration(remainingSeconds)}</span>`;
+            }
         }
 
-        const dbBadge = r.type === 'db'
-            ? (r.is_active ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>' : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>')
-            : '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
+        let dbBadge = '';
+        if (r.type === 'db') {
+            dbBadge = r.is_active ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>' : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>';
+            if (r.expires_at) {
+                const remainingDays = Math.ceil((r.expires_at - Date.now()/1000) / 86400);
+                if (remainingDays <= 0) {
+                    dbBadge += ' <span class="badge bg-danger ms-2 px-2 py-1">Hết hạn</span>';
+                } else if (remainingDays < 3650) {
+                    dbBadge += ' <span class="badge bg-warning text-dark ms-2 opacity-75">Còn ' + remainingDays + ' ngày</span>';
+                }
+            }
+        } else {
+            dbBadge = '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
+        }
 
         const targetHosts = parseCasterHosts(r.target_casters);
         let serverBadges = '';
@@ -798,8 +829,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? infos.every(i => i?.show_position !== false)
             : r.show_position;
         const showPosIcon = actualShowPos
-            ? '<i class="bi bi-eye-fill text-primary ms-1" title="Vá»‹ trÃ­ Ä‘ang HIá»†N (Live)"></i>'
-            : '<i class="bi bi-eye-slash text-muted opacity-50 ms-1" title="Vá»‹ trÃ­ Ä‘ang áº¨N (Live)"></i>';
+            ? '<i class="bi bi-eye-fill text-primary ms-1" title="Vị trí đang HIỆN (Live)"></i>'
+            : '<i class="bi bi-eye-slash text-muted opacity-50 ms-1" title="Vị trí đang ẨN (Live)"></i>';
 
         const mps = normalizeMountpointList(r.mountpoints);
         const mpsDisplay = mps.length > 0
@@ -879,7 +910,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             ${serverLabel}
                             <span class="text-muted" style="font-size: 0.75rem;">
                                 <i class="bi bi-clock me-1"></i>
-                                <span class="live-clock" data-started-at="${stableStartedAt}" title="Báº¯t Ä‘áº§u: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
+                                <span class="live-clock" data-started-at="${stableStartedAt}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
                                 <span class="ms-1 small text-muted opacity-75" style="font-size: 0.65rem;">(${startedAtText})</span>
                             </span>
                         </div>`;
@@ -891,7 +922,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (isBlocked) {
                 actionHtml += `
                     <button class="btn btn-sm btn-outline-success border-0 caster-unblock-btn me-1" 
-                        data-username="${r.username}" title="Má»Ÿ khÃ³a">
+                        data-username="${r.username}" title="Mở khóa">
                         <i class="bi bi-unlock-fill"></i>
                     </button>`;
             } else {
@@ -899,7 +930,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <button class="btn btn-sm btn-outline-danger border-0 caster-block-btn me-1" 
                         data-username="${r.username}" 
                         data-mountpoints="${mps.join(',')}"
-                        title="Cháº·n truy cáº­p">
+                        title="Chặn truy cập">
                         <i class="bi bi-shield-lock-fill"></i>
                     </button>`;
             }
@@ -908,22 +939,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (r.type === 'db') {
             actionHtml += `
                 <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
-                    data-id="${r.id}" data-username="${r.username}" title="Sá»­a">
+                    data-id="${r.id}" data-username="${r.username}" title="Sửa">
                     <i class="bi bi-pencil-square"></i>
                 </button>
                 <button class="btn btn-sm btn-outline-danger delete-btn border-0" 
-                    data-id="${r.id}" data-user="${r.username}" title="XÃ³a">
+                    data-id="${r.id}" data-user="${r.username}" title="Xóa">
                     <i class="bi bi-trash3-fill"></i>
                 </button>
             `;
         } else if (r.type === 'unknown') {
             actionHtml += `
                 <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
-                    data-id="0" data-username="${r.username}" title="Chá»‰nh sá»­a vÃ  Äá»“ng bá»™ vá» Web">
+                    data-id="0" data-username="${r.username}" title="Chỉnh sửa và Đồng bộ về Web">
                     <i class="bi bi-pencil-square"></i>
                 </button>
                 <button class="btn btn-sm btn-outline-danger border-0 caster-delete-btn" 
-                    data-username="${r.username}" title="XÃ³a tÃ i khoáº£n khá»i Caster">
+                    data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
                     <i class="bi bi-trash3"></i>
                 </button>
             `;
@@ -952,7 +983,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div>${activeConnsHtml}</div>
             </td>
             <td class="text-center">${casterStatusBadge}</td>
-            <td class="text-center">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cáº§n gÃ¡n Server</span>'}</td>
+            <td class="text-center">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
             <td class="text-end">${actionHtml}</td>
         `;
 
@@ -1031,12 +1062,40 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 (r.base_serial && r.base_serial.toLowerCase().includes(searchTerm)) ||
                                 (r.base_name && r.base_name.toLowerCase().includes(searchTerm));
             
-            const matchStation = !stationFilter || (r.base_serial && r.base_serial.includes(stationFilter));
+            // 🔥 FIXED: Lọc trạm Base thông minh cho cả DB và Unknown Rover
+            let matchStation = true;
+            if (stationFilter) {
+                const targetDevice = allDevices.find(d => d.serial === stationFilter);
+                const hasSerialMatch = r.base_serial && r.base_serial.split(',').map(s => s.trim()).includes(stationFilter);
+                
+                const allowedMps = (r.mountpoints || '').split(';').map(m => m.trim().toLowerCase());
+                const hasMpMatch = targetDevice && targetDevice.mountpoint && allowedMps.includes(targetDevice.mountpoint.toLowerCase());
+                
+                matchStation = hasSerialMatch || hasMpMatch;
+            }
+            
+            // 🔥 FIXED: Lọc trạng thái (Status) chính xác cho cả DB và Unknown Rover
+            const infos = r.caster_infos || (r.caster_info ? [r.caster_info] : []);
+            const isBlocked = infos.some(i => i?.is_blocked);
+            const isOnline = infos.some(i => i?.nclient > 0);
+            
+            let isExpired = false;
+            if (r.type === 'db') {
+                if (r.expires_at && r.expires_at < Date.now() / 1000) {
+                    isExpired = true;
+                }
+            } else {
+                const liveStatus = r.caster_info?.status;
+                if (typeof liveStatus !== 'undefined' && liveStatus <= 0) {
+                    isExpired = true;
+                }
+            }
             
             let matchStatus = true;
-            if (statusFilter === 'active') matchStatus = r.type === 'db' && r.is_active;
-            else if (statusFilter === 'blocked') matchStatus = (r.caster_infos || [r.caster_info]).some(i => i?.is_blocked);
-            else if (statusFilter === 'standby') matchStatus = !(r.caster_infos || [r.caster_info]).some(i => i?.nclient > 0 || i?.is_blocked);
+            if (statusFilter === 'active') matchStatus = isOnline;
+            else if (statusFilter === 'blocked') matchStatus = isBlocked;
+            else if (statusFilter === 'expired') matchStatus = isExpired;
+            else if (statusFilter === 'standby') matchStatus = !isOnline && !isBlocked && !isExpired;
 
             return matchSearch && matchStation && matchStatus;
         });
@@ -1053,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">KhÃ´ng tÃ¬m tháº¥y dá»¯ liá»‡u phÃ¹ há»£p.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
             return;
         }
 
@@ -1076,7 +1135,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.querySelectorAll('.caster-delete-btn').forEach(btn => btn.onclick = handleDeleteCasterUser);
     }
 
-    // === HANDLE EDIT ROVER (LOGIC Má»šI) ===
+    // === HANDLE EDIT ROVER (LOGIC MỚI) ===
     function handleEditRover(e) {
         const id = parseInt(e.currentTarget.dataset.id);
         const username = e.currentTarget.dataset.username;
@@ -1086,7 +1145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             rover = allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(username));
         }
         
-        // Náº¿u khÃ´ng cÃ³ ID trong DB (Unknown), tÃ¬m trong danh sÃ¡ch Caster
+        // Nếu không có ID trong DB (Unknown), tìm trong danh sách Caster
         if (!rover && username) {
             const cu = casterUsers.find(u => u.username === username);
             if (cu) {
@@ -1103,11 +1162,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         if (!rover) return;
 
-        // 1. Äiá»n thÃ´ng tin cÆ¡ báº£n
+        // 1. Điền thông tin cơ bản
         document.getElementById('edit-rover-id').value = rover.id;
         document.getElementById('edit-username').value = rover.username;
-        document.getElementById('edit-password').value = ''; 
-        document.getElementById('edit-expiry').value = ''; 
+        
+        // Nếu là tài khoản ngoại lai (chưa lưu DB), mật khẩu lấy trực tiếp từ Caster (không bị mã hóa/ẩn) nên ta hiện rõ
+        if (rover.id === 0) {
+            document.getElementById('edit-password').value = rover.password || '';
+        } else {
+            document.getElementById('edit-password').value = '';
+        } 
+        const expirySelect = document.getElementById('edit-expiry');
+        
+        // Cập nhật text hiển thị của tùy chọn "Giữ nguyên" (options[0])
+        if (rover.expires_at) {
+            const remainingDays = Math.ceil((rover.expires_at - Date.now()/1000) / 86400);
+            if (remainingDays >= 3650) {
+                expirySelect.options[0].text = '--- Giữ nguyên (Vĩnh viễn) ---';
+            } else if (remainingDays > 0) {
+                expirySelect.options[0].text = '--- Giữ nguyên (Còn ' + remainingDays + ' ngày) ---';
+            } else {
+                expirySelect.options[0].text = '--- Giữ nguyên (Đã hết hạn) ---';
+            }
+        } else {
+            expirySelect.options[0].text = '--- Giữ nguyên (Vĩnh viễn) ---';
+        }
+
+        // Tự động chọn gói ban đầu dựa trên hiệu số (expires_at - created_at)
+        let matchedValue = '';
+        if (rover.expires_at && rover.created_at) {
+            const diffSeconds = rover.expires_at - rover.created_at;
+            const diffDays = Math.round(diffSeconds / 86400);
+            
+            if (diffDays >= 3000) {
+                matchedValue = '3650';
+            } else if (diffDays >= 360 && diffDays <= 370) {
+                matchedValue = '365';
+            } else if (diffDays >= 170 && diffDays <= 190) {
+                matchedValue = '180';
+            } else if (diffDays >= 25 && diffDays <= 35) {
+                matchedValue = '30';
+            }
+        }
+        expirySelect.value = matchedValue; 
         document.getElementById('edit-max-connections').value = rover.max_connections || 1;
         
         const showPosToggle = document.getElementById('edit-show-position');
@@ -1157,7 +1254,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             cb.checked = targetCasters.includes(cb.value);
         });
 
-        // 2. Xá»¬ LÃ CHECKLIST TRáº M
+        // 2. XỬ LÝ CHECKLIST TRẠM
         const container = document.getElementById('edit-station-checklist');
         container.innerHTML = ''; 
         
@@ -1165,7 +1262,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('edit-mountpoints').value = (rover.mountpoints || '');
 
         if (allDevices.length === 0) {
-            container.innerHTML = '<div class="text-center small text-muted">KhÃ´ng cÃ³ tráº¡m nÃ o kháº£ dá»¥ng.</div>';
+            container.innerHTML = '<div class="text-center small text-muted">Không có trạm nào khả dụng.</div>';
         } else {
             allDevices.forEach(d => {
                 const sConf = d.service_config || {};
@@ -1211,12 +1308,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('edit-admin-live-mountpoints-box')?.classList.add('d-none');
         }
 
-        // 3. Hiá»‡n Modal
+        // 3. Hiện Modal
         const modal = new bootstrap.Modal(document.getElementById('editRoverModal'));
         modal.show();
     }
 
-    // Xá»­ lÃ½ Submit form Edit
+    // Xử lý Submit form Edit
     const editForm = document.getElementById('edit-rover-form');
     if (editForm) {
         editForm.addEventListener('submit', async (e) => {
@@ -1226,7 +1323,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const newPass = document.getElementById('edit-password').value;
             const newExpiry = document.getElementById('edit-expiry').value;
 
-            // --- Láº¤Y Dá»® LIá»†U Tá»ª CHECKLIST & TEXT BOX ---
+            // --- LẤY DỮ LIỆU TỪ CHECKLIST & TEXT BOX ---
             const checkedStations = document.querySelectorAll('.edit-station-check:checked');
             let selectedSerials = Array.from(checkedStations).map(cb => cb.value);
             
@@ -1234,13 +1331,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const finalMountpoints = document.getElementById('edit-mountpoints').value.trim();
 
             if (!finalMountpoints) {
-                showToast('Vui lÃ²ng chá»n Ã­t nháº¥t má»™t tráº¡m phÃ¡t hoáº·c nháº­p mountpoint!', 'danger');
+                showToast('Vui lòng chọn ít nhất một trạm phát hoặc nhập mountpoint!', 'danger');
                 return;
             }
 
             const payload = {
                 mountpoints: finalMountpoints,
-                selected_serials: selectedSerials, // ðŸ”¥ FIX: Gá»­i kÃ¨m danh sÃ¡ch serial tráº¡m
+                selected_serials: selectedSerials, // 🔥 FIX: Gửi kèm danh sách serial trạm
                 show_position: document.getElementById('edit-show-position').checked,
                 target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value),
                 rtcm_cycle_enabled: document.getElementById('edit-rtcm-cycle-enabled')?.checked || false,
@@ -1255,9 +1352,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = true;
-                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Äang lÆ°u...';
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang lưu...';
 
-                // Gá»ŒI API THÃ”NG MINH (PUT)
+                // GỌI API THÔNG MINH (PUT)
                 const url = roverId == "0" 
                     ? `/api/rovers/sync/by-username/${document.getElementById('edit-username').value}`
                     : `/api/rovers/${roverId}`;
@@ -1273,14 +1370,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (!res.ok) {
                     const err = await res.json();
-                    throw new Error(err.detail || 'Cáº­p nháº­t tháº¥t báº¡i');
+                    throw new Error(err.detail || 'Cập nhật thất bại');
                 }
 
                 const updatedRover = await res.json();
 
-                showToast('ÄÃ£ cáº­p nháº­t Rover thÃ nh cÃ´ng!', 'success');
+                showToast('Đã cập nhật Rover thành công!', 'success');
                 
-                // áº¨n modal vÃ  cáº­p nháº­t data táº¡i chá»— (khÃ´ng reload toÃ n trang)
+                // Ẩn modal và cập nhật data tại chỗ (không reload toàn trang)
                 const modalEl = document.getElementById('editRoverModal');
                 const modalInstance = bootstrap.Modal.getInstance(modalEl);
                 modalInstance.hide();
@@ -1293,12 +1390,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             } finally {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="bi bi-save me-2"></i>LÆ°u Thay Äá»•i';
+                submitBtn.innerHTML = '<i class="bi bi-save me-2"></i>Lưu Thay Đổi';
             }
         });
     }
 
-    // === HANDLE DELETE ROVER (MODAL Má»šI) ===
+    // === HANDLE DELETE ROVER (MODAL MỚI) ===
     async function handleDeleteRover(e) {
         const btn = e.currentTarget;
         const id = parseInt(btn.dataset.id);
@@ -1308,7 +1405,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!rover && username) {
             rover = allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(username));
         }
-        // Náº¿u lÃ  Unknown (id=0), táº¡o Ä‘á»‘i tÆ°á»£ng giáº£ láº­p Ä‘á»ƒ Modal váº«n cháº¡y
+        // Nếu là Unknown (id=0), tạo đối tượng giả lập để Modal vẫn chạy
         if (!rover && id === 0) {
             rover = {
                 id: 0,
@@ -1322,11 +1419,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         document.getElementById('delete-rover-id').value = id;
         
-        // Máº·c Ä‘á»‹nh lÃ  TÃCH CHá»ŒN xÃ³a khá»i DB (trá»« khi lÃ  tÃ i khoáº£n ngoáº¡i lai id=0)
+        // Mặc định là TÍCH CHỌN xóa khỏi DB (trừ khi là tài khoản ngoại lai id=0)
         const dbCheck = document.getElementById('delete-from-db');
         dbCheck.checked = (id !== 0);
         
-        // áº¨n vÃ¹ng xÃ³a DB náº¿u lÃ  tÃ i khoáº£n ngoáº¡i lai
+        // Ẩn vùng xóa DB nếu là tài khoản ngoại lai
         const dbSection = dbCheck.closest('.mb-2');
         if (id === 0) {
             dbSection.style.display = 'none';
@@ -1338,7 +1435,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const serverList = document.getElementById('delete-server-list');
         serverList.innerHTML = '';
         
-        // Láº¥y danh sÃ¡ch server: Æ¯u tiÃªn target_casters, náº¿u trá»‘ng thÃ¬ láº¥y thá»±c táº¿ tá»« caster_infos
+        // Lấy danh sách server: Ưu tiên target_casters, nếu trống thì lấy thực tế từ caster_infos
         let hosts = parseCasterHosts(rover.target_casters);
         let relatedCasterInfos = Array.isArray(rover.caster_infos) ? rover.caster_infos : [];
         if (relatedCasterInfos.length === 0) {
@@ -1349,7 +1446,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         
         if (hosts.length === 0) {
-            serverList.innerHTML = '<div class="text-muted small">KhÃ´ng tÃ¬m tháº¥y server nÃ o liÃªn quan.</div>';
+            serverList.innerHTML = '<div class="text-muted small">Không tìm thấy server nào liên quan.</div>';
         } else {
             hosts.forEach(host => {
                 const div = document.createElement('div');
@@ -1371,7 +1468,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // NÃºt thá»±c thi xÃ³a trong Modal
+    // Nút thực thi xóa trong Modal
     const executeDeleteBtn = document.getElementById('executeDeleteBtn');
     if (executeDeleteBtn) {
         executeDeleteBtn.onclick = async function() {
@@ -1389,24 +1486,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         try {
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Äang xá»­ lÃ½...';
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang xử lý...';
 
             if (deleteFromDb) {
-                // TRÆ¯á»œNG Há»¢P 1: XÃ³a tráº¯ng hoÃ n toÃ n
+                // TRƯỜNG HỢP 1: Xóa trắng hoàn toàn
                 const res = await fetch(`/api/rovers/${roverId}`, { 
                     method: 'DELETE', 
                     headers: API_HEADERS 
                 });
-                if (!res.ok) throw new Error(await res.text() || 'XÃ³a hoÃ n toÃ n tháº¥t báº¡i');
-                showToast(`ÄÃ£ xÃ³a vÄ©nh viá»…n tÃ i khoáº£n khá»i há»‡ thá»‘ng`, 'success');
+                if (!res.ok) throw new Error(await res.text() || 'Xóa hoàn toàn thất bại');
+                showToast(`Đã xóa vĩnh viễn tài khoản khỏi hệ thống`, 'success');
             } else {
-                // TRÆ¯á»œNG Há»¢P 2: Chá»‰ gá»¡ trÃªn má»™t sá»‘ server (Partial Cleanup)
-                // Nhá»¯ng server ÄÆ¯á»¢C TÃCH trong modal delete lÃ  nhá»¯ng server MUá»N Gá»  Bá»Ž.
-                // Danh sÃ¡ch target_casters CÃ’N Láº I = Tá»•ng - ÄÃ£ tÃ­ch gá»¡.
+                // TRƯỜNG HỢP 2: Chỉ gỡ trên một số server (Partial Cleanup)
+                // Những server ĐƯỢC TÍCH trong modal delete là những server MUỐN GỠ BỎ.
+                // Danh sách target_casters CÒN LẠI = Tổng - Đã tích gỡ.
                 const remainingHosts = allHosts.filter(h => !checkedHosts.includes(h));
                 
                 if (checkedHosts.length === 0) {
-                    showToast('Vui lÃ²ng tÃ­ch chá»n Ã­t nháº¥t 1 server Ä‘á»ƒ gá»¡ bá» (hoáº·c chá»n XÃ³a khá»i DB)', 'warning');
+                    showToast('Vui lòng tích chọn ít nhất 1 server để gỡ bỏ (hoặc chọn Xóa khỏi DB)', 'warning');
                     btn.disabled = false;
                     btn.innerHTML = originalHtml;
                     return;
@@ -1420,11 +1517,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     })
                 });
 
-                if (!res.ok) throw new Error(await res.text() || 'Cáº­p nháº­t gá»¡ bá» tháº¥t báº¡i');
-                showToast(`ÄÃ£ gá»¡ bá» tÃ i khoáº£n khá»i ${checkedHosts.length} server`, 'success');
+                if (!res.ok) throw new Error(await res.text() || 'Cập nhật gỡ bỏ thất bại');
+                showToast(`Đã gỡ bỏ tài khoản khỏi ${checkedHosts.length} server`, 'success');
             }
 
-            // ÄÃ³ng modal vÃ  refresh
+            // Đóng modal và refresh
             const modalEl = document.getElementById('deleteRoverModal');
             if (modalEl) {
                 const modal = bootstrap.Modal.getInstance(modalEl);
@@ -1433,7 +1530,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             await refreshDataInPlace();
         } catch (err) {
             console.error(err);
-            showToast(`Lá»—i: ${err.message}`, 'danger');
+            showToast(`Lỗi: ${err.message}`, 'danger');
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHtml;
@@ -1446,7 +1543,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const btn = e.currentTarget;
         const username = btn.dataset.username;
         
-        if (!confirm(`Cáº¢NH BÃO: TÃ i khoáº£n "${username}" khÃ´ng tá»“n táº¡i trong DB nhÆ°ng Ä‘ang cÃ³ trÃªn Caster.\n\nBáº¡n cÃ³ cháº¯c muá»‘n XÃ“A HOÃ€N TOÃ€N tÃ i khoáº£n nÃ y khá»i Caster?`)) return;
+        const infos = getCasterInfosForUsername(username);
+        const serversList = infos.map(i => i.server).filter(Boolean);
+        const serversStr = serversList.length > 0 ? serversList.join(', ') : 'các Caster được cấu hình';
+
+        if (!confirm(`CẢNH BÁO: Tài khoản "${username}" không tồn tại trong DB nhưng đang hoạt động trên Caster [${serversStr}].\n\nBạn có chắc muốn XÓA HOÀN TOÀN tài khoản này khỏi các Caster nêu trên?`)) return;
 
         try {
             btn.disabled = true;
@@ -1459,10 +1560,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.detail || 'XÃ³a tháº¥t báº¡i');
+                throw new Error(err.detail || 'Xóa thất bại');
             }
 
-            showToast(`ÄÃ£ xÃ³a tÃ i khoáº£n ngoáº¡i lai ${username} khá»i Caster`, 'warning');
+            const data = await res.json();
+            const deletedFrom = data.casters && data.casters.length > 0 ? data.casters.join(', ') : serversStr;
+            showToast(`Đã xóa tài khoản ngoại lai ${username} khỏi Caster: ${deletedFrom}`, 'warning');
             await refreshDataInPlace();
         } catch (err) {
             showToast(err.message, 'danger');
@@ -1487,7 +1590,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (selectedSerials.length === 0 && !isAdmin && !mpOverride.trim()) {
                 if (msgEl) {
-                    msgEl.textContent = "Vui lÃ²ng chá»n Ã­t nháº¥t má»™t tráº¡m hoáº·c nháº­p Mountpoint.";
+                    msgEl.textContent = "Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.";
                     msgEl.classList.remove('d-none');
                 }
                 return;
@@ -1495,7 +1598,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (!mpOverride.trim()) {
                 if (msgEl) {
-                    msgEl.textContent = "Mountpoint khÃ´ng Ä‘Æ°á»£c Ä‘á»ƒ trá»‘ng.";
+                    msgEl.textContent = "Mountpoint không được để trống.";
                     msgEl.classList.remove('d-none');
                 }
                 return;
@@ -1520,7 +1623,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = true;
-                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Äang táº¡o...';
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang tạo...';
 
                 const res = await fetch(`/api/rovers/create-multi`, {
                     method: 'POST',
@@ -1530,10 +1633,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 
                 if (!res.ok) {
                     const err = await res.json();
-                    throw new Error(err.detail || 'Lá»—i táº¡o Rover');
+                    throw new Error(err.detail || 'Lỗi tạo Rover');
                 }
 
-                showToast(`Táº¡o Rover "${payload.username}" thÃ nh cÃ´ng!`, 'success');
+                showToast(`Tạo Rover "${payload.username}" thành công!`, 'success');
                 bootstrap.Modal.getInstance(document.getElementById('createRoverModal')).hide();
                 createForm.reset();
                 document.querySelectorAll('.station-check').forEach(cb => cb.checked = false);
@@ -1547,7 +1650,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             } finally {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="bi bi-plus-circle me-2"></i>Táº¡o TÃ i Khoáº£n';
+                submitBtn.innerHTML = '<i class="bi bi-plus-circle me-2"></i>Tạo Tài Khoản';
             }
         });
     }
@@ -1612,7 +1715,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 renderCoordinatorExtraMountpoints('');
             }
-            showToast('ÄÃ£ táº£i láº¡i mountpoints live', 'info');
+            showToast('Đã tải lại mountpoints live', 'info');
         });
     }
 
@@ -1625,11 +1728,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 renderCoordinatorExtraMountpoints('edit-');
             }
-            showToast('ÄÃ£ táº£i láº¡i mountpoints live', 'info');
+            showToast('Đã tải lại mountpoints live', 'info');
         });
     }
     
-    // âœ… ADMIN ONLY: Tab Mountpoints
+    // ✅ ADMIN ONLY: Tab Mountpoints
     const mountpointsTab = document.getElementById('tab-mountpoints-li');
     if (mountpointsTab) {
         mountpointsTab.addEventListener('shown.bs.tab', async () => {
@@ -1637,7 +1740,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // âœ… ADMIN ONLY: Tab Blocklist
+    // ✅ ADMIN ONLY: Tab Blocklist
     const blocklistTab = document.getElementById('tab-blocklist-tab');
     if (blocklistTab) {
         blocklistTab.addEventListener('shown.bs.tab', async () => {
@@ -1656,10 +1759,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         await syncData();
         
         if (icon) icon.classList.remove('spin-anim');
-        showToast('ÄÃ£ Ä‘á»“ng bá»™ dá»¯ liá»‡u há»‡ thá»‘ng', 'info');
+        showToast('Đã đồng bộ dữ liệu hệ thống', 'info');
     });
 
-    // âœ… Load and render blocklist relationships
+    // ✅ Load and render blocklist relationships
     async function renderBlocklistMapping() {
         const container = document.getElementById('blocklist-mapping-container');
         if (!container) return;
@@ -1667,13 +1770,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         container.innerHTML = `
             <div class="text-center py-5">
                 <div class="spinner-border spinner-border-sm text-info me-2"></div>
-                <span class="text-muted">Äang táº£i danh sÃ¡ch quan há»‡ cháº·n...</span>
+                <span class="text-muted">Đang tải danh sách quan hệ chặn...</span>
             </div>
         `;
 
         try {
             const res = await fetch('/api/caster/blocklist', { headers: API_HEADERS });
-            if (!res.ok) throw new Error('KhÃ´ng thá»ƒ táº£i blocklist');
+            if (!res.ok) throw new Error('Không thể tải blocklist');
             const data = await res.json();
 
             if (data.length === 0) {
@@ -1681,13 +1784,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="premium-alert mb-4">
                         <div class="alert-content">
                             <i class="bi bi-info-circle-fill"></i>
-                            <span class="alert-text">Há»‡ thá»‘ng Ä‘ang hiá»ƒn thá»‹ cÃ¡c quy táº¯c cháº·n Ä‘á»™ng dá»±a trÃªn IP vÃ  Mountpoint. CÃ¡c quy táº¯c nÃ y Ä‘Æ°á»£c Ä‘á»“ng bá»™ 5s/láº§n tá»« Core Caster.</span>
+                            <span class="alert-text">Hệ thống đang hiển thị các quy tắc chặn động dựa trên IP và Mountpoint. Các quy tắc này được đồng bộ 5s/lần từ Core Caster.</span>
                         </div>
                     </div>
                     <div class="text-center py-5 opacity-50">
                         <i class="bi bi-shield-lock d-block mb-3 h1"></i>
-                        <p class="mb-0">Hiá»‡n táº¡i khÃ´ng cÃ³ quy táº¯c cháº·n chá»§ Ä‘á»™ng nÃ o Ä‘Æ°á»£c thiáº¿t láº­p.</p>
-                        <small>CÃ¡c tÃ i khoáº£n bá»‹ Block sáº½ hiá»ƒn thá»‹ tráº¡ng thÃ¡i BLOCKED trong danh sÃ¡ch Rover.</small>
+                        <p class="mb-0">Hiện tại không có quy tắc chặn chủ động nào được thiết lập.</p>
+                        <small>Các tài khoản bị Block sẽ hiển thị trạng thái BLOCKED trong danh sách Rover.</small>
                     </div>
                 `;
                 return;
@@ -1697,33 +1800,33 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="premium-alert mb-4">
                     <div class="alert-content">
                         <i class="bi bi-shield-fill-check text-success"></i>
-                        <span class="alert-text">CÃ³ <strong>${data.length}</strong> quy táº¯c cháº·n Ä‘ang hoáº¡t Ä‘á»™ng. CÃ¡c tÃ i khoáº£n nÃ y sáº½ bá»‹ tá»« chá»‘i káº¿t ná»‘i ngay láº­p tá»©c.</span>
+                        <span class="alert-text">Có <strong>${data.length}</strong> quy tắc chặn đang hoạt động. Các tài khoản này sẽ bị từ chối kết nối ngay lập tức.</span>
                     </div>
                 </div>
                 <div class="premium-table-card border-0 bg-transparent">
                     <table class="premium-table">
                         <thead>
                             <tr>
-                                <th>TÃ i khoáº£n</th>
+                                <th>Tài khoản</th>
                                 <th>Mountpoint</th>
-                                <th>NgÃ y cháº·n</th>
-                                <th>NgÆ°á»i cháº·n</th>
-                                <th>LÃ½ do</th>
-                                <th class="text-end">Thao tÃ¡c</th>
+                                <th>Ngày chặn</th>
+                                <th>Người chặn</th>
+                                <th>Lý do</th>
+                                <th class="text-end">Thao tác</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${data.map(bl => `
                                 <tr>
                                     <td><span class="text-white fw-bold">${bl.username}</span></td>
-                                    <td><span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-2 py-1">${bl.mountpoint || 'Táº¤T Cáº¢'}</span></td>
+                                    <td><span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-2 py-1">${bl.mountpoint || 'TẤT CẢ'}</span></td>
                                     <td><span class="text-muted small">${new Date(bl.blocked_at * 1000).toLocaleString('vi-VN')}</span></td>
                                     <td><span class="text-secondary small">${bl.blocked_by || 'System'}</span></td>
                                     <td><span class="text-muted small">${bl.reason || '--'}</span></td>
                                     <td class="text-end">
                                         <button class="btn btn-sm btn-outline-success unblock-direct-btn py-1 px-3 rounded-pill" 
                                             data-username="${bl.username}" data-mountpoint="${bl.mountpoint || ''}">
-                                            <i class="bi bi-unlock-fill me-1"></i> Má»Ÿ khÃ³a
+                                            <i class="bi bi-unlock-fill me-1"></i> Mở khóa
                                         </button>
                                     </td>
                                 </tr>
@@ -1738,7 +1841,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             container.querySelectorAll('.unblock-direct-btn').forEach(btn => {
                 btn.onclick = async () => {
                     const { username, mountpoint } = btn.dataset;
-                    if (!confirm(`XÃ¡c nháº­n má»Ÿ khÃ³a cho tÃ i khoáº£n "${username}"?`)) return;
+                    if (!confirm(`Xác nhận mở khóa cho tài khoản "${username}"?`)) return;
                     
                     try {
                         btn.disabled = true;
@@ -1747,8 +1850,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             headers: API_HEADERS,
                             body: JSON.stringify({ username, mountpoint: mountpoint || null })
                         });
-                        if (!res.ok) throw new Error('Má»Ÿ khÃ³a tháº¥t báº¡i');
-                        showToast(`ÄÃ£ má»Ÿ khÃ³a tÃ i khoáº£n ${username}`, 'success');
+                        if (!res.ok) throw new Error('Mở khóa thất bại');
+                        showToast(`Đã mở khóa tài khoản ${username}`, 'success');
                         renderBlocklistMapping(); // Refresh this tab
                         syncData(); // Refresh main list
                     } catch (err) {
@@ -1759,16 +1862,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
         } catch (e) {
-            container.innerHTML = `<div class="alert alert-danger">Lá»—i: ${e.message}</div>`;
+            container.innerHTML = `<div class="alert alert-danger">Lỗi: ${e.message}</div>`;
         }
     }
 
-    // âœ… Load and render mountpoints into tab
+    // ✅ Load and render mountpoints into tab
     async function loadAndRenderMountpoints() {
         const container = document.getElementById('mountpoints-container');
         if (!container) return;
 
-        container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Äang táº£i danh sÃ¡ch mountpoints...</span></div>';
+        container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
 
         try {
             const res = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
@@ -1780,7 +1883,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const hostOptions = Object.keys(data.by_host || {}).sort();
 
             if (sources.length === 0) {
-                container.innerHTML = '<div class="alert alert-warning text-center mt-3"><i class="bi bi-exclamation-triangle me-2"></i>KhÃ´ng cÃ³ mountpoint nÃ o</div>';
+                container.innerHTML = '<div class="alert alert-warning text-center mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Không có mountpoint nào</div>';
                 return;
             }
 
@@ -1788,19 +1891,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
                     <div class="d-flex gap-2">
                         <button type="button" class="btn btn-premium-primary btn-sm px-3" data-bs-toggle="modal" data-bs-target="#createMountpointModal">
-                            <i class="bi bi-plus-circle me-1"></i> Táº¡o mountpoint
+                            <i class="bi bi-plus-circle me-1"></i> Tạo mountpoint
                         </button>
                     </div>
                     <div class="search-input-wrapper" style="max-width: 400px;">
                         <i class="bi bi-search"></i>
-                        <input type="text" class="form-control premium-input" id="mountpoints-search" placeholder="TÃ¬m tÃªn, identifier, host...">
+                        <input type="text" class="form-control premium-input" id="mountpoints-search" placeholder="Tìm tên, identifier, host...">
                     </div>
                 </div>
 
                 <div class="mb-4">
                     <div class="premium-tabs nav nav-pills" id="domain-filter-pills" role="tablist">
                         <button class="nav-link active" data-domain="all">
-                            <i class="bi bi-grid-fill me-1"></i> Táº¥t cáº£ <span class="badge bg-white bg-opacity-25 ms-1">${sources.length}</span>
+                            <i class="bi bi-grid-fill me-1"></i> Tất cả <span class="badge bg-white bg-opacity-25 ms-1">${sources.length}</span>
                         </button>
                         ${domains.map(d => `
                             <button class="nav-link" data-domain="${d}">
@@ -1877,12 +1980,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="mt-4 p-3 bg-dark-subtle rounded border border-secondary border-opacity-25 small">
                     <div class="d-flex align-items-center gap-2 text-info mb-2">
                         <i class="bi bi-lightbulb"></i>
-                        <span class="fw-bold text-uppercase" style="letter-spacing: 0.5px">HÆ°á»›ng dáº«n nhanh</span>
+                        <span class="fw-bold text-uppercase" style="letter-spacing: 0.5px">Hướng dẫn nhanh</span>
                     </div>
                     <ul class="text-muted mb-0 ps-3">
-                        <li>Sá»­ dá»¥ng cá»™t <strong>Mountpoint</strong> khi cáº¥u hÃ¬nh quyá»n truy cáº­p cho tÃ i khoáº£n Rover.</li>
-                        <li>Tráº¡ng thÃ¡i <strong>AUTH</strong> hiá»ƒn thá»‹ cÃ¡c luá»“ng yÃªu cáº§u xÃ¡c thá»±c tÃ i khoáº£n.</li>
-                        <li>Nháº¥n vÃ o biá»ƒu tÆ°á»£ng ðŸ“‹ Ä‘á»ƒ sao chÃ©p nhanh tÃªn Mountpoint.</li>
+                        <li>Sử dụng cột <strong>Mountpoint</strong> khi cấu hình quyền truy cập cho tài khoản Rover.</li>
+                        <li>Trạng thái <strong>AUTH</strong> hiển thị các luồng yêu cầu xác thực tài khoản.</li>
+                        <li>Nhấn vào biểu tượng 📋 để sao chép nhanh tên Mountpoint.</li>
                     </ul>
                 </div>
             `;
@@ -1929,7 +2032,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 btn.onclick = () => {
                     const mp = btn.dataset.mp;
                     navigator.clipboard.writeText(mp);
-                    showToast(`ÄÃ£ copy: ${mp}`, 'success');
+                    showToast(`Đã copy: ${mp}`, 'success');
                 };
             });
 
@@ -1937,7 +2040,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             container.querySelectorAll('.delete-mp').forEach(btn => {
                 btn.onclick = async () => {
                     const { host, identifier, mountpoint } = btn.dataset;
-                    if (!mountpoint || !confirm(`Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n xÃ³a Mountpoint "${mountpoint}"?`)) return;
+                    if (!mountpoint || !confirm(`Bạn có chắc chắn muốn xóa Mountpoint "${mountpoint}"?`)) return;
 
                     try {
                         btn.disabled = true;
@@ -1946,8 +2049,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             headers: API_HEADERS,
                             body: JSON.stringify({ host, identifier, mountpoint })
                         });
-                        if (!res.ok) throw new Error((await res.json())?.detail || 'Lá»—i khi xÃ³a');
-                        showToast('ÄÃ£ xÃ³a Mountpoint thÃ nh cÃ´ng', 'warning');
+                        if (!res.ok) throw new Error((await res.json())?.detail || 'Lỗi khi xóa');
+                        showToast('Đã xóa Mountpoint thành công', 'warning');
                         await fetchCasterSources({ force: true });
                         loadAndRenderMountpoints();
                     } catch (err) {
@@ -1985,9 +2088,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             headers: API_HEADERS,
                             body: JSON.stringify(payload)
                         });
-                        if (!res.ok) throw new Error((await res.json())?.detail || 'Lá»—i khi táº¡o');
+                        if (!res.ok) throw new Error((await res.json())?.detail || 'Lỗi khi tạo');
                         
-                        showToast('ÄÃ£ táº¡o Mountpoint thÃ nh cÃ´ng', 'success');
+                        showToast('Đã tạo Mountpoint thành công', 'success');
                         const modalEl = document.getElementById('createMountpointModal');
                         if (modalEl) {
                             const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
@@ -2007,7 +2110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         } catch (e) {
             console.error("[Mountpoints]", e);
-            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lá»—i táº£i dá»¯ liá»‡u: ${e.message}</div>`;
+            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải dữ liệu: ${e.message}</div>`;
         }
     }
 
@@ -2037,11 +2140,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             const password = cell.dataset.password;
             const icon = e.target;
 
-            if (masked.textContent === 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢') {
+            if (masked.textContent === '••••••••') {
                 masked.textContent = password || '******';
                 icon.classList.replace('bi-eye', 'bi-eye-slash');
             } else {
-                masked.textContent = 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢';
+                masked.textContent = '••••••••';
                 icon.classList.replace('bi-eye-slash', 'bi-eye');
             }
         }

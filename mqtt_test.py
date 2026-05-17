@@ -1,80 +1,107 @@
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
 import time
-import random
-import json
-import ssl
-from datetime import datetime
+import sys
 
-# Cấu hình MQTT Broker
-BROKER = "mqtt.watertech.vn"
-PORT = 8883
-USERNAME = "watertech"
-PASSWORD = "watertech@2026"
-TOPIC = "test/sensor/rain"  # Bạn có thể đổi topic theo chuẩn hệ thống
+# --- THÔNG TIN CẤU HÌNH ---
+BROKER = "aitogy.asia"
+PORT = 1883
+USER = "mqttUser"
+PASSWORD = "MqttPassword123$%^"
+IMEI = "860549070087338"
+UPLOAD_TOPIC = f"device/{IMEI}/upload"
 
-# Các hàm callback để kiểm tra trạng thái kết nối
+# Lệnh FRESET, có thể một số thiết bị không cần \r\n, mình sẽ test cả 2
+PAYLOAD_CMD_CRLF = b"FRESET\r\n"
+PAYLOAD_CMD_RAW = b"FRESET"
+
+# Mở rộng thêm các topic
+TEST_TOPICS = [
+    "4gdata101",
+    f"device/{IMEI}/download",
+    f"device/{IMEI}/cmd",
+    "4gdata101/download",
+    f"device/4gdata101/{IMEI}/download", # Kiểu lồng ghép ID và IMEI
+    f"cmd/{IMEI}",
+    IMEI # Có một số phần cứng Tàu chỉ sub đúng IMEI của nó
+]
+
+device_is_online = False
+
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
-        print("✅ Đã kết nối thành công tới Broker!")
+        print("[+] Đã kết nối thành công tới MQTT Broker!")
+        client.subscribe(UPLOAD_TOPIC, qos=1)
+        print(f"[*] Đang PHỤC KÍCH chờ thiết bị gửi data lên: {UPLOAD_TOPIC}")
+        print("    (Hãy cắm điện thiết bị và chờ nó nháy đèn 4G gửi data...)")
+        print("-" * 60)
     else:
-        print(f"❌ Kết nối thất bại, mã lỗi: {rc}")
+        print(f"[-] Lỗi kết nối, mã lỗi: {rc}")
 
-def on_publish(client, userdata, mid, reason_code=None, properties=None):
-    print(f"   -> Broker đã nhận tin nhắn (mid={mid})")
-
-# Khởi tạo client (Hỗ trợ paho-mqtt v2.x)
-try:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-except AttributeError:
-    # Fallback cho paho-mqtt v1.x
-    client = mqtt.Client()
-
-client.on_connect = on_connect
-client.on_publish = on_publish
-
-# Cấu hình xác thực và TLS
-client.username_pw_set(USERNAME, PASSWORD)
-
-# Khởi tạo TLS tiêu chuẩn
-client.tls_set(cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS)
-
-# Chú ý: Nếu broker của bạn sử dụng chứng chỉ tự ký (self-signed certificate) 
-# và bị lỗi SSL Certificate Verify Failed, hãy bỏ comment dòng dưới đây:
-# client.tls_insecure_set(True)
-
-try:
-    print(f"Đang kết nối tới tls://{BROKER}:{PORT}...")
-    client.connect(BROKER, PORT, 60)
+def on_message(client, userdata, msg):
+    global device_is_online
+    print(f"\n[RECEIVED DATA] => Topic: {msg.topic}")
+    try:
+        print(f"                => Data: {msg.payload.decode('utf-8')}")
+    except:
+        print(f"                => Data (Raw): {msg.payload}")
     
-    # Chạy vòng lặp xử lý ngầm
+    # Đánh dấu là thiết bị đã online
+    if not device_is_online:
+        device_is_online = True
+
+def main():
+    # Sử dụng API Version 2 để fix lỗi DeprecationWarning
+    client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2, client_id="PythonTestScript")
+    client.username_pw_set(USER, PASSWORD)
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    print(f"[*] Đang kết nối tới {BROKER}:{PORT}...")
+    try:
+        client.connect(BROKER, PORT, 60)
+    except Exception as e:
+        print(f"[-] Lỗi không thể kết nối: {e}")
+        sys.exit(1)
+
     client.loop_start()
     
-    # Chờ 2 giây để đảm bảo callback on_connect được gọi
-    time.sleep(2)
+    # --- BƯỚC 1: CHỜ THIẾT BỊ ONLINE ---
+    timeout = 300 # Chờ tối đa 5 phút
+    waited = 0
+    while not device_is_online and waited < timeout:
+        time.sleep(1)
+        waited += 1
+        if waited % 10 == 0:
+            print(f"    ... Vẫn đang chờ thiết bị gửi data ({waited}s) ...")
+            
+    if not device_is_online:
+        print("\n[-] Quá thời gian 5 phút mà thiết bị chưa gửi gì lên. Hãy kiểm tra lại SIM/nguồn của thiết bị.")
+        client.loop_stop()
+        client.disconnect()
+        return
 
-    while True:
-        # Tạo dữ liệu đo mưa giả lập (ví dụ từ 0.0 đến 45.5 mm)
-        rain_value = round(random.uniform(0.0, 45.5), 1)
+    # --- BƯỚC 2: THIẾT BỊ ĐÃ ONLINE, BẮT ĐẦU XẢ LỆNH ---
+    print("\n[!] THIẾT BỊ ĐÃ ONLINE! BẮT ĐẦU QUÁ TRÌNH BẮN LỆNH TEST...")
+    # Tạm nghỉ 2s để thiết bị rảnh rang sau khi gửi data
+    time.sleep(2) 
+    
+    for topic in TEST_TOPICS:
+        print(f"[*] Đang gửi lệnh (FRESET\\r\\n) tới topic: {topic}")
+        # Gửi kèm QoS=1 để Broker đảm bảo chuyển tới thiết bị (nếu nó có sub)
+        client.publish(topic, PAYLOAD_CMD_CRLF, qos=1)
+        time.sleep(4)
         
-        payload = {
-            "station_id": "ST-TEST-01",
-            "rainfall_mm": rain_value,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        msg = json.dumps(payload)
-        print(f"\nĐang publish: {msg} vào topic '{TOPIC}'")
-        
-        # Publish dữ liệu
-        client.publish(TOPIC, msg, qos=1)
-        
-        time.sleep(5)
+        print(f"[*] Đang gửi lệnh (FRESET thuần) tới topic: {topic}")
+        client.publish(topic, PAYLOAD_CMD_RAW, qos=1)
+        time.sleep(4)
 
-except KeyboardInterrupt:
-    print("\n⚠️ Đã dừng gửi dữ liệu test.")
-except Exception as e:
-    print(f"\n❌ Đã xảy ra lỗi: {e}")
-finally:
+    print("\n[*] Đã xả xong toàn bộ kịch bản. Theo dõi xem nó có reboot và nhả data lại không (15s)...")
+    time.sleep(15)
+    
     client.loop_stop()
     client.disconnect()
-    print("Đã ngắt kết nối MQTT.")
+    print("[*] Kết thúc.")
+
+if __name__ == "__main__":
+    main()

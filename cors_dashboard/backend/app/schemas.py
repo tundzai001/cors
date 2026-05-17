@@ -201,6 +201,7 @@ class RoverAccountResponse(RoverAccountBase):
     rtcm_cycle_enabled: bool = False
     rtcm_disconnect_interval_seconds: int = 300
     rtcm_disconnect_duration_seconds: int = 10
+    expires_at: Optional[int] = None
     
     class Config: from_attributes = True
 

@@ -2607,3 +2607,189 @@ html {
     transition: width 320ms cubic-bezier(0.23, 1, 0.32, 1), background-color 220ms ease;
     will-change: width;
 }
+
+/* ==============================================================================
+   PUBLIC MAP MODAL
+   ============================================================================== */
+
+#publicMapModal .modal-content {
+    background: #0b1118 !important;
+}
+
+#publicMapModal .public-map-header {
+    min-height: 68px;
+    padding: 12px 16px;
+    gap: 16px;
+    border: 0;
+    background:
+        linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(8, 13, 22, 0.92)),
+        radial-gradient(circle at 18% 0%, rgba(56, 189, 248, 0.18), transparent 38%);
+    box-shadow:
+        0 14px 32px rgba(2, 6, 23, 0.34),
+        inset 0 -1px 0 rgba(148, 163, 184, 0.16);
+    backdrop-filter: blur(18px);
+    position: relative;
+    z-index: 1056;
+}
+
+#publicMapModal .public-map-header::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: linear-gradient(90deg, rgba(34, 211, 238, 0.5), rgba(34, 197, 94, 0.26), transparent);
+    pointer-events: none;
+}
+
+#publicMapModal .public-map-title-wrap {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+#publicMapModal .public-map-icon {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    color: #67e8f9;
+    background: linear-gradient(135deg, rgba(8, 145, 178, 0.28), rgba(15, 23, 42, 0.82));
+    border: 1px solid rgba(103, 232, 249, 0.28);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+#publicMapModal .public-map-icon i {
+    font-size: 1.25rem;
+}
+
+#publicMapModal .public-map-title-text {
+    min-width: 0;
+}
+
+#publicMapModal .public-map-title-text .modal-title {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1rem;
+    font-weight: 800;
+    line-height: 1.2;
+    letter-spacing: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#publicMapModal .public-map-title-text span {
+    display: block;
+    margin-top: 3px;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#publicMapModal .public-map-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-left: auto;
+}
+
+#publicMapModal .public-map-chip {
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 11px;
+    border-radius: 999px;
+    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
+#publicMapModal .public-map-chip i {
+    font-size: 0.52rem;
+}
+
+#publicMapModal .public-map-chip-online i {
+    color: #22c55e;
+}
+
+#publicMapModal .public-map-chip-offline i {
+    color: #ef4444;
+}
+
+#publicMapModal .public-map-close {
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.74);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    transition:
+        color 180ms ease,
+        background-color 180ms ease,
+        border-color 180ms ease,
+        transform 180ms ease;
+}
+
+#publicMapModal .public-map-close:hover {
+    color: #fff;
+    background: rgba(239, 68, 68, 0.16);
+    border-color: rgba(248, 113, 113, 0.38);
+    transform: translateY(-1px);
+}
+
+#publicMapModal .modal-body {
+    height: calc(100vh - 68px);
+    background: #0b1118;
+}
+
+@media (max-width: 768px) {
+    #publicMapModal .public-map-header {
+        min-height: 64px;
+        padding: 10px 12px;
+    }
+
+    #publicMapModal .public-map-icon {
+        width: 38px;
+        height: 38px;
+        flex-basis: 38px;
+        border-radius: 10px;
+    }
+
+    #publicMapModal .public-map-title-text .modal-title {
+        font-size: 0.94rem;
+    }
+
+    #publicMapModal .public-map-title-text span {
+        font-size: 0.72rem;
+    }
+
+    #publicMapModal .public-map-chip {
+        display: none;
+    }
+
+    #publicMapModal .public-map-close {
+        width: 38px;
+        height: 38px;
+        flex: 0 0 38px;
+    }
+
+    #publicMapModal .modal-body {
+        height: calc(100vh - 64px);
+    }
+}

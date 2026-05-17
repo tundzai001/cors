@@ -1,0 +1,110 @@
+{
+    "mqtt": {
+        "broker": "45.117.179.134",
+        "port": 1883,
+        "user": "mqttUser",
+        "pass": "MqttPassword123$%^"
+    },
+    "ntrip": {
+        "source_host": "rtkvietnam.vn",
+        "source_port": 1508,
+        "source_user": "aitogy123",
+        "source_pass": "aitogy123",
+        "target_host": "aitogy.com.vn",
+        "target_port": 2101,
+        "target_pass": "12345",
+        "version": 1,
+        "reconnect_interval": 15
+    },
+    "station_list": [
+        {
+            "source_mp": "YBI_XuanAI",
+            "lat": 21.850058284,
+            "lon": 104.705661679,
+            "alt": 30.8801,
+            "target_mp": "YB.VanYen"
+        },
+        {
+            "source_mp": "TNN_VoNhai",
+            "lat": 21.75413356,
+            "lon": 106.07747532,
+            "alt": 61.9418,
+            "target_mp": "TN.VoNhai"
+        },
+        {
+            "source_mp": "TNN_TPThaiNguyen",
+            "lat": 21.573653528,
+            "lon": 105.840291958,
+            "alt": 11.1829,
+            "target_mp": "TN.TP"
+        },
+        {
+            "source_mp": "TNN_DaiTu",
+            "lat": 21.633503578,
+            "lon": 105.637082715,
+            "alt": 47.8438,
+            "target_mp": "TN.DaiTu"
+        },
+        {
+            "source_mp": "TNN_PhoYen",
+            "lat": 21.416232244,
+            "lon": 105.86204898,
+            "alt": 6.469,
+            "target_mp": "TN.PhoYen"
+        },
+        {
+            "source_mp": "BG.TP",
+            "lat": 21.279629,
+            "lon": 106.212334,
+            "alt": 0.0,
+            "target_mp": "BG.TP"
+        },
+        {
+            "source_mp": "HN.QuocOai",
+            "lat": 20.926164,
+            "lon": 105.600298,
+            "alt": 0.0,
+            "target_mp": "HN.QuocOai"
+        },
+        {
+            "source_mp": "BG.LucNam",
+            "lat": 21.311513,
+            "lon": 106.386418,
+            "alt": 0.0,
+            "target_mp": "BG.LucNam"
+        },
+        {
+            "source_mp": "HB.TP",
+            "lat": 20.806464,
+            "lon": 105.358762,
+            "alt": 0.0,
+            "target_mp": "HB.TP"
+        }
+    ],
+    "monitor_list": [],
+    "mqtt_source_list": [
+        {
+            "serial": "GEOTEK_LTE_860549070087338",
+            "name": "Geotek LTE 860549070087338",
+            "mqtt_broker": "aitogy.click",
+            "mqtt_port": 1883,
+            "mqtt_user": "mqttUser",
+            "mqtt_pass": "MqttPassword123$%^",
+            "topic": "device/860549070087338/upload",
+            "command_host": "aitogy.com.vn",
+            "command_port": 2101,
+            "command_pass": "12345",
+            "command_mp": "test_lte",
+            "nmea_port": "com2",
+            "rtcm_port": "com2",
+            "target_host": "aitogy.com.vn",
+            "target_port": 2101,
+            "target_pass": "12345",
+            "target_mp": "Geotek_LTE",
+            "server1_enabled": true,
+            "server1_stream_on_demand": true,
+            "server1_stream_active": false,
+            "sensor_type": "Unicorecomm"
+        }
+    ]
+}

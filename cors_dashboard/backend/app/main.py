@@ -997,6 +997,10 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
             logger.warning("[NTRIP MQTT] Missing 'mountpoint' for start command")
             return
 
+        if mountpoint and mountpoint.lower().strip() == 'test_lte':
+            logger.info("[NTRIP MQTT] Bypassing start command for command/test mountpoint 'test_lte'")
+            return
+
         # === CHECK BLOCKLIST TRƯỚC KHI MỞ LUỒNG ===
         block_reason = await _check_rover_blocked(client_instance_id, mountpoint)
         if block_reason:
@@ -2358,6 +2362,11 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
         msg = f"BLOCKED: {reason}"
         logger.warning(f"[NTRIP Wake] {msg} for {client_id}@{mountpoint}")
         return PlainTextResponse(f"WAKE_STATUS: blocked\n{msg}")
+
+    # 1.5. Bypass cho command mountpoints (ví dụ: test_lte dùng cho Geotek remote command)
+    if mountpoint and mountpoint.lower().strip() == 'test_lte':
+        logger.info("[NTRIP Wake] Bypassing wake for command/test mountpoint 'test_lte'")
+        return PlainTextResponse("WAKE_STATUS: ok\nSTREAM_HINT: streaming\nMOUNTPOINT: test_lte\nOK")
 
     # 2. Bật trạm nếu hợp lệ
     try:
@@ -4197,29 +4206,45 @@ async def create_rover_for_base(
     if rover_data.expiry_days > 0:
         duration_seconds = rover_data.expiry_days * 86400  # 1 ngÃ y = 86400 giây
 
-    # 3. GỌI TCP ĐẾN NTRIP CASTER
-    try:
-        caster = await get_caster_client(db)
-        
-        creator_identifier = current_user.username 
-        
-        await caster.create_user(
-            creator=creator_identifier,
-            username=rover_data.username,
-            password=rover_data.password,
-            mountpoints=target_mountpoint, 
-            expiry_seconds=duration_seconds, 
-            max_users=1,
-            show_position=rover_data.show_position,
-            rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
-            rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
-            rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds,
-        )
-        logger.info(f"âœ“ Created Rover '{rover_data.username}' for MP '{target_mountpoint}'")
-        
-    except Exception as e:
-        logger.error(f"Failed to create rover on Caster: {e}")
-        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(e)}")
+    # 3. GỌI TCP ĐẾN NTRIP CASTER (Tạo trên toàn bộ Caster được cấu hình)
+    hosts, config = _read_caster_config_from_env()
+    port = int(config.get("port") or settings.CASTER_PORT or 2101)
+    
+    target_hosts = [str(h).strip() for h in hosts if h.strip()]
+    if not target_hosts:
+        default_host = str(config.get("host") or settings.CASTER_HOST or "").strip()
+        if default_host:
+            target_hosts = [default_host]
+
+    if not target_hosts:
+        raise HTTPException(status_code=500, detail="Không cấu hình được NTRIP Caster Server.")
+
+    creator_identifier = current_user.username 
+    created_any = False
+    
+    for host in target_hosts:
+        try:
+            from app.caster_client import CasterClient
+            caster = CasterClient(host, port)
+            await caster.create_user(
+                creator=creator_identifier,
+                username=rover_data.username,
+                password=rover_data.password,
+                mountpoints=target_mountpoint, 
+                expiry_seconds=duration_seconds, 
+                max_users=1,
+                show_position=rover_data.show_position,
+                rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
+                rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
+                rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds,
+            )
+            created_any = True
+            logger.info(f"✓ Created Rover '{rover_data.username}' for MP '{target_mountpoint}' on Caster {host}")
+        except Exception as host_err:
+            logger.error(f"Failed to create rover '{rover_data.username}' on Caster {host}: {host_err}")
+
+    if not created_any:
+        raise HTTPException(status_code=502, detail="Không thể tạo tài khoản trên bất kỳ NTRIP Caster Server nào.")
 
     # 4. Lưu vÃ o DB
     new_rover = await crud.create_rover_account(
@@ -4322,13 +4347,14 @@ async def update_rover(
             updated_target_hosts = list(old_hosts_set or live_hosts_set)
 
         if not updated_target_hosts:
-            # Last fallback to default configured host
+            # Last fallback to all configured hosts to ensure complete sync
             env_hosts, env_cfg = _read_caster_config_from_env()
-            default_h = str(env_cfg.get("host") or settings.CASTER_HOST or "").strip()
-            if default_h:
-                updated_target_hosts = [default_h]
-            elif env_hosts:
-                updated_target_hosts = [str(env_hosts[0]).strip()]
+            if env_hosts:
+                updated_target_hosts = [str(h).strip() for h in env_hosts if h.strip()]
+            else:
+                default_h = str(env_cfg.get("host") or settings.CASTER_HOST or "").strip()
+                if default_h:
+                    updated_target_hosts = [default_h]
 
         # Keep order and deduplicate
         seen_hosts = set()
@@ -4642,52 +4668,78 @@ async def sync_rover_by_username(
                 
             rover = await crud.update_rover_account(db, rover.id, update_data)
 
-    # 5. ĐỒNG BỘ SANG CASTER
+    # 5. ĐỒNG BỘ SANG CASTER (Đồng bộ trên toàn bộ Caster được cấu hình)
     try:
-        caster = await get_caster_client(db)
+        hosts, config = _read_caster_config_from_env()
+        port = int(config.get("port") or settings.CASTER_PORT or 2101)
         
+        target_hosts = []
+        if update_req.target_casters:
+            target_hosts = [str(h).strip() for h in update_req.target_casters if str(h).strip()]
+        
+        if not target_hosts:
+            if rover.target_casters:
+                target_hosts = [h.strip() for h in rover.target_casters.split(";") if h.strip()]
+            else:
+                target_hosts = [str(h).strip() for h in hosts if h.strip()]
+
+        if not target_hosts:
+            default_host = str(config.get("host") or settings.CASTER_HOST or "").strip()
+            if default_host:
+                target_hosts = [default_host]
+
+        # Deduplicate
+        seen_hosts = set()
+        target_hosts = [h for h in target_hosts if h and not (h in seen_hosts or seen_hosts.add(h))]
+
         # Tính toán thời hạn
         duration_seconds = 315360000 # Default 10 years
         if update_req.expiry_days:
             duration_seconds = update_req.expiry_days * 86400
 
-        # Nếu CHỈ thay đổi show_position, hãy dùng lệnh nhẹ toggle_show_pos để tránh ghi đè MP
-        # Nhưng thường khi Edit, Dashboard sẽ gửi full payload. 
-        # CasterClient.create_user thực hiện ghi đè toàn bộ bản ghi USERTABLE.
-        
-        created_ok = await caster.create_user(
-            creator=current_user.username,
-            username=username,
-            password=update_req.password or rover.password,
-            mountpoints=update_req.mountpoints or rover.mountpoints,
-            expiry_seconds=duration_seconds,
-            max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
-            show_position=update_req.show_position if update_req.show_position is not None else rover.show_position,
-            rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False) if update_req.rtcm_cycle_enabled is None else update_req.rtcm_cycle_enabled),
-            rtcm_disconnect_interval_seconds=int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) if update_req.rtcm_disconnect_interval_seconds is None else update_req.rtcm_disconnect_interval_seconds),
-        )
-        if not created_ok:
-            logger.warning(f"Sync-by-username did not get caster confirmation for '{username}'")
-        
-        # Sync show_position again specifically to be safe
-        if update_req.show_position is not None:
-            toggle_id_candidates = []
-            for ident in (current_user.username, "admin", "id"):
-                ident_s = str(ident or "").strip()
-                if ident_s and ident_s not in toggle_id_candidates:
-                    toggle_id_candidates.append(ident_s)
+        for host in target_hosts:
+            try:
+                from app.caster_client import CasterClient
+                caster = CasterClient(host, port)
+                created_ok = await caster.create_user(
+                    creator=current_user.username,
+                    username=username,
+                    password=update_req.password or rover.password,
+                    mountpoints=update_req.mountpoints or rover.mountpoints,
+                    expiry_seconds=duration_seconds,
+                    max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
+                    show_position=update_req.show_position if update_req.show_position is not None else rover.show_position,
+                    rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False) if update_req.rtcm_cycle_enabled is None else update_req.rtcm_cycle_enabled),
+                    rtcm_disconnect_interval_seconds=int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) if update_req.rtcm_disconnect_interval_seconds is None else update_req.rtcm_disconnect_interval_seconds),
+                )
+                if not created_ok:
+                    logger.warning(f"Sync-by-username did not get caster confirmation for '{username}' on host {host}")
+                
+                # Sync show_position again specifically to be safe
+                if update_req.show_position is not None:
+                    toggle_id_candidates = []
+                    for ident in (current_user.username, "admin", "id"):
+                        ident_s = str(ident or "").strip()
+                        if ident_s and ident_s not in toggle_id_candidates:
+                            toggle_id_candidates.append(ident_s)
 
-            toggle_ok = False
-            for ident in toggle_id_candidates:
-                if await caster.toggle_show_pos(ident, username, update_req.show_position):
-                    toggle_ok = True
-                    break
-            if not toggle_ok:
-                logger.warning(f"Sync-by-username could not confirm show_position toggle for '{username}'")
-            
+                    toggle_ok = False
+                    for ident in toggle_id_candidates:
+                        if await caster.toggle_show_pos(ident, username, update_req.show_position):
+                            toggle_ok = True
+                            break
+                    if not toggle_ok:
+                        logger.warning(f"Sync-by-username could not confirm show_position toggle for '{username}' on host {host}")
+            except Exception as host_err:
+                logger.error(f"Failed to sync '{username}' to caster host {host}: {host_err}")
+
+        # Cập nhật target_casters trong DB
+        if target_hosts:
+            db_target_casters = ";".join(target_hosts)
+            if db_target_casters != rover.target_casters:
+                rover = await crud.update_rover_account(db, rover.id, {"target_casters": db_target_casters})
     except Exception as e:
         logger.error(f"Sync Caster Error for '{username}': {e}")
-        # Không raise lỗi 500 nếu DB đã lưu xong, chỉ cảnh báo
         
     return rover
 
@@ -4777,11 +4829,14 @@ async def create_multi_base_rover(
         # Determine which casters to send to
         target_hosts = request.target_casters or []
         if not target_hosts:
-            # Fallback to default caster
-            env_cfg = _read_caster_config_from_env()
-            default_host = str(env_cfg.get("host") or settings.CASTER_HOST or "")
-            if default_host:
-                target_hosts = [default_host]
+            # Fallback to all configured hosts to ensure complete sync
+            env_hosts, env_cfg = _read_caster_config_from_env()
+            if env_hosts:
+                target_hosts = [str(h).strip() for h in env_hosts if h.strip()]
+            else:
+                default_host = str(env_cfg.get("host") or settings.CASTER_HOST or "")
+                if default_host:
+                    target_hosts = [default_host]
 
         if not target_hosts:
             raise ValueError("No target caster configured.")

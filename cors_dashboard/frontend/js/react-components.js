@@ -288,6 +288,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const config = device.service_config || {};
         const ntripStatus = device.ntrip_status || {};
         const ntripStats = device.ntrip_stats || {};
+        const mqttStats = device.mqtt_stats || {};
         const streamState = device.ntrip_stream_state || {};
 
         const toBool = (value, defaultValue = false) => {
@@ -322,8 +323,10 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const s1Enabled = toBool(config.server1_enabled, isServerConfigured(1));
         const s2Enabled = toBool(config.server2_enabled, isServerConfigured(2));
 
-        const rtcmInputBps = Number(ntripStats.rtcm_input_bps || ntripStats.rtcm_in_bps || 0);
-        const hasRtcmInputMetric = Object.prototype.hasOwnProperty.call(ntripStats, 'rtcm_input_bps') || Object.prototype.hasOwnProperty.call(ntripStats, 'rtcm_in_bps');
+        const rtcmInputBps = Number(ntripStats.rtcm_input_bps || ntripStats.rtcm_in_bps || mqttStats.source_bps || 0);
+        const hasRtcmInputMetric = Object.prototype.hasOwnProperty.call(ntripStats, 'rtcm_input_bps')
+            || Object.prototype.hasOwnProperty.call(ntripStats, 'rtcm_in_bps')
+            || Object.prototype.hasOwnProperty.call(mqttStats, 'source_bps');
 
         const s1State = streamState.server1 || {};
         const s1OnDemand = toBool(s1State.on_demand, toBool(config.server1_stream_on_demand, toBool(config.stream_on_demand, false)));
@@ -445,6 +448,11 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                 </div>
 
                     <span className="badge">{device.detected_chip_type || 'UNK'}</span>
+                    {device.is_lte && (
+                        <span className="badge bg-primary ms-1" title="Kết nối 4G/LTE">
+                            <i className="bi bi-reception-4 me-1"></i>4G
+                        </span>
+                    )}
             </div>
 
             {(metrics.statusColorClass === 'online' || metrics.statusColorClass === 'sleep') && (metrics.s1Enabled || metrics.s2Enabled) && (
@@ -2113,6 +2121,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const gga = nmeaData.gga || {};
             const gsa = nmeaData.gsa || {};
             const sats = Object.values(nmeaData.satellites || {}).filter(s => s.snr > 0);
+            const satCount = sats.length || gga.satellites || 0;
 
             const avgSnr = sats.length > 0
                 ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length
@@ -2131,8 +2140,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     history: [...prev.fixQuality.history, gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1].slice(-30)
                 },
                 satellites: {
-                    value: sats.length || 0,
-                    history: [...prev.satellites.history, sats.length || 0].slice(-30)
+                    value: satCount,
+                    history: [...prev.satellites.history, satCount].slice(-30)
                 },
                 accuracy: {
                     value: currentHacc,
@@ -3488,6 +3497,11 @@ const DetailsPanel = memo(function DetailsPanel({
 
                     {/* Các Badge trạng thái */}
                     <div className="d-flex align-items-center">
+                        {device.is_lte && (
+                            <span className="badge bg-primary me-2" title="Trạm kết nối qua 4G/LTE">
+                                <i className="bi bi-reception-4 me-1"></i>LTE
+                            </span>
+                    )}
                         {!device.is_synced && canEdit && (
                             <div className="me-2 position-relative group-hover-target">
                                 <button

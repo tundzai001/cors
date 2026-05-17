@@ -1,4 +1,4 @@
-﻿/**
+/**
  * HomePageEnterprise Component - Master Pro Landing
  * GNSS/Satellite themed with Vietnam S-shape, inline login
  */
@@ -852,6 +852,168 @@ const LoginPanel = ({ isOpen, onClose }) => {
 };
 
 /* ============================================================
+   PRODUCT SHOWCASE - Storytelling Scroll Animation
+   ============================================================ */
+const ProductShowcase = () => {
+    return React.createElement('section', { className: 'product-showcase' },
+        // === SECTION HEADER (above pinned area) ===
+        React.createElement('div', { className: 'product-showcase-header' },
+            React.createElement('div', { className: 'product-showcase-kicker' },
+                React.createElement('i', { className: 'bi bi-cpu' }),
+                'Khám phá thiết bị'
+            ),
+            React.createElement('h2', { className: 'product-showcase-title' },
+                'Aitogy ',
+                React.createElement('span', null, 'B290')
+            ),
+            React.createElement('p', { className: 'product-showcase-sub' },
+                'GNSS Receiver thế hệ mới — thiết kế tại Việt Nam, chuẩn công nghiệp, độ chính xác centimet.'
+            )
+        ),
+
+        // === PINNED VIEWPORT (GSAP pins this) ===
+        React.createElement('div', { className: 'product-showcase-pin' },
+            // Grid overlay
+            React.createElement('div', { className: 'showcase-grid-overlay', 'aria-hidden': 'true' }),
+
+            // Glow rings
+            React.createElement('div', { className: 'device-glow-ring', 'aria-hidden': 'true' }),
+            React.createElement('div', { className: 'device-glow-ring-2', 'aria-hidden': 'true' }),
+
+            // === DEVICE STAGE ===
+            React.createElement('div', { className: 'device-stage' },
+                // Layer 1: Surround (side view)
+                React.createElement('div', { className: 'device-layer device-layer-surround' },
+                    React.createElement('img', { src: '/img/surround.png', alt: 'Aitogy B290 — Side view', loading: 'eager' })
+                ),
+                // Layer 2: Top view
+                React.createElement('div', { className: 'device-layer device-layer-top' },
+                    React.createElement('img', { src: '/img/top.jpg', alt: 'Aitogy B290 — Top antenna dome', loading: 'eager' })
+                ),
+                // Layer 3: Under (bottom)
+                React.createElement('div', { className: 'device-layer device-layer-under' },
+                    React.createElement('img', { src: '/img/under.jpg', alt: 'Aitogy B290 — Bottom with ports', loading: 'eager' })
+                ),
+                // Layer 4: Inside (PCB)
+                React.createElement('div', { className: 'device-layer device-layer-inside' },
+                    React.createElement('img', { src: '/img/inside.jpg', alt: 'Aitogy B290 — Internal PCB with GNSS chip', loading: 'eager' })
+                )
+            ),
+
+            // Scan line (X-ray effect for inside scene)
+            React.createElement('div', { className: 'device-scan-line', 'aria-hidden': 'true' }),
+
+            // === TEXT PANELS (one per scene) ===
+
+            // Scene 1 text: Surround
+            React.createElement('div', { className: 'scene-text-panel scene-text-left scene-text-surround' },
+                React.createElement('div', { className: 'scene-text-label' }, 'Thiết kế'),
+                React.createElement('h3', { className: 'scene-text-heading' }, 'Vỏ composite chống chịu mọi thời tiết'),
+                React.createElement('p', { className: 'scene-text-body' },
+                    'Lớp vỏ ABS + nhôm CNC chống tia UV, chống nước IP67. Thiết kế đối xứng tối ưu thu sóng đa hướng.'
+                ),
+                React.createElement('div', { className: 'scene-specs' },
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-shield-check' }), 'IP67'
+                    ),
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-thermometer-half' }), '-40°C ~ 85°C'
+                    )
+                )
+            ),
+
+            // Scene 2 text: Top
+            React.createElement('div', { className: 'scene-text-panel scene-text-right scene-text-top' },
+                React.createElement('div', { className: 'scene-text-label' }, 'Anten'),
+                React.createElement('h3', { className: 'scene-text-heading' }, 'Anten đa tần số tích hợp'),
+                React.createElement('p', { className: 'scene-text-body' },
+                    'Dome anten ceramic chất lượng survey-grade, thu tín hiệu L1/L2/L5 từ GPS, GLONASS, Galileo, BeiDou và QZSS.'
+                ),
+                React.createElement('div', { className: 'scene-specs' },
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-broadcast' }), 'Dual Frequency'
+                    ),
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-globe' }), '6 hệ thống'
+                    )
+                )
+            ),
+
+            // Scene 3 text: Under
+            React.createElement('div', { className: 'scene-text-panel scene-text-left scene-text-under' },
+                React.createElement('div', { className: 'scene-text-label' }, 'Kết nối'),
+                React.createElement('h3', { className: 'scene-text-heading' }, 'Cổng giao tiếp công nghiệp'),
+                React.createElement('p', { className: 'scene-text-body' },
+                    'USB-C nguồn/dữ liệu, mount 5/8\" chuẩn trắc địa. Tem thông số sản phẩm ISO 9001:2015 đầy đủ.'
+                ),
+                React.createElement('div', { className: 'scene-specs' },
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-usb-symbol' }), 'USB-C'
+                    ),
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-nut' }), '5/8\" Mount'
+                    ),
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-bluetooth' }), 'Bluetooth'
+                    )
+                )
+            ),
+
+            // Scene 4 text: Inside
+            React.createElement('div', { className: 'scene-text-panel scene-text-right scene-text-inside' },
+                React.createElement('div', { className: 'scene-text-label' }, 'Bên trong'),
+                React.createElement('h3', { className: 'scene-text-heading' }, 'Module GNSS u-blox ZED-F9P'),
+                React.createElement('p', { className: 'scene-text-body' },
+                    'Bo mạch thiết kế bởi Aitogy JSC, tích hợp chip u-blox ZED-F9P Multi-band RTK. Xử lý tín hiệu đa tần số với độ chính xác mm.'
+                ),
+                React.createElement('div', { className: 'scene-specs' },
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-cpu' }), 'ZED-F9P'
+                    ),
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-lightning-charge' }), '5V / 2A'
+                    ),
+                    React.createElement('span', { className: 'scene-spec-badge' },
+                        React.createElement('i', { className: 'bi bi-crosshair' }), 'RTK Fix'
+                    )
+                )
+            ),
+
+            // Model name watermark
+            React.createElement('div', { className: 'device-model-name', 'aria-hidden': 'true' }, 'B290'),
+
+            // Scene counter
+            React.createElement('div', { className: 'scene-counter' },
+                React.createElement('div', { className: 'scene-counter-dot active' }),
+                React.createElement('div', { className: 'scene-counter-dot' }),
+                React.createElement('div', { className: 'scene-counter-dot' }),
+                React.createElement('div', { className: 'scene-counter-dot' })
+            ),
+
+            // Scroll hint
+            React.createElement('div', { className: 'showcase-scroll-hint' },
+                'Cuộn để khám phá',
+                React.createElement('span', null)
+            ),
+
+            // Floating particles
+            ...Array.from({ length: 8 }, (_, i) =>
+                React.createElement('div', {
+                    key: 'particle-' + i,
+                    className: 'showcase-particle',
+                    style: {
+                        top: (15 + Math.random() * 70) + '%',
+                        left: (5 + Math.random() * 90) + '%',
+                        animationDelay: (Math.random() * 5) + 's',
+                        animationDuration: (6 + Math.random() * 6) + 's'
+                    }
+                })
+            )
+        )
+    );
+};
+
+/* ============================================================
    CINEMATIC FEATURE CARDS v6 - GSAP SCROLL SEQUENCE
    ============================================================ */
 const CinematicFeatures = ({ features }) => {
@@ -1161,6 +1323,12 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
 
         // === FEATURES (Cinematic Fly-to-Center + 3D Flip) ===
         React.createElement(CinematicFeatures, { features: features }),
+
+        // === DIVIDER ===
+        React.createElement('div', { className: 'section-divider' }),
+
+        // === PRODUCT SHOWCASE (Storytelling Scroll Animation) ===
+        React.createElement(ProductShowcase),
 
         // === DIVIDER ===
         React.createElement('div', { className: 'section-divider' }),

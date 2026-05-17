@@ -159,6 +159,7 @@ class CasterClient:
                             "mountpoints": [mp.strip() for mp in parts[3].split(',') if mp.strip()],
                             "datacount": int(parts[4]) if parts[4].isdigit() else 0,
                             "status": int(parts[5]) if parts[5].isdigit() else 0,
+                            "identifier": parts[6].strip() if len(parts) > 6 else "",
                             "show_position": self._extract_show_position(parts, default=True)
                         })
             return users
@@ -255,7 +256,18 @@ class CasterClient:
         return clients
 
     async def delete_user(self, identifier: str, username: str) -> bool:
-        cmd = f"GET /deluser HTTP/1.0/{identifier}/{username}\r\n\r\n"
+        # Tự động truy vấn và lấy identifier thực tế của user trên Caster trước khi thực hiện lệnh xóa
+        real_identifier = identifier
+        try:
+            users = await self.get_users()
+            target = next((u for u in users if u["username"].lower() == username.lower()), None)
+            if target and target.get("identifier"):
+                real_identifier = target["identifier"]
+                logger.info(f"Dynamically detected real Caster identifier '{real_identifier}' for user '{username}'")
+        except Exception as e:
+            logger.error(f"Error querying real identifier for '{username}' deletion: {e}")
+
+        cmd = f"GET /deluser HTTP/1.0/{real_identifier}/{username}\r\n\r\n"
         response = await self._send_command(cmd)
         return self._is_success_response(response)
 

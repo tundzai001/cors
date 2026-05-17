@@ -85,8 +85,6 @@ const NavigationManager = {
             this.currentPage = 'security';
         } else if (path.includes('/rovers-global')) {
             this.currentPage = 'rovers';
-        } else if (path.includes('/monitoring')) {
-            this.currentPage = 'monitoring';
         } else {
             this.currentPage = 'dashboard';
         } 
@@ -173,19 +171,6 @@ const NavigationManager = {
                 active: this.currentPage === 'rovers'
             });
         }
-
-        // === 6. SYSTEM MONITORING  ===
-        /*
-        if (this.currentUser?.role === 'admin') {
-            this.addNavItem(navContainer, {
-                id: 'monitoring',
-                icon: 'bi-activity',
-                text: 'Giám sát & Logs',
-                href: '/monitoring.html',
-                active: this.currentPage === 'monitoring'
-            });
-        }
-        */
 
         console.log(`✓ Menu rendered: ${navContainer.children.length} items`);
     },
