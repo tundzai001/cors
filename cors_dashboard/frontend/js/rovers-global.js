@@ -408,14 +408,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         const targetChecks = document.querySelectorAll(`.${prefix === 'edit-' ? 'edit-caster-target-check' : 'caster-target-check'}:checked`);
         const targetHosts = Array.from(targetChecks).map(cb => cb.value);
 
+        // 1. Get current allowed mountpoints to hide if already in list
+        const targetInputId = prefix === 'edit-' ? 'edit-mountpoints' : 'new-mountpoints';
+        const allowedMpsInput = document.getElementById(targetInputId);
+        const currentAllowedMps = normalizeMountpointList(allowedMpsInput?.value || '').map(m => m.toLowerCase());
+
+        // 2. Get device base station mountpoints to hide them
+        const deviceMps = [];
+        allDevices.forEach(d => {
+            const sConf = d.service_config || {};
+            if (sConf.server1_enabled && sConf.mountpoint1) {
+                deviceMps.push(sConf.mountpoint1.trim().toLowerCase());
+            }
+            if (sConf.server2_enabled && sConf.mountpoint2) {
+                deviceMps.push(sConf.mountpoint2.trim().toLowerCase());
+            }
+        });
+
         list.querySelectorAll('.live-mp-item').forEach(item => {
+            const checkEl = item.querySelector('.live-mp-check');
+            const mpVal = String(checkEl?.value || '').trim().toLowerCase();
+
+            const isAlreadyAllowed = currentAllowedMps.includes(mpVal);
+            const isDeviceMp = deviceMps.includes(mpVal);
+
             const text = item.dataset.search || '';
             const host = item.dataset.host || '';
             const matchText = !q || text.includes(q);
             const matchHost = h === 'all' || host === h;
             const matchTarget = targetHosts.length === 0 || !host || targetHosts.includes(host);
 
-            item.style.display = (matchText && matchHost && matchTarget) ? '' : 'none';
+            // Hide if already allowed or matches system Base station mountpoints
+            const isDuplicate = isAlreadyAllowed || isDeviceMp;
+
+            item.style.display = (matchText && matchHost && matchTarget && !isDuplicate) ? '' : 'none';
         });
     }
 
@@ -439,6 +465,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         if (target) target.value = merged.join(';');
         showToast('Đã đưa mountpoint live vào Allowed Mountpoints', 'success');
+        applyLiveMpFilter(prefix);
     }
 
     function updateCasterStats() {
@@ -692,6 +719,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const final = Array.from(new Set([...manualMps, ...stationMps]));
         targetInput.value = final.join(';');
+        applyLiveMpFilter(prefix);
     }
 
     function populateFilterStation() {
@@ -1302,6 +1330,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 2.5 LOAD LIVE MOUNTPOINTS FOR EDIT
         if (String(currentUser?.role || '').toLowerCase() === 'admin') {
             renderAdminLiveMountpoints('edit-');
+            fetchCasterSources({ force: true }).then(() => {
+                renderAdminLiveMountpoints('edit-');
+            }).catch(e => console.error("Error refreshing live mountpoints", e));
         } else if (currentUser?.extra_mountpoints) {
             renderCoordinatorExtraMountpoints('edit-');
         } else {
@@ -1729,6 +1760,31 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderCoordinatorExtraMountpoints('edit-');
             }
             showToast('Đã tải lại mountpoints live', 'info');
+        });
+    }
+
+    // Input changes listener for real-time live filter updating
+    const newMpsInput = document.getElementById('new-mountpoints');
+    if (newMpsInput) {
+        newMpsInput.addEventListener('input', () => applyLiveMpFilter(''));
+    }
+    const editMpsInput = document.getElementById('edit-mountpoints');
+    if (editMpsInput) {
+        editMpsInput.addEventListener('input', () => applyLiveMpFilter('edit-'));
+    }
+
+    // Dynamic fresh fetch for create modal
+    const createModalEl = document.getElementById('createRoverModal');
+    if (createModalEl) {
+        createModalEl.addEventListener('show.bs.modal', () => {
+            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                renderAdminLiveMountpoints('');
+                fetchCasterSources({ force: true }).then(() => {
+                    renderAdminLiveMountpoints('');
+                }).catch(e => console.error("Error refreshing live mountpoints", e));
+            } else if (currentUser?.extra_mountpoints) {
+                renderCoordinatorExtraMountpoints('');
+            }
         });
     }
     

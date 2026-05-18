@@ -236,8 +236,27 @@ pi_status_ingest_queue: asyncio.Queue = asyncio.Queue(maxsize=PI_STATUS_INGEST_Q
 # TỐI ƯU CỰC ĐỘ: Cache mapping Mountpoint -> Serial để tránh quét DB liên tục
 # Giúp xử lý hàng nghìn yêu cầu wake-station mỗi giây mà không làm treo Backend.
 mountpoint_serial_cache: Dict[str, str] = {}
+command_mountpoints_cache: Set[str] = set()
 mountpoint_cache_last_updated: float = 0
 mountpoint_cache_lock = asyncio.Lock()
+
+
+def _is_command_mountpoint(mountpoint: str) -> bool:
+    if not mountpoint:
+        return False
+    normalized = _normalize_mountpoint(mountpoint)
+    if not normalized:
+        return False
+    # 1. Tra cứu trong cache động từ cơ sở dữ liệu
+    if normalized in command_mountpoints_cache:
+        return True
+    # 2. Quy tắc dự phòng heuristics
+    normalized_lower = normalized.lower()
+    if normalized_lower == 'test_lte':
+        return True
+    if normalized_lower.startswith(('test_', 'cmd_')) or normalized_lower.endswith(('_lte', '_cmd')):
+        return True
+    return False
 
 
 def _safe_json_size(value: Any) -> int:
@@ -848,7 +867,7 @@ def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bo
 
 
 async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: str) -> str:
-    global mountpoint_serial_cache, mountpoint_cache_last_updated
+    global mountpoint_serial_cache, command_mountpoints_cache, mountpoint_cache_last_updated
     requested = _normalize_mountpoint(mountpoint)
     if not requested:
         raise ValueError("mountpoint is required")
@@ -861,13 +880,14 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
 
         # Cache hết hạn hoặc không có -> Quét DB 1 lần duy nhất để rebuild toàn bộ cache
         if (now - mountpoint_cache_last_updated) >= 60:
-            logger.info("[CACHE] Rebuilding Mountpoint-to-Serial cache...")
+            logger.info("[CACHE] Rebuilding Mountpoint-to-Serial cache & Command Mountpoints cache...")
             new_cache = {}
-            rs = await db.execute(select(models.Device.serial, models.Device.service_config))
+            new_cmd_cache = set()
+            rs = await db.execute(select(models.Device.serial, models.Device.service_config, models.Device.system_info))
             for row in rs.all():
                 serial = str(row[0])
                 
-                # 🔥 FIX: Xử lý an toàn service_config (có thể là dict hoặc string)
+                # 🔥 FIX: Xử lý an toàn service_config
                 raw_cfg = row[1]
                 if isinstance(raw_cfg, dict):
                     cfg = raw_cfg
@@ -880,11 +900,27 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
                 for sid in (1, 2):
                     mp = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
                     if mp:
-                        # Nếu trùng mountpoint, ưu tiên trạm nào đang online (nhưng ở đây ta lấy hết)
                         if mp not in new_cache:
                             new_cache[mp] = serial
+
+                # Quét system_info để lấy command_mp động
+                raw_sys = row[2]
+                if isinstance(raw_sys, dict):
+                    sys_info = raw_sys
+                elif isinstance(raw_sys, str):
+                    try: sys_info = json.loads(raw_sys)
+                    except: sys_info = {}
+                else:
+                    sys_info = {}
+
+                cmd_source = sys_info.get("command_source") or {}
+                if isinstance(cmd_source, dict):
+                    cmd_mp = _normalize_mountpoint(cmd_source.get("mountpoint") or cmd_source.get("command_mp"))
+                    if cmd_mp:
+                        new_cmd_cache.add(cmd_mp)
             
             mountpoint_serial_cache = new_cache
+            command_mountpoints_cache = new_cmd_cache
             mountpoint_cache_last_updated = now
         
         if requested in mountpoint_serial_cache:
@@ -997,8 +1033,8 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
             logger.warning("[NTRIP MQTT] Missing 'mountpoint' for start command")
             return
 
-        if mountpoint and mountpoint.lower().strip() == 'test_lte':
-            logger.info("[NTRIP MQTT] Bypassing start command for command/test mountpoint 'test_lte'")
+        if mountpoint and _is_command_mountpoint(mountpoint):
+            logger.debug(f"[NTRIP MQTT] Bypassing start command for command/test mountpoint '{mountpoint}'")
             return
 
         # === CHECK BLOCKLIST TRƯỚC KHI MỞ LUỒNG ===
@@ -2354,7 +2390,11 @@ async def _check_rover_blocked(username: str, mountpoint: Optional[str] = None) 
 
 async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_address: Optional[str] = None):
     """Xử lý wake trạm, trả về PlainTextResponse chuẩn cho Caster."""
-    logger.info(f"[NTRIP Wake] mountpoint={mountpoint}, client_id={client_id}, address={requested_address or 'not-provided'}")
+    is_command_mp = mountpoint and _is_command_mountpoint(mountpoint)
+    if is_command_mp:
+        logger.debug(f"[NTRIP Wake] mountpoint={mountpoint}, client_id={client_id}, address={requested_address or 'not-provided'}")
+    else:
+        logger.info(f"[NTRIP Wake] mountpoint={mountpoint}, client_id={client_id}, address={requested_address or 'not-provided'}")
 
     # 1. Check Blocklist ngay lập tức
     reason = await _check_rover_blocked(client_id, mountpoint)
@@ -2363,10 +2403,10 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
         logger.warning(f"[NTRIP Wake] {msg} for {client_id}@{mountpoint}")
         return PlainTextResponse(f"WAKE_STATUS: blocked\n{msg}")
 
-    # 1.5. Bypass cho command mountpoints (ví dụ: test_lte dùng cho Geotek remote command)
-    if mountpoint and mountpoint.lower().strip() == 'test_lte':
-        logger.info("[NTRIP Wake] Bypassing wake for command/test mountpoint 'test_lte'")
-        return PlainTextResponse("WAKE_STATUS: ok\nSTREAM_HINT: streaming\nMOUNTPOINT: test_lte\nOK")
+    # 1.5. Bypass cho command mountpoints
+    if mountpoint and is_command_mp:
+        logger.debug(f"[NTRIP Wake] Bypassing wake for command/test mountpoint '{mountpoint}'")
+        return PlainTextResponse(f"WAKE_STATUS: ok\nSTREAM_HINT: streaming\nMOUNTPOINT: {mountpoint}\nOK")
 
     # 2. Bật trạm nếu hợp lệ
     try:
@@ -4280,7 +4320,7 @@ async def update_rover(
     
     # Ownership Check: COORDINATOR chỉ quản lý rover thuộc trạm mình sở hữu
     if not is_admin:
-        serials = rover.base_serial.split(',')
+        serials = (rover.base_serial or "").split(',')
         owned_res = await devices_db.execute(
             select(models.Device.serial).where(models.Device.user_id == current_user.id)
         )
@@ -4464,7 +4504,7 @@ async def delete_rover(
 
     # Ownership Check: COORDINATOR chỉ quản lý rover thuộc trạm mình sở hữu
     if not is_admin:
-        serials = rover_to_delete.base_serial.split(',')
+        serials = (rover_to_delete.base_serial or "").split(',')
         owned_res = await devices_db.execute(
             select(models.Device.serial).where(models.Device.user_id == current_user.id)
         )
@@ -4592,7 +4632,7 @@ async def get_all_rovers_global(
         rover_dict = schemas.RoverAccountResponse.from_orm(rover).model_dump()
         
         # Xử lý base_serial có thể lÃ  "SN1,SN2"
-        serials = rover.base_serial.split(',')
+        serials = (rover.base_serial or "").split(',')
         station_names = []
         
         for sn in serials:
@@ -4631,11 +4671,11 @@ async def sync_rover_by_username(
     
     # 3. TRƯỜNG HỢP: USER CHƯA CÓ TRONG DB (Unknown)
     if not rover:
-        if not update_req.selected_serials:
-            raise HTTPException(status_code=400, detail="Vui lòng chọn trạm để đồng bộ tài khoản này vào hệ thống.")
+        if not update_req.selected_serials and not update_req.mountpoints:
+            raise HTTPException(status_code=400, detail="Vui lòng chọn trạm hoặc nhập Allowed Mountpoints để đồng bộ tài khoản này vào hệ thống.")
         
         # Tạo mới trong DB
-        combined_serials = ",".join(update_req.selected_serials)
+        combined_serials = ",".join(update_req.selected_serials) if update_req.selected_serials else ""
         rover = await crud.create_rover_account(
             db,
             username=username,

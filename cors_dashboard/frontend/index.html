@@ -138,6 +138,11 @@
     <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
     <!-- Lenis Smooth Scroll -->
     <script src="https://cdn.jsdelivr.net/npm/lenis@1.1.18/dist/lenis.min.js"></script>
+    <script>
+        if (window.Leaflet) {
+            window.L = window.Leaflet;
+        }
+    </script>
 </head>
 
 <body>
@@ -289,7 +294,7 @@
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
 
-    <script type="text/babel" src="/js/react-components.js?v=1.0.37-leaflet-cluster-fix"></script>
+    <script type="text/babel" src="/js/react-components.js?v=1.0.40-cluster-global-fix"></script>
     <script type="text/babel" src="/js/homepage-enterprise.v2.js?v=20260513-cinematic-v15"></script>
     <script type="text/babel" src="/js/enterprise-station-detail.js?v=20260512-v2"></script>
     <script type="text/babel" src="/js/blog-system.js?v=20260512-v3"></script>
