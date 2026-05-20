@@ -16,7 +16,7 @@ const InlineFlag = (props) => React.createElement('svg', {
     })
 );
 
-/* Vietnam Map - Inline SVG with draw-on effect */
+/* Vietnam Map - Inline SVG with periodic redraw loop */
 const VietnamSVG = () => {
     const containerRef = React.useRef(null);
 
@@ -36,28 +36,57 @@ const VietnamSVG = () => {
                 svgEl.setAttribute('aria-hidden', 'true');
                 svgEl.style.width = '100%';
                 svgEl.style.height = 'auto';
-                // GSAP Draw-on: animate all paths from hidden to visible
+                // GSAP Draw-on with PERIODIC REDRAW LOOP
                 const paths = svgEl.querySelectorAll('path');
                 if (typeof gsap !== 'undefined' && paths.length) {
+                    // Prepare all paths with dasharray
+                    const pathLengths = [];
                     paths.forEach(p => {
                         const len = p.getTotalLength();
+                        pathLengths.push(len);
                         p.style.strokeDasharray = len;
                         p.style.strokeDashoffset = len;
                     });
-                    gsap.to(paths, {
+
+                    // Build a repeating timeline: draw → glow → hold → erase → pause → repeat
+                    const mapTimeline = gsap.timeline({ repeat: -1, repeatDelay: 0.1 });
+
+                    // Phase 1: Draw on (2.2s)
+                    mapTimeline.to(paths, {
                         strokeDashoffset: 0,
-                        duration: 2.5,
-                        stagger: { each: 0.004, from: 'start' },
-                        ease: 'power2.inOut',
-                        delay: 0.5
-                    });
-                    // After draw completes, add a glow pulse
-                    gsap.to(svgEl, {
-                        filter: 'brightness(2.8) saturate(2) drop-shadow(0 0 40px rgba(0, 242, 255, 0.6))',
-                        duration: 1,
-                        delay: 3.2,
+                        duration: 2.2,
+                        stagger: { each: 0.0035, from: 'start' },
+                        ease: 'power2.inOut'
+                    }, 0);
+
+                    // Phase 2: Glow flash after draw completes (0.6s)
+                    mapTimeline.to(svgEl, {
+                        filter: 'brightness(3.55) saturate(2.3) drop-shadow(0 0 54px rgba(0, 242, 255, 0.85))',
+                        duration: 0.6,
                         ease: 'power2.out'
-                    });
+                    }, 2.2);
+
+                    // Phase 3: Settle back to idle glow (0.8s)
+                    mapTimeline.to(svgEl, {
+                        filter: 'brightness(2.55) saturate(1.9) drop-shadow(0 0 34px rgba(0, 242, 255, 0.52))',
+                        duration: 0.8,
+                        ease: 'power2.inOut'
+                    }, 2.8);
+
+                    // Phase 4: Erase (fade paths back out) (1.2s)
+                    mapTimeline.to(paths, {
+                        strokeDashoffset: (i) => pathLengths[i] || 0,
+                        duration: 1.2,
+                        stagger: { each: 0.002, from: 'end' },
+                        ease: 'power1.in'
+                    }, 6.3);
+
+                    // Phase 5: Dim the SVG while erased (0.3s)
+                    mapTimeline.to(svgEl, {
+                        filter: 'brightness(1.5) saturate(1) drop-shadow(0 0 10px rgba(0, 242, 255, 0.2))',
+                        duration: 0.3,
+                        ease: 'power2.in'
+                    }, 7.5);
                 }
             })
             .catch(() => {});
@@ -73,7 +102,11 @@ const VietnamSVG = () => {
         ),
         // Scan rings
         React.createElement('div', { className: 'map-scan-ring map-scan-ring-1' }),
-        React.createElement('div', { className: 'map-scan-ring map-scan-ring-2' })
+        React.createElement('div', { className: 'map-scan-ring map-scan-ring-2' }),
+        // Data pulse rings (continuous idle animation)
+        React.createElement('div', { className: 'data-pulse-ring data-pulse-ring-1' }),
+        React.createElement('div', { className: 'data-pulse-ring data-pulse-ring-2' }),
+        React.createElement('div', { className: 'data-pulse-ring data-pulse-ring-3' })
     );
 };
 
@@ -125,28 +158,831 @@ const SatelliteField = () => {
     );
 };
 
-/* Particle Background */
+/* Particle Background - Upgraded to Canvas Plexus Field (VIP Pro Master Level) */
 const ParticleField = () => {
-    const particles = Array.from({ length: 30 }, (_, i) => ({
-        left: `${Math.random() * 100}%`,
-        delay: `${Math.random() * 14}s`,
-        duration: `${Math.random() * 8 + 12}s`,
-        size: Math.random() * 2 + 1
-    }));
-    return React.createElement('div', { className: 'landing-particles' },
-        particles.map((p, i) =>
-            React.createElement('div', {
-                key: i, className: 'landing-particle',
-                style: {
-                    left: p.left,
-                    animationDelay: p.delay,
-                    animationDuration: p.duration,
-                    width: p.size + 'px',
-                    height: p.size + 'px'
+    const canvasRef = React.useRef(null);
+
+    React.useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        let animationFrameId;
+        let width = canvas.width = canvas.offsetWidth;
+        let height = canvas.height = canvas.offsetHeight;
+
+        const isMobile = window.innerWidth < 768;
+        const particleCount = isMobile ? 35 : 95;
+        const maxDistance = 140;
+        const particles = [];
+
+        // Mouse coordinates for interaction
+        const mouse = { x: null, y: null, radius: 155 };
+
+        const handleResize = () => {
+            if (!canvas) return;
+            width = canvas.width = canvas.offsetWidth;
+            height = canvas.height = canvas.offsetHeight;
+        };
+
+        const handleMouseMove = (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        };
+
+        const handleMouseLeave = () => {
+            mouse.x = null;
+            mouse.y = null;
+        };
+
+        window.addEventListener('resize', handleResize);
+        window.addEventListener('mousemove', handleMouseMove);
+        document.body.addEventListener('mouseleave', handleMouseLeave);
+
+        // Initialize particles
+        for (let i = 0; i < particleCount; i++) {
+            particles.push({
+                x: Math.random() * width,
+                y: Math.random() * height,
+                vx: (Math.random() - 0.5) * 0.35,
+                vy: (Math.random() - 0.5) * 0.35,
+                radius: Math.random() * 2 + 1
+            });
+        }
+
+        const animate = () => {
+            ctx.clearRect(0, 0, width, height);
+
+            // Update and draw particles
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+
+                // Mouse repel effect
+                if (mouse.x !== null && mouse.y !== null) {
+                    const dx = p.x - mouse.x;
+                    const dy = p.y - mouse.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < mouse.radius) {
+                        const force = (mouse.radius - dist) / mouse.radius;
+                        const angle = Math.atan2(dy, dx);
+                        const pushX = Math.cos(angle) * force * 0.55;
+                        const pushY = Math.sin(angle) * force * 0.55;
+                        p.vx += pushX;
+                        p.vy += pushY;
+                    }
                 }
-            })
-        )
+
+                // Drag/frictional damping
+                p.vx *= 0.98;
+                p.vy *= 0.98;
+
+                // Drift noise
+                p.vx += (Math.random() - 0.5) * 0.015;
+                p.vy += (Math.random() - 0.5) * 0.015;
+
+                // Cap speed
+                const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+                const maxSpeed = 0.7;
+                if (speed > maxSpeed) {
+                    p.vx = (p.vx / speed) * maxSpeed;
+                    p.vy = (p.vy / speed) * maxSpeed;
+                }
+
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Bounce on boundaries
+                if (p.x < 0) { p.x = 0; p.vx *= -1; }
+                else if (p.x > width) { p.x = width; p.vx *= -1; }
+                if (p.y < 0) { p.y = 0; p.vy *= -1; }
+                else if (p.y > height) { p.y = height; p.vy *= -1; }
+
+                // Draw dot
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(0, 242, 255, 0.75)';
+                ctx.fill();
+            }
+
+            // Draw lines connecting particles
+            for (let i = 0; i < particles.length; i++) {
+                const p1 = particles[i];
+                for (let j = i + 1; j < particles.length; j++) {
+                    const p2 = particles[j];
+                    const dx = p1.x - p2.x;
+                    const dy = p1.y - p2.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < maxDistance) {
+                        const alpha = (1 - dist / maxDistance) * 0.35;
+                        ctx.beginPath();
+                        ctx.moveTo(p1.x, p1.y);
+                        ctx.lineTo(p2.x, p2.y);
+                        ctx.strokeStyle = `rgba(0, 242, 255, ${alpha})`;
+                        ctx.lineWidth = 0.55;
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            animationFrameId = requestAnimationFrame(animate);
+        };
+
+        animate();
+
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+            window.removeEventListener('resize', handleResize);
+            window.removeEventListener('mousemove', handleMouseMove);
+            document.body.removeEventListener('mouseleave', handleMouseLeave);
+        };
+    }, []);
+
+    return React.createElement('canvas', {
+        ref: canvasRef,
+        style: {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+            zIndex: 1,
+            willChange: 'transform'
+        }
+    });
+};
+
+/* GNSS Signal Waveform Visualizer (VIP Pro Master Level) */
+const SignalWaveform = () => {
+    const canvasRef = React.useRef(null);
+
+    React.useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        let animationFrameId;
+        let width = canvas.width = canvas.offsetWidth;
+        let height = canvas.height = canvas.offsetHeight || 40;
+
+        const handleResize = () => {
+            if (!canvas) return;
+            width = canvas.width = canvas.offsetWidth;
+            height = canvas.height = canvas.offsetHeight || 40;
+        };
+
+        window.addEventListener('resize', handleResize);
+
+        let phase1 = 0;
+        let phase2 = Math.PI / 2;
+
+        const draw = () => {
+            ctx.clearRect(0, 0, width, height);
+
+            const grad = ctx.createLinearGradient(0, 0, width, 0);
+            grad.addColorStop(0, 'rgba(0, 242, 255, 0)');
+            grad.addColorStop(0.15, 'rgba(0, 242, 255, 0.45)');
+            grad.addColorStop(0.5, 'rgba(0, 136, 255, 0.7)');
+            grad.addColorStop(0.85, 'rgba(0, 242, 255, 0.45)');
+            grad.addColorStop(1, 'rgba(0, 242, 255, 0)');
+
+            // Wave 1
+            ctx.beginPath();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = grad;
+            for (let x = 0; x < width; x++) {
+                const y = height / 2 + Math.sin(x * 0.015 + phase1) * 8 * Math.sin(x * 0.002);
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Wave 2 (interfering signal)
+            ctx.beginPath();
+            ctx.lineWidth = 1.0;
+            ctx.strokeStyle = grad;
+            for (let x = 0; x < width; x++) {
+                const y = height / 2 + Math.cos(x * 0.025 + phase2) * 6 * Math.sin(x * 0.004);
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            phase1 += 0.025;
+            phase2 += 0.035;
+
+            animationFrameId = requestAnimationFrame(draw);
+        };
+
+        draw();
+
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+            window.removeEventListener('resize', handleResize);
+        };
+    }, []);
+
+    return React.createElement('div', {
+        style: {
+            width: '100%',
+            maxWidth: '500px',
+            height: '40px',
+            margin: '12px auto',
+            position: 'relative',
+            opacity: 0.85
+        }
+    },
+        React.createElement('canvas', {
+            ref: canvasRef,
+            style: {
+                position: 'absolute',
+                top: 0, left: 0,
+                width: '100%', height: '100%',
+                pointerEvents: 'none'
+            }
+        })
     );
+};
+
+/* Satellite to Map Laser Beams (Laser line pulses) */
+const SatelliteBeams = () => {
+    return React.createElement('svg', {
+        className: 'satellite-beams-svg',
+        viewBox: '0 0 100 100',
+        preserveAspectRatio: 'none',
+        'aria-hidden': 'true'
+    },
+        React.createElement('defs', null,
+            React.createElement('linearGradient', { id: 'beamGrad1', x1: '0%', y1: '0%', x2: '100%', y2: '100%' },
+                React.createElement('stop', { offset: '0%', stopColor: 'rgba(0, 242, 255, 0.8)' }),
+                React.createElement('stop', { offset: '50%', stopColor: 'rgba(0, 242, 255, 0.2)' }),
+                React.createElement('stop', { offset: '100%', stopColor: 'rgba(0, 242, 255, 0)' })
+            ),
+            React.createElement('linearGradient', { id: 'beamGrad2', x1: '100%', y1: '0%', x2: '0%', y2: '100%' },
+                React.createElement('stop', { offset: '0%', stopColor: 'rgba(204, 93, 232, 0.8)' }),
+                React.createElement('stop', { offset: '50%', stopColor: 'rgba(204, 93, 232, 0.2)' }),
+                React.createElement('stop', { offset: '100%', stopColor: 'rgba(204, 93, 232, 0)' })
+            ),
+            React.createElement('linearGradient', { id: 'beamGrad3', x1: '100%', y1: '0%', x2: '0%', y2: '100%' },
+                React.createElement('stop', { offset: '0%', stopColor: 'rgba(79, 172, 254, 0.8)' }),
+                React.createElement('stop', { offset: '50%', stopColor: 'rgba(79, 172, 254, 0.2)' }),
+                React.createElement('stop', { offset: '100%', stopColor: 'rgba(79, 172, 254, 0)' })
+            )
+        ),
+        // Beam lines shooting from active satellite coordinates down to centered map
+        React.createElement('line', {
+            className: 'sat-beam sat-beam-1',
+            x1: '9', y1: '14', x2: '48', y2: '48',
+            stroke: 'url(#beamGrad1)', strokeWidth: '0.15'
+        }),
+        React.createElement('line', {
+            className: 'sat-beam sat-beam-2',
+            x1: '82', y1: '23', x2: '48', y2: '48',
+            stroke: 'url(#beamGrad2)', strokeWidth: '0.15'
+        }),
+        React.createElement('line', {
+            className: 'sat-beam sat-beam-3',
+            x1: '71', y1: '42', x2: '48', y2: '48',
+            stroke: 'url(#beamGrad3)', strokeWidth: '0.15'
+        }),
+        React.createElement('line', {
+            className: 'sat-beam sat-beam-4',
+            x1: '16', y1: '60', x2: '48', y2: '48',
+            stroke: 'url(#beamGrad1)', strokeWidth: '0.15'
+        })
+    );
+};
+
+/* Three.js GNSS Precision Scene - premium idle hero atmosphere */
+const HeroThreeScene = () => {
+    const mountRef = React.useRef(null);
+
+    React.useEffect(() => {
+        const mount = mountRef.current;
+        if (!mount || !window.THREE) {
+            if (mount) mount.classList.add('three-scene-fallback');
+            return;
+        }
+
+        const prefersReducedMotion = false;
+        const THREE = window.THREE;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+        camera.position.set(0, 1.62, 7.6);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.35 : 1.8));
+        renderer.setClearColor(0x000000, 0);
+        mount.appendChild(renderer.domElement);
+        renderer.domElement.className = 'hero-three-canvas';
+        mount.classList.add('three-scene-ready');
+
+        const group = new THREE.Group();
+        scene.add(group);
+
+        const cyan = new THREE.Color('#00f2ff');
+        const blue = new THREE.Color('#2478ff');
+        const softCyan = new THREE.Color('#6ffbff');
+
+        scene.add(new THREE.AmbientLight(0x9fdfff, 0.32));
+        const keyLight = new THREE.PointLight(0x00f2ff, 5.6, 18);
+        keyLight.position.set(-3.4, 3.2, 4.4);
+        scene.add(keyLight);
+        const rimLight = new THREE.PointLight(0x66f7ff, 2.2, 15);
+        rimLight.position.set(3.6, -1.6, 3.2);
+        scene.add(rimLight);
+
+        const coreGroup = new THREE.Group();
+        coreGroup.position.set(3.75, -0.08, -0.6);
+        group.add(coreGroup);
+
+        const coreGeometry = new THREE.SphereGeometry(1.02, 48, 32);
+        const coreMaterial = new THREE.MeshStandardMaterial({
+            color: 0x031522,
+            metalness: 0.28,
+            roughness: 0.5,
+            emissive: 0x00445a,
+            emissiveIntensity: 0.08,
+            transparent: true,
+            opacity: 0.03
+        });
+        const core = new THREE.Mesh(coreGeometry, coreMaterial);
+        coreGroup.add(core);
+
+        const wire = new THREE.LineSegments(
+            new THREE.WireframeGeometry(coreGeometry),
+            new THREE.LineBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending })
+        );
+        wire.scale.setScalar(1.012);
+        coreGroup.add(wire);
+
+        const latitudeLines = [];
+        const meridianLines = [];
+        const rotationMarkers = [];
+        const makeCircleLine = (radius, color, opacity) => {
+            const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, Math.PI * 2);
+            const points = curve.getPoints(180).map(p => new THREE.Vector3(p.x, p.y, 0));
+            return new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(points),
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending })
+            );
+        };
+
+        [-0.64, -0.32, 0, 0.32, 0.64].forEach((y, index) => {
+            const radius = Math.sqrt(Math.max(0.05, 1.02 * 1.02 - y * y));
+            const line = makeCircleLine(radius, 0x00f2ff, index === 2 ? 0.22 : 0.12);
+            line.position.y = y;
+            coreGroup.add(line);
+            latitudeLines.push(line);
+        });
+
+        for (let i = 0; i < 7; i++) {
+            const line = makeCircleLine(1.03, 0x00f2ff, i % 3 === 0 ? 0.14 : 0.08);
+            line.rotation.y = Math.PI / 2;
+            line.rotation.z = (Math.PI / 9) * i;
+            coreGroup.add(line);
+            meridianLines.push(line);
+        }
+
+        const makeArcLine = (radius, start, end, color, opacity) => {
+            const curve = new THREE.EllipseCurve(0, 0, radius, radius, start, end);
+            const points = curve.getPoints(80).map(p => new THREE.Vector3(p.x, p.y, 0));
+            const line = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(points),
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending })
+            );
+            return line;
+        };
+        [
+            { y: 0.42, rz: 0.32, ry: 0.22, start: -0.15, end: 2.15, opacity: 0.56 },
+            { y: -0.2, rz: -0.44, ry: -0.18, start: 2.75, end: 5.22, opacity: 0.38 }
+        ].forEach(cfg => {
+            const marker = makeArcLine(1.07, cfg.start, cfg.end, 0x9dffff, cfg.opacity);
+            marker.position.y = cfg.y;
+            marker.rotation.z = cfg.rz;
+            marker.rotation.y = cfg.ry;
+            marker.userData.baseOpacity = cfg.opacity;
+            coreGroup.add(marker);
+            rotationMarkers.push(marker);
+        });
+
+        const orbitingSatellites = [];
+        const satelliteGeometry = new THREE.OctahedronGeometry(0.075, 0);
+
+        const createRing = (radius, color, opacity, rotation) => {
+            const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, Math.PI * 2);
+            const points = curve.getPoints(180).map(p => new THREE.Vector3(p.x, 0, p.y));
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity });
+            const ring = new THREE.LineLoop(geometry, material);
+            ring.position.copy(coreGroup.position);
+            ring.rotation.set(rotation[0], rotation[1], rotation[2]);
+            group.add(ring);
+            return ring;
+        };
+
+        const rings = [
+            createRing(1.48, cyan, 0.2, [0.8, 0.25, 0]),
+            createRing(1.9, blue, 0.1, [1.28, -0.25, 0.4])
+        ];
+
+        const pulseRingGeometry = new THREE.RingGeometry(1.28, 1.31, 160);
+        const pulseRingMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00f2ff,
+            transparent: true,
+            opacity: 0.18,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const pulseRings = [0, 1].map(index => {
+            const ring = new THREE.Mesh(pulseRingGeometry, pulseRingMaterial.clone());
+            ring.position.copy(coreGroup.position);
+            ring.rotation.set(1.12 + index * 0.32, 0.24 + index * 0.18, index * 0.68);
+            ring.userData.phase = index * 1.45;
+            group.add(ring);
+            return ring;
+        });
+
+        const beamMaterials = [
+            new THREE.LineBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending }),
+            new THREE.LineBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending }),
+            new THREE.LineBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending })
+        ];
+        const satelliteConfigs = [
+            { radius: 2.05, speed: 0.58, phase: 0.1, tilt: [0.8, 0.25, 0], y: 0.05 },
+            { radius: 2.58, speed: -0.42, phase: 1.7, tilt: [1.28, -0.25, 0.4], y: -0.08 },
+            { radius: 3.08, speed: 0.33, phase: 2.6, tilt: [1.05, 0.76, -0.3], y: 0.12 }
+        ];
+        const satellites = satelliteConfigs.map((cfg, index) => {
+            const pivot = new THREE.Group();
+            pivot.position.copy(coreGroup.position);
+            pivot.rotation.set(cfg.tilt[0], cfg.tilt[1], cfg.tilt[2]);
+            group.add(pivot);
+
+            const beamGeometry = new THREE.BufferGeometry();
+            beamGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+            const beam = new THREE.Line(beamGeometry, beamMaterials[index]);
+            group.add(beam);
+
+            const tracker = new THREE.Object3D();
+            tracker.position.set(cfg.radius, cfg.y, 0);
+            pivot.add(tracker);
+
+            const satellite = new THREE.Mesh(
+                satelliteGeometry,
+                new THREE.MeshBasicMaterial({
+                    color: 0x9dffff,
+                    transparent: true,
+                    opacity: index === 0 ? 0.92 : 0.72,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            satellite.position.set(cfg.radius, cfg.y, 0);
+            pivot.add(satellite);
+            orbitingSatellites.push(satellite);
+
+            return { pivot, tracker, satellite, beam, cfg };
+        });
+
+        const nodeGeometry = new THREE.SphereGeometry(0.035, 12, 12);
+        const stationMaterial = new THREE.MeshBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.9 });
+        const stationNodes = [];
+        const stationLines = [];
+        const stationPositions = [
+            [-2.8, -1.35, -0.8],
+            [-2.1, -0.88, 0.2],
+            [-1.38, -1.08, -0.35],
+            [-0.6, -0.72, 0.22],
+            [0.18, -1.18, -0.12],
+            [0.72, -0.74, 0.35]
+        ];
+        stationPositions.forEach((pos, index) => {
+            const node = new THREE.Mesh(nodeGeometry, stationMaterial.clone());
+            node.position.set(pos[0], pos[1], pos[2]);
+            node.userData.phase = index * 0.65;
+            group.add(node);
+            node.visible = false;
+            stationNodes.push(node);
+
+            const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(pos[0], pos[1], pos[2]),
+                new THREE.Vector3(coreGroup.position.x, coreGroup.position.y, coreGroup.position.z)
+            ]);
+            const line = new THREE.Line(lineGeometry, new THREE.LineBasicMaterial({
+                color: 0x00f2ff,
+                transparent: true,
+                opacity: 0.08 + index * 0.018
+            }));
+            group.add(line);
+            line.visible = false;
+            stationLines.push(line);
+        });
+
+        const particleCount = window.innerWidth < 768 ? 90 : 180;
+        const particlePositions = new Float32Array(particleCount * 3);
+        for (let i = 0; i < particleCount; i++) {
+            particlePositions[i * 3] = (Math.random() - 0.5) * 9;
+            particlePositions[i * 3 + 1] = (Math.random() - 0.5) * 5.6;
+            particlePositions[i * 3 + 2] = (Math.random() - 0.5) * 4.5;
+        }
+        const particleGeometry = new THREE.BufferGeometry();
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+        const particleMaterial = new THREE.PointsMaterial({
+            color: 0x00f2ff,
+            size: 0.018,
+            transparent: true,
+            opacity: 0.42,
+            depthWrite: false
+        });
+        const particles = new THREE.Points(particleGeometry, particleMaterial);
+        group.add(particles);
+
+        let rafId = null;
+        let width = 0;
+        let height = 0;
+        let visible = true;
+
+        const resize = () => {
+            const rect = mount.getBoundingClientRect();
+            width = Math.max(1, Math.floor(rect.width));
+            height = Math.max(1, Math.floor(rect.height));
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height, false);
+        };
+
+        const onVisibilityChange = () => {
+            visible = document.visibilityState !== 'hidden';
+            if (visible && !rafId) animate();
+        };
+
+        const clock = new THREE.Clock();
+        const animate = () => {
+            if (!visible) {
+                rafId = null;
+                return;
+            }
+
+            const elapsed = clock.getElapsedTime();
+            if (!prefersReducedMotion) {
+                group.rotation.y = 0;
+                group.rotation.x = 0;
+                coreGroup.rotation.x = -0.08;
+                coreGroup.rotation.z = 0.02;
+                coreGroup.rotation.y += 0.014;
+                core.rotation.y += 0.02;
+                core.scale.setScalar(1);
+                coreMaterial.emissiveIntensity = 0.08;
+                wire.scale.setScalar(1.012);
+                latitudeLines.forEach((line, index) => {
+                    line.material.opacity = (index === 2 ? 0.2 : 0.1);
+                });
+                meridianLines.forEach((line, index) => {
+                    line.material.opacity = (index % 3 === 0 ? 0.14 : 0.08);
+                });
+                rotationMarkers.forEach((marker, index) => {
+                    marker.rotation.z += 0.008 + index * 0.003;
+                    marker.material.opacity = marker.userData.baseOpacity;
+                });
+                rings.forEach((ring, index) => {
+                    ring.rotation.z += 0.0048 + index * 0.0018;
+                    ring.rotation.x += 0.0007 * (index + 1);
+                    ring.material.opacity = (index === 2 ? 0.16 : 0.26) + Math.sin(elapsed * 1.2 + index) * 0.075;
+                });
+                pulseRings.forEach((ring, index) => {
+                    const cycle = (elapsed * 0.42 + index / pulseRings.length) % 1;
+                    const scale = 0.78 + cycle * 1.15;
+                    ring.scale.setScalar(scale);
+                    ring.rotation.z += 0.0025 + index * 0.001;
+                    ring.material.opacity = Math.max(0, 0.26 * (1 - cycle));
+                });
+                const coreWorldPosition = new THREE.Vector3();
+                coreGroup.getWorldPosition(coreWorldPosition);
+                satellites.forEach(({ pivot, tracker, satellite, beam, cfg }, index) => {
+                    pivot.rotation.y = elapsed * cfg.speed + cfg.phase;
+                    satellite.rotation.x += 0.045;
+                    satellite.rotation.y += 0.035;
+                    const satelliteWorldPosition = new THREE.Vector3();
+                    tracker.getWorldPosition(satelliteWorldPosition);
+                    const positions = beam.geometry.attributes.position.array;
+                    positions[0] = satelliteWorldPosition.x;
+                    positions[1] = satelliteWorldPosition.y;
+                    positions[2] = satelliteWorldPosition.z;
+                    positions[3] = coreWorldPosition.x;
+                    positions[4] = coreWorldPosition.y;
+                    positions[5] = coreWorldPosition.z;
+                    beam.geometry.attributes.position.needsUpdate = true;
+                    beam.material.opacity = 0.04 + Math.max(0, Math.sin(elapsed * 2.2 + cfg.phase)) * 0.18;
+                });
+                particles.rotation.y += 0.0008;
+                particles.rotation.x = Math.sin(elapsed * 0.08) * 0.05;
+                stationNodes.forEach((node, index) => {
+                    node.scale.setScalar(1 + Math.sin(elapsed * 3.1 + node.userData.phase) * 0.48);
+                    node.material.opacity = 0.54 + Math.max(0, Math.sin(elapsed * 2.5 + index)) * 0.46;
+                });
+                stationLines.forEach((line, index) => {
+                    line.material.opacity = 0.05 + Math.max(0, Math.sin(elapsed * 1.7 + index * 0.7)) * 0.16;
+                });
+                camera.position.x = 0;
+                camera.position.y = 1.62;
+                camera.lookAt(0.45, -0.04, 0);
+            }
+
+            renderer.render(scene, camera);
+            rafId = requestAnimationFrame(animate);
+        };
+
+        resize();
+        animate();
+        window.addEventListener('resize', resize);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
+        return () => {
+            window.removeEventListener('resize', resize);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            if (rafId) cancelAnimationFrame(rafId);
+            renderer.dispose();
+            coreGeometry.dispose();
+            coreMaterial.dispose();
+            nodeGeometry.dispose();
+            stationMaterial.dispose();
+            pulseRingGeometry.dispose();
+            pulseRingMaterial.dispose();
+            satelliteGeometry.dispose();
+            orbitingSatellites.forEach(satellite => satellite.material.dispose());
+            beamMaterials.forEach(material => material.dispose());
+            particleGeometry.dispose();
+            particleMaterial.dispose();
+            rings.forEach(ring => {
+                ring.geometry.dispose();
+                ring.material.dispose();
+            });
+            pulseRings.forEach(ring => ring.material.dispose());
+            satellites.forEach(({ beam }) => beam.geometry.dispose());
+            latitudeLines.forEach(line => {
+                line.geometry.dispose();
+                line.material.dispose();
+            });
+            meridianLines.forEach(line => {
+                line.geometry.dispose();
+                line.material.dispose();
+            });
+            rotationMarkers.forEach(line => {
+                line.geometry.dispose();
+                line.material.dispose();
+            });
+            stationNodes.forEach(node => node.material.dispose());
+            stationLines.forEach(line => {
+                line.geometry.dispose();
+                line.material.dispose();
+            });
+            if (renderer.domElement && renderer.domElement.parentNode) {
+                renderer.domElement.parentNode.removeChild(renderer.domElement);
+            }
+        };
+    }, []);
+
+    return React.createElement('div', {
+        ref: mountRef,
+        className: 'hero-three-scene',
+        'aria-hidden': 'true'
+    },
+        React.createElement('div', { className: 'hero-three-fallback-core' }),
+        React.createElement('div', { className: 'hero-three-fallback-ring hero-three-fallback-ring-1' }),
+        React.createElement('div', { className: 'hero-three-fallback-ring hero-three-fallback-ring-2' })
+    );
+};
+
+/* 3D Tilt Hook for Feature Cards (Interactive Hologram Effect) */
+const useCardTilt = () => {
+    React.useEffect(() => {
+        const cards = document.querySelectorAll('.landing-feature-card-inner');
+        if (!cards.length) return;
+
+        const handleMouseMove = (e) => {
+            const card = e.currentTarget;
+            const rect = card.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const w = rect.width;
+            const h = rect.height;
+
+            const rotateX = -((y / h) - 0.5) * 14;
+            const rotateY = ((x / w) - 0.5) * 14;
+
+            const shine = card.querySelector('.card-light-shine');
+            if (shine) {
+                const px = (x / w) * 100;
+                const py = (y / h) * 100;
+                shine.style.background = `radial-gradient(circle at ${px}% ${py}%, rgba(0, 242, 255, 0.18) 0%, transparent 60%)`;
+            }
+
+            if (typeof gsap !== 'undefined') {
+                gsap.to(card, {
+                    rotateX: rotateX,
+                    rotateY: rotateY,
+                    scale: 1.025,
+                    duration: 0.3,
+                    ease: 'power1.out',
+                    transformPerspective: 800,
+                    overwrite: 'auto'
+                });
+            }
+        };
+
+        const handleMouseLeave = (e) => {
+            const card = e.currentTarget;
+            const shine = card.querySelector('.card-light-shine');
+            if (shine) {
+                shine.style.background = 'transparent';
+            }
+            if (typeof gsap !== 'undefined') {
+                gsap.to(card, {
+                    rotateX: 0,
+                    rotateY: 0,
+                    scale: 1,
+                    duration: 0.5,
+                    ease: 'power2.out',
+                    overwrite: 'auto'
+                });
+            }
+        };
+
+        cards.forEach(card => {
+            if (!card.querySelector('.card-light-shine')) {
+                const shine = document.createElement('div');
+                shine.className = 'card-light-shine';
+                card.appendChild(shine);
+            }
+
+            card.style.transformStyle = 'preserve-3d';
+            const front = card.querySelector('.landing-feature-card-front');
+            if (front) {
+                front.style.transform = 'translateZ(25px)';
+                front.style.transformStyle = 'preserve-3d';
+            }
+
+            card.addEventListener('mousemove', handleMouseMove);
+            card.addEventListener('mouseleave', handleMouseLeave);
+        });
+
+        return () => {
+            cards.forEach(card => {
+                card.removeEventListener('mousemove', handleMouseMove);
+                card.removeEventListener('mouseleave', handleMouseLeave);
+            });
+        };
+    }, []);
+};
+
+/* Magnetic Button Hook for Hero Call-To-Actions */
+const useMagneticButtons = () => {
+    React.useEffect(() => {
+        if (typeof gsap === 'undefined') return;
+        const buttons = document.querySelectorAll('.btn-enterprise, .btn-outline-cyan');
+        if (!buttons.length) return;
+
+        const handleMouseMove = (e) => {
+            const btn = e.currentTarget;
+            const rect = btn.getBoundingClientRect();
+            const x = e.clientX - (rect.left + rect.width / 2);
+            const y = e.clientY - (rect.top + rect.height / 2);
+            
+            gsap.to(btn, {
+                x: x * 0.35,
+                y: y * 0.35,
+                scale: 1.04,
+                duration: 0.3,
+                ease: 'power1.out',
+                overwrite: 'auto'
+            });
+        };
+
+        const handleMouseLeave = (e) => {
+            const btn = e.currentTarget;
+            gsap.to(btn, {
+                x: 0,
+                y: 0,
+                scale: 1,
+                duration: 0.6,
+                ease: 'elastic.out(1.1, 0.4)',
+                overwrite: 'auto'
+            });
+        };
+
+        buttons.forEach(btn => {
+            btn.addEventListener('mousemove', handleMouseMove);
+            btn.addEventListener('mouseleave', handleMouseLeave);
+        });
+
+        return () => {
+            buttons.forEach(btn => {
+                btn.removeEventListener('mousemove', handleMouseMove);
+                btn.removeEventListener('mouseleave', handleMouseLeave);
+            });
+        };
+    }, []);
 };
 
 /* Why Choose Us Section */
@@ -187,26 +1023,138 @@ const ScrollProgressBar = () => React.createElement('div', { className: 'scroll-
     React.createElement('div', { className: 'scroll-progress-fill' })
 );
 
-/* Animated Counter Hook */
-const useCounter = (target, duration = 1500) => {
-    const [count, setCount] = React.useState(0);
+/* Typing Headline - cycles through phrases with typing/erasing effect */
+const TypingHeadline = () => {
+    const phrases = [
+        'Trung tâm điều hành CORS',
+        'Hạ tầng GNSS thế hệ mới',
+        'Định vị chính xác centimet'
+    ];
+    const [displayed, setDisplayed] = React.useState('');
+    const [phraseIdx, setPhraseIdx] = React.useState(0);
+    const [isDeleting, setIsDeleting] = React.useState(false);
+
     React.useEffect(() => {
-        if (target === 0) return;
-        const numTarget = parseInt(target) || 0;
-        const step = Math.max(1, Math.ceil(numTarget / (duration / 30)));
-        let current = 0;
+        const current = phrases[phraseIdx];
+        let timeout;
+
+        if (!isDeleting && displayed.length < current.length) {
+            // Typing
+            timeout = setTimeout(() => setDisplayed(current.slice(0, displayed.length + 1)), 60);
+        } else if (!isDeleting && displayed.length === current.length) {
+            // Hold for 4s then start deleting
+            timeout = setTimeout(() => setIsDeleting(true), 4000);
+        } else if (isDeleting && displayed.length > 0) {
+            // Erasing
+            timeout = setTimeout(() => setDisplayed(displayed.slice(0, -1)), 30);
+        } else if (isDeleting && displayed.length === 0) {
+            // Move to next phrase
+            setIsDeleting(false);
+            setPhraseIdx((phraseIdx + 1) % phrases.length);
+        }
+
+        return () => clearTimeout(timeout);
+    }, [displayed, isDeleting, phraseIdx]);
+
+    return React.createElement('div', { className: 'typing-headline-wrap' },
+        React.createElement('span', null, displayed),
+        React.createElement('span', { className: 'typing-cursor' })
+    );
+};
+
+/* Live Data Bars Continuous Animation Hook */
+const useLiveDataAnimation = () => {
+    React.useEffect(() => {
+        let intervalId;
+        const startAnimation = () => {
+            intervalId = setInterval(() => {
+                const bars = document.querySelectorAll('.livedata-bar');
+                if (!bars.length) return;
+                bars.forEach(bar => {
+                    const newHeight = 20 + Math.random() * 60;
+                    bar.style.transition = 'height 1.5s cubic-bezier(0.4, 0, 0.2, 1)';
+                    bar.style.height = newHeight + '%';
+                });
+            }, 2000);
+        };
+        // Start after initial scroll animations have had time to play
+        const delay = setTimeout(startAnimation, 3000);
+        return () => { clearTimeout(delay); clearInterval(intervalId); };
+    }, []);
+};
+
+/* Mouse Parallax Hook - shifts map and orbs based on cursor position */
+const useMouseParallax = () => {
+    React.useEffect(() => {
+        if (typeof gsap === 'undefined') return;
+        const hero = document.querySelector('.hero-section');
+        if (!hero) return;
+
+        const mapQuickX = gsap.quickTo('.hero-map-wrapper', 'x', { duration: 0.8, ease: 'power2.out' });
+        const mapQuickY = gsap.quickTo('.hero-map-wrapper', 'y', { duration: 0.8, ease: 'power2.out' });
+
+        const handleMouseMove = (e) => {
+            const rect = hero.getBoundingClientRect();
+            const cx = (e.clientX - rect.left) / rect.width - 0.5; // -0.5 to 0.5
+            const cy = (e.clientY - rect.top) / rect.height - 0.5;
+            mapQuickX(cx * 20);  // ±10px shift
+            mapQuickY(cy * 15);
+        };
+
+        hero.addEventListener('mousemove', handleMouseMove);
+        return () => hero.removeEventListener('mousemove', handleMouseMove);
+    }, []);
+};
+
+/* Animated Scramble Counter Hook (VIP Pro Master Level) */
+const useCounter = (targetStr, duration = 1600) => {
+    const [displayValue, setDisplayValue] = React.useState('');
+
+    React.useEffect(() => {
+        if (targetStr === undefined || targetStr === null || targetStr === '') return;
+        const target = String(targetStr);
+        
+        // Extract digits and symbols
+        const chars = target.split('');
+        const length = chars.length;
+        
+        let isCancelled = false;
+        let elapsed = 0;
+        const intervalTime = 30; // ~33 FPS
+        
         const timer = setInterval(() => {
-            current += step;
-            if (current >= numTarget) {
-                setCount(numTarget);
-                clearInterval(timer);
-            } else {
-                setCount(current);
+            elapsed += intervalTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            // Generate scramble string
+            const currentScramble = chars.map((char, index) => {
+                if (/[^0-9]/.test(char)) return char; // Preserve dots, plus, percentages, etc.
+                
+                // Digits settle from left to right
+                const threshold = (index / length) * 0.7;
+                if (progress > threshold + 0.25 || progress === 1) {
+                    return char;
+                }
+                
+                return Math.floor(Math.random() * 10);
+            }).join('');
+            
+            if (!isCancelled) {
+                setDisplayValue(currentScramble);
             }
-        }, 30);
-        return () => clearInterval(timer);
-    }, [target]);
-    return count;
+            
+            if (progress === 1) {
+                clearInterval(timer);
+            }
+        }, intervalTime);
+        
+        return () => {
+            isCancelled = true;
+            clearInterval(timer);
+        };
+    }, [targetStr, duration]);
+    
+    return displayValue;
 };
 
 /* ============================================================
@@ -251,7 +1199,7 @@ const useCinematicScroll = () => {
             // ========== HERO SCROLL-OUT (no pin, just fade) ==========
             gsap.to('.hero-section .container', {
                 scrollTrigger: { trigger: '.hero-section', start: 'top top', end: 'bottom top', scrub: true },
-                y: -100, opacity: 0, ease: 'none'
+                y: -24, opacity: 0.42, ease: 'none'
             });
             if (mapWrapper) {
                 const getMapTarget = (axis) => {
@@ -851,167 +1799,7 @@ const LoginPanel = ({ isOpen, onClose }) => {
     );
 };
 
-/* ============================================================
-   PRODUCT SHOWCASE - Storytelling Scroll Animation
-   ============================================================ */
-const ProductShowcase = () => {
-    return React.createElement('section', { className: 'product-showcase' },
-        // === SECTION HEADER (above pinned area) ===
-        React.createElement('div', { className: 'product-showcase-header' },
-            React.createElement('div', { className: 'product-showcase-kicker' },
-                React.createElement('i', { className: 'bi bi-cpu' }),
-                'Khám phá thiết bị'
-            ),
-            React.createElement('h2', { className: 'product-showcase-title' },
-                'Aitogy ',
-                React.createElement('span', null, 'B290')
-            ),
-            React.createElement('p', { className: 'product-showcase-sub' },
-                'GNSS Receiver thế hệ mới — thiết kế tại Việt Nam, chuẩn công nghiệp, độ chính xác centimet.'
-            )
-        ),
 
-        // === PINNED VIEWPORT (GSAP pins this) ===
-        React.createElement('div', { className: 'product-showcase-pin' },
-            // Grid overlay
-            React.createElement('div', { className: 'showcase-grid-overlay', 'aria-hidden': 'true' }),
-
-            // Glow rings
-            React.createElement('div', { className: 'device-glow-ring', 'aria-hidden': 'true' }),
-            React.createElement('div', { className: 'device-glow-ring-2', 'aria-hidden': 'true' }),
-
-            // === DEVICE STAGE ===
-            React.createElement('div', { className: 'device-stage' },
-                // Layer 1: Surround (side view)
-                React.createElement('div', { className: 'device-layer device-layer-surround' },
-                    React.createElement('img', { src: '/img/surround.png', alt: 'Aitogy B290 — Side view', loading: 'eager' })
-                ),
-                // Layer 2: Top view
-                React.createElement('div', { className: 'device-layer device-layer-top' },
-                    React.createElement('img', { src: '/img/top.jpg', alt: 'Aitogy B290 — Top antenna dome', loading: 'eager' })
-                ),
-                // Layer 3: Under (bottom)
-                React.createElement('div', { className: 'device-layer device-layer-under' },
-                    React.createElement('img', { src: '/img/under.jpg', alt: 'Aitogy B290 — Bottom with ports', loading: 'eager' })
-                ),
-                // Layer 4: Inside (PCB)
-                React.createElement('div', { className: 'device-layer device-layer-inside' },
-                    React.createElement('img', { src: '/img/inside.jpg', alt: 'Aitogy B290 — Internal PCB with GNSS chip', loading: 'eager' })
-                )
-            ),
-
-            // Scan line (X-ray effect for inside scene)
-            React.createElement('div', { className: 'device-scan-line', 'aria-hidden': 'true' }),
-
-            // === TEXT PANELS (one per scene) ===
-
-            // Scene 1 text: Surround
-            React.createElement('div', { className: 'scene-text-panel scene-text-left scene-text-surround' },
-                React.createElement('div', { className: 'scene-text-label' }, 'Thiết kế'),
-                React.createElement('h3', { className: 'scene-text-heading' }, 'Vỏ composite chống chịu mọi thời tiết'),
-                React.createElement('p', { className: 'scene-text-body' },
-                    'Lớp vỏ ABS + nhôm CNC chống tia UV, chống nước IP67. Thiết kế đối xứng tối ưu thu sóng đa hướng.'
-                ),
-                React.createElement('div', { className: 'scene-specs' },
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-shield-check' }), 'IP67'
-                    ),
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-thermometer-half' }), '-40°C ~ 85°C'
-                    )
-                )
-            ),
-
-            // Scene 2 text: Top
-            React.createElement('div', { className: 'scene-text-panel scene-text-right scene-text-top' },
-                React.createElement('div', { className: 'scene-text-label' }, 'Anten'),
-                React.createElement('h3', { className: 'scene-text-heading' }, 'Anten đa tần số tích hợp'),
-                React.createElement('p', { className: 'scene-text-body' },
-                    'Dome anten ceramic chất lượng survey-grade, thu tín hiệu L1/L2/L5 từ GPS, GLONASS, Galileo, BeiDou và QZSS.'
-                ),
-                React.createElement('div', { className: 'scene-specs' },
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-broadcast' }), 'Dual Frequency'
-                    ),
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-globe' }), '6 hệ thống'
-                    )
-                )
-            ),
-
-            // Scene 3 text: Under
-            React.createElement('div', { className: 'scene-text-panel scene-text-left scene-text-under' },
-                React.createElement('div', { className: 'scene-text-label' }, 'Kết nối'),
-                React.createElement('h3', { className: 'scene-text-heading' }, 'Cổng giao tiếp công nghiệp'),
-                React.createElement('p', { className: 'scene-text-body' },
-                    'USB-C nguồn/dữ liệu, mount 5/8\" chuẩn trắc địa. Tem thông số sản phẩm ISO 9001:2015 đầy đủ.'
-                ),
-                React.createElement('div', { className: 'scene-specs' },
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-usb-symbol' }), 'USB-C'
-                    ),
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-nut' }), '5/8\" Mount'
-                    ),
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-bluetooth' }), 'Bluetooth'
-                    )
-                )
-            ),
-
-            // Scene 4 text: Inside
-            React.createElement('div', { className: 'scene-text-panel scene-text-right scene-text-inside' },
-                React.createElement('div', { className: 'scene-text-label' }, 'Bên trong'),
-                React.createElement('h3', { className: 'scene-text-heading' }, 'Module GNSS u-blox ZED-F9P'),
-                React.createElement('p', { className: 'scene-text-body' },
-                    'Bo mạch thiết kế bởi Aitogy JSC, tích hợp chip u-blox ZED-F9P Multi-band RTK. Xử lý tín hiệu đa tần số với độ chính xác mm.'
-                ),
-                React.createElement('div', { className: 'scene-specs' },
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-cpu' }), 'ZED-F9P'
-                    ),
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-lightning-charge' }), '5V / 2A'
-                    ),
-                    React.createElement('span', { className: 'scene-spec-badge' },
-                        React.createElement('i', { className: 'bi bi-crosshair' }), 'RTK Fix'
-                    )
-                )
-            ),
-
-            // Model name watermark
-            React.createElement('div', { className: 'device-model-name', 'aria-hidden': 'true' }, 'B290'),
-
-            // Scene counter
-            React.createElement('div', { className: 'scene-counter' },
-                React.createElement('div', { className: 'scene-counter-dot active' }),
-                React.createElement('div', { className: 'scene-counter-dot' }),
-                React.createElement('div', { className: 'scene-counter-dot' }),
-                React.createElement('div', { className: 'scene-counter-dot' })
-            ),
-
-            // Scroll hint
-            React.createElement('div', { className: 'showcase-scroll-hint' },
-                'Cuộn để khám phá',
-                React.createElement('span', null)
-            ),
-
-            // Floating particles
-            ...Array.from({ length: 8 }, (_, i) =>
-                React.createElement('div', {
-                    key: 'particle-' + i,
-                    className: 'showcase-particle',
-                    style: {
-                        top: (15 + Math.random() * 70) + '%',
-                        left: (5 + Math.random() * 90) + '%',
-                        animationDelay: (Math.random() * 5) + 's',
-                        animationDuration: (6 + Math.random() * 6) + 's'
-                    }
-                })
-            )
-        )
-    );
-};
 
 /* ============================================================
    CINEMATIC FEATURE CARDS v6 - GSAP SCROLL SEQUENCE
@@ -1032,6 +1820,7 @@ const CinematicFeatures = ({ features }) => {
                     React.createElement('div', { className: 'landing-feature-card-wrapper' },
                         React.createElement('div', { className: 'landing-feature-card-inner' },
                             React.createElement('div', { className: 'feature-card-scan', 'aria-hidden': 'true' }),
+                            React.createElement('div', { className: 'feature-card-scan-continuous', 'aria-hidden': 'true' }),
                             React.createElement('div', { className: 'landing-feature-card-front' },
                                 React.createElement('div', { className: 'feature-card-index' }, `0${idx + 1}`),
                                 React.createElement('div', { className: `landing-feature-icon ${f.iconClass}` },
@@ -1054,9 +1843,14 @@ const CinematicFeatures = ({ features }) => {
    MAIN HOMEPAGE COMPONENT
    ============================================================ */
 const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
+    const isLoggedIn = !!(localStorage.getItem('access_token') || sessionStorage.getItem('access_token'));
 
     const [loginOpen, setLoginOpen] = React.useState(false);
     useCinematicScroll();
+    useLiveDataAnimation();
+    useMouseParallax();
+    useCardTilt();
+    useMagneticButtons();
 
     // Stats Animation Logic
     const stationTotal = Number(networkSummary?.total_stations || devices.length || 0);
@@ -1071,7 +1865,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
     const animProvinces = useCounter(Number(networkSummary?.coverage_areas || provinces.size || 24));
     
     // Uptime calculation (simulated or real)
-    const uptimePct = 99.98;
+    const animUptime = useCounter('99.98%');
     const toStationSlug = (value) => String(value || '')
         .normalize('NFKD')
         .replace(/[\u0300-\u036f]/g, '')
@@ -1103,7 +1897,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
         { label: 'Tổng số trạm', value: animStations, sub: 'Mạng lưới CORS Aitogy', icon: 'bi-broadcast-pin', color: '#4facfe' },
         { label: 'Đang hoạt động', value: animOnline, sub: 'Online · Sleep · Streaming', icon: 'bi-check-circle-fill', color: '#51cf66' },
         { label: 'Khu vực phủ sóng', value: animProvinces, sub: 'Tỉnh/TP trên toàn quốc', icon: 'bi-geo-alt-fill', color: '#cc5de8' },
-        { label: 'Uptime', value: `${uptimePct}%`, sub: 'Tỷ lệ hoạt động', icon: 'bi-lightning-charge-fill', color: '#00f2ff' }
+        { label: 'Uptime', value: animUptime, sub: 'Tỷ lệ hoạt động', icon: 'bi-lightning-charge-fill', color: '#00f2ff' }
     ];
 
     const features = [
@@ -1138,8 +1932,15 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
     ];
 
     return React.createElement('div', { className: 'enterprise-homepage', style: { position: 'relative', minHeight: '100vh', color: '#e6f1ff', fontFamily: "'Inter', 'Noto Sans', 'Segoe UI', sans-serif" } },
+        React.createElement('div', { className: 'noise-overlay', 'aria-hidden': 'true' }),
+
         // === ANIMATED BACKGROUND ===
         React.createElement('div', { className: 'landing-bg' },
+            React.createElement('div', { className: 'aurora-container', 'aria-hidden': 'true' },
+                React.createElement('div', { className: 'aurora-band aurora-band-1' }),
+                React.createElement('div', { className: 'aurora-band aurora-band-2' }),
+                React.createElement('div', { className: 'aurora-band aurora-band-3' })
+            ),
             React.createElement('div', { className: 'landing-grid' }),
             React.createElement('div', { className: 'landing-orb landing-orb-1' }),
             React.createElement('div', { className: 'landing-orb landing-orb-2' }),
@@ -1170,10 +1971,16 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                 React.createElement('a', { href: '/api/docs', className: 'landing-nav-link' }, 'Tài liệu API'),
                 React.createElement('button', {
                     className: 'btn-login-nav',
-                    onClick: () => setLoginOpen(true)
+                    onClick: () => {
+                        if (isLoggedIn) {
+                            if (typeof window.switchView === 'function') window.switchView('dashboard');
+                        } else {
+                            setLoginOpen(true);
+                        }
+                    }
                 },
-                    React.createElement('i', { className: 'bi bi-person-circle me-2' }),
-                    'Đăng nhập'
+                    React.createElement('i', { className: `bi ${isLoggedIn ? 'bi-speedometer2' : 'bi-person-circle'} me-2` }),
+                    isLoggedIn ? 'Bảng điều khiển' : 'Đăng nhập'
                 )
             )
         ),
@@ -1183,13 +1990,23 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
 
         // === HERO SECTION ===
         React.createElement('section', { className: 'hero-section' },
+            React.createElement(HeroThreeScene),
+            React.createElement('div', { className: 'hero-premium-hud', 'aria-hidden': 'true' },
+                React.createElement('span', null, 'RTK FIX'),
+                React.createElement('span', null, 'NTRIP LIVE'),
+                React.createElement('span', null, 'GNSS 4 CONSTELLATIONS')
+            ),
             React.createElement('div', { className: 'container position-relative', style: { zIndex: 2 } },
                 React.createElement('div', { className: 'hero-badge' },
                     React.createElement('i', { className: 'bi bi-satellite' }),
                     ' Hạ tầng GNSS thế hệ mới'
                 ),
-                React.createElement('h1', { className: 'hero-title' },
-                    'Aitogy Network',
+                React.createElement('h1', { className: 'hero-title', style: { position: 'relative' } },
+                    React.createElement('span', {
+                        className: 'glitch-hud-title',
+                        'data-text': 'Aitogy Network'
+                    }, 'Aitogy Network'),
+                    React.createElement('div', { className: 'glitch-hud-scanline' }),
                     React.createElement('br'),
                     React.createElement('span', { className: 'hero-title-gradient' }, 'Trung tâm điều hành CORS')
                 ),
@@ -1197,12 +2014,20 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                     'Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh CORS trên toàn lãnh thổ Việt Nam. ',
                     'Cung cấp hạ tầng RTK/NTRIP chuyên nghiệp cho khảo sát, đo đạc và tự động hóa.'
                 ),
+                React.createElement(SignalWaveform),
+                React.createElement(TypingHeadline),
                 React.createElement('div', { className: 'hero-actions' },
                     React.createElement('button', {
                         className: 'btn-enterprise',
-                        onClick: () => setLoginOpen(true)
+                        onClick: () => {
+                            if (isLoggedIn) {
+                                if (typeof window.switchView === 'function') window.switchView('dashboard');
+                            } else {
+                                setLoginOpen(true);
+                            }
+                        }
                     },
-                        'Truy cập hệ thống ',
+                        isLoggedIn ? 'Vào bảng điều khiển ' : 'Truy cập hệ thống ',
                         React.createElement('i', { className: 'bi bi-arrow-right ms-2' })
                     ),
                     React.createElement('button', {
@@ -1271,7 +2096,8 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                                 }
                             },
                                 React.createElement('span', {
-                                    style: { width: '10px', height: '10px', borderRadius: '50%', background: dotColor, boxShadow: `0 0 8px ${dotColor}`, flexShrink: 0 }
+                                    className: isActive ? 'station-heartbeat' : '',
+                                    style: { width: '10px', height: '10px', borderRadius: '50%', background: dotColor, boxShadow: `0 0 8px ${dotColor}`, flexShrink: 0, color: dotColor }
                                 }),
                                 React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                                     React.createElement('div', { style: { fontWeight: 700, fontSize: '0.9rem', color: '#fff' } }, d.name || d.serial),
@@ -1323,12 +2149,6 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
 
         // === FEATURES (Cinematic Fly-to-Center + 3D Flip) ===
         React.createElement(CinematicFeatures, { features: features }),
-
-        // === DIVIDER ===
-        React.createElement('div', { className: 'section-divider' }),
-
-        // === PRODUCT SHOWCASE (Storytelling Scroll Animation) ===
-        React.createElement(ProductShowcase),
 
         // === DIVIDER ===
         React.createElement('div', { className: 'section-divider' }),

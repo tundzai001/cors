@@ -297,6 +297,7 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "is_provisioned",
         "is_synced",
         "ntrip_stats",
+        "nmea_data",
         "version",
     )
     compact = {key: payload[key] for key in allowed_keys if key in payload}
@@ -1607,31 +1608,19 @@ async def lifespan(app: FastAPI):
     
     try:
         # ===================================================================
-        # BƯỚC 1: INITIALIZE DATABASES
+        # BƯỚC 1: VERIFY DATABASES (Cleaned up, stable schema assumed)
         # ===================================================================
         try:
             from sqlalchemy import text
             async with engine.begin() as conn:
-                await conn.run_sync(models.Base.metadata.create_all)
-                
-                # Auto-migrate missing columns for existing databases
-                try:
-                    await conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS version VARCHAR;"))
-                    await conn.execute(text("ALTER TABLE rtcm_stream_sessions ADD COLUMN IF NOT EXISTS caster_host VARCHAR;"))
-                except Exception as e_mig:
-                    logger.warning(f"Auto-migration failed (ignores on fresh DBs): {e_mig}")
-            logger.info("âœ“ Device database initialized")
+                await conn.execute(text("SELECT 1"))
+            logger.info("✓ Device database connection verified")
             
             async with auth_engine.begin() as conn:
-                await conn.run_sync(AuthBase.metadata.create_all)
-                try:
-                    await conn.execute(text("ALTER TABLE rover_accounts ADD COLUMN IF NOT EXISTS rtcm_cycle_enabled BOOLEAN DEFAULT FALSE;"))
-                    await conn.execute(text("ALTER TABLE rover_accounts ADD COLUMN IF NOT EXISTS rtcm_disconnect_interval_seconds INTEGER DEFAULT 300;"))
-                except Exception as e_mig_auth:
-                    logger.warning(f"Auth auto-migration failed (ignored on fresh DBs): {e_mig_auth}")
-            logger.info("âœ“ Auth database initialized")
+                await conn.execute(text("SELECT 1"))
+            logger.info("✓ Auth database connection verified")
         except Exception as e:
-            logger.critical(f"Database initialization failed: {e}", exc_info=True)
+            logger.critical(f"Database connection check failed: {e}", exc_info=True)
             raise
         
         # ===================================================================
@@ -4683,7 +4672,7 @@ async def sync_rover_by_username(
             base_serial=combined_serials,
             mountpoints=update_req.mountpoints,
             creator_id=current_user.id,
-            max_connections=update_req.max_connections or 1,
+            max_connections=update_req.max_connections if update_req.max_connections is not None else 1,
             show_position=update_req.show_position if update_req.show_position is not None else True,
             rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
             rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300)

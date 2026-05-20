@@ -254,6 +254,120 @@ def extract_rtcm3_frames(buffer):
         else:
             del buffer[0]
 
+class BitReader:
+    def __init__(self, data):
+        self.data = data
+        self.bitpos = 0
+
+    def remaining(self):
+        return (len(self.data) * 8) - self.bitpos
+
+    def read_uint(self, bits):
+        if bits < 0 or self.remaining() < bits:
+            raise ValueError("Not enough bits")
+        value = 0
+        for _ in range(bits):
+            byte_index = self.bitpos // 8
+            bit_index = 7 - (self.bitpos % 8)
+            value = (value << 1) | ((self.data[byte_index] >> bit_index) & 1)
+            self.bitpos += 1
+        return value
+
+    def skip(self, bits):
+        if bits < 0 or self.remaining() < bits:
+            raise ValueError("Not enough bits")
+        self.bitpos += bits
+
+RTCM_MSM_SYSTEMS = {
+    107: "us",
+    108: "ru",
+    109: "eu",
+    112: "cn",
+}
+
+def rtcm_message_type(frame):
+    if len(frame) < 5:
+        return None
+    payload = frame[3:-3]
+    if len(payload) < 2:
+        return None
+    return (payload[0] << 4) | (payload[1] >> 4)
+
+def parse_rtcm_msm_satellites(frame):
+    """
+    Decode enough RTCM MSM4 data to expose satellites and CNR for monitoring.
+    This intentionally does not compute azimuth/elevation; MSM does not carry it directly.
+    """
+    msg_type = rtcm_message_type(frame)
+    if msg_type is None:
+        return []
+
+    family = msg_type // 10
+    msm_version = msg_type % 10
+    system = RTCM_MSM_SYSTEMS.get(family)
+    if not system or msm_version != 4:
+        return []
+
+    try:
+        reader = BitReader(frame[3:-3])
+        reader.skip(12)  # message type
+        reader.skip(12)  # station id
+        reader.skip(30)  # epoch time
+        reader.skip(1)   # multiple message bit
+        reader.skip(3)   # issue of data station
+        reader.skip(7)   # reserved
+        reader.skip(2)   # clock steering
+        reader.skip(2)   # external clock
+        reader.skip(1)   # smoothing indicator
+        reader.skip(3)   # smoothing interval
+
+        satellite_ids = [index + 1 for index in range(64) if reader.read_uint(1)]
+        signal_ids = [index + 1 for index in range(32) if reader.read_uint(1)]
+        if not satellite_ids or not signal_ids:
+            return []
+
+        cells = []
+        for sat_id in satellite_ids:
+            for signal_id in signal_ids:
+                if reader.read_uint(1):
+                    cells.append((sat_id, signal_id))
+
+        cell_count = len(cells)
+        if cell_count <= 0:
+            return []
+
+        # MSM4 satellite data groups.
+        reader.skip(len(satellite_ids) * 8)   # rough range integer milliseconds
+
+        # MSM4 cell data groups before CNR.
+        reader.skip(cell_count * 15)  # fine pseudorange
+        reader.skip(cell_count * 22)  # fine phase range
+        reader.skip(cell_count * 4)   # lock time
+        reader.skip(cell_count * 1)   # half-cycle ambiguity
+
+        now = time.time()
+        by_sat = {}
+        for sat_id, signal_id in cells:
+            cnr = reader.read_uint(6)
+            existing = by_sat.get(sat_id)
+            if existing is None or cnr > existing["snr"]:
+                by_sat[sat_id] = {
+                    "prn": sat_id,
+                    "system": system,
+                    "signal": signal_id,
+                    "snr": cnr,
+                    "cnr": cnr,
+                    "elevation": 0,
+                    "azimuth": 0,
+                    "isTracking": True,
+                    "source": "RTCM_MSM",
+                    "rtcm_type": msg_type,
+                    "last_seen": now,
+                }
+        return list(by_sat.values())
+    except Exception:
+        return []
+
 def command_delay_seconds(command_bytes):
     if command_bytes.startswith(b"$DELAY_") and command_bytes.endswith(b"$"):
         try:
@@ -477,6 +591,99 @@ def rewrite_command_port(command_bytes, nmea_port=None, rtcm_port=None, nmea_gga
     rewritten = " ".join(parts) + "\r\n"
     logging.info(f"Rewrite command port: {stripped} -> {rewritten.strip()}")
     return rewritten.encode("ascii")
+
+def _first_value(*values):
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+def _as_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def _as_int(value, default=60):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def _extract_remote_payload(original_config):
+    if not isinstance(original_config, dict):
+        return {}, {}
+    payload = original_config.get("payload", original_config)
+    if not isinstance(payload, dict):
+        return {}, {}
+    params = payload.get("params", {})
+    if not isinstance(params, dict):
+        params = {}
+    return payload, params
+
+def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
+    """
+    Local command builder for every JSON-configured Geotek LTE source.
+
+    The dashboard can still send encoded commands, but this relay is the device
+    boundary for geotek_config.json sources. Rebuild the command list here so all
+    LTE units use the same tested COM2 profile regardless of their serial.
+    """
+    runtime_cfg = runtime_cfg if isinstance(runtime_cfg, dict) else {}
+    payload, params = _extract_remote_payload(original_config)
+    coords = params.get("coords", {}) if isinstance(params.get("coords"), dict) else {}
+
+    method = str(_first_value(
+        payload.get("method"),
+        payload.get("base_setup_method"),
+        params.get("base_setup_method"),
+        runtime_cfg.get("setup_method"),
+        "SURVEY_IN",
+    )).upper()
+    duration = _as_int(_first_value(
+        params.get("survey_in_duration"),
+        params.get("duration"),
+        runtime_cfg.get("duration"),
+        60,
+    ), 60)
+
+    lat = _as_float(_first_value(coords.get("lat"), params.get("lat"), runtime_cfg.get("lat"), 0.0), 0.0)
+    lon = _as_float(_first_value(coords.get("lon"), params.get("lon"), runtime_cfg.get("lon"), 0.0), 0.0)
+    alt = _as_float(_first_value(coords.get("alt"), params.get("alt"), runtime_cfg.get("alt"), 0.0), 0.0)
+
+    rtcm_port = str(_first_value(runtime_cfg.get("rtcm_port"), runtime_cfg.get("sensor_port"), "com2")).strip() or "com2"
+    gga_port = str(_first_value(runtime_cfg.get("nmea_gga_port"), runtime_cfg.get("nmea_port"), runtime_cfg.get("sensor_port"), rtcm_port)).strip() or rtcm_port
+
+    commands = [
+        b"FRESET\r\n",
+        b"$DELAY_8000$",
+        b"unlogall\r\n",
+        b"$DELAY_1000$",
+    ]
+
+    if method == "FIXED_LLA":
+        commands.extend([
+            f"mode base {lat} {lon} {alt}\r\n".encode("ascii"),
+            b"$DELAY_2000$",
+        ])
+    else:
+        commands.extend([
+            f"mode base time {duration}\r\n".encode("ascii"),
+            b"$DELAY_2000$",
+        ])
+
+    # Keep LTE stable: GGA is enough for position; satellite view is decoded from RTCM MSM.
+    commands.extend([
+        f"gpgga {gga_port} 1\r\n".encode("ascii"),
+        b"$DELAY_500$",
+    ])
+
+    for msg_id in ("1006", "1033", "1074", "1124", "1084", "1094", "1042", "1019", "1020", "1045"):
+        commands.append(f"rtcm{msg_id} {rtcm_port} 1\r\n".encode("ascii"))
+        commands.append(b"$DELAY_200$")
+
+    commands.append(b"saveconfig\r\n")
+    return commands
 
 # ==============================================================================
 # === RELAY WORKER ===
@@ -1410,22 +1617,16 @@ class MqttSourceWorker(threading.Thread):
         self.log("INFO", "Saved remote base config into geotek_db.json")
 
     def execute_commands(self, commands_b64, original_config=None):
-        """Inject dashboard-built chip config commands through the active SOURCE socket."""
+        """Inject Geotek LTE chip config commands through the active SOURCE socket."""
         try:
             self._persist_remote_config(original_config)
 
-            if isinstance(commands_b64, str):
-                command_items = [commands_b64]
-            elif isinstance(commands_b64, list):
-                command_items = commands_b64
-            else:
-                self.log("WARNING", f"Unsupported commands_b64 type: {type(commands_b64).__name__}")
-                return
-
-            decoded_commands = []
-            for item in command_items:
-                if item:
-                    decoded_commands.append(base64.b64decode(item))
+            decoded_commands = build_geotek_lte_unicore_commands(original_config, self.cfg)
+            self.log(
+                "INFO",
+                "Using local Geotek LTE command builder for JSON source "
+                f"(GGA/RTCM on {self.cfg.get('rtcm_port') or self.cfg.get('sensor_port') or 'com2'}; no GSV spam)"
+            )
 
             if not decoded_commands:
                 self.log("WARNING", "No commands to inject")
@@ -1445,13 +1646,6 @@ class MqttSourceWorker(threading.Thread):
                 self._clear_command_responses()
                 self.command_batch_active = True
                 for cmd_bytes in decoded_commands:
-                    cmd_bytes = rewrite_command_port(
-                        cmd_bytes,
-                        nmea_port=self.cfg.get("nmea_port") or self.cfg.get("sensor_port"),
-                        rtcm_port=self.cfg.get("rtcm_port") or self.cfg.get("sensor_port"),
-                        nmea_gga_port=self.cfg.get("nmea_gga_port"),
-                        nmea_sat_port=self.cfg.get("nmea_sat_port"),
-                    )
                     delay = command_delay_seconds(cmd_bytes)
                     if cmd_bytes.startswith(b"$DELAY_"):
                         time.sleep(delay)
@@ -1470,10 +1664,10 @@ class MqttSourceWorker(threading.Thread):
                 self.command_batch_active = False
                 self._clear_command_responses()
         except Exception as e:
-            self.log("ERROR", f"Failed to execute raw commands: {e}")
+            self.log("ERROR", f"Failed to execute Geotek LTE commands: {e}")
 
     def _send_config_commands(self, sock):
-        self.log("WARNING", "Local command building is disabled; backend must send EXECUTE_RAW_COMMANDS over MQTT.")
+        self.log("WARNING", "Direct local config path is disabled; MQTT EXECUTE_RAW_COMMANDS triggers the Geotek LTE builder.")
         return
         self.log("INFO", "📡 Executing Geotek LTE specialized configuration...")
         
@@ -1548,6 +1742,11 @@ class MqttSourceWorker(threading.Thread):
                     rtcm_frames = extract_rtcm3_frames(self.rtcm_buffer)
                     if not rtcm_frames:
                         return
+
+                    for frame in rtcm_frames:
+                        for sat in parse_rtcm_msm_satellites(frame):
+                            sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
+                            self.satellites[sat_key] = sat
 
                     with self.socket_lock:
                         for server_key, sock in list(self._target_socks.items()):
@@ -1659,6 +1858,7 @@ def setup_mqtt(worker_map):
     
     if MQTT_USER and MQTT_PASS:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
+    seen_status_commands = {}
     
     def on_connect(c, userdata, flags, rc, properties=None):
         if rc == 0:
@@ -1666,6 +1866,7 @@ def setup_mqtt(worker_map):
             c.subscribe("pi/devices/+/command", qos=1)
             c.subscribe("pi/devices/+/commands", qos=1)
             c.subscribe("pi/device/+/command", qos=1)
+            c.subscribe("pi/devices/+/status", qos=0)
             logging.info(f"MQTT control broker {MQTT_BROKER}:{MQTT_PORT}; waiting for dashboard commands")
         else:
             logging.error(f"MQTT failed: {rc}")
@@ -1677,10 +1878,21 @@ def setup_mqtt(worker_map):
             logging.warning(f"Control MQTT non-JSON message on {msg.topic}")
             return
 
-        command = str(payload.get("command", "")).strip().upper()
         parts = msg.topic.split("/")
         serial = parts[2] if len(parts) >= 4 else None
         serial = str(serial or payload.get("serial") or "").strip()
+        is_status_topic = msg.topic.endswith("/status")
+
+        if is_status_topic:
+            if "command" not in payload:
+                return
+            signature = json.dumps(payload, sort_keys=True, default=str)
+            if seen_status_commands.get(serial) == signature:
+                return
+            seen_status_commands[serial] = signature
+            logging.warning(f"[{serial}] Command payload was received on status topic; processing fallback path")
+
+        command = str(payload.get("command", "")).strip().upper()
         if command != "SET_RTCM_STREAM_ACTIVE" or serial in worker_map:
             logging.info(f"Control MQTT received topic={msg.topic} command={command}")
 

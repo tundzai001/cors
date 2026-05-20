@@ -344,6 +344,13 @@ const handleSearchChange = (newTerm) => {
 window.switchView = function (viewName) {
     globalState.currentView = viewName;
 
+    // 1. Dynamic class toggling on body to control page-level scrolling
+    if (viewName === 'dashboard' || viewName === 'map') {
+        document.body.classList.add('dashboard-fixed-layout');
+    } else {
+        document.body.classList.remove('dashboard-fixed-layout');
+    }
+
     const navDashboard = document.getElementById('nav-dashboard');
     const navMap = document.getElementById('nav-map');
     const dashboardDiv = document.getElementById('view-dashboard');
@@ -421,6 +428,74 @@ window.switchView = function (viewName) {
         if (blogDiv) blogDiv.classList.add('d-none');
         if (apiDocsDiv) apiDocsDiv.classList.remove('d-none');
         if (navbar) navbar.classList.remove('d-none');
+    }
+
+    // 2. Dynamic Mounting and Unmounting logic for public page roots
+    
+    // --- Homepage ---
+    if (window.homepageRoot) {
+        if (viewName === 'homepage') {
+            waitForGlobalComponent('HomePageEnterprise', 15000).then((homeComp) => {
+                if (homeComp && window.homepageRoot && globalState.currentView === 'homepage') {
+                    renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
+                }
+            });
+        } else {
+            window.homepageRoot.render(null);
+        }
+    }
+
+    // --- Blog ---
+    if (window.blogRoot) {
+        if (viewName === 'blog') {
+            const currentPath = window.location.pathname;
+            const slug = currentPath.startsWith('/blog') && currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
+            waitForGlobalComponent('BlogSystem', 15000).then((blogComp) => {
+                if (blogComp && window.blogRoot && globalState.currentView === 'blog') {
+                    renderReactComponent(window.blogRoot, blogComp, { slug }, 'Blog component is not loaded');
+                }
+            });
+        } else {
+            window.blogRoot.render(null);
+        }
+    }
+
+    // --- Station Detail ---
+    if (window.enterpriseDetailRoot) {
+        if (viewName === 'station-detail') {
+            const device = globalState.devices.find(d => d.serial === globalState.selectedDeviceSerial) || globalState.devices[0];
+            if (device) {
+                waitForGlobalComponent('EnterpriseStationDetail', 15000).then((stationComp) => {
+                    if (stationComp && window.enterpriseDetailRoot && globalState.currentView === 'station-detail') {
+                        renderReactComponent(window.enterpriseDetailRoot, stationComp, { device }, 'Station detail component is not loaded');
+                    }
+                });
+            }
+        } else {
+            window.enterpriseDetailRoot.render(null);
+        }
+    }
+
+    // --- API Docs ---
+    if (window.apiDocsRoot) {
+        if (viewName === 'api-docs') {
+            waitForGlobalComponent('ApiDocs', 15000).then((apiDocsComp) => {
+                if (apiDocsComp && window.apiDocsRoot && globalState.currentView === 'api-docs') {
+                    renderReactComponent(window.apiDocsRoot, apiDocsComp, {}, 'API docs component is not loaded');
+                }
+            });
+        } else {
+            window.apiDocsRoot.render(null);
+        }
+    }
+
+    // --- Dashboard & Map Roots (to optimize resource usage when inactive) ---
+    if (viewName !== 'dashboard') {
+        if (typeof deviceListRoot !== 'undefined' && deviceListRoot) deviceListRoot.render(null);
+        if (typeof detailsPanelRoot !== 'undefined' && detailsPanelRoot) detailsPanelRoot.render(null);
+    }
+    if (viewName !== 'map') {
+        if (typeof mapRoot !== 'undefined' && mapRoot) mapRoot.render(null);
     }
 
     setTimeout(() => {

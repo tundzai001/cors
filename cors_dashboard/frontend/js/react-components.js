@@ -80,13 +80,16 @@ const SatelliteBars = memo(function SatelliteBars({ satellites }) {
     const counts = {};
     const snrs = {};
     sats.forEach(sat => {
-        let sys = "UN";
-        const prnStr = String(sat.prn || "");
-        if (prnStr.startsWith('G')) sys = "US";
-        else if (prnStr.startsWith('R')) sys = "RU";
-        else if (prnStr.startsWith('E')) sys = "EU";
-        else if (prnStr.startsWith('B')) sys = "CN";
-        else if (prnStr.startsWith('Q')) sys = "JP";
+        const systemMap = { us: "US", ru: "RU", eu: "EU", cn: "CN", jp: "JP", un: "UN" };
+        let sys = systemMap[sat.system] || "UN";
+        if (sys === "UN") {
+            const prnStr = String(sat.prn || "");
+            if (prnStr.startsWith('G')) sys = "US";
+            else if (prnStr.startsWith('R')) sys = "RU";
+            else if (prnStr.startsWith('E')) sys = "EU";
+            else if (prnStr.startsWith('B')) sys = "CN";
+            else if (prnStr.startsWith('Q')) sys = "JP";
+        }
 
         counts[sys] = (counts[sys] || 0) + 1;
         snrs[sys] = (snrs[sys] || 0) + (Number(sat.snr) || 0);
@@ -550,7 +553,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             </div>
 
             {/* List */}
-            <div className="flex-grow-1 overflow-auto custom-scrollbar p-2">
+            <div className="device-list-scroll flex-grow-1 overflow-auto custom-scrollbar p-2">
                 {devices.length === 0 ? (
                     localSearchTerm ? (
                         <div className="text-center mt-5 text-muted animate-fade-in-up">
@@ -2010,6 +2013,10 @@ function getSatelliteSystem(sat) {
     return 'un';
 }
 
+function getSatelliteKey(sat) {
+    return `${getSatelliteSystem(sat)}:${sat.prn}`;
+}
+
 // ===============================================================================
 // === ENHANCED DASHBOARD COMPONENT (REPLACED)
 // ===============================================================================
@@ -2162,7 +2169,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             }));
         }, 2000);
         return () => clearInterval(interval);
-    }, [device?.serial]); // Update logic dependencies
+    }, [device?.serial, nmeaData, device?.bps, device?.hacc]); // Update logic dependencies
 
     // SKYPLOT & CANVAS LOGIC
     useEffect(() => {
@@ -2234,13 +2241,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const buffer = satelliteBufferRef.current;
 
             satellites.forEach(sat => {
-                buffer.set(sat.prn, { ...sat, lastSeen: now, opacity: 1.0 });
+                buffer.set(getSatelliteKey(sat), { ...sat, lastSeen: now, opacity: 1.0 });
             });
 
-            for (const [prn, satData] of buffer.entries()) {
+            for (const [satKey, satData] of buffer.entries()) {
                 const timeSinceLastSeen = now - satData.lastSeen;
                 if (timeSinceLastSeen > SATELLITE_TIMEOUT + FADE_DURATION) {
-                    buffer.delete(prn);
+                    buffer.delete(satKey);
                 } else if (timeSinceLastSeen > SATELLITE_TIMEOUT) {
                     const fadeProgress = (timeSinceLastSeen - SATELLITE_TIMEOUT) / FADE_DURATION;
                     satData.opacity = Math.max(0, 1 - fadeProgress);
@@ -2311,7 +2318,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const activeSatellites = Array.from(buffer.values()).filter(s => s.snr > 0 && s.opacity > 0.3);
 
             // Tạo hash cấu trúc (Chỉ phụ thuộc số lượng và loại PRN - Không chứa giá trị SNR để tránh giật hình)
-            const structureHash = activeSatellites.map(s => s.prn).sort().join('|');
+            const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort().join('|');
 
             // Cập nhật text Stats
             const groupedSats = activeSatellites.reduce((acc, sat) => {
@@ -2352,7 +2359,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             const itemDiv = document.createElement('div');
                             itemDiv.className = 'sat-bar-item';
                             // Gắn id bằng PRN để sau này chọc thẳng vào DOM update
-                            itemDiv.id = `sat-bar-${String(sat.prn).replace(/\\s+/g, '-')}`;
+                            itemDiv.id = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
                             itemDiv.innerHTML = `
                                 <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
                                 <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
@@ -2373,7 +2380,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             // 2. Chế độ NGẦM: Chỉ cập nhật trị SNR + Color (Không tái tạo DOM, giúp thanh Transition mượt mà và hết giật nền)
             else {
                 activeSatellites.forEach(sat => {
-                    const domId = `sat-bar-${String(sat.prn).replace(/\\s+/g, '-')}`;
+                    const domId = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
                     const itemDiv = document.getElementById(domId);
                     if (itemDiv) {
                         const barFillHeight = Math.min(100, sat.snr / 55 * 100);
@@ -2407,7 +2414,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
 
                 const satCountEl = document.getElementById('db-sats');
-                if (satCountEl) satCountEl.textContent = gga?.satellites || 0;
+                if (satCountEl) {
+                    const activeCount = Object.values(satellites || {}).filter(s => Number(s.snr) > 0).length;
+                    satCountEl.textContent = activeCount || gga?.satellites || 0;
+                }
 
                 const dopEl = document.getElementById('db-dop');
                 if (dopEl) {
@@ -3557,7 +3567,7 @@ const DetailsPanel = memo(function DetailsPanel({
                     </button>
                 )}
             </div>
-            <div className="card-body overflow-auto flex-grow-1 p-3">
+            <div className="details-panel-scroll card-body overflow-auto flex-grow-1 p-3">
                 <div className="d-flex justify-content-between align-items-center mb-3">
                     {isAdmin ? (
                         <p className="text-white-50 small mb-0">Serial: {device.serial}</p>

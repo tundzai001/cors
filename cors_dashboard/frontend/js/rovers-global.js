@@ -887,6 +887,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? displayItems.join(', ')
             : (mps.length > 0 ? mps[0] : 'N/A');
 
+        // Connection Limit computation & UI representation
+        let maxConn = 1;
+        if (r.type === 'db') {
+            maxConn = (typeof r.max_connections !== 'undefined' && r.max_connections !== null) ? r.max_connections : 1;
+        } else if (infos.length > 0) {
+            maxConn = (typeof infos[0].maxclient !== 'undefined' && infos[0].maxclient !== null) ? infos[0].maxclient : 1;
+        }
+
+        let limitHtml = '';
+        if (maxConn === 0) {
+            limitHtml = `<div class="text-muted mt-1" style="font-size:0.7rem" title="Không giới hạn số lượng kết nối đồng thời"><i class="bi bi-infinity me-1 text-info"></i>Không giới hạn</div>`;
+        } else {
+            limitHtml = `<div class="text-muted mt-1" style="font-size:0.7rem" title="Số lượng kết nối đồng thời tối đa"><i class="bi bi-people me-1"></i>Tối đa: ${maxConn}</div>`;
+        }
+
         let activeConnsHtml = '<span class="text-muted small">---</span>';
         const allActiveConns = [];
         infos.forEach(i => {
@@ -1009,6 +1024,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             </td>
             <td>
                 <div>${activeConnsHtml}</div>
+                ${limitHtml}
             </td>
             <td class="text-center">${casterStatusBadge}</td>
             <td class="text-center">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
@@ -1233,7 +1249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         expirySelect.value = matchedValue; 
-        document.getElementById('edit-max-connections').value = rover.max_connections || 1;
+        document.getElementById('edit-max-connections').value = (typeof rover.max_connections !== 'undefined' && rover.max_connections !== null) ? rover.max_connections : 1;
         
         const showPosToggle = document.getElementById('edit-show-position');
         if (showPosToggle) {
