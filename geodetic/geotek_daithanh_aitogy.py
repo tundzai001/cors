@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V1.1.1"
+RELAY_VERSION = "V1.1.2"
 
 import json
 import logging
@@ -57,10 +57,20 @@ class ConfigManager:
         else:
             logging.warning(f"Config file {self.config_path} not found. Using defaults.")
             self.data = {
-                "mqtt": {"broker": "aitogy.click", "port": 1883, "user": "mqttUser", "pass": "MqttPassword123$%^"},
+                "mqtt": {
+                    "broker": "45.117.179.134",
+                    "port": 1883,
+                    "user": "mqttUser",
+                    "pass": "MqttPassword123$%^"
+                },
                 "ntrip": {
-                    "source_host": "rtkvietnam.vn", "source_port": 1508, "source_user": "aitogy123", "source_pass": "aitogy123",
-                    "target_host": "aitogy.com.vn", "target_port": 2101, "target_pass": "12345",
+                    "source_host": "rtkvietnam.vn",
+                    "source_port": 1508,
+                    "source_user": "aitogy123",
+                    "source_pass": "aitogy123",
+                    "target_host": "aitogy.com.vn",
+                    "target_port": 2101,
+                    "target_pass": "12345",
                     "version": 1, "reconnect_interval": 15
                 },
                 "station_list": [],
@@ -150,20 +160,29 @@ DB_PATH = os.path.join(SCRIPT_DIR, "geotek_db.json")
 config_mgr = ConfigManager(CONFIG_PATH)
 status_mgr = StatusManager(DB_PATH)
 
+
+def config_value(section, key, env_keys, default):
+    section_data = config_mgr.data.get(section, {})
+    value = section_data.get(key)
+    if value is not None and str(value).strip() != "":
+        return value
+    return default
+
+
 # Global Settings (From Config)
-MQTT_BROKER = config_mgr.data.get("mqtt", {}).get("broker", "aitogy.click")
-MQTT_PORT = config_mgr.data.get("mqtt", {}).get("port", 1883)
-MQTT_USER = config_mgr.data.get("mqtt", {}).get("user", "mqttUser")
-MQTT_PASS = config_mgr.data.get("mqtt", {}).get("pass", "MqttPassword123$%^")
+MQTT_BROKER = config_value("mqtt", "broker", ("MQTT_BROKER", "MQTT_HOST"), "45.117.179.134")
+MQTT_PORT = int(config_value("mqtt", "port", ("MQTT_PORT",), 1883))
+MQTT_USER = config_value("mqtt", "user", ("MQTT_USERNAME",), "mqttUser")
+MQTT_PASS = config_value("mqtt", "pass", ("MQTT_PASSWORD",), "MqttPassword123$%^")
 
-SOURCE_HOST = config_mgr.data.get("ntrip", {}).get("source_host", "rtkvietnam.vn")
-SOURCE_PORT = config_mgr.data.get("ntrip", {}).get("source_port", 1508)
-SOURCE_USER = config_mgr.data.get("ntrip", {}).get("source_user", "aitogy123")
-SOURCE_PASS = config_mgr.data.get("ntrip", {}).get("source_pass", "aitogy123")
+SOURCE_HOST = config_value("ntrip", "source_host", ("NTRIP_SOURCE_HOST",), "rtkvietnam.vn")
+SOURCE_PORT = int(config_value("ntrip", "source_port", ("NTRIP_SOURCE_PORT",), 1508))
+SOURCE_USER = config_value("ntrip", "source_user", ("NTRIP_SOURCE_USER",), "aitogy123")
+SOURCE_PASS = config_value("ntrip", "source_pass", ("NTRIP_SOURCE_PASS",), "aitogy123")
 
-TARGET_HOST = config_mgr.data.get("ntrip", {}).get("target_host", "aitogy.com.vn")
-TARGET_PORT = config_mgr.data.get("ntrip", {}).get("target_port", 2101)
-TARGET_PASS = config_mgr.data.get("ntrip", {}).get("target_pass", "12345")
+TARGET_HOST = config_value("ntrip", "target_host", ("NTRIP_TARGET_HOST",), "aitogy.com.vn")
+TARGET_PORT = int(config_value("ntrip", "target_port", ("NTRIP_TARGET_PORT",), 2101))
+TARGET_PASS = config_value("ntrip", "target_pass", ("NTRIP_TARGET_PASS",), "12345")
 
 NTRIP_VERSION = config_mgr.data.get("ntrip", {}).get("version", 1)
 RECONNECT_INTERVAL = config_mgr.data.get("ntrip", {}).get("reconnect_interval", 15)
@@ -1096,8 +1115,8 @@ class MonitorWorker(threading.Thread):
                     self._sock = sock
                 
                 # Cấu trúc y hệt chuẩn thiết bị Rover Ntrip 1.0 cổ điển:
-                r_user = self.cfg.get('rover_user', 'aitogy')
-                r_pass = self.cfg.get('rover_pass', TARGET_PASS)
+                r_user = self.cfg.get('rover_user') or "aitogy"
+                r_pass = self.cfg.get('rover_pass') or TARGET_PASS
                 auth = base64.b64encode(f"{r_user}:{r_pass}".encode()).decode()
                 request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP NtripClient/1.0\r\nAuthorization: Basic {auth}\r\n\r\n"
                 sock.sendall(request.encode())

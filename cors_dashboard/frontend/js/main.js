@@ -604,16 +604,19 @@ function updateGlobalDevices(newDeviceData) {
             if (newDevice.ntrip_stats) {
                 const s1_bps = Number(newDevice.ntrip_stats.server1_bps) || 0;
                 const s2_bps = Number(newDevice.ntrip_stats.server2_bps) || 0;
+                const input_bps = Number(newDevice.ntrip_stats.rtcm_input_bps || newDevice.ntrip_stats.rtcm_in_bps) || 0;
+                const output_bps = s1_bps + s2_bps;
 
                 newDevice.ntrip_status = {
                     server1: { connected: s1_bps > 0, bps: s1_bps },
                     server2: { connected: s2_bps > 0, bps: s2_bps }
                 };
 
-                newDevice.bps = s1_bps + s2_bps;
+                newDevice.rtcm_input_bps = input_bps;
+                newDevice.bps = output_bps;
                 // Prefer backend/agent truth if provided; fallback to bps heuristic.
                 if (typeof newDevice.ntrip_connected !== 'boolean') {
-                    newDevice.ntrip_connected = newDevice.bps > 0;
+                    newDevice.ntrip_connected = output_bps > 0;
                 }
             }
             else if (existingDevice && existingDevice.ntrip_status && existingDevice.bps > 0) {
@@ -1048,8 +1051,9 @@ function handleWebSocketMessage(message) {
         }
         else if (nmeaType === 'GSV' && data.satellites) {
             data.satellites.forEach(sat => {
-                currentNmeaData.satellites[sat.prn] = {
-                    ...currentNmeaData.satellites[sat.prn],
+                const satKey = sat.id || `${sat.talker || sat.system || 'GN'}:${sat.prn}`;
+                currentNmeaData.satellites[satKey] = {
+                    ...currentNmeaData.satellites[satKey],
                     ...sat,
                     lastSeen: Date.now()
                 };
@@ -1058,6 +1062,11 @@ function handleWebSocketMessage(message) {
         }
         else if (nmeaType === 'GGA') {
             currentNmeaData.gga = data;
+            requestDetailsPanelUpdate('high');
+        }
+        else if (nmeaType === 'GST') {
+            currentNmeaData.gst = data;
+            if (typeof data.hacc !== 'undefined') currentNmeaData.hacc = data.hacc;
             requestDetailsPanelUpdate('high');
         }
     }

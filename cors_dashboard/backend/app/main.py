@@ -31,7 +31,7 @@ from fastapi import (
     HTTPException, Request, Query, status, Body
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import PlainTextResponse, FileResponse, StreamingResponse, JSONResponse, HTMLResponse
+from fastapi.responses import PlainTextResponse, FileResponse, StreamingResponse, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -298,7 +298,15 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "is_synced",
         "ntrip_stats",
         "nmea_data",
+        "nmea_health",
         "version",
+        "satellite_count",
+        "hacc",
+        "transport_status",
+        "last_command_result",
+        "reconnect_counters",
+        "queue_metrics",
+        "serial_health",
     )
     compact = {key: payload[key] for key in allowed_keys if key in payload}
 
@@ -2004,8 +2012,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors(), "body": str(exc.body)},
     )
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+# Duplicate global exception handler intentionally left undecorated; the canonical
+# handler is registered after the WebSocket endpoints.
+async def _legacy_global_exception_handler_removed(request: Request, exc: Exception):
     """
     Bắt mọi lỗi không mong muốn, ghi log kèm Traceback chi tiết vào app.log.
     """
@@ -2474,8 +2483,9 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
 
 # (Old single-instance Caster Rover Management API removed to prevent shadowing multi-instance logic)
 
-@app.get("/api/ntrip/auth-check")
-async def ntrip_auth_check(
+# Legacy JSON variant removed from routing; the canonical caster-facing endpoint
+# below returns text/plain OK or BLOCKED.
+async def _legacy_json_ntrip_auth_check_removed(
     user: str = Query(...),
     mountpoint: Optional[str] = Query(None)
 ):
@@ -3191,6 +3201,7 @@ async def unblock_caster_user(
     deleted_count = result.rowcount
 
     caster_recreated = False
+    rover = await crud.get_rover_by_username(auth_db, username)
 
     if rover:
         rover.is_active = True
@@ -4945,6 +4956,7 @@ async def configure_chip_endpoint(
     params = payload.get("params", {})
     mode = payload.get("mode")
     method = params.get("base_setup_method")
+    gnss_options = params.get("gnss_options") if isinstance(params, dict) else None
     
     if not sensor_type or not mode:
         raise HTTPException(
@@ -5002,11 +5014,11 @@ async def configure_chip_endpoint(
                 pi_command = {
                     "command": "TRIGGER_AUTO_BASE",
                     "payload": {
-                        "ip": os.getenv("AUTO_BASE_CORS_IP", "14.238.1.125"),
-                        "port": int(os.getenv("AUTO_BASE_CORS_PORT", 2101)),
-                        "user": os.getenv("AUTO_BASE_CORS_USER", "aitogy"),
-                        "password": os.getenv("AUTO_BASE_CORS_PASS", "123"),
-                        "mountpoint": os.getenv("AUTO_BASE_CORS_MOUNTPOINT", "VRS.105M3"),
+                        "ip": _get_env_preferring_dotenv("AUTO_BASE_CORS_IP", "14.238.1.125"),
+                        "port": int(_get_env_preferring_dotenv("AUTO_BASE_CORS_PORT", "2101")),
+                        "user": _get_env_preferring_dotenv("AUTO_BASE_CORS_USER", ""),
+                        "password": _get_env_preferring_dotenv("AUTO_BASE_CORS_PASS", ""),
+                        "mountpoint": _get_env_preferring_dotenv("AUTO_BASE_CORS_MOUNTPOINT", "VRS.105M3"),
                         "timeout": 3600,
                         "samples": 60,
                         "sensor_type": sensor_type
@@ -5022,7 +5034,7 @@ async def configure_chip_endpoint(
                     raise ValueError("Missing survey_in parameters")
                 
                 commands_to_send = command_builder.build_base_survey_in_command(
-                    sensor_type, survey_duration, survey_accuracy
+                    sensor_type, survey_duration, survey_accuracy, gnss_options
                 )
                 logging.info(f"Built Survey-In commands for {serial}: {survey_duration}s, {survey_accuracy}m")
             elif method == "FIXED_LLA":
@@ -5032,7 +5044,7 @@ async def configure_chip_endpoint(
                 
                 accuracy = params.get('accuracy', 10.0)
                 commands_to_send = command_builder.build_base_fixed_lla_command(
-                    sensor_type, coords['lat'], coords['lon'], coords['alt'], accuracy
+                    sensor_type, coords['lat'], coords['lon'], coords['alt'], accuracy, gnss_options
                 )
                 logging.info(f"Built Fixed LLA commands for {serial}: lat/lon/alt, acc={accuracy}m")
             else:
@@ -5939,7 +5951,7 @@ async def get_caster_config(
     
     return {
         "hosts": list(set(hosts)),
-        "version": os.getenv("APP_VERSION", "V1.1.1")
+        "version": os.getenv("APP_VERSION", "V1.1.2")
     }
 
 @app.get("/login", include_in_schema=False)
@@ -6013,7 +6025,14 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
 app.add_middleware(MonitoringMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://cors.aitogy.com, http://118.70.171.179:8000"],  # âš ï¸ Trong production, hãy chỉ định origins cụ thể
+    allow_origins=[
+        "https://cors.aitogy.com",
+        "http://118.70.171.179:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8082",
+        "http://localhost:8082",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

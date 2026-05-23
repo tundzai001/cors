@@ -252,11 +252,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # --- 2.1. TÍNH TOÁN BPS ---
             ntrip_stats = data.get('ntrip_stats')
             if ntrip_stats and isinstance(ntrip_stats, dict):
-                total_bps = sum(
-                    val for val in ntrip_stats.values() 
-                    if isinstance(val, (int, float))
-                )
-                data['bps'] = total_bps
+                data['bps'] = int(ntrip_stats.get('server1_bps', 0) or 0) + int(ntrip_stats.get('server2_bps', 0) or 0)
             
             # --- 2.2. LƯU CONFIG VÀO CACHE ĐỂ BATCH CHECKER DÙNG ---
             # 🔥 QUAN TRỌNG: Lưu config vào cache để batch checker có thể so sánh

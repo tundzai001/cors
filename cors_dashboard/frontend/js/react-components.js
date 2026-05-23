@@ -793,6 +793,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
     const [manualChip, setManualChip] = useState(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
     const [method, setMethod] = useState('FIXED_LLA');
+    const activeChip = needsManualSelection ? manualChip : device.detected_chip_type;
 
     const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
     const autoProgress = device?.auto_base_progress || {};
@@ -812,7 +813,17 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [svinDuration, setSvinDuration] = useState('300'); // Giây
     const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
 
+    const [outputMode, setOutputMode] = useState('diagnostics_rtcm');
+    const [constellations, setConstellations] = useState({
+        gps: true,
+        glo: true,
+        gal: true,
+        bds: true,
+        qzss: true,
+        sbas: true
+    });
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
 
     useEffect(() => {
         // 1. Reset về giá trị mặc định khi đổi thiết bị
@@ -824,6 +835,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setFixedAccuracyMm('10');
         setSvinDuration('300');
         setSvinAccuracyM('3.00');
+        setOutputMode('diagnostics_rtcm');
+        setConstellations({ gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true });
 
         // 2. Load config từ DB (nếu có)
         if (device.base_config) {
@@ -857,6 +870,20 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             // Load Accuracy cho Survey-In (Lưu trong DB là mét -> Giữ nguyên là mét)
             if (config.survey_in_accuracy !== undefined) {
                 setSvinAccuracyM(String(config.survey_in_accuracy));
+            }
+            if (config.gnss_options && typeof config.gnss_options === 'object') {
+                const options = config.gnss_options;
+                if (options.output_mode) setOutputMode(String(options.output_mode));
+                if (options.constellations && typeof options.constellations === 'object') {
+                    setConstellations(prev => ({
+                        ...prev,
+                        ...Object.fromEntries(
+                            Object.entries(options.constellations)
+                                .filter(([key]) => Object.prototype.hasOwnProperty.call(prev, key))
+                                .map(([key, value]) => [key, !!value])
+                        )
+                    }));
+                }
             }
         }
     }, [device.serial]);
@@ -895,6 +922,20 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 params.survey_in_accuracy = parseFloat(svinAccuracyM);
             } else if (method === 'AUTO_CORS') {
                 // Auto CORS uses backend config directly, no frontend parameters needed beyond the method
+            }
+            if (isAdmin) {
+                params.gnss_options = {
+                    output_mode: outputMode,
+                    constellations: {
+                        gps: true,
+                        glo: true,
+                        gal: true,
+                        bds: true,
+                        qzss: true,
+                        sbas: true
+                    },
+                    ports: ['USB']
+                };
             }
 
             const payload = {
@@ -1079,6 +1120,71 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 required placeholder="VD: 3.0"
                             />
                             <div className="form-text text-danger">Đơn vị: MÉT (Ví dụ nhập 3.0 là 3 mét)</div>
+                        </div>
+                    </div>
+                )}
+
+                {isAdmin && (
+                    <div className="mt-4 p-3 border rounded bg-dark bg-opacity-25">
+                        <div className="d-flex justify-content-between align-items-center mb-3">
+                            <div className="fw-bold text-info">
+                                <i className="bi bi-broadcast-pin me-2"></i>GNSS Output Policy
+                            </div>
+                            <span className="badge bg-danger">Admin</span>
+                        </div>
+                        <div className="row g-3">
+                            <div className="col-md-5">
+                                <label className="form-label small fw-bold">Output mode</label>
+                                <select
+                                    className="form-select form-select-sm"
+                                    value={outputMode}
+                                    onChange={(e) => setOutputMode(e.target.value)}
+                                >
+                                    <option value="diagnostics_rtcm">NMEA + RTCM</option>
+                                    <option value="rtcm_only">RTCM only</option>
+                                </select>
+                            </div>
+                            <div className="col-md-7">
+                                <label className="form-label small fw-bold text-info">
+                                    <i className="bi bi-info-circle me-1"></i>Thông tin Hệ vệ tinh & Bản tin RTCM
+                                </label>
+                                <div className="p-3 rounded bg-dark bg-opacity-50 border border-secondary border-opacity-25 h-100 d-flex flex-column justify-content-between">
+                                    <div className="mb-2">
+                                        <div className="fw-semibold text-light small mb-1">
+                                            Hệ vệ tinh hỗ trợ (Mặc định bật toàn bộ):
+                                        </div>
+                                        <div className="d-flex flex-wrap gap-2 mt-1">
+                                            <span className="badge bg-primary bg-opacity-25 text-primary border border-primary border-opacity-50 px-2 py-1">GPS</span>
+                                            <span className="badge bg-info bg-opacity-25 text-info border border-info border-opacity-50 px-2 py-1">GLONASS</span>
+                                            <span className="badge bg-success bg-opacity-25 text-success border border-success border-opacity-50 px-2 py-1">Galileo</span>
+                                            <span className="badge bg-danger bg-opacity-25 text-danger border border-danger border-opacity-50 px-2 py-1">BeiDou</span>
+                                            <span className="badge bg-warning bg-opacity-25 text-warning border border-warning border-opacity-50 px-2 py-1">QZSS</span>
+                                            <span className="badge bg-secondary bg-opacity-25 text-secondary border border-secondary border-opacity-50 px-2 py-1">SBAS</span>
+                                        </div>
+                                    </div>
+                                    <div className="border-top border-secondary border-opacity-25 my-2"></div>
+                                    <div>
+                                        <div className="fw-semibold text-light small mb-1">
+                                            Bản tin RTCM đầu ra ({activeChip}):
+                                        </div>
+                                        <div className="text-muted small lh-sm">
+                                            {activeChip === 'Ublox' ? (
+                                                <span>
+                                                    <strong>1005</strong> (Tọa độ Base), <strong>1074</strong> (GPS MSM4), <strong>1084</strong> (GLONASS MSM4), <strong>1094</strong> (Galileo MSM4), <strong>1124</strong> (BeiDou MSM4), <strong>1230</strong> (GLONASS Bias).
+                                                </span>
+                                            ) : activeChip === 'Unicorecomm' ? (
+                                                <span>
+                                                    <strong>1006</strong> (Tọa độ Base), <strong>1033</strong> (Tên trạm), <strong>1074/1084/1094/1124</strong> (MSM4), <strong>1019/1020/1042/1045</strong> (Lịch vệ tinh GPS/GLO/BDS/GAL).
+                                                </span>
+                                            ) : (
+                                                <span>
+                                                    Bản tin tọa độ trạm (<strong>1005/1006</strong>), Tên trạm (<strong>1033</strong>) và MSM4 (<strong>1074, 1084, 1094, 1124</strong>) cho các hệ vệ tinh GPS, GLONASS, Galileo, BeiDou.
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}

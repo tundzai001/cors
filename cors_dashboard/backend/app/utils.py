@@ -34,6 +34,8 @@ class NMEAParser:
                 return self._parse_gsa(parts)
             elif message_type == 'GSV':
                 return self._parse_gsv(parts)
+            elif message_type == 'GST':
+                return self._parse_gst(parts)
         
         except (ValueError, IndexError):
             pass
@@ -88,8 +90,8 @@ class NMEAParser:
             }
             
             # 🔥 Cập nhật trạng thái tracking cho satellites
-            for prn in self.satellites.keys():
-                self.satellites[prn]['isTracking'] = prn in active_sats
+            for sat in self.satellites.values():
+                sat['isTracking'] = sat.get('prn') in active_sats
             
             return self.last_gsa
         
@@ -138,7 +140,9 @@ class NMEAParser:
                     # Lưu vào buffer kèm theo SYSTEM
                     if talker_id in self.gsv_buffer:
                         self.gsv_buffer[talker_id].append({
+                            "id": f"{talker_id}:{prn}",
                             "prn": prn,
+                            "talker": talker_id,
                             "system": system, 
                             "elevation": elevation,
                             "azimuth": azimuth,
@@ -158,7 +162,7 @@ class NMEAParser:
                         all_sats.extend(constellation_sats)
                     
                     for sat in all_sats:
-                        self.satellites[sat['prn']] = sat
+                        self.satellites[sat.get('id') or sat['prn']] = sat
                         
                         if self.last_gsa:
                             sat['isTracking'] = sat['prn'] in self.last_gsa['active_sats']
@@ -168,6 +172,7 @@ class NMEAParser:
                     
                     return {
                         "type": "GSV",
+                        "talker": talker_id,
                         "satellites": list(self.satellites.values())
                     }
         
@@ -181,7 +186,7 @@ class NMEAParser:
             
             if all_sats:
                 for sat in all_sats:
-                    self.satellites[sat['prn']] = sat
+                    self.satellites[sat.get('id') or sat['prn']] = sat
                 
                 self.gsv_buffer.clear()
                 
@@ -191,6 +196,42 @@ class NMEAParser:
                 }
         
         return None
+
+    def _parse_gst(self, parts: list) -> dict | None:
+        """Parse GST - GNSS pseudorange error statistics."""
+        if len(parts) < 8:
+            return None
+
+        try:
+            semi_major = float(parts[3]) if len(parts) > 3 and parts[3] else None
+            semi_minor = float(parts[4]) if len(parts) > 4 and parts[4] else None
+            lat_sigma = float(parts[6]) if parts[6] else None
+            lon_sigma = float(parts[7].split('*')[0]) if parts[7] else None
+            alt_sigma = float(parts[8].split('*')[0]) if len(parts) > 8 and parts[8] else None
+            hacc = None
+            hacc_source = None
+            if lat_sigma is not None and lon_sigma is not None:
+                hacc = (lat_sigma ** 2 + lon_sigma ** 2) ** 0.5
+                hacc_source = "gst_lat_lon_sigma"
+            if hacc is not None and hacc <= 0:
+                hacc = None
+                hacc_source = None
+
+            return {
+                "type": "GST",
+                "timestamp_utc": parts[1],
+                "rms": float(parts[2]) if len(parts) > 2 and parts[2] else None,
+                "semi_major_sigma": semi_major,
+                "semi_minor_sigma": semi_minor,
+                "orientation": float(parts[5]) if len(parts) > 5 and parts[5] else None,
+                "lat_sigma": lat_sigma,
+                "lon_sigma": lon_sigma,
+                "alt_sigma": alt_sigma,
+                "hacc": hacc,
+                "hacc_source": hacc_source,
+            }
+        except (ValueError, IndexError):
+            return None
 
     def _dms_to_dd(self, dms: str, direction: str) -> float | None:
         """Convert DMS to Decimal Degrees"""
