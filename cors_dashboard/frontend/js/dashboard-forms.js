@@ -1,0 +1,1407 @@
+// ====================== Dashboard configuration forms ======================
+(() => {
+const { useState, useEffect, memo, useRef } = React;
+
+const STATUS_TEXT_MAP = {
+    'online': 'ONLINE',
+    'offline': 'OFFLINE',
+    'unprovisioned': 'CHƯA KÍCH HOẠT',
+    'awaiting_license': 'CHỜ LICENSE',
+    'configuring': 'ĐANG CẤU HÌNH',
+    'rebooting': 'KHỞI ĐỘNG LẠI',
+    'rebooting_for_reset': 'ĐANG RESET',
+    'locked': 'BỊ KHÓA',
+    'sleep': 'CHẾ ĐỘ NGỦ',
+    'streaming': 'ĐANG PHÁT',
+    'starting': 'ĐANG KHỞI CHẠY',
+    'auto_setup_rover': 'AUTO: CHẾ ĐỘ ROVER',
+    'auto_setup_wait_fix': 'AUTO: CHỜ RTK FIX',
+    'auto_setup_averaging': 'AUTO: LẤY MẪU TỌA ĐỘ',
+    'auto_setup_base': 'AUTO: CÀI ĐẶT BASE'
+};
+const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disabled }) {
+    const [licenseKey, setLicenseKey] = useState('');
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [isDeploying, setIsDeploying] = useState(false);
+
+    const handleGenerateKey = async () => {
+        setIsGenerating(true);
+        try {
+            const response = await window.apiFetch('/api/license/pi', {
+                method: 'POST',
+                body: JSON.stringify({ serial: device.serial })
+            });
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Failed to generate license');
+            }
+            const data = await response.json();
+            setLicenseKey(data.license_key);
+            window.showSuccess('License key đã được tạo!');
+        } catch (error) {
+            window.showError('Không thể tạo key: ' + error.message);
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return;
+        if (!licenseKey) return window.showError('Vui lòng tạo license key trước!');
+        setIsDeploying(true);
+        try {
+            await onDeployLicense(device.serial, licenseKey);
+        } finally {
+            setIsDeploying(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="alert alert-warning small">
+                <i className="bi bi-key-fill me-2"></i>
+                Chức năng này dùng để cấp phép cho các trạm Pi đang ở trạng thái "CHỜ LICENSE".
+            </div>
+            <div className="mb-3">
+                <label className="form-label">Serial Number của Pi</label>
+                <div className="input-group">
+                    <input type="text" className="form-control" value={device.serial} readOnly />
+                    <button
+                        className="btn btn-outline-secondary"
+                        type="button"
+                        title="Sao chép Serial"
+                        onClick={() => {
+                            navigator.clipboard.writeText(device.serial);
+                            window.showSuccess('Đã sao chép Serial!');
+                        }}
+                    >
+                        <i className="bi bi-clipboard"></i>
+                    </button>
+                </div>
+            </div>
+            <div className="mb-3">
+                <label className="form-label">License Key</label>
+                <div className="input-group">
+                    <input type="text" className="form-control" value={licenseKey} readOnly placeholder="Nhấn 'Tạo Key' để tạo..." />
+                    <button
+                        className="btn btn-outline-secondary"
+                        type="button"
+                        title="Sao chép Key"
+                        onClick={() => {
+                            if (licenseKey) {
+                                navigator.clipboard.writeText(licenseKey);
+                                window.showSuccess('Đã sao chép Key!');
+                            }
+                        }}
+                    >
+                        <i className="bi bi-clipboard-check"></i>
+                    </button>
+                </div>
+            </div>
+            <button type="button" onClick={handleGenerateKey} className="btn btn-info w-100 mb-2" disabled={isGenerating}>
+                {isGenerating ? (
+                    <>
+                        <span className="spinner-border spinner-border-sm me-2"></span>
+                        Đang tạo...
+                    </>
+                ) : (
+                    <>
+                        <i className="bi bi-magic me-2"></i>
+                        Tạo Key
+                    </>
+                )}
+            </button>
+            <button type="submit" className="btn btn-primary w-100" disabled={isDeploying || !licenseKey}>
+                {isDeploying ? (
+                    <>
+                        <span className="spinner-border spinner-border-sm me-2"></span>
+                        Đang gửi...
+                    </>
+                ) : (
+                    <>
+                        <i className="bi bi-send-fill me-2"></i>
+                        Gửi Key đến Thiết bị
+                    </>
+                )}
+            </button>
+        </form>
+    );
+});
+
+const ProvisionForm = memo(function ProvisionForm({ device, currentUser = {}, onProvision, disabled }) {
+    const [stationName, setStationName] = useState(device.name);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
+    const autoProgress = device?.auto_base_progress || {};
+    const autoSamplesCollected = Number(autoProgress.samples_collected || 0);
+    const autoSamplesTarget = Number(autoProgress.samples_target || 0);
+    const autoProgressPercent = autoSamplesTarget > 0
+        ? Math.min(100, Math.round((autoSamplesCollected / autoSamplesTarget) * 100))
+        : null;
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return;
+        if (!stationName.trim()) {
+            return window.showError('Vui lòng nhập tên trạm!');
+        }
+        setIsSubmitting(true);
+        try {
+            await onProvision(device.serial, stationName);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="p-4 border rounded border-primary bg-dark-subtle">
+            <h5 className="text-primary">
+                <i className="bi bi-1-circle-fill me-2"></i>
+                Bước 1: Kích hoạt trạm
+            </h5>
+            <p className="small text-muted">
+                Vui lòng đặt tên cho trạm phát của bạn để tiếp tục. Tên này sẽ được hiển thị trên toàn hệ thống.
+            </p>
+
+            {/* Thông báo chế độ xem */}
+            {disabled && (
+                <div className="alert alert-info">
+                    <i className="bi bi-eye-fill me-2"></i>
+                    Chế độ xem: Bạn không có quyền kích hoạt trạm này.
+                </div>
+            )}
+
+            <form onSubmit={handleSubmit}>
+                {/* Fieldset để khóa tất cả input */}
+                <fieldset disabled={disabled}>
+                    <div className="mb-3">
+                        <label htmlFor="station-name" className="form-label fw-bold">Tên trạm</label>
+                        <input
+                            type="text"
+                            className="form-control form-control-lg"
+                            id="station-name"
+                            value={stationName}
+                            onChange={(e) => setStationName(e.target.value)}
+                            required
+                        />
+                    </div>
+
+                    {/* Chỉ hiện nút submit khi có quyền */}
+                    {!disabled && (
+                        <button type="submit" className="btn btn-primary w-100 btn-lg" disabled={isSubmitting}>
+                            {isSubmitting ? (
+                                <>
+                                    <span className="spinner-border spinner-border-sm me-2"></span>
+                                    Đang kích hoạt...
+                                </>
+                            ) : (
+                                <>
+                                    <i className="bi bi-check-circle-fill me-2"></i>
+                                    Lưu tên và Kích hoạt
+                                </>
+                            )}
+                        </button>
+                    )}
+                </fieldset>
+            </form>
+        </div>
+    );
+});
+
+const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, disabled }) {
+    const knownChips = ['Ublox', 'Unicorecomm'];
+    const needsManualSelection = !knownChips.includes(device.detected_chip_type);
+
+    const [manualChip, setManualChip] = useState(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
+    const [method, setMethod] = useState('FIXED_LLA');
+    const activeChip = needsManualSelection ? manualChip : device.detected_chip_type;
+
+    const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
+    const autoProgress = device?.auto_base_progress || {};
+    const autoSamplesCollected = Number(autoProgress.samples_collected || 0);
+    const autoSamplesTarget = Number(autoProgress.samples_target || 0);
+    const autoProgressPercent = autoSamplesTarget > 0
+        ? Math.min(100, Math.round((autoSamplesCollected / autoSamplesTarget) * 100))
+        : null;
+
+    // Tọa độ Fixed
+    const [latitude, setLatitude] = useState('');
+    const [longitude, setLongitude] = useState('');
+    const [altitude, setAltitude] = useState('');
+    const [fixedAccuracyMm, setFixedAccuracyMm] = useState('10'); // Đơn vị mm cho Fixed
+
+    // Survey-In Params
+    const [svinDuration, setSvinDuration] = useState('300'); // Giây
+    const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
+
+    const [outputMode, setOutputMode] = useState('diagnostics_rtcm');
+    const [constellations, setConstellations] = useState({
+        gps: true,
+        glo: true,
+        gal: true,
+        bds: true,
+        qzss: true,
+        sbas: true
+    });
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+
+    useEffect(() => {
+        // 1. Reset về giá trị mặc định khi đổi thiết bị
+        setManualChip(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
+        setMethod('FIXED_LLA');
+        setLatitude('');
+        setLongitude('');
+        setAltitude('');
+        setFixedAccuracyMm('10');
+        setSvinDuration('300');
+        setSvinAccuracyM('3.00');
+        setOutputMode('diagnostics_rtcm');
+        setConstellations({ gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true });
+
+        // 2. Load config từ DB (nếu có)
+        if (device.base_config) {
+            const config = device.base_config;
+
+            // Set Method
+            if (config.base_setup_method) {
+                setMethod(config.base_setup_method);
+            }
+
+            // Load Fixed Params
+            const coords = config.coords || (
+                (config.lat !== undefined && config.lon !== undefined)
+                    ? { lat: config.lat, lon: config.lon, alt: config.alt }
+                    : null
+            );
+            if (coords) {
+                setLatitude(coords.lat ?? '');
+                setLongitude(coords.lon ?? '');
+                setAltitude(coords.alt ?? '');
+            }
+            // Load Accuracy cho Fixed (Lưu trong DB là mét -> Đổi ra mm để hiển thị)
+            if (config.accuracy !== undefined) {
+                setFixedAccuracyMm(String(Math.round(config.accuracy * 1000)));
+            }
+
+            // Load Survey-In Params
+            if (config.survey_in_duration !== undefined) {
+                setSvinDuration(String(config.survey_in_duration));
+            }
+            // Load Accuracy cho Survey-In (Lưu trong DB là mét -> Giữ nguyên là mét)
+            if (config.survey_in_accuracy !== undefined) {
+                setSvinAccuracyM(String(config.survey_in_accuracy));
+            }
+            if (config.gnss_options && typeof config.gnss_options === 'object') {
+                const options = config.gnss_options;
+                if (options.output_mode) setOutputMode(String(options.output_mode));
+                if (options.constellations && typeof options.constellations === 'object') {
+                    setConstellations(prev => ({
+                        ...prev,
+                        ...Object.fromEntries(
+                            Object.entries(options.constellations)
+                                .filter(([key]) => Object.prototype.hasOwnProperty.call(prev, key))
+                                .map(([key, value]) => [key, !!value])
+                        )
+                    }));
+                }
+            }
+        }
+    }, [device.serial]);
+
+    const handleDecimalInputChange = (setter) => (e) => {
+        const value = e.target.value;
+        // Cho phép nhập số thập phân âm/dương
+        if (/^-?[0-9]*\.?[0-9]*$/.test(value)) {
+            setter(value);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return;
+        setIsSubmitting(true);
+
+        try {
+            const finalChipType = needsManualSelection
+                ? manualChip
+                : device.detected_chip_type;
+
+            let params = { base_setup_method: method };
+
+            if (method === 'FIXED_LLA') {
+                params.coords = {
+                    lat: String(latitude).trim(),
+                    lon: String(longitude).trim(),
+                    alt: String(altitude).trim()
+                };
+                // Fixed: Input là mm -> Chia 1000 để thành m gửi cho backend
+                params.accuracy = parseFloat(fixedAccuracyMm) / 1000.0;
+            } else if (method === 'SURVEY_IN') {
+                params.survey_in_duration = parseInt(svinDuration);
+                // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
+                params.survey_in_accuracy = parseFloat(svinAccuracyM);
+            } else if (method === 'AUTO_CORS') {
+                // Auto CORS uses backend config directly, no frontend parameters needed beyond the method
+            }
+            if (isAdmin) {
+                params.gnss_options = {
+                    output_mode: outputMode,
+                    constellations: {
+                        gps: true,
+                        glo: true,
+                        gal: true,
+                        bds: true,
+                        qzss: true,
+                        sbas: true
+                    },
+                    ports: ['USB']
+                };
+            }
+
+            const payload = {
+                sensor_type: finalChipType,
+                mode: 'BASE',
+                params: params
+            };
+
+            await onConfigureChip(device.serial, payload);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="alert alert-info small">
+                <i className="bi bi-info-circle me-2"></i>
+                Đây là bước cấu hình tọa độ gốc cho trạm phát. Các thay đổi sẽ reset chip GNSS.
+            </div>
+
+            {disabled && (
+                <div className="alert alert-warning py-2 mb-3">
+                    <i className="bi bi-eye-fill me-2"></i>
+                    Chế độ xem: Không thể chỉnh sửa cấu hình GNSS.
+                </div>
+            )}
+
+            {needsManualSelection && (
+                <div className="mb-3 p-3 border border-warning rounded">
+                    <div className="alert alert-warning small p-2">
+                        <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                        {device.detected_chip_type === 'RTCM3_Source' ? (
+                            <span>Chip nhận dạng là <strong>RTCM3_Source</strong> (thường là chip Unicorecomm/UM982 trả về mã chung). Vui lòng xác nhận loại chip để cấu hình chính xác.</span>
+                        ) : (
+                            <span>Không thể nhận diện loại chip (hiện tại là: <strong>{device.detected_chip_type}</strong>). Vui lòng chọn thủ công.</span>
+                        )}
+                    </div>
+                    <label className="form-label fw-bold">Xác nhận Loại Chip</label>
+                    <select
+                        className="form-select"
+                        value={manualChip}
+                        onChange={(e) => setManualChip(e.target.value)}
+                        disabled={disabled}
+                    >
+                        <option value="Ublox">Ublox</option>
+                        <option value="Unicorecomm">Unicorecomm (Mặc định cho UM982 / RTCM3)</option>
+                    </select>
+                </div>
+            )}
+
+            <div className="mb-3">
+                <label className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>
+                <select
+                    className="form-select border-primary"
+                    value={method}
+                    onChange={(e) => setMethod(e.target.value)}
+                    disabled={disabled}
+                >
+                    <option value="AUTO_CORS">Tự động cấu hình Base từ CORS liên kết</option>
+                    <option value="FIXED_LLA">Nhập tọa độ thủ công (Fixed Mode - Độ chính xác cao)</option>
+                    <option value="SURVEY_IN">Tự động khảo sát (Survey-In - Độ chính xác thấp)</option>
+                </select>
+            </div>
+
+            <fieldset disabled={disabled}>
+                {method === 'AUTO_CORS' ? (
+                    <div className="row g-3">
+                        {isAutoSetupStatus && (
+                            <div className="col-12">
+                                <div className="alert alert-info small mb-2">
+                                    <div className="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <i className="bi bi-hourglass-split me-2"></i>
+                                            <strong>Đang tự động cấu hình:</strong> {STATUS_TEXT_MAP[device.status] || device.status}
+                                        </div>
+                                        {autoProgressPercent !== null && (
+                                            <span className="badge bg-primary">{autoProgressPercent}%</span>
+                                        )}
+                                    </div>
+                                    {autoSamplesTarget > 0 && (
+                                        <div className="mt-2">
+                                            <div className="progress" style={{ height: '8px' }}>
+                                                <div
+                                                    className="progress-bar progress-bar-striped progress-bar-animated"
+                                                    style={{ width: `${autoProgressPercent || 0}%` }}
+                                                ></div>
+                                            </div>
+                                            <div className="mt-1 text-muted">
+                                                Mẫu tọa độ: {autoSamplesCollected}/{autoSamplesTarget}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        <div className="col-12">
+                            <div className="alert alert-success small mb-2">
+                                <i className="bi bi-robot me-2"></i>
+                                {latitude && longitude ? (
+                                    <span>Hệ thống đã tự động cấu hình tọa độ cho trạm từ CORS liên kết thành công!</span>
+                                ) : (
+                                    <span>Hệ thống sẽ tự động ghép nối với máy chủ CORS và tính trung bình tọa độ để thiết lập trạm phát Base hoàn toàn tự động!</span>
+                                )}
+                            </div>
+                        </div>
+                        {latitude && longitude && (
+                            <>
+                                <div className="col-md-4">
+                                    <label className="form-label small">Lat (Tự động)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={latitude} readOnly />
+                                </div>
+                                <div className="col-md-4">
+                                    <label className="form-label small">Lon (Tự động)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={longitude} readOnly />
+                                </div>
+                                <div className="col-md-4">
+                                    <label className="form-label small">Alt (Tự động)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={altitude} readOnly />
+                                </div>
+                            </>
+                        )}
+                    </div>
+                ) : method === 'FIXED_LLA' ? (
+                    <div className="row g-3">
+                        <div className="col-12 text-muted small fst-italic mb-2">
+                            * Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Latitude (Vĩ độ)</label>
+                            <input
+                                type="text" inputMode="decimal" className="form-control"
+                                value={latitude} onChange={handleDecimalInputChange(setLatitude)}
+                                required placeholder="VD: 21.028511"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Longitude (Kinh độ)</label>
+                            <input
+                                type="text" inputMode="decimal" className="form-control"
+                                value={longitude} onChange={handleDecimalInputChange(setLongitude)}
+                                required placeholder="VD: 105.854167"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Altitude (Độ cao - mét)</label>
+                            <input
+                                type="text" inputMode="decimal" className="form-control"
+                                value={altitude} onChange={handleDecimalInputChange(setAltitude)}
+                                required placeholder="VD: 15.5"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label fw-bold">Giới hạn sai số (mm)</label>
+                            <input
+                                type="number" className="form-control"
+                                value={fixedAccuracyMm} onChange={(e) => setFixedAccuracyMm(e.target.value)}
+                                required placeholder="VD: 10"
+                            />
+                            <div className="form-text">Đơn vị: Milimet (Thường để 5mm - 20mm)</div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="row g-3">
+                        <div className="col-12 text-muted small fst-italic mb-2">
+                            * Chế độ này thiết bị sẽ tự đo trung bình cộng vị trí. Phù hợp thiết lập trạm tạm thời.
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label">Thời gian khảo sát (giây)</label>
+                            <input
+                                type="number" className="form-control"
+                                value={svinDuration} onChange={(e) => setSvinDuration(e.target.value)}
+                                required
+                            />
+                            <div className="form-text">Tối thiểu: 60s. Khuyên dùng: &gt; 300s.</div>
+                        </div>
+                        <div className="col-md-6">
+                            <label className="form-label fw-bold">Giới hạn sai số (m)</label>
+                            <input
+                                type="number" step="0.01" className="form-control"
+                                value={svinAccuracyM} onChange={(e) => setSvinAccuracyM(e.target.value)}
+                                required placeholder="VD: 3.0"
+                            />
+                            <div className="form-text text-danger">Đơn vị: MÉT (Ví dụ nhập 3.0 là 3 mét)</div>
+                        </div>
+                    </div>
+                )}
+
+                {isAdmin && (
+                    <div className="gnss-output-policy mt-4">
+                        <div className="gnss-output-policy__header">
+                            <div className="gnss-output-policy__title">
+                                <i className="bi bi-broadcast-pin me-2"></i>GNSS Output Policy
+                            </div>
+                            <span className="gnss-output-policy__admin">Admin</span>
+                        </div>
+                        <div className="gnss-output-policy__grid">
+                            <div className="gnss-output-policy__field">
+                                <label className="gnss-output-policy__label">Output mode</label>
+                                <select
+                                    className="form-select form-select-sm gnss-output-policy__select"
+                                    value={outputMode}
+                                    onChange={(e) => setOutputMode(e.target.value)}
+                                >
+                                    <option value="diagnostics_rtcm">NMEA + RTCM</option>
+                                    <option value="rtcm_only">RTCM only</option>
+                                </select>
+                            </div>
+                            <div className="gnss-output-policy__summary">
+                                <label className="gnss-output-policy__label gnss-output-policy__label--accent">
+                                    <i className="bi bi-info-circle me-1"></i>Thông tin Hệ vệ tinh & Bản tin RTCM
+                                </label>
+                                <div className="gnss-output-policy__info">
+                                    <div>
+                                        <div className="gnss-output-policy__section-title">
+                                            Hệ vệ tinh hỗ trợ (Mặc định bật toàn bộ):
+                                        </div>
+                                        <div className="gnss-output-policy__chips">
+                                            <span className="gnss-output-policy__chip">GPS</span>
+                                            <span className="gnss-output-policy__chip">GLONASS</span>
+                                            <span className="gnss-output-policy__chip">Galileo</span>
+                                            <span className="gnss-output-policy__chip">BeiDou</span>
+                                            <span className="gnss-output-policy__chip">QZSS</span>
+                                            <span className="gnss-output-policy__chip gnss-output-policy__chip--muted">SBAS</span>
+                                        </div>
+                                    </div>
+                                    <div className="gnss-output-policy__divider"></div>
+                                    <div className="gnss-output-policy__rtcm">
+                                        <div className="gnss-output-policy__section-title">
+                                            Bản tin RTCM đầu ra ({activeChip}):
+                                        </div>
+                                        <div className="gnss-output-policy__copy">
+                                            {activeChip === 'Ublox' ? (
+                                                <span>
+                                                    <strong>1005</strong> (Tọa độ Base), <strong>1074</strong> (GPS MSM4), <strong>1084</strong> (GLONASS MSM4), <strong>1094</strong> (Galileo MSM4), <strong>1124</strong> (BeiDou MSM4), <strong>1230</strong> (GLONASS Bias).
+                                                </span>
+                                            ) : activeChip === 'Unicorecomm' ? (
+                                                <span>
+                                                    <strong>1006</strong> (Tọa độ Base), <strong>1033</strong> (Tên trạm), <strong>1074/1084/1094/1124</strong> (MSM4), <strong>1019/1020/1042/1045</strong> (Lịch vệ tinh GPS/GLO/BDS/GAL).
+                                                </span>
+                                            ) : (
+                                                <span>
+                                                    Bản tin tọa độ trạm (<strong>1005/1006</strong>), Tên trạm (<strong>1033</strong>) và MSM4 (<strong>1074, 1084, 1094, 1124</strong>) cho các hệ vệ tinh GPS, GLONASS, Galileo, BeiDou.
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {!disabled && (
+                    <button type="submit" className="btn btn-primary mt-4 w-100 base-config-submit" disabled={isSubmitting}>
+                        {isSubmitting ? (
+                            <>
+                                <span className="spinner-border spinner-border-sm me-2"></span>
+                                Đang gửi...
+                            </>
+                        ) : (
+                            <>
+                                <i className="bi bi-lightning-charge-fill me-2"></i>
+                                Áp dụng cấu hình BASE
+                            </>
+                        )}
+                    </button>
+                )}
+            </fieldset>
+        </form>
+    );
+});
+
+const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser = {}, onConfigureService, disabled }) {
+    const [formState, setFormState] = useState({
+        ncomport: '',
+        reconnectioninterval: 10,
+        stream_on_demand: true,
+        stream_active: false,
+        server1_enabled: false,
+        server1_stream_on_demand: true,
+        server1_stream_active: false,
+        ntrip_version1: 1,
+        serverhost1: '',
+        port1: '',
+        mountpoint1: '',
+        password1: '',
+        server2_enabled: false,
+        server2_stream_on_demand: true,
+        server2_stream_active: false,
+        ntrip_version2: 1,
+        serverhost2: '',
+        port2: '',
+        mountpoint2: '',
+        password2: '',
+        rtcm_enabled: false,
+        rtcmntripversion1: 1,
+        rtcmserver1: '',
+        rtcmport1: '',
+        rtcmmountpoint1: '',
+        rtcmusername1: '',
+        rtcmpassword1: ''
+    });
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isFormDirty, setIsFormDirty] = useState(false);
+    const lastHydratedSerialRef = useRef(null);
+    const canManageStationMode =
+        currentUser?.role === 'admin' ||
+        currentUser?.permissions?.includes('manage:station_mode') ||
+        currentUser?.permissions?.includes('MANAGE_STATION_MODE');
+
+    const toBool = (value, defaultValue = false) => {
+        if (value === null || value === undefined) return defaultValue;
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value !== 0;
+        if (typeof value === 'string') {
+            const v = value.trim().toLowerCase();
+            if (['true', '1', 'yes', 'on'].includes(v)) return true;
+            if (['false', '0', 'no', 'off'].includes(v)) return false;
+        }
+        return Boolean(value);
+    };
+
+    // Common section should only show stream toggles for servers that are currently enabled.
+    const showS1StreamToggle = toBool(formState.server1_enabled, false);
+    const showS2StreamToggle = toBool(formState.server2_enabled, false);
+
+    useEffect(() => {
+        const isSerialChanged = lastHydratedSerialRef.current !== device.serial;
+
+        // Skip realtime re-hydration while user is editing current device form.
+        if (!isSerialChanged && isFormDirty) {
+            return;
+        }
+
+        // Reset về trạng thái mặc định
+        const defaultState = {
+            ncomport: '',
+            reconnectioninterval: 10,
+            stream_on_demand: true,
+            stream_active: false,
+            server1_enabled: false,
+            server1_stream_on_demand: true,
+            server1_stream_active: false,
+            ntrip_version1: 1,
+            username1: '',
+            serverhost1: '',
+            port1: '',
+            mountpoint1: '',
+            password1: '',
+            server2_enabled: false,
+            server2_stream_on_demand: true,
+            server2_stream_active: false,
+            ntrip_version2: 1,
+            username2: '',
+            serverhost2: '',
+            port2: '',
+            mountpoint2: '',
+            password2: '',
+            rtcm_enabled: false,
+            rtcmntripversion1: 1,
+            rtcmserver1: '',
+            rtcmport1: '',
+            rtcmmountpoint1: '',
+            rtcmusername1: '',
+            rtcmpassword1: ''
+        };
+
+        if (device.service_config) {
+            const merged = {
+                ...defaultState,
+                ...device.service_config
+            };
+
+            // Backward compatibility: when per-server flags are missing, inherit from global mode.
+            if (merged.server1_stream_on_demand === null || merged.server1_stream_on_demand === undefined) {
+                merged.server1_stream_on_demand = !!merged.stream_on_demand;
+            }
+            if (merged.server2_stream_on_demand === null || merged.server2_stream_on_demand === undefined) {
+                merged.server2_stream_on_demand = !!merged.stream_on_demand;
+            }
+            if (merged.server1_stream_active === null || merged.server1_stream_active === undefined) {
+                merged.server1_stream_active = !!merged.stream_active;
+            }
+            if (merged.server2_stream_active === null || merged.server2_stream_active === undefined) {
+                merged.server2_stream_active = !!merged.stream_active;
+            }
+
+            if (!merged.server1_stream_on_demand) {
+                merged.server1_stream_active = true;
+            }
+            if (!merged.server2_stream_on_demand) {
+                merged.server2_stream_active = true;
+            }
+
+            setFormState(merged);
+            setIsFormDirty(false);
+            lastHydratedSerialRef.current = device.serial;
+        } else {
+            setFormState(defaultState);
+            setIsFormDirty(false);
+            lastHydratedSerialRef.current = device.serial;
+        }
+    }, [device.serial, device.service_config, isFormDirty]);
+
+    const handleChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        const inputValue = type === 'checkbox' ? checked : value;
+        setIsFormDirty(true);
+
+        setFormState(prev => {
+            const next = {
+                ...prev,
+                [name]: inputValue
+            };
+
+            if (name === 'stream_on_demand') {
+                next.server1_stream_on_demand = !!checked;
+                next.server2_stream_on_demand = !!checked;
+                next.stream_active = !checked;
+                next.server1_stream_active = !checked;
+                next.server2_stream_active = !checked;
+            }
+
+            if (name === 'server1_stream_on_demand') {
+                next.server1_stream_active = !checked;
+            }
+            if (name === 'server2_stream_on_demand') {
+                next.server2_stream_active = !checked;
+            }
+
+            return next;
+        });
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (disabled) return;
+        setIsSubmitting(true);
+
+        try {
+            const s1Enabled = toBool(formState.server1_enabled, false);
+            const s2Enabled = toBool(formState.server2_enabled, false);
+
+            const s1CanPush = !formState.server1_stream_on_demand || !!formState.server1_stream_active;
+            const s2CanPush = !formState.server2_stream_on_demand || !!formState.server2_stream_active;
+
+            // Derive global compatibility flags from enabled servers only.
+            const derivedGlobalOnDemand =
+                (s1Enabled && !!formState.server1_stream_on_demand)
+                ||
+                (s2Enabled && !!formState.server2_stream_on_demand);
+
+            const derivedGlobalActive =
+                (s1Enabled && s1CanPush)
+                ||
+                (s2Enabled && s2CanPush);
+
+            const payload = {
+                ...formState,
+                stream_on_demand: derivedGlobalOnDemand,
+                stream_active: derivedGlobalActive,
+                ntrip_version1: parseInt(formState.ntrip_version1, 10),
+                ntrip_version2: parseInt(formState.ntrip_version2, 10),
+                port1: formState.port1 ? parseInt(formState.port1, 10) : null,
+                port2: formState.port2 ? parseInt(formState.port2, 10) : null,
+                rtcmntripversion1: parseInt(formState.rtcmntripversion1, 10) === 2 ? 2 : 1,
+                rtcmport1: formState.rtcmport1 ? parseInt(formState.rtcmport1, 10) : null,
+                reconnectioninterval: parseInt(formState.reconnectioninterval, 10)
+            };
+
+            await onConfigureService(device.serial, payload);
+            setIsFormDirty(false);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="alert alert-info small">
+                <i className="bi bi-info-circle-fill me-2"></i>
+                Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.
+            </div>
+
+            {/* 🔥 Thông báo chế độ xem */}
+            {disabled && (
+                <div className="alert alert-warning py-2 mb-3">
+                    <i className="bi bi-eye-fill me-2"></i>
+                    Chế độ xem: Không thể chỉnh sửa cấu hình dịch vụ.
+                </div>
+            )}
+
+            <div className="mb-4 p-3 border rounded border-secondary">
+                <h5 className="mb-3">Cài đặt chung</h5>
+                <div className="mb-3 p-2 rounded bg-dark border border-secondary-subtle">
+                    <div className="d-flex align-items-center justify-content-between mb-1">
+                        <span className="text-muted small">Phiên bản Agent:</span>
+                        <span className="fw-bold small text-light">{device.version || 'Không xác định'}</span>
+                    </div>
+                    <div className="d-flex align-items-center justify-content-between">
+                        <span className="text-muted small">Trạng thái đồng bộ:</span>
+                        {device.version === window.APP_VERSION ? (
+                            <span className="badge bg-success-subtle text-success border border-success-subtle">
+                                <i className="bi bi-check-circle-fill me-1"></i>ĐÃ ĐỒNG BỘ (OK)
+                            </span>
+                        ) : (
+                            <span className="badge bg-warning-subtle text-warning border border-warning-subtle">
+                                <i className="bi bi-exclamation-triangle-fill me-1"></i>KHÔNG ĐỒNG BỘ
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <fieldset disabled={disabled}>
+                    <div className="row g-3">
+                        <div className="col-md-6">
+                            <label htmlFor="ncomport" className="form-label">Định danh Trạm (ID)</label>
+                            <input
+                                type="text"
+                                className="form-control"
+                                id="ncomport"
+                                name="ncomport"
+                                value={formState.ncomport}
+                                onChange={handleChange}
+                                placeholder="Ví dụ: TRAM_HN_01"
+                            />
+                        </div>
+                        <div className="col-md-6">
+                            <label htmlFor="reconnectioninterval" className="form-label">Kết nối lại (giây)</label>
+                            <input
+                                type="number"
+                                className="form-control"
+                                id="reconnectioninterval"
+                                name="reconnectioninterval"
+                                value={formState.reconnectioninterval}
+                                onChange={handleChange}
+                            />
+                        </div>
+                        {showS1StreamToggle && (
+                            <div className="col-md-6">
+                                <label className="form-label">Server 1: Chế độ stream</label>
+                                {canManageStationMode ? (
+                                    <div className="form-check form-switch pt-2">
+                                        <input
+                                            className="form-check-input"
+                                            type="checkbox"
+                                            role="switch"
+                                            id="server1_stream_on_demand"
+                                            name="server1_stream_on_demand"
+                                            checked={!!formState.server1_stream_on_demand}
+                                            onChange={handleChange}
+                                        />
+                                        <label className="form-check-label" htmlFor="server1_stream_on_demand">
+                                            {formState.server1_stream_on_demand ? "Ngủ (On-Demand)" : "Luôn mở (Always-On)"}
+                                        </label>
+                                    </div>
+                                ) : (
+                                    <div className="pt-2">
+                                        <span className={`badge ${formState.server1_stream_on_demand ? 'bg-info' : 'bg-success'}`}>
+                                            <i className={`bi ${formState.server1_stream_on_demand ? 'bi-moon-stars-fill' : 'bi-broadcast-pin'} me-1`}></i>
+                                            {formState.server1_stream_on_demand ? "S1: Ngủ" : "S1: Luôn mở"}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {showS2StreamToggle && (
+                            <div className="col-md-6">
+                                <label className="form-label">Server 2: Chế độ stream</label>
+                                {canManageStationMode ? (
+                                    <div className="form-check form-switch pt-2">
+                                        <input
+                                            className="form-check-input"
+                                            type="checkbox"
+                                            role="switch"
+                                            id="server2_stream_on_demand"
+                                            name="server2_stream_on_demand"
+                                            checked={!!formState.server2_stream_on_demand}
+                                            onChange={handleChange}
+                                        />
+                                        <label className="form-check-label" htmlFor="server2_stream_on_demand">
+                                            {formState.server2_stream_on_demand ? "Ngủ (On-Demand)" : "Luôn mở (Always-On)"}
+                                        </label>
+                                    </div>
+                                ) : (
+                                    <div className="pt-2">
+                                        <span className={`badge ${formState.server2_stream_on_demand ? 'bg-info' : 'bg-success'}`}>
+                                            <i className={`bi ${formState.server2_stream_on_demand ? 'bi-moon-stars-fill' : 'bi-broadcast-pin'} me-1`}></i>
+                                            {formState.server2_stream_on_demand ? "S2: Ngủ" : "S2: Luôn mở"}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                    </div>
+                </fieldset>
+            </div>
+
+            <div className="accordion" id="service-config-accordion">
+                {/* ==================== SERVER 1 ==================== */}
+                <div className="accordion-item">
+                    <h2 className="accordion-header">
+                        <button
+                            className="accordion-button"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#collapseOne"
+                        >
+                            <i className="bi bi-box-arrow-up me-2 text-primary"></i>
+                            NTRIP Caster Server 1
+                        </button>
+                    </h2>
+                    <div id="collapseOne" className="accordion-collapse collapse show" data-bs-parent="#service-config-accordion">
+                        <div className="accordion-body">
+                            <fieldset disabled={disabled}>
+                                {/* Enable Switch */}
+                                <div className="form-check form-switch form-switch-lg mb-3">
+                                    <input
+                                        className="form-check-input"
+                                        type="checkbox"
+                                        role="switch"
+                                        id="server1_enabled"
+                                        name="server1_enabled"
+                                        checked={formState.server1_enabled}
+                                        onChange={handleChange}
+                                    />
+                                    <label className="form-check-label" htmlFor="server1_enabled">Kích hoạt Server 1</label>
+                                </div>
+
+                                {/* NTRIP Version Selection */}
+                                <div className="mb-3 p-3 bg-dark rounded border border-secondary">
+                                    <label className="form-label fw-bold text-info">
+                                        <i className="bi bi-gear-fill me-2"></i>NTRIP Protocol Version
+                                    </label>
+                                    <div className="d-flex gap-4">
+                                        <div className="form-check">
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version1"
+                                                id="ntrip_v1_1"
+                                                value="1"
+                                                checked={parseInt(formState.ntrip_version1) === 1}
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v1_1">
+                                                <strong>Version 1.0</strong>
+                                                <br />
+                                                <small className="text-muted">SOURCE command (Legacy)</small>
+                                            </label>
+                                        </div>
+                                        <div className="form-check">
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version1"
+                                                id="ntrip_v1_2"
+                                                value="2"
+                                                checked={parseInt(formState.ntrip_version1) === 2}
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v1_2">
+                                                <strong>Version 2.0</strong>
+                                                <br />
+                                                <small className="text-muted">HTTP POST (Modern)</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div className="alert alert-secondary small mt-2 mb-0">
+                                        <i className="bi bi-info-circle me-1"></i>
+                                        <strong>Ghi chú:</strong> Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0
+                                    </div>
+                                </div>
+
+                                {/* Connection Details */}
+                                <div className="row g-3">
+                                    <div className="col-md-8">
+                                        <label className="form-label">Host / IP</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="serverhost1"
+                                            value={formState.serverhost1}
+                                            onChange={handleChange}
+                                            placeholder="Ví dụ: rtk2go.com"
+                                        />
+                                    </div>
+                                    <div className="col-md-4">
+                                        <label className="form-label">Port</label>
+                                        <input
+                                            type="number"
+                                            className="form-control"
+                                            name="port1"
+                                            value={formState.port1}
+                                            onChange={handleChange}
+                                            placeholder="2101"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">
+                                            Username
+                                            <small className="text-muted ms-1">(NTRIP Source Account)</small>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="username1"
+                                            value={formState.username1}
+                                            onChange={handleChange}
+                                            placeholder="source hoặc username riêng"
+                                        />
+                                        <small className="text-muted">
+                                            Mặc định: "source" (NTRIP v1). Caster hiện đại có thể yêu cầu username riêng.
+                                        </small>
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Password</label>
+                                        <input
+                                            type="password"
+                                            className="form-control"
+                                            name="password1"
+                                            value={formState.password1}
+                                            onChange={handleChange}
+                                            placeholder="••••••••"
+                                        />
+                                    </div>
+                                    <div className="col-12">
+                                        <label className="form-label">Mountpoint</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="mountpoint1"
+                                            value={formState.mountpoint1}
+                                            onChange={handleChange}
+                                            placeholder="MY_BASE_01"
+                                        />
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ==================== SERVER 2 ==================== */}
+                <div className="accordion-item">
+                    <h2 className="accordion-header">
+                        <button
+                            className="accordion-button collapsed"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#collapseTwo"
+                        >
+                            <i className="bi bi-box-arrow-up me-2 text-info"></i>
+                            NTRIP Caster Server 2
+                        </button>
+                    </h2>
+                    <div id="collapseTwo" className="accordion-collapse collapse" data-bs-parent="#service-config-accordion">
+                        <div className="accordion-body">
+                            <fieldset disabled={disabled}>
+                                {/* Enable Switch */}
+                                <div className="form-check form-switch form-switch-lg mb-3">
+                                    <input
+                                        className="form-check-input"
+                                        type="checkbox"
+                                        role="switch"
+                                        id="server2_enabled"
+                                        name="server2_enabled"
+                                        checked={formState.server2_enabled}
+                                        onChange={handleChange}
+                                    />
+                                    <label className="form-check-label" htmlFor="server2_enabled">Kích hoạt Server 2</label>
+                                </div>
+
+                                {/* NTRIP Version Selection */}
+                                <div className="mb-3 p-3 bg-dark rounded border border-secondary">
+                                    <label className="form-label fw-bold text-info">
+                                        <i className="bi bi-gear-fill me-2"></i>NTRIP Protocol Version
+                                    </label>
+                                    <div className="d-flex gap-4">
+                                        <div className="form-check">
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version2"
+                                                id="ntrip_v2_1"
+                                                value="1"
+                                                checked={parseInt(formState.ntrip_version2) === 1}
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v2_1">
+                                                <strong>Version 1.0</strong>
+                                                <br />
+                                                <small className="text-muted">SOURCE command (Legacy)</small>
+                                            </label>
+                                        </div>
+                                        <div className="form-check">
+                                            <input
+                                                className="form-check-input"
+                                                type="radio"
+                                                name="ntrip_version2"
+                                                id="ntrip_v2_2"
+                                                value="2"
+                                                checked={parseInt(formState.ntrip_version2) === 2}
+                                                onChange={handleChange}
+                                            />
+                                            <label className="form-check-label" htmlFor="ntrip_v2_2">
+                                                <strong>Version 2.0</strong>
+                                                <br />
+                                                <small className="text-muted">HTTP POST (Modern)</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div className="alert alert-secondary small mt-2 mb-0">
+                                        <i className="bi bi-info-circle me-1"></i>
+                                        <strong>Ghi chú:</strong> Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0
+                                    </div>
+                                </div>
+
+                                {/* Connection Details */}
+                                <div className="row g-3">
+                                    <div className="col-md-8">
+                                        <label className="form-label">Host / IP</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="serverhost2"
+                                            value={formState.serverhost2}
+                                            onChange={handleChange}
+                                            placeholder="Ví dụ: backup.caster.com"
+                                        />
+                                    </div>
+                                    <div className="col-md-4">
+                                        <label className="form-label">Port</label>
+                                        <input
+                                            type="number"
+                                            className="form-control"
+                                            name="port2"
+                                            value={formState.port2}
+                                            onChange={handleChange}
+                                            placeholder="2101"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">
+                                            Username
+                                            <small className="text-muted ms-1">(NTRIP Source Account)</small>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="username2"
+                                            value={formState.username2}
+                                            onChange={handleChange}
+                                            placeholder="source hoặc username riêng"
+                                        />
+                                        <small className="text-muted">
+                                            Mặc định: "source" (NTRIP v1). Caster hiện đại có thể yêu cầu username riêng.
+                                        </small>
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Password</label>
+                                        <input
+                                            type="password"
+                                            className="form-control"
+                                            name="password2"
+                                            value={formState.password2}
+                                            onChange={handleChange}
+                                            placeholder="••••••••"
+                                        />
+                                    </div>
+                                    <div className="col-12">
+                                        <label className="form-label">Mountpoint</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="mountpoint2"
+                                            value={formState.mountpoint2}
+                                            onChange={handleChange}
+                                            placeholder="MY_BASE_02"
+                                        />
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ==================== RTCM CLIENT ==================== */}
+                <div className="accordion-item">
+                    <h2 className="accordion-header">
+                        <button
+                            className="accordion-button collapsed"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#collapseThree"
+                        >
+                            <i className="bi bi-box-arrow-in-down me-2 text-success"></i>
+                            RTCM Client (Nhận tín hiệu hiệu chỉnh)
+                        </button>
+                    </h2>
+                    <div id="collapseThree" className="accordion-collapse collapse" data-bs-parent="#service-config-accordion">
+                        <div className="accordion-body">
+                            <fieldset disabled={disabled}>
+                                {/* Enable Switch */}
+                                <div className="form-check form-switch form-switch-lg mb-3">
+                                    <input
+                                        className="form-check-input"
+                                        type="checkbox"
+                                        role="switch"
+                                        id="rtcm_enabled"
+                                        name="rtcm_enabled"
+                                        checked={formState.rtcm_enabled}
+                                        onChange={handleChange}
+                                    />
+                                    <label className="form-check-label" htmlFor="rtcm_enabled">Kích hoạt nhận RTCM</label>
+                                </div>
+
+                                <div className="alert alert-warning small mb-3">
+                                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                                    <strong>Lưu ý:</strong> Chức năng này dành cho trạm Rover nhận tín hiệu hiệu chỉnh từ Base Station.
+                                    Không bật nếu thiết bị đang được cấu hình làm Base Station.
+                                </div>
+
+                                <div className="mb-3">
+                                    <label className="form-label d-block">NTRIP Version</label>
+                                    <div className="btn-group" role="group" aria-label="RTCM NTRIP Version">
+                                        <input
+                                            type="radio"
+                                            className="btn-check"
+                                            id="rtcmntripversion1_v1"
+                                            name="rtcmntripversion1"
+                                            value="1"
+                                            checked={parseInt(formState.rtcmntripversion1, 10) === 1}
+                                            onChange={handleChange}
+                                        />
+                                        <label className="btn btn-outline-secondary" htmlFor="rtcmntripversion1_v1">NTRIP v1</label>
+                                        <input
+                                            type="radio"
+                                            className="btn-check"
+                                            id="rtcmntripversion1_v2"
+                                            name="rtcmntripversion1"
+                                            value="2"
+                                            checked={parseInt(formState.rtcmntripversion1, 10) === 2}
+                                            onChange={handleChange}
+                                        />
+                                        <label className="btn btn-outline-secondary" htmlFor="rtcmntripversion1_v2">NTRIP v2</label>
+                                    </div>
+                                </div>
+
+                                {/* Connection Details */}
+                                <div className="row g-3">
+                                    <div className="col-md-8">
+                                        <label className="form-label">Caster Host / IP</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="rtcmserver1"
+                                            value={formState.rtcmserver1}
+                                            onChange={handleChange}
+                                            placeholder="Ví dụ: rtk2go.com"
+                                        />
+                                    </div>
+                                    <div className="col-md-4">
+                                        <label className="form-label">Caster Port</label>
+                                        <input
+                                            type="number"
+                                            className="form-control"
+                                            name="rtcmport1"
+                                            value={formState.rtcmport1}
+                                            onChange={handleChange}
+                                            placeholder="2101"
+                                        />
+                                    </div>
+                                    <div className="col-12">
+                                        <label className="form-label">Mountpoint</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="rtcmmountpoint1"
+                                            value={formState.rtcmmountpoint1}
+                                            onChange={handleChange}
+                                            placeholder="BASE_STATION_MP"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Username</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            name="rtcmusername1"
+                                            value={formState.rtcmusername1}
+                                            onChange={handleChange}
+                                            placeholder="username"
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label className="form-label">Password</label>
+                                        <input
+                                            type="password"
+                                            className="form-control"
+                                            name="rtcmpassword1"
+                                            value={formState.rtcmpassword1}
+                                            onChange={handleChange}
+                                            placeholder="••••••••"
+                                        />
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* 🔥 Chỉ hiện nút submit khi có quyền */}
+            {!disabled && (
+                <button type="submit" className="btn btn-success mt-4 w-100 btn-lg" disabled={isSubmitting}>
+                    {isSubmitting ? (
+                        <>
+                            <span className="spinner-border spinner-border-sm me-2"></span>
+                            Đang lưu...
+                        </>
+                    ) : (
+                        <>
+                            <i className="bi bi-save-fill me-2"></i>
+                            Lưu và Áp dụng Cấu hình
+                        </>
+                    )}
+                </button>
+            )}
+        </form>
+    );
+});
+
+
+window.CorsDashboardForms = {
+    LicenseForm,
+    ProvisionForm,
+    BaseConfigForm,
+    ServiceConfigForm
+};
+window.LicenseForm = LicenseForm;
+window.ProvisionForm = ProvisionForm;
+window.BaseConfigForm = BaseConfigForm;
+window.ServiceConfigForm = ServiceConfigForm;
+})();

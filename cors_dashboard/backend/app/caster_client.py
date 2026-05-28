@@ -85,20 +85,72 @@ class CasterClient:
 
     @classmethod
     def _extract_show_position(cls, parts: list[str], default: bool = True) -> bool:
-        # Some caster variants place show_position at different indexes.
-        # Prefer common indexes first, then scan from tail for a boolean-like token.
-        candidate_indexes = [9, 8]
+        # Some caster variants place show_position at different indexes. In the
+        # current usertable format, index 7 is "#connection" and index 8 is
+        # "Max Connection", so index 8 must not be interpreted as show_position.
+        candidate_indexes = [9]
+        if not cls._has_connection_limit_columns(parts):
+            candidate_indexes.append(8)
         for idx in candidate_indexes:
             if idx < len(parts):
                 token = str(parts[idx]).strip()
                 if token.lower() in {"0", "1", "true", "false", "yes", "no", "on", "off"}:
                     return cls._parse_bool_token(token, default)
 
+        if cls._has_connection_limit_columns(parts):
+            return default
+
         for token in reversed(parts):
             normalized = str(token).strip().lower()
             if normalized in {"0", "1", "true", "false", "yes", "no", "on", "off"}:
                 return cls._parse_bool_token(normalized, default)
 
+        return default
+
+    @staticmethod
+    def _is_int_token(value) -> bool:
+        try:
+            token = str(value).strip()
+            if token == "":
+                return False
+            int(token)
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def _has_connection_limit_columns(cls, parts: list[str]) -> bool:
+        return len(parts) >= 9 and cls._is_int_token(parts[7]) and cls._is_int_token(parts[8])
+
+    @classmethod
+    def _extract_maxclient(cls, parts: list[str], default: int = 0) -> int:
+        # Current caster usertable:
+        # STR;Username;Password;Mountpoint;Data;Status;Identifier;#connection;Max Connection
+        if cls._has_connection_limit_columns(parts):
+            return max(0, int(str(parts[8]).strip()))
+
+        # Some variants place maxclient after identifier and before show_position.
+        # Only parse when a following show_position-like field is present to avoid
+        # treating legacy show_position-only rows as a connection limit.
+        candidates = ((7, 8), (8, 9))
+        for max_idx, show_pos_idx in candidates:
+            if show_pos_idx >= len(parts) or max_idx >= len(parts):
+                continue
+            show_pos_token = str(parts[show_pos_idx]).strip().lower()
+            if show_pos_token not in {"0", "1", "true", "false", "yes", "no", "on", "off"}:
+                continue
+            try:
+                token = str(parts[max_idx]).strip()
+                if token:
+                    return max(0, int(token))
+            except Exception:
+                continue
+        return default
+
+    @classmethod
+    def _extract_nclient(cls, parts: list[str], default: int = 0) -> int:
+        if cls._has_connection_limit_columns(parts):
+            return max(0, int(str(parts[7]).strip()))
         return default
 
     @staticmethod
@@ -160,6 +212,8 @@ class CasterClient:
                             "datacount": int(parts[4]) if parts[4].isdigit() else 0,
                             "status": int(parts[5]) if parts[5].isdigit() else 0,
                             "identifier": parts[6].strip() if len(parts) > 6 else "",
+                            "nclient": self._extract_nclient(parts, default=0),
+                            "maxclient": self._extract_maxclient(parts, default=0),
                             "show_position": self._extract_show_position(parts, default=True)
                         })
             return users

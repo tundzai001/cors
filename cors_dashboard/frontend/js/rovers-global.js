@@ -887,13 +887,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? displayItems.join(', ')
             : (mps.length > 0 ? mps[0] : 'N/A');
 
-        // Connection Limit computation & UI representation
-        let maxConn = 1;
-        if (r.type === 'db') {
-            maxConn = (typeof r.max_connections !== 'undefined' && r.max_connections !== null) ? r.max_connections : 1;
-        } else if (infos.length > 0) {
-            maxConn = (typeof infos[0].maxclient !== 'undefined' && infos[0].maxclient !== null) ? infos[0].maxclient : 1;
-        }
+        // Connection Limit computation & UI representation.
+        // Prefer live caster data when available because caster uses 0 as "unlimited".
+        const liveMaxClients = infos
+            .map(i => Number(i?.maxclient))
+            .filter(v => Number.isFinite(v) && v >= 0);
+        const dbMaxConnections = Number(r.max_connections);
+        const maxConn = liveMaxClients.length > 0
+            ? liveMaxClients[0]
+            : (Number.isFinite(dbMaxConnections) && dbMaxConnections >= 0 ? dbMaxConnections : 1);
 
         let limitHtml = '';
         if (maxConn === 0) {
@@ -1199,7 +1201,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     password: cu.password,
                     mountpoints: cu.mountpoints.join(';'),
                     show_position: cu.show_position,
-                    max_connections: 1
+                    max_connections: (typeof cu.maxclient !== 'undefined' && cu.maxclient !== null) ? cu.maxclient : 1
                 };
             }
         }
@@ -1249,7 +1251,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         expirySelect.value = matchedValue; 
-        document.getElementById('edit-max-connections').value = (typeof rover.max_connections !== 'undefined' && rover.max_connections !== null) ? rover.max_connections : 1;
+        const liveMaxClients = getCasterInfosForUsername(rover.username)
+            .map(i => Number(i?.maxclient))
+            .filter(v => Number.isFinite(v) && v >= 0);
+        const roverMaxConnections = Number(rover.max_connections);
+        document.getElementById('edit-max-connections').value = liveMaxClients.length > 0
+            ? liveMaxClients[0]
+            : (Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1);
         
         const showPosToggle = document.getElementById('edit-show-position');
         if (showPosToggle) {

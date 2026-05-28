@@ -1,0 +1,1089 @@
+/* ==============================================================================
+   CORS Dashboard - Ops Dense UI
+   ============================================================================== */
+
+/* ==============================================================================
+   GNSS OUTPUT POLICY
+   ============================================================================== */
+
+.gnss-output-policy {
+    background: #111827;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.gnss-output-policy__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.875rem;
+}
+
+.gnss-output-policy__title {
+    display: flex;
+    align-items: center;
+    color: #e5e7eb;
+    font-size: 0.875rem;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+.gnss-output-policy__title i,
+.gnss-output-policy__label--accent i {
+    color: #38bdf8;
+}
+
+.gnss-output-policy__admin {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    padding: 0.1875rem 0.625rem;
+    border: 1px solid rgba(248, 113, 113, 0.28);
+    border-radius: 999px;
+    background: rgba(248, 113, 113, 0.1);
+    color: #fca5a5;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.gnss-output-policy__grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.85fr) minmax(360px, 1.15fr);
+    gap: 0.875rem;
+    align-items: stretch;
+}
+
+.gnss-output-policy__field,
+.gnss-output-policy__summary {
+    min-width: 0;
+}
+
+.gnss-output-policy__label {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.45rem;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.gnss-output-policy__select {
+    min-height: 2.25rem;
+    border-color: rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    background-color: #1f2937;
+}
+
+.gnss-output-policy__info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    height: 100%;
+    padding: 0.875rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 8px;
+    background: #0f172a;
+}
+
+.gnss-output-policy__section-title {
+    margin-bottom: 0.45rem;
+    color: #e5e7eb;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.35;
+}
+
+.gnss-output-policy__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+}
+
+.gnss-output-policy__chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    padding: 0.1875rem 0.55rem;
+    border: 1px solid rgba(56, 189, 248, 0.24);
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.08);
+    color: #bae6fd;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.gnss-output-policy__chip--muted {
+    border-color: rgba(148, 163, 184, 0.24);
+    background: rgba(148, 163, 184, 0.08);
+    color: #cbd5e1;
+}
+
+.gnss-output-policy__divider {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.16);
+}
+
+.gnss-output-policy__copy {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    line-height: 1.45;
+}
+
+.gnss-output-policy__copy strong {
+    color: #dbeafe;
+}
+
+.base-config-submit {
+    min-height: 2.5rem;
+    border-radius: 8px;
+    box-shadow: none;
+}
+
+.base-config-submit:hover {
+    transform: none;
+}
+
+@media (max-width: 991.98px) {
+    .gnss-output-policy__grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+/* ==============================================================================
+   OPERATION DASHBOARD REFRESH
+   ============================================================================== */
+
+body.dashboard-fixed-layout {
+    background: #0b1120;
+}
+
+body.dashboard-fixed-layout > main.container-fluid {
+    padding: 0.875rem;
+}
+
+.dashboard-layout {
+    --dash-bg: #0b1120;
+    --dash-panel: #111827;
+    --dash-panel-2: #0f172a;
+    --dash-border: rgba(148, 163, 184, 0.18);
+    --dash-border-strong: rgba(148, 163, 184, 0.28);
+    --dash-text: #e5e7eb;
+    --dash-muted: #94a3b8;
+    --dash-accent: #38bdf8;
+    gap: 0;
+}
+
+.dashboard-sidebar,
+.dashboard-main {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+
+.dashboard-sidebar-head {
+    min-height: 2.25rem;
+}
+
+.dashboard-sidebar-head h4 {
+    color: var(--dash-text);
+    font-size: 0.95rem;
+    font-weight: 800;
+    letter-spacing: 0;
+}
+
+.dashboard-sidebar-head .badge {
+    border: 1px solid rgba(56, 189, 248, 0.24);
+    background: rgba(56, 189, 248, 0.12) !important;
+    color: #bae6fd;
+    box-shadow: none;
+}
+
+.dashboard-list-root {
+    border: 1px solid var(--dash-border);
+    border-radius: 8px;
+    background: var(--dash-panel);
+}
+
+.dashboard-list-toolbar {
+    border-bottom: 1px solid var(--dash-border);
+    background: #0f172a;
+}
+
+.dashboard-list-toolbar h6 {
+    color: var(--dash-text) !important;
+    font-size: 0.8125rem;
+    letter-spacing: 0;
+}
+
+.dashboard-list-toolbar .input-group-text,
+.dashboard-list-toolbar .form-control,
+.dashboard-list-toolbar .btn {
+    min-height: 2.25rem;
+    border-color: rgba(148, 163, 184, 0.2) !important;
+    background: #111827 !important;
+    color: var(--dash-text) !important;
+    box-shadow: none;
+}
+
+.dashboard-list-toolbar .form-control::placeholder {
+    color: #64748b;
+}
+
+.dashboard-device-card {
+    margin-bottom: 0.5rem;
+    padding: 0.75rem 0.75rem 0.75rem 0.875rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 8px;
+    background: #0f172a;
+    box-shadow: none;
+    transform: none;
+}
+
+.dashboard-device-card:hover {
+    border-color: rgba(56, 189, 248, 0.32);
+    background: #111c2f;
+    box-shadow: none;
+    transform: none;
+}
+
+.dashboard-device-card.active {
+    border-color: rgba(56, 189, 248, 0.58);
+    background: #102033;
+    box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.18);
+}
+
+.dashboard-device-card .status-bar {
+    width: 3px;
+    border-radius: 8px 0 0 8px;
+    box-shadow: none;
+}
+
+.dashboard-device-card:hover .status-bar {
+    width: 3px;
+}
+
+.dashboard-device-card .status-bar.online,
+.dashboard-device-card .status-bar.sleep,
+.dashboard-device-card .status-bar.awaiting_license,
+.dashboard-device-card .status-bar.unprovisioned,
+.dashboard-device-card .status-bar.configuring,
+.dashboard-device-card .status-bar.rebooting,
+.dashboard-device-card .status-bar.rebooting_for_reset,
+.dashboard-device-card .status-bar.locked,
+.dashboard-device-card .status-bar.offline {
+    box-shadow: none;
+}
+
+.dashboard-device-card .device-name {
+    color: var(--dash-text);
+    font-size: 0.875rem;
+    font-weight: 750;
+    letter-spacing: 0;
+}
+
+.dashboard-device-card .device-meta {
+    color: #64748b;
+}
+
+.dashboard-device-card .badge {
+    border-radius: 999px;
+    box-shadow: none !important;
+}
+
+.dashboard-device-card > .badge,
+.dashboard-device-card__top > .badge,
+.dashboard-device-card__top .badge:not([class*="bg-"]) {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(148, 163, 184, 0.1);
+    color: #cbd5e1;
+}
+
+.dashboard-device-card .server-indicators {
+    margin-top: 0.625rem;
+    gap: 0.5rem;
+}
+
+.dashboard-device-card .server-status-item {
+    min-height: 2.25rem;
+    border-radius: 7px;
+    background: rgba(15, 23, 42, 0.92);
+    box-shadow: none;
+}
+
+.dashboard-detail-card {
+    border: 1px solid var(--dash-border);
+    border-radius: 8px;
+    background: var(--dash-panel);
+    box-shadow: none;
+}
+
+.dashboard-detail-card:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.dashboard-detail-header {
+    min-height: 4.25rem;
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid var(--dash-border) !important;
+    background: #0f172a !important;
+}
+
+.dashboard-detail-header h4 {
+    color: var(--dash-text);
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 0;
+}
+
+.dashboard-detail-header .btn-link {
+    color: #94a3b8 !important;
+}
+
+.dashboard-detail-header .badge {
+    box-shadow: none !important;
+}
+
+.dashboard-detail-body {
+    padding: 1rem !important;
+    background: #111827;
+}
+
+.dashboard-detail-meta {
+    min-height: 2rem;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    background: #0f172a;
+}
+
+.dashboard-tabs {
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 8px;
+    background: #0f172a;
+}
+
+.dashboard-tabs .nav-item {
+    margin: 0;
+}
+
+.dashboard-tabs .nav-link {
+    min-height: 2.25rem;
+    border: 0 !important;
+    border-radius: 6px;
+    color: #94a3b8;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+.dashboard-tabs .nav-link:hover {
+    color: #e5e7eb;
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.dashboard-tabs .nav-link.active {
+    color: #e0f2fe;
+    background: rgba(56, 189, 248, 0.16);
+    box-shadow: none;
+}
+
+.dashboard-tab-content {
+    padding-top: 0.25rem !important;
+}
+
+.dashboard-detail-footer {
+    border-top: 1px solid var(--dash-border) !important;
+    background: #0f172a !important;
+}
+
+@media (max-width: 575.98px) {
+    body.dashboard-fixed-layout {
+        position: static;
+        height: auto;
+        overflow: auto;
+    }
+
+    body.dashboard-fixed-layout > main.container-fluid,
+    body.dashboard-fixed-layout #view-dashboard,
+    body.dashboard-fixed-layout #view-dashboard > [class*="col-"] {
+        height: auto;
+        overflow: visible;
+    }
+
+    .dashboard-sidebar,
+    .dashboard-main {
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    .dashboard-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+    }
+}
+
+.dashboard-list-root,
+.dashboard-detail-card {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: #111827;
+    box-shadow: none;
+}
+
+.dashboard-detail-card:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.dashboard-list-toolbar,
+.dashboard-detail-header,
+.dashboard-detail-footer {
+    border-color: rgba(148, 163, 184, 0.18) !important;
+    background: #0f172a !important;
+}
+
+.dashboard-device-card,
+.dashboard-device-card:hover,
+.dashboard-device-card.active {
+    border-radius: 8px;
+    box-shadow: none;
+    transform: none;
+}
+
+.dashboard-device-card {
+    margin-bottom: 0.5rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: #0f172a;
+}
+
+.dashboard-device-card:hover {
+    border-color: rgba(56, 189, 248, 0.32);
+    background: #111c2f;
+}
+
+.dashboard-device-card.active {
+    border-color: rgba(56, 189, 248, 0.58);
+    background: #102033;
+    box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.18);
+}
+
+.dashboard-device-card .status-bar,
+.dashboard-device-card:hover .status-bar {
+    width: 3px;
+    box-shadow: none;
+}
+
+.dashboard-device-card .badge,
+.dashboard-detail-card .badge {
+    box-shadow: none !important;
+}
+
+.dashboard-tabs {
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 8px;
+    background: #0f172a;
+}
+
+.dashboard-tabs .nav-link,
+.dashboard-tabs .nav-link:hover,
+.dashboard-tabs .nav-link.active {
+    border: 0 !important;
+    border-radius: 6px;
+    box-shadow: none;
+}
+
+.dashboard-tabs .nav-link {
+    color: #94a3b8;
+}
+
+.dashboard-tabs .nav-link:hover {
+    color: #e5e7eb;
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.dashboard-tabs .nav-link.active {
+    color: #e0f2fe;
+    background: rgba(56, 189, 248, 0.16);
+}
+
+/* ==============================================================================
+   Dashboard UI v2 - Visible Ops Redesign
+   ============================================================================== */
+
+body.dashboard-fixed-layout {
+    background:
+        radial-gradient(circle at 12% 8%, rgba(20, 184, 166, 0.10), transparent 28%),
+        radial-gradient(circle at 88% 0%, rgba(59, 130, 246, 0.10), transparent 26%),
+        #080d16;
+}
+
+body.dashboard-fixed-layout > main.container-fluid {
+    padding: 10px;
+}
+
+.cors-dashboard {
+    --ops-bg: #080d16;
+    --ops-panel: #0d1422;
+    --ops-panel-raised: #101a2b;
+    --ops-panel-soft: #121d30;
+    --ops-line: rgba(148, 163, 184, 0.18);
+    --ops-line-strong: rgba(148, 163, 184, 0.30);
+    --ops-text: #e5edf7;
+    --ops-muted: #8fa1b7;
+    --ops-faint: #5f7188;
+    --ops-cyan: #22d3ee;
+    --ops-green: #34d399;
+    --ops-amber: #fbbf24;
+    --ops-red: #fb7185;
+    min-height: 0;
+    gap: 0;
+}
+
+.cors-dashboard.dashboard-layout.row {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+@media (min-width: 576px) {
+    .cors-dashboard.dashboard-layout.row {
+        flex-wrap: nowrap;
+    }
+}
+
+.cors-dashboard .dashboard-sidebar,
+.cors-dashboard .dashboard-main {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.cors-dashboard .dashboard-sidebar {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 10px;
+    padding-right: 10px;
+}
+
+.cors-dashboard .dashboard-main {
+    min-width: 0;
+}
+
+.cors-dashboard #admin-monitoring-widget {
+    margin-bottom: 0 !important;
+}
+
+.cors-dashboard #admin-monitoring-widget .card {
+    border: 1px solid var(--ops-line) !important;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #121c2e 0%, #0d1422 100%) !important;
+    box-shadow: none;
+}
+
+.cors-dashboard #admin-monitoring-widget .card:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.cors-dashboard #admin-monitoring-widget .card-body {
+    min-height: 60px;
+    padding: 12px !important;
+}
+
+.cors-dashboard #admin-monitoring-widget h6 {
+    color: var(--ops-text) !important;
+    font-size: 0.82rem;
+}
+
+.cors-dashboard #admin-monitoring-widget small {
+    color: var(--ops-muted) !important;
+}
+
+.cors-dashboard .dashboard-sidebar-head {
+    margin-bottom: 0 !important;
+    padding: 0 2px;
+}
+
+.cors-dashboard .dashboard-sidebar-head h4 {
+    color: var(--ops-text);
+    font-size: 0.84rem;
+    font-weight: 800;
+}
+
+.cors-dashboard .dashboard-sidebar-head .badge {
+    min-width: 34px;
+    border: 1px solid rgba(34, 211, 238, 0.24);
+    border-radius: 999px;
+    background: rgba(34, 211, 238, 0.10) !important;
+    color: #a5f3fc;
+}
+
+.cors-dashboard .dashboard-sidebar-head .btn {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    padding: 0;
+    border: 1px solid var(--ops-line) !important;
+    border-radius: 7px;
+    background: #0d1422;
+    color: var(--ops-muted);
+}
+
+.cors-dashboard .dashboard-list-root {
+    min-height: 0;
+    border: 1px solid var(--ops-line);
+    border-radius: 8px;
+    background: var(--ops-panel);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.cors-dashboard .device-list-container {
+    background: transparent;
+}
+
+.cors-dashboard .dashboard-list-toolbar {
+    padding: 12px !important;
+    border-bottom: 1px solid var(--ops-line);
+    background: #0b1220 !important;
+}
+
+.cors-dashboard .dashboard-list-toolbar h6 {
+    color: var(--ops-text) !important;
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.cors-dashboard .dashboard-list-toolbar .btn-link {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: var(--ops-muted) !important;
+}
+
+.cors-dashboard .dashboard-list-toolbar .btn-link:hover {
+    border-color: var(--ops-line);
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.cors-dashboard .dashboard-list-toolbar .input-group {
+    height: 34px;
+}
+
+.cors-dashboard .dashboard-list-toolbar .input-group-text,
+.cors-dashboard .dashboard-list-toolbar .form-control,
+.cors-dashboard .dashboard-list-toolbar .btn-dark {
+    min-height: 34px;
+    border-color: rgba(148, 163, 184, 0.18) !important;
+    background: #08111f !important;
+    color: var(--ops-text) !important;
+}
+
+.cors-dashboard .dashboard-list-toolbar .input-group-text {
+    width: 34px;
+    justify-content: center;
+    padding: 0;
+    color: var(--ops-faint) !important;
+}
+
+.cors-dashboard .dashboard-list-toolbar .form-control {
+    font-size: 0.78rem;
+}
+
+.cors-dashboard .device-list-scroll {
+    padding: 8px !important;
+}
+
+.cors-dashboard .dashboard-device-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 86px;
+    margin-bottom: 8px;
+    padding: 11px 10px 10px 13px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    background: #0f1726;
+    box-shadow: none;
+}
+
+.cors-dashboard .dashboard-device-card:hover {
+    border-color: rgba(34, 211, 238, 0.32);
+    background: #121e31;
+}
+
+.cors-dashboard .dashboard-device-card.active {
+    border-color: rgba(34, 211, 238, 0.62);
+    background: linear-gradient(180deg, #11243a 0%, #101b2c 100%);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.18);
+}
+
+.cors-dashboard .dashboard-device-card .status-bar,
+.cors-dashboard .dashboard-device-card:hover .status-bar {
+    width: 4px;
+    border-radius: 8px 0 0 8px;
+}
+
+.cors-dashboard .dashboard-device-card .status-bar.online,
+.cors-dashboard .status-bar.online {
+    background: var(--ops-green);
+}
+
+.cors-dashboard .dashboard-device-card .status-bar.sleep,
+.cors-dashboard .status-bar.sleep {
+    background: var(--ops-cyan);
+}
+
+.cors-dashboard .dashboard-device-card .status-bar.offline,
+.cors-dashboard .dashboard-device-card .status-bar.locked,
+.cors-dashboard .status-bar.offline,
+.cors-dashboard .status-bar.locked {
+    background: var(--ops-red);
+}
+
+.cors-dashboard .dashboard-device-card .status-bar.awaiting_license,
+.cors-dashboard .dashboard-device-card .status-bar.unprovisioned,
+.cors-dashboard .dashboard-device-card .status-bar.starting,
+.cors-dashboard .status-bar.awaiting_license,
+.cors-dashboard .status-bar.unprovisioned,
+.cors-dashboard .status-bar.starting {
+    background: var(--ops-amber);
+}
+
+.cors-dashboard .dashboard-device-card__top {
+    padding-left: 4px !important;
+    margin-bottom: 0 !important;
+}
+
+.cors-dashboard .dashboard-device-card .device-name {
+    color: var(--ops-text);
+    font-size: 0.86rem;
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+.cors-dashboard .dashboard-device-card .device-meta {
+    color: var(--ops-faint);
+    font-size: 0.64rem;
+    margin-top: 3px;
+}
+
+.cors-dashboard .dashboard-device-card .badge {
+    min-height: 21px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.62rem;
+    box-shadow: none !important;
+}
+
+.cors-dashboard .dashboard-device-card__top > .badge:not(.bg-primary) {
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(148, 163, 184, 0.10);
+    color: #cbd5e1;
+}
+
+.cors-dashboard .dashboard-device-card .server-indicators {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 0;
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item {
+    min-height: 39px;
+    padding: 7px 8px;
+    border-radius: 7px;
+    border: 1px solid rgba(34, 211, 238, 0.18);
+    background: rgba(8, 17, 31, 0.88);
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.online,
+.cors-dashboard .dashboard-device-card .server-status-item.connected {
+    border-color: rgba(34, 197, 94, 0.36);
+    background: rgba(20, 83, 45, 0.18);
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.sleep {
+    border-color: rgba(34, 211, 238, 0.34);
+    background: rgba(8, 47, 73, 0.22);
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.disconnected {
+    border-color: rgba(148, 163, 184, 0.16);
+    background: rgba(15, 23, 42, 0.72);
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item:hover {
+    transform: none;
+}
+
+.cors-dashboard .dashboard-device-card .server-label {
+    color: #8fd8e8;
+    font-size: 0.64rem;
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.online .server-label,
+.cors-dashboard .dashboard-device-card .server-status-item.connected .server-label {
+    color: #86efac;
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.sleep .server-label {
+    color: #67e8f9;
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.disconnected .server-label {
+    color: #94a3b8;
+}
+
+.cors-dashboard .dashboard-device-card .server-bps {
+    color: #67e8f9;
+    font-size: 0.9rem;
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.online .server-bps,
+.cors-dashboard .dashboard-device-card .server-status-item.connected .server-bps {
+    color: #4ade80;
+    text-shadow: 0 0 8px rgba(74, 222, 128, 0.28);
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.sleep .server-bps {
+    color: #67e8f9;
+    text-shadow: 0 0 8px rgba(103, 232, 249, 0.24);
+}
+
+.cors-dashboard .dashboard-device-card .server-status-item.disconnected .server-bps {
+    color: #94a3b8;
+    text-shadow: none;
+}
+
+.cors-dashboard .dashboard-device-card .server-bps-unit {
+    color: var(--ops-muted);
+    font-size: 0.6rem;
+}
+
+.cors-dashboard .dashboard-detail-card {
+    border: 1px solid var(--ops-line);
+    border-radius: 8px;
+    background: var(--ops-panel);
+    box-shadow: none;
+}
+
+.cors-dashboard .dashboard-detail-header {
+    min-height: 66px;
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--ops-line) !important;
+    background:
+        linear-gradient(90deg, rgba(34, 211, 238, 0.08), transparent 36%),
+        #0b1220 !important;
+}
+
+.cors-dashboard .dashboard-detail-header > .d-flex {
+    min-width: 0;
+    gap: 12px;
+}
+
+.cors-dashboard .dashboard-detail-header h4 {
+    max-width: 260px !important;
+    color: var(--ops-text);
+    font-size: 1.02rem;
+    font-weight: 850;
+}
+
+.cors-dashboard .dashboard-detail-header .btn-link {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    border-radius: 7px;
+}
+
+.cors-dashboard .dashboard-detail-header .badge {
+    min-height: 22px;
+    padding: 4px 8px;
+    border-radius: 999px;
+}
+
+.cors-dashboard .dashboard-detail-header .btn-outline-danger {
+    min-height: 32px;
+    border: 1px solid rgba(251, 113, 133, 0.35) !important;
+    border-radius: 7px;
+    background: rgba(251, 113, 133, 0.08);
+    color: #fda4af;
+    box-shadow: none;
+}
+
+.cors-dashboard .dashboard-detail-header .btn-outline-danger:hover {
+    transform: none;
+    background: rgba(251, 113, 133, 0.14);
+}
+
+.cors-dashboard .dashboard-detail-body {
+    padding: 14px !important;
+    background: #0d1422;
+}
+
+.cors-dashboard .dashboard-detail-meta {
+    min-height: 35px;
+    margin-bottom: 12px !important;
+    padding: 7px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 7px;
+    background: #0a111e;
+}
+
+.cors-dashboard .dashboard-detail-meta p {
+    color: var(--ops-muted) !important;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 0.72rem;
+}
+
+.cors-dashboard .dashboard-tabs {
+    gap: 4px;
+    margin-bottom: 14px !important;
+    padding: 4px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 8px;
+    background: #08111f;
+}
+
+.cors-dashboard .dashboard-tabs .nav-link {
+    min-height: 34px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    color: var(--ops-muted);
+    font-size: 0.74rem;
+    font-weight: 800;
+}
+
+.cors-dashboard .dashboard-tabs .nav-link:hover {
+    color: var(--ops-text);
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.cors-dashboard .dashboard-tabs .nav-link.active {
+    color: #06111c;
+    background: var(--ops-cyan);
+}
+
+.cors-dashboard .dashboard-tab-content {
+    padding-top: 0 !important;
+}
+
+.cors-dashboard .dashboard-tab-content .alert {
+    border-radius: 8px;
+    border-width: 1px;
+}
+
+.cors-dashboard .dashboard-tab-content .border,
+.cors-dashboard .dashboard-tab-content fieldset,
+.cors-dashboard .dashboard-tab-content .bg-dark,
+.cors-dashboard .dashboard-tab-content .bg-dark-subtle {
+    border-color: rgba(148, 163, 184, 0.20) !important;
+    border-radius: 8px !important;
+}
+
+.cors-dashboard .dashboard-tab-content fieldset,
+.cors-dashboard .dashboard-tab-content .bg-dark-subtle {
+    background: #101a2b !important;
+}
+
+.cors-dashboard .dashboard-tab-content legend,
+.cors-dashboard .dashboard-tab-content h4,
+.cors-dashboard .dashboard-tab-content h5 {
+    color: var(--ops-text);
+    font-size: 0.9rem;
+    font-weight: 850;
+}
+
+.cors-dashboard .dashboard-tab-content .form-label {
+    color: #cbd5e1;
+    font-size: 0.76rem;
+    font-weight: 750;
+}
+
+.cors-dashboard .dashboard-tab-content .form-control,
+.cors-dashboard .dashboard-tab-content .form-select {
+    min-height: 38px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 7px;
+    background: #1a1f2a;
+    color: var(--ops-text);
+    box-shadow: none;
+}
+
+.cors-dashboard .dashboard-tab-content .form-control:focus,
+.cors-dashboard .dashboard-tab-content .form-select:focus {
+    border-color: rgba(34, 211, 238, 0.70);
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+}
+
+.cors-dashboard .dashboard-detail-footer {
+    padding: 11px 14px !important;
+    border-top: 1px solid var(--ops-line) !important;
+    background: #0b1220 !important;
+}
+
+.cors-dashboard #admin-actions-section {
+    border: 1px solid rgba(251, 191, 36, 0.24);
+    border-radius: 8px;
+    padding: 9px 10px;
+    background: rgba(251, 191, 36, 0.06);
+}
+
+.cors-dashboard #admin-actions-section .btn {
+    min-height: 36px;
+    border-radius: 7px;
+    box-shadow: none;
+}
+
+.cors-dashboard .dashboard-master .card,
+.cors-dashboard .stats-strip,
+.cors-dashboard .map-section,
+.cors-dashboard .sky-panel {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: #101a2b;
+    box-shadow: none;
+}
+
+.cors-dashboard .stats-strip {
+    padding: 8px;
+}
+
+.cors-dashboard .stat-item {
+    border-color: rgba(148, 163, 184, 0.14);
+    background: #0b1220;
+}
+
+.cors-dashboard .stat-item:hover {
+    transform: none;
+}
+
+@media (max-width: 575.98px) {
+    .cors-dashboard .dashboard-sidebar {
+        padding-right: 0;
+        margin-bottom: 10px;
+    }
+
+    .cors-dashboard .dashboard-detail-header {
+        align-items: flex-start !important;
+    }
+
+    .cors-dashboard .dashboard-detail-header > .d-flex {
+        flex-direction: column;
+        align-items: flex-start !important;
+    }
+
+    .cors-dashboard .dashboard-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+    }
+
+}

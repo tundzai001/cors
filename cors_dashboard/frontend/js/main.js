@@ -139,27 +139,27 @@ function requestDetailsPanelUpdate(priority = 'high') {
     }, waitMs);
 }
 
+function queueDashboardRender() {
+    if (dashboardRafId !== null) return;
+    dashboardRafId = requestAnimationFrame(() => {
+        dashboardRafId = null;
+        if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) return;
+        renderDashboard();
+        lastRenderTime = Date.now();
+    });
+}
+
+function queueMapRender() {
+    if (mapRafId !== null) return;
+    mapRafId = requestAnimationFrame(() => {
+        mapRafId = null;
+        if (!mapNeedsUpdate) return;
+        renderMap();
+        lastMapRenderTime = Date.now();
+    });
+}
+
 function scheduleRender(priority = 'high') {
-    const queueDashboardRender = () => {
-        if (dashboardRafId !== null) return;
-        dashboardRafId = requestAnimationFrame(() => {
-            dashboardRafId = null;
-            if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) return;
-            renderDashboard();
-            lastRenderTime = Date.now();
-        });
-    };
-
-    const queueMapRender = () => {
-        if (mapRafId !== null) return;
-        mapRafId = requestAnimationFrame(() => {
-            mapRafId = null;
-            if (!mapNeedsUpdate) return;
-            renderMap();
-            lastMapRenderTime = Date.now();
-        });
-    };
-
     if (priority === 'high') {
         deviceListNeedsUpdate = true;
         detailsPanelNeedsUpdate = true;
@@ -239,9 +239,60 @@ function getFilteredDevices() {
     return cachedFilteredDevices;
 }
 
+class ErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null, errorInfo: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+    componentDidCatch(error, errorInfo) {
+        console.error("[ErrorBoundary] React render error caught:", error, errorInfo);
+        this.setState({ errorInfo });
+    }
+    render() {
+        if (this.state.hasError) {
+            return React.createElement('div', {
+                className: 'card bg-danger text-white h-100 p-4 border border-warning shadow-lg',
+                style: { minHeight: '300px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
+            },
+                React.createElement('div', { className: 'd-flex align-items-center gap-3 mb-3' },
+                    React.createElement('i', { className: 'bi bi-exclamation-triangle-fill fs-1 text-warning' }),
+                    React.createElement('h3', { className: 'mb-0 fw-bold' }, 'Lỗi Hiển Thị Chi Tiết Trạm (Details Panel Error)')
+                ),
+                React.createElement('p', { className: 'lead' }, 'Đã xảy ra lỗi React khi hiển thị bảng chi tiết trạm. Chi tiết lỗi:'),
+                React.createElement('pre', {
+                    style: {
+                        whiteSpace: 'pre-wrap',
+                        background: 'rgba(0,0,0,0.85)',
+                        padding: '20px',
+                        borderRadius: '8px',
+                        color: '#ffc107',
+                        fontSize: '0.9rem',
+                        fontFamily: 'monospace',
+                        overflowX: 'auto',
+                        border: '1px solid rgba(255,255,255,0.1)'
+                    }
+                },
+                    this.state.error ? this.state.error.toString() : 'Lỗi không xác định',
+                    '\n\nStack Trace:\n',
+                    this.state.error ? this.state.error.stack : ''
+                )
+            );
+        }
+        return this.props.children;
+    }
+}
+window.ErrorBoundary = ErrorBoundary;
+
 // === SPLIT RENDER FUNCTIONS ===
 function renderDashboard() {
-    if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) return;
+    console.log("[DEBUG] renderDashboard() triggered! deviceListNeedsUpdate:", deviceListNeedsUpdate, "detailsPanelNeedsUpdate:", detailsPanelNeedsUpdate, "selectedDeviceSerial:", globalState.selectedDeviceSerial);
+    if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) {
+        console.log("[DEBUG] renderDashboard() returned early because no update flags were set.");
+        return;
+    }
 
     const filteredDevices = getFilteredDevices();
 
@@ -251,6 +302,7 @@ function renderDashboard() {
             console.warn("[Main] window.DeviceList is undefined. Deferring render.");
             return;
         }
+        console.log("[DEBUG] Rendering DeviceList sidebar...");
         deviceListRoot.render(
             React.createElement(window.DeviceList, {
                 devices: filteredDevices,
@@ -267,28 +319,70 @@ function renderDashboard() {
 
     // Render Details Panel
     if (detailsPanelNeedsUpdate && detailsPanelRoot) {
+        console.log("[DEBUG] detailsPanelNeedsUpdate block entered! detailsPanelRoot exists.");
         if (!window.DetailsPanel) {
             console.warn("[Main] window.DetailsPanel is undefined. Deferring render.");
             return;
         }
         const selectedDevice = globalState.devices.find(d => String(d.serial) === String(globalState.selectedDeviceSerial));
+        console.log("[DEBUG] selectedDevice resolved for DetailsPanel:", selectedDevice);
+        
+        console.log("[DEBUG] Triggering detailsPanelRoot.render()...");
         detailsPanelRoot.render(
-            React.createElement(window.DetailsPanel, {
-                device: selectedDevice,
-                nmeaData: { ...currentNmeaData },
-                currentUser: globalState.currentUser,
-                onReset: handleResetDevice,
-                onDeployLicense: handleDeployLicense,
-                onProvision: handleProvisionDevice,
-                onConfigureChip: handleConfigureChip,
-                onStopAutoBase: handleStopAutoBase,
-                onApplyAutoProvince: handleApplyAutoProvince,
-                onConfigureService: handleConfigureService,
-                onLock: handleLockDevice,
-                onUnlock: handleUnlockDevice
-            })
+            React.createElement(ErrorBoundary, null,
+                React.createElement(window.DetailsPanel, {
+                    device: selectedDevice,
+                    nmeaData: { ...currentNmeaData },
+                    currentUser: globalState.currentUser,
+                    onReset: handleResetDevice,
+                    onDeployLicense: handleDeployLicense,
+                    onProvision: handleProvisionDevice,
+                    onConfigureChip: handleConfigureChip,
+                    onStopAutoBase: handleStopAutoBase,
+                    onApplyAutoProvince: handleApplyAutoProvince,
+                    onConfigureService: handleConfigureService,
+                    onLock: handleLockDevice,
+                    onUnlock: handleUnlockDevice
+                })
+            )
         );
         detailsPanelNeedsUpdate = false;
+
+        // Perform DOM inspection after React commits
+        setTimeout(() => {
+            const rootEl = document.getElementById('details-panel-root');
+            if (rootEl) {
+                console.log("[DEBUG] DOM INSPECTION - details-panel-root children count:", rootEl.children.length, "innerHTML length:", rootEl.innerHTML.length);
+                
+                const rect = rootEl.getBoundingClientRect();
+                console.log("[DEBUG] #details-panel-root size & position:", rect.width, "x", rect.height, "at", rect.left, ",", rect.top);
+                const style = window.getComputedStyle(rootEl);
+                console.log("[DEBUG] #details-panel-root computed style - display:", style.display, "visibility:", style.visibility, "opacity:", style.opacity, "height:", style.height);
+                
+                const parentEl = rootEl.parentElement;
+                if (parentEl) {
+                    const pRect = parentEl.getBoundingClientRect();
+                    console.log("[DEBUG] Parent (.dashboard-main) size & position:", pRect.width, "x", pRect.height, "at", pRect.left, ",", pRect.top);
+                    const pStyle = window.getComputedStyle(parentEl);
+                    console.log("[DEBUG] Parent computed style - display:", pStyle.display, "visibility:", pStyle.visibility, "opacity:", pStyle.opacity, "height:", pStyle.height);
+                }
+
+                if (rootEl.children.length > 0) {
+                    const child = rootEl.children[0];
+                    const cRect = child.getBoundingClientRect();
+                    console.log("[DEBUG] Child card size & position:", cRect.width, "x", cRect.height, "at", cRect.left, ",", cRect.top);
+                    const cStyle = window.getComputedStyle(child);
+                    console.log("[DEBUG] Child computed style - display:", cStyle.display, "visibility:", cStyle.visibility, "opacity:", cStyle.opacity, "height:", cStyle.height);
+                    
+                    console.log("[DEBUG] First child HTML tag:", child.tagName, "classes:", child.className, "style:", child.getAttribute('style'));
+                    console.log("[DEBUG] First child innerText preview:", child.innerText ? child.innerText.substring(0, 100) : 'none');
+                } else {
+                    console.warn("[DEBUG] DOM INSPECTION WARNING: details-panel-root has 0 children!");
+                }
+            } else {
+                console.error("[DEBUG] DOM INSPECTION ERROR: #details-panel-root element not found in DOM!");
+            }
+        }, 150);
     }
 
     updateStaticUI();
@@ -1641,7 +1735,6 @@ window.openPublicMap = async function() {
         const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
         const isVirtual = String(dev?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
-        if (raw === 'sleep') return 'sleep';
         if (raw === 'streaming') return 'streaming';
         if (raw === 'starting') return 'starting';
 
@@ -1666,6 +1759,7 @@ window.openPublicMap = async function() {
 
         const od = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
         const ac = od ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
+        if (raw === 'sleep' && (!od || ac)) return 'online';
         return (!od || ac) ? 'online' : 'sleep';
     };
 
