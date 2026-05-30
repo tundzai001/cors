@@ -1,6 +1,10 @@
 // rovers-global.js
 
 document.addEventListener('DOMContentLoaded', async () => {
+    const authenticatedUser = await window.ApiClient.requireAuthenticatedPage();
+    if (!authenticatedUser) {
+        return;
+    }
     // 1. Kiểm tra Token (Hỗ trợ cả Local và Session Storage)
     const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (!token) {
@@ -19,6 +23,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         'Authorization': `Bearer ${token}`
     };
 
+    const apiFetchRaw = (url, options = {}) => window.ApiClient.apiFetch(url, options);
+
     let currentUser = null;
     let allRovers = [];
     let allDevices = [];
@@ -29,11 +35,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     let casterSourcesCache = null;
     let syncInProgress = false;
     let currentRenderedConnectionKeys = new Set();
+    let latestMergedRovers = [];
+    let showExpiringSoonOnly = false;
+    const selectedRoverKeys = new Set();
     const connectionClockCache = new Map();
 
     // === 2. AUTH & PERMISSIONS CHECK ===
     try {
-        const userRes = await fetch('/api/auth/me', { headers: API_HEADERS });
+        const userRes = await apiFetchRaw('/api/auth/me', { headers: API_HEADERS });
         if (!userRes.ok) {
             if (userRes.status === 401 || userRes.status === 403) {
                 throw new Error("Unauthorized");
@@ -75,7 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (typeof showToast === 'function') {
                 showToast("Lỗi kết nối hệ thống. Vui lòng tải lại trang.", "danger");
             } else {
-                alert("Lỗi khởi tạo dữ liệu. Vui lòng tải lại trang.");
+                window.CorsUI?.showToast?.('danger', 'Cannot initialize rover data. Reload the page.');
             }
         }
     }
@@ -95,6 +104,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await fetchCasterSources({ force: true });
             }
             renderTable();
+            applyRoverQueryFilter();
             if (String(currentUser?.role || '').toLowerCase() === 'admin') {
                 renderAdminLiveMountpoints();
             } else if (currentUser?.extra_mountpoints) {
@@ -123,6 +133,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     function isAnyRoverModalOpen() {
         const modalIds = ['editRoverModal', 'createRoverModal', 'blockUserModal'];
         return modalIds.some(id => document.getElementById(id)?.classList.contains('show'));
+    }
+
+    function applyRoverQueryFilter() {
+        const params = new URLSearchParams(window.location.search);
+        const rover = params.get('rover') || params.get('username');
+        if (!rover) return;
+        const search = document.getElementById('search-box');
+        if (search && search.value !== rover) {
+            search.value = rover;
+            renderTable();
+        }
+        const row = document.querySelector(`[data-username-key="${CSS.escape(normalizeUsername(rover))}"]`);
+        row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        row?.classList.add('active');
     }
 
     async function syncData() {
@@ -169,7 +193,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function fetchCasterConfig() {
         try {
-            const res = await fetch('/api/caster/config', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/caster/config', { headers: API_HEADERS });
             if (res.ok) {
                 const data = await res.json();
                 availableCasters = data.hosts || [];
@@ -237,7 +261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function fetchDevices() {
         try {
-            const res = await fetch('/api/devices', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/devices', { headers: API_HEADERS });
             if (res.ok) {
                 allDevices = await res.json();
                 populateBaseSelect();
@@ -248,7 +272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function fetchRovers({ render = true } = {}) {
         try {
-            const res = await fetch('/api/rovers/all', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/rovers/all', { headers: API_HEADERS });
             if (!res.ok) throw new Error('Không thể tải danh sách Rover');
             allRovers = await res.json();
             if (render) renderTable();
@@ -260,7 +284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // === CASTER USERS MANAGEMENT ===
     async function fetchCasterUsers({ render = true } = {}) {
         try {
-            const res = await fetch('/api/caster/users', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/caster/users', { headers: API_HEADERS });
             if (!res.ok) {
                 const err = await res.json();
                 throw new Error(err.detail || 'Không thể tải danh sách user từ Caster');
@@ -283,7 +307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function fetchCasterSources({ force = false } = {}) {
         if (casterSourcesCache && !force) return casterSourcesCache;
         try {
-            const res = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/admin/caster-sources', { headers: API_HEADERS });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.detail || 'Không thể tải mountpoints từ Caster');
@@ -564,7 +588,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang chặn...';
 
         try {
-            const res = await fetch('/api/caster/block-user', {
+            const res = await apiFetchRaw('/api/caster/block-user', {
                 method: 'POST',
                 headers: API_HEADERS,
                 body: JSON.stringify({
@@ -591,14 +615,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function handleUnblockUser(e) {
         const username = e.currentTarget.dataset.username;
-        if (!confirm(`Bạn có chắc muốn mở khóa user "${username}"?`)) return;
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Unblock user',
+            message: `Unblock user ${username}?`,
+            confirmText: 'Unblock'
+        });
+        if (!ok) return;
 
         const btn = e.currentTarget;
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
         try {
-            const res = await fetch('/api/caster/unblock-user', {
+            const res = await apiFetchRaw('/api/caster/unblock-user', {
                 method: 'POST',
                 headers: API_HEADERS,
                 body: JSON.stringify({ username: username })
@@ -789,6 +818,46 @@ document.addEventListener('DOMContentLoaded', async () => {
         return casterUsers.filter(cu => normalizeUsername(cu.username) === key);
     }
 
+    function getRoverKey(roverOrUsername) {
+        return normalizeUsername(typeof roverOrUsername === 'string' ? roverOrUsername : roverOrUsername?.username);
+    }
+
+    function getSelectedRovers() {
+        return latestMergedRovers.filter(r => selectedRoverKeys.has(getRoverKey(r)));
+    }
+
+    function updateRoverBulkToolbar() {
+        const toolbar = document.getElementById('rover-bulk-toolbar');
+        const countEl = document.getElementById('rover-selected-count');
+        const count = selectedRoverKeys.size;
+        if (countEl) countEl.textContent = String(count);
+        if (toolbar) toolbar.classList.toggle('d-none', count === 0);
+        const selectAll = document.getElementById('rover-select-all');
+        const visibleChecks = Array.from(document.querySelectorAll('.rover-row-check'));
+        if (selectAll) {
+            selectAll.checked = visibleChecks.length > 0 && visibleChecks.every(cb => cb.checked);
+            selectAll.indeterminate = visibleChecks.some(cb => cb.checked) && !selectAll.checked;
+        }
+    }
+
+    function formatExpiryCell(r, infos) {
+        if (r.type === 'db' && r.expires_at) {
+            const remainingDays = Math.ceil((Number(r.expires_at) - Date.now() / 1000) / 86400);
+            if (remainingDays <= 0) return '<span class="badge bg-danger">Expired</span>';
+            if (remainingDays <= 14) return `<span class="badge bg-warning text-dark">${remainingDays}d</span>`;
+            return `<span class="text-muted small">${remainingDays}d</span>`;
+        }
+        const live = infos.find(i => typeof i?.status !== 'undefined');
+        if (live) return `<span class="text-muted small">${formatDuration(Number(live.status || 0))}</span>`;
+        return '<span class="text-muted small">--</span>';
+    }
+
+    function isRoverExpiringSoon(r) {
+        if (r.type !== 'db' || !r.expires_at) return false;
+        const remainingDays = Math.ceil((Number(r.expires_at) - Date.now() / 1000) / 86400);
+        return remainingDays >= 0 && remainingDays <= 14;
+    }
+
     function createRoverRowElement(r) {
         const tr = document.createElement('tr');
         tr.dataset.usernameKey = normalizeUsername(r.username);
@@ -799,11 +868,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const isOnline = infos.some(i => i.nclient > 0);
         const totalClients = infos.reduce((sum, i) => sum + (i.nclient || 0), 0);
 
-        let casterStatusBadge = '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill opacity-75">OFFLINE</span>';
+        let casterStatusBadge = '<span class="rover-state-pill standby"><span></span>Offline</span>';
         if (isBlocked) {
-            casterStatusBadge = '<span class="badge badge-blocked rounded-pill"><i class="bi bi-shield-x me-1"></i>BLOCKED</span>';
+            casterStatusBadge = '<span class="rover-state-pill blocked"><span></span>Blocked</span>';
         } else if (isOnline) {
-            casterStatusBadge = `<span class="badge badge-active rounded-pill shadow-sm"><i class="bi bi-broadcast me-1"></i>ONLINE (${totalClients})</span>`;
+            casterStatusBadge = `<span class="rover-state-pill active"><span></span>Online (${totalClients})</span>`;
         } else if (infos.length > 0) {
             const remainingSeconds = infos[0].status || 0;
             if (remainingSeconds <= 0) {
@@ -838,14 +907,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const isPresent = infos.some(i => i.server === h);
                 const color = isPresent ? 'text-success' : 'text-danger fw-bold';
                 const icon = isPresent ? 'bi-server' : 'bi-exclamation-triangle';
-                return `<span class="badge bg-dark border border-secondary text-muted me-1 mb-1 d-inline-flex align-items-center" style="font-size:0.65rem" title="${h}">
+                return `<span class="rover-server-chip" title="${h}">
                             <i class="bi ${icon} ${color} me-1"></i>
                             ${h}
                         </span>`;
             }).join('');
         } else if (infos.length > 0) {
             serverBadges = infos.map(i => {
-                return `<span class="badge bg-dark border border-secondary text-muted me-1 mb-1 d-inline-flex align-items-center" style="font-size:0.65rem" title="${i.server}">
+                return `<span class="rover-server-chip" title="${i.server}">
                             <i class="bi bi-server text-warning me-1"></i>
                             ${i.server}
                         </span>`;
@@ -862,7 +931,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const mps = normalizeMountpointList(r.mountpoints);
         const mpsDisplay = mps.length > 0
-            ? mps.map(m => `<code class="text-info small" style="font-size:0.75rem">${m}</code>`).join(', ')
+            ? mps.map(m => `<code class="rover-mount-chip">${m}</code>`).join('')
             : '<span class="text-muted small">N/A</span>';
 
         // Identify "orphan" mountpoints (those not belonging to any physical station)
@@ -950,13 +1019,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const clientIdText = conn.client_id ? String(conn.client_id) : 'N/A';
                 const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${conn.server.split('.')[0]}]</span>` : '';
                 currentRenderedConnectionKeys.add(getConnectionClockKey(conn));
-                return `<div class="d-flex align-items-center mb-1">
-                            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 me-1" style="font-size: 0.7rem;">${conn.mountpoint}</span>
+                return `<div class="rover-connection-row">
+                            <span class="rover-connection-mp">${conn.mountpoint}</span>
                             ${serverLabel}
-                            <span class="text-muted" style="font-size: 0.75rem;">
+                            <span class="rover-connection-time">
                                 <i class="bi bi-clock me-1"></i>
                                 <span class="live-clock" data-started-at="${stableStartedAt}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
-                                <span class="ms-1 small text-muted opacity-75" style="font-size: 0.65rem;">(${startedAtText})</span>
+                                <span class="rover-connection-start">(${startedAtText})</span>
                             </span>
                         </div>`;
             }).join('');
@@ -966,13 +1035,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentUser.permissions?.includes('manage:caster')) {
             if (isBlocked) {
                 actionHtml += `
-                    <button class="btn btn-sm btn-outline-success border-0 caster-unblock-btn me-1" 
+                    <button class="rover-action-btn caster-unblock-btn" 
                         data-username="${r.username}" title="Mở khóa">
                         <i class="bi bi-unlock-fill"></i>
                     </button>`;
             } else {
                 actionHtml += `
-                    <button class="btn btn-sm btn-outline-danger border-0 caster-block-btn me-1" 
+                    <button class="rover-action-btn danger caster-block-btn" 
                         data-username="${r.username}" 
                         data-mountpoints="${mps.join(',')}"
                         title="Chặn truy cập">
@@ -983,54 +1052,81 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (r.type === 'db') {
             actionHtml += `
-                <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
+                <button class="rover-action-btn edit-btn" 
                     data-id="${r.id}" data-username="${r.username}" title="Sửa">
                     <i class="bi bi-pencil-square"></i>
                 </button>
-                <button class="btn btn-sm btn-outline-danger delete-btn border-0" 
+                <button class="rover-action-btn danger delete-btn" 
                     data-id="${r.id}" data-user="${r.username}" title="Xóa">
                     <i class="bi bi-trash3-fill"></i>
                 </button>
             `;
         } else if (r.type === 'unknown') {
             actionHtml += `
-                <button class="btn btn-sm btn-outline-warning edit-btn me-1 border-0" 
+                <button class="rover-action-btn edit-btn" 
                     data-id="0" data-username="${r.username}" title="Chỉnh sửa và Đồng bộ về Web">
                     <i class="bi bi-pencil-square"></i>
                 </button>
-                <button class="btn btn-sm btn-outline-danger border-0 caster-delete-btn" 
+                <button class="rover-action-btn danger caster-delete-btn" 
                     data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
                     <i class="bi bi-trash3"></i>
                 </button>
             `;
         }
 
+        const roverKey = getRoverKey(r);
+        const checkedAttr = selectedRoverKeys.has(roverKey) ? 'checked' : '';
+        const expiresHtml = formatExpiryCell(r, infos);
+        const syncHtml = infos.length
+            ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Synced</span>'
+            : '<span class="badge bg-secondary bg-opacity-25 text-secondary border border-secondary border-opacity-25">No caster</span>';
+        const sessionHtml = allActiveConns.length
+            ? `<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">${allActiveConns.length}</span>`
+            : '<span class="text-muted small">0</span>';
+        const blockedHtml = isBlocked
+            ? '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Blocked</span>'
+            : '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">OK</span>';
+        actionHtml = `
+            <button class="rover-action-btn rover-history-btn"
+                data-username="${r.username}" title="Rover history">
+                <i class="bi bi-clock-history"></i>
+            </button>
+            ${actionHtml}
+        `;
+
         tr.innerHTML = `
+            <td class="text-center">
+                <input type="checkbox" class="form-check-input rover-row-check" data-username-key="${roverKey}" ${checkedAttr}>
+            </td>
             <td>
-                <div class="d-flex align-items-center">
-                    <div class="${r.type === 'db' ? 'bg-primary' : 'bg-danger'} bg-opacity-10 ${r.type === 'db' ? 'text-primary' : 'text-danger'} rounded-circle p-2 me-2">
+                <div class="rover-user-cell">
+                    <div class="rover-user-avatar ${r.type === 'db' ? '' : 'is-unknown'}">
                         <i class="bi bi-person-fill"></i>
                     </div>
-                    <div class="d-flex flex-column">
-                        <span class="fw-bold text-light">${r.username} ${dbBadge} ${showPosIcon}</span>
-                        <span class="text-muted mt-1" style="font-size:0.7rem">${r.type === 'db' ? 'Database Account' : 'Unknown Caster User'}</span>
+                    <div>
+                        <div class="rover-user-name">${r.username} ${dbBadge} ${showPosIcon}</div>
+                        <div class="rover-user-meta">${r.type === 'db' ? 'Database account' : 'Caster only user'}</div>
                     </div>
                 </div>
             </td>
-            <td><code class="text-warning bg-dark px-2 py-1 rounded small">${r.password || '******'}</code></td>
+            <td><code class="rover-password-chip">${r.password || '******'}</code></td>
             <td>
-                <div class="d-flex flex-column">
-                    <span class="text-info fw-bold small" style="font-size:0.8rem">${baseDisplay}</span>
-                    <div class="mt-1 d-flex flex-wrap gap-1">${mpsDisplay}</div>
+                <div class="rover-mount-cell">
+                    <span>${baseDisplay}</span>
+                    <div>${mpsDisplay}</div>
                 </div>
             </td>
             <td>
                 <div>${activeConnsHtml}</div>
                 ${limitHtml}
             </td>
+            <td class="text-center">${expiresHtml}</td>
+            <td class="text-center">${syncHtml}</td>
+            <td class="text-center">${sessionHtml}</td>
+            <td class="text-center">${blockedHtml}</td>
             <td class="text-center">${casterStatusBadge}</td>
             <td class="text-center">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
-            <td class="text-end">${actionHtml}</td>
+            <td class="text-end"><div class="rover-row-actions">${actionHtml}</div></td>
         `;
 
         return tr;
@@ -1067,6 +1163,140 @@ document.addEventListener('DOMContentLoaded', async () => {
         newRow.querySelectorAll('.caster-block-btn').forEach(btn => btn.onclick = handleBlockUser);
         newRow.querySelectorAll('.caster-unblock-btn').forEach(btn => btn.onclick = handleUnblockUser);
         newRow.querySelectorAll('.caster-delete-btn').forEach(btn => btn.onclick = handleDeleteCasterUser);
+        bindRoverSelectionEvents(newRow);
+        newRow.querySelectorAll('.rover-history-btn').forEach(btn => btn.onclick = handleRoverHistory);
+    }
+
+    function bindRoverSelectionEvents(scope = document) {
+        scope.querySelectorAll('.rover-row-check').forEach(cb => {
+            cb.onchange = () => {
+                const key = cb.dataset.usernameKey;
+                if (!key) return;
+                if (cb.checked) selectedRoverKeys.add(key);
+                else selectedRoverKeys.delete(key);
+                updateRoverBulkToolbar();
+            };
+        });
+    }
+
+    async function handleRoverHistory(e) {
+        const username = e.currentTarget.dataset.username;
+        if (!username) return;
+        const title = document.getElementById('rover-history-title');
+        const body = document.getElementById('rover-history-content');
+        if (title) title.textContent = `Rover history - ${username}`;
+        if (body) body.innerHTML = '<div class="text-muted py-3">Loading history...</div>';
+        const modalEl = document.getElementById('roverHistoryModal');
+        if (modalEl && window.bootstrap) bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        try {
+            const response = await apiFetchRaw(window.ApiRoutes.rovers.history(username), { headers: API_HEADERS });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || `History failed: ${response.status}`);
+            if (body) {
+            const events = data.events || [];
+            const statuses = data.caster_status || [];
+            const connections = statuses.flatMap(item => item.active_connections || []);
+                body.innerHTML = `
+                    <div class="row g-3">
+                        <div class="col-md-4"><div class="rover-history-card"><span>DB profile</span><strong>${data.profile ? 'Available' : 'Missing'}</strong></div></div>
+                        <div class="col-md-4"><div class="rover-history-card"><span>Caster records</span><strong>${statuses.length}</strong></div></div>
+                        <div class="col-md-4"><div class="rover-history-card"><span>Active sessions</span><strong>${connections.length}</strong></div></div>
+                    </div>
+                    <div class="mt-3">
+                        <h6 class="text-white">Recent events</h6>
+                        ${events.length ? events.map(item => `
+                            <div class="rover-history-event">
+                                <span>${formatDateTime(item.timestamp)}</span>
+                                <strong>${item.severity || item.type || 'info'}</strong>
+                                <p>${item.message || ''}</p>
+                            </div>
+                        `).join('') : '<div class="text-muted small">No events for this rover.</div>'}
+                    </div>
+                    <pre class="rover-history-json">${JSON.stringify(data, null, 2)}</pre>
+                `;
+            }
+        } catch (error) {
+            if (body) body.innerHTML = `<div class="text-danger py-3">${error.message}</div>`;
+        }
+    }
+
+    async function bulkRenewSelectedRovers() {
+        const selected = getSelectedRovers().map(r => r.username).filter(Boolean);
+        const expiryDays = Number(document.getElementById('bulk-renew-days')?.value || 365);
+        if (!selected.length) return;
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Bulk renew rovers',
+            message: `Renew ${selected.length} selected rover(s) for ${expiryDays} day(s)?`,
+            confirmText: 'Renew'
+        });
+        if (!ok) return;
+        const response = await apiFetchRaw(window.ApiRoutes.rovers.bulkRenew, {
+            method: 'POST',
+            headers: API_HEADERS,
+            body: JSON.stringify({ usernames: selected, expiry_days: expiryDays })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `Bulk renew failed: ${response.status}`);
+        window.CorsUI.showToast('success', `Renewed ${data.updated?.length || 0} rover(s)`);
+        await refreshDataInPlace();
+    }
+
+    async function syncSelectedRovers() {
+        const selected = getSelectedRovers().map(r => r.username).filter(Boolean);
+        if (!selected.length) return;
+        const response = await apiFetchRaw(window.ApiRoutes.rovers.syncStatus, {
+            method: 'POST',
+            headers: API_HEADERS,
+            body: JSON.stringify({ usernames: selected })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `Sync failed: ${response.status}`);
+        window.CorsUI.showToast('success', `Synced ${data.count || 0} rover status record(s)`);
+        await refreshDataInPlace();
+    }
+
+    function exportSelectedRovers() {
+        const selected = getSelectedRovers();
+        if (!selected.length) return;
+        const headers = ['username', 'password', 'mountpoints', 'base_name', 'expires_at', 'is_active'];
+        const rows = selected.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g, '""')}"`).join(','));
+        const blob = new Blob([[headers.join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `rovers-selected-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    }
+
+    async function validateCreateRoverInputs() {
+        const username = document.getElementById('new-username')?.value?.trim();
+        const mountpoints = document.getElementById('new-mountpoints')?.value?.trim();
+        const box = document.getElementById('new-rover-validation-msg');
+        if (!box || !username) {
+            if (box) box.classList.add('d-none');
+            return;
+        }
+        const params = new URLSearchParams({ username });
+        if (mountpoints) params.set('mountpoints', mountpoints);
+        try {
+            const response = await apiFetchRaw(`${window.ApiRoutes.rovers.validate}?${params.toString()}`, { headers: API_HEADERS });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || `Validation failed: ${response.status}`);
+            const warnings = [];
+            if (data.exists_db) warnings.push('Username already exists in database.');
+            if (data.exists_caster) warnings.push('Username already exists on caster.');
+            if ((data.mountpoint_conflicts || []).length) warnings.push('Mountpoint overlaps another rover.');
+            box.className = warnings.length ? 'alert alert-warning py-2 small' : 'alert alert-success py-2 small';
+            box.textContent = warnings.length ? warnings.join(' ') : 'Username and mountpoints look available.';
+            box.classList.remove('d-none');
+        } catch (error) {
+            box.className = 'alert alert-danger py-2 small';
+            box.textContent = error.message;
+            box.classList.remove('d-none');
+        }
     }
 
     // === UNIFIED RENDER TABLE ===
@@ -1101,6 +1331,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             }
         });
+        latestMergedRovers = mergedData;
 
         // 2. Filtering
         const filtered = mergedData.filter(r => {
@@ -1142,6 +1373,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             else if (statusFilter === 'blocked') matchStatus = isBlocked;
             else if (statusFilter === 'expired') matchStatus = isExpired;
             else if (statusFilter === 'standby') matchStatus = !isOnline && !isBlocked && !isExpired;
+            if (showExpiringSoonOnly) matchStatus = matchStatus && isRoverExpiringSoon(r);
 
             return matchSearch && matchStation && matchStatus;
         });
@@ -1158,7 +1390,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="12" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
+            updateRoverBulkToolbar();
             return;
         }
 
@@ -1179,6 +1412,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.querySelectorAll('.caster-block-btn').forEach(btn => btn.onclick = handleBlockUser);
         document.querySelectorAll('.caster-unblock-btn').forEach(btn => btn.onclick = handleUnblockUser);
         document.querySelectorAll('.caster-delete-btn').forEach(btn => btn.onclick = handleDeleteCasterUser);
+        document.querySelectorAll('.rover-history-btn').forEach(btn => btn.onclick = handleRoverHistory);
+        bindRoverSelectionEvents();
+        updateRoverBulkToolbar();
     }
 
     // === HANDLE EDIT ROVER (LOGIC MỚI) ===
@@ -1414,7 +1650,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ? `/api/rovers/sync/by-username/${document.getElementById('edit-username').value}`
                     : `/api/rovers/${roverId}`;
                 
-                const res = await fetch(url, {
+                const res = await apiFetchRaw(url, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1545,7 +1781,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (deleteFromDb) {
                 // TRƯỜNG HỢP 1: Xóa trắng hoàn toàn
-                const res = await fetch(`/api/rovers/${roverId}`, { 
+                const res = await apiFetchRaw(`/api/rovers/${roverId}`, { 
                     method: 'DELETE', 
                     headers: API_HEADERS 
                 });
@@ -1564,7 +1800,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
 
-                const res = await fetch(`/api/rovers/${roverId}`, {
+                const res = await apiFetchRaw(`/api/rovers/${roverId}`, {
                     method: 'PUT',
                     headers: API_HEADERS,
                     body: JSON.stringify({
@@ -1602,13 +1838,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         const serversList = infos.map(i => i.server).filter(Boolean);
         const serversStr = serversList.length > 0 ? serversList.join(', ') : 'các Caster được cấu hình';
 
-        if (!confirm(`CẢNH BÁO: Tài khoản "${username}" không tồn tại trong DB nhưng đang hoạt động trên Caster [${serversStr}].\n\nBạn có chắc muốn XÓA HOÀN TOÀN tài khoản này khỏi các Caster nêu trên?`)) return;
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Delete caster account',
+            message: `Account ${username} is active on caster [${serversStr}] but is not in DB. Delete it from caster?`,
+            confirmText: 'Delete',
+            tone: 'danger'
+        });
+        if (!ok) return;
 
         try {
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
-            const res = await fetch(`/api/caster/users/${username}`, { 
+            const res = await apiFetchRaw(`/api/caster/users/${username}`, { 
                 method: 'DELETE', 
                 headers: API_HEADERS 
             });
@@ -1680,7 +1922,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 submitBtn.disabled = true;
                 submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang tạo...';
 
-                const res = await fetch(`/api/rovers/create-multi`, {
+                const res = await apiFetchRaw(`/api/rovers/create-multi`, {
                     method: 'POST',
                     headers: API_HEADERS,
                     body: JSON.stringify(payload)
@@ -1751,6 +1993,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     const filterStatus = document.getElementById('filter-status');
     if (filterStatus) filterStatus.addEventListener('change', renderTable);
 
+    document.getElementById('rover-select-all')?.addEventListener('change', (event) => {
+        document.querySelectorAll('.rover-row-check').forEach(cb => {
+            cb.checked = event.target.checked;
+            const key = cb.dataset.usernameKey;
+            if (key && cb.checked) selectedRoverKeys.add(key);
+            if (key && !cb.checked) selectedRoverKeys.delete(key);
+        });
+        updateRoverBulkToolbar();
+    });
+
+    document.getElementById('bulk-renew-btn')?.addEventListener('click', () => {
+        bulkRenewSelectedRovers().catch(err => showToast(err.message, 'danger'));
+    });
+    document.getElementById('bulk-sync-btn')?.addEventListener('click', () => {
+        syncSelectedRovers().catch(err => showToast(err.message, 'danger'));
+    });
+    document.getElementById('bulk-export-btn')?.addEventListener('click', exportSelectedRovers);
+    document.getElementById('filter-expiring-btn')?.addEventListener('click', () => {
+        showExpiringSoonOnly = !showExpiringSoonOnly;
+        document.getElementById('filter-expiring-btn')?.classList.toggle('active', showExpiringSoonOnly);
+        renderTable();
+    });
+
     const applyLiveMountpointsBtn = document.getElementById('apply-live-mountpoints-btn');
     if (applyLiveMountpointsBtn) {
         applyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
@@ -1791,7 +2056,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const newMpsInput = document.getElementById('new-mountpoints');
     if (newMpsInput) {
         newMpsInput.addEventListener('input', () => applyLiveMpFilter(''));
+        newMpsInput.addEventListener('blur', () => validateCreateRoverInputs());
     }
+    document.getElementById('new-username')?.addEventListener('blur', () => validateCreateRoverInputs());
     const editMpsInput = document.getElementById('edit-mountpoints');
     if (editMpsInput) {
         editMpsInput.addEventListener('input', () => applyLiveMpFilter('edit-'));
@@ -1855,7 +2122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
 
         try {
-            const res = await fetch('/api/caster/blocklist', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/caster/blocklist', { headers: API_HEADERS });
             if (!res.ok) throw new Error('Không thể tải blocklist');
             const data = await res.json();
 
@@ -1921,11 +2188,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             container.querySelectorAll('.unblock-direct-btn').forEach(btn => {
                 btn.onclick = async () => {
                     const { username, mountpoint } = btn.dataset;
-                    if (!confirm(`Xác nhận mở khóa cho tài khoản "${username}"?`)) return;
+                    const ok = await window.CorsUI.confirmAction({
+                        title: 'Unblock account',
+                        message: `Unblock account ${username}?`,
+                        confirmText: 'Unblock'
+                    });
+                    if (!ok) return;
                     
                     try {
                         btn.disabled = true;
-                        const res = await fetch('/api/caster/unblock-user', {
+                        const res = await apiFetchRaw('/api/caster/unblock-user', {
                             method: 'POST',
                             headers: API_HEADERS,
                             body: JSON.stringify({ username, mountpoint: mountpoint || null })
@@ -1954,7 +2226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
 
         try {
-            const res = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/admin/caster-sources', { headers: API_HEADERS });
             if (!res.ok) throw new Error('Failed to fetch sources');
             
             const data = await res.json();
@@ -2120,11 +2392,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             container.querySelectorAll('.delete-mp').forEach(btn => {
                 btn.onclick = async () => {
                     const { host, identifier, mountpoint } = btn.dataset;
-                    if (!mountpoint || !confirm(`Bạn có chắc chắn muốn xóa Mountpoint "${mountpoint}"?`)) return;
+                    if (!mountpoint) return;
+                    const ok = await window.CorsUI.confirmAction({
+                        title: 'Delete mountpoint',
+                        message: `Delete mountpoint ${mountpoint}?`,
+                        confirmText: 'Delete',
+                        tone: 'danger'
+                    });
+                    if (!ok) return;
 
                     try {
                         btn.disabled = true;
-                        const res = await fetch('/api/admin/caster-sources', {
+                        const res = await apiFetchRaw('/api/admin/caster-sources', {
                             method: 'DELETE',
                             headers: API_HEADERS,
                             body: JSON.stringify({ host, identifier, mountpoint })
@@ -2163,7 +2442,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                     try {
                         btn.disabled = true;
-                        const res = await fetch('/api/admin/caster-sources', {
+                        const res = await apiFetchRaw('/api/admin/caster-sources', {
                             method: 'POST',
                             headers: API_HEADERS,
                             body: JSON.stringify(payload)
@@ -2195,6 +2474,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function showToast(msg, type = 'primary') {
+        if (window.CorsUI?.showToast) {
+            const normalized = type === 'primary' ? 'info' : type;
+            window.CorsUI.showToast(normalized, msg);
+            return;
+        }
         const container = document.getElementById('toast-container');
         const el = document.createElement('div');
         el.className = `toast align-items-center text-bg-${type} border-0 shadow-lg mb-2`;

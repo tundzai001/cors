@@ -21,6 +21,7 @@ let mapRoot = null;
 // === WEBSOCKET ===
 let ws = null;
 let wsReconnectAttempts = 0;
+let wsReconnectTimerId = null;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 // === DASHBOARD STATE & LOGIC  ===
@@ -809,6 +810,30 @@ function handleSelectDevice(serial) {
     detailsPanelNeedsUpdate = true;
     scheduleRender('high');
 }
+window.selectDashboardDevice = handleSelectDevice;
+
+function selectDeviceFromDashboardQuery() {
+    const params = new URLSearchParams(window.location.search);
+    const requestedSerial = params.get('station') || params.get('serial') || params.get('device');
+    if (!requestedSerial) return false;
+
+    const normalized = requestedSerial.trim().toLowerCase();
+    const device = globalState.devices.find(d =>
+        String(d.serial || '').toLowerCase() === normalized ||
+        String(d.name || '').toLowerCase() === normalized
+    );
+    if (!device) {
+        console.warn('[Routing] Station query did not match a loaded device:', requestedSerial);
+        return false;
+    }
+
+    globalState.selectedDeviceSerial = device.serial;
+    currentNmeaData = { gga: null, gsa: null, satellites: {} };
+    deviceListNeedsUpdate = true;
+    detailsPanelNeedsUpdate = true;
+    switchView('dashboard');
+    return true;
+}
 
 // ===============================================================================
 // === EVENT HANDLERS ===
@@ -842,7 +867,13 @@ window.handleRenameDevice = handleRenameDevice;
 
 async function handleDeleteDevice(serial, name) {
     const confirmMsg = `⚠️ XÓA KHỎI DANH SÁCH\n\nBạn có chắc muốn xóa trạm '${name}' khỏi giao diện quản lý không?\n\nLưu ý: Hành động này không reset Pi.`;
-    if (!confirm(confirmMsg)) return;
+    const ok = await window.CorsUI.confirmAction({
+        title: 'Remove station',
+        message: `Remove station ${name || serial} from the admin list? This does not reset the Pi.`,
+        confirmText: 'Remove',
+        tone: 'danger'
+    });
+    if (!ok) return;
 
     try {
         const response = await apiFetch(`/api/devices/${serial}`, { method: 'DELETE' });
@@ -909,9 +940,21 @@ async function handleProvisionDevice(serial, newName) {
 
 async function handleConfigureChip(serial, payload) {
     try {
-        await apiFetch(`/api/devices/${serial}/configure-chip`, {
+        const response = await apiFetch(`/api/devices/${serial}/configure-chip`, {
             method: 'POST',
             body: JSON.stringify({ command: 'CONFIGURE_CHIP', payload: payload })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Cau hinh chip that bai');
+        }
+        updateGlobalDevices({
+            serial,
+            base_config: {
+                ...(payload?.params || {}),
+                sensor_type: payload?.sensor_type,
+                mode: payload?.mode
+            }
         });
         showSuccess('Đã gửi cấu hình GNSS! Giao diện sẽ tự cập nhật.');
     } catch (e) {
@@ -995,6 +1038,7 @@ async function handleUnlockDevice(serial) {
 // === WEBSOCKET LOGIC                                                         ===
 // ===============================================================================
 function connectWebSocket() {
+    if (window.ApiClient?.isSessionInvalidated?.() || !window.ApiClient?.hasToken?.()) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     let host = window.location.host;
 
@@ -1003,9 +1047,13 @@ function connectWebSocket() {
         host = 'cors.aitogy.com';
     }
 
-    const wsUrl = `${protocol}//${host}/ws/updates`;
-
-    ws = new WebSocket(wsUrl);
+    if (window.ApiClient?.createAuthenticatedWebSocket) {
+        ws = window.ApiClient.createAuthenticatedWebSocket('/ws/updates', host);
+    } else {
+        const wsUrl = `${protocol}//${host}/ws/updates`;
+        ws = new WebSocket(wsUrl);
+    }
+    if (!ws) return;
 
     ws.onopen = () => {
         updateConnectionStatus(true);
@@ -1027,19 +1075,35 @@ function connectWebSocket() {
         updateConnectionStatus(false);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
         updateConnectionStatus(false);
+
+        if (window.ApiClient?.isAuthWebSocketClose?.(event)) {
+            window.ApiClient.forceLogout('websocket_auth_failed');
+            return;
+        }
+        if (window.ApiClient?.isSessionInvalidated?.() || !window.ApiClient?.hasToken?.()) return;
 
         if (wsReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
             const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts), 30000);
             wsReconnectAttempts++;
             console.log(`WebSocket disconnected. Reconnecting in ${delay / 1000}s...`);
-            setTimeout(connectWebSocket, delay);
+            wsReconnectTimerId = setTimeout(connectWebSocket, delay);
         } else {
             showError('Không thể kết nối đến server. Vui lòng tải lại trang.');
         }
     };
 }
+
+window.addEventListener('cors:session-expired', () => {
+    if (wsReconnectTimerId) {
+        clearTimeout(wsReconnectTimerId);
+        wsReconnectTimerId = null;
+    }
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+        try { ws.close(1000, 'session expired'); } catch (_) {}
+    }
+});
 
 function handleWebSocketMessage(message) {
     const { type, data, serial, count } = message;
@@ -1174,6 +1238,9 @@ function handleWebSocketMessage(message) {
 // ===============================================================================
 
 async function apiFetch(url, options = {}, retries = 3) {
+    if (window.ApiClient?.apiFetch) {
+        return window.ApiClient.apiFetch(url, options, retries);
+    }
     const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     const headers = { 'Content-Type': 'application/json', ...options.headers };
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -1229,6 +1296,10 @@ function removeDeviceLocal(serial) {
 }
 
 function showToast(message, type) {
+    if (window.CorsUI?.showToast) {
+        window.CorsUI.showToast(type, message);
+        return;
+    }
     const toastContainer = document.getElementById('toast-container') || createToastContainer();
     const toastEl = document.createElement('div');
     toastEl.className = `toast align-items-center bg-${type} text-white border-0`;
@@ -1627,6 +1698,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
         return;
+    } else if (selectDeviceFromDashboardQuery()) {
+        initialView = 'dashboard';
     } else if (window.location.search.includes('view=map')) {
         initialView = 'map';
         switchView('map');

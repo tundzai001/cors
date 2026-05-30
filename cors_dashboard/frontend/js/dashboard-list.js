@@ -19,6 +19,21 @@ const STATUS_TEXT_MAP = {
     'auto_setup_averaging': 'AUTO: LẤY MẪU TỌA ĐỘ',
     'auto_setup_base': 'AUTO: CÀI ĐẶT BASE'
 };
+
+function getDeviceOpsFlags(device) {
+    const config = device?.service_config || {};
+    const ntripStatus = device?.ntrip_status || {};
+    const status = String(device?.status || 'offline').toLowerCase();
+    const enabled1 = Boolean(config.server1_enabled || (config.serverhost1 && config.port1 && config.mountpoint1));
+    const enabled2 = Boolean(config.server2_enabled || (config.serverhost2 && config.port2 && config.mountpoint2));
+    const bps1 = Number(ntripStatus.server1?.bps || 0);
+    const bps2 = Number(ntripStatus.server2?.bps || 0);
+    const activeStatus = ['online', 'streaming', 'starting'].includes(status);
+    const noStream = activeStatus && ((enabled1 && bps1 <= 0) || (enabled2 && bps2 <= 0));
+    const unsynced = device?.is_synced === false;
+    const alert = status === 'offline' || status === 'locked' || unsynced || noStream;
+    return { alert, unsynced, noStream };
+}
 const STATUS_CLASS_MAP = {
     'online': 'bg-success',
     'offline': 'bg-danger',
@@ -220,6 +235,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps
         };
     }, [device, device.ntrip_status, device.service_config, device.ntrip_stats]);
+    const opsFlags = React.useMemo(() => getDeviceOpsFlags(device), [device, device.ntrip_status, device.service_config]);
 
     const handleDelete = (e) => {
         e.stopPropagation();
@@ -250,6 +266,11 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                     {isAdmin && <div className="device-meta">{device.serial}</div>}
                 </div>
 
+                    {opsFlags.alert && (
+                        <span className="device-ops-alert-badge" title={opsFlags.noStream ? 'No stream detected' : (opsFlags.unsynced ? 'Unsynced' : 'Needs attention')}>
+                            <i className="bi bi-exclamation-triangle-fill"></i>
+                        </span>
+                    )}
                     <span className="badge">{device.detected_chip_type || 'UNK'}</span>
                     {device.is_lte && (
                         <span className="badge bg-primary ms-1" title="Kết nối 4G/LTE">
@@ -301,8 +322,34 @@ window.DeviceListItem = DeviceListItem;
 
 const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
+    const [statusFilter, setStatusFilter] = useState('all');
     const searchTimeoutRef = useRef(null);
     const isAdmin = currentUser?.role === 'admin';
+    const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
+    const counts = React.useMemo(() => {
+        return devices.reduce((acc, device) => {
+            const status = getEffectiveStatus(device);
+            const bucket = status === 'streaming' ? 'online' : status;
+            const flags = getDeviceOpsFlags(device);
+            acc[bucket] = (acc[bucket] || 0) + 1;
+            if (flags.alert) acc.alerts += 1;
+            if (flags.unsynced) acc.unsynced += 1;
+            if (flags.noStream) acc.no_stream += 1;
+            acc.all += 1;
+            return acc;
+        }, { all: 0, online: 0, sleep: 0, offline: 0, locked: 0, alerts: 0, unsynced: 0, no_stream: 0 });
+    }, [devices]);
+    const displayedDevices = React.useMemo(() => {
+        if (statusFilter === 'all') return devices;
+        return devices.filter(device => {
+            const flags = getDeviceOpsFlags(device);
+            if (statusFilter === 'alerts') return flags.alert;
+            if (statusFilter === 'unsynced') return flags.unsynced;
+            if (statusFilter === 'no_stream') return flags.noStream;
+            const status = getEffectiveStatus(device);
+            return (status === 'streaming' ? 'online' : status) === statusFilter;
+        });
+    }, [devices, statusFilter]);
 
     useEffect(() => {
         setLocalSearchTerm(searchTerm);
@@ -350,11 +397,33 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                         </button>
                     )}
                 </div>
+                <div className="dashboard-status-chips">
+                    {[
+                        ['all', 'All'],
+                        ['online', 'Online'],
+                        ['sleep', 'Sleep'],
+                        ['offline', 'Offline'],
+                        ['locked', 'Locked'],
+                        ['alerts', 'Alerts'],
+                        ['unsynced', 'Unsynced'],
+                        ['no_stream', 'No stream']
+                    ].map(([key, label]) => (
+                        <button
+                            key={key}
+                            type="button"
+                            className={`dashboard-status-chip ${statusFilter === key ? 'active' : ''}`}
+                            onClick={() => setStatusFilter(key)}
+                        >
+                            <span>{label}</span>
+                            <strong>{counts[key] || 0}</strong>
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {/* List */}
             <div className="device-list-scroll flex-grow-1 overflow-auto custom-scrollbar p-2">
-                {devices.length === 0 ? (
+                {displayedDevices.length === 0 ? (
                     localSearchTerm ? (
                         <div className="text-center mt-5 text-muted animate-fade-in-up">
                             <i className="bi bi-search display-4 opacity-25"></i>
@@ -375,7 +444,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                         </div>
                     )
                 ) : (
-                    devices.map((device, index) => (
+                    displayedDevices.map((device, index) => (
                         <DeviceListItem
                             key={device.serial}
                             device={device}

@@ -1,162 +1,175 @@
-<!--users.html-->
 <!DOCTYPE html>
 <html lang="vi" data-bs-theme="dark">
 <head>
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-G5RWFTRMJG"></script>
-    <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-
-    gtag('config', 'G-G5RWFTRMJG');
-    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quản lý User - CORS Geodetic Suite</title>
+    <title>Users - CORS Control Center</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="/css/style.css?v=20260507">
+    <link rel="stylesheet" href="/css/ops-ui.css?v=20260530-users-polish-v1">
 </head>
-<body>
-    <nav class="navbar navbar-expand-lg border-bottom border-secondary-subtle sticky-top bg-dark">
+<body class="ops-admin-page ops-users-page">
+    <nav class="navbar navbar-expand-lg sticky-top ops-admin-nav">
         <div class="container-fluid">
             <a class="navbar-brand fw-bold text-light" href="/">
-                <i class="bi bi-people-fill me-2"></i>CORS User Manager
+                <i class="bi bi-people-fill me-2"></i>CORS Control Center
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
-                aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul id="main-nav" class="navbar-nav me-auto mb-2 mb-lg-0">
-                    <!-- nav-manager.js sẽ tự động render menu -->
-                </ul>
+                <ul id="main-nav" class="navbar-nav me-auto mb-2 mb-lg-0"></ul>
             </div>
             <div class="d-flex align-items-center">
                 <span id="user-info" class="navbar-text me-3 d-none d-md-inline"></span>
                 <button id="logout-btn" class="btn btn-sm btn-outline-danger">
-                    <i class="bi bi-box-arrow-right"></i>
-                    <span class="d-none d-md-inline ms-1">Đăng xuất</span>
+                    <i class="bi bi-box-arrow-right"></i><span class="d-none d-md-inline ms-1">Logout</span>
                 </button>
             </div>
         </div>
     </nav>
 
-    <main class="container mt-4">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2 class="mb-0">Danh sách người dùng</h2>
-            <button class="btn btn-primary" id="add-user-btn" data-bs-toggle="modal" data-bs-target="#user-modal">
-                <i class="bi bi-plus-circle-fill me-2"></i>Thêm User mới
+    <main class="container-fluid ops-users-shell">
+        <div class="ops-page-head">
+            <div>
+                <div class="ops-page-title"><i class="bi bi-people-fill me-2"></i>User Administration</div>
+                <div class="ops-page-subtitle">Manage roles, account state, device access, and mountpoint access.</div>
+            </div>
+            <button class="btn btn-primary ops-btn" id="add-user-btn" data-bs-toggle="modal" data-bs-target="#user-modal">
+                <i class="bi bi-plus-lg me-2"></i>Add user
             </button>
         </div>
 
-        <div class="table-responsive">
-            <table class="table table-hover align-middle">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Username</th>
-                        <th>Họ và Tên</th>
-                        <th>Vai trò</th>
-                        <th>Trạng thái</th>
-                        <th>Hành động</th>
-                    </tr>
-                </thead>
-                <tbody id="users-table-body">
-                    <!-- Dữ liệu user sẽ được chèn vào đây bằng JS -->
-                </tbody>
-            </table>
+        <div class="ops-toolbar">
+            <div class="input-group input-group-sm" style="max-width: 360px;">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="search" id="user-search" class="form-control ops-input" placeholder="Search username, name, role">
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <select id="role-filter" class="form-select form-select-sm ops-input" style="width: 160px;">
+                    <option value="">All roles</option>
+                    <option value="admin">Admin</option>
+                    <option value="coordinator">Coordinator</option>
+                    <option value="operator">Operator</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+                <select id="status-filter" class="form-select form-select-sm ops-input" style="width: 150px;">
+                    <option value="">All status</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="ops-card ops-users-table-card">
+            <div class="table-responsive">
+                <table class="table ops-table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Username</th>
+                            <th>Full name</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-table-body">
+                        <tr><td colspan="6"><div class="ops-empty-state"><span class="spinner-border spinner-border-sm"></span><span>Loading users</span></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </main>
 
-    <!-- Modal cho Thêm/Sửa User -->
     <div class="modal fade" id="user-modal" tabindex="-1" aria-labelledby="user-modal-label" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content ops-card">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="user-modal-label">Thêm User mới</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h5 class="modal-title" id="user-modal-label">Add user</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <form id="user-form">
                         <input type="hidden" id="user-id">
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="username" class="form-label">Username</label>
-                                <input type="text" class="form-control" id="username" required>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="full_name" class="form-label">Họ và Tên</label>
-                                <input type="text" class="form-control" id="full_name">
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="password" class="form-label">Mật khẩu</label>
-                                <input type="password" class="form-control" id="password" placeholder="Để trống nếu không muốn đổi">
-                                <div class="form-text mt-1 text-muted" style="font-size: 0.75rem;"><i class="bi bi-info-circle me-1"></i>Ít nhất 8 ký tự, gồm ít nhất 1 chữ hoa, 1 chữ thường và 1 số.</div>
-                            </div>
-
-                            <div class="col-md-6 mb-3">
-                                <label for="role" class="form-label">Vai trò</label>
-                                <select class="form-select" id="role" required>
-                                    <option value="viewer">Viewer (Chỉ xem)</option>
-                                    <option value="coordinator">Coordinator (Sửa trạm được gán)</option>
-                                    <option value="admin">Admin (Toàn quyền)</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="mb-3 form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="is_active"> 
-                            <label class="form-check-label" for="is_active">Kích hoạt tài khoản</label>
-                        </div>
-                        <div id="rover-permission-section" class="form-check form-switch mb-3 d-none">
-                            <input class="form-check-input" type="checkbox" id="can_create_rovers">
-                            <label class="form-check-label" for="can_create_rovers">
-                                Cho phép tạo tài khoản Rover
-                            </label>
-                        </div>
-                        <hr>
-                        <div id="extra-mountpoints-section" class="d-none">
-                            <hr>
-                            <h5 class="mb-3">MountPoints bổ sung (Caster only)</h5>
-                            <div class="mb-2">
-                                <div class="input-group input-group-sm">
-                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                    <input type="text" class="form-control" id="search-extra-mps" placeholder="Tìm nhanh MountPoint...">
+                        <section class="mb-4">
+                            <h6 class="fw-bold mb-3">Identity</h6>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label for="username" class="form-label">Username</label>
+                                    <input type="text" class="form-control ops-input" id="username" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="full_name" class="form-label">Full name</label>
+                                    <input type="text" class="form-control ops-input" id="full_name">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="password" class="form-label">Password</label>
+                                    <input type="password" class="form-control ops-input" id="password" placeholder="Leave blank to keep current">
+                                    <div class="form-text">At least 8 characters for new passwords.</div>
                                 </div>
                             </div>
-                            <div id="extra-mps-checklist" class="p-3 border rounded bg-dark-subtle" style="max-height: 200px; overflow-y: auto;">
-                                <!-- Checkbox các MP từ Caster sẽ được chèn vào đây -->
-                                <div class="text-center text-muted small py-2">Đang tải danh sách từ Caster...</div>
+                        </section>
+
+                        <section class="mb-4">
+                            <h6 class="fw-bold mb-3">Role & Status</h6>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label for="role" class="form-label">Role</label>
+                                    <select class="form-select ops-input" id="role" required>
+                                        <option value="viewer">Viewer</option>
+                                        <option value="operator">Operator</option>
+                                        <option value="coordinator">Coordinator</option>
+                                        <option value="admin">Admin</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4 d-flex align-items-end">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="is_active">
+                                        <label class="form-check-label" for="is_active">Active account</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 d-flex align-items-end">
+                                    <div id="rover-permission-section" class="form-check form-switch d-none">
+                                        <input class="form-check-input" type="checkbox" id="can_create_rovers">
+                                        <label class="form-check-label" for="can_create_rovers">Can create rovers</label>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                        </section>
 
-                        <!-- PHẦN GÁN TRẠM (CHỈ HIỆN KHI LÀ COORDINATOR) -->
-                        <div id="device-assignment-section" class="d-none">
-                             <hr>
-                             <h5 class="mb-3">Gán Trạm cho Coordinator</h5>
-                             <p class="small text-muted">Chọn các trạm mà người dùng này có quyền xem và chỉnh sửa.</p>
-                             <div id="device-checklist" class="p-3 border rounded" style="max-height: 200px; overflow-y: auto;">
-                                 <!-- Checkbox các trạm sẽ được chèn vào đây -->
-                             </div>
-                        </div>
+                        <section id="device-assignment-section" class="mb-4 d-none">
+                            <h6 class="fw-bold mb-2">Device Access</h6>
+                            <div id="device-checklist" class="ops-card-body border rounded" style="max-height: 220px; overflow: auto;"></div>
+                        </section>
 
+                        <section id="extra-mountpoints-section" class="mb-2 d-none">
+                            <h6 class="fw-bold mb-2">Mountpoint Access</h6>
+                            <div class="input-group input-group-sm mb-2">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control ops-input" id="search-extra-mps" placeholder="Filter mountpoints">
+                            </div>
+                            <div id="extra-mps-checklist" class="ops-card-body border rounded" style="max-height: 220px; overflow: auto;">
+                                <div class="ops-empty-state"><span class="spinner-border spinner-border-sm"></span><span>Loading mountpoints</span></div>
+                            </div>
+                        </section>
                     </form>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
-                    <button type="submit" form="user-form" class="btn btn-primary" id="save-user-btn">Lưu thay đổi</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" form="user-form" class="btn btn-primary" id="save-user-btn">Save changes</button>
                 </div>
             </div>
         </div>
     </div>
 
+    <div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1100"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-
-    <script src="/js/nav-manager.js?v=20260507"></script>
-    <script src="/js/users.js?v=20260507"></script>
+    <script src="/js/api-routes.js?v=20260529-api-routes-v1"></script>
+    <script src="/js/api-client.js?v=20260529-auth-session-v2"></script>
+    <script src="/js/ops-ui.js?v=20260529-admin-hard-reset-v1"></script>
+    <script src="/js/nav-manager.js?v=20260529-admin-hard-reset-v1"></script>
+    <script src="/js/users.js?v=20260530-users-mp-normalize-v1"></script>
 </body>
 </html>

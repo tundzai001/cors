@@ -151,7 +151,13 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
 
     // --- 4. XỬ LÝ XÓA ROVER ---
     const handleDeleteRover = async (roverId, username) => {
-        if (!confirm(`Bạn có chắc muốn xóa tài khoản Rover '${username}'? Tài khoản này sẽ bị ngắt kết nối ngay lập tức.`)) return;
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Delete rover',
+            message: `Delete rover account ${username}? It will be disconnected immediately.`,
+            confirmText: 'Delete',
+            tone: 'danger'
+        });
+        if (!ok) return;
         try {
             const response = await window.apiFetch(`/api/rovers/${roverId}`, { method: 'DELETE' });
             if (!response.ok) throw new Error("Xóa thất bại");
@@ -480,6 +486,106 @@ window.SystemInfoPanel = SystemInfoPanel;
 
 console.log('✓ SystemInfoPanel component loaded');
 
+const StationOperationsPanel = memo(function StationOperationsPanel({ device, canEditService, canRunDeviceActions, onLock, onUnlock, onReset }) {
+    const [alerts, setAlerts] = useState([]);
+    const [history, setHistory] = useState([]);
+    const [templates, setTemplates] = useState([]);
+    const [templateId, setTemplateId] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
+
+    const apiJson = async (url, options = {}) => {
+        const response = await window.apiFetch(url, options);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `Request failed: ${response.status}`);
+        return data;
+    };
+
+    const loadOps = async () => {
+        if (!device?.serial) return;
+        setIsLoading(true);
+        try {
+            const [alertsData, historyData, templatesData] = await Promise.all([
+                apiJson(`${window.ApiRoutes.devices.alerts}?serial=${encodeURIComponent(device.serial)}`),
+                apiJson(window.ApiRoutes.devices.history(device.serial)),
+                apiJson(window.ApiRoutes.devices.templates)
+            ]);
+            setAlerts(alertsData.items || []);
+            setHistory(historyData.events || []);
+            setTemplates(templatesData.items || []);
+        } catch (error) {
+            window.showError ? window.showError(error.message) : console.error(error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadOps();
+    }, [device?.serial]);
+
+    const applyTemplate = async () => {
+        if (!templateId) return window.showError?.('Select a template first');
+        await apiJson(window.ApiRoutes.devices.applyTemplate, {
+            method: 'POST',
+            body: JSON.stringify({ template_id: templateId, serials: [device.serial] })
+        });
+        window.showSuccess?.('Template applied');
+        await loadOps();
+    };
+
+    const locked = device?.is_locked || device?.status === 'locked';
+
+    if (isLoading) {
+        return <div className="text-center text-muted py-4"><div className="spinner-border spinner-border-sm me-2"></div>Loading station operations...</div>;
+    }
+
+    return (
+        <div className="station-ops-panel">
+            <div className="station-ops-grid">
+                <div className="station-ops-card">
+                    <div className="station-ops-title"><i className="bi bi-exclamation-triangle me-2"></i>Device alerts</div>
+                    {alerts.length ? alerts.map(alert => (
+                        <div className={`station-ops-alert ${alert.severity || 'info'}`} key={alert.id}>
+                            <strong>{alert.title || alert.type}</strong>
+                            <span>{alert.message}</span>
+                        </div>
+                    )) : <div className="text-muted small">No active device alerts.</div>}
+                </div>
+                <div className="station-ops-card">
+                    <div className="station-ops-title"><i className="bi bi-clock-history me-2"></i>Device history</div>
+                    {history.length ? history.slice(0, 8).map((event, idx) => (
+                        <div className="station-ops-event" key={`${event.timestamp}-${idx}`}>
+                            <span>{event.timestamp ? new Date(event.timestamp * 1000).toLocaleString() : '--'}</span>
+                            <strong>{event.message || 'Event'}</strong>
+                        </div>
+                    )) : <div className="text-muted small">No recent events for this station.</div>}
+                </div>
+            </div>
+            <div className="station-ops-card mt-3">
+                <div className="station-ops-title"><i className="bi bi-sliders me-2"></i>Template and quick actions</div>
+                <div className="d-flex flex-wrap gap-2 align-items-center">
+                    <select className="form-select form-select-sm bg-dark text-light border-secondary" value={templateId} onChange={e => setTemplateId(e.target.value)} style={{ maxWidth: '280px' }}>
+                        <option value="">Select config template</option>
+                        {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                    <button className="btn btn-sm btn-outline-info" disabled={!canEditService || !templateId} onClick={applyTemplate}>
+                        <i className="bi bi-magic me-1"></i>Apply template
+                    </button>
+                    <button className={`btn btn-sm ${locked ? 'btn-outline-success' : 'btn-outline-warning'}`} disabled={!canRunDeviceActions} onClick={() => locked ? onUnlock(device.serial) : onLock(device.serial)}>
+                        <i className={`bi ${locked ? 'bi-unlock-fill' : 'bi-lock-fill'} me-1`}></i>{locked ? 'Unlock' : 'Lock'}
+                    </button>
+                    <button className="btn btn-sm btn-outline-danger" disabled={!canRunDeviceActions} onClick={() => onReset(device.serial)}>
+                        <i className="bi bi-arrow-counterclockwise me-1"></i>Reset
+                    </button>
+                    <button className="btn btn-sm btn-outline-light" onClick={loadOps}>
+                        <i className="bi bi-arrow-clockwise me-1"></i>Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+});
+
 // =========================================
 // === COMPONENT CHÍNH: DetailsPanel ===
 // =========================================
@@ -504,14 +610,23 @@ const DetailsPanel = memo(function DetailsPanel({
     const [userSelectedTab, setUserSelectedTab] = useState(false);
     const [isSystemPanelOpen, setIsSystemPanelOpen] = useState(false);
     const lastSerialRef = useRef(null);
+    const lastGnssConfiguredRef = useRef(false);
+
+    const hasConfig = (config) => !!(config && typeof config === 'object' && Object.keys(config).length > 0);
+    const isGnssConfigured = hasConfig(device?.base_config);
+    const isServiceConfigured = hasConfig(device?.service_config);
+    const baseConfigSignature = isGnssConfigured ? JSON.stringify(device.base_config) : '';
+    const serviceConfigSignature = isServiceConfigured ? JSON.stringify(device.service_config) : '';
 
     useEffect(() => {
         console.log("[DetailsPanel] useEffect triggered! device.serial:", device?.serial, "device.status:", device?.status, "activeTab:", activeTab);
         if (!device) return;
 
         const isDeviceSwitched = lastSerialRef.current !== device.serial;
+        const wasGnssConfigured = isDeviceSwitched ? false : lastGnssConfiguredRef.current;
         console.log("[DetailsPanel] isDeviceSwitched:", isDeviceSwitched, "lastSerialRef:", lastSerialRef.current, "device.serial:", device.serial);
         lastSerialRef.current = device.serial;
+        lastGnssConfiguredRef.current = isGnssConfigured;
 
         let newActiveTab = '';
 
@@ -529,15 +644,24 @@ const DetailsPanel = memo(function DetailsPanel({
                 newActiveTab = 'chip';
                 break;
             default:
+                if (!isDeviceSwitched && activeTab) {
+                    if (activeTab === 'chip' && !wasGnssConfigured && isGnssConfigured) {
+                        newActiveTab = 'service';
+                    } else {
+                        return;
+                    }
+                }
+
                 if (!isDeviceSwitched && userSelectedTab && activeTab) {
                     return;
                 }
 
-                const isGnssConfigured = device.base_config && Object.keys(device.base_config).length > 0;
                 if (!isGnssConfigured) {
                     newActiveTab = 'chip';
-                } else {
+                } else if (!isServiceConfigured) {
                     newActiveTab = 'service';
+                } else {
+                    newActiveTab = 'dashboard';
                 }
                 break;
         }
@@ -550,7 +674,7 @@ const DetailsPanel = memo(function DetailsPanel({
         setTempName(device.name || '');
         setIsEditingName(false);
 
-    }, [device?.serial, device?.status]);
+    }, [device?.serial, device?.status, baseConfigSignature, serviceConfigSignature]);
 
     const handleTabClick = (tabName) => {
         setActiveTab(tabName);
@@ -651,6 +775,8 @@ const DetailsPanel = memo(function DetailsPanel({
                     return <div className="alert alert-danger">Bạn không có quyền truy cập mục này.</div>;
                 }
                 return <RoverManagementPanel device={device} />;
+            case 'operations':
+                return <StationOperationsPanel device={device} canEditService={canEditService} canRunDeviceActions={isAdmin} onLock={onLock} onUnlock={onUnlock} onReset={onReset} />;
             default:
                 return null;
         }
@@ -659,6 +785,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_create_rovers));
     const showConfigTabs = !['awaiting_license', 'rebooting_for_reset'].includes(device.status);
     const showServiceAndDashboardTabs = showConfigTabs && (device.status !== 'unprovisioned' || isRelayLikeStation);
+    const showStationOperationsTab = showServiceAndDashboardTabs && (isAdmin || canEditService);
 
     const isDeviceLocked = device.is_locked || device.status === 'locked';
 
@@ -743,7 +870,7 @@ const DetailsPanel = memo(function DetailsPanel({
                                     onClick={() => {
                                         // Cho phép click để xem alert chi tiết nếu cần
                                         const errText = device.sync_errors ? device.sync_errors.join('\n') : "Đang chờ dữ liệu...";
-                                        alert("CHI TIẾT SAI LỆCH:\n" + errText);
+                                        window.CorsUI.showToast('warning', errText);
                                     }}
                                     title={device.sync_errors ? device.sync_errors.join('\n') : "Click để xem chi tiết"}
                                 >
@@ -780,11 +907,14 @@ const DetailsPanel = memo(function DetailsPanel({
                     <button
                         className="btn btn-sm btn-outline-danger ms-2"
                         title="Reset Trạm về trạng thái ban đầu"
-                        onClick={() => {
-                            const confirmMsg = `⚠️ XÁC NHẬN RESET\n\nBạn có chắc chắn muốn reset trạm '${device.name}' về trạng thái ban đầu không?`;
-                            if (window.confirm(confirmMsg)) {
-                                onReset(device.serial);
-                            }
+                        onClick={async () => {
+                            const ok = await window.CorsUI.confirmAction({
+                                title: 'Reset station',
+                                message: `Reset station ${device.name || device.serial} to initial state?`,
+                                confirmText: 'Reset',
+                                tone: 'danger'
+                            });
+                            if (ok) onReset(device.serial);
                         }}
                     >
                         <i className="bi bi-arrow-counterclockwise"></i> Reset
@@ -836,10 +966,18 @@ const DetailsPanel = memo(function DetailsPanel({
                         </li>
                     )}
 
+                    {showStationOperationsTab && (
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'operations' ? 'active' : ''}`} onClick={() => handleTabClick('operations')}>
+                                <i className="bi bi-activity me-1"></i>Operations
+                            </button>
+                        </li>
+                    )}
+
                     {(['online', 'sleep', 'configuring'].includes(device.status) || (device.status || '').startsWith('auto_setup')) ? (
                         <li className="nav-item">
                             <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => handleTabClick('dashboard')}>
-                                <i className="bi bi-speedometer2 me-1"></i>Dashboard
+                                <i className="bi bi-speedometer2 me-1"></i>Overview
                             </button>
                         </li>
                     ) : null}

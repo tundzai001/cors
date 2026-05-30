@@ -1,18 +1,6 @@
-﻿﻿// frontend/js/users.js
-
-document.addEventListener('DOMContentLoaded', () => {
-    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
-    if (!token) {
-        localStorage.removeItem('access_token');
-        sessionStorage.removeItem('access_token');
-        window.location.href = '/';
-        return;
-    }
-
-    const API_HEADERS = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-    };
+document.addEventListener('DOMContentLoaded', async () => {
+    const currentUser = await window.ApiClient.requireAuthenticatedPage();
+    if (!currentUser) return;
 
     const usersTableBody = document.getElementById('users-table-body');
     const userModal = new bootstrap.Modal(document.getElementById('user-modal'));
@@ -26,369 +14,274 @@ document.addEventListener('DOMContentLoaded', () => {
     const extraMountpointsSection = document.getElementById('extra-mountpoints-section');
     const extraMpsChecklist = document.getElementById('extra-mps-checklist');
     const searchExtraMpsInput = document.getElementById('search-extra-mps');
-    
-    let allDevices = []; // Lưu danh sách tất cả các trạm
-    let allCasterSources = []; // Lưu danh sách MP từ Caster
+    const userSearch = document.getElementById('user-search');
+    const roleFilter = document.getElementById('role-filter');
+    const statusFilter = document.getElementById('status-filter');
 
-    // Hàm lấy danh sách users và hiển thị
-    async function fetchAndDisplayUsers() {
-        try {
-            const response = await fetch('/api/users', { headers: API_HEADERS });
-            if (!response.ok) {
-                 if (response.status === 401 || response.status === 403) {
-                     localStorage.removeItem('access_token');
-                     sessionStorage.removeItem('access_token');
-                     window.location.href = '/';
-                 }
-                 throw new Error('Không thể lấy danh sách người dùng.');
-            }
-            const users = await response.json();
-            renderUsersTable(users);
-        } catch (error) {
-            console.error(error);
-            usersTableBody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">${error.message}</td></tr>`;
+    let allUsers = [];
+    let allDevices = [];
+    let allCasterSources = [];
+
+    async function apiJson(url, options = {}) {
+        const response = await window.ApiClient.apiFetch(url, options);
+        if (!response.ok) {
+            let detail = `Error ${response.status}`;
+            try {
+                const err = await response.json();
+                detail = err.detail || detail;
+            } catch (_) {}
+            throw new Error(detail);
         }
+        if (response.status === 204) return null;
+        return response.json();
     }
-    
-    // Hàm lấy danh sách tất cả các trạm để gán
-    async function fetchAllDevices() {
-        try {
-            const response = await fetch('/api/devices', { headers: API_HEADERS });
-            if (!response.ok) throw new Error('Không thể lấy danh sách trạm.');
-            allDevices = await response.json();
-        } catch (error) {
-            console.error(error);
+
+    function roleBadge(role) {
+        const r = String(role || '').toLowerCase();
+        if (r === 'admin') return 'ops-role-badge ops-role-admin';
+        if (r === 'coordinator') return 'ops-role-badge ops-role-coordinator';
+        if (r === 'operator') return 'ops-role-badge ops-role-operator';
+        return 'ops-role-badge ops-role-viewer';
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[ch]));
+    }
+
+    function getSourceMountpoint(source) {
+        if (typeof source === 'string') return source.trim();
+        if (!source || typeof source !== 'object') return '';
+        return String(source.mountpoint || source.name || source.identifier || source.id || '').trim();
+    }
+
+    function getSourceMeta(source) {
+        if (!source || typeof source !== 'object') return '';
+        const parts = [source.identifier, source.host || source.domain]
+            .map(v => String(v || '').trim())
+            .filter(Boolean);
+        return Array.from(new Set(parts)).join(' · ');
+    }
+
+    function getSourceSearchText(source) {
+        if (typeof source === 'string') return source.toLowerCase();
+        if (!source || typeof source !== 'object') return '';
+        return [
+            source.mountpoint,
+            source.name,
+            source.identifier,
+            source.host,
+            source.domain
+        ].map(v => String(v || '').toLowerCase()).join(' ');
+    }
+
+    function applyFilters() {
+        const term = userSearch.value.trim().toLowerCase();
+        const role = roleFilter.value;
+        const status = statusFilter.value;
+        const filtered = allUsers.filter(user => {
+            const matchesTerm = !term || `${user.username || ''} ${user.full_name || ''} ${user.role || ''}`.toLowerCase().includes(term);
+            const matchesRole = !role || user.role === role;
+            const matchesStatus = !status || (status === 'active' ? user.is_active : !user.is_active);
+            return matchesTerm && matchesRole && matchesStatus;
+        });
+        renderUsersTable(filtered);
+    }
+
+    function renderUsersTable(users) {
+        if (!users.length) {
+            usersTableBody.innerHTML = '<tr><td colspan="6"><div class="ops-empty-state"><i class="bi bi-inbox"></i><span>No users found</span></div></td></tr>';
+            return;
         }
+        usersTableBody.innerHTML = users.map(user => `
+            <tr>
+                <td class="ops-table-id">${user.id}</td>
+                <td>
+                    <div class="ops-user-cell">
+                        <span class="ops-user-avatar">${String(user.username || '?').slice(0, 1).toUpperCase()}</span>
+                        <strong>${user.username}</strong>
+                    </div>
+                </td>
+                <td class="ops-muted-cell">${user.full_name || '--'}</td>
+                <td><span class="${roleBadge(user.role)}">${user.role}</span></td>
+                <td><span class="ops-status-pill ${user.is_active ? 'is-active' : 'is-inactive'}"><span></span>${user.is_active ? 'Active' : 'Inactive'}</span></td>
+                <td class="text-end ops-row-actions">
+                    <button class="ops-table-action edit-btn" data-user-id="${user.id}" title="Edit"><i class="bi bi-pencil-square"></i></button>
+                    <button class="ops-table-action danger delete-btn" data-user-id="${user.id}" data-username="${user.username}" title="Delete"><i class="bi bi-trash3"></i></button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    async function fetchUsers() {
+        usersTableBody.innerHTML = '<tr><td colspan="6"><div class="ops-empty-state"><span class="spinner-border spinner-border-sm"></span><span>Loading users</span></div></td></tr>';
+        allUsers = await apiJson(window.ApiRoutes.users.list);
+        applyFilters();
+    }
+
+    async function fetchAllDevices() {
+        allDevices = await apiJson(window.ApiRoutes.devices.list);
     }
 
     async function fetchCasterSources() {
-        try {
-            const response = await fetch('/api/admin/caster-sources', { headers: API_HEADERS });
-            if (!response.ok) throw new Error('Không thể lấy danh sách MountPoint từ Caster.');
-            const data = await response.json();
-            // Lấy danh sách MP duy nhất từ tất cả các host
-            allCasterSources = data.all || [];
-            return allCasterSources;
-        } catch (error) {
-            console.error(error);
-            return [];
-        }
+        const data = await apiJson(window.ApiRoutes.admin.casterSources);
+        allCasterSources = data.all || [];
+        return allCasterSources;
     }
 
+    function shouldShowAccessSections(role) {
+        return ['coordinator', 'operator', 'viewer'].includes(role);
+    }
 
-    // Hàm render bảng users
-    function renderUsersTable(users) {
-        usersTableBody.innerHTML = '';
-        if (users.length === 0) {
-            usersTableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Chưa có người dùng nào.</td></tr>';
+    function updateRoleSections() {
+        const show = shouldShowAccessSections(roleSelect.value);
+        deviceAssignmentSection.classList.toggle('d-none', !show);
+        extraMountpointsSection.classList.toggle('d-none', !show);
+        roverPermissionSection.classList.toggle('d-none', !show);
+    }
+
+    function renderDeviceChecklist(assignedSerials = []) {
+        if (!allDevices.length) {
+            deviceChecklist.innerHTML = '<div class="ops-empty-state"><i class="bi bi-inbox"></i><span>No devices</span></div>';
             return;
         }
-        users.forEach(user => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>${user.id}</td>
-                <td>${user.username}</td>
-                <td>${user.full_name || ''}</td>
-                <td><span class="badge ${getRoleBadgeClass(user.role)}">${user.role}</span></td>
-                <td><span class="badge ${user.is_active ? 'bg-success' : 'bg-secondary'}">${user.is_active ? 'Active' : 'Inactive'}</span></td>
-                <td>
-                    <button class="btn btn-sm btn-outline-primary edit-btn" data-user-id="${user.id}"><i class="bi bi-pencil-fill"></i></button>
-                    <button class="btn btn-sm btn-outline-danger delete-btn" data-user-id="${user.id}" data-username="${user.username}"><i class="bi bi-trash-fill"></i></button>
-                </td>
-            `;
-            usersTableBody.appendChild(tr);
-        });
+        const assigned = new Set(assignedSerials.map(String));
+        deviceChecklist.innerHTML = allDevices.map(device => `
+            <label class="form-check d-flex align-items-center gap-2 mb-2">
+                <input class="form-check-input device-checkbox" type="checkbox" value="${device.serial}" ${assigned.has(String(device.serial)) ? 'checked' : ''}>
+                <span><strong>${device.name || device.serial}</strong><span class="text-muted ms-2">${device.serial}</span></span>
+            </label>
+        `).join('');
     }
 
-    // Mở modal để thêm user mới
-    addUserBtn.addEventListener('click', () => {
+    function renderExtraMpsChecklist(assignedMps = []) {
+        const query = (searchExtraMpsInput.value || '').trim().toLowerCase();
+        const assigned = new Set(assignedMps.map(String));
+        const list = allCasterSources.filter(source => {
+            const mp = getSourceMountpoint(source);
+            if (!mp) return false;
+            return !query || getSourceSearchText(source).includes(query);
+        });
+        if (!list.length) {
+            extraMpsChecklist.innerHTML = '<div class="ops-empty-state"><i class="bi bi-inbox"></i><span>No mountpoints</span></div>';
+            return;
+        }
+        extraMpsChecklist.innerHTML = list.map(source => {
+            const mp = getSourceMountpoint(source);
+            const meta = getSourceMeta(source);
+            return `
+            <label class="form-check d-flex align-items-center gap-2 mb-2">
+                <input class="form-check-input extra-mp-checkbox" type="checkbox" value="${escapeHtml(mp)}" ${assigned.has(mp) ? 'checked' : ''}>
+                <span><code>${escapeHtml(mp)}</code>${meta ? `<span class="text-muted ms-2">${escapeHtml(meta)}</span>` : ''}</span>
+            </label>
+        `;
+        }).join('');
+    }
+
+    function resetForm() {
         userForm.reset();
         document.getElementById('user-id').value = '';
-        modalTitle.textContent = 'Thêm User mới';
-        document.getElementById('password').placeholder = 'Bắt buộc nhập';
-        
-        // === THÊM DÒNG NÀY VÀO ===
-        // Mặc định kích hoạt tài khoản cho user mới
-        document.getElementById('is_active').checked = true; 
-        // ==========================
+        document.getElementById('is_active').checked = true;
+        document.getElementById('password').placeholder = 'Required for new user';
+        modalTitle.textContent = 'Add user';
+        renderDeviceChecklist([]);
+        renderExtraMpsChecklist([]);
+        updateRoleSections();
+    }
 
-        deviceAssignmentSection.classList.add('d-none');
-        extraMountpointsSection.classList.add('d-none'); 
-        renderDeviceChecklist([], '');
-        renderExtraMpsChecklist();
-    });
-    
-    // Mở modal để sửa user
+    async function openEditUser(userId) {
+        const [user, userDevices] = await Promise.all([
+            apiJson(window.ApiRoutes.users.detail(userId)),
+            apiJson(window.ApiRoutes.users.devices(userId))
+        ]);
 
-    usersTableBody.addEventListener('click', async (e) => {
-        // Chỉ xử lý nút edit
-        const editButton = e.target.closest('.edit-btn');
-        if (!editButton) return;
+        document.getElementById('user-id').value = user.id;
+        document.getElementById('username').value = user.username || '';
+        document.getElementById('full_name').value = user.full_name || '';
+        document.getElementById('role').value = user.role || 'viewer';
+        document.getElementById('is_active').checked = !!user.is_active;
+        document.getElementById('can_create_rovers').checked = !!user.can_create_rovers;
+        document.getElementById('password').value = '';
+        document.getElementById('password').placeholder = 'Leave blank to keep current';
+        modalTitle.textContent = `Edit user: ${user.username}`;
 
-        const userId = editButton.dataset.userId;
-        
-        try {
-            // Gọi API để lấy thông tin chi tiết user
-            const userResponse = await fetch(`/api/users/${userId}`, { headers: API_HEADERS });
-            if (!userResponse.ok) throw new Error('Không thể lấy thông tin user.');
-            const user = await userResponse.json();
+        const extraMps = String(user.extra_mountpoints || '').split(/[;,\s\n]+/).map(v => v.trim()).filter(Boolean);
+        renderDeviceChecklist((userDevices || []).map(d => d.serial));
+        renderExtraMpsChecklist(extraMps);
+        updateRoleSections();
+        userModal.show();
+    }
 
-            // Gọi API để lấy các trạm của user này
-            const deviceResponse = await fetch(`/api/devices?user_id=${userId}`, { headers: API_HEADERS });
-            if (!deviceResponse.ok) throw new Error('Không thể lấy danh sách trạm của user.');
-            const userDevices = await deviceResponse.json();
+    async function deleteUser(userId, username) {
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Delete user',
+            message: `Delete user ${username}?`,
+            confirmText: 'Delete',
+            tone: 'danger'
+        });
+        if (!ok) return;
+        await apiJson(window.ApiRoutes.users.detail(userId), { method: 'DELETE' });
+        window.CorsUI.showToast('success', `Deleted ${username}`);
+        await fetchUsers();
+    }
 
-            // === Điền thông tin vào form ===
-            document.getElementById('user-id').value = user.id;
-            document.getElementById('username').value = user.username;
-            document.getElementById('full_name').value = user.full_name || '';
-            document.getElementById('role').value = user.role;
-            document.getElementById('is_active').checked = user.is_active; // Sẽ sửa lỗi trạng thái active
-            document.getElementById('password').value = '';
-            document.getElementById('password').placeholder = 'Để trống nếu không muốn đổi';
-            modalTitle.textContent = `Sửa User: ${user.username}`;
-            document.getElementById('can_create_rovers').checked = user.can_create_rovers;
-            
-            // Hiển thị các phần cấu hình nếu là coordinator/operator/viewer
-            if(user.role === 'coordinator' || user.role === 'operator' || user.role === 'viewer') {
-                deviceAssignmentSection.classList.remove('d-none');
-                roverPermissionSection.classList.remove('d-none');
-                extraMountpointsSection.classList.remove('d-none');
-                
-                // Lấy danh sách serial của các trạm đã gán
-                const assignedSerials = userDevices.map(d => d.serial);
-                renderDeviceChecklist(assignedSerials, user.role);
-                
-                // Parse danh sách MP bổ sung
-                const extraMps = (user.extra_mountpoints || "").split(/[;,\s\n]+/).map(m => m.trim()).filter(Boolean);
-                renderExtraMpsChecklist(extraMps);
-            } else {
-                deviceAssignmentSection.classList.add('d-none');
-                roverPermissionSection.classList.add('d-none');
-                extraMountpointsSection.classList.add('d-none');
-            }
-
-            userModal.show();
-
-        } catch (error) {
-            console.error("Lỗi khi mở form sửa:", error);
-            alert(error.message);
-        }
-    });
-
-    // Xóa user
-    usersTableBody.addEventListener('click', async (e) => {
-         if (e.target.closest('.delete-btn')) {
-            const button = e.target.closest('.delete-btn');
-            const userId = button.dataset.userId;
-            const username = button.dataset.username;
-
-            if (confirm(`Bạn có chắc chắn muốn xóa user '${username}' không?`)) {
-                try {
-                    const response = await fetch(`/api/users/${userId}`, { method: 'DELETE', headers: API_HEADERS });
-                     if (!response.ok) throw new Error('Xóa thất bại.');
-                     fetchAndDisplayUsers(); // Tải lại bảng
-                } catch (error) {
-                    alert(error.message);
-                }
-            }
-        }
-    });
-
-    // Xử lý khi submit form
-    userForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
+    async function saveUser(event) {
+        event.preventDefault();
         const userId = document.getElementById('user-id').value;
-        const passwordInput = document.getElementById('password');
-        const password = passwordInput.value;
-
-        // === PHẦN THÊM MỚI: KIỂM TRA MẬT KHẨU TRÊN TRÌNH DUYỆT ===
-        // 1. Nếu là TẠO USER MỚI (không có userId) và mật khẩu bị bỏ trống
+        const password = document.getElementById('password').value;
         if (!userId && !password) {
-            alert('Lỗi: Mật khẩu là bắt buộc khi tạo user mới.');
-            passwordInput.focus(); // Đưa con trỏ vào ô mật khẩu
-            return; // Dừng việc gửi form
-        }
-
-        // 2. Nếu có nhập mật khẩu nhưng không đủ 8 ký tự
-        if (password && password.length < 8) {
-            alert('Lỗi: Mật khẩu phải có ít nhất 8 ký tự.');
-            passwordInput.focus();
-            return; // Dừng việc gửi form
-        }
-        // ==========================================================
-
-        let payload = {
-            username: document.getElementById('username').value,
-            full_name: document.getElementById('full_name').value,
-            role: document.getElementById('role').value,
-            is_active: document.getElementById('is_active').checked,
-            can_create_rovers: false,
-            extra_mountpoints: ""
-        };
-        
-        if (password) {
-            payload.password = password;
-        }
-        
-        if (payload.role === 'coordinator' || payload.role === 'operator' || payload.role === 'viewer') {
-            payload.assigned_devices = Array.from(deviceChecklist.querySelectorAll('input[type="checkbox"]:checked'))
-                                            .map(cb => cb.value);
-            
-            payload.can_create_rovers = document.getElementById('can_create_rovers').checked;
-            
-            // Thu thập MountPoints bổ sung
-            payload.extra_mountpoints = Array.from(extraMpsChecklist.querySelectorAll('input[type="checkbox"]:checked'))
-                                             .map(cb => cb.value)
-                                             .join(';');
-        }
-
-        const method = userId ? 'PUT' : 'POST';
-        const url = userId ? `/api/users/${userId}` : '/api/users';
-
-        try {
-            const response = await fetch(url, {
-                method: method,
-                headers: API_HEADERS,
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                let errorMessage = `Lỗi ${response.status}: ${response.statusText}`; // Thông báo mặc định
-                try {
-                    // Thử đọc nội dung lỗi từ backend dưới dạng JSON
-                    const errorData = await response.json();
-                    if (errorData.detail) {
-                        errorMessage = errorData.detail;
-                    }
-                } catch (jsonError) {
-                    console.error("Could not parse error response as JSON.", jsonError);
-                }
-                // Ném lỗi với thông điệp đã được xử lý
-                throw new Error(errorMessage);
-            }
-
-            userModal.hide();
-            fetchAndDisplayUsers();
-        } catch(error) {
-            // Bây giờ error.message sẽ chứa thông báo lỗi thực sự từ server
-            alert('Lỗi: ' + error.message);
-        }
-    });
-    // Hiển thị/ẩn phần gán trạm khi vai trò thay đổi trong modal
-    roleSelect.addEventListener('change', (e) => {
-        if (e.target.value === 'coordinator' || e.target.value === 'operator' || e.target.value === 'viewer') {
-            deviceAssignmentSection.classList.remove('d-none');
-            roverPermissionSection.classList.remove('d-none');
-            extraMountpointsSection.classList.remove('d-none');
-            // Lấy danh sách các trạm đã được gán hiện tại để hiển thị đúng checkbox
-            const assignedSerials = Array.from(deviceChecklist.querySelectorAll('input[type="checkbox"]:checked'))
-                                         .map(cb => cb.value);
-            renderDeviceChecklist(assignedSerials, e.target.value);
-            
-            const extraMps = Array.from(extraMpsChecklist.querySelectorAll('input[type="checkbox"]:checked'))
-                                  .map(cb => cb.value);
-            renderExtraMpsChecklist(extraMps);
-        } else {    
-            deviceAssignmentSection.classList.add('d-none');
-            roverPermissionSection.classList.add('d-none');
-            extraMountpointsSection.classList.add('d-none');
-        }
-    });
-
-    
-    // Render danh sách checkbox các trạm
-    function renderDeviceChecklist(assignedSerials = [], targetRole = '') {
-        deviceChecklist.innerHTML = '';
-        if (allDevices.length === 0) {
-            deviceChecklist.innerHTML = '<p class="text-muted">Không có trạm nào để gán.</p>';
+            window.CorsUI.showToast('warning', 'Password is required for new users');
             return;
         }
-        
-        allDevices.forEach(device => {
-            // Coordinator/Operator: Chỉ được gán trạm chưa có chủ hoặc chủ chính là mình
-            // Viewer: Được phép gán BẤT KỲ trạm nào (vì Viewer không chiếm quyền sở hữu user_id)
-            let isAssignedToOther = false;
-            if (targetRole === 'coordinator' || targetRole === 'operator') {
-                isAssignedToOther = device.user_id && !assignedSerials.includes(device.serial);
-            }
-
-            const isChecked = assignedSerials.includes(device.serial);
-
-            const div = document.createElement('div');
-            div.className = 'form-check';
-            div.innerHTML = `
-                <input class="form-check-input" type="checkbox" value="${device.serial}" id="device-${device.serial}" ${isChecked ? 'checked' : ''} ${isAssignedToOther ? 'disabled' : ''}>
-                <label class="form-check-label ${isAssignedToOther ? 'text-muted' : ''}" for="device-${device.serial}">
-                    ${device.name} (${device.serial}) ${isAssignedToOther ? '- (Đã gán cho user khác)' : ''}
-                </label>
-            `;
-            deviceChecklist.appendChild(div);
-        });
-    }
-
-    // Render danh sách checkbox các MP từ Caster
-    function renderExtraMpsChecklist(assignedMps = []) {
-        extraMpsChecklist.innerHTML = '<div class="text-center text-muted small py-2">Đang tải danh sách...</div>';
-        
-        // Nếu đã có dữ liệu rồi thì render luôn, không thì fetch
-        if (allCasterSources.length > 0) {
-            doRender();
-        } else {
-            fetchCasterSources().then(() => doRender());
+        if (password && password.length < 8) {
+            window.CorsUI.showToast('warning', 'Password must be at least 8 characters');
+            return;
         }
 
-        function doRender() {
-            extraMpsChecklist.innerHTML = '';
-            if (allCasterSources.length === 0) {
-                extraMpsChecklist.innerHTML = '<div class="text-center text-muted small py-2">Không tìm thấy MountPoint nào trên Caster.</div>';
-                return;
-            }
+        const payload = {
+            username: document.getElementById('username').value.trim(),
+            full_name: document.getElementById('full_name').value.trim(),
+            role: document.getElementById('role').value,
+            is_active: document.getElementById('is_active').checked,
+            can_create_rovers: document.getElementById('can_create_rovers').checked,
+            device_serials: Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value),
+            extra_mountpoints: Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value).join(';')
+        };
+        if (password) payload.password = password;
 
-            // Lấy danh sách MP duy nhất và sắp xếp
-            const uniqueMps = Array.from(new Set(allCasterSources.map(s => s.mountpoint))).sort();
-
-            uniqueMps.forEach(mp => {
-                const isChecked = assignedMps.includes(mp);
-                const div = document.createElement('div');
-                div.className = 'form-check extra-mp-item';
-                div.dataset.mountpoint = mp.toLowerCase();
-                div.innerHTML = `
-                    <input class="form-check-input" type="checkbox" value="${mp}" id="extra-mp-${mp}" ${isChecked ? 'checked' : ''}>
-                    <label class="form-check-label" for="extra-mp-${mp}">
-                        <code class="text-info">${mp}</code>
-                    </label>
-                `;
-                extraMpsChecklist.appendChild(div);
-            });
-        }
+        const url = userId ? window.ApiRoutes.users.detail(userId) : window.ApiRoutes.users.list;
+        const method = userId ? 'PUT' : 'POST';
+        await apiJson(url, { method, body: JSON.stringify(payload) });
+        userModal.hide();
+        window.CorsUI.showToast('success', 'User saved');
+        await fetchUsers();
     }
 
-    // Xử lý tìm kiếm MP bổ sung
-    searchExtraMpsInput.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase().trim();
-        const items = extraMpsChecklist.querySelectorAll('.extra-mp-item');
-        
-        items.forEach(item => {
-            if (item.dataset.mountpoint.includes(query)) {
-                item.classList.remove('d-none');
-            } else {
-                item.classList.add('d-none');
-            }
-        });
+    addUserBtn.addEventListener('click', resetForm);
+    usersTableBody.addEventListener('click', async (event) => {
+        const editBtn = event.target.closest('.edit-btn');
+        const deleteBtn = event.target.closest('.delete-btn');
+        try {
+            if (editBtn) await openEditUser(editBtn.dataset.userId);
+            if (deleteBtn) await deleteUser(deleteBtn.dataset.userId, deleteBtn.dataset.username);
+        } catch (error) {
+            window.CorsUI.showToast('danger', error.message);
+        }
     });
+    userForm.addEventListener('submit', (event) => saveUser(event).catch(error => window.CorsUI.showToast('danger', error.message)));
+    roleSelect.addEventListener('change', updateRoleSections);
+    searchExtraMpsInput.addEventListener('input', () => renderExtraMpsChecklist(Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value)));
+    [userSearch, roleFilter, statusFilter].forEach(el => el.addEventListener('input', applyFilters));
 
-    function getRoleBadgeClass(role) {
-        if (role === 'admin') return 'bg-danger';
-        if (role === 'coordinator' || role === 'operator') return 'bg-warning text-dark';
-        return 'bg-info';
+    try {
+        await Promise.all([fetchAllDevices(), fetchCasterSources()]);
+        await fetchUsers();
+    } catch (error) {
+        usersTableBody.innerHTML = `<tr><td colspan="6"><div class="ops-empty-state text-danger"><i class="bi bi-exclamation-triangle"></i><span>${error.message}</span></div></td></tr>`;
     }
-    
-    // Hàm khởi tạo
-    async function init() {
-        await fetchAllDevices();
-        await fetchAndDisplayUsers();
-    }
-    
-    init();
 });

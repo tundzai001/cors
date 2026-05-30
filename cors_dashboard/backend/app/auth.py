@@ -3,6 +3,7 @@
 # ==============================================================================
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -15,15 +16,31 @@ import asyncio
 import logging
 import os
 import re
+import secrets
+
+from dotenv import load_dotenv
 
 from . import models, crud
 from .database import get_auth_db
 
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "1wDN7McXLUnqvO2uVY6aqqsGpUFJNdRwJkRq3qh8_5A")
-if SECRET_KEY == "JSAjW2vXUwYPhMM4-djWW9h-THKTq9jKbd-8MzCxhlQ":
-    logger.warning("⚠️ USING DEFAULT SECRET_KEY! Change this in production!")
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+
+APP_ENV = os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or os.getenv("ENV") or "development"
+IS_PRODUCTION = APP_ENV.lower() in {"prod", "production"}
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+INSECURE_SECRET_KEYS = {
+    "",
+    "CHANGE_ME",
+    "CHANGE_ME_GENERATE_WITH_OPENSSL_RAND_BASE64_48",
+    "1wDN7McXLUnqvO2uVY6aqqsGpUFJNdRwJkRq3qh8_5A",
+}
+if SECRET_KEY in INSECURE_SECRET_KEYS:
+    if IS_PRODUCTION:
+        raise RuntimeError("SECRET_KEY must be set in production. Refusing to start with an insecure JWT secret.")
+    SECRET_KEY = secrets.token_urlsafe(64)
+    logger.warning("SECRET_KEY is not set. Using an ephemeral development JWT secret; sessions reset on restart.")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
@@ -158,6 +175,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     if not username: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ")
     user = await crud.get_user_by_username(db, username=username)
     if not user: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User không tồn tại")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is disabled")
     return user
 
 def require_permission(permission: str):

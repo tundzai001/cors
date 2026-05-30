@@ -5568,10 +5568,836 @@ async def get_heatmap_data(
     data = await crud.get_activity_heatmap(db)
     return {"data": data}
 
+# === OPERATIONS CENTER / V1 ADDITIVE OPS APIS ===
+def _split_ops_tokens(value: str | None) -> list[str]:
+    return [token.strip() for token in re.split(r"[;,\s\n]+", str(value or "")) if token.strip()]
+
+
+def _device_total_bps(device: models.Device) -> int:
+    status_data = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
+    total = int(device.bps or 0)
+    for server_data in status_data.values():
+        if isinstance(server_data, dict):
+            total += int(server_data.get("bps") or 0)
+    return total
+
+
+def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
+    alerts = []
+    service = device.service_config if isinstance(device.service_config, dict) else {}
+    ntrip = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
+    raw_status = str(device.status or "offline").lower()
+    stale_seconds = now_ts - int(device.timestamp or 0)
+
+    if raw_status == "offline":
+        alerts.append({
+            "id": f"device-offline-{device.serial}",
+            "severity": "critical",
+            "type": "device_offline",
+            "title": "Station offline",
+            "message": f"{device.name or device.serial} is offline",
+            "device_serial": device.serial,
+            "created_at": int(device.timestamp or now_ts),
+        })
+    elif stale_seconds > 900:
+        alerts.append({
+            "id": f"device-stale-{device.serial}",
+            "severity": "warning",
+            "type": "device_stale",
+            "title": "Station stale",
+            "message": f"{device.name or device.serial} has no heartbeat for {stale_seconds // 60} minutes",
+            "device_serial": device.serial,
+            "created_at": int(device.timestamp or now_ts),
+        })
+
+    for idx in (1, 2):
+        if not service.get(f"server{idx}_enabled"):
+            continue
+        if service.get(f"server{idx}_stream_on_demand") or service.get("stream_on_demand"):
+            continue
+        server_status = ntrip.get(f"server{idx}") if isinstance(ntrip, dict) else {}
+        bps = int(server_status.get("bps") or 0) if isinstance(server_status, dict) else 0
+        mountpoint = service.get(f"mountpoint{idx}") or f"S{idx}"
+        if raw_status in ("online", "streaming", "starting") and bps <= 0:
+            alerts.append({
+                "id": f"stream-silent-{device.serial}-{idx}",
+                "severity": "warning",
+                "type": "stream_silent",
+                "title": "Stream has no data",
+                "message": f"{device.name or device.serial} has no outgoing data on {mountpoint}",
+                "device_serial": device.serial,
+                "mountpoint": mountpoint,
+                "created_at": now_ts,
+            })
+
+    if device.is_synced is False:
+        alerts.append({
+            "id": f"device-unsynced-{device.serial}",
+            "severity": "info",
+            "type": "device_unsynced",
+            "title": "Config pending sync",
+            "message": f"{device.name or device.serial} has pending configuration changes",
+            "device_serial": device.serial,
+            "created_at": now_ts,
+        })
+
+    return alerts
+
+
+async def _ops_visible_devices(
+    devices_db: AsyncSession,
+    auth_db: AsyncSession,
+    current_user: models.User,
+) -> list[models.Device]:
+    if current_user.role == auth.Role.ADMIN:
+        return await crud.get_all_devices(devices_db)
+    if current_user.role in (auth.Role.COORDINATOR, auth.Role.OPERATOR):
+        return await crud.get_devices_by_user_id(devices_db, current_user.id)
+    setting_key = f"viewer_devices_{current_user.id}"
+    result = await auth_db.execute(select(models.SystemSetting).filter_by(key=setting_key))
+    setting = result.scalars().first()
+    serials = setting.value if setting and isinstance(setting.value, list) else []
+    if not serials:
+        return []
+    rs = await devices_db.execute(select(models.Device).where(models.Device.serial.in_(serials)).order_by(models.Device.name))
+    return rs.scalars().all()
+
+
+async def _ops_visible_rovers(
+    auth_db: AsyncSession,
+    devices_db: AsyncSession,
+    current_user: models.User,
+) -> list[models.RoverAccount]:
+    if current_user.role == auth.Role.ADMIN:
+        return await crud.get_all_rovers_by_user(auth_db, current_user.id, "admin")
+    if current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers:
+        return await crud.get_all_rovers_by_user(auth_db, current_user.id, "coordinator")
+    if current_user.role == auth.Role.OPERATOR:
+        devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
+        owned_serials = {str(d.serial).strip().upper() for d in devices if d.serial}
+        result = await auth_db.execute(select(models.RoverAccount).order_by(models.RoverAccount.created_at.desc()))
+        scoped = []
+        for rover in result.scalars().all():
+            rover_serials = {s.strip().upper() for s in str(rover.base_serial or "").split(",") if s.strip()}
+            if rover_serials & owned_serials:
+                scoped.append(rover)
+        return scoped
+    return []
+
+
+async def _ops_cached_rover_status(usernames: set[str] | None = None) -> list[dict]:
+    statuses = []
+    async with global_caster_cache_lock:
+        for cache_data in global_caster_data_cache.values():
+            host = cache_data.get("host", "unknown")
+            last_update = int(cache_data.get("last_update") or time.time())
+            clients = cache_data.get("clients", []) or []
+            client_map: dict[str, list[dict]] = {}
+            for client in clients:
+                uname = str(client.get("username") or "").strip().lower()
+                if uname:
+                    client_map.setdefault(uname, []).append(client)
+            for user in cache_data.get("users", []) or []:
+                username = str(user.get("username") or "").strip()
+                key = username.lower()
+                if usernames and key not in usernames:
+                    continue
+                active_clients = client_map.get(key, [])
+                statuses.append({
+                    "username": username,
+                    "server": host,
+                    "mountpoints": user.get("mountpoints", []),
+                    "status": user.get("status", 0),
+                    "nclient": user.get("nclient", 0),
+                    "maxclient": user.get("maxclient", 0),
+                    "active": len(active_clients) > 0 or int(user.get("nclient") or 0) > 0,
+                    "active_connections": active_clients,
+                    "last_seen_at": last_update,
+                })
+    return statuses
+
+
+def _ops_event_payload(log: models.ActivityLog) -> dict:
+    return {
+        "id": log.id,
+        "timestamp": log.timestamp,
+        "severity": log.type,
+        "type": log.type,
+        "message": log.message,
+        "icon": log.icon,
+        "actor_user_id": log.user_id,
+        "device_serial": log.device_serial,
+        "ip_address": log.ip_address,
+    }
+
+
+async def _ops_events_query(
+    db: AsyncSession,
+    limit: int = 50,
+    severity: str | None = None,
+    device_serial: str | None = None,
+    q: str | None = None,
+) -> list[dict]:
+    stmt = select(models.ActivityLog)
+    if severity:
+        stmt = stmt.where(models.ActivityLog.type == severity)
+    if device_serial:
+        stmt = stmt.where(models.ActivityLog.device_serial == device_serial)
+    if q:
+        stmt = stmt.where(models.ActivityLog.message.ilike(f"%{q}%"))
+    stmt = stmt.order_by(models.ActivityLog.timestamp.desc()).limit(max(1, min(int(limit or 50), 200)))
+    result = await db.execute(stmt)
+    return [_ops_event_payload(log) for log in result.scalars().all()]
+
+
+async def _ops_alert_states(auth_db: AsyncSession) -> dict:
+    settings_data = await crud.get_system_settings(auth_db)
+    states = settings_data.get("ops_alert_states", {})
+    return states if isinstance(states, dict) else {}
+
+
+def _apply_ops_alert_states(alerts: list[dict], states: dict) -> list[dict]:
+    for alert in alerts:
+        saved = states.get(alert.get("id"), {}) if isinstance(states, dict) else {}
+        if not isinstance(saved, dict):
+            saved = {}
+        alert["state"] = saved.get("state") or "open"
+        alert["acknowledged_by"] = saved.get("acknowledged_by")
+        alert["acknowledged_at"] = saved.get("acknowledged_at")
+        alert["resolved_by"] = saved.get("resolved_by")
+        alert["resolved_at"] = saved.get("resolved_at")
+        alert["reason"] = saved.get("reason")
+    return alerts
+
+
+@app.get("/api/ops/summary")
+async def get_ops_summary(
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    now_ts = int(time.time())
+    devices = await _ops_visible_devices(devices_db, auth_db, current_user)
+    rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
+    alerts = await _build_ops_alerts(auth_db, devices_db, current_user, devices=devices, rovers=rovers)
+    active_alerts = [a for a in alerts if a.get("state") != "resolved"]
+    events = await _ops_events_query(devices_db, limit=8)
+    caster_hosts = []
+    async with global_caster_cache_lock:
+        for cache_data in global_caster_data_cache.values():
+            last_update = int(cache_data.get("last_update") or 0)
+            caster_hosts.append({
+                "host": cache_data.get("host", "unknown"),
+                "port": cache_data.get("port"),
+                "users": len(cache_data.get("users", []) or []),
+                "clients": len(cache_data.get("clients", []) or []),
+                "error": cache_data.get("error"),
+                "last_update": last_update,
+                "stale": bool(last_update and now_ts - last_update > 180),
+            })
+
+    online_devices = [d for d in devices if str(d.status or "").lower() != "offline"]
+    expiring_rovers = [
+        r for r in rovers
+        if r.expires_at and now_ts < int(r.expires_at) <= now_ts + 14 * 86400
+    ]
+    blocked_result = await auth_db.execute(select(models.RoverBlocklist))
+    blocked_count = len(blocked_result.scalars().all())
+
+    return {
+        "timestamp": now_ts,
+        "devices": {
+            "total": len(devices),
+            "online": len(online_devices),
+            "offline": len(devices) - len(online_devices),
+            "unsynced": len([d for d in devices if d.is_synced is False]),
+            "total_bps": sum(_device_total_bps(d) for d in devices),
+        },
+        "rovers": {
+            "total": len(rovers),
+            "active": len([r for r in rovers if r.is_active]),
+            "expiring_14d": len(expiring_rovers),
+            "blocked": blocked_count if current_user.role == auth.Role.ADMIN else 0,
+        },
+        "casters": caster_hosts,
+        "alerts": {
+            "total": len(active_alerts),
+            "critical": len([a for a in active_alerts if a.get("severity") == "critical"]),
+            "warning": len([a for a in active_alerts if a.get("severity") == "warning"]),
+            "info": len([a for a in active_alerts if a.get("severity") == "info"]),
+            "acknowledged": len([a for a in active_alerts if a.get("state") == "acknowledged"]),
+        },
+        "recent_events": events,
+    }
+
+
+async def _build_ops_alerts(
+    auth_db: AsyncSession,
+    devices_db: AsyncSession,
+    current_user: models.User,
+    devices: list[models.Device] | None = None,
+    rovers: list[models.RoverAccount] | None = None,
+) -> list[dict]:
+    now_ts = int(time.time())
+    devices = devices if devices is not None else await _ops_visible_devices(devices_db, auth_db, current_user)
+    rovers = rovers if rovers is not None else await _ops_visible_rovers(auth_db, devices_db, current_user)
+    alerts: list[dict] = []
+
+    for device in devices:
+        alerts.extend(_device_stream_alerts(device, now_ts))
+
+    for rover in rovers:
+        if rover.expires_at:
+            exp = int(rover.expires_at)
+            if exp <= now_ts:
+                severity, alert_type, title = "critical", "rover_expired", "Rover expired"
+            elif exp <= now_ts + 14 * 86400:
+                severity, alert_type, title = "warning", "rover_expiring", "Rover expiring"
+            else:
+                continue
+            alerts.append({
+                "id": f"{alert_type}-{rover.username}",
+                "severity": severity,
+                "type": alert_type,
+                "title": title,
+                "message": f"{rover.username} expires at {time.strftime('%Y-%m-%d %H:%M', time.localtime(exp))}",
+                "rover_username": rover.username,
+                "created_at": now_ts,
+            })
+
+    if current_user.role == auth.Role.ADMIN:
+        blocklist_rs = await auth_db.execute(select(models.RoverBlocklist).order_by(models.RoverBlocklist.blocked_at.desc()).limit(50))
+        for item in blocklist_rs.scalars().all():
+            alerts.append({
+                "id": f"rover-blocked-{item.id}",
+                "severity": "warning",
+                "type": "rover_blocked",
+                "title": "Rover blocked",
+                "message": f"{item.username} blocked on {item.mountpoint or 'all mountpoints'}",
+                "rover_username": item.username,
+                "mountpoint": item.mountpoint,
+                "created_at": item.blocked_at,
+            })
+
+    async with global_caster_cache_lock:
+        for cache_data in global_caster_data_cache.values():
+            last_update = int(cache_data.get("last_update") or 0)
+            has_error = bool(cache_data.get("error"))
+            stale = last_update and now_ts - last_update > 180
+            if has_error or stale:
+                alerts.append({
+                    "id": f"caster-{cache_data.get('host', 'unknown')}",
+                    "severity": "critical" if has_error else "warning",
+                    "type": "caster_error" if has_error else "caster_stale",
+                    "title": "Caster needs attention",
+                    "message": cache_data.get("error") or f"Caster cache stale for {(now_ts - last_update) // 60} minutes",
+                    "caster_host": cache_data.get("host", "unknown"),
+                    "created_at": last_update or now_ts,
+                })
+
+    states = await _ops_alert_states(auth_db)
+    alerts = _apply_ops_alert_states(alerts, states)
+    severity_rank = {"critical": 0, "warning": 1, "info": 2}
+    return sorted(alerts, key=lambda a: (severity_rank.get(a.get("severity"), 3), -int(a.get("created_at") or 0)))
+
+
+@app.get("/api/ops/alerts")
+async def get_ops_alerts(
+    severity: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    device_serial: Optional[str] = Query(None),
+    rover_username: Optional[str] = Query(None),
+    caster_host: Optional[str] = Query(None),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    alerts = await _build_ops_alerts(auth_db, devices_db, current_user)
+    if state:
+        alerts = [a for a in alerts if a.get("state") == state]
+    else:
+        alerts = [a for a in alerts if a.get("state") != "resolved"]
+    if severity:
+        alerts = [a for a in alerts if a.get("severity") == severity]
+    if type:
+        alerts = [a for a in alerts if a.get("type") == type]
+    if device_serial:
+        alerts = [a for a in alerts if a.get("device_serial") == device_serial]
+    if rover_username:
+        wanted = rover_username.strip().lower()
+        alerts = [a for a in alerts if str(a.get("rover_username") or "").strip().lower() == wanted]
+    if caster_host:
+        wanted_host = caster_host.strip().lower()
+        alerts = [a for a in alerts if str(a.get("caster_host") or "").strip().lower() == wanted_host]
+    return {"timestamp": int(time.time()), "count": len(alerts), "items": alerts}
+
+
+async def _set_ops_alert_workflow_state(
+    alert_id: str,
+    new_state: str,
+    payload: dict,
+    auth_db: AsyncSession,
+    devices_db: AsyncSession,
+    current_user: models.User,
+) -> dict:
+    alerts = await _build_ops_alerts(auth_db, devices_db, current_user)
+    alert = next((item for item in alerts if item.get("id") == alert_id), None)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found or outside your scope")
+
+    now_ts = int(time.time())
+    states = await _ops_alert_states(auth_db)
+    saved = states.get(alert_id, {}) if isinstance(states.get(alert_id, {}), dict) else {}
+    reason = payload.get("reason") if isinstance(payload, dict) else None
+    state_payload = dict(saved)
+    state_payload["state"] = new_state
+    state_payload["reason"] = reason or saved.get("reason")
+    if new_state == "acknowledged":
+        state_payload["acknowledged_by"] = current_user.username
+        state_payload["acknowledged_at"] = now_ts
+    if new_state == "resolved":
+        state_payload["resolved_by"] = current_user.username
+        state_payload["resolved_at"] = now_ts
+        state_payload.setdefault("acknowledged_by", current_user.username)
+        state_payload.setdefault("acknowledged_at", now_ts)
+    states[alert_id] = state_payload
+    await crud.update_system_settings(auth_db, {"ops_alert_states": states})
+    await log_system_event(
+        devices_db,
+        "warning" if new_state == "acknowledged" else "success",
+        f"Ops alert {new_state}: {alert.get('title') or alert_id}",
+    )
+    alert.update(state_payload)
+    return {"status": "success", "alert": alert}
+
+
+@app.post("/api/ops/alerts/{alert_id}/ack")
+async def acknowledge_ops_alert(
+    alert_id: str,
+    payload: dict = Body(default={}),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
+    return await _set_ops_alert_workflow_state(alert_id, "acknowledged", payload, auth_db, devices_db, current_user)
+
+
+@app.post("/api/ops/alerts/{alert_id}/resolve")
+async def resolve_ops_alert(
+    alert_id: str,
+    payload: dict = Body(default={}),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
+    return await _set_ops_alert_workflow_state(alert_id, "resolved", payload, auth_db, devices_db, current_user)
+
+
+@app.get("/api/ops/events")
+async def get_ops_events(
+    limit: int = Query(50, ge=1, le=200),
+    severity: Optional[str] = Query(None),
+    device_serial: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    return {"items": await _ops_events_query(db, limit=limit, severity=severity, device_serial=device_serial, q=q)}
+
+
+@app.get("/api/rovers/validate")
+async def validate_rover_username(
+    username: str = Query(..., min_length=1),
+    mountpoints: Optional[str] = Query(None),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    clean_username = username.strip()
+    existing = await crud.get_rover_by_username(auth_db, clean_username)
+    requested_mps = {mp.lower() for mp in _split_ops_tokens(mountpoints)}
+    scoped_rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
+    scoped_names = {str(r.username).strip().lower() for r in scoped_rovers}
+    if current_user.role != auth.Role.ADMIN and existing and clean_username.lower() not in scoped_names:
+        raise HTTPException(status_code=403, detail="Rover is outside your scope")
+
+    caster_statuses = await _ops_cached_rover_status({clean_username.lower()})
+    mountpoint_conflicts = []
+    if requested_mps:
+        for rover in scoped_rovers:
+            if existing and rover.id == existing.id:
+                continue
+            rover_mps = {mp.lower() for mp in _split_ops_tokens(rover.mountpoints)}
+            overlap = sorted(requested_mps & rover_mps)
+            if overlap:
+                mountpoint_conflicts.append({"username": rover.username, "mountpoints": overlap})
+
+    return {
+        "username": clean_username,
+        "available": not existing and not caster_statuses,
+        "exists_db": bool(existing),
+        "exists_caster": bool(caster_statuses),
+        "caster_records": caster_statuses,
+        "mountpoint_conflicts": mountpoint_conflicts,
+    }
+
+
+@app.post("/api/rovers/bulk-renew")
+async def bulk_renew_rovers(
+    request: schemas.RoverBulkRenewRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    if current_user.role != auth.Role.ADMIN and not (current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers):
+        raise HTTPException(status_code=403, detail="You cannot renew rover accounts")
+    names = {name.strip().lower() for name in request.usernames if name.strip()}
+    if not names:
+        raise HTTPException(status_code=400, detail="usernames is required")
+    scoped_rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
+    matched = [rover for rover in scoped_rovers if str(rover.username).strip().lower() in names]
+    new_expiry = int(time.time()) + int(request.expiry_days) * 86400
+    updated = []
+    skipped = sorted(names - {str(r.username).strip().lower() for r in matched})
+
+    for rover in matched:
+        rover.expires_at = new_expiry
+        rover.is_active = True
+        updated.append(rover.username)
+    await auth_db.commit()
+
+    await log_system_event(
+        db=devices_db,
+        type="success",
+        message=f"{current_user.username} renewed {len(updated)} rover account(s) for {request.expiry_days} days",
+        user_id=current_user.id,
+    )
+    return {
+        "status": "ok",
+        "expiry_days": request.expiry_days,
+        "expires_at": new_expiry,
+        "updated": updated,
+        "skipped": skipped,
+        "sync_caster": False,
+    }
+
+
+@app.get("/api/rovers/export/csv")
+async def export_rovers_csv(
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(["username", "base_serial", "mountpoints", "target_casters", "active", "max_connections", "expires_at", "created_at"])
+    for rover in rovers:
+        writer.writerow([
+            rover.username,
+            rover.base_serial or "",
+            rover.mountpoints or "",
+            rover.target_casters or "",
+            "yes" if rover.is_active else "no",
+            rover.max_connections,
+            rover.expires_at or "",
+            rover.created_at or "",
+        ])
+    return Response(
+        content=stream.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=rovers-export.csv"},
+    )
+
+
+@app.get("/api/rovers/{username}/history")
+async def get_rover_history(
+    username: str,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    rover = await crud.get_rover_by_username(auth_db, username)
+    scoped = await _ops_visible_rovers(auth_db, devices_db, current_user)
+    scoped_names = {str(r.username).strip().lower() for r in scoped}
+    if current_user.role != auth.Role.ADMIN and username.strip().lower() not in scoped_names:
+        raise HTTPException(status_code=403, detail="Rover is outside your scope")
+    events = await _ops_events_query(devices_db, limit=100, q=username)
+    statuses = await _ops_cached_rover_status({username.strip().lower()})
+    return {
+        "username": username,
+        "in_db": bool(rover),
+        "profile": schemas.RoverAccountResponse.from_orm(rover).model_dump() if rover else None,
+        "caster_status": statuses,
+        "events": events,
+    }
+
+
+@app.post("/api/rovers/sync-status")
+async def sync_rover_status(
+    request: schemas.RoverSyncStatusRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    scoped = await _ops_visible_rovers(auth_db, devices_db, current_user)
+    allowed = {str(r.username).strip().lower() for r in scoped}
+    requested = {name.strip().lower() for name in (request.usernames or []) if name.strip()}
+    target_names = requested & allowed if requested else allowed
+    statuses = await _ops_cached_rover_status(target_names)
+    return {
+        "timestamp": int(time.time()),
+        "requested": sorted(requested),
+        "count": len(statuses),
+        "items": statuses,
+    }
+
+
+@app.get("/api/devices/alerts")
+async def get_device_alerts(
+    serial: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    devices = await _ops_visible_devices(devices_db, auth_db, current_user)
+    if serial:
+        devices = [d for d in devices if d.serial == serial]
+    now_ts = int(time.time())
+    alerts = []
+    for device in devices:
+        alerts.extend(_device_stream_alerts(device, now_ts))
+    if severity:
+        alerts = [a for a in alerts if a.get("severity") == severity]
+    if type:
+        alerts = [a for a in alerts if a.get("type") == type]
+    return {"timestamp": now_ts, "count": len(alerts), "items": alerts}
+
+
+@app.get("/api/devices/{serial}/history")
+async def get_device_history(
+    serial: str,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    visible = await _ops_visible_devices(devices_db, auth_db, current_user)
+    visible_map = {d.serial: d for d in visible}
+    if serial not in visible_map:
+        raise HTTPException(status_code=403, detail="Device is outside your scope")
+    events = await _ops_events_query(devices_db, limit=100, device_serial=serial)
+    device = visible_map[serial]
+    return {
+        "serial": serial,
+        "current": schemas.Device.from_orm(device).model_dump(),
+        "events": events,
+        "alerts": _device_stream_alerts(device, int(time.time())),
+    }
+
+
+@app.post("/api/devices/bulk-action")
+async def bulk_device_action(
+    request: schemas.DeviceBulkActionRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    action = str(request.action or "").strip().lower()
+    if action not in {"lock", "unlock", "reset"}:
+        raise HTTPException(status_code=400, detail="action must be lock, unlock, or reset")
+    if action in {"lock", "unlock"} and not auth.has_permission(current_user, auth.Permission.MANAGE_USERS):
+        raise HTTPException(status_code=403, detail="Missing permission for lock/unlock")
+    if action == "reset" and not auth.has_permission(current_user, auth.Permission.DELETE_DEVICE):
+        raise HTTPException(status_code=403, detail="Missing permission for reset")
+
+    visible = await _ops_visible_devices(devices_db, auth_db, current_user)
+    visible_map = {d.serial: d for d in visible}
+    results = []
+    for serial in [s.strip() for s in request.serials if s.strip()]:
+        device = visible_map.get(serial)
+        if not device:
+            results.append({"serial": serial, "status": "skipped", "detail": "outside scope or not found"})
+            continue
+        try:
+            if action == "lock":
+                response = await send_command_to_pi(serial, {"command": "LOCK_DEVICE", "payload": {}})
+                device.is_locked = True
+                status_text = "locked"
+            elif action == "unlock":
+                response = await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
+                device.is_locked = False
+                status_text = "unlocked"
+            else:
+                response = await send_command_to_pi(serial, {"command": "DELETE_DEVICE", "payload": {}})
+                device.status = "rebooting_for_reset"
+                device.is_provisioned = False
+                device.detected_chip_type = "UNKNOWN"
+                device.base_config = {}
+                device.service_config = {}
+                device.ntrip_connected = False
+                device.bps = 0
+                status_text = "reset"
+            await devices_db.commit()
+            await devices_db.refresh(device)
+            await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+            results.append({"serial": serial, "status": status_text, "channel": response.get("channel", "unknown")})
+        except Exception as exc:
+            results.append({"serial": serial, "status": "error", "detail": str(exc)})
+
+    await log_system_event(
+        db=devices_db,
+        type="warning" if action == "reset" else "info",
+        message=f"{current_user.username} executed bulk device action '{action}' on {len(results)} station(s)",
+        user_id=current_user.id,
+    )
+    return {"action": action, "results": results}
+
+
+@app.get("/api/device-config-templates")
+async def get_device_config_templates(
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_CONFIG)),
+):
+    settings_data = await crud.get_system_settings(auth_db)
+    templates = settings_data.get("device_config_templates", [])
+    if not isinstance(templates, list):
+        templates = []
+    return {"items": templates}
+
+
+@app.post("/api/device-config-templates")
+async def create_device_config_template(
+    request: schemas.DeviceConfigTemplateCreateRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_SERVICE_CONFIG)),
+):
+    settings_data = await crud.get_system_settings(auth_db)
+    templates = settings_data.get("device_config_templates", [])
+    if not isinstance(templates, list):
+        templates = []
+    template = {
+        "id": str(uuid.uuid4()),
+        "name": request.name.strip(),
+        "description": request.description or "",
+        "base_config": request.base_config or {},
+        "service_config": request.service_config or {},
+        "created_by": current_user.username,
+        "created_at": int(time.time()),
+    }
+    templates.append(template)
+    await crud.update_system_settings(auth_db, {"device_config_templates": templates})
+    await log_system_event(
+        db=devices_db,
+        type="info",
+        message=f"{current_user.username} created station config template '{template['name']}'",
+        user_id=current_user.id,
+    )
+    return template
+
+
+@app.post("/api/devices/apply-template")
+async def apply_device_config_template(
+    request: schemas.DeviceApplyTemplateRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_SERVICE_CONFIG)),
+):
+    settings_data = await crud.get_system_settings(auth_db)
+    templates = settings_data.get("device_config_templates", [])
+    template = next((t for t in templates if str(t.get("id")) == request.template_id), None) if isinstance(templates, list) else None
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    visible = await _ops_visible_devices(devices_db, auth_db, current_user)
+    visible_map = {d.serial: d for d in visible}
+    results = []
+    for serial in [s.strip() for s in request.serials if s.strip()]:
+        device = visible_map.get(serial)
+        if not device:
+            results.append({"serial": serial, "status": "skipped", "detail": "outside scope or not found"})
+            continue
+        if request.apply_base_config and isinstance(template.get("base_config"), dict) and template.get("base_config"):
+            device.base_config = template["base_config"]
+        if request.apply_service_config and isinstance(template.get("service_config"), dict) and template.get("service_config"):
+            device.service_config = template["service_config"]
+        device.is_synced = False
+        results.append({"serial": serial, "status": "applied"})
+    await devices_db.commit()
+
+    for serial in [r["serial"] for r in results if r.get("status") == "applied"]:
+        device = visible_map.get(serial)
+        if device:
+            await devices_db.refresh(device)
+            await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+
+    await log_system_event(
+        db=devices_db,
+        type="info",
+        message=f"{current_user.username} applied template '{template.get('name')}' to {len([r for r in results if r.get('status') == 'applied'])} station(s)",
+        user_id=current_user.id,
+    )
+    return {"template": template, "results": results}
+
 # === WEBSOCKETS ===
+async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
+    try:
+        await websocket.accept()
+        auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+        token = auth_message.get("token") if isinstance(auth_message, dict) else None
+        message_type = auth_message.get("type") if isinstance(auth_message, dict) else None
+        if message_type != "auth" or not token:
+            await websocket.close(code=1008, reason="Missing authentication token")
+            return None
+
+        payload = auth.decode_token(token)
+        username = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid websocket token")
+
+        async with auth_session_scope() as auth_db:
+            user = await crud.get_user_by_username(auth_db, username=username)
+            if not user or not user.is_active:
+                raise HTTPException(status_code=401, detail="Invalid websocket user")
+
+            context = {
+                "user_id": user.id,
+                "username": user.username,
+                "role": user.role,
+                "allowed_serials": None,
+            }
+
+            if user.role in (auth.Role.COORDINATOR, auth.Role.OPERATOR):
+                async with device_session_scope() as devices_db:
+                    devices = await crud.get_devices_by_user_id(devices_db, user.id)
+                    context["allowed_serials"] = {str(d.serial) for d in devices if d.serial}
+            elif user.role == auth.Role.VIEWER:
+                setting_key = f"viewer_devices_{user.id}"
+                rs = await auth_db.execute(select(models.SystemSetting).filter_by(key=setting_key))
+                setting = rs.scalars().first()
+                serials = setting.value if setting and isinstance(setting.value, list) else []
+                context["allowed_serials"] = {str(serial) for serial in serials if serial}
+
+            return context
+    except asyncio.TimeoutError:
+        logger.warning(f"Rejected UI websocket from {websocket.client}: auth timeout")
+        await websocket.close(code=1008, reason="Authentication timeout")
+        return None
+    except Exception as exc:
+        logger.warning(f"Rejected UI websocket from {websocket.client}: {exc}")
+        await websocket.close(code=1008, reason="Authentication failed")
+        return None
+
 @app.websocket("/ws/updates")
 async def ui_websocket_endpoint(websocket: WebSocket):
-    await ui_manager.connect(websocket)
+    context = await _authenticate_ui_websocket(websocket)
+    if not context:
+        return
+
+    await ui_manager.connect(websocket, context, accepted=True)
     # logging.info("New UI client connected.") 
     try:
         while True: 
@@ -5769,7 +6595,9 @@ async def custom_http_exception_handler(request: Request, exc: StarletteHTTPExce
 # ============================================================================
 
 @app.get("/api/health/detailed")
-async def detailed_health_check():
+async def detailed_health_check(
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
     """
     Enhanced health check với system metrics cho monitoring dashboard
     """
@@ -5842,7 +6670,9 @@ async def detailed_health_check():
         )
 
 @app.get("/api/metrics/buffer")
-async def buffer_metrics_endpoint():
+async def buffer_metrics_endpoint(
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
     """Buffer and flush performance metrics for realtime monitoring"""
     global buffer_metrics, device_update_buffer
     
@@ -5888,7 +6718,9 @@ async def buffer_metrics_endpoint():
     }
 
 @app.get("/api/health/errors")
-async def recent_errors():
+async def recent_errors(
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
     """Lấy danh sách lỗi gần đây"""
     return {
         "errors": health_monitor.get_recent_errors(),
@@ -5969,6 +6801,10 @@ async def serve_users():
 @app.get("/security", include_in_schema=False)
 async def serve_security():
     return FileResponse("../frontend/security.html")
+
+@app.get("/operations", include_in_schema=False)
+async def serve_operations():
+    return FileResponse("../frontend/operations.html")
 
 @app.get("/rovers-global", include_in_schema=False)
 async def serve_rovers_global():

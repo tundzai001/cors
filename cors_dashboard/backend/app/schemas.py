@@ -310,6 +310,36 @@ class HeatmapData(BaseModel):
     data: List[List[int]]
 
 
+# --- OPERATIONS / BULK ACTION SCHEMAS ---
+class RoverBulkRenewRequest(BaseModel):
+    usernames: List[str] = Field(default_factory=list)
+    expiry_days: int = Field(365, ge=1, le=3650)
+    sync_caster: bool = False
+
+
+class RoverSyncStatusRequest(BaseModel):
+    usernames: List[str] | None = None
+
+
+class DeviceBulkActionRequest(BaseModel):
+    serials: List[str] = Field(default_factory=list)
+    action: str
+
+
+class DeviceConfigTemplateCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=80)
+    description: str | None = None
+    base_config: dict | None = None
+    service_config: dict | None = None
+
+
+class DeviceApplyTemplateRequest(BaseModel):
+    template_id: str
+    serials: List[str] = Field(default_factory=list)
+    apply_base_config: bool = True
+    apply_service_config: bool = True
+
+
 # --- CASTER ROVER MANAGEMENT SCHEMAS ---
 class BlockRoverRequest(BaseModel):
     username: str

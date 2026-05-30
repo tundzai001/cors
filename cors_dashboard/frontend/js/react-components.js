@@ -1128,8 +1128,9 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             // Hàm vẽ 1 đường nối
             const drawLine = (target, color, label) => {
                 if (!target) return null;
-                const tLat = parseFloat(target.device.base_config.coords.lat);
-                const tLon = parseFloat(target.device.base_config.coords.lon);
+                const tCoords = getDeviceCoords(target.device);
+                const tLat = parseFloat(tCoords.lat);
+                const tLon = parseFloat(tCoords.lon);
                 const distKm = (target.dist / 1000).toFixed(2);
                 const stationName = target.device.name || target.device.serial;
 
@@ -1162,8 +1163,14 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
             // Zoom bao trọn tất cả đường nối
             const allBounds = leaflet.latLngBounds([[lat, lon]]);
-            if (nearestConnected) allBounds.extend([parseFloat(nearestConnected.device.base_config.coords.lat), parseFloat(nearestConnected.device.base_config.coords.lon)]);
-            if (nearestOffline) allBounds.extend([parseFloat(nearestOffline.device.base_config.coords.lat), parseFloat(nearestOffline.device.base_config.coords.lon)]);
+            if (nearestConnected) {
+                const cCoords = getDeviceCoords(nearestConnected.device);
+                allBounds.extend([parseFloat(cCoords.lat), parseFloat(cCoords.lon)]);
+            }
+            if (nearestOffline) {
+                const oCoords = getDeviceCoords(nearestOffline.device);
+                allBounds.extend([parseFloat(oCoords.lat), parseFloat(oCoords.lon)]);
+            }
             map.flyToBounds(allBounds, { padding: [60, 60], maxZoom: 14, duration: 1.5 });
         }
     };
