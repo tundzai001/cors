@@ -34,6 +34,7 @@ class Device(DeviceBase):
     is_locked: bool | None = False
 
     is_synced: bool | None = True
+    sync_errors: list[str] | None = Field(default_factory=list)
 
     @validator("base_config", "service_config", "ntrip_status", pre=True)
     def ensure_dict_device(cls, v):

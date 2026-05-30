@@ -4,6 +4,7 @@
 
 import logging
 import uuid
+import hashlib
 import json
 import asyncio
 from datetime import timedelta
@@ -41,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, update, delete, func
 from starlette.middleware.base import BaseHTTPMiddleware
 from .monitoring import health_monitor, CircuitBreaker, global_rate_limiter
+from .redis_client import redis_client
 from . import crud, models, schemas, command_builder, auth
 from starlette.responses import Response
 from .database import (
@@ -53,12 +55,14 @@ from .websocket import manager as ui_manager, visitor_manager
 from .pi_websocket import pi_manager
 from . import mqtt as mqtt_handler
 from .mqtt import mqtt_client
+from .command_dispatcher import send_command_to_pi as dispatch_command_to_pi
 from . import license_manager
 from . import nmea_parser
 from . import models, auth, crud
 from .security import rate_limiter
 from .monitoring import health_monitor
 from .caster_client import CasterClient
+from .schema_compat import ensure_device_runtime_columns
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -1123,12 +1127,12 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                 found_on_host = None
                 in_clienttable = False
                 # Check if the primary host's cache has an error (connection failure, etc.)
-                primary_cache = global_caster_data_cache.get(f"{target_host}:{port}")
+                primary_cache = await _get_caster_cache(f"{target_host}:{port}")
                 caster_error_on_primary = bool(primary_cache and primary_cache.get("error"))
                 for h in hosts_to_check:
                     h_port = int(settings.CASTER_PORT or 2101)
                     h_key = f"{h}:{h_port}"
-                    h_cache = global_caster_data_cache.get(h_key)
+                    h_cache = await _get_caster_cache(h_key)
                     if not h_cache or h_cache.get("error"): continue
 
                     clients = h_cache.get("clients", [])
@@ -1370,32 +1374,29 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host if request.client else "unknown"
         now = time.time()
 
-        # 1. Kiểm tra xem IP có đang bị BAN không
-        if client_ip in banned_ips:
-            if now < banned_ips[client_ip]:
-                # Vẫn đang bị BAN
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "Your IP has been temporarily banned due to multiple security violations."}
-                )
-            else:
-                # Đã hết hạn BAN -> Xóa khỏi danh sách để bắt đầu lại (ân xá)
-                del banned_ips[client_ip]
-                security_rep_scores[client_ip] = 0
+        # 1. Kiểm tra xem IP có đang bị BAN không (Via Redis)
+        is_banned = await redis_client.is_ip_banned(client_ip)
+        if is_banned:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Your IP has been temporarily banned due to multiple security violations."}
+            )
 
         # Helper để ghi nhận vi phạm và thực hiện BAN nếu cần
-        def record_violation():
+        async def record_violation():
             if client_ip == "unknown": return
             score = security_rep_scores.get(client_ip, 0) + 1
             security_rep_scores[client_ip] = score
             if score >= VIOLATION_THRESHOLD:
-                banned_ips[client_ip] = now + BAN_DURATION
-                logger.critical(f"🚨 AUTOMATIC BAN: IP {client_ip} has been BANNED for {BAN_DURATION}s after {score} violations.")
+                await redis_client.ban_ip(client_ip)
+                # Dọn dẹp score vì đã ban
+                security_rep_scores[client_ip] = 0
+                logger.critical(f"🚨 AUTOMATIC BAN: IP {client_ip} has been BANNED after {score} violations.")
 
         # 2. Chặn Method lạ (Linh tinh)
         if method not in ALLOWED_HTTP_METHODS:
             logger.warning(f"🚫 SECURITY BLOCK (METHOD): IP {client_ip} used forbidden method {method} on {path}")
-            record_violation()
+            await record_violation()
             return JSONResponse(
                 status_code=403,
                 content={"detail": f"Method {method} is not allowed."}
@@ -1416,7 +1417,7 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
             
             if blocked:
                 logger.warning(f"⚠️ SECURITY BLOCK (PATH): IP {client_ip} tried suspicious path: {path} (Pattern: {pattern})")
-                record_violation()
+                await record_violation()
                 return JSONResponse(
                     status_code=403, 
                     content={"detail": "Access Forbidden: Security Gate Blocked this request."}
@@ -1623,6 +1624,7 @@ async def lifespan(app: FastAPI):
             async with engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
             logger.info("✓ Device database connection verified")
+            await ensure_device_runtime_columns(engine)
             
             async with auth_engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
@@ -1766,10 +1768,12 @@ async def lifespan(app: FastAPI):
         logger.info("ðŸŽ‰ Application startup complete!")
         logger.info("=" * 60)
         
+        await redis_client.connect()
         yield
         
     finally:
         logger.info("ðŸ›‘ Application shutting down...")
+        await redis_client.disconnect()
 
         # --- BƯỚC 1: DỪNG MQTT TRƯỚC (Ngắt nguồn dữ liệu vào) ---
         try:
@@ -1816,6 +1820,10 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
+from .routers import users, devices
+app.include_router(users.router)
+app.include_router(devices.router)
+
 
 # === SEO & DYNAMIC ROUTING FOR GNSS PLATFORM ===
 @app.get("/station/{serial}")
@@ -2499,18 +2507,7 @@ async def _legacy_json_ntrip_auth_check_removed(
 
 # === COMMAND DISPATCHER ===
 async def send_command_to_pi(serial: str, command: dict) -> dict:
-    if mqtt_client and mqtt_client.is_connected():
-        topic = f"pi/devices/{serial}/command"
-        message = json.dumps(command)
-        mqtt_handler.publish_message(topic, message)
-        return {"status": "command_sent", "channel": "mqtt", "command": command.get('command')}
-
-    logging.warning(f"MQTT down. Trying WebSocket for '{serial}'.")
-    success = await pi_manager.send_personal_message(serial, command)
-    if success:
-        return {"status": "command_sent", "channel": "websocket", "command": command.get('command')}
-
-    raise HTTPException(status_code=503, detail=f"Cannot send command to '{serial}'. Both MQTT and WebSocket are unavailable.")
+    return await dispatch_command_to_pi(serial, command)
 
 # --- CASTER CLIENT FACTORY ---
 async def get_caster_client(db: AsyncSession) -> CasterClient:
@@ -2636,7 +2633,7 @@ async def login(
         expires_delta=expires_delta
     )
 
-    await log_system_event(
+    await crud.log_system_event(
         db=devices_db,
         type="success",
         message=f"User '{user.username}' logged in",
@@ -2645,6 +2642,7 @@ async def login(
     )
 
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @app.get("/api/public/map-stations")
 async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
@@ -2751,7 +2749,7 @@ async def get_caster_clienttable(
     all_clients = []
     
     async with global_caster_cache_lock:
-        for cache_data in global_caster_data_cache.values():
+        for cache_data in (await _get_all_caster_cache()).values():
             host = cache_data.get("host", "unknown")
             users = cache_data.get("users", [])
             user_visibility_map = {u.get("username", "").strip().lower(): u.get("show_position", True) for u in users}
@@ -2805,7 +2803,7 @@ async def get_caster_users(
     all_caster_users = []
     
     async with global_caster_cache_lock:
-        for cache_data in global_caster_data_cache.values():
+        for cache_data in (await _get_all_caster_cache()).values():
             host = cache_data.get("host", "unknown")
             users = cache_data.get("users", [])
             for u in users:
@@ -2863,7 +2861,7 @@ async def get_caster_users(
     active_sessions_map = {}  # (server, username) -> [ {mp, uptime} ]
 
     async with global_caster_cache_lock:
-        for cache_data in global_caster_data_cache.values():
+        for cache_data in (await _get_all_caster_cache()).values():
             host = cache_data.get("host", "unknown")
             last_update = int(cache_data.get("last_update") or time.time())
             clients = cache_data.get("clients", [])
@@ -3511,6 +3509,35 @@ global_caster_data_cache = {}
 global_caster_cache_lock = asyncio.Lock()
 
 
+async def _set_caster_cache(key: str, data: dict) -> None:
+    global_caster_data_cache[key] = data
+    try:
+        await redis_client.set_caster_cache(key, data)
+    except Exception as exc:
+        logger.debug("Redis caster cache write skipped for %s: %s", key, exc)
+
+
+async def _get_caster_cache(key: str) -> Optional[dict]:
+    cached = global_caster_data_cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        return await redis_client.get_caster_cache(key)
+    except Exception as exc:
+        logger.debug("Redis caster cache read skipped for %s: %s", key, exc)
+        return None
+
+
+async def _get_all_caster_cache() -> dict:
+    if global_caster_data_cache:
+        return dict(global_caster_data_cache)
+    try:
+        return await redis_client.get_all_caster_cache()
+    except Exception as exc:
+        logger.debug("Redis caster cache read-all skipped: %s", exc)
+        return {}
+
+
 async def caster_monitor_task():
     """Background task to periodically sync data from all configured casters."""
     logger.info("[CASTER MONITOR] Starting background sync task")
@@ -3581,14 +3608,14 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
         )
 
         async with global_caster_cache_lock:
-            global_caster_data_cache[key] = {
+            await _set_caster_cache(key, {
                 "last_update": int(time.time()),
                 "users": users or [],
                 "clients": clients or [],
                 "error": None,
                 "host": host,
                 "port": port
-            }
+            })
         if RTCM_KEEPALIVE_DEBUG:
             logger.info(f"[CASTER MONITOR] Scanned {key}: {len(users or [])} users, {len(clients or [])} clients")
 
@@ -3599,6 +3626,7 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
                 global_caster_data_cache[key] = {"users": [], "clients": [], "host": host, "port": port}
             global_caster_data_cache[key]["error"] = str(e)
             global_caster_data_cache[key]["last_update"] = int(time.time())
+            await _set_caster_cache(key, global_caster_data_cache[key])
 
 
 @app.post("/api/rtcm/ntrip/stop")
@@ -3809,260 +3837,6 @@ async def block_ip_manually(
     
     return {"status": "blocked", "ip": ip}
 
-# === USER MANAGEMENT ===
-@app.get("/api/users", response_model=list[schemas.UserResponse])
-async def get_users(db: AsyncSession = Depends(get_auth_db),
-                    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
-    users = await crud.get_all_users(db)
-    response_list = []
-    for u in users:
-        permissions = auth.get_user_permissions(u)
-        user_resp = schemas.UserResponse.from_orm(u)
-        user_resp.permissions = permissions
-        response_list.append(user_resp)
-    return response_list
-
-@app.get("/api/users/{user_id}", response_model=schemas.UserResponse)
-async def get_user_details(user_id: int, db: AsyncSession = Depends(get_auth_db),
-                           current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
-    user = await crud.get_user_by_id(db, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    permissions = auth.get_user_permissions(user)
-    user_response = schemas.UserResponse.from_orm(user)
-    user_response.permissions = permissions
-    return user_response
-
-@app.put("/api/devices/{serial}/name")
-async def rename_device(
-    serial: str,
-    request: schemas.DeviceRename, 
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_DEVICE_NAME))):
-    # 1. Kiểm tra thiết bị
-    device = await crud.get_device_by_serial(db, serial)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-
-    if not request.name.strip():
-        raise HTTPException(status_code=400, detail="Tên không được để trống")
-
-    # 2. Cập nhật Database
-    device.name = request.name
-    await db.commit()
-    
-    # 3. Gửi lệnh xuống Agent
-    try:
-        await send_command_to_pi(serial, {
-            "command": "PROVISION_DEVICE", 
-            "payload": {"name": request.name}
-        })
-    except Exception as e:
-        logging.warning(f"Rename DB ok but failed to send to Agent: {e}")
-
-    await log_system_event(
-        db=db,
-        type="info",
-        message=f"Device '{device.name}' renamed to '{request.name}' by {current_user.username}",
-        user_id=current_user.id,
-        serial=serial
-    )
-    
-    return {"status": "success", "name": device.name}
-
-@app.post("/api/users", response_model=schemas.UserResponse)
-async def create_user(
-    user_data: schemas.UserCreate,
-    auth_db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
-    existing = await crud.get_user_by_username(auth_db, username=user_data.username)
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
-    try:
-        # Dòng này có thể ném ra lỗi ValueError
-        hashed_password = await auth.get_password_hash(user_data.password)
-    except ValueError as e:
-        # Nếu có lỗi từ chính sách mật khẩu, trả về lỗi 400 với thông điệp cụ thể
-        raise HTTPException(status_code=400, detail=str(e))
-    # -----------------------------------------------------------
-        
-    new_user = await crud.create_user(
-        auth_db, 
-        username=user_data.username, 
-        hashed_password=hashed_password,
-        role=user_data.role, 
-        full_name=user_data.full_name,
-        is_active=user_data.is_active,
-        can_create_rovers=user_data.can_create_rovers,
-        extra_mountpoints=user_data.extra_mountpoints
-    )
-    
-    if user_data.assigned_devices:
-        if new_user.role in ('coordinator', 'operator'):
-            for serial in user_data.assigned_devices:
-                device = await crud.get_device_by_serial(devices_db, serial)
-                if device:
-                    device.user_id = new_user.id
-            await devices_db.commit()
-        elif new_user.role == 'viewer':
-            await crud.update_system_settings(auth_db, {f'viewer_devices_{new_user.id}': user_data.assigned_devices})
-    
-    permissions = auth.get_user_permissions(new_user)
-    user_response = schemas.UserResponse.from_orm(new_user)
-    user_response.permissions = permissions
-    await log_system_event(
-        db=devices_db,
-        type="success",
-        message=f"Admin '{current_user.username}' created user '{new_user.username}' (role: {new_user.role})",
-        user_id=current_user.id
-    )
-    
-    return user_response
-
-@app.put("/api/users/{user_id}", response_model=schemas.UserResponse)
-async def update_user(
-    user_id: int, 
-    user_data: schemas.UserUpdate,
-    auth_db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
-    
-    user_to_update = await crud.get_user_by_id(auth_db, user_id)
-    if not user_to_update:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    update_dict = user_data.dict(exclude_unset=True)
-    
-    # ===================================================================
-    # FIX: LOGIC CẬP NHẬT DANH SÁCH THIẾT BỊ (ASSIGN/UNASSIGN)
-    # ===================================================================
-    assigned_serials = update_dict.pop("assigned_devices", None)
-    
-    if assigned_serials is not None:
-        target_role = update_dict.get('role', user_to_update.role)
-        
-        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user nÃ y (chủ sở hữu)
-        current_devices = await crud.get_devices_by_user_id(devices_db, user_id)
-        
-        # 2. Gỡ bỏ tất cả ownership trước (Reset về None)
-        for dev in current_devices:
-            dev.user_id = None
-            # Broadcast cập nhật UI: Trạm này đã bị gỡ
-            await ui_manager.broadcast({
-                "type": "status_update",
-                "data": schemas.Device.from_orm(dev).model_dump()
-            })
-        
-        # 3. Áp dụng gán mới tùy theo vai trò
-        if target_role in ('coordinator', 'operator'):
-            for serial in assigned_serials:
-                device = await crud.get_device_by_serial(devices_db, serial)
-                if device:
-                    device.user_id = user_id
-                    # Broadcast cập nhật UI: Trạm nÃ y đã có chủ mới
-                    await ui_manager.broadcast({
-                        "type": "status_update",
-                        "data": schemas.Device.from_orm(device).model_dump()
-                    })
-            await devices_db.commit()
-            
-            from sqlalchemy import delete
-            from . import models
-            # Xóa cấu hình viewer cũ nếu có
-            await auth_db.execute(delete(models.SystemSetting).where(models.SystemSetting.key == f'viewer_devices_{user_id}'))
-            await auth_db.commit()
-            
-        elif target_role == 'viewer':
-            await devices_db.commit() # commit việc gỡ ownership
-            await crud.update_system_settings(auth_db, {f'viewer_devices_{user_id}': assigned_serials})
-            # Broadcast để UI Viewer cập nhật ngay lập tức
-            await ui_manager.broadcast({
-                "type": "user_assignment_updated",
-                "data": {
-                    "user_id": user_id,
-                    "role": "viewer",
-                    "assigned_devices": assigned_serials
-                }
-            })
-        else:
-            await devices_db.commit()
-    # ===================================================================
-
-    if 'password' in update_dict and update_dict['password']:
-        update_dict['hashed_password'] = await auth.get_password_hash(update_dict.pop('password'))
-    
-    updated_user = await crud.update_user(auth_db, user_id, update_dict)
-    
-    permissions = auth.get_user_permissions(updated_user)
-    user_response = schemas.UserResponse.from_orm(updated_user)
-    user_response.permissions = permissions
-    
-    await log_system_event(
-        db=devices_db,
-        type="info",
-        message=f"Admin '{current_user.username}' updated user '{updated_user.username}'",
-        user_id=current_user.id
-    )
-    
-    return user_response
-
-@app.delete("/api/users/{user_id}")
-async def delete_user(
-    user_id: int, 
-    auth_db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
-    
-    # 1. Kiểm tra user tồn tại
-    user = await crud.get_user_by_id(auth_db, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if current_user.id == user_id:
-        raise HTTPException(status_code=400, detail="Cannot delete your own account")
-    
-    # ===================================================================
-    # FIX: GỠ THIẾT BỊ + BROADCAST ĐỂ UI CẬP NHẬT NGAY LẬP TỨC
-    # ===================================================================
-    try:
-        # Tìm các thiết bị đang thuộc về user này
-        result = await devices_db.execute(select(models.Device).where(models.Device.user_id == user_id))
-        devices_to_unlink = result.scalars().all()
-
-        for dev in devices_to_unlink:
-            dev.user_id = None # Gỡ bỏ user_id
-            
-            # QUAN TRỌNG: Gửi thông báo WebSocket xuống UI để Admin thấy ngay là trạm đã "trống"
-            await ui_manager.broadcast({
-                "type": "status_update",
-                "data": schemas.Device.from_orm(dev).model_dump()
-            })
-        
-        await devices_db.commit() # Lưu thay đổi vào DB Device
-        logger.info(f"Unlinked {len(devices_to_unlink)} devices from deleted user {user_id}")
-
-    except Exception as e:
-        logger.error(f"Error unlinking devices: {e}")
-        # Không raise lỗi để tiếp tục xóa user
-    # ===================================================================
-
-    # 3. Xóa user trong Auth DB
-    success = await crud.delete_user(auth_db, user_id) 
-    if not success:
-         raise HTTPException(status_code=404, detail="User not found during deletion")
-
-    await log_system_event(
-        db=devices_db,
-        type="warning",
-        message=f"Admin '{current_user.username}' deleted user '{user.username}' and released devices.",
-        user_id=current_user.id
-    )
-    
-    return {"status": "deleted", "user_id": user_id}
-
-
-
 # === LICENSE ===
 @app.post("/api/license/pi", response_model=schemas.LicenseResponse)
 async def generate_pi_license(
@@ -4084,459 +3858,6 @@ async def generate_pi_license(
     except Exception as e:
         logging.error(f"Failed to generate license for {serial}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate license key.")
-
-# === DEVICE ENDPOINTS ===
-@app.get("/api/devices", response_model=list[schemas.Device])
-async def get_initial_devices(
-    user_id: Optional[int] = Query(None),
-    db: AsyncSession = Depends(get_db),
-    auth_db: AsyncSession = Depends(get_auth_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)) 
-):
-    target_user_id = current_user.id
-    target_role = current_user.role
-
-    if user_id is not None:
-        if current_user.role != auth.Role.ADMIN and user_id != current_user.id:
-            logging.warning(
-                f"IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
-                f"tried to filter by user_id={user_id}"
-            )
-            raise HTTPException(
-                status_code=403, 
-                detail="Only admins can filter devices by user_id"
-            )
-        target_user_id = user_id
-        user_info = await crud.get_user_by_id(auth_db, target_user_id)
-        if user_info:
-            target_role = user_info.role
-
-    if target_role in (auth.Role.COORDINATOR, auth.Role.OPERATOR):
-        devices = await crud.get_devices_by_user_id(db, user_id=target_user_id)
-        logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → {len(devices)} devices by user_id={target_user_id}")
-        return devices
-    elif target_role == auth.Role.VIEWER:
-        from sqlalchemy import select as _select
-        from . import models as _models
-        setting_key = f'viewer_devices_{target_user_id}'
-        result = await auth_db.execute(_select(_models.SystemSetting).filter_by(key=setting_key))
-        setting = result.scalars().first()
-        viewer_serials = setting.value if setting and isinstance(setting.value, list) else []
-        logger.info(f"[DEVICES] Viewer '{current_user.username}' (id={target_user_id}) → setting_key='{setting_key}', found={setting is not None}, serials={viewer_serials}")
-        if not viewer_serials:
-            return []
-        
-        result = await db.execute(_select(_models.Device).where(_models.Device.serial.in_(viewer_serials)).order_by(_models.Device.name))
-        devices = result.scalars().all()
-        logger.info(f"[DEVICES] Viewer '{current_user.username}' → returning {len(devices)} devices")
-        return devices
-    
-    # Fallback: Admin sees all
-    logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → returning ALL devices")
-    return await crud.get_all_devices(db)
-
-@app.post("/api/devices/{serial}/command")
-async def send_generic_command(
-    serial: str, 
-    command: schemas.Command, 
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user)):
-    if current_user.role == auth.Role.COORDINATOR:
-        raise HTTPException(status_code=403, detail="Coordinators can only send specific commands.")
-    if not auth.has_permission(current_user, auth.Permission.EDIT_CHIP_CONFIG):
-         raise HTTPException(status_code=403, detail="Permission denied.")
-    
-    # 1. Lấy thiết bị
-    device = await crud.get_device_by_serial(db, serial)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-    await log_system_event(
-        db=db,
-        type="info",
-        message=f"Command '{command.command}' sent to '{device.name}' by {current_user.username}",
-        user_id=current_user.id,
-        serial=serial
-    )
-    return await send_command_to_pi(serial, command.model_dump())
-
-
-
-# --- CÁC ENDPOINT CHO QUẢN LÝ ROVER ---
-@app.get("/api/bases/{serial}/rovers", response_model=list[schemas.RoverAccountResponse])
-async def get_rovers_for_base(
-    serial: str,
-    db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # Thêm vÃ o để kiểm tra quyền
-    current_user: models.User = Depends(auth.get_current_user)
-):
-    # Admin có thể xem Rover của bất kỳ trạm nÃ o
-    if current_user.role == auth.Role.ADMIN:
-        return await crud.get_rovers_by_base_serial(db, base_serial=serial)
-
-    # Coordinator chỉ có thể xem Rover của các trạm họ quản lý
-    if current_user.role == auth.Role.COORDINATOR:
-        device = await crud.get_device_by_serial(devices_db, serial)
-        if device and device.user_id == current_user.id:
-            return await crud.get_rovers_by_base_serial(db, base_serial=serial)
-    
-    # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
-    raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm nÃ y.")
-
-@app.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse)
-async def create_rover_for_base(
-    serial: str,
-    rover_data: schemas.RoverAccountCreate,
-    db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user)
-):
-    # 1. Kiểm tra quyền
-    is_admin = current_user.role == auth.Role.ADMIN
-    is_authorized_coordinator = (
-        current_user.role == auth.Role.COORDINATOR and 
-        current_user.can_create_rovers
-    )
-
-    if not is_admin and not is_authorized_coordinator:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tÃ i khoản Rover.")
-
-    if not is_admin:
-        device = await crud.get_device_by_serial(devices_db, serial)
-        if not device or device.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base nÃ y.")
-
-    # 2. Kiểm tra trùng lặp trong DB Local
-    existing_rover = await crud.get_rover_by_username(db, rover_data.username)
-    if existing_rover:
-        raise HTTPException(status_code=400, detail="Tên đăng nhập Rover đã tồn tại (DB).")
-
-    # 1. Lấy thông tin thiết bị để kiểm tra Mountpoint hợp lệ
-    device_info = await crud.get_device_by_serial(devices_db, serial)
-    if not device_info:
-        raise HTTPException(status_code=404, detail="Trạm Base không tồn tại.")
-    
-    service_conf = device_info.service_config or {}
-    
-    # 2. Xác định Mountpoint (Logic mới)
-    target_mountpoint = rover_data.mountpoint_allow
-    
-    valid_mps = []
-    if service_conf.get('server1_enabled'):
-        valid_mps.append(service_conf.get('mountpoint1'))
-    if service_conf.get('server2_enabled'):
-        valid_mps.append(service_conf.get('mountpoint2'))
-        
-    # Lọc giá trị None/Rỗng
-    valid_mps = [mp for mp in valid_mps if mp]
-
-    # Gộp thêm extra mountpoints của user (nếu có)
-    if current_user.extra_mountpoints:
-        extra_list = [mp.strip() for mp in re.split(r'[;,\s\n]+', current_user.extra_mountpoints) if mp.strip()]
-        valid_mps.extend(extra_list)
-
-    if not valid_mps:
-        target_mountpoint = f"MP_{serial}"
-    elif target_mountpoint not in valid_mps:
-        # Nếu là Admin hoặc MP nằm trong danh sách hợp lệ mở rộng thì cho qua
-        if not is_admin and target_mountpoint not in valid_mps:
-            target_mountpoint = valid_mps[0]
-
-    duration_seconds = 315360000 # 10 năm mặc định
-    
-    if rover_data.expiry_days > 0:
-        duration_seconds = rover_data.expiry_days * 86400  # 1 ngÃ y = 86400 giây
-
-    # 3. GỌI TCP ĐẾN NTRIP CASTER (Tạo trên toàn bộ Caster được cấu hình)
-    hosts, config = _read_caster_config_from_env()
-    port = int(config.get("port") or settings.CASTER_PORT or 2101)
-    
-    target_hosts = [str(h).strip() for h in hosts if h.strip()]
-    if not target_hosts:
-        default_host = str(config.get("host") or settings.CASTER_HOST or "").strip()
-        if default_host:
-            target_hosts = [default_host]
-
-    if not target_hosts:
-        raise HTTPException(status_code=500, detail="Không cấu hình được NTRIP Caster Server.")
-
-    creator_identifier = current_user.username 
-    created_any = False
-    
-    for host in target_hosts:
-        try:
-            from app.caster_client import CasterClient
-            caster = CasterClient(host, port)
-            await caster.create_user(
-                creator=creator_identifier,
-                username=rover_data.username,
-                password=rover_data.password,
-                mountpoints=target_mountpoint, 
-                expiry_seconds=duration_seconds, 
-                max_users=1,
-                show_position=rover_data.show_position,
-                rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
-                rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
-                rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds,
-            )
-            created_any = True
-            logger.info(f"✓ Created Rover '{rover_data.username}' for MP '{target_mountpoint}' on Caster {host}")
-        except Exception as host_err:
-            logger.error(f"Failed to create rover '{rover_data.username}' on Caster {host}: {host_err}")
-
-    if not created_any:
-        raise HTTPException(status_code=502, detail="Không thể tạo tài khoản trên bất kỳ NTRIP Caster Server nào.")
-
-    # 4. Lưu vÃ o DB
-    new_rover = await crud.create_rover_account(
-        db, 
-        username=rover_data.username,
-        password=rover_data.password,
-        base_serial=serial,
-        creator_id=current_user.id,
-        show_position=rover_data.show_position,
-        rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
-        rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
-        rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds
-    )
-    
-    return new_rover
-
-@app.put("/api/rovers/{rover_id}", response_model=schemas.RoverAccountResponse)
-async def update_rover(
-    rover_id: int,
-    update_req: schemas.RoverUpdate,
-    db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # Add devices_db here
-    current_user: models.User = Depends(auth.get_current_user)
-):
-    # 1. Lấy thông tin Rover cũ
-    rover = await crud.get_rover_by_id(db, rover_id)
-    if not rover:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
-
-    # 2. Kiểm tra quyền
-    is_admin = current_user.role == auth.Role.ADMIN
-    is_creator = rover.created_by_user_id == current_user.id
-    
-    # Ownership Check: COORDINATOR chỉ quản lý rover thuộc trạm mình sở hữu
-    if not is_admin:
-        serials = (rover.base_serial or "").split(',')
-        owned_res = await devices_db.execute(
-            select(models.Device.serial).where(models.Device.user_id == current_user.id)
-        )
-        owned_serials = set(owned_res.scalars().all())
-        
-        for sn in serials:
-            sn_clean = sn.strip()
-            # Nếu trạm ảo (serial trống) và là người tạo thì cho qua
-            if sn_clean == "" and is_creator:
-                continue
-            if sn_clean not in owned_serials:
-                raise HTTPException(status_code=403, detail=f"Bạn không có quyền quản lý Rover thuộc trạm '{sn}'.")
-
-
-    # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
-    new_password = update_req.password if update_req.password else rover.password
-    new_mountpoints = update_req.mountpoints if update_req.mountpoints else rover.mountpoints
-    
-    # Xử lý thời hạn (Mặc định reset lại thời hạn nếu có gửi expiry_days)
-    duration_seconds = 315360000 # Default
-    if update_req.expiry_days:
-        duration_seconds = update_req.expiry_days * 86400
-    
-    # 4. GỌI CASTER ĐỂ CẬP NHẬT
-    try:
-        from app.caster_client import CasterClient
-        creator_identifier = current_user.username 
-        new_max_connections = update_req.max_connections if update_req.max_connections is not None else rover.max_connections
-        target_show_pos = update_req.show_position if update_req.show_position is not None else rover.show_position
-        target_rtcm_cycle_enabled = update_req.rtcm_cycle_enabled if update_req.rtcm_cycle_enabled is not None else bool(getattr(rover, "rtcm_cycle_enabled", False))
-        target_rtcm_cycle_interval = update_req.rtcm_disconnect_interval_seconds if update_req.rtcm_disconnect_interval_seconds is not None else int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300)
-        target_rtcm_cycle_duration = update_req.rtcm_disconnect_duration_seconds if update_req.rtcm_disconnect_duration_seconds is not None else int(getattr(rover, "rtcm_disconnect_duration_seconds", 10) or 10)
-        
-        # Determine updated target casters
-        # If request provides target_casters, use it. Otherwise use what's in DB.
-        old_hosts_str = rover.target_casters if rover.target_casters else ""
-        old_hosts_set = set(h.strip() for h in old_hosts_str.split(";") if h.strip())
-        
-        # Resolve hosts where this rover actually exists from live caster cache.
-        live_hosts_set = set()
-        try:
-            rover_key = str(rover.username or "").strip().lower()
-            async with global_caster_cache_lock:
-                for cache_data in global_caster_data_cache.values():
-                    host = str(cache_data.get("host", "") or "").strip()
-                    if not host:
-                        continue
-                    for u in (cache_data.get("users") or []):
-                        if str(u.get("username", "") or "").strip().lower() == rover_key:
-                            live_hosts_set.add(host)
-                            break
-        except Exception as e:
-            logger.warning(f"Failed to resolve live caster hosts for '{rover.username}': {e}")
-
-        if update_req.target_casters is not None:
-            requested_hosts = [str(h).strip() for h in update_req.target_casters if str(h).strip()]
-            if requested_hosts:
-                updated_target_hosts = requested_hosts
-            else:
-                # Frontend legacy case: empty selection should not cause no-op update.
-                updated_target_hosts = list(old_hosts_set or live_hosts_set)
-        else:
-            # Load from DB first, then from live cache.
-            updated_target_hosts = list(old_hosts_set or live_hosts_set)
-
-        if not updated_target_hosts:
-            # Last fallback to all configured hosts to ensure complete sync
-            env_hosts, env_cfg = _read_caster_config_from_env()
-            if env_hosts:
-                updated_target_hosts = [str(h).strip() for h in env_hosts if h.strip()]
-            else:
-                default_h = str(env_cfg.get("host") or settings.CASTER_HOST or "").strip()
-                if default_h:
-                    updated_target_hosts = [default_h]
-
-        # Keep order and deduplicate
-        seen_hosts = set()
-        updated_target_hosts = [h for h in updated_target_hosts if h and not (h in seen_hosts or seen_hosts.add(h))]
-        
-        new_hosts_set = set(updated_target_hosts)
-        removed_hosts = old_hosts_set - new_hosts_set
-        
-        port = int(settings.CASTER_PORT or 2101)
-        results_log = []
-        creator_user = await crud.get_user_by_id(db, rover.created_by_user_id)
-        creator_username = creator_user.username if creator_user else "admin"
-        id_candidates = []
-        for ident in (creator_username, creator_identifier, "admin", "id"):
-            ident_s = str(ident or "").strip()
-            if ident_s and ident_s not in id_candidates:
-                id_candidates.append(ident_s)
-
-        # 4a. Update/Create on selected hosts
-        for host in updated_target_hosts:
-            try:
-                caster = CasterClient(host, port)
-                created_ok = await caster.create_user(
-                    creator=creator_username,
-                    username=rover.username,
-                    password=new_password,
-                    mountpoints=new_mountpoints, 
-                    expiry_seconds=duration_seconds, 
-                    max_users=new_max_connections,
-                    show_position=target_show_pos,
-                    rtcm_cycle_enabled=bool(target_rtcm_cycle_enabled),
-                    rtcm_disconnect_interval_seconds=int(target_rtcm_cycle_interval),
-                    rtcm_disconnect_duration_seconds=int(target_rtcm_cycle_duration),
-                )
-                if not created_ok:
-                    logger.warning(f"Caster {host} did not confirm create/update for rover '{rover.username}'")
-
-                # Ensure show_position is synced on legacy caster variants.
-                toggle_ok = False
-                for ident in id_candidates:
-                    if await caster.toggle_show_pos(
-                        identifier=ident,
-                        username=rover.username,
-                        enabled=target_show_pos
-                    ):
-                        toggle_ok = True
-                        break
-                if not toggle_ok:
-                    logger.warning(f"Caster {host} did not confirm show_position toggle for rover '{rover.username}'")
-                results_log.append(host)
-            except Exception as e:
-                logger.error(f"Failed to update rover on caster {host}: {e}")
-
-        # 4b. Cleanup removed hosts
-        for host in removed_hosts:
-            try:
-                caster = CasterClient(host, port)
-                deleted_ok = await caster.delete_user(
-                    identifier=creator_username,
-                    username=rover.username
-                )
-                if not deleted_ok:
-                    logger.warning(f"Caster {host} did not confirm delete for rover '{rover.username}'")
-                logger.info(f"✓ Cleaned up (deleted) rover '{rover.username}' from removed caster {host}")
-            except Exception as e:
-                logger.warning(f"Failed to cleanup rover from removed caster {host}: {e}")
-
-    except Exception as e:
-        logger.error(f"Caster Multi-Update Error: {e}")
-        raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(e)}")
-
-    # 5. Cập nhật DB Local
-    update_data = {
-        "password": new_password,
-        "mountpoints": new_mountpoints,
-        "max_connections": new_max_connections,
-        "show_position": target_show_pos,
-        "rtcm_cycle_enabled": bool(target_rtcm_cycle_enabled),
-        "rtcm_disconnect_interval_seconds": int(target_rtcm_cycle_interval),
-        "rtcm_disconnect_duration_seconds": int(target_rtcm_cycle_duration),
-        "target_casters": ";".join(updated_target_hosts)
-    }
-    
-    # 🔥 FIX: Cập nhật base_serial nếu client gửi lên danh sách trạm mới
-    if update_req.selected_serials:
-        update_data["base_serial"] = ",".join(update_req.selected_serials)
-        
-    updated_rover = await crud.update_rover_account(db, rover_id, update_data)
-    
-    return updated_rover
-
-@app.delete("/api/rovers/{rover_id}")
-async def delete_rover(
-    rover_id: int,
-    db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # Add devices_db here
-    current_user: models.User = Depends(auth.get_current_user)
-):
-    # 1. Lấy thông tin Rover
-    rover_to_delete = await crud.get_rover_by_id(db, rover_id)
-    if not rover_to_delete:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
-
-    # 2. Kiểm tra quyền
-    is_admin = current_user.role == auth.Role.ADMIN
-    is_creator = rover_to_delete.created_by_user_id == current_user.id
-
-    # Ownership Check: COORDINATOR chỉ quản lý rover thuộc trạm mình sở hữu
-    if not is_admin:
-        serials = (rover_to_delete.base_serial or "").split(',')
-        owned_res = await devices_db.execute(
-            select(models.Device.serial).where(models.Device.user_id == current_user.id)
-        )
-        owned_serials = set(owned_res.scalars().all())
-        
-        for sn in serials:
-            sn_clean = sn.strip()
-            # Nếu trạm ảo (serial trống) và là người tạo thì cho qua
-            if sn_clean == "" and is_creator:
-                continue
-            if sn_clean not in owned_serials:
-                raise HTTPException(status_code=403, detail=f"Bạn không có quyền quản lý Rover thuộc trạm '{sn}'.")
-
-    
-    creator_user = await crud.get_user_by_id(db, rover_to_delete.created_by_user_id)
-    creator_username = creator_user.username if creator_user else "admin"
-
-    # 3. GỌI TCP ĐẾN NTRIP CASTER ĐỂ XÓA
-    try:
-        caster = await get_caster_client(db)
-        await caster.delete_user(
-            identifier=creator_username, 
-            username=rover_to_delete.username
-        )
-        logger.info(f"âœ“ Deleted Rover '{rover_to_delete.username}' from Caster via TCP")
-    except Exception as e:
-        logger.warning(f"Failed to delete rover from Caster (might be already deleted): {e}")
-
-    # 4. Xóa khỏi DB Local
-    success = await crud.delete_rover_account(db, rover_id=rover_id)
-    
-    return {"status": "deleted", "rover_id": rover_id}
 
 # === CASTER USER MANAGEMENT (For non-DB users) ===
 @app.delete("/api/caster/users/{username}")
@@ -4578,7 +3899,7 @@ async def delete_caster_user_endpoint(
     # Track the event
     try:
         from .crud import log_system_event
-        await log_system_event(
+        await crud.log_system_event(
             db=db,
             type="warning",
             message=f"Xóa tài khoản ngoại lai '{username}' khỏi Caster bởi {current_user.username}",
@@ -5076,7 +4397,7 @@ async def configure_chip_endpoint(
         
         logging.info(f"✓ Sent configuration commands to {serial}")
         
-        await log_system_event(
+        await crud.log_system_event(
             db=db,
             type="info",
             message=f"GNSS config updated for '{device_in_db.name}' by {current_user.username}",
@@ -5170,7 +4491,7 @@ async def configure_service_endpoint(
     }
     try:
         response = await send_command_to_pi(serial, pi_command)
-        await log_system_event(
+        await crud.log_system_event(
             db=db,
             type="info",
             message=f"Service config updated for '{device_in_db.name}' by {current_user.username}",
@@ -5220,7 +4541,7 @@ async def reset_pi_device(
     })
 
     logging.info(f"User '{current_user.username}' sent RESET command to Pi '{serial}'")
-    await log_system_event(
+    await crud.log_system_event(
         db=db,
         type="warning",
         message=f"Device '{device.name}' reset by {current_user.username}",
@@ -5283,7 +4604,7 @@ async def delete_device_from_list(
     })
 
     
-    await log_system_event(
+    await crud.log_system_event(
         db=db,
         type="warning",
         message=f"Device '{device.name}' removed from list by {current_user.username}",
@@ -5301,7 +4622,7 @@ async def lock_device(
     device = await crud.get_device_by_serial(db, serial)
     try:
         response = await send_command_to_pi(serial, {"command": "LOCK_DEVICE", "payload": {}})
-        await log_system_event(
+        await crud.log_system_event(
             db=db,
             type="warning",
             message=f"Device '{device.name}' LOCKED by Admin {current_user.username}",
@@ -5324,7 +4645,7 @@ async def unlock_device(
     device = await crud.get_device_by_serial(db, serial)
     try:
         response = await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
-        await log_system_event(
+        await crud.log_system_event(
             db=db,
             type="success",
             message=f"Device '{device.name}' UNLOCKED by Admin {current_user.username}",
@@ -5688,7 +5009,7 @@ async def _ops_visible_rovers(
 async def _ops_cached_rover_status(usernames: set[str] | None = None) -> list[dict]:
     statuses = []
     async with global_caster_cache_lock:
-        for cache_data in global_caster_data_cache.values():
+        for cache_data in (await _get_all_caster_cache()).values():
             host = cache_data.get("host", "unknown")
             last_update = int(cache_data.get("last_update") or time.time())
             clients = cache_data.get("clients", []) or []
@@ -5784,7 +5105,7 @@ async def get_ops_summary(
     events = await _ops_events_query(devices_db, limit=8)
     caster_hosts = []
     async with global_caster_cache_lock:
-        for cache_data in global_caster_data_cache.values():
+        for cache_data in (await _get_all_caster_cache()).values():
             last_update = int(cache_data.get("last_update") or 0)
             caster_hosts.append({
                 "host": cache_data.get("host", "unknown"),
@@ -5880,7 +5201,7 @@ async def _build_ops_alerts(
             })
 
     async with global_caster_cache_lock:
-        for cache_data in global_caster_data_cache.values():
+        for cache_data in (await _get_all_caster_cache()).values():
             last_update = int(cache_data.get("last_update") or 0)
             has_error = bool(cache_data.get("error"))
             stale = last_update and now_ts - last_update > 180
@@ -5963,7 +5284,7 @@ async def _set_ops_alert_workflow_state(
         state_payload.setdefault("acknowledged_at", now_ts)
     states[alert_id] = state_payload
     await crud.update_system_settings(auth_db, {"ops_alert_states": states})
-    await log_system_event(
+    await crud.log_system_event(
         devices_db,
         "warning" if new_state == "acknowledged" else "success",
         f"Ops alert {new_state}: {alert.get('title') or alert_id}",
@@ -6067,7 +5388,7 @@ async def bulk_renew_rovers(
         updated.append(rover.username)
     await auth_db.commit()
 
-    await log_system_event(
+    await crud.log_system_event(
         db=devices_db,
         type="success",
         message=f"{current_user.username} renewed {len(updated)} rover account(s) for {request.expiry_days} days",
@@ -6247,7 +5568,7 @@ async def bulk_device_action(
         except Exception as exc:
             results.append({"serial": serial, "status": "error", "detail": str(exc)})
 
-    await log_system_event(
+    await crud.log_system_event(
         db=devices_db,
         type="warning" if action == "reset" else "info",
         message=f"{current_user.username} executed bulk device action '{action}' on {len(results)} station(s)",
@@ -6290,7 +5611,7 @@ async def create_device_config_template(
     }
     templates.append(template)
     await crud.update_system_settings(auth_db, {"device_config_templates": templates})
-    await log_system_event(
+    await crud.log_system_event(
         db=devices_db,
         type="info",
         message=f"{current_user.username} created station config template '{template['name']}'",
@@ -6334,7 +5655,7 @@ async def apply_device_config_template(
             await devices_db.refresh(device)
             await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
 
-    await log_system_event(
+    await crud.log_system_event(
         db=devices_db,
         type="info",
         message=f"{current_user.username} applied template '{template.get('name')}' to {len([r for r in results if r.get('status') == 'applied'])} station(s)",
@@ -6449,7 +5770,21 @@ async def flush_device_buffer(db: AsyncSession):
             logger.error(f"Error flushing DB: {e}")
 
 @app.websocket("/ws/pi/{serial}")
-async def pi_websocket_endpoint(websocket: WebSocket, serial: str):
+async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = Query(None)):
+    import os
+    enforce_auth = os.getenv("ENFORCE_AGENT_AUTH", "true").lower() != "false"
+    # --- Token Auth ---
+    async with device_session_scope() as db:
+        device = await crud.get_device_by_serial(db, serial)
+        expected_token = str(getattr(device, "device_token", "") or "").strip() if device else ""
+        provided_token = str(token or "").strip()
+        if enforce_auth and expected_token and provided_token != expected_token:
+            logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        if expected_token and provided_token != expected_token:
+            logger.warning("Pi '%s' connection allowed with invalid/missing token because ENFORCE_AGENT_AUTH=false.", serial)
+
     await pi_manager.connect(serial, websocket)
     
     try:
@@ -6783,7 +6118,7 @@ async def get_caster_config(
     
     return {
         "hosts": list(set(hosts)),
-        "version": os.getenv("APP_VERSION", "V1.1.2")
+        "version": settings.APP_VERSION
     }
 
 @app.get("/login", include_in_schema=False)
@@ -6831,7 +6166,7 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
         
         # Rate limiting
         client_ip = request.client.host
-        if not global_rate_limiter.is_allowed(client_ip):
+        if not await redis_client.check_rate_limit(f"rate_limit:{client_ip}", 1000, 60):
             health_monitor.record_error('rate_limit', f'IP: {client_ip}')
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

@@ -12,6 +12,7 @@ class Device(Base):
     serial = Column(String, primary_key=True, index=True)
     name = Column(String, index=True)
     status = Column(String, default="offline", index=True)
+    device_token = Column(String, unique=True, index=True, nullable=True)
     timestamp = Column(BigInteger, default=0, index=True)
     bps = Column(Integer, default=0)
     detected_chip_type = Column(String, default="UNKNOWN")

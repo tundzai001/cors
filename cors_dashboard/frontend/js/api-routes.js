@@ -57,6 +57,7 @@
             name: serial => `/api/devices/${encodeURIComponent(serial)}/name`,
             reset: serial => `/api/devices/${encodeURIComponent(serial)}/reset`,
             command: serial => `/api/devices/${encodeURIComponent(serial)}/command`,
+            autoDeployToken: serial => `/api/devices/${encodeURIComponent(serial)}/auto-deploy-token`,
             configureChip: serial => `/api/devices/${encodeURIComponent(serial)}/configure-chip`,
             configureService: serial => `/api/devices/${encodeURIComponent(serial)}/configure-service`,
             lock: serial => `/api/devices/${encodeURIComponent(serial)}/lock`,

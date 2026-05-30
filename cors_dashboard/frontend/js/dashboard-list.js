@@ -31,8 +31,9 @@ function getDeviceOpsFlags(device) {
     const activeStatus = ['online', 'streaming', 'starting'].includes(status);
     const noStream = activeStatus && ((enabled1 && bps1 <= 0) || (enabled2 && bps2 <= 0));
     const unsynced = device?.is_synced === false;
+    const syncErrors = Array.isArray(device?.sync_errors) ? device.sync_errors : [];
     const alert = status === 'offline' || status === 'locked' || unsynced || noStream;
-    return { alert, unsynced, noStream };
+    return { alert, unsynced, noStream, syncErrors };
 }
 const STATUS_CLASS_MAP = {
     'online': 'bg-success',
@@ -267,7 +268,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                 </div>
 
                     {opsFlags.alert && (
-                        <span className="device-ops-alert-badge" title={opsFlags.noStream ? 'No stream detected' : (opsFlags.unsynced ? 'Unsynced' : 'Needs attention')}>
+                        <span className="device-ops-alert-badge" title={opsFlags.noStream ? 'No stream detected' : (opsFlags.unsynced ? (opsFlags.syncErrors.join('\n') || 'Unsynced') : 'Needs attention')}>
                             <i className="bi bi-exclamation-triangle-fill"></i>
                         </span>
                     )}

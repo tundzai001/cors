@@ -20,48 +20,33 @@ const STATUS_TEXT_MAP = {
     'auto_setup_base': 'AUTO: CÀI ĐẶT BASE'
 };
 const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disabled }) {
-    const [licenseKey, setLicenseKey] = useState('');
-    const [isGenerating, setIsGenerating] = useState(false);
     const [isDeploying, setIsDeploying] = useState(false);
 
-    const handleGenerateKey = async () => {
-        setIsGenerating(true);
+    const handleAutoDeploy = async (e) => {
+        e.preventDefault();
+        if (disabled) return;
+        setIsDeploying(true);
         try {
-            const response = await window.apiFetch('/api/license/pi', {
-                method: 'POST',
-                body: JSON.stringify({ serial: device.serial })
+            const response = await window.apiFetch(window.ApiRoutes.devices.autoDeployToken(device.serial), {
+                method: 'POST'
             });
             if (!response.ok) {
                 const err = await response.json();
-                throw new Error(err.detail || 'Failed to generate license');
+                throw new Error(err.detail || 'Failed to auto-deploy token');
             }
-            const data = await response.json();
-            setLicenseKey(data.license_key);
-            window.showSuccess('License key đã được tạo!');
+            window.showSuccess('Token đã được tự động cấp và gửi tới thiết bị thành công!');
         } catch (error) {
-            window.showError('Không thể tạo key: ' + error.message);
-        } finally {
-            setIsGenerating(false);
-        }
-    };
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (disabled) return;
-        if (!licenseKey) return window.showError('Vui lòng tạo license key trước!');
-        setIsDeploying(true);
-        try {
-            await onDeployLicense(device.serial, licenseKey);
+            window.showError('Không thể cấp token tự động: ' + error.message);
         } finally {
             setIsDeploying(false);
         }
     };
 
     return (
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleAutoDeploy}>
             <div className="alert alert-warning small">
                 <i className="bi bi-key-fill me-2"></i>
-                Chức năng này dùng để cấp phép cho các trạm Pi đang ở trạng thái "CHỜ LICENSE".
+                Thiết bị đang chờ cấp phép bảo mật (Token). Quá trình này sẽ tự động khởi tạo mã xác thực và gửi xuống thiết bị qua MQTT.
             </div>
             <div className="mb-3">
                 <label className="form-label">Serial Number của Pi</label>
@@ -80,48 +65,17 @@ const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disable
                     </button>
                 </div>
             </div>
-            <div className="mb-3">
-                <label className="form-label">License Key</label>
-                <div className="input-group">
-                    <input type="text" className="form-control" value={licenseKey} readOnly placeholder="Nhấn 'Tạo Key' để tạo..." />
-                    <button
-                        className="btn btn-outline-secondary"
-                        type="button"
-                        title="Sao chép Key"
-                        onClick={() => {
-                            if (licenseKey) {
-                                navigator.clipboard.writeText(licenseKey);
-                                window.showSuccess('Đã sao chép Key!');
-                            }
-                        }}
-                    >
-                        <i className="bi bi-clipboard-check"></i>
-                    </button>
-                </div>
-            </div>
-            <button type="button" onClick={handleGenerateKey} className="btn btn-info w-100 mb-2" disabled={isGenerating}>
-                {isGenerating ? (
+            
+            <button type="submit" className="btn btn-primary w-100 py-3 mt-2 fw-bold" disabled={isDeploying}>
+                {isDeploying ? (
                     <>
                         <span className="spinner-border spinner-border-sm me-2"></span>
-                        Đang tạo...
+                        Đang cấp phát tự động...
                     </>
                 ) : (
                     <>
                         <i className="bi bi-magic me-2"></i>
-                        Tạo Key
-                    </>
-                )}
-            </button>
-            <button type="submit" className="btn btn-primary w-100" disabled={isDeploying || !licenseKey}>
-                {isDeploying ? (
-                    <>
-                        <span className="spinner-border spinner-border-sm me-2"></span>
-                        Đang gửi...
-                    </>
-                ) : (
-                    <>
-                        <i className="bi bi-send-fill me-2"></i>
-                        Gửi Key đến Thiết bị
+                        Tự động cấp & gửi Token
                     </>
                 )}
             </button>

@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V1.1.2"
+RELAY_VERSION = "V1.1.4"
 
 import json
 import logging
@@ -11,6 +11,7 @@ import select
 import os
 import ctypes
 import gc
+import hashlib
 import psutil
 from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
@@ -155,10 +156,24 @@ class StatusManager:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "geotek_config.json")
 DB_PATH = os.path.join(SCRIPT_DIR, "geotek_db.json")
+LICENSE_PATH = os.path.join(SCRIPT_DIR, "license.key")
 
 # Initialize Managers
 config_mgr = ConfigManager(CONFIG_PATH)
 status_mgr = StatusManager(DB_PATH)
+
+
+def get_license_fingerprint():
+    try:
+        if not os.path.exists(LICENSE_PATH):
+            return None
+        with open(LICENSE_PATH, "r", encoding="utf-8") as f:
+            token = f.read().strip()
+        if not token:
+            return None
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return None
 
 
 def config_value(section, key, env_keys, default):
@@ -777,6 +792,7 @@ class RelayWorker(threading.Thread):
             "name": self.cfg['target_mp'],
             "status": "online" if self.desired_active else "sleep",
             "version": RELAY_VERSION,
+            "agent_token_fingerprint": get_license_fingerprint(),
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
@@ -800,7 +816,7 @@ class RelayWorker(threading.Thread):
             "source_mountpoint": self.cfg['source_mp'],
             "rtk_fix_status": "FIXED",
             "detected_chip_type": "RELAY",
-            "is_provisioned": True
+            "is_provisioned": os.path.exists(LICENSE_PATH)
         }
         
         try:
@@ -1074,6 +1090,7 @@ class MonitorWorker(threading.Thread):
             "name": self.cfg['mountpoint'],
             "status": current_status,
             "version": RELAY_VERSION,
+            "agent_token_fingerprint": get_license_fingerprint(),
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
@@ -1347,6 +1364,7 @@ class MqttSourceWorker(threading.Thread):
             "name": self.name,
             "status": "online" if self.is_connected else ("sleep" if mqtt_data_active else "offline"),
             "version": RELAY_VERSION,
+            "agent_token_fingerprint": get_license_fingerprint(),
             "timestamp": int(time.time()),
             "base_config": base_config,
             "ntrip_connected": self.is_connected,
@@ -1961,6 +1979,22 @@ def setup_mqtt(worker_map):
             logging.info(f"[{serial}] Persisting service config from Dashboard")
             worker._persist_remote_config({"payload": {"service_config": cmd_payload}})
             worker.publish_status()
+            return
+            
+        if command == "DEPLOY_LICENSE":
+            if not serial:
+                return
+            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            license_key = cmd_payload.get("license_key")
+            if license_key:
+                try:
+                    with open(LICENSE_PATH, "w") as f:
+                        f.write(license_key)
+                    logging.info(f"[{serial}] Received and saved new license key to {LICENSE_PATH}. Restarting to apply...")
+                    time.sleep(1)
+                    os._exit(0)
+                except Exception as e:
+                    logging.error(f"[{serial}] Failed to save license key: {e}")
             return
 
         if command != "SET_RTCM_STREAM_ACTIVE":

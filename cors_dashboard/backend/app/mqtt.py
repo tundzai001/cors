@@ -6,6 +6,7 @@ import logging
 import asyncio
 import os
 import time
+import hashlib
 from typing import Awaitable, Callable, Optional
 import paho.mqtt.client as mqtt
 from sqlalchemy import select
@@ -17,6 +18,19 @@ from . import crud, nmea_parser, models
 
 # Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
 mqtt_db_write_lock = asyncio.Lock()
+
+
+def _fingerprint_token(token: str | None) -> str | None:
+    value = str(token or "").strip()
+    if not value:
+        return None
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _version_matches(agent_version: str | None) -> bool:
+    if not agent_version:
+        return False
+    return str(agent_version).strip().upper() == str(settings.APP_VERSION).strip().upper()
 
 main_loop = None
 client_id = f"backend-listen-{settings.MQTT_HOST}-{os.getpid()}"
@@ -155,7 +169,9 @@ async def batch_sync_checker():
                     base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
                     srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service", is_relay=is_relay_like)
                     
-                    is_synced = base_ok and srv_ok
+                    version_ok = _version_matches(device.version)
+                    version_errs = [] if version_ok else [f"[Version] Agent={device.version or '??'} vs Server={settings.APP_VERSION}"]
+                    is_synced = base_ok and srv_ok and version_ok
                     
                     # Cập nhật cache
                     old_sync = device_sync_cache.get(serial)
@@ -165,9 +181,13 @@ async def batch_sync_checker():
                     # Log nếu sync status thay đổi
                     if old_sync is not None and old_sync != is_synced:
                         if is_synced:
-                            logging.info(f"✓ {serial} SYNCED")
+                            logging.info("Device %s SYNCED", serial)
                         else:
-                            logging.warning(f"⚠️ {serial} OUT OF SYNC: {base_errs + srv_errs}")
+                            logging.warning("Device %s OUT OF SYNC: %s", serial, base_errs + srv_errs + version_errs)
+                    
+                    if device.is_synced != is_synced:
+                        device.is_synced = is_synced
+                        await session.commit()
                     
                     checked_count += 1
             
@@ -279,6 +299,39 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # Batch checker sẽ update cache mỗi 60s
             is_synced = device_sync_cache.get(serial, True)
             sync_errors = []
+            agent_version = data.get("version")
+            if not _version_matches(agent_version):
+                is_synced = False
+                sync_errors.append(f"Agent version {agent_version or '??'} != server {settings.APP_VERSION}")
+
+            db_device = None
+            agent_token_fp = data.get("agent_token_fingerprint")
+            try:
+                async with device_session_scope() as _db:
+                    db_device = await crud.get_device_by_serial(_db, serial)
+            except Exception as e:
+                logging.debug("Device lookup for sync metadata failed for %s: %s", serial, e)
+
+            if db_device:
+                expected_fp = _fingerprint_token(getattr(db_device, "device_token", None))
+                token_synced = bool(expected_fp and agent_token_fp and expected_fp == agent_token_fp)
+                if expected_fp and not token_synced:
+                    is_synced = False
+                    sync_errors.append("Agent token is missing or does not match server token")
+                    data["status"] = "awaiting_license"
+                    data["bps"] = 0
+                    data["ntrip_connected"] = False
+                    data["ntrip_status"] = {}
+                    data["ntrip_stats"] = {}
+                system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
+                system_info["auth_status"] = {
+                    "token_required": bool(expected_fp),
+                    "token_synced": token_synced,
+                    "agent_token_present": bool(agent_token_fp),
+                }
+                data["system_info"] = system_info
+                if not data.get("name") and db_device.name:
+                    data["name"] = db_device.name
             
             # --- CẬP NHẬT DATA ĐỂ GỬI UI ---
             data['is_synced'] = is_synced

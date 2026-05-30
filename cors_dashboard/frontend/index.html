@@ -117,9 +117,7 @@
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     <script>
         window.Leaflet = window.L;
-    </script>
-
-    <!-- Local CSS -->
+    </script><!-- Local CSS -->
     <link rel="stylesheet" href="/css/style.css?v=20260524-dashboard-ui-v4">
     <link rel="stylesheet" href="/css/enterprise-theme.css?v=20260521-v4">
     <link rel="stylesheet" href="/css/cinematic-cards.css?v=20260521-v4">
@@ -230,8 +228,7 @@
                 </ul>
             </div>
 
-            <div class="d-flex align-items-center">
-                <span id="connection-status" class="navbar-text me-3 fs-5" title="Trạng thái kết nối WebSocket"></span>
+            <div class="d-flex align-items-center"><span id="connection-status" class="navbar-text me-3 fs-5" title="Trạng thái kết nối WebSocket"></span>
                 <span id="user-info" class="navbar-text me-3 d-none d-md-inline"></span>
                 <button id="login-btn" class="btn btn-sm btn-primary me-2 d-none">Đăng nhập</button>
                 <button id="logout-btn" class="btn btn-sm btn-outline-danger d-none">
@@ -318,9 +315,10 @@
         <div id="view-api-docs" class="d-none">
             <div id="api-docs-root"></div>
         </div>
-    </main>
-
-    <!-- Public Map Modal (Like Login Page) -->
+    </main>`r`n</div>
+            </div>
+        </div>
+<!-- Public Map Modal (Like Login Page) -->
     <div class="modal fade" id="publicMapModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-fullscreen">
             <div class="modal-content bg-dark text-light">
@@ -369,7 +367,7 @@
 
     <script type="text/babel" src="/js/react-components.js?v=20260528-relay-status-v1"></script>
     <script type="text/babel" src="/js/dashboard-forms.js?v=20260524-dashboard-ui-v4"></script>
-    <script type="text/babel" src="/js/dashboard-list.js?v=20260530-context-ops-v1"></script>
+    <script type="text/babel" src="/js/dashboard-list.js?v=20260531-sync-auth-v1"></script>
     <script type="text/babel" src="/js/dashboard-live.js?v=20260524-dashboard-ui-v4"></script>
     <script type="text/babel" src="/js/dashboard-detail.js?v=20260530-context-ops-v1"></script>
     <script type="text/babel" src="/js/stations-map.js?v=20260530-popup-only-v1"></script>
@@ -380,10 +378,10 @@
     <script type="text/babel" src="/js/advanced-features.js?v=1.0.35"></script>
 
     <!-- Navigation Manager -->
-    <script src="/js/nav-manager.js?v=20260529-admin-hard-reset-v1"></script>
-
-    <!-- Local JS -->
+    <script src="/js/nav-manager.js?v=20260529-admin-hard-reset-v1"></script><!-- Local JS -->
     <script src="/js/main.js?v=20260530-open-station-v1"></script>
 </body>
 
 </html>
+
+

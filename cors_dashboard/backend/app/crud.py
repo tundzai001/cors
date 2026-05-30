@@ -12,6 +12,7 @@ import time
 import logging
 import asyncio
 import re
+import secrets
 
 logger = logging.getLogger(__name__)
  
@@ -144,6 +145,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     'system_info': normalized_system_info,
                     'version': device.get('version'),
                     'is_provisioned': device.get('is_provisioned'),
+                    'device_token': secrets.token_hex(16),
                     # is_locked thường ít khi gửi qua websocket status, nên dùng default cẩn thận
                     # Tốt nhất là không update is_locked ở đây nếu không có trong payload
                 }
@@ -403,6 +405,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
                     system_info=new_system_info or None,
                     detected_chip_type=new_chip_type,
                     version=device_data.get("version"),
+                    device_token=secrets.token_hex(16),
                     is_synced=True
                 )
             db.add(new_device)
@@ -499,7 +502,10 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
             should_update = True
     
     # ✅ XỬ LÝ is_synced
-    if new_is_synced is True and existing_device.is_synced is False:
+    if new_is_synced is False and existing_device.is_synced is not False:
+        update_values["is_synced"] = False
+        should_update = True
+    elif new_is_synced is True and existing_device.is_synced is False:
         update_values["is_synced"] = True
         should_update = True
 
@@ -786,6 +792,44 @@ async def get_activity_heatmap(db: AsyncSession):
         
         if 0 <= day_diff < 7:
             hour = int((ts + 7*3600) / 3600) % 24
-            grid[int(day_diff)][hour] += 1
-            
-    return grid 
+    return grid
+
+async def log_system_event(
+    db: AsyncSession,
+    type: str,     # success, error, warning, info
+    message: str,
+    user_id: int = None,
+    serial: str = None,
+    ip: str = None
+):
+    """Hàm helper để ghi log vào DB từ bất kỳ đâu"""
+    from .websocket import manager as ui_manager
+    icon_map = {
+        "success": "✅",
+        "error": "❌",
+        "warning": "⚠️",
+        "info": "ℹ️"
+    }
+    try:
+        log_entry = schemas.ActivityLogCreate(
+            timestamp=int(time.time()),
+            type=type,
+            message=message,
+            icon=icon_map.get(type, "📝"),
+            user_id=user_id,
+            device_serial=serial,
+            ip_address=ip
+        )
+        await create_activity_log(db, log_entry)
+        
+        await ui_manager.broadcast({
+            "type": "activity_log_event",
+            "data": {
+                "type": type,
+                "message": message,
+                "timestamp": log_entry.timestamp,
+                "icon": log_entry.icon
+            }
+        })
+    except Exception as e:
+        logger.error(f"Failed to write activity log: {e}")
