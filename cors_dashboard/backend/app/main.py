@@ -25,6 +25,7 @@ from pathlib import Path
 from collections import deque
 from contextlib import asynccontextmanager
 from typing import Optional, List, Any, Set, Dict
+from urllib.parse import unquote
 from dotenv import dotenv_values, set_key
 
 from fastapi import (
@@ -158,17 +159,45 @@ disable_windows_quick_edit_mode()
 ALLOWED_HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}
 
 SECURITY_BLACKLIST_PATTERNS = {
-    ".env", ".php", ".git", ".jsp", ".asp", ".aspx", ".bak", ".swp", ".sql", ".exe", ".cgi",
-    "wp-admin", "wp-login", "phpmyadmin", "server-status", "cgi-bin", "xmlrpc.php",
-    "config.php", "config.bak", "setup.php", "mysql-admin", "administrator",
-    "info.php", "test.php", ".htaccess", ".htpasswd", ".DS_Store", "public/.env", "backend/.env"
+    ".aws", ".backup", ".bak", ".bz2", ".cgi", ".conf", ".config", ".db", ".env",
+    ".exe", ".git", ".gz", ".htaccess", ".htpasswd", ".ini", ".jsp", ".old", ".orig",
+    ".php", ".rar", ".sql", ".sqlite", ".swp", ".tar", ".tgz", ".zip",
+    "actuator", "adminer", "administrator", "backup", "cgi-bin", "config.bak",
+    "config.php", "debug", "dump", "info.php", "jenkins", "mysql-admin",
+    "phpinfo", "phpmyadmin", "private", "public/.env", "server-status", "setup.php",
+    "test.php", "vendor/phpunit", "wp-admin", "wp-content", "wp-includes",
+    "wp-login", "xmlrpc.php", "backend/.env"
 }
+
+SECURITY_SCANNER_UA_PATTERNS = {
+    "acunetix", "arachni", "dirbuster", "gobuster", "masscan", "nessus", "nikto",
+    "nmap", "openvas", "sqlmap", "wpscan", "zgrab", "zmap", "nuclei", "fuzz",
+    "ffuf", "wafw00f", "whatweb"
+}
+
+SECURITY_QUERY_PATTERNS = {
+    "../", "..\\", "%2e%2e", "<script", "javascript:", "onerror=", "onload=",
+    "union select", "select ", " from ", "drop table", "insert into", "benchmark(",
+    "sleep(", "/etc/passwd", "cmd=", "exec=", "system(", "base64_decode"
+}
+
+SECURITY_ALLOWED_PATH_PREFIXES = (
+    "/", "/api/", "/ws/", "/img/", "/assets/", "/css/", "/js/", "/pages/", "/static/"
+)
+
+SECURITY_MAX_PATH_LENGTH = int(os.getenv("SECURITY_MAX_PATH_LENGTH", "2048"))
+SECURITY_MAX_QUERY_LENGTH = int(os.getenv("SECURITY_MAX_QUERY_LENGTH", "4096"))
+SECURITY_MAX_CONTENT_LENGTH = int(os.getenv("SECURITY_MAX_CONTENT_LENGTH", str(25 * 1024 * 1024)))
+SECURITY_BURST_WINDOW_SECONDS = float(os.getenv("SECURITY_BURST_WINDOW_SECONDS", "10"))
+SECURITY_BURST_MAX_REQUESTS = int(os.getenv("SECURITY_BURST_MAX_REQUESTS", "180"))
+SECURITY_STRICT_MODE = str(os.getenv("SECURITY_STRICT_MODE", "1")).strip().lower() in ("1", "true", "yes", "on")
 
 # --- IP REPUTATION SYSTEM ---
 VIOLATION_THRESHOLD = 5  # Số lần vi phạm tối đa trước khi BAN
 BAN_DURATION = 3600      # Thời gian BAN (giây) - 1 giờ
 security_rep_scores: Dict[str, int] = {} # IP -> score
 banned_ips: Dict[str, float] = {}        # IP -> ban_expiry_timestamp
+security_request_times: Dict[str, deque] = {}
 
 
 BATCH_SIZE = 20  
@@ -5777,13 +5806,17 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
     async with device_session_scope() as db:
         device = await crud.get_device_by_serial(db, serial)
         expected_token = str(getattr(device, "device_token", "") or "").strip() if device else ""
+        device_system_info = getattr(device, "system_info", None) if device else None
+        license_bypass = bool(isinstance(device_system_info, dict) and device_system_info.get("auth_license_bypass"))
         provided_token = str(token or "").strip()
-        if enforce_auth and expected_token and provided_token != expected_token:
+        if enforce_auth and expected_token and provided_token != expected_token and not license_bypass:
             logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
-        if expected_token and provided_token != expected_token:
+        if expected_token and provided_token != expected_token and not license_bypass:
             logger.warning("Pi '%s' connection allowed with invalid/missing token because ENFORCE_AGENT_AUTH=false.", serial)
+        if license_bypass and expected_token and provided_token != expected_token:
+            logger.warning("Pi '%s' connection allowed with invalid/missing token because per-device license bypass is enabled.", serial)
 
     await pi_manager.connect(serial, websocket)
     

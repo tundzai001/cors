@@ -1,10 +1,10 @@
 from ..redis_client import redis_client
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from ..database import get_auth_db, get_db
-from .. import crud, models, schemas, auth
+from .. import crud, models, schemas, auth, license_manager
 from ..command_dispatcher import send_command_to_pi
 from ..caster_helpers import _read_caster_config_from_env, get_caster_client, global_caster_cache_lock
 from ..database import settings
@@ -485,19 +485,23 @@ async def delete_rover(
 async def auto_deploy_device_token(
     serial: str,
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_CHIP_CONFIG))
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_LICENSE))
 ):
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
         
-    if not getattr(device, "device_token", None):
-        import secrets
-        device.device_token = secrets.token_hex(16)
+    license_base = license_manager.generate_pi_license_base(serial)
+    license_key = license_manager.get_license_code_from_string(license_base)
+    if not license_key or "Lỗi" in license_key:
+        raise HTTPException(status_code=500, detail="Failed to generate device license")
+
+    if getattr(device, "device_token", None) != license_key:
+        device.device_token = license_key
         await db.commit()
         await db.refresh(device)
         
-    payload = {"command": "DEPLOY_LICENSE", "payload": {"license_key": device.device_token}}
+    payload = {"command": "DEPLOY_LICENSE", "payload": {"license_key": license_key}}
     
     await crud.log_system_event(
         db=db,
@@ -508,3 +512,45 @@ async def auto_deploy_device_token(
     )
     
     return await send_command_to_pi(serial, payload)
+
+@router.post("/api/devices/{serial}/license-bypass")
+async def set_device_license_bypass(
+    serial: str,
+    payload: dict | None = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_LICENSE))
+):
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    payload = payload or {}
+    enabled = bool(payload.get("enabled"))
+    system_info = dict(device.system_info or {})
+    system_info["auth_license_bypass"] = enabled
+    system_info["auth_license_bypass_by"] = current_user.username
+    import time
+    system_info["auth_license_bypass_at"] = int(time.time())
+    device.system_info = system_info
+
+    if enabled and device.status == "awaiting_license":
+        device.status = "sleep" if device.base_config or device.service_config else "online"
+
+    await db.commit()
+    await db.refresh(device)
+
+    await crud.log_system_event(
+        db=db,
+        type="warning" if enabled else "info",
+        message=f"License bypass {'enabled' if enabled else 'disabled'} for '{device.name or serial}' by {current_user.username}",
+        user_id=current_user.id,
+        serial=serial
+    )
+
+    return {
+        "status": "ok",
+        "serial": serial,
+        "license_bypass": enabled,
+        "system_info": device.system_info or {},
+        "device_status": device.status,
+    }

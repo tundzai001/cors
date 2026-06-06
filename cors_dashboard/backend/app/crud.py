@@ -12,7 +12,6 @@ import time
 import logging
 import asyncio
 import re
-import secrets
 
 logger = logging.getLogger(__name__)
  
@@ -145,7 +144,9 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     'system_info': normalized_system_info,
                     'version': device.get('version'),
                     'is_provisioned': device.get('is_provisioned'),
-                    'device_token': secrets.token_hex(16),
+                    # Created only by the explicit auto-deploy flow so the UI can
+                    # show a real "token not sent yet" state for new agents.
+                    'device_token': None,
                     # is_locked thường ít khi gửi qua websocket status, nên dùng default cẩn thận
                     # Tốt nhất là không update is_locked ở đây nếu không có trong payload
                 }
@@ -405,7 +406,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
                     system_info=new_system_info or None,
                     detected_chip_type=new_chip_type,
                     version=device_data.get("version"),
-                    device_token=secrets.token_hex(16),
+                    device_token=None,
                     is_synced=True
                 )
             db.add(new_device)

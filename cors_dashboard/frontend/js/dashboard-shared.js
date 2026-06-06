@@ -88,15 +88,23 @@ const isPreferredHost = (hostValue) => {
 };
 
 const getMapEffectiveStatus = (device) => {
+    const authStatus = device?.system_info?.auth_status || {};
+    const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
     const rawStatus = String(device?.status || '').toLowerCase();
+    const statusForOps = rawStatus === 'awaiting_license' && ['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)
+        ? agentReportedStatus
+        : rawStatus;
     const stats = device?.ntrip_stats || {};
     const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
+    const streamState = device?.ntrip_stream_state || {};
     const isVirtual = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
-    if (rawStatus === 'streaming') return 'streaming';
-    if (rawStatus === 'starting') return 'starting';
+    if (statusForOps === 'streaming') return 'streaming';
+    if (statusForOps === 'starting') return 'starting';
 
-    if (!['online', 'streaming', 'sleep', 'starting'].includes(rawStatus)) {
+    if (!['online', 'streaming', 'sleep', 'starting'].includes(statusForOps)) {
+        const anyServerSleeping = Boolean(streamState.server1?.sleep || streamState.server2?.sleep);
+        if (rawStatus === 'awaiting_license' && anyServerSleeping && rtcmIn > 0) return 'sleep';
         return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
     }
 
@@ -125,11 +133,10 @@ const getMapEffectiveStatus = (device) => {
 
     const onDemand = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
     const active = onDemand ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
-    if (rawStatus === 'sleep' && (!onDemand || active)) {
+    if (statusForOps === 'sleep' && (!onDemand || active)) {
         return 'online';
     }
     return (!onDemand || active) ? 'online' : 'sleep';
 };
 window.CorsDashboardShared = { getLeaflet, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getMapEffectiveStatus };
 })();
-

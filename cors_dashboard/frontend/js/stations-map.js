@@ -98,6 +98,7 @@
         const roverMarkersRef = useRef({});
         const roverHashRef = useRef('');
         const measureRef = useRef({ enabled: false, points: [], layers: [] });
+        const nearestRef = useRef({ marker: null, layers: [] });
         const [coverage, setCoverage] = useState(true);
         const [showStations, setShowStations] = useState(true);
         const [showRovers, setShowRovers] = useState(true);
@@ -109,6 +110,7 @@
         const [searchOpen, setSearchOpen] = useState(false);
         const [filterOpen, setFilterOpen] = useState(false);
         const [measureOn, setMeasureOn] = useState(false);
+        const [findingNearest, setFindingNearest] = useState(false);
         const [tileMode, setTileMode] = useState('hybrid');
         const canViewRovers = ['admin', 'viewer', 'coordinator', 'operator'].includes(String(currentUser?.role || '').toLowerCase());
 
@@ -415,16 +417,46 @@
             }, () => window.CorsUI.showToast('warning', 'Cannot locate current position'), { enableHighAccuracy: true, timeout: 8000 });
         };
 
+        const nearestSearchOptions = () => ({
+            map: mapRef.current,
+            devices,
+            nearestRef,
+            getCoords,
+            effectiveStatus,
+            getPreferredServer
+        });
+
+        const findNearestFromCoords = (lat, lon, label = 'Vi tri cua ban') => {
+            window.StationsMapSearch?.findNearestFromCoords({
+                ...nearestSearchOptions(),
+                lat,
+                lon,
+                label
+            });
+        };
+
+        const findNearestFromBrowser = () => {
+            setFindingNearest(true);
+            if (!window.StationsMapSearch) {
+                setFindingNearest(false);
+                window.CorsUI.showToast('danger', 'Map search module is not loaded.');
+                return;
+            }
+            window.StationsMapSearch.findNearestFromBrowser(nearestSearchOptions(), () => setFindingNearest(false));
+        };
+        const openLocationInGoogleMaps = () => {
+            const q = locationSearch.trim();
+            if (!q) return;
+            window.StationsMapSearch?.openGoogleMapsSearch(q);
+        };
         const searchLocation = async (event) => {
             event.preventDefault();
             const q = locationSearch.trim();
             if (!q) return;
             setIsSearchingLoc(true);
             try {
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
-                const data = await response.json();
-                if (!data.length) throw new Error('Location not found');
-                mapRef.current.setView([Number(data[0].lat), Number(data[0].lon)], 12);
+                const result = await window.StationsMapSearch.geocodeVietnam(q);
+                findNearestFromCoords(result.lat, result.lon, result.label);
             } catch (error) {
                 window.CorsUI.showToast('danger', error.message || 'Search failed');
             } finally {
@@ -448,6 +480,9 @@
                     <div className="station-map-toolgroup">
                         <button className={`station-map-action ${filterOpen ? 'active' : ''}`} title="Filter" onClick={() => setFilterOpen(!filterOpen)}><i className="bi bi-funnel"></i></button>
                         <button className="station-map-action" title="Locate" onClick={locate}><i className="bi bi-geo-alt-fill"></i></button>
+                        <button className="station-map-action" title="Tìm trạm gần nhất" onClick={findNearestFromBrowser} disabled={findingNearest}>
+                            {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
+                        </button>
                         <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
                         <button className="station-map-action" title="Layers" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
                         <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
@@ -485,7 +520,13 @@
                             <input className="form-control form-control-sm" placeholder="Search location" value={locationSearch} onChange={(e) => setLocationSearch(e.target.value)} />
                             <button className="btn btn-sm btn-primary" disabled={isSearchingLoc} type="submit">{isSearchingLoc ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-arrow-return-left"></i>}</button>
                         </form>
-                        <button className="btn btn-sm btn-outline-primary w-100 mt-2" onClick={selectNearest}>Focus active traffic</button>
+                        <button className="btn btn-sm btn-outline-info w-100 mt-2" onClick={openLocationInGoogleMaps} disabled={!locationSearch.trim()}>
+                            Mo tren Google Maps
+                        </button>
+                        <button className="btn btn-sm btn-outline-primary w-100 mt-2" onClick={findNearestFromBrowser} disabled={findingNearest}>
+                            {findingNearest ? 'Đang tìm...' : 'Tìm trạm gần nhất từ vị trí của tôi'}
+                        </button>
+                        <button className="btn btn-sm btn-outline-secondary w-100 mt-2" onClick={selectNearest}>Focus active traffic</button>
                     </div>
                 )}
 
@@ -504,3 +545,5 @@
 
     window.AllStationsMap = AllStationsMap;
 })();
+
+

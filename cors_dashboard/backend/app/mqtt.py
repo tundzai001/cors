@@ -297,10 +297,12 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # --- 2.3. ĐỌC SYNC STATUS TỪ CACHE (KHÔNG MỞ DB) ---
             # 🔥 THAY ĐỔI CHÍNH: Không check DB mỗi message nữa!
             # Batch checker sẽ update cache mỗi 60s
+            raw_status = str(data.get("status") or "").strip().lower()
+            is_offline_packet = raw_status == "offline"
             is_synced = device_sync_cache.get(serial, True)
             sync_errors = []
             agent_version = data.get("version")
-            if not _version_matches(agent_version):
+            if agent_version and not _version_matches(agent_version):
                 is_synced = False
                 sync_errors.append(f"Agent version {agent_version or '??'} != server {settings.APP_VERSION}")
 
@@ -313,11 +315,19 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 logging.debug("Device lookup for sync metadata failed for %s: %s", serial, e)
 
             if db_device:
+                agent_reported_status = raw_status
+                db_system_info = getattr(db_device, "system_info", None)
+                license_bypass = bool(isinstance(db_system_info, dict) and db_system_info.get("auth_license_bypass"))
                 expected_fp = _fingerprint_token(getattr(db_device, "device_token", None))
                 token_synced = bool(expected_fp and agent_token_fp and expected_fp == agent_token_fp)
-                if expected_fp and not token_synced:
+                token_check_available = bool(agent_token_fp) or not is_offline_packet
+                needs_token_deploy = False if license_bypass else ((not expected_fp) or (token_check_available and not token_synced))
+                if needs_token_deploy:
                     is_synced = False
-                    sync_errors.append("Agent token is missing or does not match server token")
+                    if expected_fp:
+                        sync_errors.append("Agent token is missing or does not match server token")
+                    else:
+                        sync_errors.append("Server token has not been issued to this agent")
                     data["status"] = "awaiting_license"
                     data["bps"] = 0
                     data["ntrip_connected"] = False
@@ -325,9 +335,14 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     data["ntrip_stats"] = {}
                 system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
                 system_info["auth_status"] = {
+                    "server_token_present": bool(expected_fp),
                     "token_required": bool(expected_fp),
-                    "token_synced": token_synced,
-                    "agent_token_present": bool(agent_token_fp),
+                    "token_synced": token_synced if token_check_available else None,
+                    "agent_token_present": bool(agent_token_fp) if token_check_available else None,
+                    "needs_token_deploy": needs_token_deploy,
+                    "license_bypass": license_bypass,
+                    "agent_reported_status": agent_reported_status,
+                    "token_check_available": token_check_available,
                 }
                 data["system_info"] = system_info
                 if not data.get("name") and db_device.name:

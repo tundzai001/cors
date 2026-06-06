@@ -158,6 +158,23 @@ function getSatelliteKey(sat) {
     return `${getSatelliteSystem(sat)}:${sat.prn}`;
 }
 
+function getVisibleSatellites(satellites, maxAgeMs) {
+    const now = Date.now();
+    const visibleByKey = new Map();
+
+    (satellites || []).forEach(sat => {
+        const snr = Number(sat?.snr);
+        if (!sat || !Number.isFinite(snr) || snr <= 0) return;
+
+        const lastSeen = Number(sat.lastSeen || sat.last_seen || 0);
+        if (lastSeen > 0 && now - lastSeen > maxAgeMs) return;
+
+        visibleByKey.set(getSatelliteKey(sat), sat);
+    });
+
+    return Array.from(visibleByKey.values());
+}
+
 // ===============================================================================
 // === ENHANCED DASHBOARD COMPONENT (REPLACED)
 // ===============================================================================
@@ -454,9 +471,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const container = signalBarsContainerRef.current;
             if (!container) return;
 
-            const buffer = satelliteBufferRef.current;
-            // Chỉ lấy các vệ tinh có thông tin SNR > 0 và còn sống (opacity > 0.3) theo yêu cầu ẩn SNR 0
-            const activeSatellites = Array.from(buffer.values()).filter(s => s.snr > 0 && s.opacity > 0.3);
+            // Count only fresh satellites with a positive SNR; canvas fade remains visual-only.
+            const activeSatellites = getVisibleSatellites(satellites, SATELLITE_TIMEOUT + FADE_DURATION);
 
             // Tạo hash cấu trúc (Chỉ phụ thuộc số lượng và loại PRN - Không chứa giá trị SNR để tránh giật hình)
             const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort().join('|');
@@ -556,7 +572,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) {
-                    const activeCount = Object.values(satellites || {}).filter(s => Number(s.snr) > 0).length;
+                    const activeCount = getVisibleSatellites(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION).length;
                     satCountEl.textContent = activeCount || gga?.satellites || 0;
                 }
 

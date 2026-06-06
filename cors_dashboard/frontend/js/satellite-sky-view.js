@@ -32,6 +32,23 @@ function getSatelliteKey(sat) {
     return `${getSatelliteSystem(sat)}:${sat.prn}`;
 }
 
+function getVisibleSatellites(satellites, maxAgeMs) {
+    const now = Date.now();
+    const visibleByKey = new Map();
+
+    (satellites || []).forEach(sat => {
+        const snr = Number(sat?.snr);
+        if (!sat || !Number.isFinite(snr) || snr <= 0) return;
+
+        const lastSeen = Number(sat.lastSeen || sat.last_seen || 0);
+        if (lastSeen > 0 && now - lastSeen > maxAgeMs) return;
+
+        visibleByKey.set(getSatelliteKey(sat), sat);
+    });
+
+    return Array.from(visibleByKey.values());
+}
+
 const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
     const bgCanvasRef = useRef(null);
     const satCanvasRef = useRef(null);
@@ -193,10 +210,10 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
             satCtx.globalAlpha = 1.0;
         };
 
-        const drawSignalBars = () => {
+        const drawSignalBars = (satellites) => {
             const container = signalBarsContainerRef.current;
             if (!container) return;
-            const activeSatellites = Array.from(satelliteBufferRef.current.values()).filter(s => s.snr > 0 && s.opacity > 0.3);
+            const activeSatellites = getVisibleSatellites(satellites, SATELLITE_TIMEOUT + FADE_DURATION);
             const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort().join('|');
             const groupedSats = activeSatellites.reduce((acc, sat) => {
                 const system = getSatelliteSystem(sat);
@@ -288,7 +305,7 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) {
-                    const activeCount = Object.values(satellites || {}).filter(s => Number(s.snr) > 0).length;
+                    const activeCount = getVisibleSatellites(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION).length;
                     satCountEl.textContent = activeCount || gga?.satellites || 0;
                 }
                 const dopEl = document.getElementById('db-dop');
@@ -308,7 +325,7 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 lastCanvasUpdate.current = now;
             }
             if (now - lastBarsUpdate.current >= BARS_INTERVAL) {
-                drawSignalBars();
+                drawSignalBars(Object.values(satellites || {}));
                 lastBarsUpdate.current = now;
             }
             animationFrameRef.current = requestAnimationFrame(animate);

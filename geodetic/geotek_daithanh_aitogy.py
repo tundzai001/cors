@@ -9,6 +9,7 @@ import time
 import base64
 import select
 import os
+import re
 import ctypes
 import gc
 import hashlib
@@ -163,11 +164,32 @@ config_mgr = ConfigManager(CONFIG_PATH)
 status_mgr = StatusManager(DB_PATH)
 
 
-def get_license_fingerprint():
+def _safe_license_serial(serial):
+    value = str(serial or "").strip()
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
+    return safe or "default"
+
+
+def get_license_path(serial=None):
+    if serial:
+        return os.path.join(SCRIPT_DIR, f"license.{_safe_license_serial(serial)}.key")
+    return LICENSE_PATH
+
+
+def has_license(serial=None):
+    path = get_license_path(serial)
     try:
-        if not os.path.exists(LICENSE_PATH):
+        return os.path.exists(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
+def get_license_fingerprint(serial=None):
+    try:
+        path = get_license_path(serial)
+        if not os.path.exists(path):
             return None
-        with open(LICENSE_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             token = f.read().strip()
         if not token:
             return None
@@ -792,7 +814,7 @@ class RelayWorker(threading.Thread):
             "name": self.cfg['target_mp'],
             "status": "online" if self.desired_active else "sleep",
             "version": RELAY_VERSION,
-            "agent_token_fingerprint": get_license_fingerprint(),
+            "agent_token_fingerprint": get_license_fingerprint(self.serial),
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
@@ -816,7 +838,7 @@ class RelayWorker(threading.Thread):
             "source_mountpoint": self.cfg['source_mp'],
             "rtk_fix_status": "FIXED",
             "detected_chip_type": "RELAY",
-            "is_provisioned": os.path.exists(LICENSE_PATH)
+            "is_provisioned": has_license(self.serial)
         }
         
         try:
@@ -1090,7 +1112,7 @@ class MonitorWorker(threading.Thread):
             "name": self.cfg['mountpoint'],
             "status": current_status,
             "version": RELAY_VERSION,
-            "agent_token_fingerprint": get_license_fingerprint(),
+            "agent_token_fingerprint": get_license_fingerprint(self.serial),
             "timestamp": int(time.time()),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
@@ -1114,7 +1136,7 @@ class MonitorWorker(threading.Thread):
             "source_mountpoint": self.cfg['mountpoint'],
             "rtk_fix_status": "FIXED",
             "detected_chip_type": "Ublox",
-            "is_provisioned": True
+            "is_provisioned": has_license(self.serial)
         }
         
         try:
@@ -1364,7 +1386,7 @@ class MqttSourceWorker(threading.Thread):
             "name": self.name,
             "status": "online" if self.is_connected else ("sleep" if mqtt_data_active else "offline"),
             "version": RELAY_VERSION,
-            "agent_token_fingerprint": get_license_fingerprint(),
+            "agent_token_fingerprint": get_license_fingerprint(self.serial),
             "timestamp": int(time.time()),
             "base_config": base_config,
             "ntrip_connected": self.is_connected,
@@ -1403,7 +1425,8 @@ class MqttSourceWorker(threading.Thread):
             "base_mode_active": mqtt_data_active,
             "detected_chip_type": "Unicorecomm",
             "connection_type": "LTE",
-            "is_lte": True
+            "is_lte": True,
+            "is_provisioned": has_license(self.serial)
         }
         try:
             if self.mqtt_status_client and self.mqtt_status_client.is_connected():
@@ -1988,9 +2011,10 @@ def setup_mqtt(worker_map):
             license_key = cmd_payload.get("license_key")
             if license_key:
                 try:
-                    with open(LICENSE_PATH, "w") as f:
+                    license_path = get_license_path(serial)
+                    with open(license_path, "w") as f:
                         f.write(license_key)
-                    logging.info(f"[{serial}] Received and saved new license key to {LICENSE_PATH}. Restarting to apply...")
+                    logging.info(f"[{serial}] Received and saved new license key to {license_path}. Restarting to apply...")
                     time.sleep(1)
                     os._exit(0)
                 except Exception as e:

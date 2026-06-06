@@ -36,6 +36,14 @@ const STATUS_CLASS_MAP = {
     'auto_setup_averaging': 'bg-info',
     'auto_setup_base': 'bg-info'
 };
+
+function isDeviceStaleOffline(device) {
+    const rawStatus = String(device?.status || '').toLowerCase();
+    if (rawStatus === 'offline') return true;
+    const timestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    if (!timestamp) return false;
+    return (Date.now() / 1000) - timestamp > 180;
+}
 const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
     const [rovers, setRovers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -617,6 +625,38 @@ const DetailsPanel = memo(function DetailsPanel({
     const isServiceConfigured = hasConfig(device?.service_config);
     const baseConfigSignature = isGnssConfigured ? JSON.stringify(device.base_config) : '';
     const serviceConfigSignature = isServiceConfigured ? JSON.stringify(device.service_config) : '';
+    const authStatus = device?.system_info?.auth_status || {};
+    const licenseBypass = authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true;
+    const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
+        ? authStatus.server_token_present
+        : authStatus.token_required;
+    const tokenCheckAvailable = authStatus.token_check_available !== false;
+    const hasAuthTokenState = [
+        'server_token_present',
+        'token_required',
+        'token_synced',
+        'agent_token_present',
+        'needs_token_deploy'
+    ].some(key => Object.prototype.hasOwnProperty.call(authStatus, key));
+    const hasAccessTokenGap =
+        isDeviceStaleOffline(device)
+            ? serverTokenPresent === false
+            : (
+                authStatus.needs_token_deploy === true ||
+                serverTokenPresent === false ||
+                (tokenCheckAvailable && authStatus.agent_token_present === false) ||
+                (tokenCheckAvailable && authStatus.token_synced === false)
+            );
+    const rawStatusKey = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
+    const displayStatusKey = rawStatusKey !== 'offline' && (hasAccessTokenGap || rawStatusKey === 'awaiting_license')
+        ? 'awaiting_license'
+        : rawStatusKey;
+    const shouldShowLicenseTab =
+        !licenseBypass && (
+            device?.status === 'awaiting_license' ||
+            hasAccessTokenGap
+        );
+    const showLicenseTab = shouldShowLicenseTab || (licenseBypass && hasAuthTokenState && hasAccessTokenGap);
 
     useEffect(() => {
         console.log("[DetailsPanel] useEffect triggered! device.serial:", device?.serial, "device.status:", device?.status, "activeTab:", activeTab);
@@ -630,7 +670,23 @@ const DetailsPanel = memo(function DetailsPanel({
 
         let newActiveTab = '';
 
-        switch (device.status) {
+        if (shouldShowLicenseTab) {
+            if (!isDeviceSwitched && userSelectedTab && activeTab === 'operations') {
+                return;
+            }
+            newActiveTab = 'license';
+        } else if (device.status === 'awaiting_license' && licenseBypass) {
+            if (!isDeviceSwitched && userSelectedTab && activeTab) {
+                return;
+            }
+            if (!isGnssConfigured) {
+                newActiveTab = 'chip';
+            } else if (!isServiceConfigured) {
+                newActiveTab = 'service';
+            } else {
+                newActiveTab = 'dashboard';
+            }
+        } else switch (device.status) {
             case 'awaiting_license':
                 newActiveTab = 'license';
                 break;
@@ -674,7 +730,7 @@ const DetailsPanel = memo(function DetailsPanel({
         setTempName(device.name || '');
         setIsEditingName(false);
 
-    }, [device?.serial, device?.status, baseConfigSignature, serviceConfigSignature]);
+    }, [device?.serial, device?.status, baseConfigSignature, serviceConfigSignature, shouldShowLicenseTab]);
 
     const handleTabClick = (tabName) => {
         setActiveTab(tabName);
@@ -783,9 +839,9 @@ const DetailsPanel = memo(function DetailsPanel({
     };
 
     const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_create_rovers));
-    const showConfigTabs = !['awaiting_license', 'rebooting_for_reset'].includes(device.status);
+    const showConfigTabs = !shouldShowLicenseTab && !['rebooting_for_reset'].includes(device.status) && (device.status !== 'awaiting_license' || licenseBypass);
     const showServiceAndDashboardTabs = showConfigTabs && (device.status !== 'unprovisioned' || isRelayLikeStation);
-    const showStationOperationsTab = showServiceAndDashboardTabs && (isAdmin || canEditService);
+    const showStationOperationsTab = !['rebooting_for_reset'].includes(device.status) && (isAdmin || canEditService);
 
     const isDeviceLocked = device.is_locked || device.status === 'locked';
 
@@ -882,8 +938,8 @@ const DetailsPanel = memo(function DetailsPanel({
 
                         {/* Badge trạng thái (luôn hiển thị) */}
                         <div className="d-flex align-items-center gap-1">
-                            <span className={`badge ${STATUS_CLASS_MAP[device.status] || 'bg-secondary'}`}>
-                                {STATUS_TEXT_MAP[device.status] || device.status}
+                            <span className={`badge ${STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary'}`}>
+                                {STATUS_TEXT_MAP[displayStatusKey] || displayStatusKey}
                             </span>
                             {device.version === window.APP_VERSION ? (
                                 <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ (${device.version})`} style={{ fontSize: '1rem' }}></i>
@@ -934,7 +990,7 @@ const DetailsPanel = memo(function DetailsPanel({
                 </div>
 
                 <ul className="nav nav-tabs dashboard-tabs mb-3" role="tablist">
-                    {device.status === 'awaiting_license' && (
+                    {showLicenseTab && (
                         <li className="nav-item">
                             <button className={`nav-link ${activeTab === 'license' ? 'active' : ''}`} onClick={() => handleTabClick('license')}>
                                 <i className="bi bi-key-fill me-1"></i>License

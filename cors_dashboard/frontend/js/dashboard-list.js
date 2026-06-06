@@ -21,20 +21,43 @@ const STATUS_TEXT_MAP = {
 };
 
 function getDeviceOpsFlags(device) {
-    const config = device?.service_config || {};
-    const ntripStatus = device?.ntrip_status || {};
     const status = String(device?.status || 'offline').toLowerCase();
-    const enabled1 = Boolean(config.server1_enabled || (config.serverhost1 && config.port1 && config.mountpoint1));
-    const enabled2 = Boolean(config.server2_enabled || (config.serverhost2 && config.port2 && config.mountpoint2));
-    const bps1 = Number(ntripStatus.server1?.bps || 0);
-    const bps2 = Number(ntripStatus.server2?.bps || 0);
-    const activeStatus = ['online', 'streaming', 'starting'].includes(status);
-    const noStream = activeStatus && ((enabled1 && bps1 <= 0) || (enabled2 && bps2 <= 0));
+    const noStream = false;
     const unsynced = device?.is_synced === false;
     const syncErrors = Array.isArray(device?.sync_errors) ? device.sync_errors : [];
-    const alert = status === 'offline' || status === 'locked' || unsynced || noStream;
-    return { alert, unsynced, noStream, syncErrors };
+    const alert = status === 'locked' || unsynced;
+    const alertTitle = unsynced
+        ? (syncErrors.join('\n') || 'Unsynced')
+        : status === 'locked'
+            ? 'Locked'
+            : 'Needs attention';
+    return { alert, unsynced, noStream, syncErrors, alertTitle };
 }
+
+function hasAccessTokenGap(device) {
+    const authStatus = device?.system_info?.auth_status || {};
+    const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
+        ? authStatus.server_token_present
+        : authStatus.token_required;
+    if (isDeviceStaleOffline(device)) {
+        return serverTokenPresent === false;
+    }
+    const tokenCheckAvailable = authStatus.token_check_available !== false;
+    return String(device?.status || '').toLowerCase() === 'awaiting_license' ||
+        authStatus.needs_token_deploy === true ||
+        serverTokenPresent === false ||
+        (tokenCheckAvailable && authStatus.agent_token_present === false) ||
+        (tokenCheckAvailable && authStatus.token_synced === false);
+}
+
+function isDeviceStaleOffline(device) {
+    const rawStatus = String(device?.status || '').toLowerCase();
+    if (rawStatus === 'offline') return true;
+    const timestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    if (!timestamp) return false;
+    return (Date.now() / 1000) - timestamp > 180;
+}
+
 const STATUS_CLASS_MAP = {
     'online': 'bg-success',
     'offline': 'bg-danger',
@@ -109,7 +132,9 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const ntripStats = device.ntrip_stats || {};
         const mqttStats = device.mqtt_stats || {};
         const streamState = device.ntrip_stream_state || {};
-        const rawStatus = String(device?.status || 'offline').toLowerCase();
+        const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
+        const tokenGap = hasAccessTokenGap(device);
+        const displayStatusKey = tokenGap && rawStatus !== 'offline' ? 'awaiting_license' : rawStatus;
 
         const toBool = (value, defaultValue = false) => {
             if (value === null || value === undefined) return defaultValue;
@@ -218,12 +243,15 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             effectiveStatus = rawStatus === 'offline' ? 'online' : rawStatus;
         }
 
-        const statusColorClass = effectiveStatus;
+        const operationalStatus = window.CorsDashboardShared?.getMapEffectiveStatus?.(device);
+        const statusColorClass = tokenGap && rawStatus !== 'offline'
+            ? (['online', 'streaming', 'sleep', 'starting'].includes(operationalStatus) ? operationalStatus : 'awaiting_license')
+            : effectiveStatus;
 
         // Use the rawStatus declared above at line 265
-        const statusText = STATUS_TEXT_MAP[rawStatus] || String(device?.status || 'UNKNOWN').toUpperCase();
-        const statusBadgeClass = STATUS_CLASS_MAP[rawStatus] || 'bg-secondary';
-        const hideStatusBadge = ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(rawStatus);
+        const statusText = STATUS_TEXT_MAP[displayStatusKey] || String(displayStatusKey || 'UNKNOWN').toUpperCase();
+        const statusBadgeClass = STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary';
+        const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(rawStatus);
 
         // Per-server individual color: pushing=green, sleep/input-only=blue, idle=disconnected
         const s1StatusClass = s1.bps > 0 ? 'online' : (s1SleepMode ? 'sleep' : 'disconnected');
@@ -268,7 +296,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                 </div>
 
                     {opsFlags.alert && (
-                        <span className="device-ops-alert-badge" title={opsFlags.noStream ? 'No stream detected' : (opsFlags.unsynced ? (opsFlags.syncErrors.join('\n') || 'Unsynced') : 'Needs attention')}>
+                        <span className="device-ops-alert-badge" title={opsFlags.alertTitle}>
                             <i className="bi bi-exclamation-triangle-fill"></i>
                         </span>
                     )}
@@ -327,9 +355,15 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
     const searchTimeoutRef = useRef(null);
     const isAdmin = currentUser?.role === 'admin';
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
+    const getListStatus = React.useCallback((device) => {
+        const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
+        const effective = getEffectiveStatus(device);
+        if (rawStatus === 'offline') return 'offline';
+        return hasAccessTokenGap(device) && effective === 'offline' ? 'awaiting_license' : effective;
+    }, [getEffectiveStatus]);
     const counts = React.useMemo(() => {
         return devices.reduce((acc, device) => {
-            const status = getEffectiveStatus(device);
+            const status = getListStatus(device);
             const bucket = status === 'streaming' ? 'online' : status;
             const flags = getDeviceOpsFlags(device);
             acc[bucket] = (acc[bucket] || 0) + 1;
@@ -338,8 +372,8 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             if (flags.noStream) acc.no_stream += 1;
             acc.all += 1;
             return acc;
-        }, { all: 0, online: 0, sleep: 0, offline: 0, locked: 0, alerts: 0, unsynced: 0, no_stream: 0 });
-    }, [devices]);
+        }, { all: 0, online: 0, sleep: 0, offline: 0, awaiting_license: 0, locked: 0, alerts: 0, unsynced: 0, no_stream: 0 });
+    }, [devices, getListStatus]);
     const displayedDevices = React.useMemo(() => {
         if (statusFilter === 'all') return devices;
         return devices.filter(device => {
@@ -347,10 +381,10 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             if (statusFilter === 'alerts') return flags.alert;
             if (statusFilter === 'unsynced') return flags.unsynced;
             if (statusFilter === 'no_stream') return flags.noStream;
-            const status = getEffectiveStatus(device);
+            const status = getListStatus(device);
             return (status === 'streaming' ? 'online' : status) === statusFilter;
         });
-    }, [devices, statusFilter]);
+    }, [devices, statusFilter, getListStatus]);
 
     useEffect(() => {
         setLocalSearchTerm(searchTerm);

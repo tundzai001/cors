@@ -19,12 +19,28 @@ const STATUS_TEXT_MAP = {
     'auto_setup_averaging': 'AUTO: LẤY MẪU TỌA ĐỘ',
     'auto_setup_base': 'AUTO: CÀI ĐẶT BASE'
 };
-const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disabled }) {
+const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {
     const [isDeploying, setIsDeploying] = useState(false);
+    const [isUpdatingBypass, setIsUpdatingBypass] = useState(false);
+    const authStatus = device?.system_info?.auth_status || {};
+    const licenseBypass = authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true;
+    const canManageLicense = currentUser?.role === 'admin';
+    const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
+        ? authStatus.server_token_present
+        : authStatus.token_required;
+    const agentTokenPresent = authStatus.agent_token_present === true;
+    const tokenSynced = authStatus.token_synced === true;
+    const authMessage = serverTokenPresent === false
+        ? 'Thiết bị chưa có Access Token trên server. Bấm nút bên dưới để tạo token và gửi xuống agent qua MQTT.'
+        : tokenSynced
+            ? 'Access Token đã đồng bộ với agent. Bạn có thể gửi lại token nếu cần.'
+            : agentTokenPresent
+                ? 'Access Token trên agent không khớp với server. Bấm nút bên dưới để gửi lại token đúng.'
+                : 'Agent chưa có Access Token. Bấm nút bên dưới để gửi token xuống thiết bị qua MQTT.';
 
     const handleAutoDeploy = async (e) => {
         e.preventDefault();
-        if (disabled) return;
+        if (!canManageLicense || disabled) return;
         setIsDeploying(true);
         try {
             const response = await window.apiFetch(window.ApiRoutes.devices.autoDeployToken(device.serial), {
@@ -42,11 +58,42 @@ const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disable
         }
     };
 
+    const handleToggleBypass = async () => {
+        if (!canManageLicense || isUpdatingBypass) return;
+        const nextEnabled = !licenseBypass;
+        const ok = await window.CorsUI.confirmAction({
+            title: nextEnabled ? 'Bypass license' : 'Disable license bypass',
+            message: nextEnabled
+                ? `Cho phép trạm ${device.name || device.serial} bỏ qua license để rescue/update? Chỉ dùng tạm thời.`
+                : `Tắt bypass license cho trạm ${device.name || device.serial}?`,
+            confirmText: nextEnabled ? 'Enable bypass' : 'Disable bypass',
+            tone: nextEnabled ? 'warning' : 'primary'
+        });
+        if (!ok) return;
+        setIsUpdatingBypass(true);
+        try {
+            const response = await window.apiFetch(window.ApiRoutes.devices.licenseBypass(device.serial), {
+                method: 'POST',
+                body: JSON.stringify({ enabled: nextEnabled })
+            });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.detail || 'Failed to update license bypass');
+            }
+            window.showSuccess(nextEnabled ? 'Đã bật bypass license cho trạm.' : 'Đã tắt bypass license cho trạm.');
+            setTimeout(() => window.location.reload(), 500);
+        } catch (error) {
+            window.showError('Không thể cập nhật bypass license: ' + error.message);
+        } finally {
+            setIsUpdatingBypass(false);
+        }
+    };
+
     return (
         <form onSubmit={handleAutoDeploy}>
             <div className="alert alert-warning small">
                 <i className="bi bi-key-fill me-2"></i>
-                Thiết bị đang chờ cấp phép bảo mật (Token). Quá trình này sẽ tự động khởi tạo mã xác thực và gửi xuống thiết bị qua MQTT.
+                {canManageLicense ? authMessage : 'Trạm này đang cần Access Token để mở khóa. Vui lòng liên hệ admin để được cấp token và mở khóa trạm.'}
             </div>
             <div className="mb-3">
                 <label className="form-label">Serial Number của Pi</label>
@@ -66,7 +113,8 @@ const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disable
                 </div>
             </div>
             
-            <button type="submit" className="btn btn-primary w-100 py-3 mt-2 fw-bold" disabled={isDeploying}>
+            {canManageLicense && (
+            <button type="submit" className="btn btn-primary w-100 py-3 mt-2 fw-bold" disabled={isDeploying || disabled}>
                 {isDeploying ? (
                     <>
                         <span className="spinner-border spinner-border-sm me-2"></span>
@@ -79,6 +127,32 @@ const LicenseForm = memo(function LicenseForm({ device, onDeployLicense, disable
                     </>
                 )}
             </button>
+            )}
+            {canManageLicense && (
+                <button
+                    type="button"
+                    className={`btn ${licenseBypass ? 'btn-outline-success' : 'btn-outline-warning'} w-100 py-2 mt-2 fw-bold`}
+                    disabled={isUpdatingBypass}
+                    onClick={handleToggleBypass}
+                >
+                    {isUpdatingBypass ? (
+                        <>
+                            <span className="spinner-border spinner-border-sm me-2"></span>
+                            Đang cập nhật bypass...
+                        </>
+                    ) : licenseBypass ? (
+                        <>
+                            <i className="bi bi-shield-check me-2"></i>
+                            Tắt bypass license
+                        </>
+                    ) : (
+                        <>
+                            <i className="bi bi-shield-exclamation me-2"></i>
+                            Bỏ qua license cho trạm này
+                        </>
+                    )}
+                </button>
+            )}
         </form>
     );
 });

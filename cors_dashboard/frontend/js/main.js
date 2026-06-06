@@ -18,6 +18,15 @@ let deviceListRoot = null;
 let detailsPanelRoot = null;
 let mapRoot = null;
 
+function dismissAppPreloader() {
+    if (typeof window.hideAppPreloader === 'function') {
+        window.hideAppPreloader();
+        return;
+    }
+    const loader = document.getElementById('app-preloader');
+    if (loader) loader.remove();
+}
+
 // === WEBSOCKET ===
 let ws = null;
 let wsReconnectAttempts = 0;
@@ -209,30 +218,13 @@ function getFilteredDevices() {
                 (d.serial && d.serial.toLowerCase().includes(term))
             );
 
-        // --- SORT Logic ---
-        const needsSort = globalState.searchTerm !== lastSearchTerm ||
-            currentVersion === 0 ||
-            lastSearchTerm === null;
-
-        if (needsSort) {
-            cachedFilteredDevices.sort((a, b) => {
-                const isPendingSetup = (d) => {
-                    const status = String(d.status || '').toLowerCase();
-                    const name = String(d.name || '').trim();
-                    if (status === 'awaiting_license' || status === 'unprovisioned') return true;
-                    if (!name) return true;
-                    return false;
-                };
-
-                const aPending = isPendingSetup(a);
-                const bPending = isPendingSetup(b);
-                if (aPending !== bPending) return aPending ? -1 : 1;
-
-                const nameA = String(a.name || a.serial || '').trim();
-                const nameB = String(b.name || b.serial || '').trim();
-                return nameA.localeCompare(nameB, 'vi', { sensitivity: 'base', numeric: true });
-            });
-        }
+        // Keep the station list stable while status/license/bps packets arrive.
+        // Status is shown by badges; it should not reorder cards on every heartbeat.
+        cachedFilteredDevices.sort((a, b) => {
+            const nameA = String(a.name || a.serial || '').trim();
+            const nameB = String(b.name || b.serial || '').trim();
+            return nameA.localeCompare(nameB, 'vi', { sensitivity: 'base', numeric: true });
+        });
 
         lastSearchTerm = globalState.searchTerm;
         lastStateVersion = currentVersion;
@@ -289,9 +281,9 @@ window.ErrorBoundary = ErrorBoundary;
 
 // === SPLIT RENDER FUNCTIONS ===
 function renderDashboard() {
-    console.log("[DEBUG] renderDashboard() triggered! deviceListNeedsUpdate:", deviceListNeedsUpdate, "detailsPanelNeedsUpdate:", detailsPanelNeedsUpdate, "selectedDeviceSerial:", globalState.selectedDeviceSerial);
+    //console.log("[DEBUG] renderDashboard() triggered! deviceListNeedsUpdate:", deviceListNeedsUpdate, "detailsPanelNeedsUpdate:", detailsPanelNeedsUpdate, "selectedDeviceSerial:", globalState.selectedDeviceSerial);
     if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) {
-        console.log("[DEBUG] renderDashboard() returned early because no update flags were set.");
+        //console.log("[DEBUG] renderDashboard() returned early because no update flags were set.");
         return;
     }
 
@@ -303,7 +295,7 @@ function renderDashboard() {
             console.warn("[Main] window.DeviceList is undefined. Deferring render.");
             return;
         }
-        console.log("[DEBUG] Rendering DeviceList sidebar...");
+        ////console.log("[DEBUG] Rendering DeviceList sidebar...");
         deviceListRoot.render(
             React.createElement(window.DeviceList, {
                 devices: filteredDevices,
@@ -320,15 +312,15 @@ function renderDashboard() {
 
     // Render Details Panel
     if (detailsPanelNeedsUpdate && detailsPanelRoot) {
-        console.log("[DEBUG] detailsPanelNeedsUpdate block entered! detailsPanelRoot exists.");
+        ////console.log("[DEBUG] detailsPanelNeedsUpdate block entered! detailsPanelRoot exists.");
         if (!window.DetailsPanel) {
             console.warn("[Main] window.DetailsPanel is undefined. Deferring render.");
             return;
         }
         const selectedDevice = globalState.devices.find(d => String(d.serial) === String(globalState.selectedDeviceSerial));
-        console.log("[DEBUG] selectedDevice resolved for DetailsPanel:", selectedDevice);
+        ////console.log("[DEBUG] selectedDevice resolved for DetailsPanel:", selectedDevice);
         
-        console.log("[DEBUG] Triggering detailsPanelRoot.render()...");
+        ////console.log("[DEBUG] Triggering detailsPanelRoot.render()...");
         detailsPanelRoot.render(
             React.createElement(ErrorBoundary, null,
                 React.createElement(window.DetailsPanel, {
@@ -353,30 +345,30 @@ function renderDashboard() {
         setTimeout(() => {
             const rootEl = document.getElementById('details-panel-root');
             if (rootEl) {
-                console.log("[DEBUG] DOM INSPECTION - details-panel-root children count:", rootEl.children.length, "innerHTML length:", rootEl.innerHTML.length);
+                //console.log("[DEBUG] DOM INSPECTION - details-panel-root children count:", rootEl.children.length, "innerHTML length:", rootEl.innerHTML.length);
                 
                 const rect = rootEl.getBoundingClientRect();
-                console.log("[DEBUG] #details-panel-root size & position:", rect.width, "x", rect.height, "at", rect.left, ",", rect.top);
+                //console.log("[DEBUG] #details-panel-root size & position:", rect.width, "x", rect.height, "at", rect.left, ",", rect.top);
                 const style = window.getComputedStyle(rootEl);
-                console.log("[DEBUG] #details-panel-root computed style - display:", style.display, "visibility:", style.visibility, "opacity:", style.opacity, "height:", style.height);
+                //console.log("[DEBUG] #details-panel-root computed style - display:", style.display, "visibility:", style.visibility, "opacity:", style.opacity, "height:", style.height);
                 
                 const parentEl = rootEl.parentElement;
                 if (parentEl) {
                     const pRect = parentEl.getBoundingClientRect();
-                    console.log("[DEBUG] Parent (.dashboard-main) size & position:", pRect.width, "x", pRect.height, "at", pRect.left, ",", pRect.top);
+                    //////console.log("[DEBUG] Parent (.dashboard-main) size & position:", pRect.width, "x", pRect.height, "at", pRect.left, ",", pRect.top);
                     const pStyle = window.getComputedStyle(parentEl);
-                    console.log("[DEBUG] Parent computed style - display:", pStyle.display, "visibility:", pStyle.visibility, "opacity:", pStyle.opacity, "height:", pStyle.height);
+                    ////console.log("[DEBUG] Parent computed style - display:", pStyle.display, "visibility:", pStyle.visibility, "opacity:", pStyle.opacity, "height:", pStyle.height);
                 }
 
                 if (rootEl.children.length > 0) {
                     const child = rootEl.children[0];
                     const cRect = child.getBoundingClientRect();
-                    console.log("[DEBUG] Child card size & position:", cRect.width, "x", cRect.height, "at", cRect.left, ",", cRect.top);
+                    //console.log("[DEBUG] Child card size & position:", cRect.width, "x", cRect.height, "at", cRect.left, ",", cRect.top);
                     const cStyle = window.getComputedStyle(child);
-                    console.log("[DEBUG] Child computed style - display:", cStyle.display, "visibility:", cStyle.visibility, "opacity:", cStyle.opacity, "height:", cStyle.height);
+                    //console.log("[DEBUG] Child computed style - display:", cStyle.display, "visibility:", cStyle.visibility, "opacity:", cStyle.opacity, "height:", cStyle.height);
                     
-                    console.log("[DEBUG] First child HTML tag:", child.tagName, "classes:", child.className, "style:", child.getAttribute('style'));
-                    console.log("[DEBUG] First child innerText preview:", child.innerText ? child.innerText.substring(0, 100) : 'none');
+                    //console.log("[DEBUG] First child HTML tag:", child.tagName, "classes:", child.className, "style:", child.getAttribute('style'));
+                    //console.log("[DEBUG] First child innerText preview:", child.innerText ? child.innerText.substring(0, 100) : 'none');
                 } else {
                     console.warn("[DEBUG] DOM INSPECTION WARNING: details-panel-root has 0 children!");
                 }
@@ -785,7 +777,7 @@ function updateGlobalDevices(newDeviceData) {
         globalState.stateVersion++; // Trigger cache refresh in getFilteredDevices
 
         if (hasStructuralChanges || hasStatusChanges) {
-            console.log(`[STATE] Structural/Status change version: ${globalState.stateVersion}`);
+            //console.log(`[STATE] Structural/Status change version: ${globalState.stateVersion}`);
             lastSearchTerm = null; // Forces re-sort
         }
 
@@ -1058,7 +1050,7 @@ function connectWebSocket() {
     ws.onopen = () => {
         updateConnectionStatus(true);
         wsReconnectAttempts = 0;
-        console.log('✓ WebSocket connected');
+        //console.log('✓ WebSocket connected');
     };
 
     ws.onmessage = (event) => {
@@ -1087,7 +1079,7 @@ function connectWebSocket() {
         if (wsReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
             const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts), 30000);
             wsReconnectAttempts++;
-            console.log(`WebSocket disconnected. Reconnecting in ${delay / 1000}s...`);
+            //console.log(`WebSocket disconnected. Reconnecting in ${delay / 1000}s...`);
             wsReconnectTimerId = setTimeout(connectWebSocket, delay);
         } else {
             showError('Không thể kết nối đến server. Vui lòng tải lại trang.');
@@ -1119,7 +1111,7 @@ function handleWebSocketMessage(message) {
                 if (data.user_id !== globalState.currentUser.id) {
                     const exists = globalState.devices.some(d => d.serial === statusSerial);
                     if (exists) {
-                        console.log(`Removed unassigned device: ${statusSerial}`);
+                        //console.log(`Removed unassigned device: ${statusSerial}`);
                         removeDeviceLocal(statusSerial);
                     }
                     return;
@@ -1147,7 +1139,7 @@ function handleWebSocketMessage(message) {
     if (type === 'user_assignment_updated') {
         // Nếu chính mình là user bị thay đổi gán trạm -> Load lại toàn bộ devices
         if (data.user_id === globalState.currentUser?.id) {
-            console.log("Assignment updated for current user. Reloading devices...");
+            //console.log("Assignment updated for current user. Reloading devices...");
             // Gọi lại hàm lấy danh sách trạm ban đầu
             if (window.fetchInitialDevices) {
                 window.fetchInitialDevices();
@@ -1509,7 +1501,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // SPECIAL HANDLING FOR PUBLIC HOMEPAGE/STATION/BLOG (NO LOGIN REQUIRED)
     if (isPublicRoute && !localStorage.getItem('access_token') && !sessionStorage.getItem('access_token')) {
-        console.log("Serving Public Content...");
+        //console.log("Serving Public Content...");
         
         // Parallelize initial device loading and root creation
         const initialLoadPromise = loadInitialDevices();
@@ -1575,6 +1567,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderReactComponent(window.apiDocsRoot, apiDocsComponent, {}, 'API docs component is not loaded');
             }
         }
+        dismissAppPreloader();
         return; // CRITICAL: Stop here for public visitors!
     }
 
@@ -1586,6 +1579,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (!globalState.currentUser) {
         console.warn("[Main] Failed to load current user, stopping authenticated init.");
+        dismissAppPreloader();
         return;
     }
 
@@ -1652,7 +1646,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const token = currentPath.split('/').pop();
         const device = resolveDeviceFromStationPath(token);
         if (device) {
-            console.log("Routing to Station Detail:", token);
+            //console.log("Routing to Station Detail:", token);
             globalState.selectedDeviceSerial = device.serial;
             switchView('station-detail');
             const canonicalPath = buildPublicStationPath(device);
@@ -1689,6 +1683,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderReactComponent(window.blogRoot, blogComponent, { slug }, 'Blog component is not loaded');
             });
         }
+        dismissAppPreloader();
         return;
     } else if (currentPath === '/api/docs') {
         switchView('api-docs');
@@ -1697,6 +1692,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderReactComponent(window.apiDocsRoot, apiDocsComponent, {}, 'API docs component is not loaded');
             });
         }
+        dismissAppPreloader();
         return;
     } else if (selectDeviceFromDashboardQuery()) {
         initialView = 'dashboard';
@@ -1713,7 +1709,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 };
 
-console.log(`✓ App initialized with Performance Optimization (view: ${initialView})`);
+dismissAppPreloader();
+//console.log(`✓ App initialized with Performance Optimization (view: ${initialView})`);
 });
 
 window.openPublicMap = async function() {
