@@ -1,4 +1,4 @@
-﻿// ======================
+// ======================
 // satellite-sky-view.js
 // GNSS skyplot and satellite signal-strength view.
 // ======================
@@ -40,7 +40,8 @@ function getVisibleSatellites(satellites, maxAgeMs) {
         const snr = Number(sat?.snr);
         if (!sat || !Number.isFinite(snr) || snr <= 0) return;
 
-        const lastSeen = Number(sat.lastSeen || sat.last_seen || 0);
+        let lastSeen = Number(sat.lastSeen || sat.last_seen || 0);
+        if (lastSeen > 0 && lastSeen < 1e11) lastSeen *= 1000;
         if (lastSeen > 0 && now - lastSeen > maxAgeMs) return;
 
         visibleByKey.set(getSatelliteKey(sat), sat);

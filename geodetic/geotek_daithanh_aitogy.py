@@ -46,6 +46,7 @@ class ConfigManager:
     def __init__(self, config_path):
         self.config_path = config_path
         self.data = {}
+        self._lock = threading.RLock()
         self.load()
 
     def load(self):
@@ -81,10 +82,30 @@ class ConfigManager:
 
     def save(self):
         try:
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                json.dump(self.data, f, indent=4, ensure_ascii=False)
+            with self._lock:
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.data, f, indent=4, ensure_ascii=False)
         except Exception as e:
             logging.error(f"Error saving config: {e}")
+
+    def update_mqtt_source_config(self, serial, updates):
+        serial = str(serial or "").strip()
+        if not serial or not isinstance(updates, dict):
+            return False
+        with self._lock:
+            sources = self.data.setdefault("mqtt_source_list", [])
+            for cfg in sources:
+                cfg_serial = str(cfg.get("serial") or cfg.get("device_serial") or "").strip()
+                if cfg_serial != serial:
+                    continue
+                for key, value in updates.items():
+                    if value is not None:
+                        cfg[key] = value
+                for key in ("last_applied_config", "last_config_update", "active_mountpoint"):
+                    cfg.pop(key, None)
+                self.save()
+                return True
+        return False
 
 class StatusManager:
     def __init__(self, db_path):
@@ -198,6 +219,28 @@ def get_license_fingerprint(serial=None):
         return None
 
 
+MQTT_SOURCE_CONFIG_FIELDS = {
+    "name", "display_name",
+    "setup_method", "duration", "lat", "lon", "alt", "accuracy",
+    "base_setup_method", "survey_in_duration", "survey_in_accuracy",
+    "target_host", "target_port", "target_pass", "target_mp",
+    "stream_on_demand", "stream_active",
+    "server1_enabled", "server1_stream_on_demand", "server1_stream_active",
+    "ntrip_version1", "username1", "serverhost1", "port1", "mountpoint1", "password1",
+    "server2_enabled", "server2_stream_on_demand", "server2_stream_active",
+    "ntrip_version2", "username2", "serverhost2", "port2", "mountpoint2", "password2",
+    "command_host", "command_port", "command_pass", "command_mp",
+    "rtcm_enabled", "rtcmntripversion1", "rtcmserver1", "rtcmport1",
+    "rtcmmountpoint1", "rtcmusername1", "rtcmpassword1",
+}
+
+
+def _mqtt_source_persistable_config(values):
+    if not isinstance(values, dict):
+        return {}
+    return {key: values[key] for key in MQTT_SOURCE_CONFIG_FIELDS if key in values and values[key] is not None}
+
+
 def config_value(section, key, env_keys, default):
     section_data = config_mgr.data.get(section, {})
     value = section_data.get(key)
@@ -253,19 +296,30 @@ def read_http_header(sock, timeout=5):
     header_data = b""
     start_time = time.time()
     
-    while b"\r\n\r\n" not in header_data:
+    while True:
         if time.time() - start_time > timeout:
-            raise Exception("Timeout")
+            preview = header_data[:160].decode(errors="ignore")
+            raise Exception(f"NTRIP header timeout: {preview!r}")
         try:
             chunk = sock.recv(1024)
             if not chunk:
                 raise Exception("Connection closed")
             header_data += chunk
+
+            header_end = header_data.find(b"\r\n\r\n")
+            if header_end >= 0:
+                split_at = header_end + 4
+                return header_data[:split_at], header_data[split_at:]
+
+            line_end = header_data.find(b"\r\n")
+            if line_end >= 0:
+                first_line = header_data[:line_end].decode(errors="ignore")
+                if first_line.startswith("ICY 200"):
+                    blank_end = header_data.find(b"\r\n\r\n", line_end)
+                    split_at = blank_end + 4 if blank_end >= 0 else line_end + 2
+                    return header_data[:split_at], header_data[split_at:]
         except socket.timeout:
             raise Exception("Socket timeout")
-    
-    header_end = header_data.find(b"\r\n\r\n") + 4
-    return header_data[:header_end], header_data[header_end:]
 
 def enable_tcp_keepalive(sock):
     try:
@@ -344,7 +398,10 @@ RTCM_MSM_SYSTEMS = {
     107: "us",
     108: "ru",
     109: "eu",
+    110: "un",
+    111: "jp",
     112: "cn",
+    113: "un",
 }
 
 def rtcm_message_type(frame):
@@ -367,13 +424,14 @@ def parse_rtcm_msm_satellites(frame):
     family = msg_type // 10
     msm_version = msg_type % 10
     system = RTCM_MSM_SYSTEMS.get(family)
-    if not system or msm_version != 4:
+    if not system or msm_version not in (4, 5, 6, 7):
         return []
 
     try:
         reader = BitReader(frame[3:-3])
         reader.skip(12)  # message type
         reader.skip(12)  # station id
+        # All MSM types (including GLONASS) use 30 bits for epoch + dow/reserved
         reader.skip(30)  # epoch time
         reader.skip(1)   # multiple message bit
         reader.skip(3)   # issue of data station
@@ -398,29 +456,43 @@ def parse_rtcm_msm_satellites(frame):
         if cell_count <= 0:
             return []
 
-        # MSM4 satellite data groups.
-        reader.skip(len(satellite_ids) * 8)   # rough range integer milliseconds
-
-        # MSM4 cell data groups before CNR.
-        reader.skip(cell_count * 15)  # fine pseudorange
-        reader.skip(cell_count * 22)  # fine phase range
-        reader.skip(cell_count * 4)   # lock time
-        reader.skip(cell_count * 1)   # half-cycle ambiguity
+        if msm_version in (4, 6):
+            reader.skip(len(satellite_ids) * (8 + 10))
+        else:
+            reader.skip(len(satellite_ids) * (8 + 4 + 10 + 14))
 
         now = time.time()
+        
+        # MSM Payload is grouped by field for all cells, NOT by cell!
+        # Skip the fine pseudorange, fine phaserange, lock time, and half cycle ambiguity for ALL cells
+        if msm_version in (4, 5):
+            reader.skip((15 + 22 + 4 + 1) * cell_count)
+        else:
+            reader.skip((20 + 24 + 10 + 1) * cell_count)
+            
+        # Read CNR for ALL cells
+        cnr_values = []
+        for _ in range(cell_count):
+            if msm_version in (4, 5):
+                cnr_values.append(reader.read_uint(6) / 1.0)
+            else:
+                cnr_values.append(reader.read_uint(10) / 16.0)
+                
+        # Skip fine phaserange rate if needed
+        if msm_version in (5, 7):
+            reader.skip(15 * cell_count)
+
         by_sat = {}
-        for sat_id, signal_id in cells:
-            cnr = reader.read_uint(6)
+        for i, (sat_id, signal_id) in enumerate(cells):
+            cnr = cnr_values[i]
             existing = by_sat.get(sat_id)
             if existing is None or cnr > existing["snr"]:
                 by_sat[sat_id] = {
                     "prn": sat_id,
                     "system": system,
                     "signal": signal_id,
-                    "snr": cnr,
+                    "snr": round(cnr),
                     "cnr": cnr,
-                    "elevation": 0,
-                    "azimuth": 0,
                     "isTracking": True,
                     "source": "RTCM_MSM",
                     "rtcm_type": msg_type,
@@ -429,6 +501,75 @@ def parse_rtcm_msm_satellites(frame):
         return list(by_sat.values())
     except Exception:
         return []
+
+def parse_rtcm_legacy_satellites(frame):
+    msg_type = rtcm_message_type(frame)
+    if msg_type not in (1002, 1004, 1010, 1012):
+        return []
+
+    try:
+        reader = BitReader(frame[3:-3])
+        is_glonass = msg_type in (1010, 1012)
+        system = "ru" if is_glonass else "us"
+        
+        reader.skip(24) # Skip msg_type (12) and station_id (12)
+        reader.skip(27 if is_glonass else 30)  # epoch time
+        reader.skip(1)  # sync flag
+        sat_count = reader.read_uint(5)
+        reader.skip(1)  # smoothing indicator
+        reader.skip(3)  # smoothing interval
+
+        now = time.time()
+        sats = []
+
+        for _ in range(sat_count):
+            sat_id = reader.read_uint(6)
+            if is_glonass:
+                reader.skip(5)  # freq channel
+                reader.skip(1)  # L1 code
+                reader.skip(25) # L1 PR
+                reader.skip(20) # L1 PhR
+                reader.skip(7)  # L1 Lock
+                reader.skip(7)  # L1 Int PR
+            else:
+                reader.skip(1)  # L1 code
+                reader.skip(24) # L1 PR
+                reader.skip(20) # L1 PhR
+                reader.skip(7)  # L1 Lock
+                reader.skip(8)  # L1 Int PR
+            
+            cnr = reader.read_uint(8)
+            cnr_val = float(cnr) * 0.25
+
+            if msg_type in (1004, 1012):
+                reader.skip(2)  # L2 code
+                reader.skip(14) # L2 PR Diff
+                reader.skip(20) # L2 PhR
+                reader.skip(7)  # L2 Lock
+                reader.skip(8)  # L2 CNR
+
+            if cnr_val > 0:
+                sats.append({
+                    "prn": sat_id,
+                    "system": system,
+                    "signal": 1,
+                    "snr": round(cnr_val),
+                    "cnr": cnr_val,
+                    "isTracking": True,
+                    "source": "RTCM_LEGACY",
+                    "rtcm_type": msg_type,
+                    "last_seen": now,
+                })
+
+        return sats
+    except Exception:
+        return []
+
+def parse_all_rtcm_satellites(frame):
+    sats = parse_rtcm_msm_satellites(frame)
+    if not sats:
+        sats = parse_rtcm_legacy_satellites(frame)
+    return sats
 
 def command_delay_seconds(command_bytes):
     if command_bytes.startswith(b"$DELAY_") and command_bytes.endswith(b"$"):
@@ -718,7 +859,7 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
 
     commands = [
         b"FRESET\r\n",
-        b"$DELAY_8000$",
+        b"$DELAY_5000$",
         b"unlogall\r\n",
         b"$DELAY_1000$",
     ]
@@ -740,7 +881,8 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
         b"$DELAY_500$",
     ])
 
-    for msg_id in ("1006", "1033", "1074", "1124", "1084", "1094", "1042", "1019", "1020", "1045"):
+    # 1114 = QZSS MSM4, 1044 = QZSS Ephemeris
+    for msg_id in ("1006", "1033", "1074", "1124", "1084", "1094", "1114", "1042", "1019", "1020", "1045", "1044"):
         commands.append(f"rtcm{msg_id} {rtcm_port} 1\r\n".encode("ascii"))
         commands.append(b"$DELAY_200$")
 
@@ -767,13 +909,15 @@ class RelayWorker(threading.Thread):
         self.last_stat_update = time.time()
         self.current_bps = 0
         self.current_source_bps = 0
+        self._last_disconnect_reason = ""
         
         self.name = f"Relay-{self.cfg['target_mp']}"
-        self.desired_active = False
+        self.desired_active = bool(self.cfg.get("stream_active", True))
         self.wakeup_event = threading.Event()
         self.socket_lock = threading.Lock()
         self._source_sock = None
         self._target_sock = None
+        self.satellites = {}
 
     def _source_host(self):
         return self.cfg.get('source_host', SOURCE_HOST)
@@ -797,7 +941,10 @@ class RelayWorker(threading.Thread):
         return self.cfg.get('target_pass', TARGET_PASS)
 
     def _keep_target_connected(self):
-        return bool(self.cfg.get("keep_target_connected", True))
+        return bool(self.cfg.get("keep_target_connected", False))
+
+    def _source_send_gga(self):
+        return bool(self.cfg.get("source_send_gga", False))
     
     def log(self, level, msg):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['target_mp']}] {msg}")
@@ -808,6 +955,12 @@ class RelayWorker(threading.Thread):
         
         output_connected = bool(self.desired_active and self.is_connected)
         output_bps = self.current_bps if self.desired_active else 0
+        now = time.time()
+        satellites = {
+            key: sat for key, sat in self.satellites.items()
+            if now - float(sat.get("last_seen", 0)) <= 30
+        }
+        self.satellites = satellites
 
         status = {
             "serial": self.serial,
@@ -827,6 +980,19 @@ class RelayWorker(threading.Thread):
             "ntrip_connected": output_connected,
             "ntrip_stats": {"server1_bps": output_bps, "rtcm_input_bps": self.current_source_bps},
             "ntrip_status": {"server1": {"connected": output_connected, "bps": output_bps}},
+            "nmea_data": {
+                "gga": None,
+                "gsa": None,
+                "satellites": satellites,
+                "base_coords": {
+                    "lat": self.cfg['lat'],
+                    "lon": self.cfg['lon'],
+                    "alt": self.cfg['alt']
+                }
+            },
+            "gnss_stats": {
+                "satellites": len([sat for sat in satellites.values() if sat.get("snr", 0) > 0])
+            },
             "service_config": {
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['target_mp'],
@@ -890,6 +1056,7 @@ class RelayWorker(threading.Thread):
             source_sock = None
             target_sock = None
             try:
+                self._last_disconnect_reason = ""
                 if self.cfg.get("source_on_demand") and not self.desired_active:
                     self.is_connected = False
                     self.current_bps = 0
@@ -910,6 +1077,7 @@ class RelayWorker(threading.Thread):
                 # === LUÔN KẾT NỐI SOURCE VÀ LẤY DATA (Kể cả khi bị OFF trên web) ===
                 self.log("INFO", f"Connecting SOURCE: {source_host}:{source_port}/{self.cfg['source_mp']}")
                 source_sock = socket.create_connection((source_host, source_port), timeout=10)
+                enable_tcp_keepalive(source_sock)
                 with self.socket_lock:
                     self._source_sock = source_sock
                 
@@ -919,7 +1087,7 @@ class RelayWorker(threading.Thread):
                     f"Host: {source_host}\r\n"
                     f"Authorization: Basic {auth}\r\n"
                     f"User-Agent: NTRIP Relay/1.0\r\n"
-                    f"Connection: close\r\n\r\n"
+                    f"Connection: keep-alive\r\n\r\n"
                 )
                 source_sock.sendall(source_request.encode())
                 
@@ -928,7 +1096,9 @@ class RelayWorker(threading.Thread):
                     raise Exception("Source rejected")
                 
                 gga = generate_gga(self.cfg['lat'], self.cfg['lon'], self.cfg['alt'])
-                source_sock.sendall(gga.encode())
+                source_send_gga = self._source_send_gga()
+                if source_send_gga:
+                    source_sock.sendall(gga.encode())
                 
                 self.log("SUCCESS", "✓ Source connected")
                 
@@ -939,8 +1109,12 @@ class RelayWorker(threading.Thread):
                 self.bytes_sent = 0
                 self.bytes_received = 0
                 self.last_stat_update = time.time()
+                rtcm_buffer = bytearray()
+                if leftover:
+                    rtcm_buffer.extend(leftover)
+                    leftover = None
                 
-                source_sock.setblocking(False)
+                source_sock.settimeout(5.0)
                 
                 while not self.stop_event.is_set():
                     if self.cfg.get("source_on_demand") and not self.desired_active:
@@ -961,16 +1135,13 @@ class RelayWorker(threading.Thread):
                                 f"Source-Agent: NTRIP NtripSource/1.0\r\n\r\n"
                             )
                             target_sock.sendall(target_request.encode())
-                            response = target_sock.recv(4096)
+                            response, _ = read_http_header(target_sock, timeout=10)
                             if not (b"ICY 200" in response or b"200 OK" in response):
                                 raise Exception(f"Target rejected: {response.decode(errors='ignore')[:100]}")
+                            target_sock.settimeout(None)
                             
                             target_mode = "ACTIVE" if self.desired_active else "SLEEP-STANDBY"
                             self.log("SUCCESS", f"RELAY {target_mode}: {self.cfg['source_mp']} -> {self.cfg['target_mp']}")
-                            if leftover and self.desired_active:
-                                target_sock.sendall(leftover)
-                                self.bytes_sent += len(leftover)
-                                leftover = None
                         except Exception as e:
                             self.log("WARNING", f"Target connection failed: {e}")
                             if target_sock:
@@ -991,60 +1162,81 @@ class RelayWorker(threading.Thread):
                         with self.socket_lock:
                             self._target_sock = None
                         
-                    if time.time() - last_gga > 10:
+                    if source_send_gga and time.time() - last_gga > 10:
                         try:
                             source_sock.sendall(gga.encode())
                             last_gga = time.time()
-                        except:
+                        except Exception as e:
+                            self._last_disconnect_reason = "source_gga_send_failed"
+                            self.log("INFO", f"Source GGA send failed; reconnecting source socket: {e}")
                             break
                     
                     # 3. LUÔN ĐỌC RAW DATA TỪ SOURCE
-                    readable, _, exceptional = select.select([source_sock], [], [source_sock], 1.0)
-                    if exceptional:
-                        break
-                    
-                    if readable:
-                        try:
-                            data = source_sock.recv(4096)
-                            if not data:
-                                self.log("WARNING", "Source EOF")
-                                break
-                            self.bytes_received += len(data)
-                            
-                            # 4. CHỈ GỬI ĐI NẾU ĐANG BẬT TARGET
-                            if self.desired_active and target_sock is not None:
-                                try:
-                                    target_sock.sendall(data)
-                                    self.bytes_sent += len(data)
-                                except Exception as e:
-                                    self.log("WARNING", f"Error sending to target: {e}")
-                                    try: target_sock.close()
-                                    except: pass
-                                    target_sock = None
-                                    with self.socket_lock:
-                                        self._target_sock = None
-                            
-                            
-                            # Tính BPS thật sự
-                            now = time.time()
-                            if now - self.last_stat_update >= 1.0:
-                                self.current_bps = int(self.bytes_sent / (now - self.last_stat_update))
-                                self.current_source_bps = int(self.bytes_received / (now - self.last_stat_update))
-                                self.bytes_sent = 0
-                                self.bytes_received = 0
-                                self.last_stat_update = now
-                                self.publish_status()
-                                
-                        except BlockingIOError:
-                            continue
-                        except Exception as e:
-                            self.log("WARNING", f"Data error: {e}")
-                            break
-                    else:
+                    try:
+                        data = source_sock.recv(4096)
+                    except socket.timeout:
                         continue
+                    except OSError as e:
+                        if getattr(e, "winerror", None) in (10053, 10054) or getattr(e, "errno", None) in (10053, 10054):
+                            self._last_disconnect_reason = "source_remote_close"
+                            self.log("INFO", f"Source remote closed socket; reconnecting source socket: {e}")
+                        else:
+                            self._last_disconnect_reason = "source_socket_error"
+                            self.log("WARNING", f"Source socket error: {e}")
+                        break
+                    except Exception as e:
+                        self._last_disconnect_reason = "source_data_error"
+                        self.log("WARNING", f"Data error: {e}")
+                        break
+
+                    if not data:
+                        self._last_disconnect_reason = "source_eof"
+                        self.log("INFO", "Source EOF; reconnecting source socket.")
+                        break
+
+                    self.bytes_received += len(data)
+                    
+                    if self.mqtt_client and self.mqtt_client.is_connected():
+                        try:
+                            self.mqtt_client.publish(f"pi/devices/{self.serial}/raw_data", data, qos=0)
+                        except Exception as e:
+                            self.log("WARNING", f"Failed to publish raw_data: {e}")
+
+                    rtcm_buffer.extend(data)
+                    frames = extract_rtcm3_frames(rtcm_buffer)
+                    for frame in frames:
+                        for sat in parse_all_rtcm_satellites(frame):
+                            sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
+                            self.satellites[sat_key] = sat
+
+                    # 4. CHỈ GỬI ĐI NẾU ĐANG BẬT TARGET
+                    if self.desired_active and target_sock is not None and frames:
+                        for frame in frames:
+                            try:
+                                target_sock.sendall(frame)
+                                self.bytes_sent += len(frame)
+                            except Exception as e:
+                                self.log("WARNING", f"Error sending RTCM frame to target: {e}")
+                                try: target_sock.close()
+                                except: pass
+                                target_sock = None
+                                with self.socket_lock:
+                                    self._target_sock = None
+                                break
+
+                    # Tính BPS thật sự
+                    now = time.time()
+                    if now - self.last_stat_update >= 1.0:
+                        self.current_bps = int(self.bytes_sent / (now - self.last_stat_update))
+                        self.current_source_bps = int(self.bytes_received / (now - self.last_stat_update))
+                        self.bytes_sent = 0
+                        self.bytes_received = 0
+                        self.last_stat_update = now
+                        self.publish_status()
                 
-                self.log("INFO", f"Source loop ended, reconnecting in {RECONNECT_INTERVAL}s...")
-                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                reconnect_wait = 1 if self._last_disconnect_reason.startswith("source_") else RECONNECT_INTERVAL
+                self.log("INFO", f"Source loop ended, reconnecting in {reconnect_wait}s...")
+                self.wakeup_event.wait(reconnect_wait)
                 self.wakeup_event.clear()
                 
             except Exception as e:
@@ -1296,6 +1488,8 @@ class MqttSourceWorker(threading.Thread):
                 "port": self.cfg.get("target_port") or self.cfg.get("port1"),
                 "password": str(self.cfg.get("target_pass") or self.cfg.get("password1") or "").strip(),
                 "mountpoint": str(self.cfg.get("target_mp") or self.cfg.get("mountpoint1") or "").strip(),
+                "username": str(self.cfg.get("username1") or "source").strip() or "source",
+                "version": int(self.cfg.get("ntrip_version1", 1) or 1),
                 "on_demand": bool(self.cfg.get("server1_stream_on_demand", self.cfg.get("stream_on_demand", True))),
                 "active": bool(self.cfg.get("server1_stream_active", self.cfg.get("stream_active", False))),
             }
@@ -1305,6 +1499,8 @@ class MqttSourceWorker(threading.Thread):
             "port": self.cfg.get("port2"),
             "password": str(self.cfg.get("password2") or "").strip(),
             "mountpoint": str(self.cfg.get("mountpoint2") or "").strip(),
+            "username": str(self.cfg.get("username2") or "source").strip() or "source",
+            "version": int(self.cfg.get("ntrip_version2", 1) or 1),
             "on_demand": bool(self.cfg.get("server2_stream_on_demand", True)),
             "active": bool(self.cfg.get("server2_stream_active", False)),
         }
@@ -1373,6 +1569,10 @@ class MqttSourceWorker(threading.Thread):
             "port2": self.cfg.get("port2"),
             "mountpoint2": self.cfg.get("mountpoint2") or "",
             "password2": self.cfg.get("password2") or "",
+            "command_host": self.cfg.get("command_host") or self.cfg.get("source_host") or "",
+            "command_port": self.cfg.get("command_port") or self.cfg.get("source_port"),
+            "command_pass": self.cfg.get("command_pass") or self.cfg.get("source_pass") or "",
+            "command_mp": self.cfg.get("command_mp") or self.cfg.get("source_mp") or "",
             "rtcm_enabled": bool(self.cfg.get("rtcm_enabled", False)),
             "rtcmntripversion1": int(self.cfg.get("rtcmntripversion1", 1) or 1),
             "rtcmserver1": self.cfg.get("rtcmserver1") or "",
@@ -1441,18 +1641,42 @@ class MqttSourceWorker(threading.Thread):
         target_port = int(target_cfg["port"])
         target_pass = target_cfg["password"]
         target_mp = target_cfg["mountpoint"]
+        target_user = target_cfg.get("username") or "source"
+        target_version = int(target_cfg.get("version") or 1)
         server_key = f"server{server_id}"
 
-        self.log("INFO", f"Connecting TARGET NTRIP {server_key} for RTCM output: {target_host}:{target_port}/{target_mp}")
+        self.log("INFO", f"Connecting TARGET NTRIP {server_key} for RTCM output: {target_host}:{target_port}/{target_mp} (v{target_version}.0)")
         sock = socket.create_connection((target_host, target_port), timeout=10)
         
         # Handshake chính xác như đã test để có thể gửi lệnh vào luồng RTCM của chip
-        target_request = f"SOURCE {target_pass} /{target_mp}\r\nSource-Agent: NTRIP GeotekMqttBridge/1.0\r\n\r\n"
+        # TARGET only forwards MQTT RTCM to enabled NTRIP servers.
+        # Chip/base configuration uses the separate COMMAND SOURCE path below.
+        auth_str = f"{target_user}:{target_pass or ''}"
+        auth = base64.b64encode(auth_str.encode("ascii")).decode("ascii")
+        if target_version == 2:
+            target_request = (
+                f"POST /{target_mp} HTTP/1.1\r\n"
+                f"Host: {target_host}:{target_port}\r\n"
+                f"Ntrip-Version: Ntrip/2.0\r\n"
+                f"User-Agent: NTRIP GeotekMqttBridge/1.0\r\n"
+                f"Authorization: Basic {auth}\r\n"
+                f"Transfer-Encoding: chunked\r\n"
+                f"Connection: Keep-Alive\r\n\r\n"
+            )
+        else:
+            target_request = (
+                f"SOURCE {target_pass or ''} /{target_mp} HTTP/1.1\r\n"
+                f"Host: {target_host}:{target_port}\r\n"
+                f"Ntrip-Version: Ntrip/2.0\r\n"
+                f"User-Agent: NTRIP GeotekMqttBridge/1.0\r\n"
+                f"Authorization: Basic {auth}\r\n"
+                f"Connection: Keep-Alive\r\n\r\n"
+            )
         sock.sendall(target_request.encode())
         
         response = sock.recv(4096)
         if not (b"ICY 200" in response or b"200 OK" in response):
-            raise Exception(f"Target rejected SOURCE connection: {response.decode(errors='ignore')[:100]}")
+            raise Exception(f"Target rejected NTRIP connection: {response.decode(errors='ignore')[:100]}")
         
         self.log("SUCCESS", f"TARGET ACTIVE {server_key}: MQTT RTCM -> {target_mp}")
         
@@ -1603,6 +1827,28 @@ class MqttSourceWorker(threading.Thread):
             self.log("INFO", f"Wake received; enabling NTRIP target for mountpoint={mountpoint or self.cfg.get('target_mp')}")
         self.publish_status()
 
+    def apply_provision_payload(self, payload):
+        if not isinstance(payload, dict):
+            return
+        name = str(payload.get("name") or payload.get("display_name") or "").strip()
+        if not name:
+            return
+
+        runtime = status_mgr.get_runtime_config(self.serial)
+        runtime["name"] = name
+        runtime["display_name"] = name
+
+        self.runtime_config = runtime
+        self.cfg.update(runtime)
+        self.name = name
+        status_mgr.update_runtime_config(self.serial, runtime)
+
+        if config_mgr.update_mqtt_source_config(self.serial, {"name": name, "display_name": name}):
+            self.log("INFO", f"Saved provisioned name '{name}' into geotek_config.json")
+        else:
+            self.log("WARNING", "Could not find MQTT source in geotek_config.json for provision save")
+        self.publish_status()
+
     def _persist_remote_config(self, original_config):
         if not isinstance(original_config, dict):
             return
@@ -1638,10 +1884,14 @@ class MqttSourceWorker(threading.Thread):
 
         if method:
             runtime["setup_method"] = method
+            runtime["base_setup_method"] = method
         if method == "SURVEY_IN":
             duration = params.get("survey_in_duration") or params.get("duration")
             if duration is not None:
                 runtime["duration"] = duration
+                runtime["survey_in_duration"] = duration
+            if "survey_in_accuracy" in params:
+                runtime["survey_in_accuracy"] = params["survey_in_accuracy"]
         if method == "FIXED_LLA":
             coords = params.get("coords", {}) if isinstance(params.get("coords"), dict) else params
             for key in ("lat", "lon", "alt"):
@@ -1672,6 +1922,12 @@ class MqttSourceWorker(threading.Thread):
         self.runtime_config = runtime
         self.cfg.update(runtime)
         status_mgr.update_runtime_config(self.serial, runtime)
+        hard_config = _mqtt_source_persistable_config(runtime)
+        if hard_config:
+            if config_mgr.update_mqtt_source_config(self.serial, hard_config):
+                self.log("INFO", "Saved remote config into geotek_config.json")
+            else:
+                self.log("WARNING", "Could not find MQTT source in geotek_config.json for hard save")
 
         after_target = (
             self.cfg.get("target_host"),
@@ -1691,7 +1947,7 @@ class MqttSourceWorker(threading.Thread):
             self.is_connected = False
             self.log("INFO", "Runtime target changed; reconnecting SOURCE socket")
 
-        self.log("INFO", "Saved remote base config into geotek_db.json")
+        self.log("INFO", "Saved remote config into geotek_db.json")
 
     def execute_commands(self, commands_b64, original_config=None):
         """Inject Geotek LTE chip config commands through the active SOURCE socket."""
@@ -1796,7 +2052,15 @@ class MqttSourceWorker(threading.Thread):
                 def on_message(c, userdata, msg):
                     now = time.time()
                     self.last_mqtt_data_ts = now
-                    self.bytes_received += len(msg.payload or b"")
+                    payload_bytes = msg.payload or b""
+                    self.bytes_received += len(payload_bytes)
+                    
+                    if self.mqtt_status_client and self.mqtt_status_client.is_connected():
+                        try:
+                            self.mqtt_status_client.publish(f"pi/devices/{self.serial}/raw_data", payload_bytes, qos=0)
+                        except Exception as e:
+                            self.log("WARNING", f"Failed to publish raw_data: {e}")
+
                     if self._record_command_response(msg.payload):
                         return
                     gga = parse_nmea_gga(msg.payload)
@@ -1821,7 +2085,7 @@ class MqttSourceWorker(threading.Thread):
                         return
 
                     for frame in rtcm_frames:
-                        for sat in parse_rtcm_msm_satellites(frame):
+                        for sat in parse_all_rtcm_satellites(frame):
                             sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
                             self.satellites[sat_key] = sat
 
@@ -1985,8 +2249,13 @@ def setup_mqtt(worker_map):
             cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
             commands_b64 = cmd_payload.get("commands_b64")
             if commands_b64 and hasattr(worker, "execute_commands"):
-                logging.info(f"[{serial}] Executing remote commands from Dashboard")
-                worker.execute_commands(commands_b64, payload.get("original_config"))
+                logging.info(f"[{serial}] Executing remote commands from Dashboard in background thread")
+                import threading
+                threading.Thread(
+                    target=worker.execute_commands,
+                    args=(commands_b64, payload.get("original_config")),
+                    daemon=True
+                ).start()
             return
 
         if command == "DEPLOY_SERVICE_CONFIG":
@@ -2002,6 +2271,20 @@ def setup_mqtt(worker_map):
             logging.info(f"[{serial}] Persisting service config from Dashboard")
             worker._persist_remote_config({"payload": {"service_config": cmd_payload}})
             worker.publish_status()
+            return
+
+        if command == "PROVISION_DEVICE":
+            if not serial:
+                return
+
+            worker = worker_map.get(serial)
+            if not worker or not hasattr(worker, "apply_provision_payload"):
+                logging.warning(f"[{serial}] Provision command received but no active MQTT worker. Known serials: {list(worker_map.keys())}")
+                return
+
+            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            worker.apply_provision_payload(cmd_payload)
+            logging.info(f"[{serial}] Applied provision payload from Dashboard")
             return
             
         if command == "DEPLOY_LICENSE":
