@@ -753,8 +753,9 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
             visible_rovers.append(r)
             continue
             
-        if not r.is_shared_with_managers:
-            continue
+        # Bỏ qua kiểm tra is_shared_with_managers theo yêu cầu của user
+        # if not r.is_shared_with_managers:
+        #     continue
             
         r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
         if any(s in managed_serials for s in r_serials):
@@ -775,8 +776,9 @@ async def check_rover_management_permission(rover: models.RoverAccount, current_
     if rover.created_by_user_id == current_user.id:
         return True
         
-    if not rover.is_shared_with_managers:
-        return False
+    # Bỏ qua kiểm tra is_shared_with_managers theo yêu cầu của user
+    # if not rover.is_shared_with_managers:
+    #     return False
         
     managed_mps, managed_serials = await _get_manager_mountpoints_and_serials(devices_db, current_user)
     
