@@ -72,6 +72,48 @@ async def rename_device(
     
     return {"status": "success", "name": device.name}
 
+@router.put("/api/devices/{serial}/serial")
+async def rename_device_serial(
+    serial: str,
+    request: schemas.DeviceRenameSerial, 
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_DEVICE_NAME))):
+    
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền đổi serial")
+
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+        
+    if not request.new_serial.strip():
+        raise HTTPException(status_code=400, detail="Serial không được để trống")
+        
+    existing = await crud.get_device_by_serial(db, request.new_serial)
+    if existing:
+        raise HTTPException(status_code=400, detail="Serial mới đã tồn tại")
+
+    try:
+        from sqlalchemy import text
+        await db.execute(
+            text("UPDATE devices SET serial = :new_serial WHERE serial = :old_serial"),
+            {"new_serial": request.new_serial, "old_serial": serial}
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+    await crud.log_system_event(
+        db=db,
+        type="warning",
+        message=f"Device serial changed from '{serial}' to '{request.new_serial}' by {current_user.username}",
+        user_id=current_user.id,
+        serial=request.new_serial
+    )
+    
+    return {"status": "success", "new_serial": request.new_serial}
+
 @router.post("/api/users", response_model=schemas.UserResponse)
 async def create_user(
     user_data: schemas.UserCreate,

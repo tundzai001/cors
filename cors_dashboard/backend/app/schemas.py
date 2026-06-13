@@ -47,6 +47,9 @@ class Command(BaseModel):
     command: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
+class DeviceRenameSerial(BaseModel):
+    new_serial: str
+
 class ServiceConfig(BaseModel):
     ncomport: str | None = Field(None, description="Định danh trạm hoặc ID cổng COM")
     reconnectioninterval: int = 10

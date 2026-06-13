@@ -980,7 +980,19 @@ const DetailsPanel = memo(function DetailsPanel({
             <div className="details-panel-scroll dashboard-detail-body card-body overflow-auto flex-grow-1 p-3">
                 <div className="dashboard-detail-meta d-flex justify-content-between align-items-center mb-3">
                     {isAdmin ? (
-                        <p className="text-white-50 small mb-0">Serial: {device.serial}</p>
+                        <p className="text-white-50 small mb-0 d-flex align-items-center">
+                            Serial: {device.serial}
+                            {(device.serial.includes('_LTE_') || device.serial.includes('LTE_') || device.serial.startsWith('MQTT_')) && (
+                                <button className="btn btn-link text-warning p-0 ms-2" title="Chỉnh sửa Serial" onClick={() => {
+                                    const newSerial = prompt('Nhập Serial mới cho trạm LTE này:', device.serial);
+                                    if (newSerial && newSerial.trim() && newSerial.trim() !== device.serial) {
+                                        window.handleRenameSerial(device.serial, newSerial.trim());
+                                    }
+                                }}>
+                                    <i className="bi bi-pencil-square"></i>
+                                </button>
+                            )}
+                        </p>
                     ) : (
                         <div></div>
                     )}

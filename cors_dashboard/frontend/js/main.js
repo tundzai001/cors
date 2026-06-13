@@ -857,6 +857,28 @@ async function handleRenameDevice(serial, newName) {
 }
 window.handleRenameDevice = handleRenameDevice;
 
+async function handleRenameSerial(oldSerial, newSerial) {
+    try {
+        const response = await apiFetch(`/api/devices/${encodeURIComponent(oldSerial)}/serial`, {
+            method: 'PUT',
+            body: JSON.stringify({ new_serial: newSerial })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Đổi serial thất bại');
+        }
+
+        // We should reload the page because serial is used as primary key in many places
+        showSuccess(`Đã đổi serial thành công: "${newSerial}". Đang tải lại...`);
+        setTimeout(() => window.location.reload(), 1500);
+
+    } catch (e) {
+        showError(`Lỗi đổi serial: ${e.message}`);
+    }
+}
+window.handleRenameSerial = handleRenameSerial;
+
 async function handleDeleteDevice(serial, name) {
     const confirmMsg = `⚠️ XÓA KHỎI DANH SÁCH\n\nBạn có chắc muốn xóa trạm '${name}' khỏi giao diện quản lý không?\n\nLưu ý: Hành động này không reset Pi.`;
     const ok = await window.CorsUI.confirmAction({

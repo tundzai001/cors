@@ -55,6 +55,7 @@
             exportCsv: '/api/devices/export/csv',
             detail: serial => `/api/devices/${encodeURIComponent(serial)}`,
             name: serial => `/api/devices/${encodeURIComponent(serial)}/name`,
+            serial: serial => `/api/devices/${encodeURIComponent(serial)}/serial`,
             reset: serial => `/api/devices/${encodeURIComponent(serial)}/reset`,
             command: serial => `/api/devices/${encodeURIComponent(serial)}/command`,
             autoDeployToken: serial => `/api/devices/${encodeURIComponent(serial)}/auto-deploy-token`,

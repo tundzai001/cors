@@ -316,7 +316,7 @@ def is_valid_serial(serial: str) -> bool:
         return True
 
     # Pattern 6: LTE/MQTT bridge stations, for Geotek/Unicorecomm via 4G module.
-    if serial.startswith(('GEOTEK_LTE_', 'MQTT_')):
+    if '_LTE_' in serial or serial.startswith('MQTT_') or serial.startswith('GEOTEK_LTE_'):
         return True
     
     # Bạn có thể thêm pattern khác nếu cần
