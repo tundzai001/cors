@@ -188,6 +188,7 @@ class RoverAccountCreate(RoverAccountBase):
     rtcm_cycle_enabled: bool = False
     rtcm_disconnect_interval_seconds: int = 300  # Default 5 minutes (300 seconds)
     rtcm_disconnect_duration_seconds: int = 10
+    is_shared_with_managers: bool = False
 
 class RoverAccountResponse(RoverAccountBase):
     id: int
@@ -203,6 +204,7 @@ class RoverAccountResponse(RoverAccountBase):
     rtcm_disconnect_interval_seconds: int = 300
     rtcm_disconnect_duration_seconds: int = 10
     expires_at: Optional[int] = None
+    is_shared_with_managers: bool = False
     
     class Config: from_attributes = True
 
@@ -218,6 +220,7 @@ class RoverMultiCreate(BaseModel):
     rtcm_cycle_enabled: bool = False
     rtcm_disconnect_interval_seconds: int = 300
     rtcm_disconnect_duration_seconds: int = 10
+    is_shared_with_managers: bool = False
     
 class RoverUpdate(BaseModel):
     password: str | None = None
@@ -228,6 +231,7 @@ class RoverUpdate(BaseModel):
     rtcm_cycle_enabled: bool | None = None
     rtcm_disconnect_interval_seconds: int | None = None
     rtcm_disconnect_duration_seconds: int | None = None
+    is_shared_with_managers: bool | None = None
     selected_serials: list[str] | None = None # For syncing unknown users
     target_casters: list[str] | None = None
     

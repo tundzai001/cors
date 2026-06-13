@@ -33,7 +33,7 @@ class ConnectionManager:
             data = message.get("data") or {}
             return data.get("user_id") == context.get("user_id")
 
-        if message_type in {"status_update", "nmea_update", "device_deleted"}:
+        if message_type in {"status_update", "nmea_update", "rtcm_signal_update", "device_deleted"}:
             allowed_serials = context.get("allowed_serials")
             if not allowed_serials:
                 return False

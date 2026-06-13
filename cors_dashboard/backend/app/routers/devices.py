@@ -4,11 +4,15 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from ..database import get_auth_db, get_db
-from .. import crud, models, schemas, auth, license_manager
+from .. import crud, models, schemas, auth, license_manager, command_builder
+from .. import mqtt as mqtt_handler
 from ..command_dispatcher import send_command_to_pi
 from ..caster_helpers import _read_caster_config_from_env, get_caster_client, global_caster_cache_lock
 from ..database import settings
+from ..websocket import manager as ui_manager
+import base64
 import logging
+import os
 import re
 
 logger = logging.getLogger(__name__)
@@ -102,17 +106,153 @@ async def send_generic_command(
     )
     return await send_command_to_pi(serial, command.model_dump())
 
+@router.post("/api/devices/{serial}/configure-chip")
+async def configure_chip_endpoint(
+    serial: str,
+    config_request: schemas.Command,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_COORDINATES))
+):
+    device_in_db = await crud.get_device_by_serial(db, serial)
+    if not device_in_db:
+        raise HTTPException(status_code=404, detail="Device not found in database")
 
+    payload = config_request.payload or {}
+    sensor_type = payload.get("sensor_type")
+    params = payload.get("params", {})
+    mode = payload.get("mode")
+    method = params.get("base_setup_method") if isinstance(params, dict) else None
+    gnss_options = params.get("gnss_options") if isinstance(params, dict) else None
+
+    if not sensor_type or not mode:
+        raise HTTPException(status_code=400, detail="Missing required fields: sensor_type or mode")
+
+    try:
+        device_in_db.detected_chip_type = sensor_type
+        if isinstance(params, dict) and params:
+            normalized_params = crud.normalize_base_config(params)
+            if normalized_params:
+                device_in_db.base_config = normalized_params
+            else:
+                current_base_config = device_in_db.base_config if isinstance(device_in_db.base_config, dict) else {}
+                merged_base_config = dict(current_base_config)
+                for key, value in params.items():
+                    if key != "coords":
+                        merged_base_config[key] = value
+                if merged_base_config:
+                    device_in_db.base_config = merged_base_config
+        device_in_db.is_synced = False
+
+        await db.commit()
+        await db.refresh(device_in_db)
+        mqtt_handler.invalidate_device_cache(serial)
+
+        await ui_manager.broadcast({
+            "type": "status_update",
+            "data": schemas.Device.from_orm(device_in_db).model_dump()
+        })
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to save chip config for %s: %s", serial, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save configuration to database: {str(e)}"
+        )
+
+    try:
+        commands_to_send = []
+        pi_command = None
+
+        if mode == "BASE":
+            if method == "AUTO_CORS":
+                pi_command = {
+                    "command": "TRIGGER_AUTO_BASE",
+                    "payload": {
+                        "ip": os.getenv("AUTO_BASE_CORS_IP", "14.238.1.125"),
+                        "port": int(os.getenv("AUTO_BASE_CORS_PORT", "2101")),
+                        "user": os.getenv("AUTO_BASE_CORS_USER", ""),
+                        "password": os.getenv("AUTO_BASE_CORS_PASS", ""),
+                        "mountpoint": os.getenv("AUTO_BASE_CORS_MOUNTPOINT", "VRS.105M3"),
+                        "timeout": 3600,
+                        "samples": 60,
+                        "sensor_type": sensor_type,
+                    },
+                    "original_config": config_request.payload,
+                }
+            elif method == "SURVEY_IN":
+                survey_duration = params.get("survey_in_duration")
+                survey_accuracy = params.get("survey_in_accuracy")
+                if not survey_duration or not survey_accuracy:
+                    raise ValueError("Missing survey_in parameters")
+
+                commands_to_send = command_builder.build_base_survey_in_command(
+                    sensor_type, survey_duration, survey_accuracy, gnss_options
+                )
+            elif method == "FIXED_LLA":
+                coords = params.get("coords")
+                if not coords or not all(k in coords for k in ["lat", "lon", "alt"]):
+                    raise ValueError("Missing or incomplete coordinates")
+
+                accuracy = params.get("accuracy", 10.0)
+                commands_to_send = command_builder.build_base_fixed_lla_command(
+                    sensor_type, coords["lat"], coords["lon"], coords["alt"], accuracy, gnss_options
+                )
+            else:
+                raise ValueError(f"Unknown base setup method: {method}")
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+
+        if not pi_command:
+            encoded_commands = [base64.b64encode(cmd).decode("ascii") for cmd in commands_to_send if cmd]
+            if not encoded_commands:
+                raise ValueError("No commands generated")
+            pi_command = {
+                "command": "EXECUTE_RAW_COMMANDS",
+                "payload": {"commands_b64": encoded_commands},
+                "original_config": config_request.payload,
+            }
+    except Exception as e:
+        logger.error("Failed to build chip config commands for %s: %s", serial, e)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to build configuration commands: {str(e)}"
+        )
+
+    try:
+        response = await send_command_to_pi(serial, pi_command)
+        await crud.log_system_event(
+            db=db,
+            type="info",
+            message=f"GNSS config updated for '{device_in_db.name}' by {current_user.username}",
+            user_id=current_user.id,
+            serial=serial
+        )
+        return {
+            "status": "command_sent_waiting_sync",
+            "channel": response["channel"],
+            "commands_sent": len(commands_to_send) if not pi_command else 1,
+            "message": "Configuration saved to database and sent to device. Waiting for device to apply and confirm sync status...",
+            "is_synced": False,
+        }
+    except HTTPException as http_exc:
+        logger.warning("Failed to send chip config command to %s: %s", serial, http_exc.detail)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Configuration saved to database successfully, but device is offline ({http_exc.detail}). Config will auto-sync when device comes back online."
+        )
+    except Exception as e:
+        logger.error("Unexpected error sending chip config command to %s: %s", serial, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error while sending command: {str(e)}")
 
 # --- CÁC ENDPOINT CHO QUẢN LÝ ROVER ---
 @router.get("/api/bases/{serial}/rovers", response_model=list[schemas.RoverAccountResponse])
 async def get_rovers_for_base(
     serial: str,
     db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # Thêm vÃ o để kiểm tra quyền
+    devices_db: AsyncSession = Depends(get_db), # Thêm vào để kiểm tra quyền
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    # Admin có thể xem Rover của bất kỳ trạm nÃ o
+    # Admin có thể xem Rover của bất kỳ trạm nào
     if current_user.role == auth.Role.ADMIN:
         return await crud.get_rovers_by_base_serial(db, base_serial=serial)
 
@@ -239,7 +379,8 @@ async def create_rover_for_base(
         show_position=rover_data.show_position,
         rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
         rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
-        rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds
+        rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds,
+        is_shared_with_managers=rover_data.is_shared_with_managers
     )
     
     return new_rover
@@ -258,24 +399,9 @@ async def update_rover(
         raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
 
     # 2. Kiểm tra quyền
-    is_admin = current_user.role == auth.Role.ADMIN
-    is_creator = rover.created_by_user_id == current_user.id
-    
-    # Ownership Check: COORDINATOR chỉ quản lý rover thuộc trạm mình sở hữu
-    if not is_admin:
-        serials = (rover.base_serial or "").split(',')
-        owned_res = await devices_db.execute(
-            select(models.Device.serial).where(models.Device.user_id == current_user.id)
-        )
-        owned_serials = set(owned_res.scalars().all())
-        
-        for sn in serials:
-            sn_clean = sn.strip()
-            # Nếu trạm ảo (serial trống) và là người tạo thì cho qua
-            if sn_clean == "" and is_creator:
-                continue
-            if sn_clean not in owned_serials:
-                raise HTTPException(status_code=403, detail=f"Bạn không có quyền quản lý Rover thuộc trạm '{sn}'.")
+    has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+    if not has_perm:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
 
 
     # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
@@ -425,6 +551,9 @@ async def update_rover(
     if update_req.selected_serials:
         update_data["base_serial"] = ",".join(update_req.selected_serials)
         
+    if update_req.is_shared_with_managers is not None:
+        update_data["is_shared_with_managers"] = update_req.is_shared_with_managers
+        
     updated_rover = await crud.update_rover_account(db, rover_id, update_data)
     
     return updated_rover
@@ -442,24 +571,9 @@ async def delete_rover(
         raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
 
     # 2. Kiểm tra quyền
-    is_admin = current_user.role == auth.Role.ADMIN
-    is_creator = rover_to_delete.created_by_user_id == current_user.id
-
-    # Ownership Check: COORDINATOR chỉ quản lý rover thuộc trạm mình sở hữu
-    if not is_admin:
-        serials = (rover_to_delete.base_serial or "").split(',')
-        owned_res = await devices_db.execute(
-            select(models.Device.serial).where(models.Device.user_id == current_user.id)
-        )
-        owned_serials = set(owned_res.scalars().all())
-        
-        for sn in serials:
-            sn_clean = sn.strip()
-            # Nếu trạm ảo (serial trống) và là người tạo thì cho qua
-            if sn_clean == "" and is_creator:
-                continue
-            if sn_clean not in owned_serials:
-                raise HTTPException(status_code=403, detail=f"Bạn không có quyền quản lý Rover thuộc trạm '{sn}'.")
+    has_perm = await crud.check_rover_management_permission(rover_to_delete, current_user, devices_db)
+    if not has_perm:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
 
     
     creator_user = await crud.get_user_by_id(db, rover_to_delete.created_by_user_id)

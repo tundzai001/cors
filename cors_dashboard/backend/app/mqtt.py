@@ -15,6 +15,7 @@ from . import schemas
 from .websocket import manager
 from .database import settings, device_session_scope
 from . import crud, nmea_parser, models
+from .rtcm_signal_decoder import rtcm_signal_decoder
 
 # Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
 mqtt_db_write_lock = asyncio.Lock()
@@ -215,6 +216,15 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
         
         # ==================== 1. XỬ LÝ NMEA DATA ====================
         if message_type == "raw_data":
+            decoded_rtcm = await rtcm_signal_decoder.decode(serial, payload)
+            if decoded_rtcm:
+                await manager.broadcast({
+                    "type": "rtcm_signal_update",
+                    "serial": serial,
+                    "data": decoded_rtcm
+                })
+                return
+
             try:
                 line = payload.decode('ascii', errors='ignore')
                 parsed_data = nmea_parser.parse(line)

@@ -214,7 +214,9 @@ class CasterClient:
                             "identifier": parts[6].strip() if len(parts) > 6 else "",
                             "nclient": self._extract_nclient(parts, default=0),
                             "maxclient": self._extract_maxclient(parts, default=0),
-                            "show_position": self._extract_show_position(parts, default=True)
+                            "show_position": self._extract_show_position(parts, default=True),
+                            "is_blocked": parts[12].strip() == "1" if len(parts) > 12 else False,
+                            "block_reason": __import__("urllib").parse.unquote(parts[13].strip()) if len(parts) > 13 else ""
                         })
             return users
         except Exception: return []
@@ -322,6 +324,18 @@ class CasterClient:
             logger.error(f"Error querying real identifier for '{username}' deletion: {e}")
 
         cmd = f"GET /deluser HTTP/1.0/{real_identifier}/{username}\r\n\r\n"
+        response = await self._send_command(cmd)
+        return self._is_success_response(response)
+
+    async def block_user(self, identifier: str, username: str, reason: str) -> bool:
+        import urllib.parse
+        encoded_reason = urllib.parse.quote(reason)
+        cmd = f"GET /blockuser HTTP/1.0/{identifier}/{username}/{encoded_reason}\r\n\r\n"
+        response = await self._send_command(cmd)
+        return self._is_success_response(response)
+
+    async def unblock_user(self, identifier: str, username: str) -> bool:
+        cmd = f"GET /unblockuser HTTP/1.0/{identifier}/{username}\r\n\r\n"
         response = await self._send_command(cmd)
         return self._is_success_response(response)
 

@@ -263,6 +263,8 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         commands.append(b'rtcm1019 com3 1\r\n')
         commands.append(b'rtcm1020 com3 1\r\n')
         commands.append(b'rtcm1045 com3 1\r\n')
+        commands.append(b'rtcm1114 com3 1\r\n')
+        commands.append(b'rtcm1044 com3 1\r\n')
         
         # BƯỚC 5: Save config
         commands.append(b'saveconfig\r\n')
@@ -408,6 +410,8 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         commands.append(b'rtcm1019 com3 1\r\n')
         commands.append(b'rtcm1020 com3 1\r\n')
         commands.append(b'rtcm1045 com3 1\r\n')
+        commands.append(b'rtcm1114 com3 1\r\n')
+        commands.append(b'rtcm1044 com3 1\r\n')
         
         # BƯỚC 5: Save config
         commands.append(b'saveconfig\r\n')
@@ -417,7 +421,7 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
 
 def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: float = 0, lon: float = 0, alt: float = 0) -> list[bytes]:
     """
-    Hàm chuyên biệt dành riêng cho chip Unicorecomm LTE (Geotek).
+    Hàm chuyên biệt dành riêng cho chip Unicorecomm LTE.
     Sử dụng mặc định cổng COM2 và chuỗi lệnh tối ưu theo yêu cầu người dùng.
     Trình tự: FRESET -> unlogall -> mode base -> NMEA -> RTCM -> saveconfig
     """

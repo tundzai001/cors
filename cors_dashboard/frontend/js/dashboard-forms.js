@@ -244,6 +244,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [manualChip, setManualChip] = useState(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
     const [method, setMethod] = useState('FIXED_LLA');
     const activeChip = needsManualSelection ? manualChip : device.detected_chip_type;
+    const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
 
     const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
     const autoProgress = device?.auto_base_progress || {};
@@ -373,7 +374,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             } else if (method === 'AUTO_CORS') {
                 // Auto CORS uses backend config directly, no frontend parameters needed beyond the method
             }
-            if (isAdmin) {
+            if (isAdmin && !isLteStation) {
                 params.gnss_options = {
                     output_mode: outputMode,
                     constellations: {
@@ -580,8 +581,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <div className="gnss-output-policy__title">
                                 <i className="bi bi-broadcast-pin me-2"></i>GNSS Output Policy
                             </div>
-                            <span className="gnss-output-policy__admin">Admin</span>
+                            <span className="gnss-output-policy__admin">{isLteStation ? 'LTE bỏ qua' : 'Admin'}</span>
                         </div>
+                        {isLteStation && (
+                            <div className="alert alert-info small mb-3">
+                                <i className="bi bi-reception-4 me-2"></i>
+                                <strong>Trạm LTE:</strong> mục NMEA + RTCM và bật/tắt hệ vệ tinh không được set từ UI.
+                                Bridge LTE luôn giữ profile ổn định: lấy dữ liệu từ MQTT, mở SOURCE command khi cần cấu hình,
+                                phát GGA + RTCM trên COM2. Các lựa chọn bên dưới chỉ để tham khảo và sẽ không được gửi xuống trạm LTE.
+                            </div>
+                        )}
                         <div className="gnss-output-policy__grid">
                             <div className="gnss-output-policy__field">
                                 <label className="gnss-output-policy__label">Output mode</label>
@@ -589,6 +598,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     className="form-select form-select-sm gnss-output-policy__select"
                                     value={outputMode}
                                     onChange={(e) => setOutputMode(e.target.value)}
+                                    disabled={isLteStation}
                                 >
                                     <option value="diagnostics_rtcm">NMEA + RTCM</option>
                                     <option value="rtcm_only">RTCM only</option>
@@ -669,6 +679,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         server1_stream_on_demand: true,
         server1_stream_active: false,
         ntrip_version1: 1,
+        username1: '',
         serverhost1: '',
         port1: '',
         mountpoint1: '',
@@ -687,7 +698,11 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         rtcmport1: '',
         rtcmmountpoint1: '',
         rtcmusername1: '',
-        rtcmpassword1: ''
+        rtcmpassword1: '',
+        command_host: '',
+        command_port: '',
+        command_pass: '',
+        command_mp: ''
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isFormDirty, setIsFormDirty] = useState(false);
@@ -696,6 +711,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         currentUser?.role === 'admin' ||
         currentUser?.permissions?.includes('manage:station_mode') ||
         currentUser?.permissions?.includes('MANAGE_STATION_MODE');
+    const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
 
     const toBool = (value, defaultValue = false) => {
         if (value === null || value === undefined) return defaultValue;
@@ -751,7 +767,11 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             rtcmport1: '',
             rtcmmountpoint1: '',
             rtcmusername1: '',
-            rtcmpassword1: ''
+            rtcmpassword1: '',
+            command_host: '',
+            command_port: '',
+            command_pass: '',
+            command_mp: ''
         };
 
         if (device.service_config) {
@@ -852,10 +872,25 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 ntrip_version2: parseInt(formState.ntrip_version2, 10),
                 port1: formState.port1 ? parseInt(formState.port1, 10) : null,
                 port2: formState.port2 ? parseInt(formState.port2, 10) : null,
+                command_port: formState.command_port ? parseInt(formState.command_port, 10) : null,
                 rtcmntripversion1: parseInt(formState.rtcmntripversion1, 10) === 2 ? 2 : 1,
                 rtcmport1: formState.rtcmport1 ? parseInt(formState.rtcmport1, 10) : null,
                 reconnectioninterval: parseInt(formState.reconnectioninterval, 10)
             };
+            if (isLteStation) {
+                delete payload.command_host;
+                delete payload.command_port;
+                delete payload.command_pass;
+                delete payload.command_mp;
+                Object.assign(payload, {
+                    rtcm_enabled: false,
+                    rtcmserver1: null,
+                    rtcmport1: null,
+                    rtcmmountpoint1: null,
+                    rtcmusername1: null,
+                    rtcmpassword1: null
+                });
+            }
 
             await onConfigureService(device.serial, payload);
             setIsFormDirty(false);
@@ -870,6 +905,15 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 <i className="bi bi-info-circle-fill me-2"></i>
                 Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.
             </div>
+            {isLteStation && (
+                <div className="alert alert-primary small">
+                    <div className="fw-bold mb-1">
+                        <i className="bi bi-reception-4 me-2"></i>Mục LTE
+                    </div>
+                    Trạm LTE giữ luồng hoạt động MQTT data -> NTRIP SOURCE. Chỉ cấu hình NTRIP Caster Server 1/2,
+                    mountpoint, password và chế độ sleep/always-on. Phần RTCM Client và NMEA vệ tinh không áp dụng cho LTE.
+                </div>
+            )}
 
             {/* 🔥 Thông báo chế độ xem */}
             {disabled && (
@@ -987,11 +1031,84 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             </div>
 
             <div className="accordion" id="service-config-accordion">
+                {isLteStation && (
+                    <div className="accordion-item">
+                        <h2 className="accordion-header">
+                            <button
+                                className="accordion-button"
+                                type="button"
+                                data-bs-toggle="collapse"
+                                data-bs-target="#collapseLteCommand"
+                            >
+                                <i className="bi bi-terminal me-2 text-warning"></i>
+                                LTE Command SOURCE
+                            </button>
+                        </h2>
+                        <div id="collapseLteCommand" className="accordion-collapse collapse show" data-bs-parent="#service-config-accordion">
+                            <div className="accordion-body">
+                                <fieldset disabled>
+                                    <div className="alert alert-warning small mb-3">
+                                        <i className="bi bi-lightning-charge-fill me-2"></i>
+                                        Đây là SOURCE riêng để gửi lệnh cấu hình tọa độ/chip LTE. Giá trị này được khóa cứng theo cấu hình hệ thống,
+                                        chỉ hiển thị để kiểm tra và không thể sửa từ màn Service Config.
+                                    </div>
+                                    <div className="row g-3">
+                                        <div className="col-md-8">
+                                            <label className="form-label">Command Host / IP</label>
+                                            <input
+                                                type="text"
+                                                className="form-control"
+                                                name="command_host"
+                                                value={formState.command_host}
+                                                onChange={handleChange}
+                                                placeholder="aitogy.com.vn"
+                                            />
+                                        </div>
+                                        <div className="col-md-4">
+                                            <label className="form-label">Command Port</label>
+                                            <input
+                                                type="number"
+                                                className="form-control"
+                                                name="command_port"
+                                                value={formState.command_port}
+                                                onChange={handleChange}
+                                                placeholder="2101"
+                                            />
+                                        </div>
+                                        <div className="col-md-6">
+                                            <label className="form-label">Command Password</label>
+                                            <input
+                                                type="password"
+                                                className="form-control"
+                                                name="command_pass"
+                                                value={formState.command_pass}
+                                                onChange={handleChange}
+                                                placeholder="••••••••"
+                                            />
+                                        </div>
+                                        <div className="col-md-6">
+                                            <label className="form-label">Command Mountpoint</label>
+                                            <input
+                                                type="text"
+                                                className="form-control"
+                                                name="command_mp"
+                                                value={formState.command_mp}
+                                                onChange={handleChange}
+                                                placeholder="test_lte"
+                                            />
+                                        </div>
+                                    </div>
+                                </fieldset>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* ==================== SERVER 1 ==================== */}
                 <div className="accordion-item">
                     <h2 className="accordion-header">
                         <button
-                            className="accordion-button"
+                            className={`accordion-button ${isLteStation ? 'collapsed' : ''}`}
                             type="button"
                             data-bs-toggle="collapse"
                             data-bs-target="#collapseOne"
@@ -1000,9 +1117,17 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                             NTRIP Caster Server 1
                         </button>
                     </h2>
-                    <div id="collapseOne" className="accordion-collapse collapse show" data-bs-parent="#service-config-accordion">
+                    <div id="collapseOne" className={`accordion-collapse collapse ${isLteStation ? '' : 'show'}`} data-bs-parent="#service-config-accordion">
                         <div className="accordion-body">
                             <fieldset disabled={disabled}>
+                                {isLteStation && (
+                                    <div className="alert alert-info small mb-3">
+                                        <i className="bi bi-box-arrow-up-right me-2"></i>
+                                        Với LTE, Server 1 chỉ là đường Python bridge forward RTCM nhận từ MQTT ra caster.
+                                        Các trường Host/Port/Password/Mountpoint ở đây sẽ được lưu đồng thời thành target_host,
+                                        target_port, target_pass và target_mp. Nó không gửi lệnh vào chip.
+                                    </div>
+                                )}
                                 {/* Enable Switch */}
                                 <div className="form-check form-switch form-switch-lg mb-3">
                                     <input
@@ -1060,6 +1185,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         <i className="bi bi-info-circle me-1"></i>
                                         <strong>Ghi chú:</strong> Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0
                                     </div>
+                                    {isLteStation && (
+                                        <div className="alert alert-info small mt-2 mb-0">
+                                            <i className="bi bi-reception-4 me-1"></i>
+                                            Với LTE, NTRIP version chỉ điều khiển cách bridge Python forward RTCM MQTT lên caster Server 1. Cấu hình tọa độ/chip vẫn đi qua LTE Command SOURCE.
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Connection Details */}
@@ -1200,6 +1331,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             </label>
                                         </div>
                                     </div>
+                                    {isLteStation && (
+                                        <div className="alert alert-info small mt-2 mb-0">
+                                            <i className="bi bi-reception-4 me-1"></i>
+                                            Với LTE, NTRIP version chỉ điều khiển cách bridge Python forward RTCM MQTT lên caster Server 2. Cấu hình tọa độ/chip vẫn đi qua LTE Command SOURCE.
+                                        </div>
+                                    )}
                                     <div className="alert alert-secondary small mt-2 mb-0">
                                         <i className="bi bi-info-circle me-1"></i>
                                         <strong>Ghi chú:</strong> Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0
@@ -1285,12 +1422,19 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                             data-bs-target="#collapseThree"
                         >
                             <i className="bi bi-box-arrow-in-down me-2 text-success"></i>
-                            RTCM Client (Nhận tín hiệu hiệu chỉnh)
+                            {isLteStation ? 'RTCM Client / NMEA vệ tinh (không áp dụng cho LTE)' : 'RTCM Client (Nhận tín hiệu hiệu chỉnh)'}
                         </button>
                     </h2>
                     <div id="collapseThree" className="accordion-collapse collapse" data-bs-parent="#service-config-accordion">
                         <div className="accordion-body">
-                            <fieldset disabled={disabled}>
+                            {isLteStation && (
+                                <div className="alert alert-info small mb-3">
+                                    <i className="bi bi-info-circle-fill me-2"></i>
+                                    LTE không dùng mục này để set NMEA/GSV hoặc bật vệ tinh. Bridge tự giữ luồng MQTT -> SOURCE,
+                                    còn cấu hình chip LTE dùng profile cố định GGA + RTCM trên COM2. Các trường RTCM Client bên dưới sẽ bị bỏ qua.
+                                </div>
+                            )}
+                            <fieldset disabled={disabled || isLteStation}>
                                 {/* Enable Switch */}
                                 <div className="form-check form-switch form-switch-lg mb-3">
                                     <input

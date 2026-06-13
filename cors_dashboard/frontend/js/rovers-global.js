@@ -65,6 +65,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (String(currentUser.role || '').toLowerCase() === 'admin') {
             const mountpointsTab = document.getElementById('tab-mountpoints-li');
             if (mountpointsTab) mountpointsTab.classList.remove('d-none');
+            
+            document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('d-none'));
         }
 
         initData();
@@ -1494,8 +1496,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('edit-max-connections').value = liveMaxClients.length > 0
             ? liveMaxClients[0]
             : (Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1);
-        
         const showPosToggle = document.getElementById('edit-show-position');
+        const isSharedToggle = document.getElementById('edit-is-shared');
+        if (isSharedToggle) isSharedToggle.checked = rover.is_shared_with_managers || false;
         if (showPosToggle) {
             const liveInfos = getCasterInfosForUsername(rover.username);
             const hasLiveShowPos = liveInfos.some(i => typeof i?.show_position !== 'undefined');
@@ -1633,7 +1636,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value),
                 rtcm_cycle_enabled: document.getElementById('edit-rtcm-cycle-enabled')?.checked || false,
                 rtcm_disconnect_interval_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-interval')?.value || 300),
-                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10)
+                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10),
+                is_shared_with_managers: document.getElementById('edit-is-shared')?.checked || false
             };
             if (newPass) payload.password = newPass;
             if (newExpiry) payload.expiry_days = parseInt(newExpiry);
@@ -1914,7 +1918,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 show_position: document.getElementById('new-show-position').checked,
                 rtcm_cycle_enabled: document.getElementById('new-rtcm-cycle-enabled').checked,
                 rtcm_disconnect_interval_seconds: parseInt(document.getElementById('new-rtcm-disconnect-interval').value || 300),
-                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('new-rtcm-disconnect-duration').value || 10)
+                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('new-rtcm-disconnect-duration').value || 10),
+                is_shared_with_managers: document.getElementById('new-is-shared')?.checked || false
             };
 
             try {

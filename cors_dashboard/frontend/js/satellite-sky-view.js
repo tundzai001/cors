@@ -42,9 +42,13 @@ function getVisibleSatellites(satellites, maxAgeMs) {
 
         let lastSeen = Number(sat.lastSeen || sat.last_seen || 0);
         if (lastSeen > 0 && lastSeen < 1e11) lastSeen *= 1000;
-        if (lastSeen > 0 && now - lastSeen > maxAgeMs) return;
+        if (lastSeen > 0 && now - lastSeen > maxAgeMs) return; // Uncommented to clear stale satellites
 
-        visibleByKey.set(getSatelliteKey(sat), sat);
+        const key = getSatelliteKey(sat);
+        const existing = visibleByKey.get(key);
+        if (!existing || snr > (Number(existing.snr) || 0)) {
+            visibleByKey.set(key, sat);
+        }
     });
 
     return Array.from(visibleByKey.values());
@@ -148,7 +152,16 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
             const now = Date.now();
             const buffer = satelliteBufferRef.current;
             satellites.forEach(sat => {
-                buffer.set(getSatelliteKey(sat), { ...sat, lastSeen: now, opacity: 1.0 });
+                const key = getSatelliteKey(sat);
+                const existing = buffer.get(key);
+                const satSnr = Number(sat.snr) || 0;
+                const existingSnr = existing ? (Number(existing.snr) || 0) : 0;
+                
+                if (!existing || satSnr > 0 || existingSnr === 0) {
+                    buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
+                } else {
+                    existing.lastSeen = now;
+                }
             });
 
             for (const [satKey, satData] of buffer.entries()) {

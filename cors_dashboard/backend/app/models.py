@@ -51,6 +51,7 @@ class RoverAccount(AuthBase):
     rtcm_disconnect_interval_seconds = Column(Integer, default=300)  # Default 5 minutes
     rtcm_disconnect_duration_seconds = Column(Integer, default=10) # Pause duration
     expires_at = Column(BigInteger, nullable=True) # Unix timestamp of expiration, None = infinite
+    is_shared_with_managers = Column(Boolean, default=False)
 class User(AuthBase):
     __tablename__ = "users"
 

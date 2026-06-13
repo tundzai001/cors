@@ -63,7 +63,11 @@
             mountpoint: String(cfg[`mountpoint${idx}`] || '').trim(),
             bps: Number(ntrip[`server${idx}`]?.bps || 0)
         }));
-        return servers.find(s => s.host.toLowerCase().includes(PREFERRED_HOST)) || servers.find(s => s.host) || servers[0];
+        return (
+            servers.find(s => s.host.toLowerCase().includes(PREFERRED_HOST)) ||
+            servers.find(s => s.host) ||
+            { idx: 1, host: '', mountpoint: String(device?.mountpoint || '').trim(), bps: Number(device?.bps || 0) }
+        );
     }
 
     function popupHtml(device, status, traffic) {

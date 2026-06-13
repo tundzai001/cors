@@ -1376,7 +1376,19 @@ async def log_system_event(
 class IgnoreSocketErrorsFilter(logging.Filter):
     def filter(self, record):
         # Chặn các log warning của asyncio liên quan đến socket.send
-        if "socket.send() raised exception" in record.getMessage():
+        message = record.getMessage()
+        exc_text = ""
+        if record.exc_info:
+            exc_text = "".join(traceback.format_exception(*record.exc_info))
+
+        noisy_socket_errors = (
+            "socket.send() raised exception",
+            "Accept failed on a socket",
+            "Task exception was never retrieved",
+            "WinError 64",
+            "The specified network name is no longer available",
+        )
+        if any(token in message or token in exc_text for token in noisy_socket_errors):
             return False
         return True
 
@@ -2707,6 +2719,14 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                     return lat, lon
 
             return None, None
+
+        def _extract_public_mountpoint(dev: models.Device) -> Optional[str]:
+            service_config = _dict_or_empty(getattr(dev, "service_config", None))
+            for key in ("active_mountpoint", "mountpoint1", "mountpoint2"):
+                value = str(service_config.get(key) or "").strip()
+                if value:
+                    return value
+            return None
         
         public_data = []
         skipped_devices = 0
@@ -2722,12 +2742,10 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                         "status": dev.status,
                         "lat": float(lat),
                         "lon": float(lon),
-                        "service_config": dev.service_config,
-                        "ntrip_stats": dev.ntrip_status,
-                        "detected_chip_type": dev.detected_chip_type,
+                        "mountpoint": _extract_public_mountpoint(dev),
                         "is_provisioned": dev.is_provisioned,
                         "ntrip_connected": getattr(dev, "ntrip_connected", False),
-                        "bps": getattr(dev, "bps", 0)
+                        "bps": _device_total_bps(dev)
                     })
                 except (ValueError, TypeError) as e:
                     logging.warning(f"⚠️ Invalid coordinates for {dev.name}: {e}")
@@ -2801,8 +2819,8 @@ async def get_caster_clienttable(
         managed_devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
         managed_serials = {d.serial.upper().strip() for d in managed_devices}
 
-        # 2. Lấy danh sách rover mà user tạo ra
-        my_rovers = await crud.get_all_rovers_by_user(db, current_user.id, current_user.role)
+        # 2. Lấy danh sách rover mà user quản lý
+        my_rovers = await crud.get_visible_rovers_for_user(db, devices_db, current_user)
         
         # 3. Lọc: Rover vừa do user tạo, vừa được gán vào trạm user quản lý
         allowed_usernames = set()
@@ -2846,8 +2864,8 @@ async def get_caster_users(
         managed_devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
         managed_serials = {d.serial.upper().strip() for d in managed_devices}
 
-        # 2. Lấy danh sách rover mà user tạo ra
-        my_rovers = await crud.get_all_rovers_by_user(auth_db, current_user.id, current_user.role)
+        # 2. Lấy danh sách rover mà user quản lý
+        my_rovers = await crud.get_visible_rovers_for_user(auth_db, devices_db, current_user)
         
         # 3. Lọc: 
         # - Cho phép những Rover do chính User tạo ra (đã lấy ở bước 2)
@@ -3124,14 +3142,24 @@ def _extract_domain(host: str) -> str:
 async def block_caster_user(
     req: schemas.BlockRoverRequest,
     auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
     """
     Chặn rover trên hệ thống:
     1. Lưu vào blocklist DB (source of truth)
-    2. Gọi caster TCP delete_user để kick ngay lập tức
+    2. Gọi caster TCP block_user để kick và chặn ngay lập tức
     3. Cập nhật RoverAccount.is_active = False (nếu user có trong DB)
     """
+    username = req.username.strip()
+    
+    # Permission check if rover exists in DB
+    rover = await crud.get_rover_by_username(auth_db, username)
+    if rover:
+        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+        if not has_perm:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
+            
     username = req.username.strip()
     target_mps = req.mountpoints if req.mountpoints else [None]
     now = int(time.time())
@@ -3161,6 +3189,9 @@ async def block_caster_user(
         auth_db.add(new_block)
         blocks_created += 1
 
+    if blocks_created > 0:
+        await auth_db.commit()
+
     # 3. Gọi các caster TCP để xóa user (kick ngay lập tức trên tất cả server)
     hosts, env_cfg = _read_caster_config_from_env()
     target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
@@ -3171,14 +3202,15 @@ async def block_caster_user(
         try:
             from app.caster_client import CasterClient
             caster = CasterClient(host, port)
-            ok = await caster.delete_user(
+            ok = await caster.block_user(
                 identifier=current_user.username,
                 username=username,
+                reason=req.reason or "Blocked by admin",
             )
             if ok: deleted_count_caster += 1
-            logger.info(f"[CASTER MGMT] Deleted user '{username}' from caster {host}")
+            logger.info(f"[CASTER MGMT] Blocked user '{username}' on caster {host}")
         except Exception as e:
-            logger.warning(f"[CASTER MGMT] Failed to delete user from caster {host}: {e}")
+            logger.warning(f"[CASTER MGMT] Failed to block user on caster {host}: {e}")
 
     return {
         "status": "blocked",
@@ -3203,6 +3235,7 @@ async def get_caster_blocklist(
 async def unblock_caster_user(
     req: schemas.UnblockRoverRequest,
     auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
     """
@@ -3211,6 +3244,15 @@ async def unblock_caster_user(
     2. Tạo lại user trên caster (nếu có thông tin trong DB)
     3. Cập nhật RoverAccount.is_active = True (nếu có)
     """
+    username = req.username.strip()
+    
+    # Permission check if rover exists in DB
+    rover = await crud.get_rover_by_username(auth_db, username)
+    if rover:
+        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+        if not has_perm:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
+            
     username = req.username.strip()
     mountpoint = req.mountpoint.strip() if req.mountpoint else None
 
@@ -3226,6 +3268,7 @@ async def unblock_caster_user(
 
     result = await auth_db.execute(del_q)
     deleted_count = result.rowcount
+    await auth_db.commit()
 
     caster_recreated = False
     rover = await crud.get_rover_by_username(auth_db, username)
@@ -3244,22 +3287,12 @@ async def unblock_caster_user(
             try:
                 from app.caster_client import CasterClient
                 caster = CasterClient(host, port)
-                rover_mps = rover.mountpoints or ""
-                await caster.create_user(
-                    creator=current_user.username,
-                    username=rover.username,
-                    password=rover.password,
-                    mountpoints=rover_mps,
-                    expiry_seconds=315360000,  # 10 năm
-                    max_users=1,
-                    show_position=bool(rover.show_position),
-                    rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False)),
-                    rtcm_disconnect_interval_seconds=int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300),
-                )
+
+                await caster.unblock_user(identifier=current_user.username, username=rover.username)
                 recreated_count += 1
-                logger.info(f"[CASTER MGMT] Re-created user '{username}' on caster {host}")
+                logger.info(f"[CASTER MGMT] Unblocked user '{username}' on caster {host}")
             except Exception as e:
-                logger.warning(f"[CASTER MGMT] Failed to re-create user on caster {host}: {e}")
+                logger.warning(f"[CASTER MGMT] Failed to unblock user on caster {host}: {e}")
         
         caster_recreated = (recreated_count > 0)
     else:
@@ -3965,11 +3998,7 @@ async def get_all_rovers_global(
             detail="Bạn chưa được cấp quyền quản lý Rover."
         )
     
-    # 2. Lấy danh sách Rover dựa trên role
-    if current_user.role == auth.Role.ADMIN:
-        rovers = await crud.get_all_rovers_by_user(db, user_id=current_user.id, role="admin")
-    else:
-        rovers = await crud.get_all_rovers_by_user(db, user_id=current_user.id, role="coordinator")
+    rovers = await crud.get_visible_rovers_for_user(db, devices_db, current_user)
     
     # 3. LÃ m giÃ u dữ liệu (XỬ LÝ HIỂN THỊ NHIỀU TRẠM)
     enriched_rovers = []
@@ -4019,6 +4048,11 @@ async def sync_rover_by_username(
     # 2. Tìm trong DB
     rover = await crud.get_rover_by_username(db, username)
     
+    if rover:
+        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+        if not has_perm:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
+    
     # 3. TRƯỜNG HỢP: USER CHƯA CÓ TRONG DB (Unknown)
     if not rover:
         if not update_req.selected_serials and not update_req.mountpoints:
@@ -4036,7 +4070,8 @@ async def sync_rover_by_username(
             max_connections=update_req.max_connections if update_req.max_connections is not None else 1,
             show_position=update_req.show_position if update_req.show_position is not None else True,
             rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
-            rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300)
+            rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300),
+            is_shared_with_managers=getattr(update_req, 'is_shared_with_managers', False)
         )
         logger.info(f"âœ“ Adopted unknown rover '{username}' into DB")
     
@@ -4279,7 +4314,8 @@ async def create_multi_base_rover(
         target_casters=";".join(results_log), # Lưu chính xác những server đã tạo thành công
         rtcm_cycle_enabled=getattr(request, 'rtcm_cycle_enabled', False),
         rtcm_disconnect_interval_seconds=getattr(request, 'rtcm_disconnect_interval_seconds', 300),
-        rtcm_disconnect_duration_seconds=getattr(request, 'rtcm_disconnect_duration_seconds', 10)
+        rtcm_disconnect_duration_seconds=getattr(request, 'rtcm_disconnect_duration_seconds', 10),
+        is_shared_with_managers=getattr(request, 'is_shared_with_managers', False)
     )
     
     return new_rover
@@ -4925,11 +4961,18 @@ def _split_ops_tokens(value: str | None) -> list[str]:
 
 def _device_total_bps(device: models.Device) -> int:
     status_data = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
-    total = int(device.bps or 0)
+    total = 0
+    has_detailed_bps = False
+    for key in ("server1_bps", "server2_bps", "rtcm_input_bps", "rtcm_in_bps"):
+        value = status_data.get(key)
+        if value is not None:
+            has_detailed_bps = True
+            total += int(value or 0)
     for server_data in status_data.values():
         if isinstance(server_data, dict):
+            has_detailed_bps = True
             total += int(server_data.get("bps") or 0)
-    return total
+    return total if has_detailed_bps else int(getattr(device, "bps", 0) or 0)
 
 
 def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
@@ -5018,10 +5061,8 @@ async def _ops_visible_rovers(
     devices_db: AsyncSession,
     current_user: models.User,
 ) -> list[models.RoverAccount]:
-    if current_user.role == auth.Role.ADMIN:
-        return await crud.get_all_rovers_by_user(auth_db, current_user.id, "admin")
-    if current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers:
-        return await crud.get_all_rovers_by_user(auth_db, current_user.id, "coordinator")
+    return await crud.get_visible_rovers_for_user(auth_db, devices_db, current_user)
+    
     if current_user.role == auth.Role.OPERATOR:
         devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
         owned_serials = {str(d.serial).strip().upper() for d in devices if d.serial}

@@ -1134,6 +1134,22 @@ function handleWebSocketMessage(message) {
             currentNmeaData.base_coords = data.base_coords;
             requestDetailsPanelUpdate('high');
         }
+        if (statusSerial === globalState.selectedDeviceSerial && data.nmea_data) {
+            const nmea = data.nmea_data || {};
+            if (nmea.gga) currentNmeaData.gga = nmea.gga;
+            if (nmea.gsa) currentNmeaData.gsa = nmea.gsa;
+            if (nmea.base_coords) currentNmeaData.base_coords = nmea.base_coords;
+            const statusSatellites = nmea.satellites || {};
+            Object.values(statusSatellites).forEach(sat => {
+                const satKey = sat.id || `${sat.talker || sat.system || 'GN'}:${sat.prn}`;
+                currentNmeaData.satellites[satKey] = {
+                    ...currentNmeaData.satellites[satKey],
+                    ...sat,
+                    lastSeen: sat.lastSeen || sat.last_seen || Date.now()
+                };
+            });
+            requestDetailsPanelUpdate('high');
+        }
     }
 
     if (type === 'user_assignment_updated') {
@@ -1217,6 +1233,26 @@ function handleWebSocketMessage(message) {
         else if (nmeaType === 'GST') {
             currentNmeaData.gst = data;
             if (typeof data.hacc !== 'undefined') currentNmeaData.hacc = data.hacc;
+            requestDetailsPanelUpdate('high');
+        }
+    }
+    if (type === 'rtcm_signal_update' && serial === globalState.selectedDeviceSerial) {
+        const satellites = Array.isArray(data?.satellites) ? data.satellites : [];
+        if (satellites.length) {
+            satellites.forEach(sat => {
+                const satKey = sat.id || `RTCM:${sat.system || 'un'}:${sat.prn}`;
+                currentNmeaData.satellites[satKey] = {
+                    ...currentNmeaData.satellites[satKey],
+                    ...sat,
+                    lastSeen: sat.lastSeen || Date.now()
+                };
+            });
+            currentNmeaData.rtcm = {
+                packets: data.packets || [],
+                errors: data.errors || 0,
+                bufferedBytes: data.bufferedBytes || 0,
+                lastSeen: Date.now()
+            };
             requestDetailsPanelUpdate('high');
         }
     }

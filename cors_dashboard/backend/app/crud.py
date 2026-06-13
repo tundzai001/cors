@@ -630,7 +630,8 @@ async def create_rover_account(
     rtcm_cycle_enabled: bool = False,
     rtcm_disconnect_interval_seconds: int = 300,
     rtcm_disconnect_duration_seconds: int = 10,
-    expires_at: int = None
+    expires_at: int = None,
+    is_shared_with_managers: bool = False
 ) -> models.RoverAccount:
     db_rover = models.RoverAccount(
         username=username, 
@@ -646,7 +647,8 @@ async def create_rover_account(
         rtcm_cycle_enabled=rtcm_cycle_enabled,
         rtcm_disconnect_interval_seconds=rtcm_disconnect_interval_seconds,
         rtcm_disconnect_duration_seconds=rtcm_disconnect_duration_seconds,
-        expires_at=expires_at
+        expires_at=expires_at,
+        is_shared_with_managers=is_shared_with_managers
     )
     db.add(db_rover)
     await db.commit()
@@ -710,6 +712,83 @@ async def get_all_rovers_by_user(db: AsyncSession, user_id: int, role: str) -> l
         return result.scalars().all()
     
     return []
+
+async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current_user: models.User) -> tuple[set[str], set[str]]:
+    managed_devices_res = await devices_db.execute(
+        select(models.Device).where(models.Device.user_id == current_user.id)
+    )
+    managed_devices = managed_devices_res.scalars().all()
+    
+    managed_serials = {d.serial.strip().upper() for d in managed_devices if d.serial}
+    managed_mps = set()
+    
+    for d in managed_devices:
+        cfg = d.service_config or {}
+        if cfg.get("server1_enabled") and cfg.get("mountpoint1"):
+            managed_mps.add(str(cfg.get("mountpoint1")).strip().lower())
+        if cfg.get("server2_enabled") and cfg.get("mountpoint2"):
+            managed_mps.add(str(cfg.get("mountpoint2")).strip().lower())
+            
+    if current_user.extra_mountpoints:
+        import re
+        extras = [mp.strip().lower() for mp in re.split(r'[;,\s\n]+', current_user.extra_mountpoints) if mp.strip()]
+        managed_mps.update(extras)
+        
+    return managed_mps, managed_serials
+
+async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSession, current_user: models.User) -> list[models.RoverAccount]:
+    all_rovers_res = await auth_db.execute(
+        select(models.RoverAccount).order_by(models.RoverAccount.created_at.desc())
+    )
+    all_rovers = all_rovers_res.scalars().all()
+    
+    if current_user.role == "admin":
+        return all_rovers
+        
+    managed_mps, managed_serials = await _get_manager_mountpoints_and_serials(devices_db, current_user)
+    
+    visible_rovers = []
+    for r in all_rovers:
+        if r.created_by_user_id == current_user.id:
+            visible_rovers.append(r)
+            continue
+            
+        if not r.is_shared_with_managers:
+            continue
+            
+        r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
+        if any(s in managed_serials for s in r_serials):
+            visible_rovers.append(r)
+            continue
+            
+        r_mps = [m.strip().lower() for m in (r.mountpoints or "").split(";") if m.strip()]
+        if set(r_mps).intersection(managed_mps):
+            visible_rovers.append(r)
+            continue
+            
+    return visible_rovers
+
+async def check_rover_management_permission(rover: models.RoverAccount, current_user: models.User, devices_db: AsyncSession) -> bool:
+    if current_user.role == "admin":
+        return True
+        
+    if rover.created_by_user_id == current_user.id:
+        return True
+        
+    if not rover.is_shared_with_managers:
+        return False
+        
+    managed_mps, managed_serials = await _get_manager_mountpoints_and_serials(devices_db, current_user)
+    
+    r_serials = [s.strip().upper() for s in (rover.base_serial or "").split(',') if s.strip()]
+    if any(s in managed_serials for s in r_serials):
+        return True
+        
+    r_mps = [m.strip().lower() for m in (rover.mountpoints or "").split(";") if m.strip()]
+    if set(r_mps).intersection(managed_mps):
+        return True
+        
+    return False
 
 # ==============================================================================
 # CLEANUP GHOST DEVICES: Xóa các device không hợp lệ (optional)

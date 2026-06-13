@@ -168,9 +168,14 @@ function getVisibleSatellites(satellites, maxAgeMs) {
 
         let lastSeen = Number(sat.lastSeen || sat.last_seen || 0);
         if (lastSeen > 0 && lastSeen < 1e11) lastSeen *= 1000;
-        // if (lastSeen > 0 && now - lastSeen > maxAgeMs) return; // Removed due to clock skew between client and server
+        if (lastSeen > 0 && now - lastSeen > maxAgeMs) return; // Uncommented to clear stale satellites
 
-        visibleByKey.set(getSatelliteKey(sat), sat);
+        const key = getSatelliteKey(sat);
+        const existing = visibleByKey.get(key);
+        // Only overwrite if this sat has better SNR
+        if (!existing || snr > (Number(existing.snr) || 0)) {
+            visibleByKey.set(key, sat);
+        }
     });
 
     return Array.from(visibleByKey.values());
@@ -281,12 +286,18 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const BARS_INTERVAL = 500;
 
     // 🆕 METRICS UPDATE LOGIC
+    const metricsNmeaDataRef = useRef(nmeaData);
     useEffect(() => {
-        if (!device || !nmeaData) return;
+        metricsNmeaDataRef.current = nmeaData;
+    }, [nmeaData]);
+
+    useEffect(() => {
+        if (!device) return;
         const interval = setInterval(() => {
-            const gga = nmeaData.gga || {};
-            const gsa = nmeaData.gsa || {};
-            const sats = Object.values(nmeaData.satellites || {}).filter(s => s.snr > 0);
+            const currentNmeaData = metricsNmeaDataRef.current || {};
+            const gga = currentNmeaData.gga || {};
+            const gsa = currentNmeaData.gsa || {};
+            const sats = Object.values(currentNmeaData.satellites || {}).filter(s => s.snr > 0);
             const satCount = sats.length || gga.satellites || 0;
 
             const avgSnr = sats.length > 0
@@ -296,8 +307,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             let currentHacc = undefined;
             if (device.hacc !== undefined) {
                 currentHacc = device.hacc / 1000;
-            } else if (nmeaData.hacc !== undefined) {
-                currentHacc = nmeaData.hacc / 1000;
+            } else if (currentNmeaData.hacc !== undefined) {
+                currentHacc = currentNmeaData.hacc / 1000;
             }
 
             setMetrics(prev => ({
@@ -328,7 +339,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             }));
         }, 2000);
         return () => clearInterval(interval);
-    }, [device?.serial, nmeaData, device?.bps, device?.hacc]); // Update logic dependencies
+    }, [device?.serial, device?.bps, device?.hacc]); // Update logic dependencies
 
     // SKYPLOT & CANVAS LOGIC
     useEffect(() => {
@@ -400,7 +411,17 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const buffer = satelliteBufferRef.current;
 
             satellites.forEach(sat => {
-                buffer.set(getSatelliteKey(sat), { ...sat, lastSeen: now, opacity: 1.0 });
+                const key = getSatelliteKey(sat);
+                const existing = buffer.get(key);
+                const satSnr = Number(sat.snr) || 0;
+                const existingSnr = existing ? (Number(existing.snr) || 0) : 0;
+                
+                // Only update buffer if the new satellite has SNR, or if the existing one also has no SNR
+                if (!existing || satSnr > 0 || existingSnr === 0) {
+                    buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
+                } else {
+                    existing.lastSeen = now; // keep it alive
+                }
             });
 
             for (const [satKey, satData] of buffer.entries()) {

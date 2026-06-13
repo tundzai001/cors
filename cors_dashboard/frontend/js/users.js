@@ -249,7 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             role: document.getElementById('role').value,
             is_active: document.getElementById('is_active').checked,
             can_create_rovers: document.getElementById('can_create_rovers').checked,
-            device_serials: Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value),
+            assigned_devices: Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value),
             extra_mountpoints: Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value).join(';')
         };
         if (password) payload.password = password;
