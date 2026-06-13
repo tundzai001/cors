@@ -48,15 +48,19 @@ class CasterClient:
 
             # 3. Đọc dữ liệu
             while True:
-                chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                
-                # Thoát sớm chỉ khi gặp marker kết thúc thật sự của response.
-                # Không dừng ở chữ SOURCETABLE vì nó xuất hiện ngay trong header "SOURCETABLE 200 OK".
-                partial_resp = chunk.decode('utf-8', errors='ignore')
-                if "ENDCLIENTTABLE" in partial_resp or "ENDUSERTABLE" in partial_resp or "ENDSOURCETABLE" in partial_resp:
+                try:
+                    # Giảm timeout xuống 0.5s thay vì 5.0s để tránh block pool kết nối
+                    chunk = await asyncio.wait_for(reader.read(4096), timeout=0.5)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    
+                    # Thoát sớm chỉ khi gặp marker kết thúc thật sự của response.
+                    partial_resp = chunk.decode('utf-8', errors='ignore').upper()
+                    if "ENDCLIENTTABLE" in partial_resp or "ENDUSERTABLE" in partial_resp or "ENDSOURCETABLE" in partial_resp:
+                        break
+                except asyncio.TimeoutError:
+                    # Chấp nhận timeout như là dấu hiệu kết thúc luồng dữ liệu
                     break
             
             return b"".join(chunks).decode('utf-8', errors='ignore')
