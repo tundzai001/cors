@@ -1142,11 +1142,23 @@ function handleWebSocketMessage(message) {
             const statusSatellites = nmea.satellites || {};
             Object.values(statusSatellites).forEach(sat => {
                 const satKey = sat.id || `${sat.talker || sat.system || 'GN'}:${sat.prn}`;
-                currentNmeaData.satellites[satKey] = {
-                    ...currentNmeaData.satellites[satKey],
-                    ...sat,
-                    lastSeen: sat.lastSeen || sat.last_seen || Date.now()
-                };
+                const existingSat = currentNmeaData.satellites[satKey];
+                const newSnr = Number(sat.snr) || 0;
+                const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
+                
+                if (existingSat && newSnr === 0 && oldSnr > 0) {
+                    currentNmeaData.satellites[satKey] = {
+                        ...sat,
+                        ...existingSat, // Keep old valid data (snr, el, az)
+                        lastSeen: Date.now()
+                    };
+                } else {
+                    currentNmeaData.satellites[satKey] = {
+                        ...existingSat,
+                        ...sat,
+                        lastSeen: Date.now()
+                    };
+                }
             });
             requestDetailsPanelUpdate('high');
         }
@@ -1218,11 +1230,23 @@ function handleWebSocketMessage(message) {
         else if (nmeaType === 'GSV' && data.satellites) {
             data.satellites.forEach(sat => {
                 const satKey = sat.id || `${sat.talker || sat.system || 'GN'}:${sat.prn}`;
-                currentNmeaData.satellites[satKey] = {
-                    ...currentNmeaData.satellites[satKey],
-                    ...sat,
-                    lastSeen: Date.now()
-                };
+                const existingSat = currentNmeaData.satellites[satKey];
+                const newSnr = Number(sat.snr) || 0;
+                const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
+                
+                if (existingSat && newSnr === 0 && oldSnr > 0) {
+                    currentNmeaData.satellites[satKey] = {
+                        ...sat,
+                        ...existingSat,
+                        lastSeen: Date.now()
+                    };
+                } else {
+                    currentNmeaData.satellites[satKey] = {
+                        ...existingSat,
+                        ...sat,
+                        lastSeen: Date.now()
+                    };
+                }
             });
             requestDetailsPanelUpdate('high');
         }
@@ -1241,11 +1265,23 @@ function handleWebSocketMessage(message) {
         if (satellites.length) {
             satellites.forEach(sat => {
                 const satKey = sat.id || `RTCM:${sat.system || 'un'}:${sat.prn}`;
-                currentNmeaData.satellites[satKey] = {
-                    ...currentNmeaData.satellites[satKey],
-                    ...sat,
-                    lastSeen: sat.lastSeen || Date.now()
-                };
+                const existingSat = currentNmeaData.satellites[satKey];
+                const newSnr = Number(sat.snr) || 0;
+                const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
+                
+                if (existingSat && newSnr === 0 && oldSnr > 0) {
+                    currentNmeaData.satellites[satKey] = {
+                        ...sat,
+                        ...existingSat,
+                        lastSeen: Date.now()
+                    };
+                } else {
+                    currentNmeaData.satellites[satKey] = {
+                        ...existingSat,
+                        ...sat,
+                        lastSeen: Date.now()
+                    };
+                }
             });
             currentNmeaData.rtcm = {
                 packets: data.packets || [],
