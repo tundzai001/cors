@@ -84,8 +84,8 @@
     "monitor_list": [],
     "mqtt_source_list": [
         {
-            "serial": "GEOTEK_LTE_860549070087338",
-            "name": "Geotek LTE 860549070087338",
+            "serial": "BaBe_LTE_860549070087338",
+            "name": "BK.BaBe",
             "mqtt_broker": "aitogy.click",
             "mqtt_port": 1883,
             "mqtt_user": "mqttUser",
@@ -100,7 +100,7 @@
             "target_host": "aitogy.com.vn",
             "target_port": 2101,
             "target_pass": "12345",
-            "target_mp": "Geotek_LTE",
+            "target_mp": "BK.BaBe",
             "server1_enabled": true,
             "server1_stream_on_demand": true,
             "server1_stream_active": false,

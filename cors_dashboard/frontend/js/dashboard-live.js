@@ -415,14 +415,30 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 const existing = buffer.get(key);
                 const satSnr = Number(sat.snr) || 0;
                 const existingSnr = existing ? (Number(existing.snr) || 0) : 0;
-                
+                const newAz = Number(sat.azimuth) || 0;
+                const newEl = Number(sat.elevation) || 0;
+                const hasNewPos = (newAz !== 0 || newEl !== 0);
+                const hasOldPos = existing && (Number(existing.azimuth) !== 0 || Number(existing.elevation) !== 0);
+
                 // Only update buffer if the new satellite has SNR, or if the existing one also has no SNR
                 if (!existing || satSnr > 0 || existingSnr === 0) {
-                    buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
+                    if (!hasNewPos && hasOldPos) {
+                        // Giữ lại az/el cũ khi ephemeris chưa được tính lại
+                        buffer.set(key, { ...sat, azimuth: existing.azimuth, elevation: existing.elevation, lastSeen: now, opacity: 1.0 });
+                    } else {
+                        buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
+                    }
                 } else {
                     existing.lastSeen = now; // keep it alive
+                    // Cập nhật SNR nhưng giữ az/el cũ nếu mới = 0
+                    if (satSnr > 0) existing.snr = satSnr;
+                    if (hasNewPos) {
+                        existing.azimuth = newAz;
+                        existing.elevation = newEl;
+                    }
                 }
             });
+
 
             for (const [satKey, satData] of buffer.entries()) {
                 const timeSinceLastSeen = now - satData.lastSeen;

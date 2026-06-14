@@ -616,7 +616,7 @@ class RTCMSignalDecoder:
             if serial not in self._azel_cache: self._azel_cache[serial] = {}
             cached = self._azel_cache[serial].get(sat_str_id)
             
-            if cached and now - cached[0] < 5.0:
+            if cached and now - cached[0] < 120.0:
                 azimuth, elevation = cached[1], cached[2]
             else:
                 base_pos = self._base_positions.get(serial)

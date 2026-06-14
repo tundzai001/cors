@@ -736,7 +736,7 @@ def parse_nmea_gsv(payload):
         system = system_map.get(talker_id, "un")
         fields = parts[4:]
         for index in range(0, len(fields), 4):
-            chunk = fields[index:index + 4]
+            chunk = [c.strip() for c in fields[index:index + 4]]
             if len(chunk) < 4 or not chunk[0]:
                 continue
             try:
@@ -879,6 +879,14 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
     commands.extend([
         f"gpgga {gga_port} 1\r\n".encode("ascii"),
         b"$DELAY_500$",
+        f"gpgsv {gga_port} 1\r\n".encode("ascii"),
+        b"$DELAY_200$",
+        f"glgsv {gga_port} 1\r\n".encode("ascii"),
+        b"$DELAY_200$",
+        f"gagsv {gga_port} 1\r\n".encode("ascii"),
+        b"$DELAY_200$",
+        f"bdgsv {gga_port} 1\r\n".encode("ascii"),
+        b"$DELAY_200$",
     ])
 
     # 1114 = QZSS MSM4, 1044 = QZSS Ephemeris
@@ -1207,7 +1215,10 @@ class RelayWorker(threading.Thread):
                     for frame in frames:
                         for sat in parse_all_rtcm_satellites(frame):
                             sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
-                            self.satellites[sat_key] = sat
+                            existing = self.satellites.get(sat_key, {})
+                            existing.update({k: v for k, v in sat.items() if v or k not in existing})
+                            existing["last_seen"] = time.time()
+                            self.satellites[sat_key] = existing
 
                     # 4. CHỈ GỬI ĐI NẾU ĐANG BẬT TARGET
                     if self.desired_active and target_sock is not None and frames:
@@ -1626,7 +1637,8 @@ class MqttSourceWorker(threading.Thread):
             "detected_chip_type": "Unicorecomm",
             "connection_type": "LTE",
             "is_lte": True,
-            "is_provisioned": has_license(self.serial)
+            "is_provisioned": has_license(self.serial),
+            "config_status": getattr(self, "config_status", None)
         }
         try:
             if self.mqtt_status_client and self.mqtt_status_client.is_connected():
@@ -1952,6 +1964,9 @@ class MqttSourceWorker(threading.Thread):
     def execute_commands(self, commands_b64, original_config=None):
         """Inject Geotek LTE chip config commands through the active SOURCE socket."""
         try:
+            self.config_status = {"state": "started", "progress": "Initializing...", "error": None}
+            self.publish_status()
+            
             self._persist_remote_config(original_config)
 
             decoded_commands = build_geotek_lte_unicore_commands(original_config, self.cfg)
@@ -1963,6 +1978,8 @@ class MqttSourceWorker(threading.Thread):
 
             if not decoded_commands:
                 self.log("WARNING", "No commands to inject")
+                self.config_status = {"state": "done", "progress": "No commands needed", "error": None}
+                self.publish_status()
                 return
 
             self.log("INFO", f"Received {len(decoded_commands)} commands to send to command SOURCE")
@@ -1978,14 +1995,21 @@ class MqttSourceWorker(threading.Thread):
                 command_sock = self._connect_command_source()
                 self._clear_command_responses()
                 self.command_batch_active = True
-                for cmd_bytes in decoded_commands:
+                
+                total = len(decoded_commands)
+                for i, cmd_bytes in enumerate(decoded_commands):
+                    self.config_status = {"state": "executing", "progress": f"Executing {i+1}/{total}", "error": None}
+                    self.publish_status()
+                    
                     delay = command_delay_seconds(cmd_bytes)
                     if cmd_bytes.startswith(b"$DELAY_"):
                         time.sleep(delay)
                         continue
                     if not self._send_command_with_ack(command_sock, cmd_bytes):
-                        raise TimeoutError(f"Command did not receive OK/no func response: {cmd_bytes.decode(errors='ignore').strip()}")
+                        raise TimeoutError(f"No response for: {cmd_bytes.decode(errors='ignore').strip()}")
                     time.sleep(delay)
+                
+                self.config_status = {"state": "success", "progress": "Configuration applied successfully", "error": None}
                 self.log("SUCCESS", "Commands sent through command SOURCE successfully")
             finally:
                 if command_sock:
@@ -1996,7 +2020,10 @@ class MqttSourceWorker(threading.Thread):
                     self.log("INFO", "COMMAND SOURCE closed after command batch")
                 self.command_batch_active = False
                 self._clear_command_responses()
+                self.publish_status()
         except Exception as e:
+            self.config_status = {"state": "error", "progress": "Failed", "error": str(e)}
+            self.publish_status()
             self.log("ERROR", f"Failed to execute Geotek LTE commands: {e}")
 
     def _send_config_commands(self, sock):
@@ -2078,7 +2105,10 @@ class MqttSourceWorker(threading.Thread):
                         for sat in gsv_sats:
                             sat["isTracking"] = sat.get("prn") in active
                             sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
-                            self.satellites[sat_key] = sat
+                            existing = self.satellites.get(sat_key, {})
+                            existing.update({k: v for k, v in sat.items() if v or k not in existing})
+                            existing["last_seen"] = time.time()
+                            self.satellites[sat_key] = existing
                     self.rtcm_buffer.extend(msg.payload or b"")
                     rtcm_frames = extract_rtcm3_frames(self.rtcm_buffer)
                     if not rtcm_frames:
@@ -2087,7 +2117,10 @@ class MqttSourceWorker(threading.Thread):
                     for frame in rtcm_frames:
                         for sat in parse_all_rtcm_satellites(frame):
                             sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
-                            self.satellites[sat_key] = sat
+                            existing = self.satellites.get(sat_key, {})
+                            existing.update({k: v for k, v in sat.items() if v or k not in existing})
+                            existing["last_seen"] = time.time()
+                            self.satellites[sat_key] = existing
 
                     with self.socket_lock:
                         for server_key, sock in list(self._target_socks.items()):
@@ -2302,6 +2335,22 @@ def setup_mqtt(worker_map):
                     os._exit(0)
                 except Exception as e:
                     logging.error(f"[{serial}] Failed to save license key: {e}")
+            return
+
+        if command == "CHANGE_SERIAL":
+            if not serial:
+                return
+            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            new_serial = cmd_payload.get("new_serial")
+            if new_serial:
+                try:
+                    updated = config_mgr.update_mqtt_source_config(serial, {"serial": new_serial})
+                    if updated:
+                        logging.info(f"[{serial}] Received CHANGE_SERIAL command. Updated config to new serial '{new_serial}'. Restarting to apply...")
+                        time.sleep(1)
+                        os._exit(0)
+                except Exception as e:
+                    logging.error(f"[{serial}] Failed to update serial: {e}")
             return
 
         if command != "SET_RTCM_STREAM_ACTIVE":

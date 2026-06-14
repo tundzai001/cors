@@ -79,8 +79,8 @@ async def rename_device_serial(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_DEVICE_NAME))):
     
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền đổi serial")
+    if current_user.role.strip().lower() != 'admin':
+        raise HTTPException(status_code=403, detail=f"Chỉ admin mới có quyền đổi serial (Quyền hiện tại: {current_user.role})")
 
     device = await crud.get_device_by_serial(db, serial)
     if not device:
@@ -94,6 +94,12 @@ async def rename_device_serial(
         raise HTTPException(status_code=400, detail="Serial mới đã tồn tại")
 
     try:
+        # Gửi lệnh đổi serial qua MQTT để geotek script tự động cập nhật cấu hình
+        try:
+            await send_command_to_pi(serial, {"command": "CHANGE_SERIAL", "payload": {"new_serial": request.new_serial}})
+        except Exception as e:
+            logger.warning(f"Không thể gửi lệnh CHANGE_SERIAL qua MQTT cho {serial}: {e}")
+
         from sqlalchemy import text
         await db.execute(
             text("UPDATE devices SET serial = :new_serial WHERE serial = :old_serial"),

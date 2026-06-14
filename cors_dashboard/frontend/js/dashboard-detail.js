@@ -978,6 +978,26 @@ const DetailsPanel = memo(function DetailsPanel({
                 )}
             </div>
             <div className="details-panel-scroll dashboard-detail-body card-body overflow-auto flex-grow-1 p-3">
+                {/* HIỂN THỊ TIẾN ĐỘ CẤU HÌNH (CONFIG STATUS) */}
+                {device?.system_info?.config_status && !['done', 'success', 'idle'].includes(device.system_info.config_status.state) && (
+                    <div className={`alert ${device.system_info.config_status.state === 'error' ? 'alert-danger' : 'alert-info'} mb-3`}>
+                        <div className="d-flex align-items-center">
+                            {device.system_info.config_status.state === 'executing' ? (
+                                <div className="spinner-border spinner-border-sm me-2" role="status"></div>
+                            ) : device.system_info.config_status.state === 'error' ? (
+                                <i className="bi bi-x-circle-fill me-2 fs-5"></i>
+                            ) : (
+                                <i className="bi bi-info-circle-fill me-2 fs-5"></i>
+                            )}
+                            <div>
+                                <strong>Trạng thái cấu hình thiết bị:</strong> {device.system_info.config_status.progress}
+                                {device.system_info.config_status.error && (
+                                    <div className="small mt-1 text-danger">Lỗi: {device.system_info.config_status.error}</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
                 <div className="dashboard-detail-meta d-flex justify-content-between align-items-center mb-3">
                     {isAdmin ? (
                         <p className="text-white-50 small mb-0 d-flex align-items-center">

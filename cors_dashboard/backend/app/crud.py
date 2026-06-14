@@ -295,11 +295,18 @@ def is_valid_serial(serial: str) -> bool:
     - Garbled text
     - Empty/None
     """
-    if not serial or len(serial) < 8:
+    if not serial:
+        return False
+    serial = str(serial).strip()
+    if len(serial) < 8:
         return False
     
     # Pattern 1: Ublox (16 hex chars)
     if re.match(r'^[0-9a-fA-F]{16}$', serial):
+        return True
+        
+    # Pattern 1.1: IMEI-like (15-20 digits)
+    if re.match(r'^\d{15,20}$', serial):
         return True
     
     # Pattern 2: LoRa Pi (LP_MAC)
@@ -330,6 +337,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     serial = device_data.get("serial")
     if not serial: 
         return None
+    serial = str(serial).strip()
+    device_data["serial"] = serial
 
     # ✅ BƯỚC 1: VALIDATE SERIAL TRƯỚC KHI XỬ LÝ
     if not is_valid_serial(serial):
@@ -348,6 +357,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     if command_source:
         new_system_info["command_source"] = command_source
     new_chip_type = device_data.get("detected_chip_type", "UNKNOWN")
+    if "config_status" in device_data:
+        new_system_info["config_status"] = device_data["config_status"]
     new_name = device_data.get("name")
     
     raw_is_provisioned = device_data.get("is_provisioned") 
@@ -380,7 +391,11 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     
     # ✅ BƯỚC 2: TỰ ĐỘNG TẠO CHO RELAY / VIRTUAL / MONITOR
     if not existing_device:
-        is_relay_like = serial.startswith(('RELAY_', 'MONITOR_', 'GEOTEK_LTE_', 'MQTT_'))
+        is_relay_like = (
+            serial.startswith(('RELAY_', 'MONITOR_', 'GEOTEK_LTE_', 'MQTT_')) 
+            or '_LTE_' in serial
+            or device_data.get("is_lte") is True
+        )
         
         if is_relay_like:
             # Initialize with defaults if missing to prevent sync errors
@@ -395,20 +410,20 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
                 final_service_config.update(new_service_config)
 
             # Tạo mới thiết bị nếu là relay-like
-                new_device = models.Device(
-                    serial=serial,
-                    name=new_name or serial,
-                    status=new_status or "offline",
-                    is_provisioned=True, 
-                    timestamp=current_ts,
-                    base_config=new_base_config,
-                    service_config=final_service_config,
-                    system_info=new_system_info or None,
-                    detected_chip_type=new_chip_type,
-                    version=device_data.get("version"),
-                    device_token=None,
-                    is_synced=True
-                )
+            new_device = models.Device(
+                serial=serial,
+                name=new_name or serial,
+                status=new_status or "offline",
+                is_provisioned=True, 
+                timestamp=current_ts,
+                base_config=new_base_config,
+                service_config=final_service_config,
+                system_info=new_system_info or None,
+                detected_chip_type=new_chip_type,
+                version=device_data.get("version"),
+                device_token=None,
+                is_synced=True
+            )
             db.add(new_device)
             await db.commit()
             await db.refresh(new_device)

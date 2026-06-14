@@ -42,7 +42,7 @@ function getVisibleSatellites(satellites, maxAgeMs) {
 
         let lastSeen = Number(sat.lastSeen || sat.last_seen || 0);
         if (lastSeen > 0 && lastSeen < 1e11) lastSeen *= 1000;
-        if (lastSeen > 0 && now - lastSeen > maxAgeMs) return; // Uncommented to clear stale satellites
+        if (lastSeen > 0 && now - lastSeen > maxAgeMs) return;
 
         const key = getSatelliteKey(sat);
         const existing = visibleByKey.get(key);
@@ -67,6 +67,18 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
     const lastCanvasUpdate = useRef(0);
     const lastBarsUpdate = useRef(0);
     const [satStats, setSatStats] = useState({ total: 0, tracking: 0, bySystem: {} });
+    // Resolve SatelliteBars sau khi scripts load xong (tránh race condition)
+    const [SatBars, setSatBars] = useState(() => window.SatelliteBars || null);
+    useEffect(() => {
+        if (window.SatelliteBars) { setSatBars(() => window.SatelliteBars); return; }
+        // Poll ngắn để chờ script load
+        let attempts = 0;
+        const tid = setInterval(() => {
+            if (window.SatelliteBars) { setSatBars(() => window.SatelliteBars); clearInterval(tid); }
+            if (++attempts > 30) clearInterval(tid); // dừng sau 3 giây
+        }, 100);
+        return () => clearInterval(tid);
+    }, []);
 
     useEffect(() => {
         safeNmeaDataRef.current = safeNmeaData;
@@ -90,11 +102,11 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
 
         const bgCtx = bgCanvasRef.current.getContext('2d');
         const satCtx = satCanvasRef.current.getContext('2d');
-        const SATELLITE_TIMEOUT = 5000;
+        const SATELLITE_TIMEOUT = 8000;
         const FADE_DURATION = 2000;
-        const STATS_INTERVAL = 1000;
-        const CANVAS_INTERVAL = 200;
-        const BARS_INTERVAL = 500;
+        const STATS_INTERVAL = 800;
+        const CANVAS_INTERVAL = 100;   // ~10 FPS skyplot
+        const BARS_INTERVAL = 150;     // ~7 FPS signal bars
 
         const drawSkyplotBase = () => {
             const w = bgCtx.canvas.width;
@@ -156,11 +168,26 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 const existing = buffer.get(key);
                 const satSnr = Number(sat.snr) || 0;
                 const existingSnr = existing ? (Number(existing.snr) || 0) : 0;
-                
+                const newAz = Number(sat.azimuth) || 0;
+                const newEl = Number(sat.elevation) || 0;
+                const hasNewPos = (newAz !== 0 || newEl !== 0);
+                const hasOldPos = existing && (Number(existing.azimuth) !== 0 || Number(existing.elevation) !== 0);
+
                 if (!existing || satSnr > 0 || existingSnr === 0) {
-                    buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
+                    if (!hasNewPos && hasOldPos) {
+                        // Giữ lại az/el cũ khi ephemeris chưa được tính lại
+                        buffer.set(key, { ...sat, azimuth: existing.azimuth, elevation: existing.elevation, lastSeen: now, opacity: 1.0 });
+                    } else {
+                        buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
+                    }
                 } else {
-                    existing.lastSeen = now;
+                    existing.lastSeen = now; // keep it alive
+                    // Cập nhật SNR nhưng giữ az/el cũ nếu mới = 0
+                    if (satSnr > 0) existing.snr = satSnr;
+                    if (hasNewPos) {
+                        existing.azimuth = newAz;
+                        existing.elevation = newEl;
+                    }
                 }
             });
 
@@ -170,6 +197,8 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                     buffer.delete(satKey);
                 } else if (age > SATELLITE_TIMEOUT) {
                     satData.opacity = Math.max(0, 1 - ((age - SATELLITE_TIMEOUT) / FADE_DURATION));
+                } else {
+                    satData.opacity = 1.0;
                 }
             }
 
@@ -227,22 +256,49 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
         const drawSignalBars = (satellites) => {
             const container = signalBarsContainerRef.current;
             if (!container) return;
-            const activeSatellites = getVisibleSatellites(satellites, SATELLITE_TIMEOUT + FADE_DURATION);
-            const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort().join('|');
-            const groupedSats = activeSatellites.reduce((acc, sat) => {
+
+            // Use buffer so vệ tinh LTE không mất khi ephemeris cycle
+            const buffer = satelliteBufferRef.current;
+            const allSats = [];
+            for (const satData of buffer.values()) {
+                if ((Number(satData.snr) || 0) > 0) allSats.push(satData);
+            }
+            // Also include fresh sats not yet in buffer
+            satellites.forEach(sat => {
+                const snr = Number(sat?.snr) || 0;
+                if (snr <= 0) return;
+                if (!buffer.has(getSatelliteKey(sat))) allSats.push(sat);
+            });
+
+            const groupedSats = {};
+            allSats.forEach(sat => {
                 const system = getSatelliteSystem(sat);
-                if (!acc[system]) acc[system] = [];
-                acc[system].push(sat);
-                return acc;
-            }, {});
-            setSatStats({ total: activeSatellites.length, tracking: activeSatellites.filter(s => s.isTracking).length, bySystem: groupedSats });
+                if (!groupedSats[system]) groupedSats[system] = new Map();
+                const k = getSatelliteKey(sat);
+                const ex = groupedSats[system].get(k);
+                if (!ex || Number(sat.snr) > Number(ex.snr)) groupedSats[system].set(k, sat);
+            });
+            // Convert maps to sorted arrays
+            const groupedFinal = {};
+            for (const sys of Object.keys(groupedSats)) {
+                groupedFinal[sys] = Array.from(groupedSats[sys].values())
+                    .sort((a, b) => parseFloat(a.prn) - parseFloat(b.prn));
+            }
+
+            const totalSats = allSats.length;
+            const trackingSats = allSats.filter(s => s.isTracking).length;
+            setSatStats({ total: totalSats, tracking: trackingSats, bySystem: groupedFinal });
+
+            const structureHash = ['us','ru','eu','cn','jp','un']
+                .map(sys => groupedFinal[sys] ? `${sys}:${groupedFinal[sys].map(s => s.prn).join(',')}` : '')
+                .join('|');
 
             if (lastSatelliteDataRef.current !== structureHash) {
                 lastSatelliteDataRef.current = structureHash;
                 const fragment = document.createDocumentFragment();
                 ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
-                    if (!groupedSats[system]) return;
-                    const sats = groupedSats[system].sort((a, b) => parseFloat(a.prn) - parseFloat(b.prn));
+                    if (!groupedFinal[system] || groupedFinal[system].length === 0) return;
+                    const sats = groupedFinal[system];
                     const groupDiv = document.createElement('div');
                     groupDiv.className = 'constellation-group';
                     const headerDiv = document.createElement('div');
@@ -276,25 +332,22 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 return;
             }
 
-            activeSatellites.forEach(sat => {
-                const itemDiv = document.getElementById(`sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`);
-                if (!itemDiv) return;
-                const barFillHeight = Math.min(100, sat.snr / 55 * 100);
-                const system = getSatelliteSystem(sat);
-                let barColor = colors[system];
-                if (sat.snr >= 40) barColor = '#00ff88';
-                else if (sat.snr >= 20) barColor = '#ffc107';
-                else barColor = '#ff5252';
-                const snrText = itemDiv.querySelector('.sat-bar-snr');
-                const fillDiv = itemDiv.querySelector('.sat-bar-fill');
-                if (snrText) {
-                    snrText.textContent = sat.snr;
-                    snrText.style.color = barColor;
-                }
-                if (fillDiv) {
-                    fillDiv.style.height = `${barFillHeight}%`;
-                    fillDiv.style.background = barColor;
-                }
+            // Fast in-place SNR update
+            ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
+                if (!groupedFinal[system]) return;
+                groupedFinal[system].forEach(sat => {
+                    const itemDiv = document.getElementById(`sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`);
+                    if (!itemDiv) return;
+                    const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+                    let barColor = colors[system];
+                    if (sat.snr >= 40) barColor = '#00ff88';
+                    else if (sat.snr >= 20) barColor = '#ffc107';
+                    else barColor = '#ff5252';
+                    const snrText = itemDiv.querySelector('.sat-bar-snr');
+                    const fillDiv = itemDiv.querySelector('.sat-bar-fill');
+                    if (snrText) { snrText.textContent = sat.snr; snrText.style.color = barColor; }
+                    if (fillDiv) { fillDiv.style.height = `${barFillHeight}%`; fillDiv.style.background = barColor; }
+                });
             });
         };
 
@@ -369,8 +422,8 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 </div>
             </div>
 
-            <div className="sky-panel signals-panel">
-                <div className="panel-header">
+            <div className="sky-panel signals-panel" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="panel-header" style={{ flexShrink: 0 }}>
                     <i className="bi bi-bar-chart-fill"></i><span>Signal Strength (SNR)</span>
                     <div className="ms-auto d-flex gap-2">
                         <span className="badge bg-success">{satStats.tracking} Tracking</span>
@@ -379,9 +432,10 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 </div>
                 <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
 
-                {window.SatelliteBars && (
-                    <div className="mt-auto pt-2 border-top border-secondary-subtle">
-                        <window.SatelliteBars satellites={safeNmeaData.satellites} />
+                {/* Constellation summary bar at the bottom — luôn hiển thị khi SatBars available */}
+                {SatBars && (
+                    <div style={{ flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '6px', paddingBottom: '6px' }}>
+                        <SatBars satellites={safeNmeaData.satellites} />
                     </div>
                 )}
             </div>

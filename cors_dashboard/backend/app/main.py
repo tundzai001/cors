@@ -5981,7 +5981,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(StarletteHTTPException)
 async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Xử lý 404 cho API và các lỗi HTTP khác"""
-    if exc.status_code == 404 and request.url.path.startswith("/api/"):
+    if exc.status_code == 404 and exc.detail == "Not Found" and request.url.path.startswith("/api/"):
         client_ip = request.client.host if request.client else "unknown"
         logger.warning(f"🚫 SECURITY BLOCK (API 404): IP {client_ip} probed non-existent API: {request.url.path}")
         

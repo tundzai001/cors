@@ -1290,11 +1290,25 @@ function handleWebSocketMessage(message) {
                 const existingSat = currentNmeaData.satellites[satKey];
                 const newSnr = Number(sat.snr) || 0;
                 const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
-                
+                const newAz = Number(sat.azimuth) || 0;
+                const newEl = Number(sat.elevation) || 0;
+                const hasNewPosition = (newAz !== 0 || newEl !== 0);
+                const hasOldPosition = existingSat && (Number(existingSat.azimuth) !== 0 || Number(existingSat.elevation) !== 0);
+
                 if (existingSat && newSnr === 0 && oldSnr > 0) {
+                    // SNR bằng 0 → giữ nguyên toàn bộ data cũ, chỉ refresh lastSeen
                     currentNmeaData.satellites[satKey] = {
                         ...sat,
                         ...existingSat,
+                        lastSeen: Date.now()
+                    };
+                } else if (existingSat && !hasNewPosition && hasOldPosition) {
+                    // Az/El mới = 0 nhưng cũ đã có vị trí → giữ az/el cũ để vệ tinh không nhảy về trung tâm
+                    currentNmeaData.satellites[satKey] = {
+                        ...existingSat,
+                        ...sat,
+                        azimuth: existingSat.azimuth,
+                        elevation: existingSat.elevation,
                         lastSeen: Date.now()
                     };
                 } else {

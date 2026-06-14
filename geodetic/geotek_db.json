@@ -1,0 +1,216 @@
+{
+    "workers": {
+        "RELAY_TN_DaiTu": {
+            "serial": "RELAY_TN_DaiTu",
+            "name": "TN.DaiTu",
+            "status": "online",
+            "version": "V1.1.4",
+            "agent_token_fingerprint": null,
+            "timestamp": 1781259886,
+            "base_config": {
+                "base_setup_method": "FIXED_LLA",
+                "coords": {
+                    "lat": 21.0,
+                    "lon": 105.0,
+                    "alt": 10.0
+                }
+            },
+            "ntrip_connected": true,
+            "ntrip_stats": {
+                "server1_bps": 20690,
+                "rtcm_input_bps": 20690
+            },
+            "ntrip_status": {
+                "server1": {
+                    "connected": true,
+                    "bps": 20690
+                }
+            },
+            "nmea_data": {
+                "gga": null,
+                "gsa": null,
+                "satellites": {
+                    "us:10": {
+                        "prn": 10,
+                        "system": "us",
+                        "signal": 2,
+                        "snr": 7,
+                        "cnr": 7.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "us:12": {
+                        "prn": 12,
+                        "system": "us",
+                        "signal": 2,
+                        "snr": 47,
+                        "cnr": 47.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "us:18": {
+                        "prn": 18,
+                        "system": "us",
+                        "signal": 10,
+                        "snr": 47,
+                        "cnr": 47.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "us:23": {
+                        "prn": 23,
+                        "system": "us",
+                        "signal": 10,
+                        "snr": 46,
+                        "cnr": 46.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "us:24": {
+                        "prn": 24,
+                        "system": "us",
+                        "signal": 2,
+                        "snr": 52,
+                        "cnr": 52.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "us:25": {
+                        "prn": 25,
+                        "system": "us",
+                        "signal": 2,
+                        "snr": 56,
+                        "cnr": 56.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "us:28": {
+                        "prn": 28,
+                        "system": "us",
+                        "signal": 2,
+                        "snr": 63,
+                        "cnr": 63.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "us:32": {
+                        "prn": 32,
+                        "system": "us",
+                        "signal": 2,
+                        "snr": 47,
+                        "cnr": 47.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1074,
+                        "last_seen": 1781259886.3206477
+                    },
+                    "ru:6": {
+                        "prn": 6,
+                        "system": "ru",
+                        "signal": 12,
+                        "snr": 62,
+                        "cnr": 62.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1084,
+                        "last_seen": 1781259886.3212235
+                    },
+                    "ru:17": {
+                        "prn": 17,
+                        "system": "ru",
+                        "signal": 5,
+                        "snr": 29,
+                        "cnr": 29.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1084,
+                        "last_seen": 1781259886.3212235
+                    },
+                    "ru:21": {
+                        "prn": 21,
+                        "system": "ru",
+                        "signal": 5,
+                        "snr": 17,
+                        "cnr": 17.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1084,
+                        "last_seen": 1781259886.3212235
+                    },
+                    "ru:22": {
+                        "prn": 22,
+                        "system": "ru",
+                        "signal": 5,
+                        "snr": 63,
+                        "cnr": 63.0,
+                        "elevation": 0,
+                        "azimuth": 0,
+                        "isTracking": true,
+                        "source": "RTCM_MSM",
+                        "rtcm_type": 1084,
+                        "last_seen": 1781259886.3212235
+                    }
+                },
+                "base_coords": {
+                    "lat": 21.0,
+                    "lon": 105.0,
+                    "alt": 10.0
+                }
+            },
+            "gnss_stats": {
+                "satellites": 12
+            },
+            "service_config": {
+                "server1_enabled": true,
+                "mountpoint1": "TN.DaiTu",
+                "serverhost1": "aitogy.com.vn",
+                "stream_on_demand": true,
+                "stream_active": true,
+                "active_mountpoint": "TN.DaiTu"
+            },
+            "source_mountpoint": "TN.DaiTu",
+            "rtk_fix_status": "FIXED",
+            "detected_chip_type": "RELAY",
+            "is_provisioned": false
+        }
+    },
+    "system": {},
+    "last_update": "2026-06-12T17:24:46.321546",
+    "runtime_config": {}
+}
