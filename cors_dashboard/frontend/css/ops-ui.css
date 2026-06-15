@@ -1832,3 +1832,45 @@ body.ops-admin-page {
         margin-top: 10px;
     }
 }
+
+/* ==============================================================================
+   MOBILE RESPONSIVE OVERRIDES
+   ============================================================================== */
+@media (max-width: 575.98px) {
+    .dashboard-sidebar,
+    .dashboard-main {
+        max-height: none !important;
+    }
+
+    .dashboard-main > div,
+    .dashboard-main #details-panel-root,
+    .dashboard-list-root {
+        height: auto !important;
+    }
+
+    .dashboard-status-chip {
+        min-height: 36px;
+        padding: 6px 10px;
+        font-size: 0.8rem;
+    }
+
+    .ops-icon-btn {
+        height: 40px;
+        width: 40px;
+    }
+
+    .ops-table-action {
+        height: 40px;
+        width: 40px;
+    }
+
+    .rover-action-btn {
+        height: 36px;
+        width: 36px;
+    }
+
+    .device-ops-alert-badge {
+        height: 28px;
+        width: 28px;
+    }
+}

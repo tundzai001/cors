@@ -417,15 +417,114 @@ body.dashboard-fixed-layout > main.container-fluid {
         overflow: visible;
     }
 
+    body.dashboard-fixed-layout #device-list-root {
+        height: 60vh !important;
+        overflow: hidden !important;
+    }
+
+    body.dashboard-fixed-layout .device-list-container {
+        height: 100%;
+        overflow: hidden;
+    }
+
+    body.dashboard-fixed-layout .device-list-scroll {
+        flex: 1 1 auto;
+        height: 0;
+        min-height: 0;
+        overflow-y: auto !important;
+    }
+
     .dashboard-sidebar,
     .dashboard-main {
         padding-left: 0;
         padding-right: 0;
+        max-height: none !important;
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    body.dashboard-fixed-layout #details-panel-root {
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    body.dashboard-fixed-layout #details-panel-root > * {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    body.dashboard-fixed-layout .details-panel-scroll {
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible !important;
     }
 
     .dashboard-tabs {
         flex-wrap: nowrap;
         overflow-x: auto;
+    }
+
+    /* === MOBILE FONT SIZE & TOUCH FIXES === */
+    .dashboard-device-card {
+        padding: 14px 12px 12px 14px !important;
+        min-height: 80px;
+    }
+
+    .dashboard-device-card .device-name {
+        font-size: 0.95rem !important;
+    }
+
+    .dashboard-device-card .device-meta {
+        font-size: 0.75rem !important;
+    }
+
+    .dashboard-device-card .badge {
+        font-size: 0.7rem !important;
+        min-height: 22px;
+        padding: 4px 8px !important;
+    }
+
+    .dashboard-device-card .server-indicators {
+        gap: 8px;
+    }
+
+    .dashboard-device-card .server-status-item {
+        min-height: 44px;
+        padding: 8px 10px;
+    }
+
+    .dashboard-device-card .server-label {
+        font-size: 0.72rem !important;
+    }
+
+    .dashboard-device-card .server-bps-unit {
+        font-size: 0.68rem !important;
+    }
+
+    .dashboard-status-chip {
+        min-height: 36px !important;
+        padding: 6px 10px !important;
+        font-size: 0.78rem !important;
+    }
+
+    .dashboard-list-toolbar .form-control {
+        min-height: 40px !important;
+        font-size: 0.85rem !important;
+    }
+
+    .dashboard-list-toolbar .input-group-text {
+        min-height: 40px !important;
+    }
+
+    .dashboard-detail-header {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .dashboard-detail-header h4 {
+        max-width: 100% !important;
+        font-size: 1rem !important;
     }
 }
 
@@ -1086,4 +1185,42 @@ body.dashboard-fixed-layout > main.container-fluid {
         overflow-x: auto;
     }
 
+    .cors-dashboard .dashboard-device-card .device-name {
+        font-size: 0.95rem !important;
+    }
+
+    .cors-dashboard .dashboard-device-card .device-meta {
+        font-size: 0.75rem !important;
+    }
+
+    .cors-dashboard .dashboard-device-card .badge {
+        font-size: 0.72rem !important;
+    }
+
+    .cors-dashboard .dashboard-device-card .server-label {
+        font-size: 0.72rem !important;
+    }
+
+    .cors-dashboard .dashboard-device-card .server-bps-unit {
+        font-size: 0.68rem !important;
+    }
+
+    .cors-dashboard .dashboard-device-card .server-status-item {
+        min-height: 44px;
+    }
+
+    .cors-dashboard .dashboard-status-chip {
+        min-height: 36px !important;
+        padding: 6px 10px !important;
+        font-size: 0.78rem !important;
+    }
+
+    .cors-dashboard .dashboard-detail-header h4 {
+        max-width: 100% !important;
+    }
+
+    .cors-dashboard .dashboard-list-toolbar .form-control {
+        min-height: 40px !important;
+        font-size: 0.85rem !important;
+    }
 }

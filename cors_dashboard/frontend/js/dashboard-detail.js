@@ -846,7 +846,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const isDeviceLocked = device.is_locked || device.status === 'locked';
 
     return (
-        <div className="card dashboard-detail-card bg-dark-tertiary h-100 d-flex flex-column" style={{ maxHeight: '100vh', position: 'relative', overflowX: 'hidden' }}>
+        <div className="card dashboard-detail-card bg-dark-tertiary h-100 d-flex flex-column" style={{ position: 'relative', overflowX: 'hidden' }}>
             {isAdmin && device && device.system_info && (
                 <button
                     className="btn-system-toggle"
@@ -861,7 +861,7 @@ const DetailsPanel = memo(function DetailsPanel({
                 <div className="d-flex align-items-center flex-grow-1">
                     {/* 🔥 THAY THẾ PHẦN HIỂN THỊ TÊN */}
                     {isEditingName ? (
-                        <div className="input-group input-group-sm me-3" style={{ maxWidth: '300px' }}>
+                        <div className="input-group input-group-sm me-3" style={{ maxWidth: 'min(300px, 100%)' }}>
                             <input
                                 type="text"
                                 className="form-control"
@@ -893,7 +893,7 @@ const DetailsPanel = memo(function DetailsPanel({
                         </div>
                     ) : (
                         <div className="d-flex align-items-center me-3">
-                            <h4 className="mb-0 me-2 text-truncate" style={{ maxWidth: '350px' }} title={device.name}>
+                            <h4 className="mb-0 me-2 text-truncate" style={{ maxWidth: 'min(350px, calc(100vw - 120px))' }} title={device.name}>
                                 {device.name}
                             </h4>
                             {canEdit && (

@@ -133,6 +133,23 @@ class NMEAParser:
                 
                 try:
                     prn = int(sats_raw[i])
+                    
+                    # FILTER: Unicore receivers offset PRNs for different constellations in GPGSV
+                    if talker_id == 'GP':
+                        if prn >= 65 and prn <= 96:
+                            system = 'ru'
+                            prn -= 64
+                        elif prn >= 193 and prn <= 202:
+                            system = 'jp'
+                            prn -= 192
+                        elif prn > 100:
+                            continue # Completely ignore PRNs like 1212, 254
+                    elif talker_id == 'GL' and prn > 64:
+                        prn -= 64
+                    
+                    if prn > 200:
+                        continue
+                        
                     elevation = int(sats_raw[i+1]) if sats_raw[i+1] else 0
                     azimuth = int(sats_raw[i+2]) if sats_raw[i+2] else 0
                     snr = int(sats_raw[i+3].split('*')[0]) if sats_raw[i+3] else 0

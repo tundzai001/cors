@@ -334,6 +334,15 @@ body.dashboard-fixed-layout .details-panel-scroll {
 
 /* ========== CHIP BADGE ========== */
 .device-card .badge {
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #adb5bd;
+    transition: all 0.2s ease;
 }
 
 /* ============================================================================
@@ -901,18 +910,6 @@ body.cors-manager-page .toast-fixed-layer { z-index: 1090; }
     }
 }
 
-    font-size: 0.65rem;
-    padding: 3px 8px;
-    border-radius: 6px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #adb5bd;
-    
-    transition: all 0.2s ease;
-}
 
 .device-card:hover .badge {
     background: rgba(255, 255, 255, 0.12);
@@ -1923,6 +1920,30 @@ padding-bottom: env(safe-area-inset-bottom);
 
 .server-status-item {
     padding: 10px 12px;
+    min-height: 44px;
+}
+
+.server-label {
+    font-size: 0.75rem !important;
+}
+
+.server-bps-unit {
+    font-size: 0.72rem !important;
+}
+
+.sat-bar-prn, .sat-bar-snr, .gnss-label {
+    font-size: 0.7rem !important;
+}
+
+.dashboard-status-chip {
+    min-height: 36px !important;
+    padding: 6px 12px !important;
+    font-size: 0.8rem !important;
+}
+
+.btn-ghost, .btn-system-toggle, .public-map-close {
+    min-height: 44px !important;
+    min-width: 44px !important;
 }
 
 /* Details Panel */

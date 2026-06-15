@@ -657,10 +657,14 @@ class RTCMSignalDecoder:
     def _skip_msm_satellite_data(reader: BitReader, msm_level: int, satellite_count: int) -> None:
         if msm_level in (1, 2, 3):
             reader.skip(10 * satellite_count)
-        elif msm_level in (4, 6):
-            reader.skip((8 + 10) * satellite_count)
-        elif msm_level in (5, 7):
-            reader.skip((8 + 4 + 10 + 14) * satellite_count)
+        elif msm_level == 4:
+            reader.skip(18 * satellite_count)
+        elif msm_level == 5:
+            reader.skip(22 * satellite_count)
+        elif msm_level == 6:
+            reader.skip(32 * satellite_count)
+        elif msm_level == 7:
+            reader.skip(36 * satellite_count)
 
     @staticmethod
     def _read_msm_signal_cnr(
@@ -673,19 +677,22 @@ class RTCMSignalDecoder:
 
         if msm_level in (1, 2, 3):
             return signal_cnr
-        if msm_level in (4, 5):
-            reader.skip((15 + 22 + 4 + 1) * cell_count)
+        if msm_level in (4, 6):
+            reader.skip(42 * cell_count)
             for cell in cell_mask:
                 signal_cnr[cell] = float(reader.read_uint(6))
-            if msm_level == 5:
-                reader.skip(15 * cell_count)
             return signal_cnr
-        if msm_level in (6, 7):
-            reader.skip((20 + 24 + 10 + 1) * cell_count)
+        if msm_level == 5:
+            reader.skip(42 * cell_count)
             for cell in cell_mask:
                 signal_cnr[cell] = reader.read_uint(10) / 16.0
-            if msm_level == 7:
-                reader.skip(15 * cell_count)
+            reader.skip(15 * cell_count)
+            return signal_cnr
+        if msm_level == 7:
+            reader.skip(55 * cell_count)
+            for cell in cell_mask:
+                signal_cnr[cell] = reader.read_uint(10) / 16.0
+            reader.skip(15 * cell_count)
         return signal_cnr
 
     @staticmethod

@@ -455,29 +455,30 @@ def parse_rtcm_msm_satellites(frame):
         cell_count = len(cells)
         if cell_count <= 0:
             return []
+        nsat = len(satellite_ids)
+        if msm_version == 4:
+            reader.skip(nsat * 18)
+        elif msm_version == 5:
+            reader.skip(nsat * 22)
+        elif msm_version == 6:
+            reader.skip(nsat * 32)
+        elif msm_version == 7:
+            reader.skip(nsat * 36)
+        else:
+            return []
 
         if msm_version in (4, 6):
-            reader.skip(len(satellite_ids) * (8 + 10))
-        else:
-            reader.skip(len(satellite_ids) * (8 + 4 + 10 + 14))
+            reader.skip(cell_count * 42)
+            cnr_values = [reader.read_uint(6) / 1.0 for _ in range(cell_count)]
+        elif msm_version == 5:
+            reader.skip(cell_count * 42)
+            cnr_values = [reader.read_uint(10) / 16.0 for _ in range(cell_count)]
+        elif msm_version == 7:
+            reader.skip(cell_count * 55)
+            cnr_values = [reader.read_uint(10) / 16.0 for _ in range(cell_count)]
 
         now = time.time()
-        
-        # MSM Payload is grouped by field for all cells, NOT by cell!
-        # Skip the fine pseudorange, fine phaserange, lock time, and half cycle ambiguity for ALL cells
-        if msm_version in (4, 5):
-            reader.skip((15 + 22 + 4 + 1) * cell_count)
-        else:
-            reader.skip((20 + 24 + 10 + 1) * cell_count)
             
-        # Read CNR for ALL cells
-        cnr_values = []
-        for _ in range(cell_count):
-            if msm_version in (4, 5):
-                cnr_values.append(reader.read_uint(6) / 1.0)
-            else:
-                cnr_values.append(reader.read_uint(10) / 16.0)
-                
         # Skip fine phaserange rate if needed
         if msm_version in (5, 7):
             reader.skip(15 * cell_count)
@@ -740,14 +741,30 @@ def parse_nmea_gsv(payload):
             if len(chunk) < 4 or not chunk[0]:
                 continue
             try:
+                prn = int(chunk[0])
+                if talker_id == 'GP':
+                    if prn >= 65 and prn <= 96:
+                        system = 'ru'
+                        prn -= 64
+                    elif prn >= 193 and prn <= 202:
+                        system = 'jp'
+                        prn -= 192
+                    elif prn > 100:
+                        continue # Completely ignore PRNs like 1212, 254
+                elif talker_id == 'GL' and prn > 64:
+                    prn -= 64
+                if prn > 200:
+                    continue
+                    
                 satellites.append({
-                    "prn": int(chunk[0]),
+                    "prn": prn,
                     "system": system,
                     "elevation": int(chunk[1]) if chunk[1] else 0,
                     "azimuth": int(chunk[2]) if chunk[2] else 0,
                     "snr": int(chunk[3]) if chunk[3] else 0,
                     "isTracking": False,
-                    "last_seen": time.time(),
+                    "source": "NMEA_GSV",
+                    "last_seen": time.time()
                 })
             except Exception:
                 continue
@@ -879,14 +896,6 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
     commands.extend([
         f"gpgga {gga_port} 1\r\n".encode("ascii"),
         b"$DELAY_500$",
-        f"gpgsv {gga_port} 1\r\n".encode("ascii"),
-        b"$DELAY_200$",
-        f"glgsv {gga_port} 1\r\n".encode("ascii"),
-        b"$DELAY_200$",
-        f"gagsv {gga_port} 1\r\n".encode("ascii"),
-        b"$DELAY_200$",
-        f"bdgsv {gga_port} 1\r\n".encode("ascii"),
-        b"$DELAY_200$",
     ])
 
     # 1114 = QZSS MSM4, 1044 = QZSS Ephemeris
