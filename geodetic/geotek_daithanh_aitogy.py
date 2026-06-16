@@ -935,6 +935,8 @@ class RelayWorker(threading.Thread):
         self._source_sock = None
         self._target_sock = None
         self.satellites = {}
+        self.raw_publish_buffer = bytearray()
+        self.last_raw_publish = time.time()
 
     def _source_host(self):
         return self.cfg.get('source_host', SOURCE_HOST)
@@ -1214,10 +1216,14 @@ class RelayWorker(threading.Thread):
                     self.bytes_received += len(data)
                     
                     if self.mqtt_client and self.mqtt_client.is_connected():
-                        try:
-                            self.mqtt_client.publish(f"pi/devices/{self.serial}/raw_data", data, qos=0)
-                        except Exception as e:
-                            self.log("WARNING", f"Failed to publish raw_data: {e}")
+                        self.raw_publish_buffer.extend(data)
+                        if time.time() - self.last_raw_publish >= 1.0:
+                            try:
+                                self.mqtt_client.publish(f"pi/devices/{self.serial}/raw_data", bytes(self.raw_publish_buffer), qos=0)
+                            except Exception as e:
+                                self.log("WARNING", f"Failed to publish raw_data: {e}")
+                            self.raw_publish_buffer.clear()
+                            self.last_raw_publish = time.time()
 
                     rtcm_buffer.extend(data)
                     frames = extract_rtcm3_frames(rtcm_buffer)
@@ -1493,6 +1499,8 @@ class MqttSourceWorker(threading.Thread):
         self.latest_gga = None
         self.latest_gsa = None
         self.satellites = {}
+        self.raw_publish_buffer = bytearray()
+        self.last_raw_publish = time.time()
 
     def log(self, level, msg):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['topic']} -> {self.cfg['target_mp']}] {msg}")
@@ -2092,10 +2100,14 @@ class MqttSourceWorker(threading.Thread):
                     self.bytes_received += len(payload_bytes)
                     
                     if self.mqtt_status_client and self.mqtt_status_client.is_connected():
-                        try:
-                            self.mqtt_status_client.publish(f"pi/devices/{self.serial}/raw_data", payload_bytes, qos=0)
-                        except Exception as e:
-                            self.log("WARNING", f"Failed to publish raw_data: {e}")
+                        self.raw_publish_buffer.extend(payload_bytes)
+                        if time.time() - self.last_raw_publish >= 1.0:
+                            try:
+                                self.mqtt_status_client.publish(f"pi/devices/{self.serial}/raw_data", bytes(self.raw_publish_buffer), qos=0)
+                            except Exception as e:
+                                self.log("WARNING", f"Failed to publish raw_data: {e}")
+                            self.raw_publish_buffer.clear()
+                            self.last_raw_publish = time.time()
 
                     if self._record_command_response(msg.payload):
                         return
