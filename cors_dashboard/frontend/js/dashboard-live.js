@@ -966,9 +966,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                                     <span className="text-muted">Mạng:</span>
                                                     <span className="fw-bold text-light">{isAwake ? `${rtcmBps + telemetryBps} B/s` : '--'}</span>
                                                 </div>
-                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
                                                     <span className="text-muted">Điện áp:</span>
                                                     <span className="fw-bold text-warning">{isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Công suất:</span>
+                                                    <span className="fw-bold text-success">{isAwake ? '3.5 W' : '--'}</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -983,9 +987,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                                     <span className="text-muted">Mạng:</span>
                                                     <span className="fw-bold text-light">{!isAwake ? `${telemetryBps} B/s` : '--'}</span>
                                                 </div>
-                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
                                                     <span className="text-muted">Điện áp:</span>
                                                     <span className="fw-bold text-warning">{!isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Công suất:</span>
+                                                    <span className="fw-bold text-success">{!isAwake ? '2.8 W' : '--'}</span>
                                                 </div>
                                             </div>
                                         </div>
