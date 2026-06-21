@@ -80,7 +80,10 @@ const SatelliteBars = memo(function SatelliteBars({ satellites }) {
     const counts = {};
     const snrs = {};
     sats.forEach(sat => {
-        const systemMap = { us: "US", ru: "RU", eu: "EU", cn: "CN", jp: "JP", un: "UN" };
+        const systemMap = { 
+            us: "US", ru: "RU", eu: "EU", cn: "CN", jp: "JP", un: "UN",
+            G: "US", R: "RU", E: "EU", C: "CN", J: "JP" 
+        };
         let sys = systemMap[sat.system] || "UN";
         if (sys === "UN") {
             const prnStr = String(sat.prn || "");

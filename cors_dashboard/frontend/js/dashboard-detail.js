@@ -375,6 +375,12 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
         if (info.memory?.percent > 85) score -= 20;
         else if (info.memory?.percent > 70) score -= 10;
 
+        if (device.measured_latency !== undefined) {
+            const latency = device.measured_latency;
+            if (latency > 5) score -= 30;
+            else if (latency > 2) score -= 15;
+        }
+
         return Math.max(score, 0);
     };
 
@@ -479,6 +485,46 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                             </div>
                         </div>
                     ) : <div className="text-muted small">No disk data</div>}
+                </div>
+
+                <div className="info-section mt-3 mb-4">
+                    <div className="section-title"><i className="bi bi-activity me-2"></i>Network Latency (Agent → Server)</div>
+                    {(() => {
+                        if (device.measured_latency === undefined) {
+                            return <div className="text-muted small">Đang chờ dữ liệu...</div>;
+                        }
+                        
+                        let latency = device.measured_latency.toFixed(1);
+                        
+                        if (latency > 5) {
+                            return (
+                                <div className="metric-card bg-danger bg-opacity-25 border border-danger">
+                                    <div className="d-flex justify-content-between mb-1">
+                                        <span className="fw-bold text-danger">Mất kết nối / Trễ cao ({latency}s)</span>
+                                    </div>
+                                    <div className="small text-light">Cảnh báo: Dữ liệu gửi từ trạm đang bị trễ ({latency} giây). Trạm có thể đang bị rớt mạng (LTE/Wifi) hoặc quá tải.</div>
+                                </div>
+                            );
+                        } else if (latency >= 2) {
+                            return (
+                                <div className="metric-card bg-warning bg-opacity-25 border border-warning">
+                                    <div className="d-flex justify-content-between mb-1">
+                                        <span className="fw-bold text-warning">Trễ mạng ({latency}s)</span>
+                                    </div>
+                                    <div className="small text-light">Mạng chậm/không đều. Chênh lệch thời gian giữa Agent và Server là {latency}s.</div>
+                                </div>
+                            );
+                        } else {
+                            return (
+                                <div className="metric-card border border-success">
+                                    <div className="d-flex justify-content-between mb-1">
+                                        <span className="fw-bold text-success">Ổn định ({latency}s)</span>
+                                    </div>
+                                    <div className="small text-light">Kết nối mạng từ trạm đến máy chủ rất tốt và liên tục.</div>
+                                </div>
+                            );
+                        }
+                    })()}
                 </div>
 
                 {/* Footer */}
@@ -941,10 +987,10 @@ const DetailsPanel = memo(function DetailsPanel({
                             <span className={`badge ${STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary'}`}>
                                 {STATUS_TEXT_MAP[displayStatusKey] || displayStatusKey}
                             </span>
-                            {device.version === window.APP_VERSION ? (
-                                <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ (${device.version})`} style={{ fontSize: '1rem' }}></i>
+                            {device.is_synced ? (
+                                <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ`} style={{ fontSize: '1rem' }}></i>
                             ) : (
-                                <i className="bi bi-exclamation-triangle-fill text-warning" title={`Không đồng bộ (Agent: ${device.version || '??'} | Server: ${window.APP_VERSION})`} style={{ fontSize: '1rem' }}></i>
+                                <i className="bi bi-exclamation-triangle-fill text-warning" title={device.sync_errors && device.sync_errors.length > 0 ? device.sync_errors.join('\n') : "Không đồng bộ"} style={{ fontSize: '1rem' }}></i>
                             )}
                         </div>
 

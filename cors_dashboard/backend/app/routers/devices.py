@@ -44,7 +44,10 @@ async def get_initial_devices(
     target_role = current_user.role
 
     if user_id is not None:
-        if current_user.role != auth.Role.ADMIN and user_id != current_user.id:
+        user_info = await crud.get_user_by_id(auth_db, user_id)
+        is_child = user_info and getattr(user_info, 'parent_id', None) == current_user.id
+        
+        if current_user.role != auth.Role.ADMIN and user_id != current_user.id and not (current_user.role == auth.Role.COORDINATOR and is_child):
             logging.warning(
                 f"IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
                 f"tried to filter by user_id={user_id}"
@@ -54,7 +57,6 @@ async def get_initial_devices(
                 detail="Only admins can filter devices by user_id"
             )
         target_user_id = user_id
-        user_info = await crud.get_user_by_id(auth_db, target_user_id)
         if user_info:
             target_role = user_info.role
 
@@ -65,11 +67,16 @@ async def get_initial_devices(
     elif target_role == auth.Role.VIEWER:
         from sqlalchemy import select as _select
         from .. import models as _models
-        setting_key = f'viewer_devices_{target_user_id}'
-        result = await auth_db.execute(_select(_models.SystemSetting).filter_by(key=setting_key))
-        setting = result.scalars().first()
-        viewer_serials = setting.value if setting and isinstance(setting.value, list) else []
-        logger.info(f"[DEVICES] Viewer '{current_user.username}' (id={target_user_id}) → setting_key='{setting_key}', found={setting is not None}, serials={viewer_serials}")
+        user_info = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
+        if not user_info or not user_info.allowed_bases:
+            return []
+        
+        import json
+        try:
+            viewer_serials = json.loads(user_info.allowed_bases)
+        except:
+            viewer_serials = []
+            
         if not viewer_serials:
             return []
         

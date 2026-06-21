@@ -63,7 +63,11 @@ class User(AuthBase):
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(BigInteger, nullable=False)
     can_create_rovers = Column(Boolean, default=False, nullable=False)
+    can_create_users = Column(Boolean, default=False, nullable=False)
     extra_mountpoints = Column(String, nullable=True) # Danh sÃ¡ch MP bÃ´Ì‰ sung (dÃ¢Ì u ; ngÄƒn caÌ ch)
+    parent_id = Column(Integer, index=True, nullable=True) # ID của coordinator đã tạo ra viewer này
+    allowed_bases = Column(String, nullable=True) # JSON array các serial trạm Base
+    allowed_rovers = Column(String, nullable=True) # JSON array các username của Rover
 
 class IpSecurityLog(AuthBase):
     __tablename__ = 'ip_security_logs'

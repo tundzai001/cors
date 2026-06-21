@@ -285,10 +285,10 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                             <span className={`badge ${metrics.statusBadgeClass}`}>
                                 {metrics.statusText}
                             </span>
-                            {device.version === window.APP_VERSION ? (
-                                <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ (${device.version})`} style={{ fontSize: '0.9rem' }}></i>
+                            {device.is_synced ? (
+                                <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ`} style={{ fontSize: '0.9rem' }}></i>
                             ) : (
-                                <i className="bi bi-exclamation-triangle-fill text-warning" title={`Không đồng bộ (Agent: ${device.version || '??'} | Server: ${window.APP_VERSION})`} style={{ fontSize: '0.9rem' }}></i>
+                                <i className="bi bi-exclamation-triangle-fill text-warning" title={device.sync_errors && device.sync_errors.length > 0 ? device.sync_errors.join('\n') : "Không đồng bộ"} style={{ fontSize: '0.9rem' }}></i>
                             )}
                         </div>
                     )}

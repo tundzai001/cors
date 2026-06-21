@@ -69,6 +69,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('d-none'));
         }
 
+        // Ẩn nút chức năng tạo, sửa, xóa, bulk action với tài khoản Viewer
+        if (String(currentUser.role || '').toLowerCase() === 'viewer') {
+            document.querySelectorAll('[data-bs-target="#createRoverModal"]').forEach(el => el.classList.add('d-none'));
+            const bulkToolbar = document.getElementById('rover-bulk-toolbar');
+            if (bulkToolbar) bulkToolbar.classList.add('d-none');
+            const bulkToolbarMobile = document.getElementById('rover-bulk-toolbar-mobile');
+            if (bulkToolbarMobile) bulkToolbarMobile.classList.add('d-none');
+        }
+
         initData();
 
     } catch (e) {
@@ -1052,28 +1061,30 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        if (r.type === 'db') {
-            actionHtml += `
-                <button class="rover-action-btn edit-btn" 
-                    data-id="${r.id}" data-username="${r.username}" title="Sửa">
-                    <i class="bi bi-pencil-square"></i>
-                </button>
-                <button class="rover-action-btn danger delete-btn" 
-                    data-id="${r.id}" data-user="${r.username}" title="Xóa">
-                    <i class="bi bi-trash3-fill"></i>
-                </button>
-            `;
-        } else if (r.type === 'unknown') {
-            actionHtml += `
-                <button class="rover-action-btn edit-btn" 
-                    data-id="0" data-username="${r.username}" title="Chỉnh sửa và Đồng bộ về Web">
-                    <i class="bi bi-pencil-square"></i>
-                </button>
-                <button class="rover-action-btn danger caster-delete-btn" 
-                    data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
-                    <i class="bi bi-trash3"></i>
-                </button>
-            `;
+        if (currentUser.role !== 'viewer') {
+            if (r.type === 'db') {
+                actionHtml += `
+                    <button class="rover-action-btn edit-btn" 
+                        data-id="${r.id}" data-username="${r.username}" title="Sửa">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button class="rover-action-btn danger delete-btn" 
+                        data-id="${r.id}" data-user="${r.username}" title="Xóa">
+                        <i class="bi bi-trash3-fill"></i>
+                    </button>
+                `;
+            } else if (r.type === 'unknown') {
+                actionHtml += `
+                    <button class="rover-action-btn edit-btn" 
+                        data-id="0" data-username="${r.username}" title="Chỉnh sửa và Đồng bộ về Web">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button class="rover-action-btn danger caster-delete-btn" 
+                        data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
+                        <i class="bi bi-trash3"></i>
+                    </button>
+                `;
+            }
         }
 
         const roverKey = getRoverKey(r);

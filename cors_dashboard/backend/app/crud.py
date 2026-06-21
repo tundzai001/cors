@@ -589,7 +589,9 @@ async def get_all_users(db: AsyncSession) -> list[models.User]:
     result = await db.execute(select(models.User).order_by(models.User.username))
     return result.scalars().all()
 
-async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, extra_mountpoints: str | None = None) -> models.User:
+import json
+
+async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, can_create_users: bool = False, extra_mountpoints: str | None = None, parent_id: int | None = None, allowed_bases: list[str] | None = None, allowed_rovers: list[str] | None = None) -> models.User:
     db_user = models.User(
         username=username, 
         hashed_password=hashed_password, 
@@ -597,7 +599,11 @@ async def create_user(db: AsyncSession, username: str, hashed_password: str, rol
         role=role, 
         is_active=is_active, 
         can_create_rovers=can_create_rovers,
+        can_create_users=can_create_users,
         extra_mountpoints=extra_mountpoints,
+        parent_id=parent_id,
+        allowed_bases=json.dumps(allowed_bases) if allowed_bases is not None else None,
+        allowed_rovers=json.dumps(allowed_rovers) if allowed_rovers is not None else None,
         created_at=int(time.time())
     )
     db.add(db_user)
@@ -610,7 +616,9 @@ async def update_user(db: AsyncSession, user_id: int, update_data: dict) -> mode
     if not user: 
         return None
     for key, value in update_data.items():
-        if hasattr(user, key): 
+        if key in ("allowed_bases", "allowed_rovers"):
+            setattr(user, key, json.dumps(value) if value is not None else None)
+        elif hasattr(user, key): 
             setattr(user, key, value)
     await db.commit()
     await db.refresh(user)
@@ -759,6 +767,15 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
     
     if current_user.role == "admin":
         return all_rovers
+        
+    if current_user.role == "viewer":
+        import json
+        try:
+            allowed = json.loads(current_user.allowed_rovers) if current_user.allowed_rovers else []
+        except:
+            allowed = []
+        return [r for r in all_rovers if r.username in allowed]
+        
         
     managed_mps, managed_serials = await _get_manager_mountpoints_and_serials(devices_db, current_user)
     

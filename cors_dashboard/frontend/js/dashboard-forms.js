@@ -932,7 +932,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                     </div>
                     <div className="d-flex align-items-center justify-content-between">
                         <span className="text-muted small">Trạng thái đồng bộ:</span>
-                        {device.version === window.APP_VERSION ? (
+                        {device.is_synced ? (
                             <span className="badge bg-success-subtle text-success border border-success-subtle">
                                 <i className="bi bi-check-circle-fill me-1"></i>ĐÃ ĐỒNG BỘ (OK)
                             </span>

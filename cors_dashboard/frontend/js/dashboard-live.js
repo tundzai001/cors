@@ -144,8 +144,27 @@ const colors = { us: '#00d47e', ru: '#ff5c5c', eu: '#5c9cff', cn: '#ffb95c', jp:
 const constellationNames = { us: "GPS (USA)", ru: "GLONASS (Russia)", eu: "Galileo (EU)", cn: "BeiDou (China)", jp: "QZSS (Japan)", un: "Unknown" };
 
 function getSatelliteSystem(sat) {
-    if (sat.system && ['us', 'ru', 'eu', 'cn', 'jp'].includes(sat.system)) return sat.system;
-    const prn = sat.prn;
+    if (!sat) return 'un';
+    const sys = String(sat.system || '').toLowerCase();
+    if (['us', 'ru', 'eu', 'cn', 'jp'].includes(sys)) return sys;
+    
+    const mapping = {
+        g: 'us', gps: 'us',
+        r: 'ru', glonass: 'ru',
+        e: 'eu', galileo: 'eu',
+        c: 'cn', beidou: 'cn', compass: 'cn',
+        j: 'jp', qzss: 'jp'
+    };
+    if (mapping[sys]) return mapping[sys];
+
+    // Fallback: try extracting system from string PRN (e.g. "G01", "R07")
+    const prnStr = String(sat.prn || '');
+    if (prnStr.length >= 2) {
+        const firstChar = prnStr[0].toLowerCase();
+        if (mapping[firstChar]) return mapping[firstChar];
+    }
+
+    const prn = Number(sat.prn);
     if (prn >= 1 && prn <= 32) return 'us';
     if (prn >= 65 && prn <= 96) return 'ru';
     if (prn >= 301 && prn <= 336) return 'eu';
@@ -154,8 +173,23 @@ function getSatelliteSystem(sat) {
     return 'un';
 }
 
+// Chuẩn hóa PRN về dải RTCM (1-based) để NMEA và RTCM cùng vệ tinh dùng chung key.
+// GLONASS: NMEA dùng 65-96 → chuẩn hóa về 1-32 (RTCM)
+// Galileo: NMEA dùng 301-336 → chuẩn hóa về 1-36 (RTCM)
+// BeiDou: NMEA dùng 401-463 → chuẩn hóa về 1-63 (RTCM)
+// QZSS: NMEA dùng 193-200 → chuẩn hóa về 1-8 (RTCM)
+function getNormalizedPrn(sat) {
+    const prn = Number(sat.prn);
+    const sys = getSatelliteSystem(sat);
+    if (sys === 'ru' && prn >= 65 && prn <= 96) return prn - 64;  // GLONASS NMEA→RTCM
+    if (sys === 'eu' && prn >= 301 && prn <= 336) return prn - 300; // Galileo NMEA→RTCM
+    if (sys === 'cn' && prn >= 401 && prn <= 463) return prn - 400; // BeiDou NMEA→RTCM
+    if (sys === 'jp' && prn >= 193 && prn <= 200) return prn - 192; // QZSS NMEA→RTCM
+    return prn; // GPS or already RTCM-space
+}
+
 function getSatelliteKey(sat) {
-    return `${getSatelliteSystem(sat)}:${sat.prn}`;
+    return `${getSatelliteSystem(sat)}:${getNormalizedPrn(sat)}`;
 }
 
 function getVisibleSatellites(satellites, maxAgeMs) {
@@ -275,7 +309,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             }
             : null
     );
-    const baseCoords = safeNmeaData.base_coords || fallbackBaseCoords;
+    const baseCoords = (safeNmeaData.base_coords && safeNmeaData.base_coords.lat !== 0 && safeNmeaData.base_coords.lon !== 0) 
+        ? safeNmeaData.base_coords 
+        : fallbackBaseCoords;
 
     const lastStatsUpdate = useRef(0);
     const lastCanvasUpdate = useRef(0);
@@ -500,7 +536,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 satCtx.font = 'bold 7px Arial';
                 satCtx.textAlign = 'center';
                 satCtx.textBaseline = 'middle';
-                satCtx.fillText(satData.prn, x, y + flagSize / 2 + 7);
+                satCtx.fillText(getNormalizedPrn(satData), x, y + flagSize / 2 + 7);
             }
             satCtx.globalAlpha = 1.0;
         };
@@ -516,13 +552,24 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort().join('|');
 
             // Cập nhật text Stats
+            let totalSnr = 0;
+            let lowSnrCount = 0;
             const groupedSats = activeSatellites.reduce((acc, sat) => {
                 const system = getSatelliteSystem(sat);
                 if (!acc[system]) acc[system] = [];
                 acc[system].push(sat);
+                if (sat.snr > 0) totalSnr += sat.snr;
+                if (sat.snr < 25 && sat.snr > 0) lowSnrCount++;
                 return acc;
             }, {});
-            setSatStats({ total: activeSatellites.length, tracking: activeSatellites.filter(s => s.isTracking).length, bySystem: groupedSats });
+            const avgSnr = activeSatellites.length > 0 ? totalSnr / activeSatellites.length : 0;
+            setSatStats({ 
+                total: activeSatellites.length, 
+                tracking: activeSatellites.filter(s => s.isTracking).length, 
+                bySystem: groupedSats,
+                avgSnr: avgSnr,
+                lowSnrCount: lowSnrCount
+            });
 
             // 1. Nếu CẤU TRÚC bị đổi (thêm/bớt vệ tinh) -> Xóa toàn bộ và vẽ lại DOM
             if (lastSatelliteDataRef.current !== structureHash) {
@@ -558,7 +605,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             itemDiv.innerHTML = `
                                 <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
                                 <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
-                                <div class="sat-bar-prn">${sat.prn}</div>
+                                <div class="sat-bar-prn">${getNormalizedPrn(sat)}</div>
                             `;
                             barsWrapper.appendChild(itemDiv);
                         });
@@ -758,6 +805,217 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <BaseLocationMap coords={baseCoords} />
             </div>
 
+            {/* RTCM & ANTENNA ASSESSMENT - REDESIGNED */}
+            <div className="card mb-3 bg-dark border-secondary">
+                <div className="card-header d-flex align-items-center bg-dark">
+                    <i className="bi bi-broadcast me-2 text-primary"></i>
+                    <h6 className="mb-0">RTCM & Antenna Assessment</h6>
+                </div>
+                <div className="card-body p-3">
+                    {(!device.rtcm_stats || Object.keys(device.rtcm_stats).length === 0) ? (
+                        <div className="text-muted small text-center my-3">
+                            <i className="bi bi-hourglass-split me-2"></i>
+                            Đang chờ dữ liệu giải mã RTCM từ trạm...
+                        </div>
+                    ) : (() => {
+                        const rtcmDescriptions = {
+                            "1001": { name: "GPS L1 Obs (Basic)", desc: "Quan trắc GPS L1 cơ bản", category: "obs" },
+                            "1002": { name: "GPS L1 Obs (Extended)", desc: "Quan trắc GPS L1 mở rộng", category: "obs" },
+                            "1003": { name: "GPS L1/L2 Obs (Basic)", desc: "Quan trắc GPS L1/L2 cơ bản", category: "obs" },
+                            "1004": { name: "GPS L1/L2 Obs (Extended)", desc: "Quan trắc GPS L1/L2 mở rộng", category: "obs" },
+                            "1005": { name: "Base Position (ARP)", desc: "Tọa độ trạm Base (không có chiều cao ăng-ten)", category: "base" },
+                            "1006": { name: "Base Position + Height", desc: "Tọa độ trạm Base kèm chiều cao ăng-ten", category: "base" },
+                            "1007": { name: "Antenna Descriptor", desc: "Mô tả loại ăng-ten đang sử dụng", category: "base" },
+                            "1008": { name: "Antenna Serial Number", desc: "Số serial ăng-ten", category: "base" },
+                            "1019": { name: "GPS Ephemeris", desc: "Lịch thiên văn GPS – Quỹ đạo chính xác vệ tinh GPS", category: "eph" },
+                            "1020": { name: "GLONASS Ephemeris", desc: "Lịch thiên văn GLONASS – Quỹ đạo vệ tinh GLONASS", category: "eph" },
+                            "1033": { name: "Receiver & Antenna", desc: "Thông tin máy thu và ăng-ten (model, firmware)", category: "base" },
+                            "1042": { name: "BeiDou Ephemeris", desc: "Lịch thiên văn BeiDou – Quỹ đạo vệ tinh BDS", category: "eph" },
+                            "1044": { name: "QZSS Ephemeris", desc: "Lịch thiên văn QZSS – Quỹ đạo vệ tinh Nhật Bản", category: "eph" },
+                            "1045": { name: "Galileo F/NAV Eph", desc: "Lịch thiên văn Galileo F/NAV – Quỹ đạo vệ tinh EU", category: "eph" },
+                            "1046": { name: "Galileo I/NAV Eph", desc: "Lịch thiên văn Galileo I/NAV", category: "eph" },
+                            "1074": { name: "GPS MSM4", desc: "Tín hiệu đo GPS đa tần – Pseudorange + Carrier Phase", category: "msm" },
+                            "1077": { name: "GPS MSM7", desc: "Tín hiệu GPS đầy đủ (Full) – Độ chính xác cao nhất", category: "msm" },
+                            "1084": { name: "GLONASS MSM4", desc: "Tín hiệu đo GLONASS đa tần", category: "msm" },
+                            "1087": { name: "GLONASS MSM7", desc: "Tín hiệu GLONASS đầy đủ (Full)", category: "msm" },
+                            "1094": { name: "Galileo MSM4", desc: "Tín hiệu đo Galileo đa tần", category: "msm" },
+                            "1097": { name: "Galileo MSM7", desc: "Tín hiệu Galileo đầy đủ (Full)", category: "msm" },
+                            "1114": { name: "QZSS MSM4", desc: "Tín hiệu đo QZSS đa tần (Nhật Bản)", category: "msm" },
+                            "1117": { name: "QZSS MSM7", desc: "Tín hiệu QZSS đầy đủ (Full)", category: "msm" },
+                            "1124": { name: "BeiDou MSM4", desc: "Tín hiệu đo BeiDou đa tần (Trung Quốc)", category: "msm" },
+                            "1127": { name: "BeiDou MSM7", desc: "Tín hiệu BeiDou đầy đủ (Full)", category: "msm" },
+                            "1230": { name: "GLONASS Code-Phase Bias", desc: "Hiệu chỉnh sai lệch mã-pha sóng GLONASS", category: "aux" },
+                        };
+                        const categoryLabels = {
+                            "msm": { label: "📡 Tín hiệu vệ tinh (MSM)", color: "#0d6efd" },
+                            "eph": { label: "🌍 Lịch thiên văn (Ephemeris)", color: "#6f42c1" },
+                            "base": { label: "📍 Thông tin trạm Base", color: "#20c997" },
+                            "obs": { label: "📊 Quan trắc cơ bản", color: "#fd7e14" },
+                            "aux": { label: "🔧 Hiệu chỉnh & Phụ trợ", color: "#adb5bd" },
+                        };
+                        const grouped = {};
+                        Object.keys(device.rtcm_stats).sort().forEach(type => {
+                            const info = rtcmDescriptions[type] || { name: `RTCM ${type}`, desc: "Bản tin RTCM khác", category: "aux" };
+                            const cat = info.category;
+                            if (!grouped[cat]) grouped[cat] = [];
+                            grouped[cat].push({ type, stat: device.rtcm_stats[type], ...info });
+                        });
+                        const catOrder = ["msm", "base", "eph", "obs", "aux"];
+                        return (
+                            <div>
+                                {catOrder.filter(c => grouped[c]).map(cat => {
+                                    const catInfo = categoryLabels[cat] || { label: cat, color: "#6c757d" };
+                                    return (
+                                        <div key={cat} className="mb-3">
+                                            <div className="d-flex align-items-center mb-2" style={{ borderLeft: `3px solid ${catInfo.color}`, paddingLeft: '8px' }}>
+                                                <span className="small fw-bold" style={{ color: catInfo.color }}>{catInfo.label}</span>
+                                            </div>
+                                            {grouped[cat].map(item => {
+                                                const isMsm = item.category === "msm";
+                                                let statusColor = "#6c757d";
+                                                let statusBg = "rgba(108,117,125,0.15)";
+                                                if (isMsm) {
+                                                    if (item.stat.interval <= 1.5) { statusColor = "#198754"; statusBg = "rgba(25,135,84,0.12)"; }
+                                                    else if (item.stat.interval <= 3.0) { statusColor = "#ffc107"; statusBg = "rgba(255,193,7,0.12)"; }
+                                                    else { statusColor = "#dc3545"; statusBg = "rgba(220,53,69,0.12)"; }
+                                                } else {
+                                                    if (item.stat.interval <= 15) { statusColor = "#0dcaf0"; statusBg = "rgba(13,202,240,0.10)"; }
+                                                    else { statusColor = "#6c757d"; statusBg = "rgba(108,117,125,0.10)"; }
+                                                }
+                                                return (
+                                                    <div key={item.type} className="d-flex align-items-center py-1 px-2 mb-1 rounded" style={{ backgroundColor: statusBg }}>
+                                                        <div style={{ minWidth: '52px' }}>
+                                                            <span className="badge fw-bold" style={{ backgroundColor: statusColor, fontSize: '0.8rem', minWidth: '44px', display: 'inline-block', textAlign: 'center' }}>{item.type}</span>
+                                                        </div>
+                                                        <div className="flex-grow-1 ms-2" style={{ lineHeight: 1.3 }}>
+                                                            <div className="small fw-semibold text-light">{item.name}</div>
+                                                            <div style={{ fontSize: '0.72rem', color: '#8b949e' }}>{item.desc}</div>
+                                                        </div>
+                                                        <div className="text-end ms-2" style={{ minWidth: '58px' }}>
+                                                            <span className="badge bg-dark bg-opacity-75 border" style={{ borderColor: `${statusColor} !important`, color: statusColor, fontSize: '0.78rem' }}>{item.stat.interval}s</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })()}
+                    <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                        <div className="text-muted small mb-2 text-uppercase">Antenna Quality Diagnostics</div>
+                        {(() => {
+                            const avgSnr = Number(metrics.signalStrength.value) || 0;
+                            const sats = metrics.satellites.value;
+                            const hasCoords = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => k === "1005" || k === "1006");
+                            
+                            return (
+                                <ul className="mb-0 text-light small ps-3" style={{ listStyleType: "circle" }}>
+                                    {hasCoords ? (
+                                        <li className="text-success mb-1">Tọa độ Base (1005/1006) đã sẵn sàng.</li>
+                                    ) : (
+                                        <li className="text-danger mb-1">Chưa có gói tọa độ 1005/1006. Rover không thể FIX RTK!</li>
+                                    )}
+                                    
+                                    {sats < 12 && sats > 0 && (
+                                        <li className="text-warning mb-1">Số lượng vệ tinh quan sát được khá thấp ({sats}). Góc nhìn bầu trời hẹp.</li>
+                                    )}
+                                    
+                                    {avgSnr > 0 && avgSnr < 35 && (
+                                        <li className="text-warning mb-1">Cường độ tín hiệu thấp (SNR trung bình {avgSnr.toFixed(1)} dB-Hz). <strong>Khuyến nghị:</strong> Nâng cao ăng-ten hoặc đưa ra nơi trống trải.</li>
+                                    )}
+                                    {avgSnr >= 38 && (
+                                        <li className="text-success mb-1">Tín hiệu thu được từ ăng-ten rất tốt và ổn định (SNR trung bình {avgSnr.toFixed(1)} dB-Hz).</li>
+                                    )}
+                                    {avgSnr >= 35 && avgSnr < 38 && (
+                                        <li className="text-info mb-1">Tín hiệu ăng-ten đạt mức khá (SNR trung bình {avgSnr.toFixed(1)} dB-Hz).</li>
+                                    )}
+                                </ul>
+                            );
+                        })()}
+                    </div>
+                </div>
+            </div>
+
+            {/* HARDWARE & ECO SAVINGS PANEL */}
+            {device.system_info && (
+                <div className="card mb-3 border-0" style={{ background: 'linear-gradient(135deg, rgba(13,110,253,0.08), rgba(32,201,151,0.08))', border: '1px solid rgba(13,110,253,0.25)' }}>
+                    <div className="card-header d-flex align-items-center border-0" style={{ background: 'transparent' }}>
+                        <i className="bi bi-cpu-fill me-2" style={{ color: '#0dcaf0' }}></i>
+                        <h6 className="mb-0 text-light">Hardware Telemetry & Eco Savings</h6>
+                        <span className="badge ms-auto" style={{ backgroundColor: 'rgba(13,202,240,0.15)', color: '#0dcaf0', fontSize: '0.7rem' }}>Aitogy.com.vn</span>
+                    </div>
+                    <div className="card-body pt-0 pb-3 px-3">
+                        {(() => {
+                            const isAwake = device.status !== "sleep";
+                            const rtcmBps = device.ntrip_stats?.rtcm_input_bps || 0;
+                            const telemetryBps = device.savings_stats?.telemetry_bps || 0;
+                            const currentVolts = device.system_info?.cpu?.core_volts || null;
+
+                            return (
+                                <>
+                                    <div className="row g-2 mb-3">
+                                        {/* CỘT THỨC (AWAKE) */}
+                                        <div className="col-6">
+                                            <div className="rounded p-2" style={{ backgroundColor: isAwake ? 'rgba(25,135,84,0.1)' : 'rgba(255,255,255,0.02)', border: isAwake ? '1px solid #198754' : '1px solid transparent' }}>
+                                                <div className="fw-bold mb-2 text-center" style={{ color: isAwake ? '#198754' : '#8b949e', fontSize: '0.85rem' }}>
+                                                    <i className="bi bi-broadcast me-1"></i> Trạng thái Thức
+                                                </div>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Mạng:</span>
+                                                    <span className="fw-bold text-light">{isAwake ? `${rtcmBps + telemetryBps} B/s` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Điện áp:</span>
+                                                    <span className="fw-bold text-warning">{isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* CỘT NGỦ (SLEEP) */}
+                                        <div className="col-6">
+                                            <div className="rounded p-2" style={{ backgroundColor: !isAwake ? 'rgba(13,202,240,0.1)' : 'rgba(255,255,255,0.02)', border: !isAwake ? '1px solid #0dcaf0' : '1px solid transparent' }}>
+                                                <div className="fw-bold mb-2 text-center" style={{ color: !isAwake ? '#0dcaf0' : '#8b949e', fontSize: '0.85rem' }}>
+                                                    <i className="bi bi-moon-stars me-1"></i> Trạng thái Ngủ
+                                                </div>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Mạng:</span>
+                                                    <span className="fw-bold text-light">{!isAwake ? `${telemetryBps} B/s` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Điện áp:</span>
+                                                    <span className="fw-bold text-warning">{!isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {device.savings_stats && (
+                                        <div className="rounded p-2 d-flex align-items-center justify-content-between" style={{ backgroundColor: 'rgba(25,135,84,0.12)', border: '1px solid rgba(25,135,84,0.3)' }}>
+                                            <div className="d-flex align-items-center">
+                                                <i className="bi bi-shield-check fs-4 me-3" style={{ color: '#198754' }}></i>
+                                                <div>
+                                                    <div style={{ fontSize: '0.7rem', color: '#8b949e', textTransform: 'uppercase' }}>Tích lũy tài nguyên đã tiết kiệm</div>
+                                                    <div className="fw-bold fs-5" style={{ color: '#198754', lineHeight: 1.2 }}>
+                                                        {((device.savings_stats.total_data_saved_bytes || 0) / 1048576).toFixed(2)} <span style={{fontSize: '0.65em'}}>MB</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="text-end pe-2">
+                                                <div className="fw-bold fs-5 text-warning" style={{ lineHeight: 1.2 }}>
+                                                    {device.savings_stats.total_saved_mwh ? device.savings_stats.total_saved_mwh.toFixed(1) : "0.0"} <span style={{fontSize: '0.65em'}}>mWh</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            );
+                        })()}
+                    </div>
+                </div>
+            )}
+
             {/* SKYPLOT & SIGNALS */}
             <div className="sky-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -781,8 +1039,33 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     </div>
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
 
+                    {/* Antenna Assessment */}
+                    <div className="antenna-assessment-section mt-2 p-2 mx-2 mb-2 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.1)' }}>
+                        <div className="d-flex justify-content-between align-items-center mb-1">
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                <i className="bi bi-broadcast me-1"></i>Antenna Health
+                            </span>
+                            <span className="badge rounded-pill" style={{ backgroundColor: satStats.total > 0 && satStats.avgSnr > 35 ? 'var(--success-color)' : 'var(--warning-color)' }}>
+                                {satStats.total > 0 ? (satStats.avgSnr || 0).toFixed(1) + ' dBHz Avg' : 'N/A'}
+                            </span>
+                        </div>
+                        <div className="d-flex justify-content-between small text-muted">
+                            <div className="text-center">
+                                <div>Diversity</div>
+                                <div style={{ color: Object.keys(satStats.bySystem).length >= 3 ? 'var(--success-color)' : 'var(--warning-color)', fontWeight: 'bold' }}>
+                                    {Object.keys(satStats.bySystem).length} Sys
+                                </div>
+                            </div>
+                            <div className="text-center">
+                                <div>Multipath Risk</div>
+                                <div style={{ color: (satStats.lowSnrCount || 0) > 5 ? 'var(--danger-color)' : 'var(--success-color)', fontWeight: 'bold' }}>
+                                    {(satStats.lowSnrCount || 0)} Low SNR
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     {/* Premium Chart Overlay */}
-                    {window.SatelliteBars && (
+                    {window.SatelliteBars && safeNmeaData?.satellites && Object.keys(safeNmeaData.satellites).length > 0 && (
                         <div className="mt-auto pt-2 border-top border-secondary-subtle">
                             <window.SatelliteBars satellites={safeNmeaData.satellites} />
                         </div>

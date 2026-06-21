@@ -131,14 +131,15 @@
 
         const visibleRovers = useMemo(() => {
             if (!showRovers || !canViewRovers) return [];
+            const allowedRoversList = Array.isArray(currentUser?.allowed_rovers) ? currentUser.allowed_rovers : [];
             return roverClients.filter(rover => {
                 const lat = Number(rover.latitude);
                 const lon = Number(rover.longitude);
                 const mp = String(rover.mountpoint || '').trim();
-                const isAllowed = allowedMountpoints === null || allowedMountpoints.has(mp);
+                const isAllowed = allowedMountpoints === null || allowedMountpoints.has(mp) || allowedRoversList.includes(rover.username);
                 return isAllowed && rover.show_position !== false && Number.isFinite(lat) && Number.isFinite(lon);
             });
-        }, [roverClients, showRovers, canViewRovers, allowedMountpoints]);
+        }, [roverClients, showRovers, canViewRovers, allowedMountpoints, currentUser?.allowed_rovers]);
 
         const stations = useMemo(() => {
             const term = search.trim().toLowerCase();

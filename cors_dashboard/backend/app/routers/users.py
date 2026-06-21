@@ -9,6 +9,31 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# === HELPER: Lấy danh sách ownership từ SystemSettings ===
+async def _get_ownership_info(db: AsyncSession, creator_id: int) -> tuple[set[int], set[int]]:
+    """Truy vấn SystemSettings để tìm thông tin ownership.
+    Returns:
+        - my_created_ids: set user_id do creator_id tạo
+        - all_owned_ids: set tất cả user_id đã có owner (bất kỳ ai tạo)
+    Key format: user_created_by_{user_id} = creator_id"""
+    result = await db.execute(
+        select(models.SystemSetting).where(
+            models.SystemSetting.key.like('user_created_by_%')
+        )
+    )
+    settings = result.scalars().all()
+    my_created_ids = set()
+    all_owned_ids = set()
+    for s in settings:
+        try:
+            uid = int(s.key.replace('user_created_by_', ''))
+            all_owned_ids.add(uid)
+            if s.value == creator_id:
+                my_created_ids.add(uid)
+        except (ValueError, TypeError):
+            pass
+    return my_created_ids, all_owned_ids
+
 router = APIRouter(tags=["Users"])
 
 # === USER MANAGEMENT ===
@@ -17,7 +42,20 @@ async def get_users(db: AsyncSession = Depends(get_auth_db),
                     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
     users = await crud.get_all_users(db)
     response_list = []
+    
+    # Nếu không phải admin, chỉ hiển thị chính mình + viewer do mình tạo
+    if current_user.role != 'admin':
+        my_created_ids, _ = await _get_ownership_info(db, current_user.id)
+    
     for u in users:
+        if current_user.role != 'admin':
+            # Luôn hiển thị chính mình
+            if u.id == current_user.id:
+                pass  # OK, cho phép
+            elif u.role == 'viewer' and u.id in my_created_ids:
+                pass  # Viewer do mình tạo → cho phép
+            else:
+                continue  # Ẩn tất cả user khác
         permissions = auth.get_user_permissions(u)
         user_resp = schemas.UserResponse.from_orm(u)
         user_resp.permissions = permissions
@@ -30,6 +68,13 @@ async def get_user_details(user_id: int, db: AsyncSession = Depends(get_auth_db)
     user = await crud.get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if current_user.role != 'admin':
+        if user.id != current_user.id:
+            # Chỉ cho xem viewer do mình tạo
+            my_created_ids, _ = await _get_ownership_info(db, current_user.id)
+            is_my_viewer = user.role == 'viewer' and user.id in my_created_ids
+            if not is_my_viewer:
+                raise HTTPException(status_code=403, detail="Không có quyền xem thông tin tài khoản này")
     permissions = auth.get_user_permissions(user)
     user_response = schemas.UserResponse.from_orm(user)
     user_response.permissions = permissions
@@ -126,6 +171,10 @@ async def create_user(
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
+    
+    if current_user.role != 'admin' and user_data.role != 'viewer':
+        raise HTTPException(status_code=403, detail="Chỉ admin mới được tạo tài khoản khác ngoài Viewer")
+
     existing = await crud.get_user_by_username(auth_db, username=user_data.username)
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
@@ -137,6 +186,7 @@ async def create_user(
         raise HTTPException(status_code=400, detail=str(e))
     # -----------------------------------------------------------
         
+    parent_id = current_user.id if current_user.role != 'admin' else None
     new_user = await crud.create_user(
         auth_db, 
         username=user_data.username, 
@@ -145,7 +195,10 @@ async def create_user(
         full_name=user_data.full_name,
         is_active=user_data.is_active,
         can_create_rovers=user_data.can_create_rovers,
-        extra_mountpoints=user_data.extra_mountpoints
+        extra_mountpoints=user_data.extra_mountpoints,
+        parent_id=parent_id,
+        allowed_bases=user_data.allowed_bases,
+        allowed_rovers=user_data.allowed_rovers
     )
     
     if user_data.assigned_devices:
@@ -155,8 +208,6 @@ async def create_user(
                 if device:
                     device.user_id = new_user.id
             await devices_db.commit()
-        elif new_user.role == 'viewer':
-            await crud.update_system_settings(auth_db, {f'viewer_devices_{new_user.id}': user_data.assigned_devices})
     
     permissions = auth.get_user_permissions(new_user)
     user_response = schemas.UserResponse.from_orm(new_user)
@@ -164,7 +215,7 @@ async def create_user(
     await crud.log_system_event(
         db=devices_db,
         type="success",
-        message=f"Admin '{current_user.username}' created user '{new_user.username}' (role: {new_user.role})",
+        message=f"'{current_user.username}' created user '{new_user.username}' (role: {new_user.role})",
         user_id=current_user.id
     )
     
@@ -181,6 +232,19 @@ async def update_user(
     user_to_update = await crud.get_user_by_id(auth_db, user_id)
     if not user_to_update:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if current_user.role != 'admin':
+        if user_to_update.id != current_user.id:
+            # Chỉ được sửa viewer do mình tạo
+            my_created_ids, _ = await _get_ownership_info(auth_db, current_user.id)
+            is_my_viewer = user_to_update.role == 'viewer' and user_to_update.id in my_created_ids
+            if not is_my_viewer:
+                raise HTTPException(status_code=403, detail="Chỉ có thể sửa đổi tài khoản Viewer do bạn tạo")
+        if user_data.role and user_data.role != user_to_update.role:
+            raise HTTPException(status_code=403, detail="Không có quyền thay đổi Role")
+
+    if current_user.id == user_id and user_data.is_active is False:
+        raise HTTPException(status_code=400, detail="Không thể vô hiệu hóa tài khoản của chính bạn")
 
     update_dict = user_data.dict(exclude_unset=True)
     
@@ -225,14 +289,12 @@ async def update_user(
             
         elif target_role == 'viewer':
             await devices_db.commit() # commit việc gỡ ownership
-            await crud.update_system_settings(auth_db, {f'viewer_devices_{user_id}': assigned_serials})
             # Broadcast để UI Viewer cập nhật ngay lập tức
             await ui_manager.broadcast({
                 "type": "user_assignment_updated",
                 "data": {
                     "user_id": user_id,
-                    "role": "viewer",
-                    "assigned_devices": assigned_serials
+                    "role": "viewer"
                 }
             })
         else:
@@ -271,6 +333,13 @@ async def delete_user(
     
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
+        
+    if current_user.role != 'admin':
+        # Chỉ được xóa viewer do mình tạo
+        my_created_ids, _ = await _get_ownership_info(auth_db, current_user.id)
+        is_my_viewer = user.role == 'viewer' and user.id in my_created_ids
+        if not is_my_viewer:
+            raise HTTPException(status_code=403, detail="Chỉ có thể xóa tài khoản Viewer do bạn tạo")
     
     # ===================================================================
     # FIX: GỠ THIẾT BỊ + BROADCAST ĐỂ UI CẬP NHẬT NGAY LẬP TỨC

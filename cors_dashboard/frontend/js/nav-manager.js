@@ -64,8 +64,14 @@ const NavigationManager = {
         if (this.currentUser?.role === 'admin') {
             this.addGroup(navContainer, 'Admin');
             this.addNavItem(navContainer, { id: 'operations', icon: 'bi-activity', text: 'Operations', href: '/operations.html', active: this.currentPage === 'operations' });
-            this.addNavItem(navContainer, { id: 'users', icon: 'bi-people-fill', text: 'Users', href: '/users.html', active: this.currentPage === 'users' });
             this.addNavItem(navContainer, { id: 'security', icon: 'bi-shield-lock-fill', text: 'Security', href: '/security.html', active: this.currentPage === 'security' });
+        }
+
+        if (this.currentUser?.role === 'admin' || (this.currentUser?.role === 'coordinator' && this.currentUser?.can_create_users)) {
+            if (this.currentUser?.role !== 'admin') {
+                this.addGroup(navContainer, 'Admin');
+            }
+            this.addNavItem(navContainer, { id: 'users', icon: 'bi-people-fill', text: 'Users', href: '/users.html', active: this.currentPage === 'users' });
         }
 
         if (this.currentUser?.role === 'admin' || (this.currentUser?.role === 'coordinator' && this.currentUser?.can_create_rovers)) {

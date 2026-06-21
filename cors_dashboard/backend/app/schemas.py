@@ -137,7 +137,10 @@ class UserCreate(UserBase):
     password: str
     assigned_devices: List[str] | None = Field(default_factory=list)
     can_create_rovers: bool = False
+    can_create_users: bool = False
     extra_mountpoints: str | None = None
+    allowed_bases: List[str] | None = None
+    allowed_rovers: List[str] | None = None
     @validator('password')
     def validate_password(cls, v):
         if len(v) < 6:
@@ -154,7 +157,10 @@ class UserUpdate(BaseModel):
     password: str | None = None
     assigned_devices: List[str] | None = None
     can_create_rovers: bool | None = None
+    can_create_users: bool | None = None
     extra_mountpoints: str | None = None
+    allowed_bases: List[str] | None = None
+    allowed_rovers: List[str] | None = None
     @validator('role')
     def validate_role(cls, v):
         if v is not None:
@@ -174,9 +180,23 @@ class UserResponse(UserBase):
     created_at: int
     permissions: list[str] = []
     can_create_rovers: bool = False
+    can_create_users: bool = False
     extra_mountpoints: str | None = None
+    parent_id: int | None = None
+    allowed_bases: List[str] | None = None
+    allowed_rovers: List[str] | None = None
     app_version: str | None = None
     
+    @validator("allowed_bases", "allowed_rovers", pre=True)
+    def parse_json_lists(cls, v):
+        if isinstance(v, str):
+            import json
+            try:
+                return json.loads(v)
+            except Exception:
+                return []
+        return v
+
     class Config:
         from_attributes = True
 

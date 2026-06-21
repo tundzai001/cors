@@ -86,25 +86,27 @@ class PasswordPolicy:
         if password.lower() in {'password', '12345678', 'admin123', 'password123', '123456'}:
             return False, "Mật khẩu quá đơn giản hoặc dễ đoán"
 
-        # === QUY TẮC 3: Phải chứa ít nhất một chữ cái ===
-        # any(c.isalpha() for c in password) sẽ kiểm tra từng ký tự, nếu có 1 ký tự là chữ, nó trả về True.
-        if not any(c.isalpha() for c in password):
-            return False, "Mật khẩu phải chứa ít nhất một chữ cái"
+        # === QUY TẮC 3: Phải chứa ít nhất một chữ hoa và một chữ thường ===
+        if not any(c.isupper() for c in password):
+            return False, "Mật khẩu phải chứa ít nhất 1 chữ hoa"
+        if not any(c.islower() for c in password):
+            return False, "Mật khẩu phải chứa ít nhất 1 chữ thường"
 
         # === QUY TẮC 4: Phải chứa ít nhất một chữ số ===
         if not any(c.isdigit() for c in password):
-            return False, "Mật khẩu phải chứa ít nhất một chữ số"
+            return False, "Mật khẩu phải chứa ít nhất 1 chữ số"
 
-        # === QUY TẮC 5 (Tùy chọn): Phải chứa ít nhất một chữ hoa ===
-        if not any(c.isupper() for c in password):
-            return False, "Mật khẩu phải chứa ít nhất một chữ cái viết hoa"
-            
-        # === QUY TẮC 6 (Tùy chọn): Phải chứa ít nhất một ký tự đặc biệt ===
-        # re.search tìm kiếm một ký tự không phải là chữ hoặc số.
-        # if not re.search(r'[^a-zA-Z0-9]', password):
-        #     return False, "Mật khẩu phải chứa ít nhất một ký tự đặc biệt (ví dụ: !@#$%)"
+        # === QUY TẮC 5: Ký tự đặc biệt ===
+        import re
+        if not re.search(r'[^a-zA-Z0-9]', password):
+            return False, "Mật khẩu phải chứa ít nhất 1 ký tự đặc biệt"
 
-        # Nếu vượt qua tất cả các kiểm tra
+        # === QUY TẮC 6: Không được chứa ký tự cấm ===
+        forbidden = [' ', '"', "'", '`', '&', '(', ')', '|', '<', '>']
+        for c in forbidden:
+            if c in password:
+                return False, f"Mật khẩu không được chứa ký tự: {c}"
+
         return True, ""
 
 class Role:
@@ -181,7 +183,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 def require_permission(permission: str):
     async def permission_checker(current_user: models.User = Depends(get_current_user)) -> models.User:
-        user_permissions = ROLE_PERMISSIONS.get(current_user.role, [])
+        user_permissions = get_user_permissions(current_user)
         if permission not in user_permissions:
             logger.warning(f"Permission denied: User '{current_user.username}' (role: {current_user.role}) tried to access '{permission}'")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Bạn không có quyền '{permission}'.")
@@ -189,7 +191,11 @@ def require_permission(permission: str):
     return permission_checker
 
 def has_permission(user: models.User, permission: str) -> bool:
-    return permission in ROLE_PERMISSIONS.get(user.role, [])
+    return permission in get_user_permissions(user)
 
 def get_user_permissions(user: models.User) -> list[str]:
-    return ROLE_PERMISSIONS.get(user.role, [])
+    perms = list(ROLE_PERMISSIONS.get(user.role, []))
+    if user.role == Role.COORDINATOR and getattr(user, 'can_create_users', False):
+        if Permission.MANAGE_USERS not in perms:
+            perms.append(Permission.MANAGE_USERS)
+    return perms

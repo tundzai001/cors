@@ -177,6 +177,10 @@ async def batch_sync_checker():
                     # Cập nhật cache
                     old_sync = device_sync_cache.get(serial)
                     device_sync_cache[serial] = is_synced
+                    if not is_synced:
+                        device_sync_cache[f"{serial}_errors"] = base_errs + srv_errs + version_errs
+                    else:
+                        device_sync_cache.pop(f"{serial}_errors", None)
                     device_last_sync_check[serial] = time.time()
                     
                     # Log nếu sync status thay đổi
@@ -216,6 +220,29 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
         
         # ==================== 1. XỬ LÝ NMEA DATA ====================
         if message_type == "raw_data":
+            if payload.startswith(b'{'):
+                try:
+                    data = json.loads(payload.decode('ascii'))
+                    if data.get("type") == "rtcm_skyview_calculated":
+                        # Payload is already fully calculated at the Edge! Just broadcast it.
+                        await manager.broadcast({
+                            "type": "rtcm_signal_update",
+                            "serial": serial,
+                            "data": data
+                        })
+                        return
+                    elif data.get("type") == "rtcm_skyview":
+                        decoded_rtcm = rtcm_signal_decoder.decode_json(serial, data)
+                        if decoded_rtcm:
+                            await manager.broadcast({
+                                "type": "rtcm_signal_update",
+                                "serial": serial,
+                                "data": decoded_rtcm
+                            })
+                        return
+                except Exception:
+                    pass
+
             decoded_rtcm = await rtcm_signal_decoder.decode(serial, payload)
             if decoded_rtcm:
                 await manager.broadcast({
@@ -310,11 +337,13 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             raw_status = str(data.get("status") or "").strip().lower()
             is_offline_packet = raw_status == "offline"
             is_synced = device_sync_cache.get(serial, True)
-            sync_errors = []
+            sync_errors = device_sync_cache.get(f"{serial}_errors", [])[:]
             agent_version = data.get("version")
             if agent_version and not _version_matches(agent_version):
                 is_synced = False
-                sync_errors.append(f"Agent version {agent_version or '??'} != server {settings.APP_VERSION}")
+                err_msg = f"Agent version {agent_version or '??'} != server {settings.APP_VERSION}"
+                if err_msg not in sync_errors:
+                    sync_errors.append(err_msg)
 
             db_device = None
             agent_token_fp = data.get("agent_token_fingerprint")
@@ -433,7 +462,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 
                 # Loại bỏ các field tạm thời
                 fields_to_remove = [
-                    'bps', 'ntrip_stats', 'base_coords', 'gnss_stats', 'sync_errors'
+                    'bps', 'ntrip_stats', 'base_coords', 'gnss_stats', 'sync_errors', 'rtcm_stats'
                 ]
                 
                 for field in fields_to_remove:

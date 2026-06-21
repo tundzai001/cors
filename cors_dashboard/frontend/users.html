@@ -105,8 +105,20 @@
                                 </div>
                                 <div class="col-md-4">
                                     <label for="password" class="form-label">Password</label>
-                                    <input type="password" class="form-control ops-input" id="password" placeholder="Leave blank to keep current">
-                                    <div class="form-text">At least 8 characters for new passwords.</div>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control ops-input" id="password" placeholder="Leave blank to keep current">
+                                        <button class="btn btn-outline-secondary ops-input" type="button" id="togglePassword" style="border-left: none;">
+                                            <i class="bi bi-eye" id="togglePasswordIcon"></i>
+                                        </button>
+                                    </div>
+                                    <div id="passwordReqs" class="small mt-2" style="display: none;">
+                                        <div id="reqLength" class="text-danger"><i class="bi bi-x-circle me-1"></i>Ít nhất 8 ký tự</div>
+                                        <div id="reqUpper" class="text-danger"><i class="bi bi-x-circle me-1"></i>Ít nhất 1 chữ hoa</div>
+                                        <div id="reqLower" class="text-danger"><i class="bi bi-x-circle me-1"></i>Ít nhất 1 chữ thường</div>
+                                        <div id="reqNumber" class="text-danger"><i class="bi bi-x-circle me-1"></i>Ít nhất 1 chữ số</div>
+                                        <div id="reqSpecial" class="text-danger"><i class="bi bi-x-circle me-1"></i>Ít nhất 1 ký tự đặc biệt</div>
+                                        <div id="reqForbidden" class="text-success"><i class="bi bi-check-circle me-1"></i>Không chứa: khoảng trắng, ", ', `, &, (, ), |, <, ></div>
+                                    </div>
                                 </div>
                             </div>
                         </section>
@@ -129,10 +141,16 @@
                                         <label class="form-check-label" for="is_active">Active account</label>
                                     </div>
                                 </div>
-                                <div class="col-md-4 d-flex align-items-end">
+                                <div class="col-md-3 d-flex align-items-end">
                                     <div id="rover-permission-section" class="form-check form-switch d-none">
                                         <input class="form-check-input" type="checkbox" id="can_create_rovers">
                                         <label class="form-check-label" for="can_create_rovers">Can create rovers</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 d-flex align-items-end">
+                                    <div id="user-permission-section" class="form-check form-switch d-none">
+                                        <input class="form-check-input" type="checkbox" id="can_create_users">
+                                        <label class="form-check-label" for="can_create_users">Can create users</label>
                                     </div>
                                 </div>
                             </div>
@@ -141,6 +159,11 @@
                         <section id="device-assignment-section" class="mb-4 d-none">
                             <h6 class="fw-bold mb-2">Device Access</h6>
                             <div id="device-checklist" class="ops-card-body border rounded" style="max-height: 220px; overflow: auto;"></div>
+                        </section>
+
+                        <section id="rover-assignment-section" class="mb-4 d-none">
+                            <h6 class="fw-bold mb-2">Rover Access</h6>
+                            <div id="rover-checklist" class="ops-card-body border rounded" style="max-height: 220px; overflow: auto;"></div>
                         </section>
 
                         <section id="extra-mountpoints-section" class="mb-2 d-none">
@@ -170,6 +193,6 @@
     <script src="/js/api-client.js?v=20260529-auth-session-v2"></script>
     <script src="/js/ops-ui.js?v=20260529-admin-hard-reset-v1"></script>
     <script src="/js/nav-manager.js?v=20260529-admin-hard-reset-v1"></script>
-    <script src="/js/users.js?v=20260530-users-mp-normalize-v1"></script>
+    <script src="/js/users.js?v=20260618-hide-self-actions"></script>
 </body>
 </html>

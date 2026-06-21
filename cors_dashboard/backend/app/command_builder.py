@@ -60,6 +60,7 @@ UNICORE_RTCM_BY_CONSTELLATION = {
     "glo": ("1084", "1020"),
     "gal": ("1094", "1045"),
     "bds": ("1124", "1042"),
+    "qzss": ("1114", "1044"),
 }
 
 
@@ -163,6 +164,7 @@ def _append_unicore_output_commands(commands: list[bytes], port: str, gnss_optio
             rtcm_msgs.extend(messages)
     for message in dict.fromkeys(rtcm_msgs):
         commands.append(f'rtcm{message} {port} 1\r\n'.encode('ascii'))
+        commands.append(b'$DELAY_200$')
 
 
 def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: float, gnss_options: dict | None = None) -> list[bytes]:
@@ -208,63 +210,9 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         logging.info(f"🔍 Survey-In command: {repr(cmd_str)}")
         commands.append(cmd_str.encode('ascii'))
         commands.append(b'$DELAY_2000$')
+        
         logging.info("Configuring Unicore output messages on COM3")
         _append_unicore_output_commands(commands, "com3", gnss_options)
-        commands.append(b'saveconfig\r\n')
-        return commands
-        
-        logging.info("📡 Configuring NMEA output on COM3 (same as RTCM port)")
-        
-        # GPS Messages
-        commands.append(b'gpgga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gpgsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gpgsv com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gpgst com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        
-        # GLONASS Messages 
-        commands.append(b'glgga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'glgsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'glgsv com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        
-        # Galileo Messages
-        commands.append(b'gagga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gagsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gagsv com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        
-        # BeiDou Messages
-        commands.append(b'bdgga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'bdgsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'bdgsv com3 1\r\n')
-        commands.append(b'$DELAY_500$')
-        
-        # ========================================
-        # BƯỚC 4: RTCM messages 
-        # ========================================
-        logging.info("📡 Configuring RTCM output messages on COM3")
-        commands.append(b'rtcm1006 com3 1\r\n')
-        commands.append(b'rtcm1033 com3 1\r\n')
-        commands.append(b'rtcm1074 com3 1\r\n')
-        commands.append(b'rtcm1124 com3 1\r\n')
-        commands.append(b'rtcm1084 com3 1\r\n')
-        commands.append(b'rtcm1094 com3 1\r\n')
-        commands.append(b'rtcm1042 com3 1\r\n')
-        commands.append(b'rtcm1019 com3 1\r\n')
-        commands.append(b'rtcm1020 com3 1\r\n')
-        commands.append(b'rtcm1045 com3 1\r\n')
-        commands.append(b'rtcm1114 com3 1\r\n')
-        commands.append(b'rtcm1044 com3 1\r\n')
         
         # BƯỚC 5: Save config
         commands.append(b'saveconfig\r\n')
@@ -354,66 +302,7 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         commands.append(b'$DELAY_2000$')
         logging.info("Configuring Unicore output messages on COM3")
         _append_unicore_output_commands(commands, "com3", gnss_options)
-        commands.append(b'saveconfig\r\n')
-        return commands
         
-        # ========================================
-        # ✅ FIX: BẬT NMEA TRÊN COM3 (CÙNG PORT VỚI RTCM)
-        # ========================================
-        logging.info("📡 Configuring NMEA output on COM3 (same as RTCM port)")
-        
-        # GPS Messages
-        commands.append(b'gpgga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gpgsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gpgsv com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gpgst com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        
-        # GLONASS Messages
-        commands.append(b'glgga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'glgsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'glgsv com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        
-        # Galileo Messages
-        commands.append(b'gagga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gagsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'gagsv com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        
-        # BeiDou Messages
-        commands.append(b'bdgga com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'bdgsa com3 1\r\n')
-        commands.append(b'$DELAY_200$')
-        commands.append(b'bdgsv com3 1\r\n')
-        commands.append(b'$DELAY_500$')
-        
-        # ========================================
-        # BƯỚC 4: RTCM messages (CÙNG PORT COM3)
-        # ========================================
-        logging.info("📡 Configuring RTCM output messages on COM3")
-        commands.append(b'rtcm1006 com3 1\r\n')
-        commands.append(b'rtcm1033 com3 1\r\n')
-        commands.append(b'rtcm1074 com3 1\r\n')
-        commands.append(b'rtcm1124 com3 1\r\n')
-        commands.append(b'rtcm1084 com3 1\r\n')
-        commands.append(b'rtcm1094 com3 1\r\n')
-        commands.append(b'rtcm1042 com3 1\r\n')
-        commands.append(b'rtcm1019 com3 1\r\n')
-        commands.append(b'rtcm1020 com3 1\r\n')
-        commands.append(b'rtcm1045 com3 1\r\n')
-        commands.append(b'rtcm1114 com3 1\r\n')
-        commands.append(b'rtcm1044 com3 1\r\n')
-        
-        # BƯỚC 5: Save config
         commands.append(b'saveconfig\r\n')
         
     return commands

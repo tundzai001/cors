@@ -1119,8 +1119,27 @@ window.addEventListener('cors:session-expired', () => {
     }
 });
 
+let lastSatelliteGcTs = 0;
+
 function handleWebSocketMessage(message) {
     const { type, data, serial, count } = message;
+
+    const now = Date.now();
+    if (now - lastSatelliteGcTs > 10000) {
+        lastSatelliteGcTs = now;
+        if (currentNmeaData.satellites) {
+            let changed = false;
+            Object.keys(currentNmeaData.satellites).forEach(key => {
+                if (now - currentNmeaData.satellites[key].lastSeen > 30000) {
+                    delete currentNmeaData.satellites[key];
+                    changed = true;
+                }
+            });
+            if (changed && detailsPanelNeedsUpdate === false) {
+                requestDetailsPanelUpdate('low');
+            }
+        }
+    }
 
     if (type === 'status_update') {
         const statusSerial = serial || data?.serial;
@@ -1150,6 +1169,9 @@ function handleWebSocketMessage(message) {
             }
         }
 
+        if (data && data.timestamp) {
+            data.measured_latency = Math.max(0, (Date.now() / 1000) - data.timestamp);
+        }
         enqueueStatusUpdate(data);
 
         if (statusSerial === globalState.selectedDeviceSerial && data.base_coords) {
@@ -1168,19 +1190,11 @@ function handleWebSocketMessage(message) {
                 const newSnr = Number(sat.snr) || 0;
                 const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
                 
-                if (existingSat && newSnr === 0 && oldSnr > 0) {
-                    currentNmeaData.satellites[satKey] = {
-                        ...sat,
-                        ...existingSat, // Keep old valid data (snr, el, az)
-                        lastSeen: Date.now()
-                    };
-                } else {
-                    currentNmeaData.satellites[satKey] = {
-                        ...existingSat,
-                        ...sat,
-                        lastSeen: Date.now()
-                    };
-                }
+                currentNmeaData.satellites[satKey] = {
+                    ...existingSat,
+                    ...sat,
+                    lastSeen: Date.now()
+                };
             });
             requestDetailsPanelUpdate('high');
         }
@@ -1256,19 +1270,11 @@ function handleWebSocketMessage(message) {
                 const newSnr = Number(sat.snr) || 0;
                 const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
                 
-                if (existingSat && newSnr === 0 && oldSnr > 0) {
-                    currentNmeaData.satellites[satKey] = {
-                        ...sat,
-                        ...existingSat,
-                        lastSeen: Date.now()
-                    };
-                } else {
-                    currentNmeaData.satellites[satKey] = {
-                        ...existingSat,
-                        ...sat,
-                        lastSeen: Date.now()
-                    };
-                }
+                currentNmeaData.satellites[satKey] = {
+                    ...existingSat,
+                    ...sat,
+                    lastSeen: Date.now()
+                };
             });
             requestDetailsPanelUpdate('high');
         }
@@ -1283,7 +1289,19 @@ function handleWebSocketMessage(message) {
         }
     }
     if (type === 'rtcm_signal_update' && serial === globalState.selectedDeviceSerial) {
+        const data = message.data || {};
         const satellites = Array.isArray(data?.satellites) ? data.satellites : [];
+        
+        // Update latency continuously based on RTCM packets (which arrive ~1Hz)
+        if (data.timestamp) {
+            const rtcm_latency = Math.max(0, (Date.now() / 1000) - data.timestamp);
+            const deviceObj = globalState.devices.find(d => d.serial === serial);
+            if (deviceObj) {
+                deviceObj.measured_latency = rtcm_latency;
+                requestDetailsPanelUpdate('low');
+            }
+        }
+        
         if (satellites.length) {
             satellites.forEach(sat => {
                 const satKey = sat.id || `RTCM:${sat.system || 'un'}:${sat.prn}`;
@@ -1295,14 +1313,7 @@ function handleWebSocketMessage(message) {
                 const hasNewPosition = (newAz !== 0 || newEl !== 0);
                 const hasOldPosition = existingSat && (Number(existingSat.azimuth) !== 0 || Number(existingSat.elevation) !== 0);
 
-                if (existingSat && newSnr === 0 && oldSnr > 0) {
-                    // SNR bằng 0 → giữ nguyên toàn bộ data cũ, chỉ refresh lastSeen
-                    currentNmeaData.satellites[satKey] = {
-                        ...sat,
-                        ...existingSat,
-                        lastSeen: Date.now()
-                    };
-                } else if (existingSat && !hasNewPosition && hasOldPosition) {
+                if (existingSat && !hasNewPosition && hasOldPosition) {
                     // Az/El mới = 0 nhưng cũ đã có vị trí → giữ az/el cũ để vệ tinh không nhảy về trung tâm
                     currentNmeaData.satellites[satKey] = {
                         ...existingSat,

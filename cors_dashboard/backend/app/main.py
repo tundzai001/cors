@@ -2790,9 +2790,22 @@ async def get_public_network_summary(db: AsyncSession = Depends(get_db)):
 async def get_caster_clienttable(
     db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+    current_user: models.User = Depends(auth.get_current_user),
 ):
     """Aggregate clienttable from all scanned casters to show on map."""
+    # Viewer chỉ được truy cập nếu có allowed_rovers
+    has_caster_perm = auth.has_permission(current_user, auth.Permission.MANAGE_CASTER)
+    import json as _json
+    raw_allowed = getattr(current_user, 'allowed_rovers', None)
+    if isinstance(raw_allowed, str):
+        try:
+            raw_allowed = _json.loads(raw_allowed)
+        except Exception:
+            raw_allowed = []
+    viewer_has_rovers = isinstance(raw_allowed, list) and len(raw_allowed) > 0
+    
+    if not has_caster_perm and not viewer_has_rovers:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xem rover trên bản đồ.")
     all_clients = []
     
     async with global_caster_cache_lock:
@@ -2831,7 +2844,20 @@ async def get_caster_clienttable(
             if any(s in managed_serials for s in r_serials):
                 allowed_usernames.add(str(r.username).strip().lower())
 
-        # 4. Chỉ giữ lại những client trên map thuộc danh sách allowed
+        # 4. Bổ sung allowed_rovers từ DB (cho viewer được cấp quyền xem rover)
+        import json as _json
+        raw_allowed = getattr(current_user, 'allowed_rovers', None)
+        if raw_allowed:
+            if isinstance(raw_allowed, str):
+                try:
+                    raw_allowed = _json.loads(raw_allowed)
+                except Exception:
+                    raw_allowed = []
+            if isinstance(raw_allowed, list):
+                for uname in raw_allowed:
+                    allowed_usernames.add(str(uname).strip().lower())
+
+        # 5. Chỉ giữ lại những client trên map thuộc danh sách allowed
         filtered_clients = [c for c in filtered_clients if str(c.get("username", "")).strip().lower() in allowed_usernames]
     
     return {
@@ -3986,12 +4012,6 @@ async def get_all_rovers_global(
 ):
 
     # 1. Kiểm tra quyền cơ bản
-    if current_user.role == auth.Role.VIEWER:
-        raise HTTPException(
-            status_code=403, 
-            detail="Viewer không có quyền xem danh sách Rover."
-        )
-    
     if current_user.role == auth.Role.COORDINATOR and not current_user.can_create_rovers:
         raise HTTPException(
             status_code=403, 

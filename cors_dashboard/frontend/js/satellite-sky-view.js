@@ -18,8 +18,27 @@ const colors = { us: '#00d47e', ru: '#ff5c5c', eu: '#5c9cff', cn: '#ffb95c', jp:
 const constellationNames = { us: 'GPS (USA)', ru: 'GLONASS (Russia)', eu: 'Galileo (EU)', cn: 'BeiDou (China)', jp: 'QZSS (Japan)', un: 'Unknown' };
 
 function getSatelliteSystem(sat) {
-    if (sat.system && ['us', 'ru', 'eu', 'cn', 'jp'].includes(sat.system)) return sat.system;
-    const prn = sat.prn;
+    if (!sat) return 'un';
+    const sys = String(sat.system || '').toLowerCase();
+    if (['us', 'ru', 'eu', 'cn', 'jp'].includes(sys)) return sys;
+    
+    const mapping = {
+        g: 'us', gps: 'us',
+        r: 'ru', glonass: 'ru',
+        e: 'eu', galileo: 'eu',
+        c: 'cn', beidou: 'cn', compass: 'cn',
+        j: 'jp', qzss: 'jp'
+    };
+    if (mapping[sys]) return mapping[sys];
+
+    // Fallback: try extracting system from string PRN (e.g. "G01", "R07")
+    const prnStr = String(sat.prn || '');
+    if (prnStr.length >= 2) {
+        const firstChar = prnStr[0].toLowerCase();
+        if (mapping[firstChar]) return mapping[firstChar];
+    }
+
+    const prn = Number(sat.prn);
     if (prn >= 1 && prn <= 32) return 'us';
     if (prn >= 65 && prn <= 96) return 'ru';
     if (prn >= 301 && prn <= 336) return 'eu';
@@ -28,8 +47,24 @@ function getSatelliteSystem(sat) {
     return 'un';
 }
 
+// Chuẩn hóa PRN về dải RTCM (1-based) để NMEA và RTCM cùng vệ tinh dùng chung key.
+function getNormalizedPrn(sat) {
+    const prnRaw = sat.prn;
+    const prnStr = String(prnRaw || '');
+    // Handle string PRNs from RTCM decoder (e.g. "G01", "R07", "E12", "C14")
+    const match = prnStr.match(/^[A-Z]?(\d+)$/);
+    const prn = match ? Number(match[1]) : Number(prnRaw);
+    if (isNaN(prn)) return prnStr; // fallback to raw string
+    const sys = getSatelliteSystem(sat);
+    if (sys === 'ru' && prn >= 65 && prn <= 96) return prn - 64;
+    if (sys === 'eu' && prn >= 301 && prn <= 336) return prn - 300;
+    if (sys === 'cn' && prn >= 401 && prn <= 463) return prn - 400;
+    if (sys === 'jp' && prn >= 193 && prn <= 200) return prn - 192;
+    return prn;
+}
+
 function getSatelliteKey(sat) {
-    return `${getSatelliteSystem(sat)}:${sat.prn}`;
+    return `${getSatelliteSystem(sat)}:${getNormalizedPrn(sat)}`;
 }
 
 function getVisibleSatellites(satellites, maxAgeMs) {
@@ -248,7 +283,7 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 satCtx.font = 'bold 7px Arial';
                 satCtx.textAlign = 'center';
                 satCtx.textBaseline = 'middle';
-                satCtx.fillText(satData.prn, x, y + flagSize / 2 + 7);
+                satCtx.fillText(getNormalizedPrn(satData), x, y + flagSize / 2 + 7);
             }
             satCtx.globalAlpha = 1.0;
         };
@@ -319,7 +354,7 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                         itemDiv.innerHTML = `
                             <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
                             <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
-                            <div class="sat-bar-prn">${sat.prn}</div>
+                            <div class="sat-bar-prn">${getNormalizedPrn(sat)}</div>
                         `;
                         barsWrapper.appendChild(itemDiv);
                     });
