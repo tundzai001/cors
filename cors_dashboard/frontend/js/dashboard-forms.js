@@ -910,7 +910,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                     <div className="fw-bold mb-1">
                         <i className="bi bi-reception-4 me-2"></i>Mục LTE
                     </div>
-                    Trạm LTE giữ luồng hoạt động MQTT data -> NTRIP SOURCE. Chỉ cấu hình NTRIP Caster Server 1/2,
+                    Trạm LTE giữ luồng hoạt động MQTT data -&gt; NTRIP SOURCE. Chỉ cấu hình NTRIP Caster Server 1/2,
                     mountpoint, password và chế độ sleep/always-on. Phần RTCM Client và NMEA vệ tinh không áp dụng cho LTE.
                 </div>
             )}
@@ -1430,7 +1430,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                             {isLteStation && (
                                 <div className="alert alert-info small mb-3">
                                     <i className="bi bi-info-circle-fill me-2"></i>
-                                    LTE không dùng mục này để set NMEA/GSV hoặc bật vệ tinh. Bridge tự giữ luồng MQTT -> SOURCE,
+                                    LTE không dùng mục này để set NMEA/GSV hoặc bật vệ tinh. Bridge tự giữ luồng MQTT -&gt; SOURCE,
                                     còn cấu hình chip LTE dùng profile cố định GGA + RTCM trên COM2. Các trường RTCM Client bên dưới sẽ bị bỏ qua.
                                 </div>
                             )}
