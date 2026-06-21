@@ -1663,7 +1663,8 @@ class RelayWorker(threading.Thread):
             source_sock = None
             target_sock = None
             try:
-                # XÓA sleep logic để luồng SOURCE luôn được kết nối và parse RTCM                source_host = self._source_host()
+                # XÓA sleep logic để luồng SOURCE luôn được kết nối và parse RTCM
+                source_host = self._source_host()
                 source_port = self._source_port()
                 source_user = self._source_user()
                 source_pass = self._source_pass()
