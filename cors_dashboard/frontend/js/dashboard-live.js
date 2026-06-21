@@ -948,7 +948,40 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     </div>
                     <div className="card-body pt-0 pb-3 px-3">
                         {(() => {
-                            const isAwake = device.status !== "sleep";
+                            // Determine if the stream to aitogy.com.vn is active
+                            const cfg = device?.service_config || {};
+                            const s1Host = String(cfg.serverhost1 || '').trim().toLowerCase();
+                            const s2Host = String(cfg.serverhost2 || '').trim().toLowerCase();
+                            const preferred = 'aitogy.com.vn';
+                            
+                            let targetSid = null;
+                            if (s1Host.includes(preferred)) targetSid = 1;
+                            else if (s2Host.includes(preferred)) targetSid = 2;
+
+                            let isAwake = false;
+                            if (targetSid !== null) {
+                                const targetEnabled = window.CorsDashboardShared?.parseBoolCompat(
+                                    cfg[`server${targetSid}_enabled`],
+                                    window.CorsDashboardShared?.isServerConfiguredCompat(cfg, targetSid)
+                                );
+                                if (targetEnabled) {
+                                    const onDemand = window.CorsDashboardShared?.parseBoolCompat(
+                                        cfg[`server${targetSid}_stream_on_demand`],
+                                        false
+                                    );
+                                    const active = onDemand
+                                        ? window.CorsDashboardShared?.parseBoolCompat(
+                                            cfg[`server${targetSid}_stream_active`],
+                                            false
+                                        )
+                                        : true;
+                                    const bps = Number(device?.ntrip_status?.[`server${targetSid}`]?.bps || 0);
+                                    isAwake = active || bps > 0;
+                                }
+                            } else {
+                                isAwake = device.status !== "sleep";
+                            }
+
                             const rtcmBps = device.ntrip_stats?.rtcm_input_bps || 0;
                             const telemetryBps = device.savings_stats?.telemetry_bps || 0;
                             const currentVolts = device.system_info?.cpu?.core_volts || null;
