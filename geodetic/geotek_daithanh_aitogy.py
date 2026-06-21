@@ -331,36 +331,41 @@ def enable_tcp_keepalive(sock):
 
 def extract_rtcm3_frames(buffer):
     frames = []
-    while True:
-        start = buffer.find(b"\xd3")
-        if start < 0:
-            buffer.clear()
-            return frames
-        if start > 0:
-            del buffer[:start]
-        if len(buffer) < 6:
-            return frames
-        if buffer[1] & 0xFC:
-            del buffer[0]
-            continue
-
-        payload_len = ((buffer[1] & 0x03) << 8) | buffer[2]
-        total_len = 3 + payload_len + 3
-        if payload_len > 1023:
-            del buffer[0]
-            continue
-        if len(buffer) < total_len:
-            if len(buffer) > 8192:
-                del buffer[:-total_len]
-            return frames
-
-        frame = bytes(buffer[:total_len])
-        expected_crc = int.from_bytes(frame[-3:], "big")
-        if crc24q(frame[:-3]) == expected_crc:
-            frames.append(frame)
-            del buffer[:total_len]
+    while len(buffer) > 0:
+        if buffer[0] == 0xD3:
+            if len(buffer) < 6:
+                break
+            if buffer[1] & 0xFC:
+                del buffer[0]
+                continue
+            payload_len = ((buffer[1] & 0x03) << 8) | buffer[2]
+            total_len = 3 + payload_len + 3
+            if payload_len > 1023:
+                del buffer[0]
+                continue
+            if len(buffer) < total_len:
+                break
+            
+            frame = bytes(buffer[:total_len])
+            expected_crc = int.from_bytes(frame[-3:], "big")
+            if crc24q(frame[:-3]) == expected_crc:
+                frames.append(frame)
+                del buffer[:total_len]
+            else:
+                del buffer[0]
+        elif buffer[0] == 0x24:  # '$' - NMEA sentence start
+            end_idx = buffer.find(b'\n')
+            if end_idx >= 0:
+                del buffer[:end_idx + 1]
+            else:
+                if len(buffer) > 512:
+                    del buffer[0]
+                    continue
+                break  # Wait for more data to complete NMEA sentence
         else:
+            # Skip any other non-RTCM, non-NMEA byte
             del buffer[0]
+    return frames
 
 CRC24Q_POLY = 0x1864CFB
 MAX_BUFFER_BYTES = 65536
