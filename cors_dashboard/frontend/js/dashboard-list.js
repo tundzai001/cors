@@ -25,13 +25,29 @@ function getDeviceOpsFlags(device) {
     const noStream = false;
     const unsynced = device?.is_synced === false;
     const syncErrors = Array.isArray(device?.sync_errors) ? device.sync_errors : [];
-    const alert = status === 'locked' || unsynced;
-    const alertTitle = unsynced
-        ? (syncErrors.join('\n') || 'Unsynced')
-        : status === 'locked'
-            ? 'Locked'
-            : 'Needs attention';
-    return { alert, unsynced, noStream, syncErrors, alertTitle };
+
+    const rtcmInputBps = Number(
+        device?.rtcm_input_bps ||
+        device?.ntrip_stats?.rtcm_input_bps ||
+        device?.ntrip_stats?.rtcm_in_bps ||
+        device?.mqtt_stats?.source_bps ||
+        0
+    );
+    const antennaStatus = device?.antenna_status || device?.system_info?.antenna_status;
+    const antennaFault = (antennaStatus && antennaStatus.state === "FAULT") ||
+        (['online', 'sleep', 'streaming', 'starting'].includes(status) && rtcmInputBps > 0 && rtcmInputBps < 100);
+
+    const alert = status === 'locked' || unsynced || antennaFault;
+    let alertTitle = 'Needs attention';
+    if (unsynced) {
+        alertTitle = syncErrors.join('\n') || 'Unsynced';
+    } else if (status === 'locked') {
+        alertTitle = 'Locked';
+    } else if (antennaFault) {
+        alertTitle = (antennaStatus && antennaStatus.message) || `Lỗi Ăng-ten (Dòng RTCM cực thấp: ${rtcmInputBps} B/s)`;
+    }
+
+    return { alert, unsynced, noStream, syncErrors, alertTitle, antennaFault };
 }
 
 function hasAccessTokenGap(device) {

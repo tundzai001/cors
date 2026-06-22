@@ -581,6 +581,10 @@ def _extract_active_mountpoint(device: Optional[models.Device]) -> Optional[str]
         return None
     cfg = device.service_config or {}
     active_mp = cfg.get("active_mountpoint")
+    if not active_mp:
+        is_active = bool(cfg.get("stream_active", cfg.get("server1_stream_active", False)))
+        if is_active:
+            active_mp = cfg.get("mountpoint1") or cfg.get("target_mp") or device.name or device.serial
     return str(active_mp) if active_mp else None
 
 
@@ -5053,6 +5057,33 @@ def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
             "device_serial": device.serial,
             "created_at": now_ts,
         })
+
+    # Antenna health checks based on agent reported antenna_status or rtcm_input_bps
+    if raw_status in ("online", "streaming", "sleep", "starting"):
+        system_info = device.system_info if isinstance(device.system_info, dict) else {}
+        antenna_status = system_info.get("antenna_status") or ntrip.get("antenna_status")
+        if isinstance(antenna_status, dict) and antenna_status.get("state") == "FAULT":
+            alerts.append({
+                "id": f"device-antenna-fault-{device.serial}",
+                "severity": "warning",
+                "type": "antenna_fault",
+                "title": "Antenna Fault",
+                "message": antenna_status.get("message") or f"{device.name or device.serial} has an antenna fault.",
+                "device_serial": device.serial,
+                "created_at": now_ts,
+            })
+        else:
+            rtcm_in_bps = int(ntrip.get("rtcm_input_bps") or 0)
+            if 0 < rtcm_in_bps < 100:
+                alerts.append({
+                    "id": f"device-antenna-low-bps-{device.serial}",
+                    "severity": "warning",
+                    "type": "antenna_fault",
+                    "title": "Low RTCM Input Rate",
+                    "message": f"{device.name or device.serial} has extremely low RTCM input rate ({rtcm_in_bps} B/s). Possible antenna fault.",
+                    "device_serial": device.serial,
+                    "created_at": now_ts,
+                })
 
     return alerts
 

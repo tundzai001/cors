@@ -116,7 +116,9 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     
                     device['ntrip_status'] = {
                         "server1": {"connected": s1_bps > 0, "bps": s1_bps},
-                        "server2": {"connected": s2_bps > 0, "bps": s2_bps}
+                        "server2": {"connected": s2_bps > 0, "bps": s2_bps},
+                        "rtcm_input_bps": int(raw_stats.get('rtcm_input_bps', 0) or raw_stats.get('rtcm_in_bps', 0) or 0),
+                        "antenna_status": device.get('antenna_status')
                     }
                     device['bps'] = s1_bps + s2_bps
                     device['ntrip_connected'] = (s1_bps + s2_bps) > 0
@@ -387,6 +389,10 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         if service_config.get("server2_enabled"):
             s2_bps = ntrip_stats.get("server2_bps", 0)
             ntrip_status["server2"] = {"connected": s2_bps > 0, "bps": s2_bps}
+        
+        ntrip_status["rtcm_input_bps"] = int(ntrip_stats.get("rtcm_input_bps", 0) or ntrip_stats.get("rtcm_in_bps", 0) or 0)
+        if "antenna_status" in device_data:
+            ntrip_status["antenna_status"] = device_data["antenna_status"]
         return ntrip_status
     
     # ✅ BƯỚC 2: TỰ ĐỘNG TẠO CHO RELAY / VIRTUAL / MONITOR
@@ -501,12 +507,6 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         update_values["timestamp"] = current_ts
         should_update = True
 
-    # NTRIP connected
-    new_ntrip = device_data.get("ntrip_connected")
-    if new_ntrip is not None and new_ntrip != existing_device.ntrip_connected:
-        update_values["ntrip_connected"] = new_ntrip
-        should_update = True
-
     # NTRIP status
     current_service_config = new_service_config if new_service_config else _ensure_dict(existing_device.service_config)
     new_ntrip_status = build_ntrip_status(device_data, current_service_config)
@@ -516,6 +516,24 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         if old_ntrip_status != new_ntrip_status:
             update_values["ntrip_status"] = new_ntrip_status
             should_update = True
+            
+            # Recalculate top-level bps
+            s1 = new_ntrip_status.get("server1", {})
+            s2 = new_ntrip_status.get("server2", {})
+            total_bps = int(s1.get("bps", 0) or 0) + int(s2.get("bps", 0) or 0)
+            if total_bps != existing_device.bps:
+                update_values["bps"] = total_bps
+                should_update = True
+
+    # NTRIP connected
+    new_ntrip = device_data.get("ntrip_connected")
+    if new_ntrip is None and new_ntrip_status:
+        s1 = new_ntrip_status.get("server1", {})
+        s2 = new_ntrip_status.get("server2", {})
+        new_ntrip = (int(s1.get("bps", 0) or 0) + int(s2.get("bps", 0) or 0)) > 0
+    if new_ntrip is not None and new_ntrip != existing_device.ntrip_connected:
+        update_values["ntrip_connected"] = new_ntrip
+        should_update = True
     
     # ✅ XỬ LÝ is_synced
     if new_is_synced is False and existing_device.is_synced is not False:

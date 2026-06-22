@@ -386,7 +386,17 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 data["system_info"] = system_info
                 if not data.get("name") and db_device.name:
                     data["name"] = db_device.name
-            
+
+            # Ensure savings_stats and antenna_status are persisted in system_info JSONB
+            system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
+            savings_stats = data.get("savings_stats")
+            if savings_stats and isinstance(savings_stats, dict):
+                system_info["savings_stats"] = savings_stats
+            antenna_status = data.get("antenna_status")
+            if antenna_status and isinstance(antenna_status, dict):
+                system_info["antenna_status"] = antenna_status
+            data["system_info"] = system_info
+
             # --- CẬP NHẬT DATA ĐỂ GỬI UI ---
             data['is_synced'] = is_synced
             data['sync_errors'] = sync_errors
@@ -462,7 +472,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 
                 # Loại bỏ các field tạm thời
                 fields_to_remove = [
-                    'bps', 'ntrip_stats', 'base_coords', 'gnss_stats', 'sync_errors', 'rtcm_stats'
+                    'bps', 'base_coords', 'gnss_stats', 'sync_errors', 'rtcm_stats'
                 ]
                 
                 for field in fields_to_remove:

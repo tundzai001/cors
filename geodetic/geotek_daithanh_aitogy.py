@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V1.4.4"
+RELAY_VERSION = "V1.8.4"
 
 import json
 import logging
@@ -105,6 +105,24 @@ class ConfigManager:
                         cfg[key] = value
                 for key in ("last_applied_config", "last_config_update", "active_mountpoint"):
                     cfg.pop(key, None)
+                self.save()
+                return True
+        return False
+
+    def update_relay_config(self, serial, updates):
+        serial = str(serial or "").strip()
+        if not serial or not isinstance(updates, dict):
+            return False
+        with self._lock:
+            stations = self.data.setdefault("station_list", [])
+            for cfg in stations:
+                target_mp = str(cfg.get("target_mp") or "").strip()
+                cfg_serial = f"RELAY_{target_mp.replace('.', '_')}"
+                if cfg_serial != serial:
+                    continue
+                for key, value in updates.items():
+                    if value is not None:
+                        cfg[key] = value
                 self.save()
                 return True
         return False
@@ -1622,13 +1640,70 @@ class RelayWorker(threading.Thread):
         except Exception as e:
             logging.debug(f"Error publishing/saving status: {e}")
 
-    def set_stream_active(self, active: bool):
+    def set_stream_active(self, active: bool, mountpoint=None):
         self.desired_active = bool(active)
         if not self.desired_active:
             self.bytes_sent = 0
             self.current_bps = 0
         self.wakeup_event.set()
         self.publish_status()
+
+    def _persist_remote_config(self, original_config):
+        if not isinstance(original_config, dict):
+            return
+
+        payload = original_config.get("payload", original_config)
+        service_config = payload.get("service_config", {}) if isinstance(payload.get("service_config"), dict) else {}
+        if not service_config:
+            service_config = payload
+
+        before_target = (
+            self.cfg.get("target_host"),
+            str(self.cfg.get("target_port") or ""),
+            self.cfg.get("target_pass"),
+            self.cfg.get("target_mp"),
+        )
+
+        updates = {}
+        
+        # Parse stream_active
+        stream_active = service_config.get("server1_stream_active")
+        if stream_active is None:
+            stream_active = service_config.get("stream_active")
+        if stream_active is not None:
+            updates["stream_active"] = bool(stream_active)
+            self.desired_active = bool(stream_active)
+
+        target_aliases = {
+            "target_host": ("target_host", "serverhost1", "host", "caster_host"),
+            "target_port": ("target_port", "serverport1", "port1", "port", "caster_port"),
+            "target_pass": ("target_pass", "password1", "password", "pass", "caster_password"),
+            "target_mp": ("target_mp", "mountpoint", "mountpoint1", "active_mountpoint"),
+        }
+        for target_key, aliases in target_aliases.items():
+            for alias in aliases:
+                val = service_config.get(alias)
+                if val not in (None, ""):
+                    updates[target_key] = val
+                    break
+
+        if updates:
+            self.cfg.update(updates)
+            config_mgr.update_relay_config(self.serial, updates)
+            self.log("INFO", f"Saved remote config into geotek_config.json: {updates}")
+
+        after_target = (
+            self.cfg.get("target_host"),
+            str(self.cfg.get("target_port") or ""),
+            self.cfg.get("target_pass"),
+            self.cfg.get("target_mp"),
+        )
+
+        if after_target != before_target:
+            self.log("INFO", "Runtime target changed; reconnecting TARGET socket")
+            self._close_target_socket()
+
+        self.wakeup_event.set()
 
     def _close_target_socket(self):
         with self.socket_lock:
@@ -2165,6 +2240,7 @@ class MqttSourceWorker(threading.Thread):
             "port1": self.cfg.get("target_port"),
             "mountpoint1": self.cfg.get("target_mp"),
             "password1": self.cfg.get("target_pass"),
+            "active_mountpoint": self.cfg.get("target_mp") if bool(self.cfg.get("stream_active", self.cfg.get("server1_stream_active", False))) else None,
             "server2_enabled": bool(self.cfg.get("server2_enabled", False)),
             "server2_stream_on_demand": bool(self.cfg.get("server2_stream_on_demand", True)),
             "server2_stream_active": bool(self.cfg.get("server2_stream_active", False)),

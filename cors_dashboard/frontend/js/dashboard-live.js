@@ -910,12 +910,56 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             const sats = metrics.satellites.value;
                             const hasCoords = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => k === "1005" || k === "1006");
                             
+                            const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
+                            const isAntennaFault = antennaStatus && antennaStatus.state === "FAULT";
+                            
+                            const rtcmInputBps = Number(
+                                device.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_in_bps ||
+                                device.mqtt_stats?.source_bps ||
+                                0
+                            );
+
+                            const hasMsm = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => {
+                                const t = Number(k);
+                                return t >= 1071 && t <= 1127;
+                            });
+
                             return (
                                 <ul className="mb-0 text-light small ps-3" style={{ listStyleType: "circle" }}>
+                                    {isAntennaFault && (
+                                        <li className="text-danger mb-1 fw-bold">
+                                            <i className="bi bi-exclamation-octagon-fill me-1"></i>
+                                            Cảnh báo Ăng-ten: {antennaStatus.message}
+                                        </li>
+                                    )}
+                                    
                                     {hasCoords ? (
                                         <li className="text-success mb-1">Tọa độ Base (1005/1006) đã sẵn sàng.</li>
                                     ) : (
                                         <li className="text-danger mb-1">Chưa có gói tọa độ 1005/1006. Rover không thể FIX RTK!</li>
+                                    )}
+
+                                    {device.status !== "offline" && !hasMsm && (
+                                        <li className="text-danger mb-1 fw-semibold">
+                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                            Lỗi Giải mã RTCM: Không nhận được bất kỳ trị đo vệ tinh nào (gói MSM). Rover không thể FIX RTK!
+                                        </li>
+                                    )}
+
+                                    {device.status !== "offline" && rtcmInputBps > 0 && rtcmInputBps < 100 && !isAntennaFault && (
+                                        <li className="text-danger mb-1 fw-semibold">
+                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                            Cảnh báo dòng dữ liệu: Tốc độ nhận RTCM từ máy thu cực thấp ({rtcmInputBps} B/s). Ăng-ten có thể đã hỏng hoặc lỏng cáp.
+                                        </li>
+                                    )}
+                                    
+                                    {sats === 0 && device.status !== "offline" && !isAntennaFault && (
+                                        <li className="text-danger mb-1 fw-semibold">
+                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                            Lỗi Tín hiệu: Không nhận được vệ tinh nào (0 Sats). Kiểm tra kết nối ăng-ten.
+                                        </li>
                                     )}
                                     
                                     {sats < 12 && sats > 0 && (
@@ -948,13 +992,17 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     </div>
                     <div className="card-body pt-0 pb-3 px-3">
                         {(() => {
-                            const savings = device.savings_stats || {};
-                            const isAwake = (savings.is_sleeping !== undefined && savings.is_sleeping !== null)
-                                ? !savings.is_sleeping
-                                : (device.status !== "sleep");
+                            const savings = device.savings_stats || device.system_info?.savings_stats || {};
+                            const isAwake = (device.status !== "sleep");
 
-                            const rtcmBps = device.ntrip_stats?.rtcm_input_bps || 0;
-                            const telemetryBps = device.savings_stats?.telemetry_bps || 0;
+                            const rtcmBps = Number(
+                                device.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_in_bps ||
+                                device.mqtt_stats?.source_bps ||
+                                0
+                            );
+                            const telemetryBps = savings.telemetry_bps || 0;
                             const currentVolts = device.system_info?.cpu?.core_volts || null;
 
                             return (
@@ -1003,24 +1051,27 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                         </div>
                                     </div>
                                     
-                                    {device.savings_stats && (
-                                        <div className="rounded p-2 d-flex align-items-center justify-content-between" style={{ backgroundColor: 'rgba(25,135,84,0.12)', border: '1px solid rgba(25,135,84,0.3)' }}>
-                                            <div className="d-flex align-items-center">
-                                                <i className="bi bi-shield-check fs-4 me-3" style={{ color: '#198754' }}></i>
-                                                <div>
-                                                    <div style={{ fontSize: '0.7rem', color: '#8b949e', textTransform: 'uppercase' }}>Tích lũy tài nguyên đã tiết kiệm</div>
-                                                    <div className="fw-bold fs-5" style={{ color: '#198754', lineHeight: 1.2 }}>
-                                                        {((device.savings_stats.total_data_saved_bytes || 0) / 1048576).toFixed(2)} <span style={{fontSize: '0.65em'}}>MB</span>
+                                    {(device.savings_stats || device.system_info?.savings_stats) && (() => {
+                                        const actualSavings = device.savings_stats || device.system_info?.savings_stats || {};
+                                        return (
+                                            <div className="rounded p-2 d-flex align-items-center justify-content-between" style={{ backgroundColor: 'rgba(25,135,84,0.12)', border: '1px solid rgba(25,135,84,0.3)' }}>
+                                                <div className="d-flex align-items-center">
+                                                    <i className="bi bi-shield-check fs-4 me-3" style={{ color: '#198754' }}></i>
+                                                    <div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#8b949e', textTransform: 'uppercase' }}>Tích lũy tài nguyên đã tiết kiệm</div>
+                                                        <div className="fw-bold fs-5" style={{ color: '#198754', lineHeight: 1.2 }}>
+                                                            {((actualSavings.total_data_saved_bytes || 0) / 1048576).toFixed(2)} <span style={{fontSize: '0.65em'}}>MB</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-end pe-2">
+                                                    <div className="fw-bold fs-5 text-warning" style={{ lineHeight: 1.2 }}>
+                                                        {actualSavings.total_saved_mwh ? actualSavings.total_saved_mwh.toFixed(1) : "0.0"} <span style={{fontSize: '0.65em'}}>mWh</span>
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div className="text-end pe-2">
-                                                <div className="fw-bold fs-5 text-warning" style={{ lineHeight: 1.2 }}>
-                                                    {device.savings_stats.total_saved_mwh ? device.savings_stats.total_saved_mwh.toFixed(1) : "0.0"} <span style={{fontSize: '0.65em'}}>mWh</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
+                                        );
+                                    })()}
                                 </>
                             );
                         })()}
