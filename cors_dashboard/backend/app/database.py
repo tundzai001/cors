@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     ENABLE_PREFERRED_HOST: bool = False
     PREFERRED_HOST_MARKER: str = ""
     
+    # Zalo Bot
+    ENABLE_ZALO_BOT: bool = False
+    ZALO_BOT_TOKEN: str = ""
+    ZALO_ADMIN_GROUP_TOKEN: str = ""
+    ZALO_PUBLIC_GROUP_TOKEN: str = ""
+    ZALO_BOT_ADMIN_USERNAME: str = ""
+    ENABLE_ZALO_ERROR_ALERTS: bool = True
+    
     # Database configs
     DATABASE_URL: str
     AUTH_DATABASE_URL: str

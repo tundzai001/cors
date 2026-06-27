@@ -1794,6 +1794,7 @@ async def lifespan(app: FastAPI):
                     logger.error(f"Security rate limiter cleanup error: {e}")
         
         # Tạo vÃ  track tất cả tasks
+        # Tạo và track tất cả tasks
         tasks.append(asyncio.create_task(check_device_heartbeats_with_retry()))
         tasks.append(asyncio.create_task(global_rate_limiter_cleanup_task()))
         tasks.append(asyncio.create_task(security_rate_limiter_cleanup_task()))
@@ -1808,16 +1809,62 @@ async def lifespan(app: FastAPI):
         # Start global caster monitor (synchronizes multiple caster servers into local cache)
         tasks.append(asyncio.create_task(caster_monitor_task()))
 
-        logger.info("âœ“ Background tasks started")
         logger.info("=" * 60)
-        logger.info("ðŸŽ‰ Application startup complete!")
+        logger.info("🎉 Application startup complete!")
         logger.info("=" * 60)
         
         await redis_client.connect()
+
+        # --- ZALO BOT INTEGRATION ---
+        if settings.ENABLE_ZALO_BOT:
+            from .zalo_bot_service import zalo_bot_service
+            
+            async def _zalo_get_devices():
+                from .database import device_session_scope, auth_session_scope
+                from . import crud
+                async with device_session_scope() as devices_db:
+                    async with auth_session_scope() as auth_db:
+                        user = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
+                        if not user:
+                            return []
+                        devices = await _ops_visible_devices(devices_db, auth_db, user)
+                        return [{
+                            "serial": d.serial,
+                            "name": d.name,
+                            "status": getattr(d, "status", "unknown"),
+                            "latest_throughput_bps": getattr(d, "latest_throughput_bps", 0),
+                            "latitude": getattr(d, "latitude", 0),
+                            "longitude": getattr(d, "longitude", 0),
+                            "mountpoint": getattr(d, "mountpoint", "")
+                        } for d in devices]
+                        
+            async def _zalo_get_alerts():
+                from .database import device_session_scope, auth_session_scope
+                from . import crud
+                async with auth_session_scope() as auth_db:
+                    async with device_session_scope() as devices_db:
+                        user = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
+                        if not user:
+                            return []
+                        alerts = await _build_ops_alerts(auth_db, devices_db, user)
+                        return alerts # it's already a list of dicts
+                        
+            zalo_bot_service.set_callbacks(get_devices=_zalo_get_devices, get_alerts=_zalo_get_alerts)
+            tasks.append(asyncio.create_task(zalo_bot_service.start()))
+            logger.info("✓ Zalo Bot service started")
+
         yield
         
     finally:
-        logger.info("ðŸ›‘ Application shutting down...")
+        logger.info("🛑 Application shutting down...")
+        
+        if settings.ENABLE_ZALO_BOT:
+            try:
+                from .zalo_bot_service import zalo_bot_service
+                await zalo_bot_service.stop()
+            except Exception as e:
+                logger.error(f"Error stopping Zalo Bot: {e}")
+                
         await redis_client.disconnect()
 
         # --- BƯỚC 1: DỪNG MQTT TRƯỚC (Ngắt nguồn dữ liệu vào) ---

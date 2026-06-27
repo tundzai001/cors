@@ -18,6 +18,16 @@ import uvicorn
 
 load_dotenv(Path(__file__).with_name(".env"), override=False)
 
+import logging
+
+class UvicornWebsocketFilter(logging.Filter):
+    def filter(self, record):
+        if record.levelname == "ERROR" and "data transfer failed" in record.getMessage():
+            return False
+        return True
+
+logging.getLogger("uvicorn.error").addFilter(UvicornWebsocketFilter())
+
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app", 

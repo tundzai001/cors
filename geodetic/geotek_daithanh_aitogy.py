@@ -2135,7 +2135,7 @@ class MqttSourceWorker(threading.Thread):
         self.bytes_received = 0
         self.last_mqtt_data_ts = 0.0
         self.current_mqtt_bps = 0
-        self.data_timeout = int(self.cfg.get("data_timeout", 30))
+        self.data_timeout = int(self.cfg.get("data_timeout", 2))
         self.socket_lock = threading.Lock()
         self._target_sock = None
         self._target_socks = {}
@@ -2153,6 +2153,19 @@ class MqttSourceWorker(threading.Thread):
         self.satellites = {}
         self.raw_publish_buffer = bytearray()
         self.last_raw_publish = time.time()
+        self.startup_time = time.time()
+        self.was_offline = False
+        self.offline_start_time = None
+
+    def log_offline_event(self, message):
+        try:
+            log_path = os.path.join(SCRIPT_DIR, "offline_lte.txt")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] {message}\n")
+            self.log("INFO", f"Logged offline event: {message}")
+        except Exception as e:
+            self.log("ERROR", f"Failed to write to offline_lte.txt: {e}")
 
     def log(self, level, msg):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['topic']} -> {self.cfg['target_mp']}] {msg}")
@@ -2737,6 +2750,7 @@ class MqttSourceWorker(threading.Thread):
         self.log("SUCCESS", "✅ Geotek LTE configuration finished.")
 
     def run(self):
+        self.log_offline_event(f"Monitoring started for {self.name} ({self.serial})")
         while not self.stop_event.is_set():
             try:
                 try:
@@ -2749,6 +2763,17 @@ class MqttSourceWorker(threading.Thread):
                 
                 def on_message(c, userdata, msg):
                     now = time.time()
+                    if self.was_offline:
+                        offline_duration = int(now - self.offline_start_time)
+                        m, s = divmod(offline_duration, 60)
+                        h, m = divmod(m, 60)
+                        duration_str = f"{h}h {m}m {s}s" if h > 0 else (f"{m}m {s}s" if m > 0 else f"{s}s")
+                        self.log_offline_event(f"{self.name} ({self.serial}) came back ONLINE. Offline duration: {duration_str} ({offline_duration} seconds)")
+                        self.was_offline = False
+                        self.offline_start_time = None
+                    elif self.offline_start_time is None:
+                        self.was_offline = False
+                    
                     self.last_mqtt_data_ts = now
                     payload_bytes = msg.payload or b""
                     self.bytes_received += len(payload_bytes)
@@ -2814,7 +2839,16 @@ class MqttSourceWorker(threading.Thread):
                         self._target_sock = self._target_socks.get("server1")
                         self.is_connected = bool(self._target_socks)
 
+                def on_disconnect(c, userdata, *args):
+                    rc = args[-1] if args else 0
+                    self.log("WARNING", f"MQTT source client disconnected with code {rc}")
+                    if not self.was_offline:
+                        self.was_offline = True
+                        self.offline_start_time = time.time()
+                        self.log_offline_event(f"{self.name} ({self.serial}) went OFFLINE (MQTT connection lost, code {rc})")
+
                 self.mqtt_data_client.on_message = on_message
+                self.mqtt_data_client.on_disconnect = on_disconnect
                 self.mqtt_data_client.connect(self.cfg['mqtt_broker'], int(self.cfg['mqtt_port']), 60)
                 self.mqtt_data_client.subscribe(self.cfg['topic'])
                 self.log("INFO", f"Subscribed MQTT source topic: {self.cfg['topic']}")
@@ -2822,6 +2856,26 @@ class MqttSourceWorker(threading.Thread):
 
                 while not self.stop_event.is_set():
                     now = time.time()
+                    
+                    # Check offline status
+                    mqtt_data_age = None if self.last_mqtt_data_ts <= 0 else int(now - self.last_mqtt_data_ts)
+                    mqtt_data_active = mqtt_data_age is not None and mqtt_data_age <= self.data_timeout
+                    
+                    if not mqtt_data_active:
+                        if not self.was_offline:
+                            self.was_offline = True
+                            if self.last_mqtt_data_ts > 0:
+                                self.offline_start_time = self.last_mqtt_data_ts
+                                last_data_dt = datetime.fromtimestamp(self.last_mqtt_data_ts).strftime("%Y-%m-%d %H:%M:%S")
+                                self.log_offline_event(f"{self.name} ({self.serial}) went OFFLINE (No MQTT data for {mqtt_data_age}s, last data received at {last_data_dt})")
+                            else:
+                                # No data received since startup
+                                if now - self.startup_time > self.data_timeout:
+                                    self.offline_start_time = self.startup_time
+                                    self.log_offline_event(f"{self.name} ({self.serial}) went OFFLINE (No MQTT data received since startup)")
+                                else:
+                                    self.was_offline = False
+
                     if now - self.last_stat_update >= 5.0:
                         elapsed = now - self.last_stat_update
                         self.current_bps_by_server = {
@@ -2877,6 +2931,10 @@ class MqttSourceWorker(threading.Thread):
 
             except Exception as e:
                 self.log("ERROR", f"Worker loop error: {e}")
+                if not self.was_offline:
+                    self.was_offline = True
+                    self.offline_start_time = time.time()
+                    self.log_offline_event(f"{self.name} ({self.serial}) went OFFLINE (Worker loop error: {e})")
                 time.sleep(RECONNECT_INTERVAL)
             finally:
                 if self.mqtt_data_client:

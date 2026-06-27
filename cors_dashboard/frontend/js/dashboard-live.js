@@ -993,7 +993,18 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <div className="card-body pt-0 pb-3 px-3">
                         {(() => {
                             const savings = device.savings_stats || device.system_info?.savings_stats || {};
-                            const isAwake = (device.status !== "sleep");
+                            let isAwake = (device.status !== "sleep");
+                            if (savings.is_sleeping !== undefined && savings.is_sleeping !== null) {
+                                isAwake = !savings.is_sleeping;
+                            } else {
+                                const cfg = device.service_config || {};
+                                if (cfg.server1_enabled) {
+                                    const s1Active = cfg.server1_stream_active !== undefined ? cfg.server1_stream_active : cfg.stream_active;
+                                    if (s1Active !== undefined && s1Active !== null) {
+                                        isAwake = !!s1Active;
+                                    }
+                                }
+                            }
 
                             const rtcmBps = Number(
                                 device.rtcm_input_bps ||
