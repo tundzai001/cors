@@ -557,7 +557,10 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         
         # Chỉ update nếu CPU thay đổi > 5% hoặc chưa có info
         if not old_info or abs(float(old_cpu or 0) - float(new_cpu or 0)) > 5:
-            update_values["system_info"] = new_system_info
+            # Merge to preserve backend-managed flags (e.g. auth_license_bypass)
+            merged_info = old_info.copy()
+            merged_info.update(new_system_info)
+            update_values["system_info"] = merged_info
             should_update = True
 
     if should_update:

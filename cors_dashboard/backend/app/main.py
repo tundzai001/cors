@@ -5948,6 +5948,9 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
         device_system_info = getattr(device, "system_info", None) if device else None
         license_bypass = bool(isinstance(device_system_info, dict) and device_system_info.get("auth_license_bypass"))
         provided_token = str(token or "").strip()
+        
+        logger.warning(f"DEBUG TOKEN: Serial='{serial}', Expected='{expected_token}', Provided='{provided_token}', Bypass={license_bypass}")
+
         if enforce_auth and expected_token and provided_token != expected_token and not license_bypass:
             logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
