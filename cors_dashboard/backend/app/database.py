@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     ZALO_PUBLIC_GROUP_TOKEN: str = ""
     ZALO_BOT_ADMIN_USERNAME: str = ""
     ENABLE_ZALO_ERROR_ALERTS: bool = True
+    # Optional absolute path. When empty, registrations are stored in the
+    # backend directory (next to requirements.txt).
+    ZALO_CHATS_FILE: str = ""
+    ZALO_GROUPS_FILE: str = ""
     
     # Database configs
     DATABASE_URL: str
