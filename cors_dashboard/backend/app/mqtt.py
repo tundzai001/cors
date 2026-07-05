@@ -46,6 +46,56 @@ device_status_cache = {}     # Lưu trạng thái cũ (online/offline)
 device_sync_cache = {}       # Lưu trạng thái sync (True/False)
 device_last_sync_check = {}  # Lưu thời gian lần cuối check DB
 device_name_cache = {}       # Lưu tên trạm để ghép vào bản tin offline (LWT không kèm tên)
+device_telemetry_cache = {}  # Snapshot live cho bot/API đọc tọa độ và vệ tinh hiện tại
+RTCM_SATELLITE_CACHE_TTL_MS = 10_000
+
+
+def _cache_rtcm_signal_snapshot(serial: str, decoded: dict) -> None:
+    """Accumulate fresh RTCM satellites exactly as the dashboard live view does."""
+    if not isinstance(decoded, dict):
+        return
+    now_ms = int(time.time() * 1000)
+    live = device_telemetry_cache.setdefault(str(serial), {})
+    satellite_map = live.setdefault("rtcm_satellites", {})
+    if not isinstance(satellite_map, dict):
+        satellite_map = {}
+        live["rtcm_satellites"] = satellite_map
+    raw_satellites = decoded.get("satellites") or []
+    if isinstance(raw_satellites, dict):
+        raw_satellites = list(raw_satellites.values())
+    for index, item in enumerate(raw_satellites):
+        if not isinstance(item, dict):
+            continue
+        satellite = dict(item)
+        try:
+            last_seen = int(float(satellite.get("lastSeen") or now_ms))
+        except (TypeError, ValueError):
+            last_seen = now_ms
+        if 0 < last_seen < 10_000_000_000:
+            last_seen *= 1000
+        if last_seen <= 0 or last_seen > now_ms + 60_000:
+            last_seen = now_ms
+        satellite["lastSeen"] = last_seen
+        key = str(
+            satellite.get("id")
+            or f"RTCM:{satellite.get('system') or 'un'}:{satellite.get('prn') or index}"
+        )
+        satellite_map[key] = satellite
+    for key, item in list(satellite_map.items()):
+        try:
+            last_seen = int(item.get("lastSeen") or 0)
+        except (TypeError, ValueError, AttributeError):
+            last_seen = 0
+        if last_seen and now_ms - last_seen > RTCM_SATELLITE_CACHE_TTL_MS:
+            satellite_map.pop(key, None)
+    fresh_satellites = list(satellite_map.values())
+    live["rtcm_signal_data"] = {
+        **decoded,
+        "satellites": fresh_satellites,
+        "satellite_count": len(fresh_satellites),
+        "updated_at_ms": now_ms,
+    }
+    live["satellite_count"] = len(fresh_satellites)
 
 # 🔥 NEW: Global sync check tracking
 LAST_GLOBAL_SYNC_CHECK = 0
@@ -225,6 +275,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     data = json.loads(payload.decode('ascii'))
                     if data.get("type") == "rtcm_skyview_calculated":
                         # Payload is already fully calculated at the Edge! Just broadcast it.
+                        _cache_rtcm_signal_snapshot(serial, data)
                         await manager.broadcast({
                             "type": "rtcm_signal_update",
                             "serial": serial,
@@ -234,6 +285,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     elif data.get("type") == "rtcm_skyview":
                         decoded_rtcm = rtcm_signal_decoder.decode_json(serial, data)
                         if decoded_rtcm:
+                            _cache_rtcm_signal_snapshot(serial, decoded_rtcm)
                             await manager.broadcast({
                                 "type": "rtcm_signal_update",
                                 "serial": serial,
@@ -245,6 +297,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
 
             decoded_rtcm = await rtcm_signal_decoder.decode(serial, payload)
             if decoded_rtcm:
+                _cache_rtcm_signal_snapshot(serial, decoded_rtcm)
                 await manager.broadcast({
                     "type": "rtcm_signal_update",
                     "serial": serial,
@@ -256,6 +309,17 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 line = payload.decode('ascii', errors='ignore')
                 parsed_data = nmea_parser.parse(line)
                 if parsed_data:
+                    live = device_telemetry_cache.setdefault(serial, {})
+                    nmea_live = live.setdefault("nmea_data", {})
+                    parsed_type = str(parsed_data.get("type") or "").upper()
+                    if parsed_type == "GGA":
+                        nmea_live["gga"] = parsed_data
+                    elif parsed_type == "GSA":
+                        nmea_live["gsa"] = parsed_data
+                    elif parsed_type == "GSV":
+                        nmea_live["satellites"] = parsed_data.get("satellites") or []
+                    elif parsed_type:
+                        nmea_live[parsed_type.lower()] = parsed_data
                     await manager.broadcast({
                         "type": "nmea_update",
                         "serial": serial,
@@ -427,6 +491,9 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     pass  # Không tên vẫn broadcast được, không chặn luồng
 
             # --- 2.5. BROADCAST REAL-TIME TO UI ---
+            live_snapshot = dict(device_telemetry_cache.get(serial) or {})
+            live_snapshot.update(data)
+            device_telemetry_cache[serial] = live_snapshot
             await manager.broadcast({
                 "type": "status_update", 
                 "data": data

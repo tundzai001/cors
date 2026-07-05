@@ -49,6 +49,7 @@ const NavigationManager = {
         else if (path.includes('users')) this.currentPage = 'users';
         else if (path.includes('security')) this.currentPage = 'security';
         else if (path.includes('rovers-global')) this.currentPage = 'rovers';
+        else if (path.includes('zalo')) this.currentPage = 'zalo';
         else this.currentPage = 'dashboard';
     },
 
@@ -60,6 +61,7 @@ const NavigationManager = {
         this.addGroup(navContainer, 'Operate');
         this.addNavItem(navContainer, { id: 'dashboard', icon: 'bi-grid-1x2-fill', text: 'Dashboard', href: '/', active: this.currentPage === 'dashboard' });
         this.addNavItem(navContainer, { id: 'map', icon: 'bi-map-fill', text: 'Station Map', href: '/?view=map', active: this.currentPage === 'map' });
+        this.addNavItem(navContainer, { id: 'zalo', icon: 'bi-chat-dots-fill', text: 'Zalo Bot', href: '/zalo.html', active: this.currentPage === 'zalo' });
 
         if (this.currentUser?.role === 'admin') {
             this.addGroup(navContainer, 'Admin');

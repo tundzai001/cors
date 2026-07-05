@@ -55,7 +55,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const r = String(role || '').toLowerCase();
         if (r === 'admin') return 'ops-role-badge ops-role-admin';
         if (r === 'coordinator') return 'ops-role-badge ops-role-coordinator';
-        if (r === 'operator') return 'ops-role-badge ops-role-operator';
         return 'ops-role-badge ops-role-viewer';
     }
 
@@ -168,7 +167,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function shouldShowAccessSections(role) {
-        return ['coordinator', 'operator', 'viewer'].includes(role);
+        return ['coordinator', 'viewer'].includes(role);
     }
 
     function updateRoleSections() {

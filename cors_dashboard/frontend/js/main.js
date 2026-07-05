@@ -1143,8 +1143,8 @@ function handleWebSocketMessage(message) {
 
     if (type === 'status_update') {
         const statusSerial = serial || data?.serial;
-        // --- LOGIC CHẶN TRẠM LẠ CHO ROLES BỊ GIỚI HẠN (COORDINATOR, OPERATOR, VIEWER) ---
-        if (globalState.currentUser && ['coordinator', 'operator', 'viewer'].includes(globalState.currentUser.role)) {
+        // --- LOGIC CHẶN TRẠM LẠ CHO ROLES BỊ GIỚI HẠN (COORDINATOR, VIEWER) ---
+        if (globalState.currentUser && ['coordinator', 'viewer'].includes(globalState.currentUser.role)) {
 
             // Trường hợp 1: Admin vừa gán/thu hồi quyền sở hữu (Bản tin có chứa user_id)
             // Lưu ý: Viewers không dựa trên user_id ownership nên sẽ rơi vào Trường hợp 2

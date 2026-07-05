@@ -2,6 +2,19 @@
 from pydantic import BaseModel, Field, validator
 from typing import Any, List, Optional
 
+
+class ZaloBindingAdminUpdate(BaseModel):
+    display_name: Optional[str] = None
+    binding_type: Optional[str] = None
+    is_active: Optional[bool] = None
+    station_scope_mode: Optional[str] = None
+    allowed_bases: Optional[List[str]] = None
+    notifications_enabled: Optional[bool] = None
+    min_severity: Optional[str] = None
+    quiet_start: Optional[str] = None
+    quiet_end: Optional[str] = None
+    critical_override: Optional[bool] = None
+
 # --- DEVICE SCHEMAS ---
 class DeviceBase(BaseModel):
     serial: str
@@ -128,7 +141,7 @@ class UserBase(BaseModel):
     
     @validator('role')
     def validate_role(cls, v):
-        allowed_roles = ['admin', 'viewer', 'coordinator', 'operator']
+        allowed_roles = ['admin', 'viewer', 'coordinator']
         if v not in allowed_roles:
             raise ValueError(f'Role phải là một trong: {allowed_roles}')
         return v
@@ -164,7 +177,7 @@ class UserUpdate(BaseModel):
     @validator('role')
     def validate_role(cls, v):
         if v is not None:
-            allowed_roles = ['admin', 'viewer', 'coordinator', 'operator']
+            allowed_roles = ['admin', 'viewer', 'coordinator']
             if v not in allowed_roles:
                 raise ValueError(f'Role phải là một trong: {allowed_roles}')
         return v
@@ -366,6 +379,12 @@ class DeviceApplyTemplateRequest(BaseModel):
     serials: List[str] = Field(default_factory=list)
     apply_base_config: bool = True
     apply_service_config: bool = True
+
+
+class ZaloGroupLinkCodeCreate(BaseModel):
+    binding_type: str
+    station_scope_mode: str = "all"
+    allowed_bases: List[str] = Field(default_factory=list)
 
 
 # --- CASTER ROVER MANAGEMENT SCHEMAS ---

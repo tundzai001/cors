@@ -32,10 +32,20 @@ class Settings(BaseSettings):
     # Zalo Bot
     ENABLE_ZALO_BOT: bool = False
     ZALO_BOT_TOKEN: str = ""
-    ZALO_ADMIN_GROUP_TOKEN: str = ""
-    ZALO_PUBLIC_GROUP_TOKEN: str = ""
     ZALO_BOT_ADMIN_USERNAME: str = ""
+    ZALO_BOT_MODE: str = "polling"
+    ZALO_WEBHOOK_URL: str = ""
+    ZALO_WEBHOOK_SECRET: str = ""
     ENABLE_ZALO_ERROR_ALERTS: bool = True
+    ZALO_STATE_ENCRYPTION_KEY: str = ""
+    ZALO_SMART_ASSISTANT_V2: bool = True
+    ZALO_ENABLE_WRITE_ACTIONS: bool = True
+    ZALO_ENABLE_NOTIFICATIONS: bool = True
+    ZALO_LINK_CODE_TTL_SECONDS: int = 30
+    ZALO_PENDING_ACTION_TTL_SECONDS: int = 120
+    ZALO_EXPORT_LINK_TTL_SECONDS: int = 300
+    ZALO_SEND_RETRY_ATTEMPTS: int = 3
+    ZALO_SEND_RETRY_BASE_DELAY_SECONDS: float = 0.4
     
     # Database configs
     DATABASE_URL: str

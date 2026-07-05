@@ -617,7 +617,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
     const canViewRovers = React.useMemo(() => {
         const role = String(currentUser?.role || '').toLowerCase();
-        return role === 'admin' || role === 'viewer' || role === 'coordinator' || role === 'operator';
+        return role === 'admin' || role === 'viewer' || role === 'coordinator';
     }, [currentUser?.role]);
 
     // Các trạm mà coordinator có thể xem sẽ bị giới hạn bởi mountpoint

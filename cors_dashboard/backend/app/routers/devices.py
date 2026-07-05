@@ -60,7 +60,7 @@ async def get_initial_devices(
         if user_info:
             target_role = user_info.role
 
-    if target_role in (auth.Role.COORDINATOR, auth.Role.OPERATOR):
+    if target_role == auth.Role.COORDINATOR:
         devices = await crud.get_devices_by_user_id(db, user_id=target_user_id)
         logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → {len(devices)} devices by user_id={target_user_id}")
         return _with_runtime_sync_flags(devices)
@@ -413,7 +413,9 @@ async def update_rover(
 
     # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
     new_password = update_req.password if update_req.password else rover.password
-    new_mountpoints = update_req.mountpoints if update_req.mountpoints else rover.mountpoints
+    # Empty string is intentional: it means remove every allowed mountpoint.
+    # Only None means "keep the current value".
+    new_mountpoints = update_req.mountpoints if update_req.mountpoints is not None else rover.mountpoints
     
     # Xử lý thời hạn (Mặc định reset lại thời hạn nếu có gửi expiry_days)
     duration_seconds = 315360000 # Default

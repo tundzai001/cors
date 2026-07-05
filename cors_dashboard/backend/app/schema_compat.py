@@ -18,8 +18,26 @@ DEVICE_SCHEMA_STATEMENTS = (
 )
 
 
+AUTH_ZALO_SCHEMA_STATEMENTS = (
+    "ALTER TABLE zalo_chat_bindings ADD COLUMN IF NOT EXISTS station_scope_mode VARCHAR NOT NULL DEFAULT 'all'",
+    "ALTER TABLE zalo_chat_bindings ADD COLUMN IF NOT EXISTS allowed_bases JSON NOT NULL DEFAULT '[]'::json",
+    "ALTER TABLE zalo_link_codes ADD COLUMN IF NOT EXISTS link_type VARCHAR NOT NULL DEFAULT 'private'",
+    "ALTER TABLE zalo_link_codes ADD COLUMN IF NOT EXISTS station_scope_mode VARCHAR NOT NULL DEFAULT 'all'",
+    "ALTER TABLE zalo_link_codes ADD COLUMN IF NOT EXISTS allowed_bases JSON NOT NULL DEFAULT '[]'::json",
+    "CREATE INDEX IF NOT EXISTS ix_zalo_link_codes_link_type ON zalo_link_codes (link_type)",
+)
+
+
 async def ensure_device_runtime_columns(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         for statement in DEVICE_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
     logger.info("Device schema compatibility check completed")
+
+
+async def ensure_auth_zalo_runtime_columns(engine: AsyncEngine) -> None:
+    """Keep Zalo authorization usable when code is deployed before Alembic."""
+    async with engine.begin() as conn:
+        for statement in AUTH_ZALO_SCHEMA_STATEMENTS:
+            await conn.execute(text(statement))
+    logger.info("Auth Zalo schema compatibility check completed")

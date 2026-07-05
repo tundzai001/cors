@@ -2,7 +2,7 @@
 # == backend/app/models.py ==
 # ==============================================================================
 
-from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index
+from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from .database import Base, AuthBase 
 
@@ -84,6 +84,108 @@ class SystemSetting(AuthBase):
     
     key = Column(String, primary_key=True, index=True)
     value = Column(JSON, nullable=False)
+
+
+class ZaloChatBinding(AuthBase):
+    __tablename__ = "zalo_chat_bindings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_id = Column(String, unique=True, nullable=False, index=True)
+    chat_type = Column(String, nullable=False, default="private")
+    binding_type = Column(String, nullable=False, index=True)  # private, group_admin, group_public
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    sender_id = Column(String, nullable=True, index=True)
+    display_name = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    onboarding_completed = Column(Boolean, nullable=False, default=False)
+    created_at = Column(BigInteger, nullable=False)
+    last_seen_at = Column(BigInteger, nullable=False)
+    registered_by = Column(String, nullable=True)
+    station_scope_mode = Column(String, nullable=False, default="all")
+    allowed_bases = Column(JSON, nullable=False, default=list)
+
+
+class ZaloLinkCode(AuthBase):
+    __tablename__ = "zalo_link_codes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash = Column(String, unique=True, nullable=False, index=True)
+    created_at = Column(BigInteger, nullable=False)
+    expires_at = Column(BigInteger, nullable=False, index=True)
+    used_at = Column(BigInteger, nullable=True)
+    used_by_chat_id = Column(String, nullable=True)
+    link_type = Column(String, nullable=False, default="private", index=True)
+    station_scope_mode = Column(String, nullable=False, default="all")
+    allowed_bases = Column(JSON, nullable=False, default=list)
+
+
+class ZaloWorkflowState(AuthBase):
+    __tablename__ = "zalo_workflow_states"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_id = Column(String, nullable=False)
+    sender_id = Column(String, nullable=False)
+    flow = Column(String, nullable=False, index=True)
+    step = Column(String, nullable=False)
+    state_encrypted = Column(Text, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    expires_at = Column(BigInteger, nullable=False, index=True)
+
+    __table_args__ = (UniqueConstraint("chat_id", "sender_id", name="uq_zalo_workflow_actor"),)
+
+
+class ZaloPendingAction(AuthBase):
+    __tablename__ = "zalo_pending_actions"
+
+    id = Column(String, primary_key=True)
+    code_hash = Column(String, unique=True, nullable=False, index=True)
+    chat_id = Column(String, nullable=False, index=True)
+    sender_id = Column(String, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action = Column(String, nullable=False, index=True)
+    risk_level = Column(String, nullable=False, default="standard")
+    target_identifier = Column(String, nullable=True)
+    payload_encrypted = Column(Text, nullable=False)
+    preview = Column(Text, nullable=False)
+    state_fingerprint = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="pending", index=True)
+    created_at = Column(BigInteger, nullable=False)
+    expires_at = Column(BigInteger, nullable=False, index=True)
+    executed_at = Column(BigInteger, nullable=True)
+
+
+class ZaloNotificationPreference(AuthBase):
+    __tablename__ = "zalo_notification_preferences"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    binding_id = Column(Integer, ForeignKey("zalo_chat_bindings.id", ondelete="CASCADE"), unique=True, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    min_severity = Column(String, nullable=False, default="critical")
+    scopes = Column(JSON, nullable=False, default=dict)
+    quiet_start = Column(String, nullable=True)
+    quiet_end = Column(String, nullable=True)
+    timezone = Column(String, nullable=False, default="Asia/Saigon")
+    critical_override = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(BigInteger, nullable=False)
+
+
+class ZaloDeliveryLog(AuthBase):
+    __tablename__ = "zalo_delivery_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    binding_id = Column(Integer, ForeignKey("zalo_chat_bindings.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_key = Column(String, nullable=False)
+    severity = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(BigInteger, nullable=False)
+    sent_at = Column(BigInteger, nullable=True)
+
+    __table_args__ = (UniqueConstraint("binding_id", "event_key", name="uq_zalo_delivery_event"),)
 
 class ActivityLog(Base):
     __tablename__ = "activity_logs"

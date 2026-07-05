@@ -202,7 +202,7 @@ async def create_user(
     )
     
     if user_data.assigned_devices:
-        if new_user.role in ('coordinator', 'operator'):
+        if new_user.role == 'coordinator':
             for serial in user_data.assigned_devices:
                 device = await crud.get_device_by_serial(devices_db, serial)
                 if device:
@@ -269,7 +269,7 @@ async def update_user(
             })
         
         # 3. Áp dụng gán mới tùy theo vai trò
-        if target_role in ('coordinator', 'operator'):
+        if target_role == 'coordinator':
             for serial in assigned_serials:
                 device = await crud.get_device_by_serial(devices_db, serial)
                 if device:

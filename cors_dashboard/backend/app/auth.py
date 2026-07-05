@@ -110,7 +110,7 @@ class PasswordPolicy:
         return True, ""
 
 class Role:
-    ADMIN, VIEWER, COORDINATOR, OPERATOR = "admin", "viewer", "coordinator", "operator"
+    ADMIN, VIEWER, COORDINATOR = "admin", "viewer", "coordinator"
 class Permission:
     VIEW_DEVICES, VIEW_CONFIG = "view:devices", "view:config"
     EDIT_DEVICE_NAME, EDIT_COORDINATES = "edit:device_name", "edit:coordinates"
@@ -137,11 +137,6 @@ ROLE_PERMISSIONS = {
     Role.COORDINATOR: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,
         Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME, 
-        Permission.MANAGE_CASTER,
-    ],
-    Role.OPERATOR: [
-        Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,
-        Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME,
         Permission.MANAGE_CASTER,
     ],
     Role.VIEWER: [

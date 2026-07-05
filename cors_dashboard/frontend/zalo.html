@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="vi" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Zalo Bot · CORS Control Center</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/css/ops-ui.css?v=20260705-zalo-premium-v5" rel="stylesheet">
+    <link href="/css/zalo-bot.css?v=20260705-zalo-group-otp-v7" rel="stylesheet">
+</head>
+<body class="ops-admin-page ops-zalo-page">
+    <nav class="navbar navbar-expand-lg sticky-top ops-admin-nav">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold text-light" href="/"><i class="bi bi-chat-dots-fill me-2"></i>CORS Control Center</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"><span class="navbar-toggler-icon"></span></button>
+            <div class="collapse navbar-collapse" id="navbarNav"><ul id="main-nav" class="navbar-nav me-auto mb-2 mb-lg-0"></ul></div>
+            <div class="d-flex align-items-center">
+                <span id="user-info" class="navbar-text me-3 d-none d-md-inline"></span>
+                <button id="logout-btn" class="btn btn-sm btn-outline-danger"><i class="bi bi-box-arrow-right"></i><span class="d-none d-md-inline ms-1">Logout</span></button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container-fluid ops-users-shell py-4">
+        <!-- Page Header -->
+        <div class="ops-page-head">
+            <div>
+                <div class="ops-page-title" id="zalo-page-title"><i class="bi bi-chat-dots-fill me-2"></i>Zalo Bot Administration</div>
+                <div class="ops-page-subtitle" id="zalo-page-subtitle">Quản lý liên kết, quyền truy cập trạm và cảnh báo của từng cuộc trò chuyện.</div>
+            </div>
+        </div>
+
+        <!-- Stat Cards -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-3 zalo-stat-column">
+                <div class="zalo-stat-card stat-total zalo-fade-in h-100">
+                    <div class="stat-icon"><i class="bi bi-link-45deg"></i></div>
+                    <div class="stat-label">Tổng liên kết</div>
+                    <div class="stat-value" id="stat-total">0</div>
+                </div>
+            </div>
+            <div class="col-md-3 zalo-stat-column">
+                <div class="zalo-stat-card stat-active zalo-fade-in h-100">
+                    <div class="stat-icon"><i class="bi bi-check-circle-fill"></i></div>
+                    <div class="stat-label">Đang hoạt động</div>
+                    <div class="stat-value" id="stat-active">0</div>
+                </div>
+            </div>
+            <div class="col-md-3 zalo-stat-column">
+                <div class="zalo-stat-card stat-private zalo-fade-in h-100">
+                    <div class="stat-icon"><i class="bi bi-person-fill"></i></div>
+                    <div class="stat-label">Chat cá nhân</div>
+                    <div class="stat-value" id="stat-private">0</div>
+                </div>
+            </div>
+            <div class="col-md-3 zalo-stat-column d-none" id="group-stat-column">
+                <div class="zalo-stat-card stat-groups zalo-fade-in h-100">
+                    <div class="stat-icon"><i class="bi bi-people-fill"></i></div>
+                    <div class="stat-label">Group</div>
+                    <div class="stat-value" id="stat-groups">0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- OTP Section (Google Authenticator style) -->
+        <section class="zalo-otp-section mb-3" id="otp-section">
+            <div class="otp-header">
+                <div class="otp-header-title"><i class="bi bi-shield-lock-fill"></i>Mã trao đổi liên tục</div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="small text-muted" id="otp-status-text">Sẵn sàng</span>
+                    <button class="btn btn-sm btn-outline-info" id="otp-toggle-btn">
+                        <i class="bi bi-play-fill me-1"></i><span>Bắt đầu</span>
+                    </button>
+                </div>
+            </div>
+            <div class="otp-body">
+                <!-- Idle state -->
+                <div id="otp-idle" class="zalo-otp-idle">
+                    <div class="idle-icon"><i class="bi bi-shield-lock"></i></div>
+                    <div>Bấm <strong>"Bắt đầu"</strong> để tạo mã liên kết tự động refresh mỗi 30 giây.<br>
+                    <span class="small">Hoạt động giống Google Authenticator — mã chạy liên tục, dùng một lần.</span></div>
+                </div>
+                <!-- Active OTP display -->
+                <div id="otp-active" class="d-none">
+                    <div class="zalo-otp-display">
+                        <div class="zalo-otp-code" id="otp-code-display">---  ---</div>
+                        <div class="zalo-countdown-wrap">
+                            <svg class="zalo-countdown-ring" viewBox="0 0 64 64">
+                                <circle class="ring-bg" cx="32" cy="32" r="28"></circle>
+                                <circle class="ring-progress" id="otp-ring" cx="32" cy="32" r="28"
+                                    stroke-dasharray="175.93" stroke-dashoffset="0"></circle>
+                            </svg>
+                            <span class="zalo-countdown-seconds" id="otp-seconds">30</span>
+                            <span class="zalo-countdown-label">giây</span>
+                        </div>
+                    </div>
+                    <div class="zalo-otp-commands" id="otp-commands">
+                        <div class="zalo-cmd-card">
+                            <div class="cmd-title"><i class="bi bi-person-fill text-info"></i>Chat cá nhân</div>
+                            <code class="cmd-code" id="otp-link-cmd">/link ------</code>
+                            <button class="btn btn-sm btn-outline-info cmd-copy-btn" id="copy-link-cmd">
+                                <i class="bi bi-copy me-1"></i>Sao chép /link
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Admin-only group OTP builder. Group policy is sealed into the OTP. -->
+        <section class="ops-card mb-3 d-none" id="group-otp-section">
+            <div class="ops-section-head">
+                <div class="ops-section-title"><i class="bi bi-people-fill me-2 text-warning"></i>Tạo OTP liên kết Group</div>
+                <span class="badge bg-warning text-dark">Chỉ Admin</span>
+            </div>
+            <div class="p-3 p-lg-4">
+                <div class="row g-3">
+                    <div class="col-lg-4">
+                        <label class="form-label fw-bold">Quyền của group</label>
+                        <select id="group-otp-type" class="form-select ops-input">
+                            <option value="group_public">Group public — chỉ tra cứu</option>
+                            <option value="group_admin">Group admin — toàn quyền</option>
+                        </select>
+                        <div class="form-text">Group admin luôn có toàn quyền. Group public chỉ xem các trạm được chọn.</div>
+                    </div>
+                    <div class="col-lg-4" id="group-otp-scope-field">
+                        <label class="form-label fw-bold">Phạm vi trạm</label>
+                        <select id="group-otp-scope" class="form-select ops-input">
+                            <option value="all">Tất cả trạm</option>
+                            <option value="selected">Chỉ các trạm được chọn</option>
+                            <option value="none">Không cho xem trạm nào</option>
+                        </select>
+                    </div>
+                    <div class="col-lg-4 d-flex align-items-end">
+                        <button id="generate-group-otp" class="btn btn-warning w-100"><i class="bi bi-shield-lock-fill me-2"></i>Tạo OTP group 30 giây</button>
+                    </div>
+                </div>
+                <div id="group-otp-stations-wrap" class="mt-3 d-none">
+                    <label class="form-label fw-bold">Chọn trạm cho group public</label>
+                    <div id="group-otp-station-checklist" class="zalo-group-station-grid"></div>
+                </div>
+                <div id="group-otp-result" class="zalo-group-otp-result d-none mt-4">
+                    <div>
+                        <div class="small text-muted mb-1" id="group-otp-summary">OTP group</div>
+                        <code id="group-otp-command">/register ------</code>
+                    </div>
+                    <div class="d-flex align-items-center gap-3">
+                        <strong><span id="group-otp-seconds">30</span>s</strong>
+                        <button id="copy-group-otp" class="btn btn-sm btn-outline-warning"><i class="bi bi-copy me-1"></i>Sao chép</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Search toolbar -->
+        <div class="ops-toolbar">
+            <div class="input-group input-group-sm" style="max-width: 420px;">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input id="binding-search" class="form-control ops-input" placeholder="Tìm tên chat, tài khoản hoặc Chat ID">
+            </div>
+            <div class="small text-muted"><span class="ops-connection-dot online me-2"></span>Tự đồng bộ mỗi 5 giây</div>
+        </div>
+
+        <!-- Bindings Table -->
+        <section class="ops-card">
+            <div class="ops-section-head">
+                <div class="ops-section-title"><i class="bi bi-diagram-3 me-2"></i>Chat đã liên kết</div>
+                <button class="btn btn-sm btn-outline-secondary" id="refresh-bindings"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="table-responsive">
+                <table class="table ops-table mb-0">
+                    <thead><tr><th>Loại</th><th>Tên / Chat ID</th><th>Tài khoản / Quyền</th><th>Phạm vi trạm</th><th>Cảnh báo</th><th>Hoạt động cuối</th><th>Trạng thái</th><th class="text-end">Thao tác</th></tr></thead>
+                    <tbody id="binding-list"><tr><td colspan="8"><div class="ops-empty-state"><span class="spinner-border spinner-border-sm"></span><span>Đang tải liên kết</span></div></td></tr></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Edit Binding Modal -->
+    <div class="modal fade" id="binding-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content ops-card">
+                <div class="modal-header">
+                    <div><h5 class="modal-title">Cấu hình chat Zalo</h5><div class="small text-muted" id="edit-chat-id"></div></div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="binding-form">
+                        <input type="hidden" id="edit-binding-id">
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-5"><label class="form-label">Tên hiển thị</label><input id="edit-display-name" class="form-control ops-input" maxlength="255"></div>
+                            <div id="binding-type-field" class="col-md-4"><label class="form-label">Loại quyền</label><select id="edit-binding-type" class="form-select ops-input"><option value="private">Theo tài khoản dashboard</option><option value="group_admin">Group quản trị</option><option value="group_public">Group chỉ tra cứu</option></select></div>
+                            <div id="binding-active-field" class="col-md-3 d-flex align-items-end"><div class="form-check form-switch mb-2"><input id="edit-active" class="form-check-input" type="checkbox"><label class="form-check-label" for="edit-active">Kích hoạt liên kết</label></div></div>
+                        </div>
+
+                        <section class="mb-4">
+                            <h6 class="fw-bold mb-2">Phạm vi trạm</h6>
+                            <div id="private-scope-note" class="alert alert-info py-2 d-none">Chat cá nhân luôn kế thừa chính xác trạm và quyền của tài khoản dashboard.</div>
+                            <div id="group-admin-scope-note" class="alert alert-warning py-2 d-none">Group admin luôn có toàn quyền trên tất cả trạm.</div>
+                            <div id="group-scope-editor">
+                                <select id="edit-scope-mode" class="form-select ops-input mb-3" style="max-width: 320px;"><option value="all">Tất cả trạm</option><option value="selected">Chỉ các trạm được chọn</option><option value="none">Không cho xem trạm nào</option></select>
+                                <div id="station-checklist" class="border rounded p-3" style="max-height: 260px; overflow:auto;"></div>
+                            </div>
+                        </section>
+
+                        <section>
+                            <h6 class="fw-bold mb-3">Cảnh báo</h6>
+                            <div class="row g-3">
+                                <div class="col-md-3 d-flex align-items-end"><div class="form-check form-switch mb-2"><input id="edit-notifications" class="form-check-input" type="checkbox"><label class="form-check-label" for="edit-notifications">Nhận cảnh báo</label></div></div>
+                                <div class="col-md-3"><label class="form-label">Mức tối thiểu</label><select id="edit-severity" class="form-select ops-input"><option value="critical">Nghiêm trọng</option><option value="warning">Cảnh báo</option><option value="info">Thông tin</option></select></div>
+                                <div class="col-md-3"><label class="form-label">Bắt đầu im lặng</label><input id="edit-quiet-start" type="time" class="form-control ops-input"></div>
+                                <div class="col-md-3"><label class="form-label">Kết thúc im lặng</label><input id="edit-quiet-end" type="time" class="form-control ops-input"></div>
+                                <div class="col-12"><div class="form-check form-switch"><input id="edit-critical-override" class="form-check-input" type="checkbox"><label class="form-check-label" for="edit-critical-override">Vẫn gửi cảnh báo nghiêm trọng trong giờ im lặng</label></div></div>
+                            </div>
+                        </section>
+                    </form>
+                </div>
+                <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Đóng</button><button class="btn btn-primary" id="save-binding"><i class="bi bi-check-lg me-1"></i>Lưu cấu hình</button></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/api-routes.js?v=20260705-zalo-v4"></script>
+    <script src="/js/api-client.js?v=20260529-auth-session-v2"></script>
+    <script src="/js/ops-ui.js?v=20260529-admin-ui-v1"></script>
+    <script src="/js/nav-manager.js?v=20260705-zalo-selfservice-v5"></script>
+    <script src="/js/zalo-settings.js?v=20260705-zalo-group-otp-v8"></script>
+</body>
+</html>

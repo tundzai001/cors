@@ -5,7 +5,13 @@
         docs: '/api/docs',
         auth: {
             me: '/api/auth/me',
-            login: '/api/auth/login'
+            login: '/api/auth/login',
+            zaloLinkCode: '/api/auth/zalo-link-code',
+            zaloMyLinkCode: '/api/auth/zalo-my-link-code',
+            zaloGroupLinkCode: '/api/admin/zalo-group-link-code',
+            zaloBindings: '/api/auth/zalo-bindings',
+            zaloBinding: bindingId => `/api/auth/zalo-bindings/${encodeURIComponent(bindingId)}`,
+            revokeZaloBinding: bindingId => `/api/auth/zalo-bindings/${encodeURIComponent(bindingId)}`
         },
         activity: {
             feed: (limit = 50) => `/api/activity/feed?limit=${encodeURIComponent(limit)}`,
