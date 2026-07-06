@@ -3,6 +3,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+from sqlalchemy.exc import IntegrityError
 from ..database import get_auth_db, get_db
 from .. import crud, models, schemas, auth, license_manager, command_builder
 from .. import mqtt as mqtt_handler
@@ -621,8 +622,15 @@ async def auto_deploy_device_token(
 
     if getattr(device, "device_token", None) != license_key:
         device.device_token = license_key
-        await db.commit()
-        await db.refresh(device)
+        try:
+            await db.commit()
+            await db.refresh(device)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=400, 
+                detail="This device token is already used by another device. This usually happens if you have duplicate devices with the same serial number. Please remove the old device first."
+            )
         
     payload = {"command": "DEPLOY_LICENSE", "payload": {"license_key": license_key}}
     

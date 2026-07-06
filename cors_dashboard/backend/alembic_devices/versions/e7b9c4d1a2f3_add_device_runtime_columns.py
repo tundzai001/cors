@@ -26,7 +26,7 @@ def upgrade() -> None:
     op.add_column("devices", sa.Column("base_mode_active", sa.Boolean(), nullable=True, server_default=sa.false()))
     op.add_column("devices", sa.Column("version", sa.String(), nullable=True))
     op.add_column("devices", sa.Column("is_synced", sa.Boolean(), nullable=False, server_default=sa.true()))
-    op.create_index(op.f("ix_devices_device_token"), "devices", ["device_token"], unique=True)
+    op.create_index(op.f("ix_devices_device_token"), "devices", ["device_token"], unique=False)
 
 
 def downgrade() -> None:

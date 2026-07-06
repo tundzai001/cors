@@ -14,7 +14,8 @@ DEVICE_SCHEMA_STATEMENTS = (
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS base_mode_active BOOLEAN DEFAULT FALSE",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS version VARCHAR",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_synced BOOLEAN NOT NULL DEFAULT TRUE",
-    "CREATE UNIQUE INDEX IF NOT EXISTS ix_devices_device_token ON devices (device_token)",
+    "DROP INDEX IF EXISTS ix_devices_device_token",
+    "CREATE INDEX IF NOT EXISTS ix_devices_device_token ON devices (device_token)",
 )
 
 
