@@ -628,6 +628,23 @@ async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[st
     payload = {"active": bool(active)}
     if mountpoint:
         payload["mountpoint"] = str(mountpoint)
+    if requested_address:
+        payload["caster_host"] = str(requested_address)
+        # Tự động phân giải server_idx (1 hoặc 2) dựa vào cấu hình trạm
+        try:
+            async with device_session_scope() as db:
+                device = await crud.get_device_by_serial(db, serial)
+                if device and device.service_config:
+                    cfg = device.service_config
+                    if isinstance(cfg, dict):
+                        h = requested_address.strip().lower()
+                        for sid in (1, 2):
+                            host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
+                            if host and (h in host or host in h):
+                                payload["server_idx"] = sid
+                                break
+        except Exception:
+            pass
 
     await send_command_to_pi(
         serial,
@@ -1011,7 +1028,7 @@ async def _resolve_stop_serial(
     raise ValueError("Cannot resolve station for stop; provide mountpoint")
 
 
-async def _ntrip_mqtt_stop(serial: str, client_instance_id: str):
+async def _ntrip_mqtt_stop(serial: str, client_instance_id: str, caster_host: Optional[str] = None):
     now = int(time.time())
     client_id = _build_ntrip_mqtt_client_id(client_instance_id)
     should_deactivate = False
@@ -1024,13 +1041,28 @@ async def _ntrip_mqtt_stop(serial: str, client_instance_id: str):
             )
 
             active_sessions_rs = await db.execute(
-                select(models.RTCMStreamSession.session_id, models.RTCMStreamSession.mountpoint).where(
+                select(
+                    models.RTCMStreamSession.session_id, 
+                    models.RTCMStreamSession.mountpoint,
+                    models.RTCMStreamSession.caster_host
+                ).where(
                     models.RTCMStreamSession.serial == serial,
                     models.RTCMStreamSession.client_id == client_id,
                     models.RTCMStreamSession.expires_at > now,
                 )
             )
-            active_rows = [(str(r[0]), str(r[1])) for r in active_sessions_rs.all() if r and r[0] and r[1]]
+            active_rows = [
+                (str(r[0]), str(r[1]), str(r[2] or "")) 
+                for r in active_sessions_rs.all() if r and r[0] and r[1]
+            ]
+            
+            if caster_host:
+                norm_ch = caster_host.strip().lower()
+                active_rows = [
+                    r for r in active_rows 
+                    if norm_ch in r[2].lower() or r[2].lower() in norm_ch
+                ]
+
             active_session_ids = [row[0] for row in active_rows]
 
             if active_session_ids:
@@ -1039,8 +1071,7 @@ async def _ntrip_mqtt_stop(serial: str, client_instance_id: str):
                         models.RTCMStreamSession.session_id.in_(active_session_ids)
                     )
                 )
-
-            await db.commit()
+                await db.commit()
 
             device = await crud.get_device_by_serial(db, serial)
             active_mountpoint_norm = _normalize_mountpoint(_extract_active_mountpoint(device))
@@ -1055,7 +1086,7 @@ async def _ntrip_mqtt_stop(serial: str, client_instance_id: str):
                 should_deactivate = remaining_for_active_mp == 0
 
     if should_deactivate:
-        await _set_station_stream(serial, active=False)
+        await _set_station_stream(serial, active=False, requested_address=caster_host)
 
 
 async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
@@ -1065,8 +1096,8 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
         logger.warning(f"[NTRIP MQTT] Invalid JSON on topic '{topic}': {e}")
         return
 
-    if not topic.endswith("/start"):
-        logger.warning(f"[NTRIP MQTT] Unsupported topic '{topic}'. Use ntrip/rtcm/start only")
+    if not (topic.endswith("/start") or topic.endswith("/stop")):
+        logger.warning(f"[NTRIP MQTT] Unsupported topic '{topic}'. Use ntrip/rtcm/start or stop only")
         return
 
     serial = str(data.get("serial", "")).strip()
@@ -1085,35 +1116,46 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
 
     try:
         if not mountpoint:
-            logger.warning("[NTRIP MQTT] Missing 'mountpoint' for start command")
+            logger.warning("[NTRIP MQTT] Missing 'mountpoint' for command")
             return
 
         if mountpoint and _is_command_mountpoint(mountpoint):
-            logger.debug(f"[NTRIP MQTT] Bypassing start command for command/test mountpoint '{mountpoint}'")
+            logger.debug(f"[NTRIP MQTT] Bypassing command for command/test mountpoint '{mountpoint}'")
             return
 
-        # === CHECK BLOCKLIST TRƯỚC KHI MỞ LUỒNG ===
-        block_reason = await _check_rover_blocked(client_instance_id, mountpoint)
-        if block_reason:
-            logger.warning(
-                f"[NTRIP MQTT] BLOCKED user='{client_instance_id}' "
-                f"mountpoint='{mountpoint}' reason='{block_reason}'"
+        if topic.endswith("/start"):
+            # === CHECK BLOCKLIST TRƯỚC KHI MỞ LUỒNG ===
+            block_reason = await _check_rover_blocked(client_instance_id, mountpoint)
+            if block_reason:
+                logger.warning(
+                    f"[NTRIP MQTT] BLOCKED user='{client_instance_id}' "
+                    f"mountpoint='{mountpoint}' reason='{block_reason}'"
+                )
+                return
+
+            async with device_session_scope() as db:
+                resolved_serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+
+            ttl_seconds = int(data.get("ttl_seconds", 90))
+            await _ntrip_mqtt_start(
+                serial=resolved_serial,
+                mountpoint=mountpoint,
+                client_instance_id=client_instance_id,
+                ttl_seconds=ttl_seconds,
             )
-            return
-
-        async with device_session_scope() as db:
-            resolved_serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
-
-        ttl_seconds = int(data.get("ttl_seconds", 90))
-        await _ntrip_mqtt_start(
-            serial=resolved_serial,
-            mountpoint=mountpoint,
-            client_instance_id=client_instance_id,
-            ttl_seconds=ttl_seconds,
-        )
-        logger.info(f"[NTRIP MQTT] start accepted serial={resolved_serial} mountpoint={mountpoint} client={client_instance_id}")
+            logger.info(f"[NTRIP MQTT] start accepted serial={resolved_serial} mountpoint={mountpoint} client={client_instance_id}")
+        elif topic.endswith("/stop"):
+            force = bool(data.get("force", False))
+            address = data.get("caster_address") or data.get("address") or data.get("host") or data.get("ip") or data.get("caster_host")
+            await _do_ntrip_stop(
+                mountpoint=mountpoint,
+                client_id=client_instance_id,
+                force=force,
+                requested_address=address
+            )
+            logger.info(f"[NTRIP MQTT] stop accepted mountpoint={mountpoint} client={client_instance_id} force={force} address={address}")
     except Exception as e:
-        logger.warning(f"[NTRIP MQTT] Start command failed mountpoint={mountpoint}: {e}")
+        logger.warning(f"[NTRIP MQTT] Command failed mountpoint={mountpoint}: {e}")
 
 
 async def rtcm_ntrip_clienttable_keepalive_task():
@@ -3703,6 +3745,111 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
         return PlainTextResponse(f"WAKE_STATUS: error\n{msg}", status_code=200)
 
 
+async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, requested_address: Optional[str] = None):
+    """Xử lý ngắt/dừng trạm, trả về PlainTextResponse."""
+    logger.info(f"[NTRIP Stop] mountpoint={mountpoint}, client_id={client_id}, force={force}, address={requested_address or 'not-provided'}")
+    try:
+        async with device_session_scope() as db:
+            serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+            device = await crud.get_device_by_serial(db, serial)
+            if not device:
+                return PlainTextResponse(f"STOP_STATUS: error\nERROR: Trạm {serial} không tồn tại")
+            
+            # 🔥 Phân giải caster_host từ service_config của thiết bị nếu requested_address khớp một phần
+            selected_server_host = ""
+            raw_cfg = getattr(device, "service_config", None)
+            if isinstance(raw_cfg, dict):
+                cfg = raw_cfg
+            elif isinstance(raw_cfg, str):
+                import json
+                try: cfg = json.loads(raw_cfg)
+                except: cfg = {}
+            else:
+                cfg = {}
+
+            selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
+            if selected_server_id in (1, 2):
+                selected_server_host = str(cfg.get(f"serverhost{selected_server_id}", "") or "").strip()
+
+            target_host = selected_server_host or requested_address
+
+            if force:
+                # Force stop: xóa toàn bộ session của trạm này (và khớp host nếu có) và tắt luồng stream ngay lập tức
+                async with rtcm_session_lock:
+                    if target_host:
+                        norm_ch = target_host.strip().lower()
+                        # Lấy danh sách session để xóa theo caster_host
+                        stmt = select(models.RTCMStreamSession.session_id, models.RTCMStreamSession.caster_host).where(
+                            models.RTCMStreamSession.serial == serial
+                        )
+                        rs = await db.execute(stmt)
+                        to_delete = []
+                        for sid, host in rs.all():
+                            h_str = str(host or "").strip().lower()
+                            if norm_ch in h_str or h_str in norm_ch:
+                                to_delete.append(sid)
+                        
+                        if to_delete:
+                            await db.execute(
+                                delete(models.RTCMStreamSession).where(
+                                    models.RTCMStreamSession.session_id.in_(to_delete)
+                                )
+                            )
+                    else:
+                        await db.execute(
+                            delete(models.RTCMStreamSession).where(
+                                models.RTCMStreamSession.serial == serial
+                            )
+                        )
+                    await db.commit()
+                await _set_station_stream(serial, active=False, requested_address=target_host)
+                logger.info(f"[NTRIP Stop] Force stopped station stream serial={serial} mountpoint={mountpoint} host={target_host}")
+            else:
+                await _ntrip_mqtt_stop(
+                    serial=serial,
+                    client_instance_id=client_id,
+                    caster_host=target_host
+                )
+            return PlainTextResponse("STOP_STATUS: ok\nOK dừng trạm thành công")
+    except Exception as e:
+        msg = f"ERROR: {e}"
+        logger.error(f"[NTRIP Stop ERR] {msg}")
+        return PlainTextResponse(f"STOP_STATUS: error\n{msg}", status_code=200)
+
+
+# === NTRIP STOP STATION HTTP ENDPOINT ===
+@app.get("/api/ntrip/stop-listen", response_class=PlainTextResponse)
+@app.get("/api/ntrip/stop-station", response_class=PlainTextResponse)
+async def ntrip_stop_listen_get(
+    mountpoint: str = Query(...),
+    client_instance_id: Optional[str] = Query(None),
+    receiver_id: Optional[str] = Query(None),
+    identifier: Optional[str] = Query(None),
+    force: bool = Query(False),
+    caster_address: Optional[str] = Query(None),
+    address: Optional[str] = Query(None),
+    host: Optional[str] = Query(None),
+    ip: Optional[str] = Query(None),
+):
+    id_to_use = client_instance_id or receiver_id or identifier or "http-get"
+    addr_to_use = caster_address or address or host or ip
+    return await _do_ntrip_stop(mountpoint, id_to_use, force=force, requested_address=addr_to_use)
+
+@app.post("/api/ntrip/stop-station", response_class=PlainTextResponse)
+async def ntrip_stop_station(payload: dict = Body(...)):
+    mountpoint = payload.get("mountpoint")
+    client_instance_id = (
+        payload.get("client_instance_id") or 
+        payload.get("receiver_id") or 
+        payload.get("identifier")
+    )
+    force = bool(payload.get("force", False))
+    address = payload.get("caster_address") or payload.get("address") or payload.get("host") or payload.get("ip")
+    if not mountpoint:
+        return PlainTextResponse("ERROR: mountpoint is required", status_code=400)
+    return await _do_ntrip_stop(mountpoint, client_instance_id or "http-post", force=force, requested_address=address)
+
+
 # (Old single-instance Caster Rover Management API removed to prevent shadowing multi-instance logic)
 
 # Legacy JSON variant removed from routing; the canonical caster-facing endpoint
@@ -4091,7 +4238,7 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
         def _dict_or_empty(value: Any) -> dict:
             return value if isinstance(value, dict) else {}
 
-        def _extract_public_map_coords(dev: models.Device) -> tuple[Optional[Any], Optional[Any]]:
+        def _extract_public_map_coords(dev: models.Device) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
             candidate_sources = []
 
             base_config = _dict_or_empty(getattr(dev, "base_config", None))
@@ -4104,17 +4251,18 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
 
             for source in candidate_sources:
                 coords = _dict_or_empty(source.get("coords"))
-                lat = coords.get("lat")
-                lon = coords.get("lon")
-
-                if lat is None or lon is None:
-                    lat = source.get("lat")
-                    lon = source.get("lon")
+                lat = coords.get("lat") if coords.get("lat") is not None else source.get("lat")
+                lon = coords.get("lon") if coords.get("lon") is not None else source.get("lon")
+                alt = coords.get("alt") if coords.get("alt") is not None else source.get("alt")
 
                 if lat is not None and lon is not None:
-                    return lat, lon
+                    try:
+                        alt_val = float(alt) if alt is not None else 0.0
+                    except (TypeError, ValueError):
+                        alt_val = 0.0
+                    return lat, lon, alt_val
 
-            return None, None
+            return None, None, None
 
         def _extract_public_mountpoint(dev: models.Device) -> Optional[str]:
             service_config = _dict_or_empty(getattr(dev, "service_config", None))
@@ -4123,12 +4271,52 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                 if value:
                     return value
             return None
+
+        def _extract_public_streams(dev: models.Device) -> list:
+            service_config = _dict_or_empty(getattr(dev, "service_config", None))
+            streams = []
+            
+            # Check S1
+            mp1 = str(service_config.get("mountpoint1") or "").strip()
+            if mp1:
+                streams.append({
+                    "stream_id": "s1",
+                    "host": service_config.get("serverhost1", service_config.get("host1", "")),
+                    "port": service_config.get("port1", service_config.get("serverport1", "")),
+                    "mountpoint": mp1,
+                    "enabled": bool(service_config.get("server1_enabled"))
+                })
+                
+            # Check S2
+            mp2 = str(service_config.get("mountpoint2") or "").strip()
+            if mp2:
+                streams.append({
+                    "stream_id": "s2",
+                    "host": service_config.get("serverhost2", service_config.get("host2", "")),
+                    "port": service_config.get("port2", service_config.get("serverport2", "")),
+                    "mountpoint": mp2,
+                    "enabled": bool(service_config.get("server2_enabled"))
+                })
+                
+            # Fallback
+            if not streams:
+                amp = str(service_config.get("active_mountpoint") or "").strip()
+                if amp:
+                    streams.append({
+                        "stream_id": "active",
+                        "host": "",
+                        "port": "",
+                        "mountpoint": amp,
+                        "enabled": True
+                    })
+                    
+            return streams
         
         public_data = []
         skipped_devices = 0
         
         for dev in devices:
-            lat, lon = _extract_public_map_coords(dev)
+            lat, lon, alt = _extract_public_map_coords(dev)
 
             if lat is not None and lon is not None:
                 try:
@@ -4138,7 +4326,10 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
                         "status": dev.status,
                         "lat": float(lat),
                         "lon": float(lon),
+                        "alt": float(alt) if alt is not None else 0.0,
                         "mountpoint": _extract_public_mountpoint(dev),
+                        "streams": _extract_public_streams(dev),
+                        "service_config": dev.service_config,
                         "is_provisioned": dev.is_provisioned,
                         "ntrip_connected": getattr(dev, "ntrip_connected", False),
                         "bps": _device_total_bps(dev)
@@ -7226,8 +7417,40 @@ async def ui_websocket_endpoint(websocket: WebSocket):
     # logging.info("New UI client connected.") 
     try:
         while True: 
-            # Giữ kết nối sống, chờ tin nhắn (dù UI chỉ nhận chứ không gửi gì)
-            await websocket.receive_text()
+            # Nhận tin nhắn từ client và xử lý lệnh start_rtcm/stop_rtcm
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                action = msg.get("action")
+                if action in ("start_rtcm", "stop_rtcm"):
+                    mountpoint = msg.get("mountpoint")
+                    client_id = msg.get("client_instance_id", msg.get("identifier", "ws-client"))
+                    ttl_seconds = int(msg.get("ttl_seconds", 90))
+                    
+                    if not mountpoint:
+                        await websocket.send_json({"status": "error", "error": "mountpoint is required"})
+                        continue
+                        
+                    if action == "start_rtcm":
+                        resp = await _do_ntrip_wake(mountpoint, client_id, ttl_seconds)
+                        await websocket.send_json({
+                            "status": "ok",
+                            "action": "start_rtcm",
+                            "mountpoint": mountpoint,
+                            "response": getattr(resp, "body", b"").decode("utf-8")
+                        })
+                    elif action == "stop_rtcm":
+                        force = bool(msg.get("force", False))
+                        address = msg.get("caster_address") or msg.get("address") or msg.get("host") or msg.get("ip") or msg.get("caster_host")
+                        resp = await _do_ntrip_stop(mountpoint, client_id, force=force, requested_address=address)
+                        await websocket.send_json({
+                            "status": "ok",
+                            "action": "stop_rtcm",
+                            "mountpoint": mountpoint,
+                            "response": getattr(resp, "body", b"").decode("utf-8")
+                        })
+            except Exception:
+                pass
     except (WebSocketDisconnect, Exception):
         # Khi client ngắt kết nối, xóa khỏi manager
         ui_manager.disconnect(websocket)

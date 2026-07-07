@@ -125,6 +125,7 @@ def on_connect(client, userdata, flags, rc):
         client.subscribe("pi/devices/+/service_config_state", qos=1)
         # NTRIP control plane -> backend listens and translates to agent commands.
         client.subscribe("ntrip/rtcm/start", qos=1)
+        client.subscribe("ntrip/rtcm/stop", qos=1)
     else:
         logging.error(f"MQTT Connect Failed with code: {rc}")
 

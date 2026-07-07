@@ -47,18 +47,30 @@ class CasterClient:
             await writer.drain()
 
             # 3. Đọc dữ liệu
+            # Phân biệt truy vấn bảng dữ liệu lớn (usertable, sourcetable, clienttable) và lệnh điều khiển ngắn
+            is_table_query = any(x in command for x in ["/usertable", "/sourcetable", "/clienttable"])
+            
+            # Tăng timeout an toàn lên 5.0s để chờ Caster xử lý xong vòng lặp UI (tối đa 2.0s)
+            timeout = 5.0
+            
             while True:
                 try:
-                    # Giảm timeout xuống 0.5s thay vì 5.0s để tránh block pool kết nối
-                    chunk = await asyncio.wait_for(reader.read(4096), timeout=0.5)
+                    chunk = await asyncio.wait_for(reader.read(4096), timeout=timeout)
                     if not chunk:
                         break
                     chunks.append(chunk)
+                    
+                    # Với các lệnh điều khiển ngắn, chỉ đọc gói dữ liệu đầu tiên rồi thoát ngay để tránh block kết nối
+                    if not is_table_query:
+                        break
                     
                     # Thoát sớm chỉ khi gặp marker kết thúc thật sự của response.
                     partial_resp = chunk.decode('utf-8', errors='ignore').upper()
                     if "ENDCLIENTTABLE" in partial_resp or "ENDUSERTABLE" in partial_resp or "ENDSOURCETABLE" in partial_resp:
                         break
+                    
+                    # Các lần đọc tiếp theo của bảng dữ liệu có thể dùng timeout ngắn hơn (1.0s)
+                    timeout = 1.0
                 except asyncio.TimeoutError:
                     # Chấp nhận timeout như là dấu hiệu kết thúc luồng dữ liệu
                     break
