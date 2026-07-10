@@ -168,6 +168,7 @@ LAST_GST_TS = 0.0
 LAST_GSV_AVG_SNR = None
 LAST_GSV_SNR_SAMPLES = 0
 LAST_GSV_TS = 0.0
+LAST_CONFIGURED_OUTPUT_MODE = None
 
 
 def _runtime_serial_baud(agent=None, gnss_reader=None) -> int:
@@ -1759,6 +1760,37 @@ def dispatch_nmea_data(data):
                 except (Empty, Full):
                     pass  # Silently skip NMEA on overflow
 
+def _base_config_expects_nmea_skyview() -> bool:
+    """
+    In diagnostics modes the receiver is configured to emit NMEA GSV, which is
+    the preferred skyview source. RTCM MSM packets are still forwarded to NTRIP,
+    but should not be republished as calculated skyview on raw_data.
+    """
+    try:
+        configured_mode = globals().get("LAST_CONFIGURED_OUTPUT_MODE")
+        if configured_mode:
+            return str(configured_mode).strip().lower() != "rtcm_only"
+
+        ag = globals().get('agent')
+        base_cfg = ag.get_base_config() if ag and hasattr(ag, 'get_base_config') else {}
+        if not isinstance(base_cfg, dict) or not base_cfg:
+            return False
+        gnss_options = base_cfg.get("gnss_options") or {}
+        output_mode = str(gnss_options.get("output_mode") or "diagnostics_rtcm").strip().lower()
+        return output_mode != "rtcm_only"
+    except Exception:
+        return False
+
+def _remember_output_mode_from_original_config(data: dict) -> None:
+    try:
+        params = ((data.get("original_config") or {}).get("params") or {})
+        gnss_options = params.get("gnss_options") or {}
+        output_mode = str(gnss_options.get("output_mode") or "").strip().lower()
+        if output_mode:
+            globals()["LAST_CONFIGURED_OUTPUT_MODE"] = output_mode
+    except Exception:
+        pass
+
 # ==============================================================================
 # === RTCM DECODER INTEGRATION                                              ===
 # ==============================================================================
@@ -2659,6 +2691,9 @@ class RTCMPublisherMQTT(threading.Thread):
                 # Note: We do NOT publish raw RTCM bytes to raw_data topic, as the station streams directly to NTRIP.
                 if HAS_RTCM_DECODER and self.decoder:
                     try:
+                        if _base_config_expects_nmea_skyview():
+                            continue
+
                         # If NMEA GSV already provides skyview data, skip RTCM
                         # decoding. GGA/GSA-only streams still need RTCM decode
                         # so the UI can render the skyview.
@@ -4557,6 +4592,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             await send_status(agent, mqtt_client)
             
         elif command == "EXECUTE_RAW_COMMANDS":
+            _remember_output_mode_from_original_config(data)
             if data.get("original_config", {}).get("mode") == "BASE":
                 try:
                     if active_auto_base_client:

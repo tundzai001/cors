@@ -97,6 +97,20 @@ def _cache_rtcm_signal_snapshot(serial: str, decoded: dict) -> None:
     }
     live["satellite_count"] = len(fresh_satellites)
 
+
+def _expects_nmea_skyview(serial: str) -> bool:
+    try:
+        serial_key = str(serial)
+        live = device_telemetry_cache.get(serial_key) or {}
+        base_config = live.get("base_config") or device_sync_cache.get(f"{serial_key}_base_config") or {}
+        if not isinstance(base_config, dict) or not base_config:
+            return False
+        gnss_options = base_config.get("gnss_options") or {}
+        output_mode = str(gnss_options.get("output_mode") or "diagnostics_rtcm").strip().lower()
+        return output_mode != "rtcm_only"
+    except Exception:
+        return False
+
 # 🔥 NEW: Global sync check tracking
 LAST_GLOBAL_SYNC_CHECK = 0
 GLOBAL_SYNC_CHECK_INTERVAL = 60.0  # Batch check 60s/lần
@@ -275,6 +289,8 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 try:
                     data = json.loads(payload.decode('ascii'))
                     if data.get("type") == "rtcm_skyview_calculated":
+                        if _expects_nmea_skyview(serial):
+                            return
                         # Payload is already fully calculated at the Edge! Just broadcast it.
                         _cache_rtcm_signal_snapshot(serial, data)
                         await manager.broadcast({
