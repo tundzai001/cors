@@ -20,6 +20,9 @@
         reset(serial) {
             return request(window.ApiRoutes.devices.reset(serial), { method: 'POST' });
         },
+        hardReset(serial) {
+            return request(window.ApiRoutes.devices.hardReset(serial), { method: 'POST' });
+        },
 
         sendCommand(serial, command, payload = {}) {
             return request(window.ApiRoutes.devices.command(serial), {

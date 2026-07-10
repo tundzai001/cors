@@ -9,7 +9,7 @@ const STATUS_TEXT_MAP = {
     'awaiting_license': 'CHỜ LICENSE',
     'configuring': 'ĐANG CẤU HÌNH',
     'rebooting': 'KHỞI ĐỘNG LẠI',
-    'rebooting_for_reset': 'ĐANG RESET',
+    'rebooting_for_reset': 'ĐANG KHÔI PHỤC',
     'locked': 'BỊ KHÓA',
     'sleep': 'CHẾ ĐỘ NGỦ',
     'streaming': 'ĐANG PHÁT',
@@ -629,7 +629,7 @@ const StationOperationsPanel = memo(function StationOperationsPanel({ device, ca
                         <i className={`bi ${locked ? 'bi-unlock-fill' : 'bi-lock-fill'} me-1`}></i>{locked ? 'Unlock' : 'Lock'}
                     </button>
                     <button className="btn btn-sm btn-outline-danger" disabled={!canRunDeviceActions} onClick={() => onReset(device.serial)}>
-                        <i className="bi bi-arrow-counterclockwise me-1"></i>Reset
+                        <i className="bi bi-power me-1"></i>Khởi động lại
                     </button>
                     <button className="btn btn-sm btn-outline-light" onClick={loadOps}>
                         <i className="bi bi-arrow-clockwise me-1"></i>Refresh
@@ -822,18 +822,18 @@ const DetailsPanel = memo(function DetailsPanel({
     const canEdit = role === 'admin' ||
         (role === 'coordinator' && device.user_id === currentUser?.id);
     const canEditService = canEdit || (isRelayLikeStation && hasServiceEditPermission);
-
-    if (device.status === 'rebooting_for_reset') {
+    // REBOOTING STATE
+    if (device.status === 'rebooting' || device.status === 'rebooting_for_reset') {
         return (
             <div className="card dashboard-detail-card bg-dark-tertiary h-100">
                 <div className="card-body text-center d-flex flex-column justify-content-center align-items-center">
                     <div className="spinner-border text-danger" style={{ width: '3rem', height: '3rem' }} role="status">
                         <span className="visually-hidden">Loading...</span>
                     </div>
-                    <h3 className="mt-4 text-danger">Đang Reset Trạm</h3>
+                    <h3 className="mt-4 text-danger">Đang Khởi động lại</h3>
                     <p className="text-muted mt-2">
-                        Thiết bị đang xóa cấu hình và khởi động lại.<br />
-                        Giao diện sẽ tự động chuyển sang bước cấp License sau giây lát.
+                        Thiết bị đang khởi động lại.<br />
+                        Vui lòng đợi trong giây lát để thiết bị kết nối lại.
                     </p>
                 </div>
             </div>
@@ -885,9 +885,9 @@ const DetailsPanel = memo(function DetailsPanel({
     };
 
     const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_create_rovers));
-    const showConfigTabs = !shouldShowLicenseTab && !['rebooting_for_reset'].includes(device.status) && (device.status !== 'awaiting_license' || licenseBypass);
+    const showConfigTabs = !shouldShowLicenseTab && !['rebooting', 'rebooting_for_reset'].includes(device.status) && (device.status !== 'awaiting_license' || licenseBypass);
     const showServiceAndDashboardTabs = showConfigTabs && (device.status !== 'unprovisioned' || isRelayLikeStation);
-    const showStationOperationsTab = !['rebooting_for_reset'].includes(device.status) && (isAdmin || canEditService);
+    const showStationOperationsTab = !['rebooting', 'rebooting_for_reset'].includes(device.status) && (isAdmin || canEditService);
 
     const isDeviceLocked = device.is_locked || device.status === 'locked';
 
@@ -1008,18 +1008,44 @@ const DetailsPanel = memo(function DetailsPanel({
                 {canEdit && !isEditingName && (
                     <button
                         className="btn btn-sm btn-outline-danger ms-2"
-                        title="Reset Trạm về trạng thái ban đầu"
+                        title="Khởi động lại nguồn trạm"
                         onClick={async () => {
                             const ok = await window.CorsUI.confirmAction({
-                                title: 'Reset station',
-                                message: `Reset station ${device.name || device.serial} to initial state?`,
-                                confirmText: 'Reset',
+                                title: 'Khởi động lại trạm',
+                                message: `Bạn có chắc muốn khởi động lại nguồn trạm ${device.name || device.serial}?`,
+                                confirmText: 'Khởi động lại',
                                 tone: 'danger'
                             });
                             if (ok) onReset(device.serial);
                         }}
                     >
-                        <i className="bi bi-arrow-counterclockwise"></i> Reset
+                        <i className="bi bi-power"></i> Khởi động lại
+                    </button>
+                )}
+
+                {/* Nút Hard Reset (Chỉ Admin) */}
+                {isAdmin && !isEditingName && (
+                    <button
+                        className="btn btn-sm btn-outline-danger ms-2"
+                        title="Khôi phục cài đặt gốc"
+                        onClick={async () => {
+                            const ok = await window.CorsUI.confirmAction({
+                                title: 'Khôi phục cài đặt gốc',
+                                message: `Bạn có chắc muốn khôi phục cài đặt gốc và xóa mọi cấu hình của trạm ${device.name || device.serial} không?`,
+                                confirmText: 'Khôi phục',
+                                tone: 'danger'
+                            });
+                            if (ok) {
+                                try {
+                                    await window.CorsDeviceAPI.hardReset(device.serial);
+                                    window.showSuccess(`Đã gửi lệnh khôi phục cài đặt gốc đến thiết bị.`);
+                                } catch (error) {
+                                    window.showError(`Không thể gửi lệnh khôi phục: ${error.message}`);
+                                }
+                            }
+                        }}
+                    >
+                        <i className="bi bi-eraser-fill"></i> Reset Mới Cứng
                     </button>
                 )}
             </div>

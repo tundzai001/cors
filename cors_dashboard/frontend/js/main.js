@@ -919,9 +919,9 @@ async function handleDeleteDevice(serial, name) {
 async function handleResetDevice(serial) {
     try {
         await apiFetch(`/api/devices/${serial}/reset`, { method: 'POST' });
-        showSuccess(`Đã gửi lệnh reset đến thiết bị. Giao diện sẽ tự cập nhật.`);
+        showSuccess(`Đã gửi lệnh khởi động lại đến thiết bị. Giao diện sẽ tự cập nhật.`);
     } catch (error) {
-        showError(`Không thể gửi lệnh reset: ${error.message}`);
+        showError(`Không thể gửi lệnh khởi động lại: ${error.message}`);
         throw error;
     }
 }
@@ -1873,7 +1873,7 @@ window.openPublicMap = async function() {
     const STATUS_TEXT_MAP = {
         online: 'ONLINE', offline: 'OFFLINE', unprovisioned: 'CHUA KICH HOAT',
         awaiting_license: 'CHO LICENSE', configuring: 'DANG CAU HINH',
-        rebooting: 'KHOI DONG LAI', rebooting_for_reset: 'DANG RESET',
+        rebooting: 'KHOI DONG LAI', rebooting_for_reset: 'DANG KHOI PHUC',
         locked: 'BI KHOA', sleep: 'CHE DO NGU', streaming: 'DANG PHAT',
         starting: 'DANG KHOI CHAY'
     };

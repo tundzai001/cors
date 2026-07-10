@@ -46,6 +46,12 @@ UBLOX_RTCM_KEYS = {
     "1094": {"UART1": 0x20910368, "UART2": 0x20910369, "USB": 0x2091036A},  # Galileo MSM4
     "1124": {"UART1": 0x2091036E, "UART2": 0x2091036F, "USB": 0x20910370},  # BeiDou MSM4
     
+    # MSM7 based on config file C:\Users\len\Desktop\tun\nmea+rtcm.txt
+    "1077": {"UART1": 0x209102CD, "UART2": 0x209102CE, "USB": 0x209102CF},  # GPS MSM7
+    "1087": {"UART1": 0x209102D2, "UART2": 0x209102D3, "USB": 0x209102D4},  # GLONASS MSM7
+    "1097": {"UART1": 0x209102D7, "UART2": 0x209102D8, "USB": 0x209102D9},  # Galileo MSM7
+    "1127": {"UART1": 0x209102DC, "UART2": 0x209102DD, "USB": 0x209102DE},  # BeiDou MSM7
+    
     "1230": {"UART1": 0x20910304, "UART2": 0x20910305, "USB": 0x20910306},  # GLONASS bias
 }
 
@@ -57,11 +63,11 @@ UNICORE_NMEA_BY_CONSTELLATION = {
 }
 
 UNICORE_RTCM_BY_CONSTELLATION = {
-    "gps": ("1074", "1019"),
-    "glo": ("1084", "1020"),
-    "gal": ("1094", "1045"),
-    "bds": ("1124", "1042"),
-    "qzss": ("1114", "1044"),
+    "gps": ("1074", "1077", "1019"),
+    "glo": ("1084", "1087", "1020"),
+    "gal": ("1094", "1097", "1045"),
+    "bds": ("1124", "1127", "1042"),
+    "qzss": ("1114", "1117", "1044"),
 }
 
 
@@ -80,6 +86,15 @@ def _ubx_cfg_valset_u1(entries: dict[int, int], layers: int = 0x07) -> bytes:
         payload.extend(int(key).to_bytes(4, 'little'))
         payload.append(1 if value else 0)
     return _ubx_packet(0x06, 0x8A, bytes(payload))
+
+def _ubx_cfg_msg(msg_class: int, msg_id: int, ports: list[str], rate: int = 1) -> bytes:
+    payload = bytearray([msg_class, msg_id, 0, 0, 0, 0, 0, 0])
+    if "I2C" in ports: payload[2] = rate
+    if "UART1" in ports: payload[3] = rate
+    if "UART2" in ports: payload[4] = rate
+    if "USB" in ports: payload[5] = rate
+    if "SPI" in ports: payload[6] = rate
+    return _ubx_packet(0x06, 0x01, bytes(payload))
 
 
 def normalize_gnss_options(options: dict | None) -> dict:
@@ -137,13 +152,39 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
         "1084": constellations["glo"],
         "1094": constellations["gal"],
         "1124": constellations["bds"],
+        "1077": constellations["gps"],
+        "1087": constellations["glo"],
+        "1097": constellations["gal"],
+        "1127": constellations["bds"],
         "1230": constellations["glo"],
     }
     for message, keys_by_port in UBLOX_RTCM_KEYS.items():
         for port in ports:
             entries[keys_by_port[port]] = 1 if rtcm_enabled.get(message, False) else 0
 
-    return _ubx_cfg_valset_u1(entries)
+    command = _ubx_cfg_valset_u1(entries)
+
+    # Legacy CFG-MSG commands for MSM4 as fallback/guarantee
+    if constellations["gps"]:
+        command += _ubx_cfg_msg(0xF5, 0x4A, ports)  # 1074
+    if constellations["glo"]:
+        command += _ubx_cfg_msg(0xF5, 0x54, ports)  # 1084
+    if constellations["gal"]:
+        command += _ubx_cfg_msg(0xF5, 0x5E, ports)  # 1094
+    if constellations["bds"]:
+        command += _ubx_cfg_msg(0xF5, 0x7C, ports)  # 1124
+
+    # Legacy CFG-MSG commands for MSM7 as fallback/guarantee
+    if constellations["gps"]:
+        command += _ubx_cfg_msg(0xF5, 0x4D, ports)  # 1077
+    if constellations["glo"]:
+        command += _ubx_cfg_msg(0xF5, 0x57, ports)  # 1087
+    if constellations["gal"]:
+        command += _ubx_cfg_msg(0xF5, 0x61, ports)  # 1097
+    if constellations["bds"]:
+        command += _ubx_cfg_msg(0xF5, 0x7F, ports)  # 1127
+
+    return command
 
 
 def _append_unicore_output_commands(commands: list[bytes], port: str, gnss_options: dict | None = None) -> None:
@@ -337,9 +378,10 @@ def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: 
     for msg in nmea_msgs:
         commands.append(f'{msg} {port} 1\r\n'.encode('ascii'))
         
-    # 4. Bật các bản tin RTCM cần thiết trên COM2 (10 bản tin)
+    # 4. Bật các bản tin RTCM cần thiết trên COM2 (bật CẢ MSM4 và MSM7)
     rtcm_msgs = [
-        '1006', '1033', '1074', '1124', '1084', '1094', '1042', '1019', '1020', '1045'
+        '1006', '1033', '1074', '1124', '1084', '1094', '1042', '1019', '1020', '1045',
+        '1077', '1127', '1087', '1097'
     ]
     for msg in rtcm_msgs:
         commands.append(f'rtcm{msg} {port} 1\r\n'.encode('ascii'))

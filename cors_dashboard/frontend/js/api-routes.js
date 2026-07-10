@@ -63,6 +63,7 @@
             name: serial => `/api/devices/${encodeURIComponent(serial)}/name`,
             serial: serial => `/api/devices/${encodeURIComponent(serial)}/serial`,
             reset: serial => `/api/devices/${encodeURIComponent(serial)}/reset`,
+            hardReset: serial => `/api/devices/${encodeURIComponent(serial)}/hard-reset`,
             command: serial => `/api/devices/${encodeURIComponent(serial)}/command`,
             autoDeployToken: serial => `/api/devices/${encodeURIComponent(serial)}/auto-deploy-token`,
             licenseBypass: serial => `/api/devices/${encodeURIComponent(serial)}/license-bypass`,

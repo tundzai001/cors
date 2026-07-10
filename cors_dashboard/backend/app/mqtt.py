@@ -296,39 +296,54 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 except Exception:
                     pass
 
-            decoded_rtcm = await rtcm_signal_decoder.decode(serial, payload)
-            if decoded_rtcm:
-                _cache_rtcm_signal_snapshot(serial, decoded_rtcm)
-                await manager.broadcast({
-                    "type": "rtcm_signal_update",
-                    "serial": serial,
-                    "data": decoded_rtcm
-                })
+            # Optimize: If payload is NMEA, parse it immediately and return
+            if payload.startswith(b'$'):
+                try:
+                    line = payload.decode('ascii', errors='ignore')
+                    parsed_data = nmea_parser.parse(line)
+                    if parsed_data:
+                        live = device_telemetry_cache.setdefault(serial, {})
+                        nmea_live = live.setdefault("nmea_data", {})
+                        parsed_type = str(parsed_data.get("type") or "").upper()
+                        nmea_live["last_nmea_ts"] = time.time()
+                        if parsed_type == "GGA":
+                            nmea_live["gga"] = parsed_data
+                        elif parsed_type == "GSA":
+                            nmea_live["gsa"] = parsed_data
+                        elif parsed_type == "GSV":
+                            nmea_live["satellites"] = parsed_data.get("satellites") or []
+                            nmea_live["last_gsv_ts"] = nmea_live["last_nmea_ts"]
+                        elif parsed_type:
+                            nmea_live[parsed_type.lower()] = parsed_data
+                        await manager.broadcast({
+                            "type": "nmea_update",
+                            "serial": serial,
+                            "data": parsed_data
+                        })
+                except Exception as e:
+                    logging.debug(f"NMEA parse error: {e}")
                 return
 
-            try:
-                line = payload.decode('ascii', errors='ignore')
-                parsed_data = nmea_parser.parse(line)
-                if parsed_data:
-                    live = device_telemetry_cache.setdefault(serial, {})
-                    nmea_live = live.setdefault("nmea_data", {})
-                    parsed_type = str(parsed_data.get("type") or "").upper()
-                    if parsed_type == "GGA":
-                        nmea_live["gga"] = parsed_data
-                    elif parsed_type == "GSA":
-                        nmea_live["gsa"] = parsed_data
-                    elif parsed_type == "GSV":
-                        nmea_live["satellites"] = parsed_data.get("satellites") or []
-                    elif parsed_type:
-                        nmea_live[parsed_type.lower()] = parsed_data
-                    await manager.broadcast({
-                        "type": "nmea_update",
-                        "serial": serial,
-                        "data": parsed_data
-                    })
-            except Exception as e:
-                logging.debug(f"NMEA parse error: {e}")
-            return
+            # If payload is RTCM (0xD3), only skip decoding when NMEA GSV
+            # already provides skyview data. GGA/GSA-only streams still need
+            # RTCM decode to populate the skyview.
+            is_rtcm = len(payload) > 0 and payload[0] == 0xD3
+            if is_rtcm:
+                live = device_telemetry_cache.get(serial, {})
+                nmea_live = live.get("nmea_data", {})
+                last_gsv_ts = nmea_live.get("last_gsv_ts") or 0
+                has_nmea_skyview = (time.time() - last_gsv_ts) < 60
+                
+                if not has_nmea_skyview:
+                    decoded_rtcm = await rtcm_signal_decoder.decode(serial, payload)
+                    if decoded_rtcm:
+                        _cache_rtcm_signal_snapshot(serial, decoded_rtcm)
+                        await manager.broadcast({
+                            "type": "rtcm_signal_update",
+                            "serial": serial,
+                            "data": decoded_rtcm
+                        })
+                return
 
         # ==================== 2. XỬ LÝ STATUS UPDATE ====================
         try:

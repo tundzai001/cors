@@ -6180,6 +6180,55 @@ async def configure_service_endpoint(
 async def reset_pi_device(
     serial: str,
     db: AsyncSession = Depends(get_db), 
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    # 1. Lấy thiết bị từ DB TRƯỚC để kiểm tra sự tồn tại
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
+
+    # 2. Phân quyền: Cần EDIT_SERVICE_CONFIG. Nếu là Coordinator thì phải là người sở hữu.
+    if not auth.has_permission(current_user, auth.Permission.EDIT_SERVICE_CONFIG):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền khởi động lại thiết bị.")
+
+    if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị này.")
+
+    # 3. Gửi lệnh xuống thiết bị (Chỉ gửi khi đã qua cửa kiểm tra an ninh)
+    try:
+        await send_command_to_pi(serial, {"command": "REBOOT_DEVICE", "payload": {}})
+    except Exception as e:
+        # Log lỗi nhưng không chặn dòng chảy để cập nhật DB cho UI phản hồi
+        logging.error(f"Failed to send reboot command to {serial}: {e}")
+
+    # 4. Cập nhật DB ngay lập tức
+    device.status = "rebooting"
+    
+    await db.commit()
+    
+    # 🔥 FIX: Invalidate sync cache on reset
+    mqtt_handler.invalidate_device_cache(serial)
+    
+    # 5. Broadcast để UI cập nhật ngay
+    await ui_manager.broadcast({
+        "type": "status_update",
+        "data": schemas.Device.from_orm(device).model_dump()
+    })
+
+    logging.info(f"User '{current_user.username}' sent REBOOT command to Pi '{serial}'")
+    await crud.log_system_event(
+        db=db,
+        type="warning",
+        message=f"Device '{device.name}' rebooted by {current_user.username}",
+        user_id=current_user.id,
+        serial=serial
+    )
+    return {"status": "reboot_command_sent"}
+
+@app.post("/api/devices/{serial}/hard-reset")
+async def hard_reset_pi_device(
+    serial: str,
+    db: AsyncSession = Depends(get_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.DELETE_DEVICE))
 ):
     # 1. Lấy thiết bị từ DB TRƯỚC để kiểm tra sự tồn tại
@@ -6192,7 +6241,7 @@ async def reset_pi_device(
         await send_command_to_pi(serial, {"command": "DELETE_DEVICE", "payload": {}})
     except Exception as e:
         # Log lỗi nhưng không chặn dòng chảy để cập nhật DB cho UI phản hồi
-        logging.error(f"Failed to send reset command to {serial}: {e}")
+        logging.error(f"Failed to send hard-reset command to {serial}: {e}")
 
     # 4. Cập nhật DB ngay lập tức
     device.status = "rebooting_for_reset"
@@ -6214,15 +6263,15 @@ async def reset_pi_device(
         "data": schemas.Device.from_orm(device).model_dump()
     })
 
-    logging.info(f"User '{current_user.username}' sent RESET command to Pi '{serial}'")
+    logging.info(f"User '{current_user.username}' sent HARD-RESET command to Pi '{serial}'")
     await crud.log_system_event(
         db=db,
         type="warning",
-        message=f"Device '{device.name}' reset by {current_user.username}",
+        message=f"Device '{device.name}' hard-reset (factory reset) by {current_user.username}",
         user_id=current_user.id,
         serial=serial
     )
-    return {"status": "reset_command_sent"}
+    return {"status": "hard_reset_command_sent"}
 
 @app.delete("/api/devices/{serial}")
 async def delete_device_from_list(
@@ -7226,7 +7275,7 @@ async def bulk_device_action(
         raise HTTPException(status_code=400, detail="action must be lock, unlock, or reset")
     if action in {"lock", "unlock"} and not auth.has_permission(current_user, auth.Permission.MANAGE_USERS):
         raise HTTPException(status_code=403, detail="Missing permission for lock/unlock")
-    if action == "reset" and not auth.has_permission(current_user, auth.Permission.DELETE_DEVICE):
+    if action == "reset" and not auth.has_permission(current_user, auth.Permission.EDIT_SERVICE_CONFIG):
         raise HTTPException(status_code=403, detail="Missing permission for reset")
 
     visible = await _ops_visible_devices(devices_db, auth_db, current_user)
@@ -7247,14 +7296,8 @@ async def bulk_device_action(
                 device.is_locked = False
                 status_text = "unlocked"
             else:
-                response = await send_command_to_pi(serial, {"command": "DELETE_DEVICE", "payload": {}})
-                device.status = "rebooting_for_reset"
-                device.is_provisioned = False
-                device.detected_chip_type = "UNKNOWN"
-                device.base_config = {}
-                device.service_config = {}
-                device.ntrip_connected = False
-                device.bps = 0
+                response = await send_command_to_pi(serial, {"command": "REBOOT_DEVICE", "payload": {}})
+                device.status = "rebooting"
                 status_text = "reset"
             await devices_db.commit()
             await devices_db.refresh(device)
@@ -7565,6 +7608,61 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                         "type": "nmea_update",
                         "serial": serial,
                         "data": parsed_data
+                    })
+            elif message_type == "rtcm_signal_update" and payload:
+                decoded_data = payload
+                if isinstance(decoded_data, str):
+                    try:
+                        decoded_data = json.loads(decoded_data)
+                    except Exception:
+                        decoded_data = None
+                if isinstance(decoded_data, dict):
+                    now_ms = int(time.time() * 1000)
+                    live = latest_device_telemetry_cache.setdefault(str(serial), {})
+                    satellite_map = live.setdefault("rtcm_satellites", {})
+                    if not isinstance(satellite_map, dict):
+                        satellite_map = {}
+                        live["rtcm_satellites"] = satellite_map
+                    satellites = decoded_data.get("satellites") or []
+                    if isinstance(satellites, dict):
+                        satellites = list(satellites.values())
+                    for index, item in enumerate(satellites):
+                        if not isinstance(item, dict):
+                            continue
+                        satellite = dict(item)
+                        try:
+                            last_seen = int(float(satellite.get("lastSeen") or satellite.get("last_seen") or now_ms))
+                        except (TypeError, ValueError):
+                            last_seen = now_ms
+                        if 0 < last_seen < 10_000_000_000:
+                            last_seen *= 1000
+                        if last_seen <= 0 or last_seen > now_ms + 60_000:
+                            last_seen = now_ms
+                        satellite["lastSeen"] = last_seen
+                        key = str(
+                            satellite.get("id")
+                            or f"RTCM:{satellite.get('system') or satellite.get('sys') or 'un'}:{satellite.get('prn') or index}"
+                        )
+                        satellite_map[key] = satellite
+                    for key, item in list(satellite_map.items()):
+                        try:
+                            last_seen = int(item.get("lastSeen") or 0)
+                        except (TypeError, ValueError, AttributeError):
+                            last_seen = 0
+                        if last_seen and now_ms - last_seen > 10_000:
+                            satellite_map.pop(key, None)
+                    decoded_data = {
+                        **decoded_data,
+                        "satellites": list(satellite_map.values()),
+                        "satellite_count": len(satellite_map),
+                        "updated_at_ms": now_ms,
+                    }
+                    live["rtcm_signal_data"] = decoded_data
+                    live["satellite_count"] = len(satellite_map)
+                    await ui_manager.broadcast({
+                        "type": "rtcm_signal_update",
+                        "serial": serial,
+                        "data": decoded_data
                     })
 
     except WebSocketDisconnect:

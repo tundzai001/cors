@@ -1184,7 +1184,7 @@ class ZaloBotService:
                     elif action == "station_unlock":
                         preview = f"MỞ KHÓA trạm {device_name} ({device_serial})"
                     elif action == "station_reset":
-                        preview = f"RESET TOÀN BỘ CONFIG VÀ KHỞI ĐỘNG LẠI trạm {device_name} ({device_serial})"
+                        preview = f"KHỞI ĐỘNG LẠI NGUỒN trạm {device_name} ({device_serial})"
                     elif action == "coord_set":
                         preview = (
                             f"Trạm: {device_name} ({device_serial})\n"
@@ -2419,7 +2419,7 @@ class ZaloBotService:
 
     async def _stationreset_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self._queue_station_power_action(
-            update, context, "station_reset", "RESET TOÀN BỘ CONFIG VÀ KHỞI ĐỘNG LẠI"
+            update, context, "station_reset", "KHỞI ĐỘNG LẠI NGUỒN"
         )
 
     async def _stationdelete_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2663,7 +2663,7 @@ class ZaloBotService:
             ))
         if principal.allows(auth.Permission.DELETE_DEVICE):
             write_lines.extend((
-                "/stationreset <tên> — Reset trạm",
+                "/stationreset <tên> — Khởi động lại trạm",
                 "/stationdelete <tên> — Xóa trạm",
             ))
         if write_lines:

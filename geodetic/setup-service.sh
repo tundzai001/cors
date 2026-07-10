@@ -27,6 +27,7 @@ EOF
 
 echo "geodetic-agent.service file has been created."
 
+
 echo "Reloading systemd configuration..."
 sudo systemctl daemon-reload
 

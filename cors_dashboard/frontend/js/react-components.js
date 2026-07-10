@@ -125,7 +125,7 @@ const STATUS_TEXT_MAP = {
     'awaiting_license': 'CHỜ LICENSE',
     'configuring': 'ĐANG CẤU HÌNH',
     'rebooting': 'KHỞI ĐỘNG LẠI',
-    'rebooting_for_reset': 'ĐANG RESET',
+    'rebooting_for_reset': 'ĐANG KHÔI PHỤC',
     'locked': 'BỊ KHÓA',
     'sleep': 'CHẾ ĐỘ NGỦ',
     'streaming': 'ĐANG PHÁT',
