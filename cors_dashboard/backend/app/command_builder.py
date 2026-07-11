@@ -12,6 +12,7 @@ DEFAULT_GNSS_OPTIONS = {
         "sbas": False,
     },
     "output_mode": "diagnostics_rtcm",
+    "msm_level": 4,
     "ports": ["USB"],
 }
 
@@ -39,6 +40,15 @@ UBLOX_NAV_KEYS = {
     "NAV_HPPOSLLH": {"UART1": 0x20910034, "UART2": 0x20910035, "USB": 0x20910036},
 }
 
+# Message rates and output protocols are independent on u-blox receivers. A
+# port left in RTCM-only mode keeps NMEA silent even when GGA/GSV/GST rates are
+# subsequently enabled, unless its OUTPROT-NMEA key is enabled as well.
+UBLOX_OUTPUT_PROTOCOL_KEYS = {
+    "UART1": {"UBX": 0x10740001, "NMEA": 0x10740002, "RTCM3X": 0x10740004},
+    "UART2": {"UBX": 0x10760001, "NMEA": 0x10760002, "RTCM3X": 0x10760004},
+    "USB": {"UBX": 0x10780001, "NMEA": 0x10780002, "RTCM3X": 0x10780004},
+}
+
 UBLOX_RTCM_KEYS = {
     "1005": {"UART1": 0x209102BE, "UART2": 0x209102BF, "USB": 0x209102C0},
     "1074": {"UART1": 0x2091035F, "UART2": 0x20910360, "USB": 0x20910361},  # GPS MSM4
@@ -46,11 +56,12 @@ UBLOX_RTCM_KEYS = {
     "1094": {"UART1": 0x20910368, "UART2": 0x20910369, "USB": 0x2091036A},  # Galileo MSM4
     "1124": {"UART1": 0x2091036E, "UART2": 0x2091036F, "USB": 0x20910370},  # BeiDou MSM4
     
-    # MSM7 based on config file C:\Users\len\Desktop\tun\nmea+rtcm.txt
     "1077": {"UART1": 0x209102CD, "UART2": 0x209102CE, "USB": 0x209102CF},  # GPS MSM7
     "1087": {"UART1": 0x209102D2, "UART2": 0x209102D3, "USB": 0x209102D4},  # GLONASS MSM7
     "1097": {"UART1": 0x209102D7, "UART2": 0x209102D8, "USB": 0x209102D9},  # Galileo MSM7
-    "1127": {"UART1": 0x209102DC, "UART2": 0x209102DD, "USB": 0x209102DE},  # BeiDou MSM7
+    # RTCM 1127 is configured through the CFG-MSG fallback below. ZED-F9P
+    # HPG 1.32 NAKs CFG-VALSET key 0x209102DE; including it would reject the
+    # entire combined VALSET packet, including all NMEA message-rate changes.
     
     "1230": {"UART1": 0x20910304, "UART2": 0x20910305, "USB": 0x20910306},  # GLONASS bias
 }
@@ -111,6 +122,16 @@ def normalize_gnss_options(options: dict | None) -> dict:
     if output_mode not in {"diagnostics_rtcm", "rtcm_only"}:
         output_mode = DEFAULT_GNSS_OPTIONS["output_mode"]
 
+    try:
+        raw_msm_level = raw.get("msm_level") or DEFAULT_GNSS_OPTIONS["msm_level"]
+        msm_level = "both" if str(raw_msm_level).strip().lower() == "both" else int(raw_msm_level)
+    except (TypeError, ValueError):
+        msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
+    if msm_level not in {4, 7, "both"}:
+        msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
+    if output_mode != "rtcm_only" and msm_level == "both":
+        msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
+
     raw_ports = raw.get("ports") or DEFAULT_GNSS_OPTIONS["ports"]
     if isinstance(raw_ports, str):
         raw_ports = [raw_ports]
@@ -125,6 +146,7 @@ def normalize_gnss_options(options: dict | None) -> dict:
     return {
         "constellations": constellations,
         "output_mode": output_mode,
+        "msm_level": msm_level,
         "ports": ports,
     }
 
@@ -133,9 +155,16 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
     opts = normalize_gnss_options(gnss_options)
     constellations = opts["constellations"]
     output_mode = opts["output_mode"]
+    msm_level = opts["msm_level"]
     ports = opts["ports"]
     diagnostics_enabled = output_mode != "rtcm_only"
     entries: dict[int, int] = {}
+
+    for port in ports:
+        protocol_keys = UBLOX_OUTPUT_PROTOCOL_KEYS[port]
+        entries[protocol_keys["UBX"]] = 1
+        entries[protocol_keys["NMEA"]] = 1 if diagnostics_enabled else 0
+        entries[protocol_keys["RTCM3X"]] = 1
 
     for message, keys_by_port in UBLOX_NMEA_KEYS.items():
         enabled = diagnostics_enabled and message in {"GGA", "GSA", "GSV", "GST"}
@@ -148,14 +177,14 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
 
     rtcm_enabled = {
         "1005": True,
-        "1074": constellations["gps"],
-        "1084": constellations["glo"],
-        "1094": constellations["gal"],
-        "1124": constellations["bds"],
-        "1077": constellations["gps"],
-        "1087": constellations["glo"],
-        "1097": constellations["gal"],
-        "1127": constellations["bds"],
+        "1074": msm_level in {4, "both"} and constellations["gps"],
+        "1084": msm_level in {4, "both"} and constellations["glo"],
+        "1094": msm_level in {4, "both"} and constellations["gal"],
+        "1124": msm_level in {4, "both"} and constellations["bds"],
+        "1077": msm_level in {7, "both"} and constellations["gps"],
+        "1087": msm_level in {7, "both"} and constellations["glo"],
+        "1097": msm_level in {7, "both"} and constellations["gal"],
+        "1127": msm_level in {7, "both"} and constellations["bds"],
         "1230": constellations["glo"],
     }
     for message, keys_by_port in UBLOX_RTCM_KEYS.items():
@@ -164,26 +193,19 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
 
     command = _ubx_cfg_valset_u1(entries)
 
-    # Legacy CFG-MSG commands for MSM4 as fallback/guarantee
-    if constellations["gps"]:
-        command += _ubx_cfg_msg(0xF5, 0x4A, ports)  # 1074
-    if constellations["glo"]:
-        command += _ubx_cfg_msg(0xF5, 0x54, ports)  # 1084
-    if constellations["gal"]:
-        command += _ubx_cfg_msg(0xF5, 0x5E, ports)  # 1094
-    if constellations["bds"]:
-        command += _ubx_cfg_msg(0xF5, 0x7C, ports)  # 1124
-
-    # Legacy CFG-MSG commands for MSM7 as fallback/guarantee
-    if constellations["gps"]:
-        command += _ubx_cfg_msg(0xF5, 0x4D, ports)  # 1077
-    if constellations["glo"]:
-        command += _ubx_cfg_msg(0xF5, 0x57, ports)  # 1087
-    if constellations["gal"]:
-        command += _ubx_cfg_msg(0xF5, 0x61, ports)  # 1097
-    if constellations["bds"]:
-        command += _ubx_cfg_msg(0xF5, 0x7F, ports)  # 1127
-
+    # Legacy CFG-MSG fallback must explicitly configure both MSM families.
+    # Otherwise a message enabled by an older setup (for example MSM7) keeps
+    # streaming after the user switches to MSM4, causing duplicate/conflicting
+    # observations on receivers that use CFG-MSG instead of VALSET.
+    msm_ids = {
+        4: {"gps": 0x4A, "glo": 0x54, "gal": 0x5E, "bds": 0x7C},
+        7: {"gps": 0x4D, "glo": 0x57, "gal": 0x61, "bds": 0x7F},
+    }
+    for level, ids_by_constellation in msm_ids.items():
+        level_enabled = msm_level == "both" or msm_level == level
+        for constellation, msg_id in ids_by_constellation.items():
+            enabled = level_enabled and constellations[constellation]
+            command += _ubx_cfg_msg(0xF5, msg_id, ports if enabled else [], rate=1 if enabled else 0)
     return command
 
 
@@ -191,6 +213,7 @@ def _append_unicore_output_commands(commands: list[bytes], port: str, gnss_optio
     opts = normalize_gnss_options(gnss_options)
     constellations = opts["constellations"]
     diagnostics_enabled = opts["output_mode"] != "rtcm_only"
+    msm_level = opts["msm_level"]
 
     if diagnostics_enabled:
         for constellation, messages in UNICORE_NMEA_BY_CONSTELLATION.items():
@@ -203,7 +226,12 @@ def _append_unicore_output_commands(commands: list[bytes], port: str, gnss_optio
     rtcm_msgs = ["1006", "1033"]
     for constellation, messages in UNICORE_RTCM_BY_CONSTELLATION.items():
         if constellations.get(constellation):
-            rtcm_msgs.extend(messages)
+            rtcm_msgs.extend(
+                message for message in messages
+                if (msm_level == "both" and message[-1:] in {"4", "7"})
+                or message.endswith(str(msm_level))
+                or message in {"1019", "1020", "1042", "1044", "1045"}
+            )
     for message in dict.fromkeys(rtcm_msgs):
         commands.append(f'rtcm{message} {port} 1\r\n'.encode('ascii'))
         commands.append(b'$DELAY_200$')

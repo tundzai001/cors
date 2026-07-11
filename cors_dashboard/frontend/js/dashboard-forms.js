@@ -265,6 +265,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
 
     const [outputMode, setOutputMode] = useState('diagnostics_rtcm');
+    const [msmLevel, setMsmLevel] = useState('4');
     const [constellations, setConstellations] = useState({
         gps: true,
         glo: true,
@@ -287,6 +288,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setSvinDuration('300');
         setSvinAccuracyM('3.00');
         setOutputMode('diagnostics_rtcm');
+        setMsmLevel('4');
         setConstellations({ gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true });
 
         // 2. Load config từ DB (nếu có)
@@ -325,6 +327,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             if (config.gnss_options && typeof config.gnss_options === 'object') {
                 const options = config.gnss_options;
                 if (options.output_mode) setOutputMode(String(options.output_mode));
+                if ([4, 7].includes(Number(options.msm_level)) || options.msm_level === 'both') setMsmLevel(String(options.msm_level));
                 if (options.constellations && typeof options.constellations === 'object') {
                     setConstellations(prev => ({
                         ...prev,
@@ -377,6 +380,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             if (isAdmin && !isLteStation) {
                 params.gnss_options = {
                     output_mode: outputMode,
+                    msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel),
                     constellations: {
                         gps: true,
                         glo: true,
@@ -597,11 +601,28 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 <select
                                     className="form-select form-select-sm gnss-output-policy__select"
                                     value={outputMode}
-                                    onChange={(e) => setOutputMode(e.target.value)}
+                                    onChange={(e) => {
+                                        const nextMode = e.target.value;
+                                        setOutputMode(nextMode);
+                                        if (nextMode !== 'rtcm_only' && msmLevel === 'both') setMsmLevel('4');
+                                    }}
                                     disabled={isLteStation}
                                 >
                                     <option value="diagnostics_rtcm">NMEA + RTCM</option>
                                     <option value="rtcm_only">RTCM only</option>
+                                </select>
+                            </div>
+                            <div className="gnss-output-policy__field">
+                                <label className="gnss-output-policy__label">RTCM MSM level</label>
+                                <select
+                                    className="form-select form-select-sm gnss-output-policy__select"
+                                    value={msmLevel}
+                                    onChange={(e) => setMsmLevel(e.target.value)}
+                                    disabled={isLteStation}
+                                >
+                                    <option value="4">MSM4</option>
+                                    <option value="7">MSM7</option>
+                                    <option value="both" disabled={outputMode !== 'rtcm_only'}>MSM4 + MSM7 (RTCM only)</option>
                                 </select>
                             </div>
                             <div className="gnss-output-policy__summary">
@@ -630,11 +651,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         <div className="gnss-output-policy__copy">
                                             {activeChip === 'Ublox' ? (
                                                 <span>
-                                                    <strong>1005</strong> (Tọa độ Base), <strong>1074</strong> (GPS MSM4), <strong>1084</strong> (GLONASS MSM4), <strong>1094</strong> (Galileo MSM4), <strong>1124</strong> (BeiDou MSM4), <strong>1230</strong> (GLONASS Bias).
+                                                    <strong>1005</strong> (Tọa độ Base), <strong>{msmLevel === 'both' ? '1074+1077' : (msmLevel === '7' ? '1077' : '1074')}</strong> (GPS), <strong>{msmLevel === 'both' ? '1084+1087' : (msmLevel === '7' ? '1087' : '1084')}</strong> (GLONASS), <strong>{msmLevel === 'both' ? '1094+1097' : (msmLevel === '7' ? '1097' : '1094')}</strong> (Galileo), <strong>{msmLevel === 'both' ? '1124+1127' : (msmLevel === '7' ? '1127' : '1124')}</strong> (BeiDou), <strong>1230</strong> (GLONASS Bias).
                                                 </span>
                                             ) : activeChip === 'Unicorecomm' ? (
                                                 <span>
-                                                    <strong>1006</strong> (Tọa độ Base), <strong>1033</strong> (Tên trạm), <strong>1074/1084/1094/1124</strong> (MSM4), <strong>1019/1020/1042/1045</strong> (Lịch vệ tinh GPS/GLO/BDS/GAL).
+                                                    <strong>1006</strong> (Tọa độ Base), <strong>1033</strong> (mô tả antenna/receiver), <strong>{msmLevel === 'both' ? '1074/1084/1094/1124 + 1077/1087/1097/1127' : (msmLevel === '7' ? '1077/1087/1097/1127' : '1074/1084/1094/1124')}</strong> ({msmLevel === 'both' ? 'MSM4 + MSM7' : `MSM${msmLevel}`}), <strong>1019/1020/1042/1045</strong> (Lịch vệ tinh GPS/GLO/BDS/GAL).
                                                 </span>
                                             ) : (
                                                 <span>

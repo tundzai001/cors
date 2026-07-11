@@ -1762,9 +1762,12 @@ def dispatch_nmea_data(data):
 
 def _base_config_expects_nmea_skyview() -> bool:
     """
-    In diagnostics modes the receiver is configured to emit NMEA GSV, which is
-    the preferred skyview source. RTCM MSM packets are still forwarded to NTRIP,
-    but should not be republished as calculated skyview on raw_data.
+    Return False only when the UI explicitly configured RTCM-only output.
+
+    RTCM MSM packets are still forwarded to NTRIP in combined modes, but they
+    must not be decoded and republished on raw_data. Defaulting to NMEA here is
+    intentional: an absent/stale config must never make calculated RTCM JSON
+    replace the receiver's GGA/GST/GSV sentences.
     """
     try:
         configured_mode = globals().get("LAST_CONFIGURED_OUTPUT_MODE")
@@ -1774,12 +1777,12 @@ def _base_config_expects_nmea_skyview() -> bool:
         ag = globals().get('agent')
         base_cfg = ag.get_base_config() if ag and hasattr(ag, 'get_base_config') else {}
         if not isinstance(base_cfg, dict) or not base_cfg:
-            return False
+            return True
         gnss_options = base_cfg.get("gnss_options") or {}
-        output_mode = str(gnss_options.get("output_mode") or "diagnostics_rtcm").strip().lower()
+        output_mode = str(gnss_options.get("output_mode") or "").strip().lower()
         return output_mode != "rtcm_only"
     except Exception:
-        return False
+        return True
 
 def _remember_output_mode_from_original_config(data: dict) -> None:
     try:
@@ -2349,7 +2352,26 @@ class RTCMSignalDecoder:
     def get_stats(self, serial: str) -> dict[str, Any]:
         if hasattr(self, '_stats_by_serial'):
             raw = self._stats_by_serial.get(serial, {})
-            return {k: {"interval": v["interval"], "count": v["count"]} for k, v in raw.items()}
+            now = time.time()
+            active = {}
+            stale = []
+            for message_type, stat in raw.items():
+                interval = max(0.0, float(stat.get("interval") or 0.0))
+                # Fast MSM/base messages disappear promptly after reconfigure;
+                # slower ephemeris/descriptor messages retain an adaptive TTL.
+                ttl = max(15.0, min(180.0, interval * 3.0 + 2.0))
+                age = now - float(stat.get("last_seen") or 0.0)
+                if age <= ttl:
+                    active[message_type] = {
+                        "interval": interval,
+                        "count": stat.get("count", 0),
+                        "age": round(max(0.0, age), 1),
+                    }
+                else:
+                    stale.append(message_type)
+            for message_type in stale:
+                raw.pop(message_type, None)
+            return active
         return {}
 
     def decode_sync(self, serial: str, payload: bytes) -> dict[str, Any] | None:
@@ -2691,18 +2713,17 @@ class RTCMPublisherMQTT(threading.Thread):
                 # Note: We do NOT publish raw RTCM bytes to raw_data topic, as the station streams directly to NTRIP.
                 if HAS_RTCM_DECODER and self.decoder:
                     try:
-                        if _base_config_expects_nmea_skyview():
-                            continue
-
-                        # If NMEA GSV already provides skyview data, skip RTCM
-                        # decoding. GGA/GSA-only streams still need RTCM decode
-                        # so the UI can render the skyview.
+                        # Always decode RTCM so rtcm_stats reflects the messages
+                        # currently emitted by the receiver. NMEA availability
+                        # only controls whether RTCM-derived skyview is published.
                         last_gsv_ts = globals().get('LAST_GSV_TS', 0)
-                        if time.time() - last_gsv_ts < 60:
-                            continue
+                        publish_rtcm_skyview = (
+                            not _base_config_expects_nmea_skyview()
+                            and time.time() - last_gsv_ts >= 60
+                        )
 
                         # Try to get base position from agent config or NMEA/UBX if not already received from RTCM 1005/1006
-                        if self.serial_number not in self.decoder._base_positions:
+                        if publish_rtcm_skyview and self.serial_number not in self.decoder._base_positions:
                             ag = globals().get('agent')
                             base_coords = None
                             if ag and hasattr(ag, 'get_base_config'):
@@ -2734,7 +2755,7 @@ class RTCMPublisherMQTT(threading.Thread):
                         
                         # Loop until the buffer is completely drained
                         while parsed is not None:
-                            if parsed.get("satellites"):
+                            if publish_rtcm_skyview and parsed.get("satellites"):
                                 nav_system = "GPS"
                                 for pkt in parsed.get("packets", []):
                                     if "navSystem" in pkt:
@@ -3371,9 +3392,14 @@ class GNSSReader(threading.Thread):
             
             # ==================== NMEA DETECTION (IMPROVED) ====================
             elif buffer[0] == ord('$'):
-                end_idx = buffer.find(b'\r\n')
+                line_end = buffer.find(b'\n')
+                if line_end >= 0:
+                    sentence_end = line_end + 1
+                else:
+                    line_end = buffer.find(b'\r')
+                    sentence_end = line_end + 1 if line_end >= 0 else -1
                 
-                if end_idx == -1:
+                if sentence_end == -1:
                     if len(buffer) >= 6:
                         try:
                             sentence_start = buffer[:6].decode('ascii', errors='ignore')
@@ -3406,7 +3432,7 @@ class GNSSReader(threading.Thread):
                         self.nmea_incomplete_waits += 1
                         break
                 
-                sentence = buffer[:end_idx + 2]
+                sentence = buffer[:sentence_end]
                 self.nmea_sentence_seen += 1
                 
                 try:
@@ -3425,7 +3451,7 @@ class GNSSReader(threading.Thread):
                             self.bytes_read += len(packet)
                             self.last_data_time = time.time()
                             
-                            buffer = buffer[end_idx + 2:]
+                            buffer = buffer[sentence_end:]
                             processed = True
                             continue
                         else:
@@ -3435,7 +3461,7 @@ class GNSSReader(threading.Thread):
                             continue
                     else:
                         self.nmea_unimportant_skipped += 1
-                        buffer = buffer[end_idx + 2:]
+                        buffer = buffer[sentence_end:]
                         processed = True
                         continue
                         

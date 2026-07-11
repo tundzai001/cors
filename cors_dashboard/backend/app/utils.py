@@ -44,28 +44,34 @@ class NMEAParser:
 
     def _parse_gga(self, parts: list) -> dict | None:
         """Parse GGA - Tọa độ và trạng thái fix"""
-        if len(parts) < 11 or not all(parts[i] for i in [2, 3, 4, 5, 6, 7, 9]):
+        # No-fix GGA sentences intentionally leave coordinates and altitude
+        # empty. Preserve the receiver status instead of dropping the sentence.
+        if len(parts) < 10:
             return None
         
         try:
-            fix_quality = int(parts[6])
+            fix_quality = int(parts[6]) if parts[6] else 0
             fix_map = {
                 0: "INVALID", 1: "GPS (SPS)", 2: "DGPS", 
                 3: "PPS", 4: "RTK_FIXED", 5: "RTK_FLOAT", 6: "ESTIMATED"
             }
             
+            altitude_msl = float(parts[9]) if parts[9] else None
+            geoid_separation = float(parts[11]) if len(parts) > 11 and parts[11] else None
+            altitude = altitude_msl + (geoid_separation or 0.0) if altitude_msl is not None else None
+
             self.last_gga = {
                 "type": "GGA",
                 "timestamp_utc": parts[1],
                 "latitude": self._dms_to_dd(parts[2], parts[3]),
                 "longitude": self._dms_to_dd(parts[4], parts[5]),
                 "fix_status": fix_map.get(fix_quality, f"UNKNOWN_{fix_quality}"),
-                "satellites": int(parts[7]),
+                "satellites": int(parts[7]) if parts[7] else 0,
                 "hdop": float(parts[8]) if parts[8] else 99.99,
                 # NMEA GGA: field 9 = MSL height H, field 11 = geoid separation N.
                 # Ellipsoidal height h = H + N.
-                "altitude": float(parts[9]) + (float(parts[11]) if len(parts) > 11 and parts[11] else 0.0),
-                "altitude_msl": float(parts[9]),
+                "altitude": altitude,
+                "altitude_msl": altitude_msl,
                 "altitude_ref": "ELLIPSOID"
             }
             return self.last_gga
