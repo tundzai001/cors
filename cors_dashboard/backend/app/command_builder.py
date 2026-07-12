@@ -382,7 +382,7 @@ def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: 
     """
     Hàm chuyên biệt dành riêng cho chip Unicorecomm LTE.
     Sử dụng mặc định cổng COM2 và chuỗi lệnh tối ưu theo yêu cầu người dùng.
-    Trình tự: FRESET -> unlogall -> mode base -> NMEA -> RTCM -> saveconfig
+    Trình tự: FRESET -> unlogall -> mode base -> RTCM-only -> saveconfig
     """
     commands = []
     port = "com2"
@@ -398,18 +398,14 @@ def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: 
         # Giữ nguyên độ chính xác của tọa độ
         commands.append(f'mode base {lat} {lon} {alt}\r\n'.encode('ascii'))
     
-    # 3. Bật các bản tin NMEA cần thiết trên COM2 (12 bản tin)
-    # Unicore LTE: chi bat GGA/GST. GSA/GSV lam stream MQTT/RTCM khong on dinh.
-    nmea_msgs = [
-        'gpgga',
-    ]
-    for msg in nmea_msgs:
-        commands.append(f'{msg} {port} 1\r\n'.encode('ascii'))
+    # 3. LTE bridge is RTCM-only. Do not enable NMEA on the chip output port.
         
     # 4. Bật các bản tin RTCM cần thiết trên COM2 (bật CẢ MSM4 và MSM7)
     rtcm_msgs = [
-        '1006', '1033', '1074', '1124', '1084', '1094', '1042', '1019', '1020', '1045',
-        '1077', '1127', '1087', '1097'
+        '1006', '1033',
+        '1074', '1124', '1084', '1094', '1114',
+        '1077', '1127', '1087', '1097', '1117',
+        '1042', '1019', '1020', '1045', '1044',
     ]
     for msg in rtcm_msgs:
         commands.append(f'rtcm{msg} {port} 1\r\n'.encode('ascii'))

@@ -592,7 +592,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 <i className="bi bi-reception-4 me-2"></i>
                                 <strong>Trạm LTE:</strong> mục NMEA + RTCM và bật/tắt hệ vệ tinh không được set từ UI.
                                 Bridge LTE luôn giữ profile ổn định: lấy dữ liệu từ MQTT, mở SOURCE command khi cần cấu hình,
-                                phát GGA + RTCM trên COM2. Các lựa chọn bên dưới chỉ để tham khảo và sẽ không được gửi xuống trạm LTE.
+                                chỉ phát RTCM (MSM4 + MSM7) trên COM2. Các lựa chọn bên dưới chỉ để tham khảo và sẽ không được gửi xuống trạm LTE.
                             </div>
                         )}
                         <div className="gnss-output-policy__grid">
@@ -1452,7 +1452,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                 <div className="alert alert-info small mb-3">
                                     <i className="bi bi-info-circle-fill me-2"></i>
                                     LTE không dùng mục này để set NMEA/GSV hoặc bật vệ tinh. Bridge tự giữ luồng MQTT -&gt; SOURCE,
-                                    còn cấu hình chip LTE dùng profile cố định GGA + RTCM trên COM2. Các trường RTCM Client bên dưới sẽ bị bỏ qua.
+                                    còn cấu hình chip LTE dùng profile RTCM-only cố định (MSM4 + MSM7) trên COM2. Các trường RTCM Client bên dưới sẽ bị bỏ qua.
                                 </div>
                             )}
                             <fieldset disabled={disabled || isLteStation}>

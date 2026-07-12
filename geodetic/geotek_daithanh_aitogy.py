@@ -22,6 +22,7 @@ import paho.mqtt.client as mqtt
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', force=True)
 
 ACTIVE_WORKERS = {}
+WORKER_MAP_LOCK = threading.RLock()
 
 if os.name == 'nt':
     try:
@@ -237,6 +238,24 @@ def get_license_fingerprint(serial=None):
         return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
     except Exception:
         return None
+
+
+def save_license(serial, token):
+    """Atomically replace one device token without terminating the relay."""
+    value = str(token or "").strip()
+    if not value:
+        raise ValueError("license token is empty")
+    path = get_license_path(serial)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(value)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_path, path)
+    return path
 
 
 MQTT_SOURCE_CONFIG_FIELDS = {
@@ -1477,8 +1496,6 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
     alt = _as_float(_first_value(coords.get("alt"), params.get("alt"), runtime_cfg.get("alt"), 0.0), 0.0)
 
     rtcm_port = str(_first_value(runtime_cfg.get("rtcm_port"), runtime_cfg.get("sensor_port"), "com2")).strip() or "com2"
-    gga_port = str(_first_value(runtime_cfg.get("nmea_gga_port"), runtime_cfg.get("nmea_port"), runtime_cfg.get("sensor_port"), rtcm_port)).strip() or rtcm_port
-
     commands = [
         b"FRESET\r\n",
         b"$DELAY_5000$",
@@ -1497,14 +1514,15 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
             b"$DELAY_2000$",
         ])
 
-    # Keep LTE stable: GGA is enough for position; satellite view is decoded from RTCM MSM.
-    commands.extend([
-        f"gpgga {gga_port} 1\r\n".encode("ascii"),
-        b"$DELAY_500$",
-    ])
-
-    # 1114 = QZSS MSM4, 1044 = QZSS Ephemeris
-    for msg_id in ("1006", "1033", "1074", "1124", "1084", "1094", "1114", "1042", "1019", "1020", "1045", "1044"):
+    # LTE bridge is RTCM-only. Keep this profile aligned with
+    # command_builder.build_geotek_lte_unicore_config().
+    # 1114/1117 = QZSS MSM4/MSM7; 1044 = QZSS ephemeris.
+    for msg_id in (
+        "1006", "1033",
+        "1074", "1124", "1084", "1094", "1114",
+        "1077", "1127", "1087", "1097", "1117",
+        "1042", "1019", "1020", "1045", "1044",
+    ):
         commands.append(f"rtcm{msg_id} {rtcm_port} 1\r\n".encode("ascii"))
         commands.append(b"$DELAY_200$")
 
@@ -1532,6 +1550,7 @@ class RelayWorker(threading.Thread):
         self.current_bps = 0
         self.current_source_bps = 0
         self._last_disconnect_reason = ""
+        self._source_failure_count = 0
         
         self.name = f"Relay-{self.cfg['target_mp']}"
         self.desired_active = bool(self.cfg.get("stream_active", True))
@@ -1774,7 +1793,9 @@ class RelayWorker(threading.Thread):
                 
                 self.log("SUCCESS", "✓ Source connected")
                 
-                self.is_connected = True
+                # A 200/ICY response only authenticates the source. Do not mark
+                # the relay output online or open TARGET until real RTCM arrives.
+                self.is_connected = False
                 self.publish_status()
                 
                 last_gga = time.time()
@@ -1782,6 +1803,7 @@ class RelayWorker(threading.Thread):
                 self.bytes_received = 0
                 self.last_stat_update = time.time()
                 rtcm_buffer = bytearray()
+                source_has_rtcm = False
                 if leftover:
                     rtcm_buffer.extend(leftover)
                     leftover = None
@@ -1790,7 +1812,7 @@ class RelayWorker(threading.Thread):
                 
                 while not self.stop_event.is_set():
                     # XÓA disconnect logic: luồng SOURCE không bị ngắt dù cho TARGET có bị chặn                    # 1. KẾT NỐI TARGET NẾU TRẠM BẬT (desired_active = True) MÀ CHƯA KẾT NỐI
-                    if target_sock is None and (self.desired_active or self._keep_target_connected()):
+                    if source_has_rtcm and target_sock is None and (self.desired_active or self._keep_target_connected()):
                         self.log("INFO", f"Connecting TARGET: {target_host}:{target_port}/{self.cfg['target_mp']} (v1.0)")
                         try:
                             target_sock = socket.create_connection((target_host, target_port), timeout=10)
@@ -1807,6 +1829,7 @@ class RelayWorker(threading.Thread):
                             if not (b"ICY 200" in response or b"200 OK" in response):
                                 raise Exception(f"Target rejected: {response.decode(errors='ignore')[:100]}")
                             target_sock.settimeout(None)
+                            self.is_connected = True
                             
                             target_mode = "ACTIVE" if self.desired_active else "SLEEP-STANDBY"
                             self.log("SUCCESS", f"RELAY {target_mode}: {self.cfg['source_mp']} -> {self.cfg['target_mp']}")
@@ -1818,6 +1841,7 @@ class RelayWorker(threading.Thread):
                                 target_sock = None
                                 with self.socket_lock:
                                     self._target_sock = None
+                            self.is_connected = False
                     
                     # 2. NGẮT TARGET NẾU TRẠM TẮT (desired_active = False)
                     if not self.desired_active and target_sock is not None and not self._keep_target_connected():
@@ -1829,6 +1853,7 @@ class RelayWorker(threading.Thread):
                         target_sock = None
                         with self.socket_lock:
                             self._target_sock = None
+                        self.is_connected = False
                         
                     if source_send_gga and time.time() - last_gga > 10:
                         try:
@@ -1876,6 +1901,9 @@ class RelayWorker(threading.Thread):
 
                     rtcm_buffer.extend(data)
                     frames = extract_rtcm3_frames(rtcm_buffer)
+                    if frames:
+                        source_has_rtcm = True
+                        self._source_failure_count = 0
                     for frame in frames:
                         decoded = rtcm_signal_decoder.decode_sync(self.serial, frame)
                         sats = decoded.get("satellites", []) if decoded else []
@@ -1899,6 +1927,7 @@ class RelayWorker(threading.Thread):
                                 target_sock = None
                                 with self.socket_lock:
                                     self._target_sock = None
+                                self.is_connected = False
                                 break
 
                     # Tính BPS thật sự
@@ -1911,7 +1940,14 @@ class RelayWorker(threading.Thread):
                         self.last_stat_update = now
                         self.publish_status()
                 
-                reconnect_wait = 1 if self._last_disconnect_reason.startswith("source_") else RECONNECT_INTERVAL
+                if self._last_disconnect_reason.startswith("source_"):
+                    self._source_failure_count += 1
+                    reconnect_wait = min(
+                        max(2, int(RECONNECT_INTERVAL)),
+                        2 ** min(self._source_failure_count, 6),
+                    )
+                else:
+                    reconnect_wait = RECONNECT_INTERVAL
                 self.log("INFO", f"Source loop ended, reconnecting in {reconnect_wait}s...")
                 self.wakeup_event.wait(reconnect_wait)
                 self.wakeup_event.clear()
@@ -2142,6 +2178,7 @@ class MqttSourceWorker(threading.Thread):
         self.bytes_sent_by_server = {"server1": 0, "server2": 0}
         self.current_bps_by_server = {"server1": 0, "server2": 0}
         self.mqtt_data_client = None
+        self.restart_connection_event = threading.Event()
         self.rtcm_buffer = bytearray()
         self.command_response_condition = threading.Condition()
         self.command_responses = []
@@ -2657,7 +2694,7 @@ class MqttSourceWorker(threading.Thread):
             self.log(
                 "INFO",
                 "Using local Geotek LTE command builder for JSON source "
-                f"(GGA/RTCM on {self.cfg.get('rtcm_port') or self.cfg.get('sensor_port') or 'com2'}; no GSV spam)"
+                f"(RTCM-only on {self.cfg.get('rtcm_port') or self.cfg.get('sensor_port') or 'com2'}; MSM4+MSM7)"
             )
 
             if not decoded_commands:
@@ -2753,6 +2790,7 @@ class MqttSourceWorker(threading.Thread):
         self.log_offline_event(f"Monitoring started for {self.name} ({self.serial})")
         while not self.stop_event.is_set():
             try:
+                self.restart_connection_event.clear()
                 try:
                     self.mqtt_data_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
                 except:
@@ -2855,6 +2893,9 @@ class MqttSourceWorker(threading.Thread):
                 self.mqtt_data_client.loop_start()
 
                 while not self.stop_event.is_set():
+                    if self.restart_connection_event.is_set():
+                        self.log("WARNING", "Connection restart requested; rebuilding MQTT subscription and NTRIP targets")
+                        break
                     now = time.time()
                     
                     # Check offline status
@@ -2959,6 +3000,142 @@ def _worker_mountpoint(worker):
         return str(worker.cfg.get("target_mp", "")).strip()
     return str(worker.cfg.get("target_mp") or worker.cfg.get("mountpoint", "")).strip()
 
+
+def _close_worker_connections(worker, stop_worker=False):
+    """Close transports without discarding the worker's runtime state."""
+    if stop_worker:
+        worker.stop_event.set()
+    wakeup = getattr(worker, "wakeup_event", None)
+    if wakeup:
+        wakeup.set()
+
+    mqtt_data_client = getattr(worker, "mqtt_data_client", None)
+    if mqtt_data_client:
+        try:
+            mqtt_data_client.loop_stop()
+        except Exception:
+            pass
+        try:
+            mqtt_data_client.disconnect()
+        except Exception:
+            pass
+
+    socket_lock = getattr(worker, "socket_lock", None)
+    acquired = socket_lock.acquire(timeout=2) if socket_lock is not None else False
+    try:
+        sockets = []
+        for attr in ("_sock", "_source_sock", "_target_sock"):
+            sock = getattr(worker, attr, None)
+            if sock:
+                sockets.append(sock)
+                setattr(worker, attr, None)
+        target_socks = getattr(worker, "_target_socks", None)
+        if isinstance(target_socks, dict):
+            sockets.extend(target_socks.values())
+            target_socks.clear()
+        for sock in sockets:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                sock.close()
+            except Exception:
+                pass
+    finally:
+        if acquired:
+            socket_lock.release()
+
+
+def _stop_worker_connections(worker):
+    """Stop one worker and actively unblock its network loops."""
+    _close_worker_connections(worker, stop_worker=True)
+
+
+def restart_worker_connections(worker, reason="remote_restart"):
+    """Reconnect transports in-place, preserving device/runtime data."""
+    restart_event = getattr(worker, "restart_connection_event", None)
+    if restart_event is not None:
+        restart_event.set()
+    _close_worker_connections(worker, stop_worker=False)
+    logging.warning(
+        f"[{getattr(worker, 'serial', '?')}] Restarting connections in-place reason={reason}; "
+        "config, token, runtime cache and device data are preserved"
+    )
+    return worker
+
+
+def restart_worker(worker_map, serial, mqtt_status_client, reason="remote_restart"):
+    """Replace a Thread object; Python threads themselves cannot be restarted."""
+    serial = str(serial or "").strip()
+    with WORKER_MAP_LOCK:
+        old_worker = worker_map.get(serial)
+        if old_worker is None:
+            return None
+        cfg = dict(old_worker.cfg)
+        worker_type = type(old_worker)
+        _stop_worker_connections(old_worker)
+        if old_worker is not threading.current_thread():
+            old_worker.join(timeout=5)
+
+        new_worker = worker_type(cfg, mqtt_status_client)
+        worker_map[serial] = new_worker
+        new_worker.start()
+        logging.warning(
+            f"[{serial}] Restarted {worker_type.__name__} reason={reason}; "
+            "MQTT/source/target connections will be recreated"
+        )
+        try:
+            new_worker.publish_status()
+        except Exception:
+            pass
+        return new_worker
+
+
+def replace_worker_serial(worker_map, old_serial, new_serial, mqtt_status_client):
+    old_serial = str(old_serial or "").strip()
+    new_serial = str(new_serial or "").strip()
+    if not old_serial or not new_serial:
+        return None
+    with WORKER_MAP_LOCK:
+        old_worker = worker_map.pop(old_serial, None)
+        if old_worker is None:
+            return None
+        cfg = dict(old_worker.cfg)
+        cfg["serial"] = new_serial
+        cfg.pop("device_serial", None)
+        runtime = status_mgr.get_runtime_config(old_serial)
+        if runtime:
+            status_mgr.update_runtime_config(new_serial, runtime)
+        _stop_worker_connections(old_worker)
+        old_worker.join(timeout=5)
+        new_worker = type(old_worker)(cfg, mqtt_status_client)
+        worker_map[new_serial] = new_worker
+        new_worker.start()
+        logging.warning(f"[{old_serial}] Worker serial changed to {new_serial} without stopping relay process")
+        try:
+            new_worker.publish_status()
+        except Exception:
+            pass
+        return new_worker
+
+
+def publish_unconfigured_device_status(client, serial, detail=""):
+    """A token may arrive before its source exists in geotek_config.json."""
+    status = {
+        "serial": serial,
+        "name": serial,
+        "status": "awaiting_config",
+        "version": RELAY_VERSION,
+        "is_provisioned": has_license(serial),
+        "agent_token_fingerprint": get_license_fingerprint(serial),
+        "detail": str(detail or "")[:300],
+        "timestamp": time.time(),
+    }
+    if client and client.is_connected():
+        client.publish(f"pi/devices/{serial}/status", json.dumps(status), qos=0, retain=True)
+
+
 def setup_mqtt(worker_map):
     try:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"relay-{int(time.time())}")
@@ -3032,7 +3209,12 @@ def setup_mqtt(worker_map):
 
             worker = worker_map.get(serial)
             if not worker or not hasattr(worker, "_persist_remote_config"):
-                logging.warning(f"[{serial}] Service config received but no active MQTT worker. Known serials: {list(worker_map.keys())}")
+                cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+                runtime = status_mgr.get_runtime_config(serial)
+                runtime.update(_mqtt_source_persistable_config(cmd_payload))
+                status_mgr.update_runtime_config(serial, runtime)
+                publish_unconfigured_device_status(c, serial, "Service config saved; waiting for geotek source config")
+                logging.warning(f"[{serial}] Service config saved without active worker. Known serials: {list(worker_map.keys())}")
                 return
 
             cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
@@ -3047,7 +3229,14 @@ def setup_mqtt(worker_map):
 
             worker = worker_map.get(serial)
             if not worker or not hasattr(worker, "apply_provision_payload"):
-                logging.warning(f"[{serial}] Provision command received but no active MQTT worker. Known serials: {list(worker_map.keys())}")
+                cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+                runtime = status_mgr.get_runtime_config(serial)
+                name = str(cmd_payload.get("name") or cmd_payload.get("display_name") or "").strip()
+                if name:
+                    runtime.update({"name": name, "display_name": name})
+                    status_mgr.update_runtime_config(serial, runtime)
+                publish_unconfigured_device_status(c, serial, "Provision saved; waiting for geotek source config")
+                logging.warning(f"[{serial}] Provision saved without active worker. Known serials: {list(worker_map.keys())}")
                 return
 
             cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
@@ -3062,14 +3251,26 @@ def setup_mqtt(worker_map):
             license_key = cmd_payload.get("license_key")
             if license_key:
                 try:
-                    license_path = get_license_path(serial)
-                    with open(license_path, "w") as f:
-                        f.write(license_key)
-                    logging.info(f"[{serial}] Received and saved new license key to {license_path}. Restarting to apply...")
-                    time.sleep(1)
-                    os._exit(0)
+                    license_path = save_license(serial, license_key)
+                    worker = worker_map.get(serial)
+                    if worker and hasattr(worker, "publish_status"):
+                        worker.publish_status()
+                    else:
+                        publish_unconfigured_device_status(c, serial, "License saved; waiting for geotek source config")
+                    logging.info(f"[{serial}] Received and applied new license key at {license_path}; relay remains running")
                 except Exception as e:
                     logging.error(f"[{serial}] Failed to save license key: {e}")
+            return
+
+        if command in {"REBOOT_DEVICE", "RESTART_DEVICE", "RESTART_MQTT"}:
+            worker = worker_map.get(serial)
+            if worker is None:
+                publish_unconfigured_device_status(c, serial, f"{command} ignored: no configured worker")
+                logging.warning(f"[{serial}] {command} received but no configured worker exists")
+            elif worker.is_alive():
+                restart_worker_connections(worker, reason=command.lower())
+            else:
+                restart_worker(worker_map, serial, c, reason=f"{command.lower()}_dead_worker")
             return
 
         if command == "CHANGE_SERIAL":
@@ -3081,9 +3282,10 @@ def setup_mqtt(worker_map):
                 try:
                     updated = config_mgr.update_mqtt_source_config(serial, {"serial": new_serial})
                     if updated:
-                        logging.info(f"[{serial}] Received CHANGE_SERIAL command. Updated config to new serial '{new_serial}'. Restarting to apply...")
-                        time.sleep(1)
-                        os._exit(0)
+                        worker = replace_worker_serial(worker_map, serial, new_serial, c)
+                        if worker is None:
+                            publish_unconfigured_device_status(c, new_serial, "Serial saved; waiting for geotek source config")
+                        logging.info(f"[{serial}] Received CHANGE_SERIAL command. Applied new serial '{new_serial}' without exiting")
                 except Exception as e:
                     logging.error(f"[{serial}] Failed to update serial: {e}")
             return
@@ -3178,6 +3380,7 @@ if __name__ == "__main__":
         
         last_gc = time.time()
         last_sys_stat = 0
+        last_worker_health = 0
         while True:
             time.sleep(1)
             
@@ -3185,6 +3388,18 @@ if __name__ == "__main__":
             if time.time() - last_sys_stat > 5:
                 status_mgr.update_system_status()
                 last_sys_stat = time.time()
+
+            # A worker exception must not require a human to rerun this file.
+            # Recreate the worker object so MQTT subscriptions and sockets are
+            # rebuilt from scratch.
+            if time.time() - last_worker_health > 5:
+                with WORKER_MAP_LOCK:
+                    worker_snapshot = list(ACTIVE_WORKERS.items())
+                for serial, worker in worker_snapshot:
+                    if not worker.is_alive():
+                        logging.error(f"[{serial}] Worker thread stopped unexpectedly; auto-restarting")
+                        restart_worker(ACTIVE_WORKERS, serial, mqtt_client, reason="supervisor_dead_thread")
+                last_worker_health = time.time()
 
             # Tối ưu dọn rác bộ nhớ (Garbage Collector) mỗi 60s
             if time.time() - last_gc > 60:
@@ -3194,10 +3409,11 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nðŸ›‘ Stopping...")
         
-        for w in workers:
-            w.stop_event.set()
-        
-        for w in workers:
+        with WORKER_MAP_LOCK:
+            active_snapshot = list(ACTIVE_WORKERS.values())
+        for w in active_snapshot:
+            _stop_worker_connections(w)
+        for w in active_snapshot:
             w.join(timeout=3)
         
         if mqtt_client:
