@@ -1312,6 +1312,10 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                     remaining = remain_rs.scalar() or 0
 
                     if remaining == 0:
+                        device = await crud.get_device_by_serial(db, serial)
+                        cfg = device.service_config or {} if device else {}
+                        if not cfg.get("stream_on_demand", True):
+                            continue
                         await _set_station_stream(serial, active=False)
                         logger.info(f"[RTCM] Deactivated station {serial} (mp={mp_norm}, no remaining sessions)")
 

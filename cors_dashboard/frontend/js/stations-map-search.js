@@ -2,6 +2,10 @@
 (() => {
     const VIETNAM_VIEWBOX = '102,24,110,8';
     const AVAILABLE_STATUSES = new Set(['online', 'streaming', 'sleep']);
+    const SEARCH_STOP_WORDS = new Set([
+        'viet', 'nam', 'vietnam', 'vn', 'dia', 'diem', 'tim', 'kiem',
+        'o', 'tai', 'gan', 'khu', 'vuc', 'gi', 'day', 'nay', 'kia', 'cho'
+    ]);
     const LOCAL_FALLBACKS = [
         {
             match: ['sin quyen', 'sinquyen'],
@@ -21,8 +25,8 @@
         return String(value || '')
             .normalize('NFD')
             .replace(/[\u0300-\u036f]/g, '')
-            .replace(/đ/g, 'd')
-            .replace(/Đ/g, 'D')
+            .replace(/\u0111/g, 'd')
+            .replace(/\u0110/g, 'D')
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, ' ')
             .trim();
@@ -75,11 +79,6 @@
                 'Sin Quyen, Ban Vuoc, Bat Xat, Lao Cai, Viet Nam'
             );
         }
-        variants.push(
-            q.replace(/\bmo\s*dong\b/i, '').trim(),
-            `${q}, Lao Cai, Viet Nam`,
-            `${q}, Viet Nam`
-        );
         return [...new Set(variants.filter(Boolean))];
     }
 
@@ -91,71 +90,48 @@
         return item ? buildResult(item.lat, item.lon, item.label, 'local') : null;
     }
 
+    function meaningfulTokens(value) {
+        return normalizeSearchText(value)
+            .split(' ')
+            .filter(token => token.length >= 2 && !SEARCH_STOP_WORDS.has(token));
+    }
+
+    function isRelevantNominatimResult(query, item) {
+        const countryCode = String(item?.address?.country_code || '').toLowerCase();
+        if (countryCode && countryCode !== 'vn') return false;
+
+        const queryTokens = [...new Set(meaningfulTokens(query))];
+        if (!queryTokens.length) return false;
+
+        const names = Object.values(item?.namedetails || {}).join(' ');
+        const resultTokens = new Set(meaningfulTokens(`${item?.display_name || ''} ${names}`));
+        const matches = queryTokens.filter(token => resultTokens.has(token)).length;
+        const minimumMatches = queryTokens.length === 1
+            ? 1
+            : Math.min(2, Math.ceil(queryTokens.length / 2));
+        return matches >= minimumMatches;
+    }
+
     async function queryNominatim(query) {
         const params = new URLSearchParams({
-            format: 'json',
-            limit: '3',
+            format: 'jsonv2',
+            limit: '5',
             countrycodes: 'vn',
             viewbox: VIETNAM_VIEWBOX,
+            bounded: '1',
+            addressdetails: '1',
+            namedetails: '1',
+            dedupe: '1',
+            'accept-language': 'vi,en',
             q: appendVietnam(query)
         });
         const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`);
+        if (!response.ok) throw new Error(`Geocoding service error (${response.status})`);
         const data = await response.json();
         if (!Array.isArray(data)) return null;
         for (const item of data) {
+            if (!isRelevantNominatimResult(query, item)) continue;
             const result = buildResult(Number(item.lat), Number(item.lon), item.display_name || query, 'osm');
-            if (result) return result;
-        }
-        return null;
-    }
-
-    async function queryWikipedia(query, lang = 'vi') {
-        const params = new URLSearchParams({
-            action: 'query',
-            format: 'json',
-            origin: '*',
-            generator: 'search',
-            gsrsearch: appendVietnam(query),
-            gsrlimit: '5',
-            prop: 'coordinates',
-            colimit: '5'
-        });
-        const response = await fetch(`https://${lang}.wikipedia.org/w/api.php?${params.toString()}`);
-        const data = await response.json();
-        const pages = Object.values(data?.query?.pages || {});
-        for (const page of pages) {
-            const coord = page.coordinates?.[0];
-            if (!coord) continue;
-            const result = buildResult(Number(coord.lat), Number(coord.lon), page.title || query, `wikipedia-${lang}`);
-            if (result) return result;
-        }
-        return null;
-    }
-
-    async function queryWikidata(query) {
-        const sparql = `
-SELECT ?item ?itemLabel ?coord WHERE {
-  SERVICE wikibase:mwapi {
-    bd:serviceParam wikibase:endpoint "www.wikidata.org";
-                    wikibase:api "EntitySearch";
-                    mwapi:search "${String(query).replace(/"/g, '\\"')}";
-                    mwapi:language "vi".
-    ?item wikibase:apiOutputItem mwapi:item.
-  }
-  ?item wdt:P625 ?coord.
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "vi,en". }
-}
-LIMIT 5`;
-        const params = new URLSearchParams({ query: sparql, format: 'json' });
-        const response = await fetch(`https://query.wikidata.org/sparql?${params.toString()}`);
-        const data = await response.json();
-        const rows = data?.results?.bindings || [];
-        for (const row of rows) {
-            const match = String(row.coord?.value || '').match(/Point\(([-\d.]+) ([-\d.]+)\)/);
-            if (!match) continue;
-            const lon = Number(match[1]);
-            const lat = Number(match[2]);
-            const result = buildResult(lat, lon, row.itemLabel?.value || query, 'wikidata');
             if (result) return result;
         }
         return null;
@@ -169,16 +145,9 @@ LIMIT 5`;
         if (coord) return coord;
 
         for (const variant of buildQueryVariants(q)) {
-            const wiki = await queryWikipedia(variant, 'vi');
-            if (wiki) return wiki;
-            const wikiEn = await queryWikipedia(variant, 'en');
-            if (wikiEn) return wikiEn;
             const osm = await queryNominatim(variant);
             if (osm) return osm;
         }
-
-        const wikidata = await queryWikidata(q);
-        if (wikidata) return wikidata;
 
         const fallback = getLocalFallback(q);
         if (fallback) return fallback;

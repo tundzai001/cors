@@ -359,7 +359,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                             "serial": serial,
                             "data": decoded_rtcm
                         })
-                return
+            return
 
         # ==================== 2. XỬ LÝ STATUS UPDATE ====================
         try:
@@ -379,6 +379,9 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     data['base_mode_active'] = False
         except json.JSONDecodeError as e:
             logging.error(f"❌ JSON decode error on topic {topic}: {e}")
+            return
+        except UnicodeDecodeError as e:
+            logging.error(f"❌ Unicode decode error on topic {topic}: {e}")
             return
 
         if message_type in ["status", "status_update"]:
