@@ -698,10 +698,7 @@ const DetailsPanel = memo(function DetailsPanel({
         ? 'awaiting_license'
         : rawStatusKey;
     const shouldShowLicenseTab =
-        !licenseBypass && (
-            device?.status === 'awaiting_license' ||
-            hasAccessTokenGap
-        );
+        !licenseBypass && hasAccessTokenGap;
     const showLicenseTab = shouldShowLicenseTab || (licenseBypass && hasAuthTokenState && hasAccessTokenGap);
 
     useEffect(() => {
@@ -721,21 +718,7 @@ const DetailsPanel = memo(function DetailsPanel({
                 return;
             }
             newActiveTab = 'license';
-        } else if (device.status === 'awaiting_license' && licenseBypass) {
-            if (!isDeviceSwitched && userSelectedTab && activeTab) {
-                return;
-            }
-            if (!isGnssConfigured) {
-                newActiveTab = 'chip';
-            } else if (!isServiceConfigured) {
-                newActiveTab = 'service';
-            } else {
-                newActiveTab = 'dashboard';
-            }
         } else switch (device.status) {
-            case 'awaiting_license':
-                newActiveTab = 'license';
-                break;
             case 'unprovisioned':
                 newActiveTab = 'chip';
                 break;

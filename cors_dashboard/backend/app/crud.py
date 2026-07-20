@@ -210,8 +210,6 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                         else_=models.Device.system_info
                     ),
                     
-                    # Chỉ update name nếu có dữ liệu
-                    'name': func.coalesce(func.nullif(func.btrim(stmt.excluded.name), ''), models.Device.name),
                     'is_provisioned': func.coalesce(stmt.excluded.is_provisioned, models.Device.is_provisioned),
                     'version': func.coalesce(stmt.excluded.version, models.Device.version),
                 }
@@ -449,11 +447,9 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     # Xử lý is_provisioned
     if existing_device.is_provisioned and raw_is_provisioned is False:
         update_values["is_provisioned"] = False
-        update_values["name"] = new_name
         should_update = True
     elif not existing_device.is_provisioned and raw_is_provisioned is True:
         update_values["is_provisioned"] = True
-        update_values["name"] = new_name
         should_update = True
 
     # Chip type

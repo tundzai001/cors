@@ -483,7 +483,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     "token_check_available": token_check_available,
                 }
                 data["system_info"] = system_info
-                if not data.get("name") and db_device.name:
+                if db_device.name:
                     data["name"] = db_device.name
 
             # Ensure savings_stats and antenna_status are persisted in system_info JSONB
@@ -511,7 +511,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     async with device_session_scope() as _db:
                         _dev = await crud.get_device_by_serial(_db, serial)
                         if _dev:
-                            if not data.get('name') and _dev.name:
+                            if _dev.name:
                                 data['name'] = _dev.name
                             # FIX: Khi offline, ghép config từ DB vào broadcast
                             # để UI/map không mất vị trí trạm
