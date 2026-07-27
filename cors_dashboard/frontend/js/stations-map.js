@@ -155,6 +155,7 @@
             let isMounted = true;
 
             const fetchRoverClients = async () => {
+                if (document.visibilityState === 'hidden' || window.globalState?.currentView !== 'map') return;
                 if (!canViewRovers) {
                     roverHashRef.current = '';
                     if (isMounted) setRoverClients([]);
@@ -548,7 +549,7 @@
         );
     }
 
-    window.AllStationsMap = AllStationsMap;
+window.AllStationsMap = React.memo(AllStationsMap);
 })();
 
 

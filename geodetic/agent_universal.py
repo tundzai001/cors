@@ -111,6 +111,8 @@ PARSER_DEBUG_INTERVAL_SECONDS = 2.0
 
 # --- GLOBAL VARIABLES ---
 AGENT_START_TS = time.time()
+STATUS_BOOT_ID = uuid.uuid4().hex
+STATUS_SEQUENCE = 0
 MACHINE_SERIAL = ""
 rtcm_subscribers = []
 nmea_subscribers = []
@@ -4339,9 +4341,14 @@ class AgentManager:
 # === ASYNC FUNCTIONS                                                       ===
 # ==============================================================================
 async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
+    global STATUS_SEQUENCE
     await initialization_complete.wait()
     
     status_payload = agent.get_full_status()
+    STATUS_SEQUENCE += 1
+    status_payload["status_boot_id"] = STATUS_BOOT_ID
+    status_payload["status_sequence"] = STATUS_SEQUENCE
+    status_payload["agent_timestamp"] = status_payload.get("timestamp", time.time())
     
     try:
         system_info = get_cached_system_info()
@@ -4901,7 +4908,10 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
     last_will = json.dumps({
         "serial": MACHINE_SERIAL,
         "status": "offline",
-        "timestamp": int(time.time())
+        "timestamp": int(time.time()),
+        "agent_timestamp": int(time.time()),
+        "status_boot_id": STATUS_BOOT_ID,
+        "status_event": "lwt"
     })
     client.will_set(f"pi/devices/{MACHINE_SERIAL}/status", payload=last_will, qos=1, retain=True)
     
@@ -5671,6 +5681,10 @@ async def main():
                     "serial": MACHINE_SERIAL,
                     "status": "offline",
                     "timestamp": int(time.time()),
+                    "agent_timestamp": int(time.time()),
+                    "status_boot_id": STATUS_BOOT_ID,
+                    "status_sequence": STATUS_SEQUENCE,
+                    "status_event": "cleanup",
                     "cleanup": True
                 })
                 mqtt_client.publish(f"pi/devices/{MACHINE_SERIAL}/status", offline_msg, qos=1, retain=True)

@@ -6,6 +6,54 @@
 .vietnam-map-inline {
     width: 100%; height: auto;
 }
+
+/* Runtime quality tiers: retain the premium composition while reducing paint and
+   compositor pressure on mobile/low-power devices. */
+.landing-page section:not(.hero-section),
+#view-homepage section:not(.hero-section) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 760px;
+}
+
+html[data-quality="balanced"] .landing-orb,
+html[data-quality="balanced"] .glass-card,
+html[data-quality="balanced"] .landing-stat-card {
+    box-shadow: none !important;
+    backdrop-filter: blur(8px) !important;
+}
+
+html[data-quality="balanced"] .flying-satellite:nth-of-type(n + 5),
+html[data-quality="balanced"] .data-pulse-ring:nth-of-type(n + 3) {
+    display: none !important;
+}
+
+html[data-quality="lite"] .hero-three-scene,
+html[data-quality="lite"] .landing-particles,
+html[data-quality="lite"] .flying-satellite,
+html[data-quality="lite"] .map-radar-sweep,
+html[data-quality="lite"] .landing-orb,
+html[data-quality="lite"] .feature-card-scan {
+    display: none !important;
+}
+
+html[data-quality="lite"] .hero-section {
+    background:
+        radial-gradient(circle at 78% 24%, rgba(0, 191, 255, 0.12), transparent 34rem),
+        linear-gradient(145deg, #050913, #07111d 56%, #02060b) !important;
+}
+
+html[data-quality="lite"] *,
+html.reduced-motion * {
+    scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+}
 .vietnam-map-inline svg {
     display: block;
     width: 100%; height: auto;

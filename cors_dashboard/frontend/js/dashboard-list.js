@@ -511,7 +511,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
         </div>
     );
 });
-window.DeviceList = DeviceList;
+window.DeviceList = React.memo(DeviceList);
 
 
 })();

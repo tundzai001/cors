@@ -37,6 +37,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse, FileResponse, StreamingResponse, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.exception_handlers import http_exception_handler
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -65,6 +66,7 @@ from .security import rate_limiter
 from .monitoring import health_monitor
 from .caster_client import CasterClient
 from .schema_compat import ensure_auth_zalo_runtime_columns, ensure_device_runtime_columns
+from .status_reconciler import status_reconciler
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -271,6 +273,9 @@ buffer_metrics = {
 }
 ui_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=UI_BROADCAST_QUEUE_MAXSIZE)
 pi_status_ingest_queue: asyncio.Queue = asyncio.Queue(maxsize=PI_STATUS_INGEST_QUEUE_MAXSIZE)
+pending_ui_status_updates: Dict[str, dict] = {}
+pending_ui_status_lock = asyncio.Lock()
+pending_ui_status_event = asyncio.Event()
 
 # TỐI ƯU CỰC ĐỘ: Cache mapping Mountpoint -> Serial để tránh quét DB liên tục
 # Giúp xử lý hàng nghìn yêu cầu wake-station mỗi giây mà không làm treo Backend.
@@ -324,6 +329,10 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "name",
         "status",
         "timestamp",
+        "agent_timestamp",
+        "status_boot_id",
+        "status_sequence",
+        "status_event",
         "bps",
         "ntrip_status",
         "ntrip_connected",
@@ -335,6 +344,7 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "system_info",
         "is_provisioned",
         "is_synced",
+        "sync_errors",
         "ntrip_stats",
         "nmea_data",
         "nmea_health",
@@ -367,6 +377,27 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
 
 
 async def enqueue_ui_broadcast(message: dict) -> None:
+    if isinstance(message, dict) and message.get("type") == "status_update":
+        data = message.get("data") or {}
+        serial = str(message.get("serial") or data.get("serial") or "").strip()
+        if serial:
+            async with pending_ui_status_lock:
+                previous_message = pending_ui_status_updates.get(serial) or {}
+                previous_data = previous_message.get("data") or {}
+                revision = int(data.get("status_revision") or 0)
+                previous_revision = int(previous_data.get("status_revision") or 0)
+                received_at = float(data.get("server_received_at") or data.get("timestamp") or 0)
+                previous_received_at = float(
+                    previous_data.get("server_received_at") or previous_data.get("timestamp") or 0
+                )
+                if previous_message and revision and previous_revision:
+                    if revision < previous_revision:
+                        return
+                    if revision == previous_revision and received_at <= previous_received_at:
+                        return
+                pending_ui_status_updates[serial] = message
+                pending_ui_status_event.set()
+            return
     try:
         ui_broadcast_queue.put_nowait(message)
     except asyncio.QueueFull:
@@ -394,10 +425,30 @@ async def ui_broadcast_worker_task():
             ui_broadcast_queue.task_done()
 
 
+async def ui_status_broadcast_worker_task():
+    """Coalesce bursts per station without dropping another station's update."""
+    while True:
+        await pending_ui_status_event.wait()
+        await asyncio.sleep(0.05)
+        async with pending_ui_status_lock:
+            batch = list(pending_ui_status_updates.values())
+            pending_ui_status_updates.clear()
+            pending_ui_status_event.clear()
+        for message in batch:
+            try:
+                await ui_manager.broadcast(message)
+            except Exception as exc:
+                logger.warning("UI status broadcast worker error: %s", exc)
+
+
 async def pi_status_ingest_worker_task():
     while True:
         payload = await pi_status_ingest_queue.get()
         try:
+            # Preserve reconciler order before any slower broadcast/DB lookup can
+            # let another worker overtake this station update.
+            async with device_update_buffer_lock:
+                device_update_buffer.append(payload)
             await enqueue_ui_broadcast({"type": "status_update", "data": payload})
             
             # === CASTER STATUS SYNC: Detect per-server status changes ===
@@ -415,8 +466,6 @@ async def pi_status_ingest_worker_task():
                 except Exception as e:
                     logger.warning(f"[CASTER SYNC] Error detecting status change for '{serial}': {e}")
             
-            async with device_update_buffer_lock:
-                device_update_buffer.append(payload)
         except Exception as e:
             logger.warning(f"PI status ingest worker error: {e}")
         finally:
@@ -1543,6 +1592,19 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         
         return response
 
+class FrontendCacheMiddleware(BaseHTTPMiddleware):
+    """Keep HTML fresh while caching versioned source assets for a short period."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        content_type = response.headers.get("content-type", "").lower()
+
+        if "text/html" in content_type:
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        elif path.startswith(("/css/", "/js/", "/img/")):
+            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+        return response
+
 # === HEARTBEAT CHECKER (FIXED) ===
 async def check_device_heartbeats_with_retry():
     """Heartbeat check với retry vÃ  backoff"""
@@ -1769,6 +1831,7 @@ async def lifespan(app: FastAPI):
         # BƯỚC 3: START MQTT
         # ===================================================================
         mqtt_handler.set_external_command_handler(handle_ntrip_mqtt_command)
+        mqtt_handler.set_status_broadcast_handler(enqueue_ui_broadcast)
         mqtt_handler.start_mqtt_loop()
         
         # ===================================================================
@@ -1796,27 +1859,47 @@ async def lifespan(app: FastAPI):
                             
                             result = await db.execute(
                                 select(models.Device).filter(
-                                    models.Device.status.in_(['online', 'sleep']),
+                                    models.Device.status.in_([
+                                        'online', 'sleep', 'streaming', 'starting',
+                                        'initializing', 'configuring', 'rebooting',
+                                        'rebooting_for_reset'
+                                    ]),
                                     models.Device.timestamp < timeout_threshold
                                 )
                             )
                             timed_out_devices = result.scalars().all()
                             
                             if timed_out_devices:
+                                accepted_timeouts = []
+                                timeout_payloads = {}
                                 for device in timed_out_devices:
+                                    if await status_reconciler.is_fresh(device.serial, HEARTBEAT_TIMEOUT, now=now):
+                                        continue
+                                    decision = await status_reconciler.accept_offline(
+                                        device.serial,
+                                        source="heartbeat",
+                                        received_at=now,
+                                    )
+                                    if not decision.accepted:
+                                        continue
                                     device.status = 'offline'
                                     device.timestamp = now
                                     device.bps = 0
                                     device.ntrip_connected = False
+                                    accepted_timeouts.append(device)
+                                    timeout_payloads[device.serial] = decision.payload
                                 
-                                await db.commit()
-                                logger.info(f"Set {len(timed_out_devices)} devices to offline")
+                                if accepted_timeouts:
+                                    await db.commit()
+                                    logger.info(f"Set {len(accepted_timeouts)} devices to offline")
                                 
                                 # Broadcast updates
-                                for device in timed_out_devices:
-                                    await ui_manager.broadcast({
+                                for device in accepted_timeouts:
+                                    broadcast_data = schemas.Device.from_orm(device).model_dump()
+                                    broadcast_data.update(timeout_payloads.get(device.serial) or {})
+                                    await enqueue_ui_broadcast({
                                         "type": "status_update",
-                                        "data": schemas.Device.from_orm(device).model_dump()
+                                        "data": broadcast_data
                                     })
                         
                         break  # Success, thoát retry loop
@@ -1858,6 +1941,7 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(rtcm_session_reaper_task()))
         tasks.append(asyncio.create_task(rtcm_ntrip_clienttable_keepalive_task()))
         tasks.append(asyncio.create_task(ui_broadcast_worker_task()))
+        tasks.append(asyncio.create_task(ui_status_broadcast_worker_task()))
         tasks.append(asyncio.create_task(memory_guard_task()))
         for _ in range(max(1, PI_INGEST_WORKER_COUNT)):
             tasks.append(asyncio.create_task(pi_status_ingest_worker_task()))
@@ -3293,7 +3377,9 @@ async def _legacy_global_exception_handler_removed(request: Request, exc: Except
     )
 
 app.add_middleware(SecurityGateMiddleware) # SECURITY FIRST
-app.add_middleware(RequestIDMiddleware) 
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(FrontendCacheMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=800, compresslevel=5)
 
 # === NTRIP WAKE STATION HTTP ENDPOINT ===
 @app.get("/api/ntrip/wake-listen", response_class=PlainTextResponse)
@@ -7517,7 +7603,17 @@ async def flush_device_buffer(db: AsyncSession):
             item = device_update_buffer.popleft()
             serial = item.get("serial") if isinstance(item, dict) else None
             if serial:
-                unique_updates[serial] = item
+                previous = unique_updates.get(serial)
+                item_order = (
+                    int(item.get("status_revision") or 0),
+                    float(item.get("server_received_at") or item.get("timestamp") or 0),
+                )
+                previous_order = (
+                    int(previous.get("status_revision") or 0),
+                    float(previous.get("server_received_at") or previous.get("timestamp") or 0),
+                ) if previous else (-1, -1.0)
+                if item_order >= previous_order:
+                    unique_updates[serial] = item
 
     final_batch = list(unique_updates.values())
     duplicates_count = snapshot_size - len(final_batch)
@@ -7552,6 +7648,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
         device = await crud.get_device_by_serial(db, serial)
         expected_token = str(getattr(device, "device_token", "") or "").strip() if device else ""
         device_system_info = getattr(device, "system_info", None) if device else None
+        db_sync_state = bool(getattr(device, "is_synced", False)) if device else False
         license_bypass = bool(isinstance(device_system_info, dict) and device_system_info.get("auth_license_bypass"))
         provided_token = str(token or "").strip()
         
@@ -7575,9 +7672,44 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
             payload = data.get("payload")
 
             if message_type == "status_update" and payload:
+                payload = dict(payload)
+                payload["serial"] = serial
+                sync_errors = list(mqtt_handler.device_sync_cache.get(f"{serial}_errors", []) or [])
+                cached_sync = mqtt_handler.device_sync_cache.get(serial, db_sync_state)
+                payload["is_synced"] = bool(cached_sync)
+                if not cached_sync and not sync_errors:
+                    sync_errors.append("Pending server configuration sync")
+                agent_version = str(payload.get("version") or "").strip().upper()
+                server_version = str(settings.APP_VERSION or "").strip().upper()
+                if agent_version and server_version and agent_version != server_version:
+                    payload["is_synced"] = False
+                    version_error = f"Agent version {agent_version} != server {server_version}"
+                    if version_error not in sync_errors:
+                        sync_errors.append(version_error)
+                if not license_bypass and not expected_token:
+                    payload["status"] = "awaiting_license"
+                    payload["bps"] = 0
+                    payload["ntrip_connected"] = False
+                    payload["ntrip_status"] = {}
+                    payload["ntrip_stats"] = {}
+                    payload["is_synced"] = False
+                    sync_errors.append("Server token has not been issued to this agent")
+                payload["sync_errors"] = sync_errors
                 compact_payload = _compact_status_payload(payload)
                 if not compact_payload:
                     continue
+                status_decision = await status_reconciler.accept(
+                    compact_payload,
+                    source="websocket",
+                )
+                if not status_decision.accepted:
+                    logger.debug(
+                        "Ignored WebSocket status for %s: %s",
+                        serial,
+                        status_decision.reason,
+                    )
+                    continue
+                compact_payload = status_decision.payload
                 # Hot path: enqueue for async workers (broadcast + buffered DB write)
                 try:
                     pi_status_ingest_queue.put_nowait(compact_payload)
@@ -7671,14 +7803,35 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
 
     except WebSocketDisconnect:
         logging.info(f"Pi '{serial}' disconnected.")
-        pi_manager.disconnect(serial)
+        pi_manager.disconnect(serial, websocket)
+        if pi_manager.has_replacement(serial, websocket):
+            logger.info("Pi '%s' old WebSocket closed after a newer connection replaced it", serial)
+            return
+
+        # WebSocket is the secondary channel. Give MQTT/LWT time to prove the
+        # device is still alive before changing the effective station status.
+        disconnected_at = time.time()
+        await asyncio.sleep(12)
+        if await status_reconciler.has_update_after(serial, disconnected_at):
+            logger.info("Pi '%s' WebSocket dropped but another status channel is active", serial)
+            return
+        if await status_reconciler.current_status(serial) == "offline":
+            return
 
         now_ts = int(time.time())
+        offline_decision = await status_reconciler.accept_offline(
+            serial,
+            source="disconnect",
+            received_at=now_ts,
+        )
+        if not offline_decision.accepted:
+            return
 
         # FIX: Read device from DB to get full config (name, base_config, service_config)
         # then broadcast FULL payload to UI so the map doesn't lose station position.
         # Only write status-related fields to DB, do NOT touch config.
         ui_broadcast_payload = {
+            **(offline_decision.payload or {}),
             "serial": serial,
             "status": "offline",
             "ntrip_connected": False,
@@ -7725,7 +7878,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
     
     except Exception as e:
         logging.error(f"WS Error '{serial}': {e}")
-        pi_manager.disconnect(serial)
+        pi_manager.disconnect(serial, websocket)
         
 # === GLOBAL EXCEPTION HANDLER ===
 @app.exception_handler(Exception)
@@ -7860,6 +8013,9 @@ async def buffer_metrics_endpoint(
     
     current_buffer_size = len(device_update_buffer)
     uptime_since_flush = time.time() - buffer_metrics.get("last_flush_time", time.time())
+    reconciler_metrics = await status_reconciler.metrics_snapshot()
+    async with pending_ui_status_lock:
+        pending_station_updates = len(pending_ui_status_updates)
     
     return {
         "status": "ok",
@@ -7885,6 +8041,12 @@ async def buffer_metrics_endpoint(
             ),
             "seconds_since_last_flush": uptime_since_flush,
             "last_flush_size": buffer_metrics["last_buffer_size"],
+        },
+        "status_reconciler": reconciler_metrics,
+        "realtime": {
+            "pending_station_updates": pending_station_updates,
+            "ui_queue_depth": ui_broadcast_queue.qsize(),
+            "pi_ingest_queue_depth": pi_status_ingest_queue.qsize(),
         },
         "config": {
             "flush_interval_min_sec": BUFFER_FLUSH_INTERVAL_MIN,

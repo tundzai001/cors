@@ -16,6 +16,7 @@ from .websocket import manager
 from .database import settings, device_session_scope
 from . import crud, nmea_parser, models
 from .rtcm_signal_decoder import rtcm_signal_decoder
+from .status_reconciler import status_reconciler
 
 # Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
 mqtt_db_write_lock = asyncio.Lock()
@@ -118,10 +119,14 @@ GLOBAL_SYNC_CHECK_INTERVAL = 60.0  # Batch check 60s/lần
 DB_WRITE_INTERVAL = 120.0    # Ghi DB định kỳ 2 phút/lần nếu không có gì thay đổi
 IS_SHUTTING_DOWN = False 
 external_command_handler: Optional[Callable[[str, bytes], Awaitable[None]]] = None
+status_broadcast_handler: Optional[Callable[[dict], Awaitable[None]]] = None
 
 def invalidate_device_cache(serial: str):
     """Xóa cache của thiết bị để buộc background worker fetch lại từ DB."""
-    device_sync_cache.pop(serial, None)
+    # A config/token mutation is unsynced until the server-side batch checker
+    # proves otherwise. This prevents a stale agent self-report from briefly
+    # flipping the UI back to synced.
+    device_sync_cache[serial] = False
     device_last_sync_check.pop(serial, None)
     device_write_cache.pop(serial, None)
     logging.info(f"♻️ Cache invalidated for device {serial}")
@@ -197,7 +202,7 @@ async def batch_sync_checker():
             # Lấy danh sách devices online từ cache (không cần DB)
             online_serials = [
                 serial for serial, status in device_status_cache.items()
-                if status in ['online', 'sleep']
+                if status in ['online', 'sleep', 'streaming', 'starting', 'configuring']
             ]
             
             if not online_serials:
@@ -525,14 +530,32 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 except Exception:
                     pass  # Không tên vẫn broadcast được, không chặn luồng
 
+            # MQTT and the direct WebSocket carry the same heartbeat. Reconcile
+            # them before touching live state so retained/out-of-order packets
+            # cannot make a station jump backwards.
+            status_decision = await status_reconciler.accept(
+                data,
+                source="mqtt",
+                retained=is_retained,
+                received_at=now,
+            )
+            if not status_decision.accepted:
+                logging.debug("Ignored MQTT status for %s: %s", serial, status_decision.reason)
+                return
+            data = status_decision.payload
+
             # --- 2.5. BROADCAST REAL-TIME TO UI ---
             live_snapshot = dict(device_telemetry_cache.get(serial) or {})
             live_snapshot.update(data)
             device_telemetry_cache[serial] = live_snapshot
-            await manager.broadcast({
+            status_message = {
                 "type": "status_update", 
                 "data": data
-            })
+            }
+            if status_broadcast_handler:
+                await status_broadcast_handler(status_message)
+            else:
+                await manager.broadcast(status_message)
             
             # --- 2.5. LOGIC QUYẾT ĐỊNH GHI DB ---
             last_write_time = device_write_cache.get(serial, 0)
@@ -735,3 +758,9 @@ def set_external_command_handler(handler: Callable[[str, bytes], Awaitable[None]
     """Register a coroutine handler for non-device MQTT command topics."""
     global external_command_handler
     external_command_handler = handler
+
+
+def set_status_broadcast_handler(handler: Callable[[dict], Awaitable[None]]):
+    """Route station status through main's per-station coalescing queue."""
+    global status_broadcast_handler
+    status_broadcast_handler = handler

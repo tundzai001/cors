@@ -23,8 +23,10 @@ const VietnamSVG = () => {
     React.useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
+        const abortController = new AbortController();
+        let mapTimeline = null;
         // Fetch the SVG and inject inline for GSAP draw-on
-        fetch('/img/vietnam-map.svg')
+        fetch('/img/vietnam-map.svg', { signal: abortController.signal })
             .then(r => r.text())
             .then(svgText => {
                 const svgHolder = container.querySelector('.vietnam-map-inline');
@@ -49,7 +51,7 @@ const VietnamSVG = () => {
                     });
 
                     // Build a repeating timeline: draw → glow → hold → erase → pause → repeat
-                    const mapTimeline = gsap.timeline({ repeat: -1, repeatDelay: 0.1 });
+                    mapTimeline = gsap.timeline({ repeat: -1, repeatDelay: 0.1 });
 
                     // Phase 1: Draw on (2.2s)
                     mapTimeline.to(paths, {
@@ -89,7 +91,13 @@ const VietnamSVG = () => {
                     }, 7.5);
                 }
             })
-            .catch(() => {});
+            .catch((error) => {
+                if (error.name !== 'AbortError') console.warn('[Landing] Vietnam SVG unavailable');
+            });
+        return () => {
+            abortController.abort();
+            mapTimeline?.kill();
+        };
     }, []);
 
     return React.createElement('div', { className: 'hero-map-wrapper', ref: containerRef },
@@ -170,25 +178,27 @@ const ParticleField = () => {
         let width = canvas.width = canvas.offsetWidth;
         let height = canvas.height = canvas.offsetHeight;
 
-        const isMobile = window.innerWidth < 768;
-        const particleCount = isMobile ? 35 : 95;
-        const maxDistance = 140;
+        const performanceSettings = window.CorsPerformance || {};
+        const particleCount = performanceSettings.particleCount ?? (window.innerWidth < 768 ? 35 : 95);
+        if (particleCount === 0) return;
+        const maxDistance = performanceSettings.tier === 'balanced' ? 115 : 140;
         const particles = [];
+        let active = document.visibilityState === 'visible';
 
         // Mouse coordinates for interaction
         const mouse = { x: null, y: null, radius: 155 };
 
-        const handleResize = () => {
+        const handleResize = (performanceSettings.rafThrottle || ((fn) => fn))(() => {
             if (!canvas) return;
             width = canvas.width = canvas.offsetWidth;
             height = canvas.height = canvas.offsetHeight;
-        };
+        });
 
-        const handleMouseMove = (e) => {
+        const handleMouseMove = (performanceSettings.rafThrottle || ((fn) => fn))((e) => {
             const rect = canvas.getBoundingClientRect();
             mouse.x = e.clientX - rect.left;
             mouse.y = e.clientY - rect.top;
-        };
+        });
 
         const handleMouseLeave = () => {
             mouse.x = null;
@@ -198,6 +208,17 @@ const ParticleField = () => {
         window.addEventListener('resize', handleResize);
         window.addEventListener('mousemove', handleMouseMove);
         document.body.addEventListener('mouseleave', handleMouseLeave);
+
+        const onVisibility = () => {
+            active = document.visibilityState === 'visible';
+            if (active && !animationFrameId) animate();
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+        const observer = new IntersectionObserver(([entry]) => {
+            active = entry.isIntersecting && document.visibilityState === 'visible';
+            if (active && !animationFrameId) animate();
+        }, { rootMargin: '100px' });
+        observer.observe(canvas);
 
         // Initialize particles
         for (let i = 0; i < particleCount; i++) {
@@ -211,6 +232,10 @@ const ParticleField = () => {
         }
 
         const animate = () => {
+            if (!active) {
+                animationFrameId = null;
+                return;
+            }
             ctx.clearRect(0, 0, width, height);
 
             // Update and draw particles
@@ -295,6 +320,8 @@ const ParticleField = () => {
             window.removeEventListener('resize', handleResize);
             window.removeEventListener('mousemove', handleMouseMove);
             document.body.removeEventListener('mouseleave', handleMouseLeave);
+            document.removeEventListener('visibilitychange', onVisibility);
+            observer.disconnect();
         };
     }, []);
 
@@ -464,14 +491,15 @@ const HeroThreeScene = () => {
             return;
         }
 
-        const prefersReducedMotion = false;
+        const qualitySettings = window.CorsPerformance || {};
+        const prefersReducedMotion = !!qualitySettings.reducedMotion;
         const THREE = window.THREE;
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
         camera.position.set(0, 1.62, 7.6);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.35 : 1.8));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualitySettings.threePixelRatio || 1.35));
         renderer.setClearColor(0x000000, 0);
         mount.appendChild(renderer.domElement);
         renderer.domElement.className = 'hero-three-canvas';
@@ -679,7 +707,7 @@ const HeroThreeScene = () => {
             stationLines.push(line);
         });
 
-        const particleCount = window.innerWidth < 768 ? 90 : 180;
+        const particleCount = qualitySettings.tier === 'high' ? 180 : 72;
         const particlePositions = new Float32Array(particleCount * 3);
         for (let i = 0; i < particleCount; i++) {
             particlePositions[i * 3] = (Math.random() - 0.5) * 9;
@@ -702,6 +730,8 @@ const HeroThreeScene = () => {
         let width = 0;
         let height = 0;
         let visible = true;
+        let sectionVisible = true;
+        let lastFrameAt = 0;
 
         const resize = () => {
             const rect = mount.getBoundingClientRect();
@@ -719,10 +749,18 @@ const HeroThreeScene = () => {
 
         const clock = new THREE.Clock();
         const animate = () => {
-            if (!visible) {
+            if (!visible || !sectionVisible) {
                 rafId = null;
                 return;
             }
+
+            const now = window.performance?.now?.() || Date.now();
+            const frameInterval = qualitySettings.frameInterval || 0;
+            if (frameInterval && now - lastFrameAt < frameInterval) {
+                rafId = requestAnimationFrame(animate);
+                return;
+            }
+            lastFrameAt = now;
 
             const elapsed = clock.getElapsedTime();
             if (!prefersReducedMotion) {
@@ -797,10 +835,16 @@ const HeroThreeScene = () => {
         animate();
         window.addEventListener('resize', resize);
         document.addEventListener('visibilitychange', onVisibilityChange);
+        const observer = new IntersectionObserver(([entry]) => {
+            sectionVisible = entry.isIntersecting;
+            if (sectionVisible && visible && !rafId) animate();
+        }, { rootMargin: '160px' });
+        observer.observe(mount);
 
         return () => {
             window.removeEventListener('resize', resize);
             document.removeEventListener('visibilitychange', onVisibilityChange);
+            observer.disconnect();
             if (rafId) cancelAnimationFrame(rafId);
             renderer.dispose();
             coreGeometry.dispose();
@@ -1162,17 +1206,20 @@ const useCounter = (targetStr, duration = 1600) => {
    ============================================================ */
 const useCinematicScroll = () => {
     React.useEffect(() => {
+        if (window.CorsPerformance?.tier === 'lite') return;
         if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
             console.warn('[Cinematic] GSAP not loaded');
             return;
         }
         gsap.registerPlugin(ScrollTrigger);
         let lenis = null;
+        let lenisTicker = null;
         try {
             if (typeof Lenis !== 'undefined') {
                 lenis = new Lenis({ duration: 1.2, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), smoothWheel: true });
                 lenis.on('scroll', ScrollTrigger.update);
-                gsap.ticker.add((time) => lenis.raf(time * 1000));
+                lenisTicker = (time) => lenis.raf(time * 1000);
+                gsap.ticker.add(lenisTicker);
                 gsap.ticker.lagSmoothing(0);
             }
         } catch(e) {}
@@ -1649,6 +1696,7 @@ const useCinematicScroll = () => {
             clearTimeout(initTimer);
             window.removeEventListener('scroll', hideIndicator);
             ScrollTrigger.getAll().forEach(t => t.kill());
+            if (lenisTicker) gsap.ticker.remove(lenisTicker);
             if (lenis) lenis.destroy();
         };
     }, []);
@@ -1851,6 +1899,14 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
     useMouseParallax();
     useCardTilt();
     useMagneticButtons();
+    React.useEffect(() => {
+        const updateNavbar = (window.CorsPerformance?.rafThrottle || ((fn) => fn))(() => {
+            document.getElementById('landing-navbar')?.classList.toggle('scrolled', window.scrollY > 50);
+        });
+        window.addEventListener('scroll', updateNavbar, { passive: true });
+        updateNavbar();
+        return () => window.removeEventListener('scroll', updateNavbar);
+    }, []);
 
     // Stats Animation Logic
     const stationTotal = Number(networkSummary?.total_stations || devices.length || 0);
@@ -2124,6 +2180,15 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                     )
                 ),
                 React.createElement('div', { className: 'col-lg-7', style: { position: 'relative', height: '450px' } },
+                    React.createElement('img', {
+                        className: 'network-mobile-map',
+                        src: '/img/vietnam-map.svg',
+                        alt: 'Bản đồ mạng lưới CORS Việt Nam',
+                        width: 634,
+                        height: 875,
+                        loading: 'lazy',
+                        decoding: 'async'
+                    }),
                     React.createElement('div', { className: 'network-map-slot' }),
                     React.createElement(NetworkMapOverlays),
                     React.createElement('div', {
@@ -2436,15 +2501,5 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
         )
     );
 };
-
-// Navbar scroll effect
-if (typeof window !== 'undefined') {
-    window.addEventListener('scroll', () => {
-        const nav = document.getElementById('landing-navbar');
-        if (nav) {
-            nav.classList.toggle('scrolled', window.scrollY > 50);
-        }
-    });
-}
 
 window.HomePageEnterprise = HomePageEnterprise;

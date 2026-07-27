@@ -156,5 +156,10 @@ const NavigationManager = {
     }
 };
 
-document.addEventListener('DOMContentLoaded', () => NavigationManager.init());
 window.NavigationManager = NavigationManager;
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => NavigationManager.init(), { once: true });
+} else {
+    NavigationManager.init();
+}

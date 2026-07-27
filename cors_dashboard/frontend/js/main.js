@@ -109,7 +109,17 @@ function buildPublicStationPath(device) {
 
 // Batch status updates to prevent UI stalls under high websocket throughput.
 const STATUS_FLUSH_INTERVAL = 140;
+const CONTROL_STATUS_VALUES = new Set([
+    'locked', 'rebooting', 'rebooting_for_reset',
+    'unprovisioned', 'awaiting_license'
+]);
+const LIVE_STATUS_FIELDS = [
+    'status', 'timestamp', 'agent_timestamp', 'server_received_at',
+    'status_revision', 'status_source', 'bps', 'ntrip_connected',
+    'ntrip_status', 'ntrip_stats', 'transport_status'
+];
 let pendingStatusUpdates = new Map();
+let lastStatusMetaBySerial = new Map();
 let statusFlushTimerId = null;
 let visitorPulseTimerId = null;
 let lastVisitorCount = null;
@@ -126,6 +136,26 @@ function enqueueStatusUpdate(payload) {
     const list = Array.isArray(payload) ? payload : [payload];
     list.forEach((item) => {
         if (!item || !item.serial) return;
+        const revision = Number(item.status_revision || 0);
+        const receivedAt = Number(item.server_received_at || item.timestamp || 0);
+        const previous = lastStatusMetaBySerial.get(item.serial);
+        if (previous && revision > 0) {
+            if (revision < previous.revision) return;
+            if (revision === previous.revision && receivedAt <= previous.receivedAt) return;
+        }
+        if (previous && revision === 0 && receivedAt <= previous.receivedAt) {
+            // Some administrative endpoints send a full DB snapshot after changing
+            // config/ownership. Preserve its static fields, but never let that
+            // older snapshot roll live transport state backwards.
+            const existing = globalState.devices.find((device) => device.serial === item.serial);
+            if (existing && !CONTROL_STATUS_VALUES.has(String(item.status || '').toLowerCase())) {
+                item = { ...item };
+                LIVE_STATUS_FIELDS.forEach((field) => {
+                    if (Object.prototype.hasOwnProperty.call(existing, field)) item[field] = existing[field];
+                });
+            }
+        }
+        if (revision > 0) lastStatusMetaBySerial.set(item.serial, { revision, receivedAt });
         pendingStatusUpdates.set(item.serial, item);
     });
 
@@ -429,7 +459,12 @@ const handleSearchChange = (newTerm) => {
 };
 
 window.switchView = function (viewName) {
+    const previousView = globalState.currentView;
     globalState.currentView = viewName;
+    if (viewName !== 'dashboard' || previousView !== 'dashboard') {
+        document.body.classList.remove('mobile-detail-open');
+    }
+    document.body.classList.toggle('landing-view-active', viewName === 'homepage');
 
     // 1. Dynamic class toggling on body to control page-level scrolling
     if (viewName === 'dashboard' || viewName === 'map') {
@@ -794,6 +829,10 @@ function updateGlobalDevices(newDeviceData) {
 }
 
 function handleSelectDevice(serial) {
+    if (window.matchMedia?.('(max-width: 575.98px)').matches) {
+        document.body.classList.add('mobile-detail-open');
+        window.scrollTo({ top: 0, behavior: 'auto' });
+    }
     if (globalState.selectedDeviceSerial === serial) return;
 
     globalState.selectedDeviceSerial = serial;
@@ -824,6 +863,9 @@ function selectDeviceFromDashboardQuery() {
     deviceListNeedsUpdate = true;
     detailsPanelNeedsUpdate = true;
     switchView('dashboard');
+    if (window.matchMedia?.('(max-width: 575.98px)').matches) {
+        document.body.classList.add('mobile-detail-open');
+    }
     return true;
 }
 
@@ -1072,6 +1114,7 @@ function connectWebSocket() {
     ws.onopen = () => {
         updateConnectionStatus(true);
         wsReconnectAttempts = 0;
+        lastStatusMetaBySerial.clear();
         //console.log('✓ WebSocket connected');
     };
 
@@ -1570,6 +1613,14 @@ function setupUIbasedOnPermissions() {
 
 function setupEventListeners() {
 
+    const mobileStationListBtn = document.getElementById('mobile-station-list-btn');
+    if (mobileStationListBtn) {
+        mobileStationListBtn.addEventListener('click', () => {
+            document.body.classList.remove('mobile-detail-open');
+            window.scrollTo({ top: 0, behavior: 'auto' });
+        });
+    }
+
     const exportBtn = document.getElementById('export-csv-btn');
     if (exportBtn) {
         exportBtn.addEventListener('click', async (e) => {
@@ -1599,7 +1650,7 @@ function setupEventListeners() {
 }
 
 // === ENTRY POINT ===
-document.addEventListener('DOMContentLoaded', async () => {
+async function initializeCorsApp() {
     // 1. Auth Check with Public Route Exceptions
     const publicRoutes = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
     const currentPath = window.location.pathname;
@@ -1622,9 +1673,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (isPublicRoute && !localStorage.getItem('access_token') && !sessionStorage.getItem('access_token')) {
         //console.log("Serving Public Content...");
         
-        // Parallelize initial device loading and root creation
-        const initialLoadPromise = loadInitialDevices();
-
         const homepageContainer = document.getElementById('homepage-root');
         if (homepageContainer && !window.homepageRoot) {
             window.homepageRoot = ReactDOM.createRoot(homepageContainer);
@@ -1645,46 +1693,35 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.apiDocsRoot = ReactDOM.createRoot(apiDocsContainer);
         }
         
-        await initialLoadPromise; // Wait for devices before rendering components that need them
-
-        if (currentPath === '/') {
+        if (currentPath === '/' || currentPath === '/network-status' || currentPath === '/coverage') {
+            // Paint the hero immediately. Network data updates the same root later and
+            // never blocks first content or basic landing interactions.
             switchView('homepage');
-            const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 15000);
-            if (window.homepageRoot) {
-                renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
-            }
-        } else if (currentPath === '/network-status') {
-            switchView('homepage');
-            const homeComponent = await waitForGlobalComponent('HomePageEnterprise', 15000);
-            if (window.homepageRoot) {
-                renderReactComponent(window.homepageRoot, homeComponent, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
-            }
+            dismissAppPreloader();
+            loadInitialDevices().then(() => {
+                if (globalState.currentView === 'homepage' && window.homepageRoot && window.HomePageEnterprise) {
+                    renderReactComponent(window.homepageRoot, window.HomePageEnterprise, {
+                        devices: globalState.devices,
+                        networkSummary: globalState.publicNetworkSummary
+                    });
+                }
+            }).catch((error) => console.warn('[Landing] Async station refresh failed:', error));
         } else if (currentPath.startsWith('/blog')) {
             switchView('blog');
-            const slug = currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
-            if (window.blogRoot) {
-                const blogComponent = await waitForGlobalComponent('BlogSystem', 15000);
-                renderReactComponent(window.blogRoot, blogComponent, { slug }, 'Blog component is not loaded');
-            }
-
         } else if (currentPath.startsWith('/station/')) {
+             await loadInitialDevices();
              const token = currentPath.split('/').pop();
              const device = resolveDeviceFromStationPath(token);
+             if (device) globalState.selectedDeviceSerial = device.serial;
              switchView('station-detail');
-             if (device && window.enterpriseDetailRoot) {
+             if (device) {
                  const canonicalPath = buildPublicStationPath(device);
                  if (window.location.pathname !== canonicalPath) {
                      window.history.replaceState({}, '', canonicalPath);
                  }
-                 const stationComponent = await waitForGlobalComponent('EnterpriseStationDetail', 15000);
-                 renderReactComponent(window.enterpriseDetailRoot, stationComponent, { device }, 'Station detail component is not loaded');
              }
         } else if (currentPath === '/api/docs') {
             switchView('api-docs');
-            if (window.apiDocsRoot) {
-                const apiDocsComponent = await waitForGlobalComponent('ApiDocs', 15000);
-                renderReactComponent(window.apiDocsRoot, apiDocsComponent, {}, 'API docs component is not loaded');
-            }
         }
         dismissAppPreloader();
         return; // CRITICAL: Stop here for public visitors!
@@ -1772,45 +1809,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (window.location.pathname !== canonicalPath) {
                 window.history.replaceState({}, '', canonicalPath);
             }
-            
-            // Wait for devices to load, then render
-            const checkAndRender = setInterval(() => {
-                const liveDevice = globalState.devices.find(d => d.serial === device.serial);
-                if (liveDevice && window.enterpriseDetailRoot) {
-                    waitForGlobalComponent('EnterpriseStationDetail', 15000).then((stationComponent) => {
-                        renderReactComponent(window.enterpriseDetailRoot, stationComponent, { device: liveDevice }, 'Station detail component is not loaded');
-                        clearInterval(checkAndRender);
-                    });
-                }
-            }, 500);
-            
-            // Timeout after 10s
-            setTimeout(() => clearInterval(checkAndRender), 10000);
         }
     } else if (currentPath === '/network-status') {
         switchView('homepage');
-        waitForGlobalComponent('HomePageEnterprise', 15000).then((homeComp) => {
-            if (homeComp && window.homepageRoot) {
-                renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
-            }
-        });
     } else if (currentPath.startsWith('/blog')) {
         switchView('blog');
-        const slug = currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
-        if (window.blogRoot) {
-            waitForGlobalComponent('BlogSystem', 15000).then((blogComponent) => {
-                renderReactComponent(window.blogRoot, blogComponent, { slug }, 'Blog component is not loaded');
-            });
-        }
         dismissAppPreloader();
         return;
     } else if (currentPath === '/api/docs') {
         switchView('api-docs');
-        if (window.apiDocsRoot) {
-            waitForGlobalComponent('ApiDocs', 15000).then((apiDocsComponent) => {
-                renderReactComponent(window.apiDocsRoot, apiDocsComponent, {}, 'API docs component is not loaded');
-            });
-        }
         dismissAppPreloader();
         return;
     } else if (selectDeviceFromDashboardQuery()) {
@@ -1830,7 +1837,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 dismissAppPreloader();
 //console.log(`✓ App initialized with Performance Optimization (view: ${initialView})`);
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeCorsApp, { once: true });
+} else {
+    initializeCorsApp();
+}
 
 window.openPublicMap = async function() {
     const modalEl = document.getElementById('publicMapModal');

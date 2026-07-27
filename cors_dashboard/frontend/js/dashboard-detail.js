@@ -714,7 +714,7 @@ const DetailsPanel = memo(function DetailsPanel({
         let newActiveTab = '';
 
         if (shouldShowLicenseTab) {
-            if (!isDeviceSwitched && userSelectedTab && activeTab === 'operations') {
+            if (!isDeviceSwitched && activeTab) {
                 return;
             }
             newActiveTab = 'license';
@@ -868,7 +868,7 @@ const DetailsPanel = memo(function DetailsPanel({
     };
 
     const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_create_rovers));
-    const showConfigTabs = !shouldShowLicenseTab && !['rebooting', 'rebooting_for_reset'].includes(device.status) && (device.status !== 'awaiting_license' || licenseBypass);
+    const showConfigTabs = !['rebooting', 'rebooting_for_reset'].includes(device.status) && (device.status !== 'awaiting_license' || licenseBypass);
     const showServiceAndDashboardTabs = showConfigTabs && (device.status !== 'unprovisioned' || isRelayLikeStation);
     const showStationOperationsTab = !['rebooting', 'rebooting_for_reset'].includes(device.status) && (isAdmin || canEditService);
 
