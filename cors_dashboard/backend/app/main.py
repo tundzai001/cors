@@ -733,6 +733,9 @@ def _resolve_stream_status(device: Optional[models.Device], force_starting: bool
     if not device:
         return "offline"
 
+    if str(getattr(device, "status", "offline") or "offline").lower() == "offline":
+        return "offline"
+
     if bool(getattr(device, "ntrip_connected", False)):
         return "streaming"
 

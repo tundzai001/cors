@@ -1553,6 +1553,7 @@ class RelayWorker(threading.Thread):
         self.last_stat_update = time.time()
         self.current_bps = 0
         self.current_source_bps = 0
+        self.source_connected = False
         self._last_disconnect_reason = ""
         self._source_failure_count = 0
         
@@ -1608,8 +1609,17 @@ class RelayWorker(threading.Thread):
         if not self.mqtt_client or not self.mqtt_client.is_connected():
             pass # Vẫn cập nhật DB cục bộ dù mất MQTT
         
+        source_has_data = bool(self.source_connected and self.current_source_bps > 0)
         output_connected = bool(self.desired_active and self.is_connected)
         output_bps = self.current_bps if self.desired_active else 0
+        if not source_has_data:
+            status_value = "offline"
+        elif not self.desired_active:
+            status_value = "sleep"
+        elif output_connected and output_bps > 0:
+            status_value = "online"
+        else:
+            status_value = "offline"
         now = time.time()
         satellites = {
             key: sat for key, sat in self.satellites.items()
@@ -1621,7 +1631,7 @@ class RelayWorker(threading.Thread):
             "serial": self.serial,
             "rtcm_stats": globals().get("rtcm_signal_decoder").get_stats(self.serial) if globals().get("rtcm_signal_decoder") else {},
             "name": self.cfg['target_mp'],
-            "status": "online" if self.desired_active else "sleep",
+            "status": status_value,
             "version": RELAY_VERSION,
             "agent_token_fingerprint": get_license_fingerprint(self.serial),
             "timestamp": round(time.time(), 3),
@@ -1634,6 +1644,7 @@ class RelayWorker(threading.Thread):
                 }
             },
             "ntrip_connected": output_connected,
+            "source_connected": bool(self.source_connected),
             "ntrip_stats": {"server1_bps": output_bps, "rtcm_input_bps": self.current_source_bps},
             "ntrip_status": {"server1": {"connected": output_connected, "bps": output_bps}},
             "nmea_data": {
@@ -1800,6 +1811,7 @@ class RelayWorker(threading.Thread):
                 src_header, leftover = read_http_header(source_sock)
                 if b"200 OK" not in src_header and b"ICY 200" not in src_header:
                     raise Exception("Source rejected")
+                self.source_connected = True
                 
                 gga = generate_gga(self.cfg['lat'], self.cfg['lon'], self.cfg['alt'])
                 source_send_gga = self._source_send_gga()
@@ -1972,6 +1984,7 @@ class RelayWorker(threading.Thread):
                 
             finally:
                 self.is_connected = False
+                self.source_connected = False
                 self.current_bps = 0
                 self.current_source_bps = 0
                 if source_sock:

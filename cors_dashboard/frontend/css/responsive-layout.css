@@ -526,7 +526,8 @@ body.landing-view-active #homepage-root {
     }
 
     .enterprise-homepage .hero-three-scene {
-        display: none;
+        display: block;
+        opacity: 0.24;
     }
 }
 
@@ -927,7 +928,7 @@ code,
     }
 }
 
-@media (max-width: 767.98px) and (prefers-reduced-motion: no-preference) {
+@media (max-width: 767.98px) {
     .enterprise-homepage .map-scan-ring,
     .enterprise-homepage .data-pulse-ring {
         animation-duration: 6s !important;
@@ -944,23 +945,10 @@ code,
     }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .enterprise-homepage :is(
-        .map-scan-ring,
-        .data-pulse-ring,
-        .station-heartbeat,
-        .livedata-bar,
-        .support-tech-scan,
-        .scroll-indicator
-    ) {
-        animation: none !important;
-    }
-}
-
 /* Keep the signature hero -> network Vietnam-map transition on touch devices.
    The map is smaller and sits behind hero copy, while expensive 3D/particles
    remain controlled by the runtime quality tier. */
-@media (max-width: 991.98px) and (prefers-reduced-motion: no-preference) {
+@media (max-width: 991.98px) {
     .enterprise-homepage .hero-map-wrapper {
         display: block !important;
         top: 38vh;
@@ -984,7 +972,7 @@ code,
     }
 }
 
-@media (max-width: 767.98px) and (prefers-reduced-motion: no-preference) {
+@media (max-width: 767.98px) {
     .enterprise-homepage .hero-map-wrapper {
         top: 23vh;
         right: -10vw;

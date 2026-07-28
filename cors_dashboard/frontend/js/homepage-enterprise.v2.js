@@ -54,8 +54,7 @@ const VietnamSVG = () => {
                     });
 
                     // Build a repeating timeline: draw → glow → hold → erase → pause → repeat
-                    const liteMap = window.CorsPerformance?.tier === 'lite';
-                    mapTimeline = gsap.timeline({ repeat: liteMap ? 0 : -1, repeatDelay: 0.1 });
+                    mapTimeline = gsap.timeline({ repeat: -1, repeatDelay: 0.1 });
 
                     // Phase 1: Draw on (2.2s)
                     mapTimeline.to(paths, {
@@ -1231,7 +1230,6 @@ const useCounter = (targetStr, duration = 1600) => {
 const useCinematicScroll = () => {
     React.useEffect(() => {
         const performanceProfile = window.CorsPerformance || {};
-        if (performanceProfile.reducedMotion) return;
         const liteMode = performanceProfile.tier === 'lite';
         if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
             console.warn('[Cinematic] GSAP not loaded');
@@ -1250,7 +1248,10 @@ const useCinematicScroll = () => {
             }
         } catch(e) {}
 
+        let scrollContext = null;
         const initTimer = setTimeout(() => {
+            const landingScope = document.querySelector('.enterprise-homepage') || document.body;
+            scrollContext = gsap.context(() => {
             const hero = document.querySelector('.hero-section');
             const mapImg = document.querySelector('.vietnam-map-bg');
             const mapWrapper = document.querySelector('.hero-map-wrapper');
@@ -1710,7 +1711,7 @@ const useCinematicScroll = () => {
                     }
                 );
             }
-
+            }, landingScope);
         }, 500);
 
         const hideIndicator = () => {
@@ -1722,7 +1723,7 @@ const useCinematicScroll = () => {
         return () => {
             clearTimeout(initTimer);
             window.removeEventListener('scroll', hideIndicator);
-            ScrollTrigger.getAll().forEach(t => t.kill());
+            if (scrollContext) scrollContext.revert();
             if (lenisTicker) gsap.ticker.remove(lenisTicker);
             if (lenis) lenis.destroy();
         };

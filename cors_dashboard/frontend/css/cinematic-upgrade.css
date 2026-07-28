@@ -7,14 +7,7 @@
     width: 100%; height: auto;
 }
 
-/* Runtime quality tiers: retain the premium composition while reducing paint and
-   compositor pressure on mobile/low-power devices. */
-.landing-page section:not(.hero-section),
-#view-homepage section:not(.hero-section) {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 760px;
-}
-
+/* Runtime quality tiers reduce paint cost without removing any effect. */
 html[data-quality="balanced"] .landing-orb,
 html[data-quality="balanced"] .glass-card,
 html[data-quality="balanced"] .landing-stat-card {
@@ -36,38 +29,8 @@ html[data-quality="balanced"] .data-pulse-ring {
     animation-duration: 5.5s;
 }
 
-html[data-quality="lite"] .hero-three-scene,
-html[data-quality="lite"] .landing-particles,
-html[data-quality="lite"] .flying-satellite,
-html[data-quality="lite"] .map-radar-sweep,
-html[data-quality="lite"] .landing-orb,
-html[data-quality="lite"] .feature-card-scan {
-    opacity: calc(0.34 + var(--effect-intensity, 0.48) * 0.34);
-}
-
-html[data-quality="lite"] .flying-satellite,
-html[data-quality="lite"] .landing-orb,
-html[data-quality="lite"] .feature-card-scan {
-    animation-duration: 28s !important;
-}
-
-html[data-quality="lite"] .hero-section {
-    background:
-        radial-gradient(circle at 78% 24%, rgba(0, 191, 255, 0.12), transparent 34rem),
-        linear-gradient(145deg, #050913, #07111d 56%, #02060b) !important;
-}
-
-html[data-quality="lite"] *,
-html.reduced-motion * {
+html[data-quality="lite"] * {
     scroll-behavior: auto !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-        animation-duration: 0.001ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.001ms !important;
-    }
 }
 .vietnam-map-inline svg {
     display: block;
@@ -264,17 +227,6 @@ html.reduced-motion * {
 /* LIVE DATA BARS continuous shimmer */
 .livedata-bar.bar-active {
     transition: height 1.5s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* REDUCED MOTION */
-@media (prefers-reduced-motion: reduce) {
-    .data-pulse-ring,
-    .station-heartbeat,
-    .typing-cursor,
-    .vietnam-map-inline svg.map-idle-glow,
-    .flying-satellite {
-        animation: none !important;
-    }
 }
 
 /* ============================================================
@@ -648,13 +600,6 @@ html.reduced-motion * {
         inset: 10% 0 auto 0;
         height: 55vh;
         opacity: 0.38;
-    }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .hero-three-fallback-core,
-    .hero-three-fallback-ring {
-        animation: none !important;
     }
 }
 

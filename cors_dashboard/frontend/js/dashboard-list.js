@@ -193,13 +193,13 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const s1OnDemand = toBool(s1State.on_demand, toBool(config.server1_stream_on_demand, toBool(config.stream_on_demand, false)));
         const s1Active = toBool(s1State.active, toBool(config.server1_stream_active, !s1OnDemand));
         const s1SleepMode = s1Enabled && s1OnDemand && !s1Active;
-        const s1UseRtcmSleepUi = s1SleepMode && hasRtcmInputMetric;
+        const s1UseRtcmSleepUi = rawStatus === 'sleep' && s1SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
 
         const s2State = streamState.server2 || {};
         const s2OnDemand = toBool(s2State.on_demand, toBool(config.server2_stream_on_demand, toBool(config.stream_on_demand, false)));
         const s2Active = toBool(s2State.active, toBool(config.server2_stream_active, !s2OnDemand));
         const s2SleepMode = s2Enabled && s2OnDemand && !s2Active;
-        const s2UseRtcmSleepUi = s2SleepMode && hasRtcmInputMetric;
+        const s2UseRtcmSleepUi = rawStatus === 'sleep' && s2SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
 
         const hasInputTraffic = hasRtcmInputMetric && rtcmInputBps > 0;
         const hasAnyOutputTraffic = (s1Enabled && s1.bps > 0) || (s2Enabled && s2.bps > 0);
@@ -270,8 +270,9 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(rawStatus);
 
         // Per-server individual color: pushing=green, sleep/input-only=blue, idle=disconnected
-        const s1StatusClass = s1.bps > 0 ? 'online' : (s1SleepMode ? 'sleep' : 'disconnected');
-        const s2StatusClass = s2.bps > 0 ? 'online' : (s2SleepMode ? 'sleep' : 'disconnected');
+        const sourceOffline = rawStatus === 'offline';
+        const s1StatusClass = sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1SleepMode && rawStatus === 'sleep' ? 'sleep' : 'disconnected'));
+        const s2StatusClass = sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2SleepMode && rawStatus === 'sleep' ? 'sleep' : 'disconnected'));
 
         return {
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(s1UseRtcmSleepUi ? rtcmInputBps : s1.bps),

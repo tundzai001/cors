@@ -15,22 +15,26 @@
         }
     }
 
-    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
     const webgl = supportsWebGL();
-    const storedTier = sessionStorage.getItem('cors:quality-mode');
-    const validStoredTier = storedTier && ['high', 'balanced', 'lite'].includes(storedTier) ? storedTier : null;
-    let tier = validStoredTier || ((reducedMotion || !webgl) ? 'lite' : 'high');
+    // Always start with the complete landing composition. A slow sample from a
+    // previous visit must never silently remove effects on the next page load.
+    try {
+        sessionStorage.removeItem('cors:quality-mode');
+    } catch (_) {}
+    let tier = 'high';
 
     const profiles = {
         high: { particleCount: 95, threePixelRatio: 1.8, frameInterval: 0, effectIntensity: 1 },
-        balanced: { particleCount: 48, threePixelRatio: 1.15, frameInterval: 24, effectIntensity: 0.72 },
-        lite: { particleCount: 18, threePixelRatio: 0.78, frameInterval: 50, effectIntensity: 0.48 }
+        balanced: { particleCount: 68, threePixelRatio: 1.3, frameInterval: 16, effectIntensity: 0.82 },
+        lite: { particleCount: 42, threePixelRatio: 1, frameInterval: 24, effectIntensity: 0.68 }
     };
     const tierRank = { lite: 0, balanced: 1, high: 2 };
-    let maxTier = tier;
+    const maxTier = 'high';
     const settings = {
         tier,
-        reducedMotion,
+        reducedMotion: false,
+        prefersReducedMotion,
         webgl,
         fps: 60,
         ...profiles[tier]
@@ -42,12 +46,6 @@
         Object.assign(settings, profiles[nextTier], { tier: nextTier });
         document.documentElement.dataset.quality = nextTier;
         document.documentElement.style.setProperty('--effect-intensity', String(settings.effectIntensity));
-        if (reason === 'low-fps' || reason === 'manual') {
-            maxTier = nextTier;
-            try {
-                sessionStorage.setItem('cors:quality-mode', nextTier);
-            } catch (_) {}
-        }
         if (changed) {
             window.dispatchEvent(new CustomEvent('cors:qualitychange', {
                 detail: { tier: nextTier, reason, fps: settings.fps }
@@ -55,16 +53,17 @@
         }
     }
 
-    applyTier(tier, 'hardware');
-    document.documentElement.classList.toggle('reduced-motion', reducedMotion);
+    applyTier(tier, 'initial-high');
+    document.documentElement.classList.remove('reduced-motion');
 
     const lagBannerState = {
         element: null,
-        lastShownAt: 0
+        lastShownAt: 0,
+        dismissed: false
     };
 
     function showLagBanner(fps, nextTier, reason = 'low-fps') {
-        if (document.hidden) return;
+        if (document.hidden || lagBannerState.dismissed || lagBannerState.element) return;
         const now = Date.now();
         if (now - lagBannerState.lastShownAt < 20000) return;
         lagBannerState.lastShownAt = now;
@@ -95,12 +94,12 @@
                 <div style="flex:1 1 auto; min-width:0;">
                     <div style="font-weight:800; font-size:0.98rem; margin-bottom:4px;">Thiết bị đang hơi lag</div>
                     <div style="font-size:0.9rem; color:#b5c7d8; line-height:1.45;">
-                        FPS trung bình ${fps}. Hệ thống đã tự hạ chất lượng sang ${nextTier.toUpperCase()} để giữ mượt hơn.
-                        Bạn có thể tải lại trang để áp dụng sạch hơn.
+                        FPS trung bình ${fps}. Bạn có muốn giảm mật độ hiệu ứng xuống ${nextTier.toUpperCase()} để thao tác mượt hơn không?
+                        Bố cục và toàn bộ loại hiệu ứng vẫn được giữ nguyên.
                     </div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
-                        <button type="button" data-action="reload" style="min-height:36px; padding:8px 12px; border:0; border-radius:999px; background:#38bdf8; color:#00111f; font-weight:800;">Tải lại trang</button>
-                        <button type="button" data-action="dismiss" style="min-height:36px; padding:8px 12px; border:1px solid rgba(148,163,184,0.35); border-radius:999px; background:transparent; color:#e2f3ff; font-weight:700;">Đóng</button>
+                        <button type="button" data-action="reduce" style="min-height:36px; padding:8px 12px; border:0; border-radius:999px; background:#38bdf8; color:#00111f; font-weight:800;">Giảm nhẹ hiệu ứng</button>
+                        <button type="button" data-action="keep" style="min-height:36px; padding:8px 12px; border:1px solid rgba(148,163,184,0.35); border-radius:999px; background:transparent; color:#e2f3ff; font-weight:700;">Giữ chất lượng tối đa</button>
                     </div>
                 </div>
             </div>
@@ -113,12 +112,15 @@
         banner.addEventListener('click', (event) => {
             const action = event.target?.closest?.('[data-action]')?.dataset?.action;
             if (!action) return;
-            if (action === 'reload') {
-                sessionStorage.setItem('cors:quality-mode', nextTier);
-                window.location.reload();
+            if (action === 'reduce') {
+                applyTier(nextTier, 'manual');
+                dismiss();
                 return;
             }
-            if (action === 'dismiss') dismiss();
+            if (action === 'keep') {
+                lagBannerState.dismissed = true;
+                dismiss();
+            }
         });
 
         document.body.appendChild(banner);
@@ -164,7 +166,6 @@
             const canChange = now - lastChangeAt >= 12000;
             if (canChange && fps < 38) {
                 const nextTier = settings.tier === 'high' ? 'balanced' : 'lite';
-                applyTier(nextTier, 'low-fps');
                 showLagBanner(fps, nextTier, 'low-fps');
                 lastChangeAt = now;
                 strongWindows = 0;
