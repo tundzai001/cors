@@ -23,6 +23,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 
 ACTIVE_WORKERS = {}
 WORKER_MAP_LOCK = threading.RLock()
+# Avoid a startup/reconnect storm when many stations use the same NTRIP caster.
+# Healthy connections only hold this gate for the TCP handshake (normally a few
+# milliseconds); a slow caster can no longer make every worker retry together.
+SOURCE_CONNECT_LIMIT = threading.BoundedSemaphore(3)
 
 if os.name == 'nt':
     try:
@@ -1583,6 +1587,14 @@ class RelayWorker(threading.Thread):
     def _target_pass(self):
         return self.cfg.get('target_pass', TARGET_PASS)
 
+    def _source_retry_delay(self):
+        self._source_failure_count += 1
+        configured = max(2, int(RECONNECT_INTERVAL))
+        backoff = min(60, max(configured, 2 ** min(self._source_failure_count, 6)))
+        # Stable per-station jitter prevents all workers waking on the same tick.
+        jitter = hashlib.sha256(self.serial.encode("utf-8")).digest()[0] % 4
+        return backoff + jitter
+
     def _keep_target_connected(self):
         return bool(self.cfg.get("keep_target_connected", False))
 
@@ -1767,7 +1779,10 @@ class RelayWorker(threading.Thread):
                 target_pass = self._target_pass()
                 # === LUÔN KẾT NỐI SOURCE VÀ LẤY DATA (Kể cả khi bị OFF trên web) ===
                 self.log("INFO", f"Connecting SOURCE: {source_host}:{source_port}/{self.cfg['source_mp']}")
-                source_sock = socket.create_connection((source_host, source_port), timeout=10)
+                with SOURCE_CONNECT_LIMIT:
+                    if self.stop_event.is_set():
+                        break
+                    source_sock = socket.create_connection((source_host, source_port), timeout=10)
                 enable_tcp_keepalive(source_sock)
                 with self.socket_lock:
                     self._source_sock = source_sock
@@ -1941,11 +1956,7 @@ class RelayWorker(threading.Thread):
                         self.publish_status()
                 
                 if self._last_disconnect_reason.startswith("source_"):
-                    self._source_failure_count += 1
-                    reconnect_wait = min(
-                        max(2, int(RECONNECT_INTERVAL)),
-                        2 ** min(self._source_failure_count, 6),
-                    )
+                    reconnect_wait = self._source_retry_delay()
                 else:
                     reconnect_wait = RECONNECT_INTERVAL
                 self.log("INFO", f"Source loop ended, reconnecting in {reconnect_wait}s...")
@@ -1954,7 +1965,9 @@ class RelayWorker(threading.Thread):
                 
             except Exception as e:
                 self.log("WARNING", f"Connection error: {e}")
-                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                reconnect_wait = self._source_retry_delay()
+                self.log("INFO", f"Source connection retry scheduled in {reconnect_wait}s")
+                self.wakeup_event.wait(reconnect_wait)
                 self.wakeup_event.clear()
                 
             finally:

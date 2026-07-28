@@ -13,10 +13,10 @@ let globalState = {
     stateVersion: 0
 };
 window.globalState = globalState;
-const PUBLIC_ROUTES = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
+const MAIN_PUBLIC_ROUTES = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
 
-function isPublicRoute(pathname = window.location.pathname) {
-    return PUBLIC_ROUTES.some(route => route === '/' ? pathname === '/' : pathname.startsWith(route));
+function isMainPublicRoute(pathname = window.location.pathname) {
+    return MAIN_PUBLIC_ROUTES.some(route => route === '/' ? pathname === '/' : pathname.startsWith(route));
 }
 
 function softGoHome() {
@@ -1555,7 +1555,7 @@ async function loadCurrentUser() {
             throw new Error('Failed to load user info');
         }
     } catch (error) {
-        if (isPublicRoute()) return;
+        if (isMainPublicRoute()) return;
         localStorage.removeItem('access_token');
         sessionStorage.removeItem('access_token');
         softGoHome();
