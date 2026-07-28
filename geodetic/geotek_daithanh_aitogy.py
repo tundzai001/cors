@@ -2240,6 +2240,16 @@ class MqttSourceWorker(threading.Thread):
         stream_allowed = (not cfg["on_demand"]) or cfg["active"]
         return cfg["enabled"] and stream_allowed and bool(cfg["host"] and cfg["port"] and cfg["password"] and cfg["mountpoint"])
 
+    def _has_active_client(self):
+        return bool(self._target_socks)
+
+    def _derive_status(self, mqtt_data_active):
+        if not self._has_active_client():
+            return "sleep"
+        if not mqtt_data_active or self.current_mqtt_bps <= 0:
+            return "offline"
+        return "online"
+
     def publish_status(self):
         now = time.time()
         mqtt_data_age = None if self.last_mqtt_data_ts <= 0 else int(now - self.last_mqtt_data_ts)
@@ -2316,7 +2326,7 @@ class MqttSourceWorker(threading.Thread):
             "serial": self.serial,
             "rtcm_stats": globals().get("rtcm_signal_decoder").get_stats(self.serial) if globals().get("rtcm_signal_decoder") else {},
             "name": self.name,
-            "status": "online" if self.is_connected else ("sleep" if mqtt_data_active else "offline"),
+            "status": status_value,
             "version": RELAY_VERSION,
             "agent_token_fingerprint": get_license_fingerprint(self.serial),
             "timestamp": round(time.time(), 3),
@@ -2361,6 +2371,7 @@ class MqttSourceWorker(threading.Thread):
             "is_provisioned": has_license(self.serial),
             "config_status": getattr(self, "config_status", None)
         }
+        status_value = "sleep" if not target_enabled else self._derive_status(mqtt_data_active)
         try:
             if self.mqtt_status_client and self.mqtt_status_client.is_connected():
                 self.mqtt_status_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
@@ -2901,8 +2912,9 @@ class MqttSourceWorker(threading.Thread):
                     # Check offline status
                     mqtt_data_age = None if self.last_mqtt_data_ts <= 0 else int(now - self.last_mqtt_data_ts)
                     mqtt_data_active = mqtt_data_age is not None and mqtt_data_age <= self.data_timeout
+                    has_active_client = self._has_active_client()
                     
-                    if not mqtt_data_active:
+                    if has_active_client and not mqtt_data_active:
                         if not self.was_offline:
                             self.was_offline = True
                             if self.last_mqtt_data_ts > 0:
@@ -2916,6 +2928,10 @@ class MqttSourceWorker(threading.Thread):
                                     self.log_offline_event(f"{self.name} ({self.serial}) went OFFLINE (No MQTT data received since startup)")
                                 else:
                                     self.was_offline = False
+                    elif not has_active_client:
+                        if self.was_offline:
+                            self.was_offline = False
+                            self.offline_start_time = None
 
                     if now - self.last_stat_update >= 5.0:
                         elapsed = now - self.last_stat_update

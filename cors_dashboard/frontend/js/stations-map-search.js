@@ -199,7 +199,7 @@
     }
 
     function drawResult({ map, nearestRef, origin, label, nearestAvailable, nearestOffline }) {
-        const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
+        const L = window.CorsDashboardShared?.getLeaflet?.();
         if (!L || !map) return;
 
         clearOverlay(map, nearestRef);
@@ -250,7 +250,7 @@
             effectiveStatus,
             getPreferredServer
         } = options || {};
-        const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
+        const L = window.CorsDashboardShared?.getLeaflet?.();
         if (!L || !map) return null;
 
         const stationItems = buildStationItems(devices, getCoords, effectiveStatus, getPreferredServer);

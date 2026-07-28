@@ -534,3 +534,482 @@ body.landing-view-active #homepage-root {
         transform: none !important;
     }
 }
+
+/* ==========================================================================
+   Mobile fluid authority
+   Source-only responsive guardrails for all public frontend views.
+   ========================================================================== */
+
+:root {
+    --app-tap-size: 44px;
+    --app-radius: 8px;
+    --app-safe-top: env(safe-area-inset-top, 0px);
+    --app-safe-right: env(safe-area-inset-right, 0px);
+    --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --app-safe-left: env(safe-area-inset-left, 0px);
+    --app-page-gutter: clamp(14px, 4vw, 28px);
+}
+
+html,
+body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+@supports not (overflow: clip) {
+    html,
+    body {
+        overflow-x: hidden;
+    }
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body > main,
+main.container-fluid,
+.container,
+.container-fluid,
+.row,
+[class*="col-"],
+.card,
+.modal-content,
+.tab-content,
+.table-responsive {
+    min-width: 0;
+}
+
+img,
+video,
+svg {
+    max-width: 100%;
+    height: auto;
+}
+
+pre,
+code,
+.font-monospace,
+.text-monospace {
+    overflow-wrap: anywhere;
+}
+
+:is(a, button, input, select, textarea, label, [role="button"]) {
+    touch-action: manipulation;
+}
+
+:is(.btn, button, .nav-link, .form-control, .form-select, .form-check-input) {
+    min-height: var(--app-tap-size);
+}
+
+.btn-sm,
+.btn-group-sm > .btn {
+    min-height: 38px;
+}
+
+@media (max-width: 767.98px) {
+    body {
+        min-width: 0;
+    }
+
+    input,
+    select,
+    textarea,
+    .form-control,
+    .form-select {
+        font-size: 16px !important;
+    }
+
+    .modal-dialog {
+        max-width: calc(100vw - 16px - var(--app-safe-left) - var(--app-safe-right));
+        margin: calc(8px + var(--app-safe-top)) auto calc(8px + var(--app-safe-bottom));
+    }
+
+    .modal-content {
+        max-height: calc(100dvh - 16px - var(--app-safe-top) - var(--app-safe-bottom));
+        overflow: hidden;
+    }
+
+    .modal-body {
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    .toast-container {
+        inset: calc(8px + var(--app-safe-top)) var(--app-page-gutter) auto var(--app-page-gutter) !important;
+        width: auto;
+        max-width: none;
+        padding: 0 !important;
+    }
+
+    .global-error-reporter {
+        left: var(--app-page-gutter) !important;
+        right: var(--app-page-gutter) !important;
+        width: auto !important;
+        max-width: none !important;
+        transform: none !important;
+    }
+}
+
+/* Landing must stay centered on ultrawide displays and collapse cleanly on touch. */
+.enterprise-homepage {
+    --landing-gutter: clamp(16px, 3vw, 44px);
+    --landing-max: 1360px;
+    isolation: isolate;
+}
+
+@media (min-width: 1800px) {
+    .enterprise-homepage {
+        --landing-max: 1440px;
+    }
+}
+
+.enterprise-homepage .container,
+.enterprise-homepage .hero-section .container {
+    width: min(calc(100% - var(--landing-gutter) * 2), var(--landing-max));
+    max-width: var(--landing-max) !important;
+    padding-inline: 0;
+}
+
+.enterprise-homepage .landing-navbar {
+    padding-left: max(var(--landing-gutter), calc((100vw - var(--landing-max)) / 2));
+    padding-right: max(var(--landing-gutter), calc((100vw - var(--landing-max)) / 2));
+}
+
+.enterprise-homepage .hero-section {
+    overflow: clip;
+}
+
+.enterprise-homepage .landing-bg,
+.enterprise-homepage .noise-overlay,
+.enterprise-homepage .hero-three-scene,
+.enterprise-homepage .scroll-progress-wrap {
+    max-width: 100%;
+}
+
+.enterprise-homepage .noise-overlay {
+    inset: 0;
+    width: auto;
+    height: auto;
+}
+
+.enterprise-homepage .scroll-progress-wrap {
+    height: 100dvh;
+}
+
+.enterprise-homepage .hero-section .container {
+    position: relative;
+    z-index: 4;
+}
+
+.enterprise-homepage .hero-title {
+    max-width: min(760px, 100%);
+}
+
+.enterprise-homepage .hero-subtitle {
+    max-width: min(680px, 100%);
+}
+
+.enterprise-homepage .hero-map-wrapper {
+    right: max(var(--landing-gutter), calc((100vw - var(--landing-max)) / 2 + 28px));
+    width: clamp(300px, 26vw, 470px);
+    max-width: calc(100vw - var(--landing-gutter) * 2);
+}
+
+.enterprise-homepage :is(
+    .landing-stats,
+    .network-map-section,
+    .landing-features,
+    .why-choose-section,
+    .hiw-section,
+    .livedata-section,
+    .support-tech-section,
+    .cta-section,
+    .station-directory-section,
+    .landing-footer
+) {
+    /* ScrollTrigger must be able to measure the real section geometry. */
+    contain: none !important;
+    content-visibility: visible !important;
+}
+
+@media (max-width: 991.98px) {
+    .enterprise-homepage {
+        --landing-max: 900px;
+    }
+
+    .enterprise-homepage .hero-section {
+        min-height: max(680px, 100svh);
+    }
+
+    .enterprise-homepage .hero-title,
+    .enterprise-homepage .hero-subtitle {
+        margin-inline: auto;
+    }
+
+    .enterprise-homepage .hero-actions {
+        flex-wrap: wrap;
+        width: min(100%, 520px);
+        margin-inline: auto;
+    }
+
+    .enterprise-homepage .network-map-section .row,
+    .enterprise-homepage .livedata-section .row,
+    .enterprise-homepage .support-tech-section .row,
+    .enterprise-homepage .landing-footer .row {
+        --bs-gutter-x: 1rem;
+        --bs-gutter-y: 1rem;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .enterprise-homepage {
+        --landing-gutter: 16px;
+        --landing-max: 100%;
+    }
+
+    body.landing-view-active > main.container-fluid {
+        padding: 0 !important;
+    }
+
+    .enterprise-homepage .container,
+    .enterprise-homepage .hero-section .container {
+        width: 100%;
+        max-width: 100% !important;
+        padding-inline: calc(16px + var(--app-safe-left)) calc(16px + var(--app-safe-right));
+    }
+
+    .enterprise-homepage .landing-navbar {
+        left: 0;
+        right: 0;
+        width: 100%;
+        padding-left: calc(12px + var(--app-safe-left));
+        padding-right: calc(12px + var(--app-safe-right));
+    }
+
+    .enterprise-homepage .hero-section {
+        min-height: max(620px, 100svh) !important;
+        display: flex;
+        align-items: center;
+        padding-top: calc(88px + var(--app-safe-top)) !important;
+        padding-bottom: calc(52px + var(--app-safe-bottom)) !important;
+    }
+
+    .enterprise-homepage .satellite-beams-svg {
+        opacity: 0.42;
+    }
+
+    .enterprise-homepage .landing-orb {
+        opacity: 0.28;
+        filter: blur(54px);
+        animation-duration: 18s !important;
+    }
+
+    .enterprise-homepage .landing-orb-3 {
+        opacity: 0.16;
+    }
+
+    .enterprise-homepage .hero-title {
+        font-size: clamp(2rem, 10vw, 3rem) !important;
+        letter-spacing: 0 !important;
+        overflow-wrap: anywhere;
+    }
+
+    .enterprise-homepage .hero-subtitle {
+        font-size: clamp(0.95rem, 3.8vw, 1.08rem) !important;
+        line-height: 1.62;
+    }
+
+    .enterprise-homepage .hero-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .enterprise-homepage .hero-actions :is(.btn-enterprise, .btn-outline-cyan),
+    .enterprise-homepage .cta-actions :is(.btn-enterprise, .btn-outline-cyan) {
+        min-width: 0;
+        width: 100%;
+        min-height: 50px;
+        justify-content: center;
+        text-align: center;
+        white-space: normal;
+    }
+
+    .enterprise-homepage .network-map-section .col-lg-5,
+    .enterprise-homepage .network-map-section .col-lg-7 {
+        width: 100%;
+    }
+
+    .enterprise-homepage .network-map-section .col-lg-7 {
+        min-height: clamp(330px, 62svh, 470px);
+        overflow: hidden;
+    }
+
+    .enterprise-homepage .station-info-card {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .enterprise-homepage .station-info-card :is(strong, span) {
+        overflow-wrap: anywhere;
+    }
+
+    .enterprise-homepage .landing-feature-card-wrapper {
+        height: auto !important;
+        min-height: 280px;
+    }
+
+    .enterprise-homepage .landing-feature-card-inner {
+        min-height: 280px;
+    }
+
+    .enterprise-homepage .support-tech-marquee {
+        overflow: hidden;
+    }
+
+    .enterprise-homepage .support-tech-track {
+        animation-duration: 34s !important;
+    }
+
+    .enterprise-homepage .station-directory-grid {
+        margin-inline: 0;
+        max-height: min(50svh, 420px) !important;
+        padding-right: 2px;
+    }
+
+    .enterprise-homepage .station-directory-grid > [class*="col-"] {
+        padding-inline: 4px;
+    }
+
+    .enterprise-homepage .station-dir-name,
+    .enterprise-homepage .landing-footer-link,
+    .enterprise-homepage .cta-contact-link span {
+        overflow-wrap: anywhere;
+        min-width: 0;
+    }
+
+    .enterprise-homepage .login-panel {
+        width: min(100%, 430px);
+        border-radius: 8px;
+    }
+}
+
+@media (max-width: 380px) {
+    .enterprise-homepage .landing-nav-brand {
+        flex: 1 1 auto;
+    }
+
+    .enterprise-homepage .btn-login-nav {
+        max-width: 42vw;
+        padding-inline: 10px;
+    }
+
+    .enterprise-homepage .hero-badge {
+        font-size: 0.62rem;
+    }
+
+    .enterprise-homepage .landing-stats .col-6,
+    .enterprise-homepage .station-directory-grid > [class*="col-"] {
+        width: 100%;
+    }
+}
+
+@media (max-width: 767.98px) and (prefers-reduced-motion: no-preference) {
+    .enterprise-homepage .map-scan-ring,
+    .enterprise-homepage .data-pulse-ring {
+        animation-duration: 6s !important;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .enterprise-homepage .station-heartbeat {
+        animation-duration: 3.2s !important;
+    }
+
+    .enterprise-homepage .support-tech-scan {
+        animation-duration: 10s !important;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .enterprise-homepage :is(
+        .map-scan-ring,
+        .data-pulse-ring,
+        .station-heartbeat,
+        .livedata-bar,
+        .support-tech-scan,
+        .scroll-indicator
+    ) {
+        animation: none !important;
+    }
+}
+
+/* Keep the signature hero -> network Vietnam-map transition on touch devices.
+   The map is smaller and sits behind hero copy, while expensive 3D/particles
+   remain controlled by the runtime quality tier. */
+@media (max-width: 991.98px) and (prefers-reduced-motion: no-preference) {
+    .enterprise-homepage .hero-map-wrapper {
+        display: block !important;
+        top: 38vh;
+        right: 2vw;
+        width: clamp(220px, 36vw, 330px);
+        max-width: 42vw;
+        z-index: 2;
+    }
+
+    .enterprise-homepage .network-mobile-map {
+        display: none !important;
+    }
+
+    .enterprise-homepage .flying-flag {
+        display: inline-flex !important;
+        scale: 0.86;
+    }
+
+    .enterprise-homepage .flying-satellite {
+        display: block !important;
+    }
+}
+
+@media (max-width: 767.98px) and (prefers-reduced-motion: no-preference) {
+    .enterprise-homepage .hero-map-wrapper {
+        top: 23vh;
+        right: -10vw;
+        width: min(58vw, 270px);
+        max-width: 58vw;
+    }
+
+    .enterprise-homepage .flying-flag {
+        right: 2vw;
+        top: 16vh;
+        scale: 0.72;
+    }
+
+    .enterprise-homepage .hero-map-wrapper .vietnam-map-bg,
+    .enterprise-homepage .satellite-orbit-ring,
+    .enterprise-homepage .map-radar-sweep,
+    .enterprise-homepage .map-connection-lines,
+    .enterprise-homepage .scroll-progress-wrap,
+    .enterprise-homepage .hero-three-scene {
+        display: block !important;
+    }
+
+    .enterprise-homepage .scroll-indicator {
+        display: flex !important;
+    }
+
+    .enterprise-homepage .hiw-timeline::before {
+        display: block !important;
+    }
+
+    .enterprise-homepage .satellite-orbit-ring,
+    .enterprise-homepage .map-radar-sweep,
+    .enterprise-homepage .map-connection-lines {
+        opacity: calc(0.3 + var(--effect-intensity, 0.72) * 0.4);
+    }
+}

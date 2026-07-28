@@ -731,34 +731,18 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
             }).addTo(map);
 
-            let canUseMarkerCluster = typeof leaflet.markerClusterGroup === 'function' &&
-                typeof leaflet.MarkerClusterGroup === 'function' &&
-                leaflet.MarkerClusterGroup.prototype;
-            if (canUseMarkerCluster && typeof Reflect !== 'undefined') {
-                try {
-                    Reflect.construct(function () {}, [], leaflet.MarkerClusterGroup);
-                } catch (error) {
-                    canUseMarkerCluster = false;
-                }
-            }
-
-            if (canUseMarkerCluster) {
-                try {
-                    roverClusterRef.current = leaflet.markerClusterGroup({
-                        chunkedLoading: true,
-                        chunkInterval: 40,
-                        chunkDelay: 40,
-                        removeOutsideVisibleBounds: true,
-                        showCoverageOnHover: false,
-                        spiderfyOnMaxZoom: false,
-                        maxClusterRadius: 45,
-                        disableClusteringAtZoom: 14
-                    });
-                    map.addLayer(roverClusterRef.current);
-                } catch (error) {
-                    console.info('Leaflet marker cluster unavailable, using plain rover markers.');
-                    roverClusterRef.current = null;
-                }
+            roverClusterRef.current = window.CorsDashboardShared?.createMarkerClusterGroup?.({
+                chunkedLoading: true,
+                chunkInterval: 40,
+                chunkDelay: 40,
+                removeOutsideVisibleBounds: true,
+                showCoverageOnHover: false,
+                spiderfyOnMaxZoom: false,
+                maxClusterRadius: 45,
+                disableClusteringAtZoom: 14
+            }) || leaflet.layerGroup();
+            if (roverClusterRef.current) {
+                map.addLayer(roverClusterRef.current);
             }
 
             const handleViewportChanged = () => {

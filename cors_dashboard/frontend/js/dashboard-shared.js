@@ -9,6 +9,24 @@ function getLeaflet() {
     return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
 }
 
+function createMarkerClusterGroup(options = {}) {
+    const leaflet = getLeaflet();
+    if (!leaflet) return null;
+
+    try {
+        if (typeof leaflet.MarkerClusterGroup === 'function') {
+            return new leaflet.MarkerClusterGroup(options);
+        }
+        if (typeof leaflet.markerClusterGroup === 'function') {
+            return leaflet.markerClusterGroup(options);
+        }
+    } catch (error) {
+        console.warn('MarkerCluster plugin is invalid; using a standard Leaflet layer group.');
+    }
+
+    return typeof leaflet.layerGroup === 'function' ? leaflet.layerGroup() : null;
+}
+
 const STATUS_TEXT_MAP = {
     'online': 'ONLINE',
     'offline': 'OFFLINE',
@@ -138,5 +156,5 @@ const getMapEffectiveStatus = (device) => {
     }
     return (!onDemand || active) ? 'online' : 'sleep';
 };
-window.CorsDashboardShared = { getLeaflet, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getMapEffectiveStatus };
+window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getMapEffectiveStatus };
 })();

@@ -630,11 +630,14 @@ class ZaloBotService:
         self._webhook_setup_task = asyncio.create_task(self._delayed_set_webhook())
         logger.info("Zalo webhook runtime is ready.")
 
-    async def start(self):
+    async def start(self, *, strict: bool = False) -> bool:
         try:
             if not ZALO_AVAILABLE or not settings.ENABLE_ZALO_BOT or not settings.ZALO_BOT_TOKEN:
-                logger.warning("Zalo Bot is disabled or missing requirements/token.")
-                return
+                message = "Zalo Bot is disabled or missing requirements/token."
+                logger.warning(message)
+                if strict:
+                    raise RuntimeError(message)
+                return False
 
             self._load_chats()
             # The database is now the only authorization source.  Keeping the
@@ -655,8 +658,13 @@ class ZaloBotService:
                 self._task = asyncio.create_task(self._error_check_loop())
                 
             logger.info("Zalo Bot Service started successfully.")
+            return True
         except Exception as e:
             logger.error(f"FATAL ZALO BOT ERROR: {e}", exc_info=True)
+            await self.stop()
+            if strict:
+                raise RuntimeError(f"Zalo Bot failed to start: {e}") from e
+            return False
 
     async def process_webhook_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         trace_id = uuid.uuid4().hex[:12]
@@ -838,17 +846,18 @@ class ZaloBotService:
             self._active_trace_id.reset(context_token)
 
     async def stop(self):
-        if self.app:
+        owned_tasks = [
+            task for task in (self._task, self._polling_task, self._webhook_setup_task)
+            if task
+        ]
+        if self.app or owned_tasks:
             logger.info("Stopping Zalo Bot Service...")
-            owned_tasks = [
-                task for task in (self._task, self._polling_task, self._webhook_setup_task)
-                if task
-            ]
             for task in owned_tasks:
                 task.cancel()
             if owned_tasks:
                 await asyncio.gather(*owned_tasks, return_exceptions=True)
-            try:
+        try:
+            if self.app:
                 if hasattr(self.app, 'stop'):
                     if asyncio.iscoroutinefunction(self.app.stop):
                         await self.app.stop()
@@ -858,8 +867,14 @@ class ZaloBotService:
                     await self._maybe_await(self.app.shutdown())
                 elif self._bot_mode() == "webhook" and getattr(self.app, "bot", None):
                     await self.app.bot.shutdown()
-            except Exception as e:
-                logger.error(f"Error stopping Zalo Bot: {e}")
+        except Exception as e:
+            logger.error(f"Error stopping Zalo Bot: {e}")
+        finally:
+            self._task = None
+            self._polling_task = None
+            self._webhook_setup_task = None
+            self.dispatcher = None
+            self.app = None
 
     def _get_chat_id(self, update: Update) -> str:
         if hasattr(update, 'effective_chat') and update.effective_chat:

@@ -38,6 +38,9 @@ const VietnamSVG = () => {
                 svgEl.setAttribute('aria-hidden', 'true');
                 svgEl.style.width = '100%';
                 svgEl.style.height = 'auto';
+                requestAnimationFrame(() => {
+                    if (typeof ScrollTrigger !== 'undefined') ScrollTrigger.refresh();
+                });
                 // GSAP Draw-on with PERIODIC REDRAW LOOP
                 const paths = svgEl.querySelectorAll('path');
                 if (typeof gsap !== 'undefined' && paths.length) {
@@ -51,7 +54,8 @@ const VietnamSVG = () => {
                     });
 
                     // Build a repeating timeline: draw → glow → hold → erase → pause → repeat
-                    mapTimeline = gsap.timeline({ repeat: -1, repeatDelay: 0.1 });
+                    const liteMap = window.CorsPerformance?.tier === 'lite';
+                    mapTimeline = gsap.timeline({ repeat: liteMap ? 0 : -1, repeatDelay: 0.1 });
 
                     // Phase 1: Draw on (2.2s)
                     mapTimeline.to(paths, {
@@ -148,7 +152,7 @@ const SatelliteField = () => {
         satellites.map((sat, idx) =>
             React.createElement('div', {
                 key: idx,
-                className: `flying-satellite ${sat.cls}`,
+                className: `flying-satellite satellite-index-${idx + 1} ${sat.cls}`,
                 style: {
                     top: sat.top,
                     left: sat.left,
@@ -179,11 +183,10 @@ const ParticleField = () => {
         let height = canvas.height = canvas.offsetHeight;
 
         const performanceSettings = window.CorsPerformance || {};
-        const particleCount = performanceSettings.particleCount ?? (window.innerWidth < 768 ? 35 : 95);
-        if (particleCount === 0) return;
-        const maxDistance = performanceSettings.tier === 'balanced' ? 115 : 140;
+        const maxParticleCount = 95;
         const particles = [];
         let active = document.visibilityState === 'visible';
+        let lastFrameAt = 0;
 
         // Mouse coordinates for interaction
         const mouse = { x: null, y: null, radius: 155 };
@@ -221,7 +224,7 @@ const ParticleField = () => {
         observer.observe(canvas);
 
         // Initialize particles
-        for (let i = 0; i < particleCount; i++) {
+        for (let i = 0; i < maxParticleCount; i++) {
             particles.push({
                 x: Math.random() * width,
                 y: Math.random() * height,
@@ -236,10 +239,22 @@ const ParticleField = () => {
                 animationFrameId = null;
                 return;
             }
+            const now = window.performance?.now?.() || Date.now();
+            const frameInterval = Number(performanceSettings.frameInterval || 0);
+            if (frameInterval && now - lastFrameAt < frameInterval) {
+                animationFrameId = requestAnimationFrame(animate);
+                return;
+            }
+            lastFrameAt = now;
             ctx.clearRect(0, 0, width, height);
+            const activeParticleCount = Math.max(
+                8,
+                Math.min(particles.length, Number(performanceSettings.particleCount || 18))
+            );
+            const maxDistance = performanceSettings.tier === 'high' ? 140 : performanceSettings.tier === 'balanced' ? 115 : 88;
 
             // Update and draw particles
-            for (let i = 0; i < particles.length; i++) {
+            for (let i = 0; i < activeParticleCount; i++) {
                 const p = particles[i];
 
                 // Mouse repel effect
@@ -290,9 +305,9 @@ const ParticleField = () => {
             }
 
             // Draw lines connecting particles
-            for (let i = 0; i < particles.length; i++) {
+            for (let i = 0; i < activeParticleCount; i++) {
                 const p1 = particles[i];
-                for (let j = i + 1; j < particles.length; j++) {
+                for (let j = i + 1; j < activeParticleCount; j++) {
                     const p2 = particles[j];
                     const dx = p1.x - p2.x;
                     const dy = p1.y - p2.y;
@@ -707,7 +722,7 @@ const HeroThreeScene = () => {
             stationLines.push(line);
         });
 
-        const particleCount = qualitySettings.tier === 'high' ? 180 : 72;
+        const particleCount = 180;
         const particlePositions = new Float32Array(particleCount * 3);
         for (let i = 0; i < particleCount; i++) {
             particlePositions[i * 3] = (Math.random() - 0.5) * 9;
@@ -742,6 +757,11 @@ const HeroThreeScene = () => {
             renderer.setSize(width, height, false);
         };
 
+        const onQualityChange = () => {
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualitySettings.threePixelRatio || 1));
+            resize();
+        };
+
         const onVisibilityChange = () => {
             visible = document.visibilityState !== 'hidden';
             if (visible && !rafId) animate();
@@ -763,6 +783,8 @@ const HeroThreeScene = () => {
             lastFrameAt = now;
 
             const elapsed = clock.getElapsedTime();
+            const visibleParticleCount = qualitySettings.tier === 'high' ? 180 : qualitySettings.tier === 'balanced' ? 72 : 28;
+            particleGeometry.setDrawRange(0, visibleParticleCount);
             if (!prefersReducedMotion) {
                 group.rotation.y = 0;
                 group.rotation.x = 0;
@@ -834,6 +856,7 @@ const HeroThreeScene = () => {
         resize();
         animate();
         window.addEventListener('resize', resize);
+        window.addEventListener('cors:qualitychange', onQualityChange);
         document.addEventListener('visibilitychange', onVisibilityChange);
         const observer = new IntersectionObserver(([entry]) => {
             sectionVisible = entry.isIntersecting;
@@ -843,6 +866,7 @@ const HeroThreeScene = () => {
 
         return () => {
             window.removeEventListener('resize', resize);
+            window.removeEventListener('cors:qualitychange', onQualityChange);
             document.removeEventListener('visibilitychange', onVisibilityChange);
             observer.disconnect();
             if (rafId) cancelAnimationFrame(rafId);
@@ -1206,7 +1230,9 @@ const useCounter = (targetStr, duration = 1600) => {
    ============================================================ */
 const useCinematicScroll = () => {
     React.useEffect(() => {
-        if (window.CorsPerformance?.tier === 'lite') return;
+        const performanceProfile = window.CorsPerformance || {};
+        if (performanceProfile.reducedMotion) return;
+        const liteMode = performanceProfile.tier === 'lite';
         if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
             console.warn('[Cinematic] GSAP not loaded');
             return;
@@ -1215,7 +1241,7 @@ const useCinematicScroll = () => {
         let lenis = null;
         let lenisTicker = null;
         try {
-            if (typeof Lenis !== 'undefined') {
+            if (!liteMode && typeof Lenis !== 'undefined') {
                 lenis = new Lenis({ duration: 1.2, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), smoothWheel: true });
                 lenis.on('scroll', ScrollTrigger.update);
                 lenisTicker = (time) => lenis.raf(time * 1000);
@@ -1249,6 +1275,7 @@ const useCinematicScroll = () => {
                 y: -24, opacity: 0.42, ease: 'none'
             });
             if (mapWrapper) {
+                const compactMap = window.innerWidth <= 991;
                 const getMapTarget = (axis) => {
                     const slot = document.querySelector('.network-map-slot');
                     if (!slot || !mapWrapper) return 0;
@@ -1262,7 +1289,7 @@ const useCinematicScroll = () => {
                 };
 
                 gsap.fromTo(mapWrapper,
-                    { x: 0, y: 0, scale: 1, opacity: 1 },
+                    { x: 0, y: 0, scale: 1, opacity: compactMap ? 0.42 : 1 },
                     {
                         scrollTrigger: { 
                             trigger: '.hero-section', 
@@ -1275,7 +1302,7 @@ const useCinematicScroll = () => {
                         x: () => getMapTarget('x'),
                         y: () => getMapTarget('y'),
                         scale: 0.78,
-                        opacity: 0.96,
+                        opacity: compactMap ? 0.92 : 0.96,
                         ease: 'power1.inOut',
                         immediateRender: false
                     }

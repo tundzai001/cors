@@ -10,6 +10,7 @@
         otpExpiresAt: 0, otpDurationMs: OTP_INTERVAL_MS,
         currentCode: '', currentUser: null,
         groupOtpExpiresAt: 0, groupOtpTimer: null,
+        system: { enabled: false, running: false, available: false, loading: false },
     };
 
     const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, ch => ({
@@ -53,10 +54,142 @@
     function applyRoleLayout() {
         document.getElementById('group-stat-column').classList.toggle('d-none', !state.isAdmin);
         document.getElementById('group-otp-section').classList.toggle('d-none', !state.isAdmin);
+        document.getElementById('zalo-system-section').classList.toggle('d-none', !state.isAdmin);
         document.querySelectorAll('.zalo-stat-column').forEach(column => {
             column.classList.toggle('col-md-3', state.isAdmin);
             column.classList.toggle('col-md-4', !state.isAdmin);
         });
+    }
+
+    function syncSystemControls() {
+        const section = document.getElementById('zalo-system-section');
+        if (!section) return;
+
+        const toggle = document.getElementById('zalo-system-toggle');
+        const badge = document.getElementById('zalo-system-badge');
+        const label = section.querySelector('.zalo-system-switch .form-check-label');
+        const note = document.getElementById('zalo-system-note');
+        const description = document.getElementById('zalo-system-description');
+        const refreshBtn = document.getElementById('zalo-system-refresh');
+        const otpToggle = document.getElementById('otp-toggle-btn');
+        const otpCopy = document.getElementById('copy-link-cmd');
+        const groupGenerate = document.getElementById('generate-group-otp');
+        const groupCopy = document.getElementById('copy-group-otp');
+
+        const enabled = Boolean(state.system.enabled);
+        const running = Boolean(state.system.running);
+        const available = Boolean(state.system.available);
+        const tokenConfigured = Boolean(state.system.token_configured);
+        const sdkAvailable = Boolean(state.system.sdk_available);
+
+        if (toggle) {
+            toggle.checked = enabled;
+            toggle.disabled = state.system.loading || (!available && !enabled);
+        }
+
+        if (badge) {
+            badge.className = 'badge';
+            if (!available) {
+                badge.classList.add('bg-warning', 'text-dark');
+                badge.textContent = 'Thiếu token';
+            } else if (enabled && running) {
+                badge.classList.add('bg-success');
+                badge.textContent = 'Đang chạy';
+            } else if (enabled) {
+                badge.classList.add('bg-info', 'text-dark');
+                badge.textContent = 'Đã bật';
+            } else {
+                badge.classList.add('bg-secondary');
+                badge.textContent = 'Đã tắt';
+            }
+        }
+
+        if (label) {
+            label.textContent = enabled ? 'Hệ thống đang bật' : 'Hệ thống đang tắt';
+        }
+
+        if (description) {
+            if (available) {
+                description.textContent = `Trạng thái được lưu trực tiếp vào ${state.system.env_file || '.env'} và áp dụng ngay cho runtime.`;
+            } else if (!sdkAvailable) {
+                description.textContent = 'Thiếu Zalo SDK trong môi trường hiện tại nên không thể bật bot.';
+            } else if (!tokenConfigured) {
+                description.textContent = 'Thiếu ZALO_BOT_TOKEN trong .env nên không thể bật bot.';
+            } else {
+                description.textContent = 'Bot chưa sẵn sàng để bật.';
+            }
+        }
+
+        if (note) {
+            note.textContent = enabled
+                ? 'Khi tắt, webhook / polling và các lệnh bot sẽ dừng; khi bật, bot khởi động lại ngay nếu token hợp lệ.'
+                : 'Bot đang tắt. Các lệnh Zalo, OTP và webhook sẽ không hoạt động cho đến khi bật lại.';
+        }
+
+        if (refreshBtn) refreshBtn.disabled = state.system.loading;
+        if (otpToggle) otpToggle.disabled = !enabled;
+        if (otpCopy) otpCopy.disabled = !enabled;
+        if (groupGenerate) groupGenerate.disabled = !enabled || !state.isAdmin;
+        if (groupCopy) groupCopy.disabled = !enabled;
+
+        const otpStatus = document.getElementById('otp-status-text');
+        if (otpStatus && !state.otpStreaming) {
+            otpStatus.textContent = enabled ? 'Sẵn sàng' : 'Hệ thống đã tắt';
+        }
+    }
+
+    async function loadSystemState() {
+        if (!state.isAdmin) return;
+        state.system.loading = true;
+        syncSystemControls();
+        try {
+            const data = await apiJson(window.ApiRoutes.admin.zaloSystem);
+            state.system.enabled = Boolean(data.enabled);
+            state.system.running = Boolean(data.running);
+            state.system.available = Boolean(data.available);
+            state.system.token_configured = Boolean(data.token_configured);
+            state.system.sdk_available = Boolean(data.sdk_available);
+            state.system.env_file = data.env_file || '.env';
+        } catch (error) {
+            window.CorsUI?.showToast?.('danger', `Không tải được trạng thái Zalo Bot: ${error.message}`);
+        } finally {
+            state.system.loading = false;
+            syncSystemControls();
+        }
+    }
+
+    async function setSystemEnabled(enabled) {
+        if (!state.isAdmin || state.system.loading) return;
+        const nextValue = Boolean(enabled);
+        const previous = { ...state.system };
+        state.system.loading = true;
+        syncSystemControls();
+        try {
+            const data = await apiJson(window.ApiRoutes.admin.zaloSystem, {
+                method: 'PATCH',
+                body: JSON.stringify({ enabled: nextValue })
+            });
+            state.system.enabled = Boolean(data.enabled);
+            state.system.running = Boolean(data.running);
+            state.system.available = Boolean(data.available);
+            state.system.token_configured = Boolean(data.token_configured);
+            state.system.sdk_available = Boolean(data.sdk_available);
+            state.system.env_file = data.env_file || '.env';
+            if (state.system.enabled) {
+                if (!state.otpStreaming) startOtpStream();
+                await loadBindings({ silent: true });
+                window.CorsUI?.showToast?.('success', 'Đã bật Zalo Bot và cập nhật .env.');
+            } else {
+                stopOtpStream();
+                window.CorsUI?.showToast?.('success', 'Đã tắt Zalo Bot và cập nhật .env.');
+            }
+        } catch (error) {
+            state.system = previous;
+            window.CorsUI?.showToast?.('danger', error.message);
+        } finally {
+            state.system.loading = false;
+            syncSystemControls();
+        }
     }
 
     function renderGroupOtpStations() {
@@ -90,14 +223,14 @@
             const badgeClass = scopeBadgeClass(item);
             const actions = `<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
             return `<tr>
-                <td><span class="badge ${isGroup ? 'bg-warning text-dark' : 'bg-info text-dark'}">${isGroup ? 'Nhóm' : 'Cá nhân'}</span></td>
-                <td><strong>${escapeHtml(item.display_name || fallbackName)}</strong><div class="small text-muted font-monospace">${escapeHtml(item.chat_id)}</div></td>
-                <td><div>${escapeHtml(accountPrimary)}</div><div class="small text-muted">${escapeHtml(accountSecondary)}</div></td>
-                <td><span class="badge ${badgeClass}">${escapeHtml(scopeLabel(item))}</span></td>
-                <td>${notification.enabled ? `<span class="text-success"><i class="bi bi-bell-fill me-1"></i>${escapeHtml(notification.min_severity || 'critical')}</span>` : '<span class="text-muted"><i class="bi bi-bell-slash me-1"></i>Tắt</span>'}</td>
-                <td>${fmtTime(item.last_seen_at)}</td>
-                <td><span class="badge ${item.is_active ? 'bg-success' : 'bg-secondary'}">${item.is_active ? 'Hoạt động' : 'Đã tắt'}</span></td>
-                <td class="text-end text-nowrap">${actions}</td>
+                <td data-label="Loại"><span class="badge ${isGroup ? 'bg-warning text-dark' : 'bg-info text-dark'}">${isGroup ? 'Nhóm' : 'Cá nhân'}</span></td>
+                <td data-label="Chat"><strong>${escapeHtml(item.display_name || fallbackName)}</strong><div class="small text-muted font-monospace">${escapeHtml(item.chat_id)}</div></td>
+                <td data-label="Tài khoản"><div>${escapeHtml(accountPrimary)}</div><div class="small text-muted">${escapeHtml(accountSecondary)}</div></td>
+                <td data-label="Phạm vi"><span class="badge ${badgeClass}">${escapeHtml(scopeLabel(item))}</span></td>
+                <td data-label="Cảnh báo">${notification.enabled ? `<span class="text-success"><i class="bi bi-bell-fill me-1"></i>${escapeHtml(notification.min_severity || 'critical')}</span>` : '<span class="text-muted"><i class="bi bi-bell-slash me-1"></i>Tắt</span>'}</td>
+                <td data-label="Lần cuối">${fmtTime(item.last_seen_at)}</td>
+                <td data-label="Trạng thái"><span class="badge ${item.is_active ? 'bg-success' : 'bg-secondary'}">${item.is_active ? 'Hoạt động' : 'Đã tắt'}</span></td>
+                <td data-label="Thao tác" class="zalo-binding-actions text-end text-nowrap">${actions}</td>
             </tr>`;
         }).join('');
     }
@@ -108,10 +241,12 @@
             state.items = data.items || [];
             state.stations = data.stations || [];
             state.isAdmin = Boolean(data.is_admin);
+            state.system.enabled = Boolean(data.system_enabled);
             applyRoleLayout();
             renderGroupOtpStations();
             renderStats();
             renderBindings();
+            syncSystemControls();
         } catch (error) {
             if (!silent) document.getElementById('binding-list').innerHTML = `<tr><td colspan="8" class="text-danger p-3">${escapeHtml(error.message)}</td></tr>`;
         }
@@ -122,6 +257,10 @@
     // ═══════════════════════════════════════════════════════════
 
     async function fetchNewCode() {
+        if (!state.system.enabled) {
+            window.CorsUI?.showToast?.('warning', 'Hệ thống Zalo đang tắt.');
+            return false;
+        }
         try {
             const endpoint = state.isAdmin
                 ? window.ApiRoutes.auth.zaloLinkCode
@@ -204,6 +343,7 @@
     }
 
     function startOtpStream() {
+        if (!state.system.enabled) return;
         state.otpStreaming = true;
         document.getElementById('otp-idle').classList.add('d-none');
         document.getElementById('otp-active').classList.remove('d-none');
@@ -214,6 +354,7 @@
         btn.classList.replace('btn-outline-info', 'btn-outline-danger');
         document.getElementById('otp-status-text').textContent = 'Đang chạy';
 
+        syncSystemControls();
         otpCycle();
     }
 
@@ -229,7 +370,8 @@
         const btn = document.getElementById('otp-toggle-btn');
         btn.innerHTML = '<i class="bi bi-play-fill me-1"></i><span>Bắt đầu</span>';
         btn.classList.replace('btn-outline-danger', 'btn-outline-info');
-        document.getElementById('otp-status-text').textContent = 'Sẵn sàng';
+        document.getElementById('otp-status-text').textContent = state.system.enabled ? 'Sẵn sàng' : 'Hệ thống đã tắt';
+        syncSystemControls();
     }
 
     function toggleOtpStream() {
@@ -451,16 +593,25 @@
             if (edit) openEditor(edit.dataset.edit);
             if (revoke) revokeBinding(revoke.dataset.revoke);
         });
+        document.getElementById('zalo-system-toggle').addEventListener('change', event => {
+            setSystemEnabled(event.target.checked);
+        });
+        document.getElementById('zalo-system-refresh').addEventListener('click', () => loadSystemState());
 
         // Tab visibility
         document.addEventListener('visibilitychange', handleVisibility);
 
         await loadBindings();
+        await loadSystemState();
+        if (state.system.enabled) {
+            startOtpStream();
+        } else {
+            stopOtpStream();
+        }
         state.polling = window.setInterval(() => {
             if (!document.hidden && !document.getElementById('binding-modal').classList.contains('show')) loadBindings({ silent: true });
         }, 5000);
 
-        // Auto-start OTP stream
-        startOtpStream();
+        syncSystemControls();
     });
 })();

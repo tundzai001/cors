@@ -1388,3 +1388,397 @@ body.dashboard-fixed-layout > main.container-fluid {
         display: block !important;
     }
 }
+
+/* ==========================================================================
+   Phone/tablet operation authority
+   Keep dashboard usable across narrow, short, landscape and notch viewports.
+   ========================================================================== */
+
+@media (max-width: 767.98px) {
+    body.dashboard-fixed-layout {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100dvh !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+        padding: 0 0 calc(64px + env(safe-area-inset-bottom, 0px)) !important;
+        background: #080d16;
+    }
+
+    body.dashboard-fixed-layout > main.container-fluid {
+        height: calc(100dvh - 64px - env(safe-area-inset-bottom, 0px)) !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+        padding: 6px !important;
+    }
+
+    body.dashboard-fixed-layout #view-dashboard {
+        height: 100% !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard.dashboard-layout.row {
+        display: block;
+        margin: 0;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard .dashboard-sidebar,
+    body.dashboard-fixed-layout .cors-dashboard .dashboard-main {
+        width: 100% !important;
+        height: 100% !important;
+        max-height: none !important;
+        min-height: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard .dashboard-sidebar {
+        display: grid !important;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard #admin-monitoring-widget {
+        display: none !important;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard .dashboard-sidebar-head {
+        min-height: 44px;
+        margin: 0 !important;
+        padding: 0 2px;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard .dashboard-sidebar-head h4 {
+        font-size: 0.95rem;
+        line-height: 1.2;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard .dashboard-sidebar-head .btn {
+        width: 40px;
+        height: 40px;
+        min-height: 40px;
+    }
+
+    body.dashboard-fixed-layout #device-list-root {
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    body.dashboard-fixed-layout .device-list-container {
+        height: 100% !important;
+        min-height: 0 !important;
+    }
+
+    body.dashboard-fixed-layout .device-list-scroll {
+        height: 0 !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding: 8px !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    body.dashboard-fixed-layout .cors-dashboard .dashboard-main {
+        display: none !important;
+    }
+
+    body.dashboard-fixed-layout.mobile-detail-open .cors-dashboard .dashboard-sidebar {
+        display: none !important;
+    }
+
+    body.dashboard-fixed-layout.mobile-detail-open .cors-dashboard .dashboard-main {
+        display: block !important;
+    }
+
+    body.dashboard-fixed-layout #details-panel-root,
+    body.dashboard-fixed-layout #details-panel-root > *,
+    body.dashboard-fixed-layout .dashboard-detail-card {
+        height: 100% !important;
+        max-height: 100% !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    body.dashboard-fixed-layout .details-panel-scroll {
+        height: auto !important;
+        min-height: 0 !important;
+        flex: 1 1 auto !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar {
+        position: fixed !important;
+        inset: auto 0 0 0 !important;
+        min-height: calc(60px + env(safe-area-inset-bottom, 0px)) !important;
+        padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar .navbar-collapse {
+        min-width: 0;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar #main-nav {
+        flex: 1 0 auto;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar .nav-link,
+    body.dashboard-fixed-layout > nav.navbar #logout-btn {
+        min-width: 50px;
+        min-height: 48px;
+        font-size: 0.72rem;
+    }
+
+    .mobile-station-list-btn {
+        position: sticky;
+        top: 0;
+        z-index: 1030;
+        min-height: 46px;
+        margin: 0 0 6px;
+        border-radius: 8px;
+        flex: 0 0 auto;
+    }
+
+    .cors-dashboard .dashboard-device-card {
+        min-height: 92px;
+        padding: 13px 11px 12px 14px !important;
+    }
+
+    .cors-dashboard .dashboard-device-card__top {
+        align-items: flex-start !important;
+        gap: 8px;
+    }
+
+    .cors-dashboard .dashboard-device-card .device-name {
+        line-height: 1.28;
+        overflow-wrap: anywhere;
+    }
+
+    .cors-dashboard .dashboard-device-card .server-indicators {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .cors-dashboard .dashboard-device-card .server-status-item {
+        min-width: 0;
+        min-height: 44px;
+    }
+
+    .cors-dashboard .dashboard-device-card .server-label,
+    .cors-dashboard .dashboard-device-card .server-bps,
+    .cors-dashboard .dashboard-device-card .server-bps-unit {
+        overflow-wrap: anywhere;
+    }
+
+    .cors-dashboard .dashboard-list-toolbar {
+        padding: 10px !important;
+    }
+
+    .cors-dashboard .dashboard-list-toolbar .input-group {
+        height: auto;
+    }
+
+    .cors-dashboard .dashboard-list-toolbar .input-group-text,
+    .cors-dashboard .dashboard-list-toolbar .form-control,
+    .cors-dashboard .dashboard-list-toolbar .btn-dark {
+        min-height: 44px !important;
+    }
+
+    .cors-dashboard .dashboard-detail-card {
+        border-radius: 8px;
+    }
+
+    .cors-dashboard .dashboard-detail-header {
+        min-height: 0;
+        padding: 10px 12px !important;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .cors-dashboard .dashboard-detail-header > .d-flex,
+    .cors-dashboard .dashboard-detail-header > .d-flex > .d-flex,
+    .cors-dashboard .dashboard-detail-header > .d-flex + .d-flex {
+        width: 100%;
+        min-width: 0;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .cors-dashboard .dashboard-detail-header h4 {
+        max-width: calc(100vw - 92px) !important;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .cors-dashboard .dashboard-detail-header .input-group {
+        width: 100% !important;
+        max-width: none !important;
+        margin-right: 0 !important;
+    }
+
+    .cors-dashboard .dashboard-detail-header .btn,
+    .cors-dashboard .dashboard-detail-header .btn-link {
+        min-height: 40px;
+    }
+
+    .cors-dashboard .dashboard-detail-header .btn-outline-danger {
+        flex: 1 1 150px;
+        justify-content: center;
+        margin-left: 0 !important;
+        min-height: 44px;
+        white-space: normal;
+    }
+
+    .cors-dashboard .dashboard-detail-body {
+        padding: 10px !important;
+    }
+
+    .cors-dashboard .dashboard-detail-meta {
+        align-items: flex-start !important;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .cors-dashboard .dashboard-detail-meta p {
+        min-width: 0;
+        overflow-wrap: anywhere;
+        white-space: normal !important;
+    }
+
+    .cors-dashboard .dashboard-tabs {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        flex-wrap: nowrap !important;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .cors-dashboard .dashboard-tabs::-webkit-scrollbar,
+    .station-map-toolbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .cors-dashboard .dashboard-tabs .nav-link {
+        flex: 0 0 auto;
+        min-height: 44px;
+        white-space: nowrap;
+    }
+
+    .cors-dashboard .dashboard-tab-content :is(.row, .d-flex) {
+        min-width: 0;
+    }
+
+    .cors-dashboard .dashboard-tab-content .btn,
+    .cors-dashboard .dashboard-detail-footer .btn {
+        min-height: 44px;
+    }
+
+    .cors-dashboard .dashboard-detail-footer {
+        padding: 10px !important;
+    }
+
+    .cors-dashboard .dashboard-detail-footer .d-flex {
+        align-items: stretch !important;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .cors-dashboard .dashboard-detail-footer [style*="width"] {
+        width: 100% !important;
+    }
+
+    .btn-system-toggle {
+        position: absolute;
+        top: auto;
+        right: 12px;
+        bottom: 12px;
+        width: 48px;
+        height: 48px;
+        border: 1px solid rgba(56, 189, 248, 0.36);
+        border-radius: 999px;
+        transform: none;
+    }
+
+    .btn-system-toggle:hover,
+    .btn-system-toggle:active {
+        right: 12px;
+        transform: none;
+    }
+
+    .system-info-panel {
+        position: absolute;
+        inset: auto 0 0 0;
+        width: 100%;
+        max-width: none;
+        height: min(74dvh, 620px);
+        border-left: 0;
+        border-top: 1px solid rgba(56, 189, 248, 0.28);
+        transform: translateY(100%);
+    }
+
+    .system-info-panel.open {
+        transform: translateY(0);
+    }
+
+    .panel-body-sys {
+        height: calc(100% - 58px);
+        padding: 14px;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+@media (max-width: 380px) {
+    body.dashboard-fixed-layout > main.container-fluid {
+        padding: 4px !important;
+    }
+
+    .cors-dashboard .dashboard-device-card .server-indicators {
+        grid-template-columns: 1fr;
+    }
+
+    .cors-dashboard .dashboard-detail-header h4 {
+        font-size: 0.95rem !important;
+    }
+
+    .cors-dashboard .dashboard-tabs .nav-link {
+        padding-inline: 10px;
+        font-size: 0.72rem;
+    }
+}
+
+@media (max-width: 767.98px) and (orientation: landscape) and (max-height: 520px) {
+    body.dashboard-fixed-layout {
+        padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    body.dashboard-fixed-layout > main.container-fluid {
+        height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar {
+        min-height: calc(52px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar .nav-link,
+    body.dashboard-fixed-layout > nav.navbar #logout-btn {
+        min-height: 44px;
+    }
+
+    .cors-dashboard .dashboard-detail-header {
+        padding-block: 8px !important;
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .cors-dashboard :is(.dashboard-device-card, .dashboard-detail-card, .stat-item, .btn):hover {
+        transform: none !important;
+        box-shadow: none !important;
+    }
+}

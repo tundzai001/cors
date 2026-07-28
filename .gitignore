@@ -1,5 +1,17 @@
 *.pyc
 __pycache__/
+venv/
+.venv/
+
+# Local runtime state and databases
+*.db
+*.sqlite
+*.sqlite3
+cors_dashboard/backend/zalo_chats.json
+cors_dashboard/backend/zalo_groups.json
+geodetic/geotek_config.json
+geodetic/geotek_db.json
+license*.key
 
 # Local secrets
 .env

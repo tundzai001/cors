@@ -116,6 +116,7 @@
         const [measureOn, setMeasureOn] = useState(false);
         const [findingNearest, setFindingNearest] = useState(false);
         const [tileMode, setTileMode] = useState('hybrid');
+        const [mapError, setMapError] = useState('');
         const canViewRovers = ['admin', 'viewer', 'coordinator'].includes(String(currentUser?.role || '').toLowerCase());
 
         const allowedMountpoints = useMemo(() => {
@@ -187,11 +188,17 @@
         }, [canViewRovers]);
 
         useEffect(() => {
-            const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
-            if (!L || !mapEl.current || mapRef.current) return;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
+            if (!mapEl.current || mapRef.current) return;
+            if (!L) {
+                setMapError('Không tải được thư viện bản đồ. Vui lòng kiểm tra mạng và tải lại trang.');
+                console.error('Stations map initialization skipped: Leaflet is unavailable or invalid.');
+                return;
+            }
 
             const map = L.map(mapEl.current, { zoomControl: true, preferCanvas: true }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
             mapRef.current = map;
+            setMapError('');
 
             const googleAttribution = '&copy; Google';
             const tiles = {
@@ -216,15 +223,15 @@
             coverageRef.current.addTo(map);
             layerRef.current.addTo(map);
 
-            if (L.markerClusterGroup) {
-                roverClusterRef.current = L.markerClusterGroup({
+            roverClusterRef.current = window.CorsDashboardShared?.createMarkerClusterGroup?.({
                     chunkedLoading: true,
                     removeOutsideVisibleBounds: true,
                     showCoverageOnHover: false,
                     spiderfyOnMaxZoom: false,
                     maxClusterRadius: 45,
                     disableClusteringAtZoom: 14
-                });
+                }) || L.layerGroup();
+            if (roverClusterRef.current) {
                 roverClusterRef.current.addTo(map);
             }
 
@@ -275,7 +282,7 @@
 
         useEffect(() => {
             const map = mapRef.current;
-            const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
             if (!map || !L || !map.__tiles) return;
             Object.values(map.__tiles).forEach(layer => map.removeLayer(layer));
             map.__tiles[tileMode].addTo(map);
@@ -283,7 +290,7 @@
 
         useEffect(() => {
             const map = mapRef.current;
-            const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
             if (!map || !L || !layerRef.current || !coverageRef.current) return;
             layerRef.current.clearLayers();
             coverageRef.current.clearLayers();
@@ -326,7 +333,7 @@
 
         useEffect(() => {
             const map = mapRef.current;
-            const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
             if (!map || !L) return;
 
             const roverMarkers = roverMarkersRef.current;
@@ -415,11 +422,12 @@
 
         const locate = () => {
             const map = mapRef.current;
-            if (!map || !navigator.geolocation) return;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
+            if (!map || !L || !navigator.geolocation) return;
             navigator.geolocation.getCurrentPosition((pos) => {
                 const latlng = [pos.coords.latitude, pos.coords.longitude];
                 map.setView(latlng, 13);
-                window.L.circleMarker(latlng, { radius: 7, color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 1 }).addTo(map).bindPopup('Your location').openPopup();
+                L.circleMarker(latlng, { radius: 7, color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 1 }).addTo(map).bindPopup('Your location').openPopup();
             }, () => window.CorsUI.showToast('warning', 'Cannot locate current position'), { enableHighAccuracy: true, timeout: 8000 });
         };
 
@@ -481,6 +489,16 @@
         return (
             <div className="station-map-container">
                 <div ref={mapEl} className="station-map-canvas"></div>
+
+                {mapError && (
+                    <div className="station-map-load-error" role="alert">
+                        <i className="bi bi-map me-2"></i>
+                        <span>{mapError}</span>
+                        <button type="button" className="btn btn-sm btn-outline-light" onClick={() => window.location.reload()}>
+                            Tải lại
+                        </button>
+                    </div>
+                )}
 
                 <div className="station-map-toolbar">
                     <div className="station-map-toolgroup">

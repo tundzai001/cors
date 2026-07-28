@@ -18,13 +18,22 @@
 html[data-quality="balanced"] .landing-orb,
 html[data-quality="balanced"] .glass-card,
 html[data-quality="balanced"] .landing-stat-card {
-    box-shadow: none !important;
+    box-shadow: 0 10px 30px rgba(0, 18, 32, 0.32), 0 0 18px rgba(0, 242, 255, 0.06) !important;
     backdrop-filter: blur(8px) !important;
 }
 
-html[data-quality="balanced"] .flying-satellite:nth-of-type(n + 5),
-html[data-quality="balanced"] .data-pulse-ring:nth-of-type(n + 3) {
-    display: none !important;
+html[data-quality="lite"] .glass-card,
+html[data-quality="lite"] .landing-stat-card {
+    box-shadow: 0 8px 22px rgba(0, 18, 32, 0.24), 0 0 12px rgba(0, 242, 255, 0.04) !important;
+    backdrop-filter: blur(4px) !important;
+}
+
+html[data-quality="balanced"] .flying-satellite {
+    animation-duration: 22s, 5s;
+}
+
+html[data-quality="balanced"] .data-pulse-ring {
+    animation-duration: 5.5s;
 }
 
 html[data-quality="lite"] .hero-three-scene,
@@ -33,7 +42,13 @@ html[data-quality="lite"] .flying-satellite,
 html[data-quality="lite"] .map-radar-sweep,
 html[data-quality="lite"] .landing-orb,
 html[data-quality="lite"] .feature-card-scan {
-    display: none !important;
+    opacity: calc(0.34 + var(--effect-intensity, 0.48) * 0.34);
+}
+
+html[data-quality="lite"] .flying-satellite,
+html[data-quality="lite"] .landing-orb,
+html[data-quality="lite"] .feature-card-scan {
+    animation-duration: 28s !important;
 }
 
 html[data-quality="lite"] .hero-section {
@@ -563,7 +578,16 @@ html.reduced-motion * {
 }
 
 .hero-premium-hud {
-    display: none;
+    position: absolute;
+    top: 128px;
+    right: clamp(18px, 4vw, 72px);
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+    pointer-events: none;
+    opacity: calc(0.58 + var(--effect-intensity, 1) * 0.3);
 }
 
 .hero-section {
@@ -611,7 +635,11 @@ html.reduced-motion * {
     }
 
     .hero-premium-hud {
-        display: none;
+        right: 10px;
+        top: 104px;
+        opacity: calc(0.24 + var(--effect-intensity, 0.72) * 0.26);
+        scale: 0.78;
+        transform-origin: top right;
     }
 }
 

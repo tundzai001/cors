@@ -75,6 +75,23 @@ if sys.platform == "win32":
 log_file = 'app.log'
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
+# High-frequency public reads are expected traffic. Keep failures visible while
+# avoiding three INFO lines for every successful map refresh.
+QUIET_REQUEST_LOG_PATHS = frozenset({
+    "/api/public/map-stations",
+})
+
+
+class QuietEndpointAccessFilter(logging.Filter):
+    def filter(self, record):
+        try:
+            args = record.args
+            path = str(args[2]).split("?", 1)[0] if isinstance(args, tuple) and len(args) >= 3 else ""
+            status_code = int(args[4]) if isinstance(args, tuple) and len(args) >= 5 else 0
+            return path not in QUIET_REQUEST_LOG_PATHS or status_code >= 400
+        except (TypeError, ValueError, IndexError):
+            return True
+
 # Tạo FileHandler một lần để dùng chung
 file_handler = logging.FileHandler(log_file, encoding='utf-8')
 file_handler.setFormatter(logging.Formatter(log_format))
@@ -98,6 +115,8 @@ for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
     l = logging.getLogger(logger_name)
     l.addHandler(file_handler)
     l.propagate = False # Tránh bị lặp log ra console vì basicConfig đã bắt root rồi
+
+logging.getLogger("uvicorn.access").addFilter(QuietEndpointAccessFilter())
 
 
 def _fix_ntrip_pos_typo(data: bytes) -> bytes:
@@ -227,6 +246,33 @@ mqtt_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
 db_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=30)
 
 logger = logging.getLogger(__name__)
+
+CASTER_STATUS_NOTIFY_CONCURRENCY = max(
+    1,
+    int(os.getenv("CASTER_STATUS_NOTIFY_CONCURRENCY", "4")),
+)
+caster_status_notify_semaphore = asyncio.Semaphore(CASTER_STATUS_NOTIFY_CONCURRENCY)
+
+PUBLIC_MAP_CACHE_TTL_SECONDS = max(
+    1.0,
+    float(os.getenv("PUBLIC_MAP_CACHE_TTL_SECONDS", "10")),
+)
+public_map_cache: Optional[list] = None
+public_map_cache_updated_monotonic = 0.0
+
+EVENT_LOOP_WATCHDOG_INTERVAL_SECONDS = max(
+    0.5,
+    float(os.getenv("EVENT_LOOP_WATCHDOG_INTERVAL_SECONDS", "2")),
+)
+EVENT_LOOP_WATCHDOG_WARN_LAG_SECONDS = max(
+    0.1,
+    float(os.getenv("EVENT_LOOP_WATCHDOG_WARN_LAG_SECONDS", "1")),
+)
+event_loop_watchdog_metrics = {
+    "last_lag_ms": 0.0,
+    "max_lag_ms": 0.0,
+    "warning_count": 0,
+}
 device_update_buffer = deque(maxlen=DEVICE_UPDATE_BUFFER_MAXSIZE)
 device_update_buffer_lock = asyncio.Lock()
 latest_device_telemetry_cache: Dict[str, dict] = {}
@@ -439,6 +485,30 @@ async def ui_status_broadcast_worker_task():
                 await ui_manager.broadcast(message)
             except Exception as exc:
                 logger.warning("UI status broadcast worker error: %s", exc)
+
+
+async def event_loop_watchdog_task():
+    """Record and report event-loop stalls before nginx starts losing upstream responses."""
+    loop = asyncio.get_running_loop()
+    expected_at = loop.time() + EVENT_LOOP_WATCHDOG_INTERVAL_SECONDS
+    while True:
+        await asyncio.sleep(EVENT_LOOP_WATCHDOG_INTERVAL_SECONDS)
+        now = loop.time()
+        lag_seconds = max(0.0, now - expected_at)
+        lag_ms = lag_seconds * 1000.0
+        event_loop_watchdog_metrics["last_lag_ms"] = round(lag_ms, 2)
+        event_loop_watchdog_metrics["max_lag_ms"] = max(
+            float(event_loop_watchdog_metrics["max_lag_ms"]),
+            round(lag_ms, 2),
+        )
+        if lag_seconds >= EVENT_LOOP_WATCHDOG_WARN_LAG_SECONDS:
+            event_loop_watchdog_metrics["warning_count"] += 1
+            logger.warning(
+                "[EVENT LOOP] Backend stalled for %.0f ms (warning #%s)",
+                lag_ms,
+                event_loop_watchdog_metrics["warning_count"],
+            )
+        expected_at = now + EVENT_LOOP_WATCHDOG_INTERVAL_SECONDS
 
 
 async def pi_status_ingest_worker_task():
@@ -1579,16 +1649,19 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
+        quiet_success_path = request.url.path in QUIET_REQUEST_LOG_PATHS
         
         # Ghi log mÃ  không cần extra, vì filter sẽ tự thêm vÃ o
-        logger.info(f"--> {request.method} {request.url.path}")
+        if not quiet_success_path:
+            logger.info(f"--> {request.method} {request.url.path}")
         
         start_time = time.time()
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
         
         response.headers['X-Request-ID'] = request_id
-        logger.info(f"<-- {request.method} {request.url.path} - Completed in {process_time:.2f}ms, Status: {response.status_code}")
+        if not quiet_success_path or response.status_code >= 400:
+            logger.info(f"<-- {request.method} {request.url.path} - Completed in {process_time:.2f}ms, Status: {response.status_code}")
         
         return response
 
@@ -1942,6 +2015,7 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(rtcm_ntrip_clienttable_keepalive_task()))
         tasks.append(asyncio.create_task(ui_broadcast_worker_task()))
         tasks.append(asyncio.create_task(ui_status_broadcast_worker_task()))
+        tasks.append(asyncio.create_task(event_loop_watchdog_task()))
         tasks.append(asyncio.create_task(memory_guard_task()))
         for _ in range(max(1, PI_INGEST_WORKER_COUNT)):
             tasks.append(asyncio.create_task(pi_status_ingest_worker_task()))
@@ -3670,16 +3744,24 @@ async def _send_status_to_caster(caster_host: str, status_payload: dict, server_
             method='POST'
         )
         
-        # Set timeout 3 seconds
-        with urllib.request.urlopen(request, timeout=3) as response:
-            result = response.read().decode('utf-8')
-            state = status_payload.get('state', 'unknown')
-            mp = status_payload.get('mountpoint', '?')
-            # 📉 Thay đổi từ logger.info sang logger.debug để giảm rác log theo yêu cầu
-            logger.debug(
-                f"[CASTER SYNC] ✓ Sent {server_label} status to {caster_host}: "
-                f"{mp} → {state}"
+        def _post_status_sync() -> None:
+            # urllib is blocking, so this function must never execute on the
+            # single Uvicorn event-loop thread.
+            with urllib.request.urlopen(request, timeout=3) as response:
+                response.read()
+
+        async with caster_status_notify_semaphore:
+            await asyncio.wait_for(
+                asyncio.to_thread(_post_status_sync),
+                timeout=4.0,
             )
+
+        state = status_payload.get('state', 'unknown')
+        mp = status_payload.get('mountpoint', '?')
+        logger.debug(
+            f"[CASTER SYNC] ✓ Sent {server_label} status to {caster_host}: "
+            f"{mp} → {state}"
+        )
     except Exception as e:
         logger.warning(
             f"[CASTER SYNC] ✗ Failed to notify {caster_host} ({server_label}) "
@@ -4145,6 +4227,34 @@ def _validate_zalo_webhook_secret(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid Zalo webhook secret")
 
 
+def _persist_zalo_bot_enabled(enabled: bool) -> None:
+    value = "true" if enabled else "false"
+    set_key(str(ENV_FILE_PATH), "ENABLE_ZALO_BOT", value)
+    os.environ["ENABLE_ZALO_BOT"] = value
+    try:
+        settings.ENABLE_ZALO_BOT = enabled
+    except Exception:
+        setattr(settings, "ENABLE_ZALO_BOT", enabled)
+
+
+def _get_zalo_system_state() -> dict[str, Any]:
+    from .zalo_bot_service import zalo_bot_service
+    from .zalo_bot_service import ZALO_AVAILABLE
+
+    token = str(getattr(settings, "ZALO_BOT_TOKEN", "") or "").strip()
+    running = bool(getattr(zalo_bot_service, "app", None))
+    sdk_available = bool(ZALO_AVAILABLE)
+    return {
+        "enabled": bool(settings.ENABLE_ZALO_BOT),
+        "running": running,
+        "token_configured": bool(token),
+        "sdk_available": sdk_available,
+        "available": bool(token) and sdk_available,
+        "mode": str(getattr(settings, "ZALO_BOT_MODE", "polling") or "polling").strip().lower(),
+        "env_file": str(ENV_FILE_PATH),
+    }
+
+
 @app.get("/api/zalo/webhook", response_class=PlainTextResponse)
 async def zalo_webhook_verify(request: Request):
     _validate_zalo_webhook_secret(request)
@@ -4197,6 +4307,63 @@ async def clear_zalo_diagnostics(
     from .zalo_bot_service import zalo_bot_service
     zalo_bot_service.clear_debug_events()
     return {"status": "cleared"}
+
+
+@app.get("/api/admin/zalo/system")
+async def get_zalo_system_state(
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xem trạng thái hệ thống Zalo.")
+    return _get_zalo_system_state()
+
+
+@app.patch("/api/admin/zalo/system")
+async def update_zalo_system_state(
+    payload: Dict[str, Any] = Body(...),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được bật/tắt hệ thống Zalo.")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload không hợp lệ.")
+
+    if "enabled" not in payload:
+        raise HTTPException(status_code=400, detail="Thiếu trường enabled.")
+
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="enabled phải là boolean.")
+
+    current_state = _get_zalo_system_state()
+    if enabled and not current_state["available"]:
+        if not current_state["sdk_available"]:
+            raise HTTPException(status_code=400, detail="Thiếu Zalo SDK trong môi trường hiện tại nên không thể bật bot.")
+        raise HTTPException(status_code=400, detail="Thiếu ZALO_BOT_TOKEN trong .env nên không thể bật bot.")
+
+    if enabled == current_state["enabled"]:
+        return current_state
+
+    from .zalo_bot_service import zalo_bot_service
+
+    _persist_zalo_bot_enabled(enabled)
+    try:
+        if enabled:
+            if not current_state["running"]:
+                await zalo_bot_service.start(strict=True)
+        else:
+            await zalo_bot_service.stop()
+    except Exception as exc:
+        if enabled:
+            try:
+                await zalo_bot_service.stop()
+            except Exception:
+                pass
+        _persist_zalo_bot_enabled(not enabled)
+        raise HTTPException(status_code=500, detail=f"Không thể cập nhật trạng thái Zalo Bot: {exc}")
+
+    return _get_zalo_system_state()
 
 
 @app.post("/api/auth/zalo-link-code")
@@ -4274,7 +4441,13 @@ async def get_zalo_bindings(
             {"serial": str(item.serial), "name": str(item.name or item.serial), "status": str(item.status or "unknown")}
             for item in station_rows.scalars().all()
         ]
-    return {"items": items, "total": len(items), "stations": stations, "is_admin": current_user.role == auth.Role.ADMIN}
+    return {
+        "items": items,
+        "total": len(items),
+        "stations": stations,
+        "is_admin": current_user.role == auth.Role.ADMIN,
+        "system_enabled": bool(settings.ENABLE_ZALO_BOT),
+    }
 
 
 @app.patch("/api/auth/zalo-bindings/{binding_id}")
@@ -4319,7 +4492,23 @@ async def revoke_zalo_binding(
 
 
 @app.get("/api/public/map-stations")
-async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
+async def get_public_map_stations(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    global public_map_cache, public_map_cache_updated_monotonic
+
+    response.headers["Cache-Control"] = (
+        f"public, max-age={int(PUBLIC_MAP_CACHE_TTL_SECONDS)}, stale-while-revalidate=30"
+    )
+    now_monotonic = time.monotonic()
+    if (
+        public_map_cache is not None
+        and now_monotonic - public_map_cache_updated_monotonic < PUBLIC_MAP_CACHE_TTL_SECONDS
+    ):
+        response.headers["X-Data-Cache"] = "HIT"
+        return public_map_cache
+
     try:
         # Lấy tất cả thiết bị
         result = await db.execute(select(models.Device))
@@ -4431,7 +4620,10 @@ async def get_public_map_stations(db: AsyncSession = Depends(get_db)):
             else:
                 skipped_devices += 1
         
-        logging.info(
+        public_map_cache = public_data
+        public_map_cache_updated_monotonic = time.monotonic()
+        response.headers["X-Data-Cache"] = "MISS"
+        logger.debug(
             f"✓ Public map API: found {len(devices)} devices, returning {len(public_data)} with valid coords, "
             f"skipped {skipped_devices} without usable coords"
         )
@@ -7938,7 +8130,9 @@ async def detailed_health_check(
     """
     try:
         # System metrics
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # Never block the single Uvicorn event loop while sampling CPU.
+        # interval=None returns the percentage since the previous sample.
+        cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         
@@ -8047,6 +8241,7 @@ async def buffer_metrics_endpoint(
             "pending_station_updates": pending_station_updates,
             "ui_queue_depth": ui_broadcast_queue.qsize(),
             "pi_ingest_queue_depth": pi_status_ingest_queue.qsize(),
+            "event_loop": dict(event_loop_watchdog_metrics),
         },
         "config": {
             "flush_interval_min_sec": BUFFER_FLUSH_INTERVAL_MIN,

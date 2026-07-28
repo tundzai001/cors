@@ -83,7 +83,8 @@
             blockIp: '/api/admin/security/block-ip',
             unblockIp: '/api/admin/security/unblock-ip',
             casterConfig: '/api/admin/caster-config',
-            casterSources: '/api/admin/caster-sources'
+            casterSources: '/api/admin/caster-sources',
+            zaloSystem: '/api/admin/zalo/system'
         },
         license: {
             pi: '/api/license/pi'
