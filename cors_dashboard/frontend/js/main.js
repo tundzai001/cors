@@ -13,6 +13,22 @@ let globalState = {
     stateVersion: 0
 };
 window.globalState = globalState;
+const PUBLIC_ROUTES = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
+
+function isPublicRoute(pathname = window.location.pathname) {
+    return PUBLIC_ROUTES.some(route => route === '/' ? pathname === '/' : pathname.startsWith(route));
+}
+
+function softGoHome() {
+    try {
+        if (window.location.pathname !== '/') {
+            window.history.replaceState({}, '', '/');
+        }
+    } catch (_) {}
+    if (typeof window.switchView === 'function') {
+        window.switchView('homepage');
+    }
+}
 // === REACT ROOTS ===
 let deviceListRoot = null;
 let detailsPanelRoot = null;
@@ -652,7 +668,7 @@ document.addEventListener('click', (e) => {
     if (!target) return;
     if (target.id === 'login-btn' || (target.closest && target.closest('#login-btn'))) {
         e.preventDefault();
-        window.location.href = '/';
+        softGoHome();
     }
     if (target.id === 'back-home-btn' || (target.closest && target.closest('#back-home-btn'))) {
         e.preventDefault();
@@ -911,9 +927,12 @@ async function handleRenameSerial(oldSerial, newSerial) {
             throw new Error(err.detail || 'Đổi serial thất bại');
         }
 
-        // We should reload the page because serial is used as primary key in many places
-        showSuccess(`Đã đổi serial thành công: "${newSerial}". Đang tải lại...`);
-        setTimeout(() => window.location.reload(), 1500);
+        globalState.selectedDeviceSerial = newSerial;
+        showSuccess(`Đã đổi serial thành công: "${newSerial}". Đang làm mới danh sách...`);
+        await loadInitialDevices();
+        deviceListNeedsUpdate = true;
+        detailsPanelNeedsUpdate = true;
+        scheduleRender('high');
 
     } catch (e) {
         showError(`Lỗi đổi serial: ${e.message}`);
@@ -1251,8 +1270,12 @@ function handleWebSocketMessage(message) {
             if (window.fetchInitialDevices) {
                 window.fetchInitialDevices();
             } else {
-                // Fallback: Reload trang nếu không tìm thấy hàm
-                window.location.reload();
+                // Fallback: refresh data in place instead of forcing a full reload
+                loadInitialDevices().then(() => {
+                    deviceListNeedsUpdate = true;
+                    detailsPanelNeedsUpdate = true;
+                    scheduleRender('high');
+                }).catch(() => {});
             }
         }
     }
@@ -1412,7 +1435,7 @@ async function apiFetch(url, options = {}, retries = 3) {
             } else {
                 localStorage.removeItem('access_token');
                 sessionStorage.removeItem('access_token');
-                window.location.href = '/';
+                softGoHome();
             }
             throw new Error('Unauthorized');
         }
@@ -1532,9 +1555,10 @@ async function loadCurrentUser() {
             throw new Error('Failed to load user info');
         }
     } catch (error) {
+        if (isPublicRoute()) return;
         localStorage.removeItem('access_token');
         sessionStorage.removeItem('access_token');
-        window.location.href = '/';
+        softGoHome();
     }
 }
 
@@ -1664,7 +1688,7 @@ async function initializeCorsApp() {
         } else {
             localStorage.removeItem('access_token');
             sessionStorage.removeItem('access_token');
-            window.location.href = '/';
+            softGoHome();
         }
         return;
     }

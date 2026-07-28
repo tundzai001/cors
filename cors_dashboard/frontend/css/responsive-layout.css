@@ -126,7 +126,13 @@ body.landing-view-active #homepage-root {
 
 @media (max-width: 991.98px) {
     .enterprise-homepage .hero-map-wrapper {
-        display: none;
+        display: block !important;
+        right: 8px;
+        top: 38vh;
+        width: min(40vw, 320px);
+        max-width: 40vw;
+        opacity: 0.62;
+        pointer-events: none;
     }
 
     .enterprise-homepage .hero-section .container {
@@ -165,7 +171,9 @@ body.landing-view-active #homepage-root {
     }
 
     .enterprise-homepage :is(.flying-flag, .flying-satellite) {
-        display: none !important;
+        display: block !important;
+        opacity: 0.78;
+        transform: scale(0.88);
     }
 }
 

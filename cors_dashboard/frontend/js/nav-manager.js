@@ -152,7 +152,15 @@ const NavigationManager = {
         }
         localStorage.removeItem('access_token');
         sessionStorage.removeItem('access_token');
-        window.location.replace('/');
+        if (window.location.pathname === '/' || this.isPublicRoute()) return;
+        try {
+            window.history.replaceState({}, '', '/');
+        } catch (_) {}
+        if (typeof window.switchView === 'function') {
+            window.switchView('homepage');
+            return;
+        }
+        window.location.assign('/');
     }
 };
 

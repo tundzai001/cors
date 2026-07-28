@@ -2322,6 +2322,7 @@ class MqttSourceWorker(threading.Thread):
             "rtcmusername1": self.cfg.get("rtcmusername1") or "",
             "rtcmpassword1": self.cfg.get("rtcmpassword1") or "",
         }
+        status_value = "sleep" if not target_enabled else self._derive_status(mqtt_data_active)
         status = {
             "serial": self.serial,
             "rtcm_stats": globals().get("rtcm_signal_decoder").get_stats(self.serial) if globals().get("rtcm_signal_decoder") else {},
@@ -2371,7 +2372,6 @@ class MqttSourceWorker(threading.Thread):
             "is_provisioned": has_license(self.serial),
             "config_status": getattr(self, "config_status", None)
         }
-        status_value = "sleep" if not target_enabled else self._derive_status(mqtt_data_active)
         try:
             if self.mqtt_status_client and self.mqtt_status_client.is_connected():
                 self.mqtt_status_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)

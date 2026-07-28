@@ -3,7 +3,32 @@
 
     const ACCESS_TOKEN_KEY = 'access_token';
     const DEFAULT_TIMEOUT_MS = 30000;
+    const PUBLIC_ROUTES = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
     let sessionInvalidated = false;
+
+    function isPublicRoute(pathname = window.location.pathname) {
+        return PUBLIC_ROUTES.some(route => route === '/' ? pathname === '/' : pathname.startsWith(route));
+    }
+
+    function isPublicApiUrl(url) {
+        try {
+            const pathname = new URL(url, window.location.origin).pathname;
+            return pathname.startsWith('/api/public/');
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function goHomeSoft() {
+        try {
+            if (window.location.pathname !== '/') {
+                window.history.replaceState({}, '', '/');
+            }
+        } catch (_) {}
+        if (typeof window.switchView === 'function') {
+            window.switchView('homepage');
+        }
+    }
 
     function getToken() {
         return localStorage.getItem(ACCESS_TOKEN_KEY) || sessionStorage.getItem(ACCESS_TOKEN_KEY);
@@ -31,7 +56,8 @@
         sessionInvalidated = true;
         clearToken();
         window.dispatchEvent(new CustomEvent('cors:session-expired', { detail: { reason } }));
-        window.location.replace('/');
+        if (isPublicRoute()) return;
+        goHomeSoft();
     }
 
     function isSessionInvalidated() {
@@ -87,7 +113,9 @@
             clearTimeout(timeoutId);
 
             if (response.status === 401) {
-                forceLogout();
+                if (!isPublicRoute() && !isPublicApiUrl(url)) {
+                    forceLogout('unauthorized');
+                }
                 throw new Error('Unauthorized');
             }
 
@@ -119,7 +147,7 @@
         }, { once: true });
 
         ws.addEventListener('close', (event) => {
-            if (isAuthWebSocketClose(event)) {
+            if (isAuthWebSocketClose(event) && !isPublicRoute()) {
                 forceLogout('websocket_auth_failed');
             }
         });
