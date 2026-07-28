@@ -58,9 +58,9 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
+    body:not(.landing-view-active) *,
+    body:not(.landing-view-active) *::before,
+    body:not(.landing-view-active) *::after {
         animation: none !important;
         transition: none !important;
         scroll-behavior: auto !important;
@@ -2100,7 +2100,9 @@ overscroll-behavior-y: contain;
 ACCESSIBILITY
 ============================================================================== */
 @media (prefers-reduced-motion: reduce) {
-*, *::before, *::after {
+body:not(.landing-view-active) *,
+body:not(.landing-view-active) *::before,
+body:not(.landing-view-active) *::after {
 animation-duration: 0.01ms !important;
 animation-iteration-count: 1 !important;
 transition-duration: 0.01ms !important;
@@ -2722,9 +2724,9 @@ html {
    ============================================ */
 
 @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
+    body:not(.landing-view-active) *,
+    body:not(.landing-view-active) *::before,
+    body:not(.landing-view-active) *::after {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
