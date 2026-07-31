@@ -17,11 +17,8 @@
 
     const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
     const webgl = supportsWebGL();
-    // Always start with the complete landing composition. A slow sample from a
-    // previous visit must never silently remove effects on the next page load.
-    try {
-        sessionStorage.removeItem('cors:quality-mode');
-    } catch (_) {}
+    // Every visit starts at the complete Max composition. Runtime monitoring
+    // may offer a lower tier, but it never changes quality without consent.
     let tier = 'high';
 
     const profiles = {
@@ -146,43 +143,51 @@
 
     // Calibrate against real rendered FPS. Quality changes density, pixel ratio
     // and update cadence; it never removes an effect from the composition.
+    const sampleWindowMs = 3500;
+    const warmupMs = 4000;
+    const lowFpsThreshold = 42;
+    let monitorReadyAt = 0;
     let sampleStart = 0;
     let sampleFrames = 0;
     let lastChangeAt = 0;
-    let strongWindows = 0;
+    let lowWindows = 0;
+    const resetSample = (now) => {
+        sampleStart = now;
+        sampleFrames = 0;
+        lowWindows = 0;
+    };
     const sample = (now) => {
-        if (document.visibilityState === 'hidden') {
-            sampleStart = now;
-            sampleFrames = 0;
+        const landingActive = document.body?.classList.contains('landing-view-active');
+        if (document.visibilityState === 'hidden' || !landingActive || now < monitorReadyAt) {
+            resetSample(now);
             requestAnimationFrame(sample);
             return;
         }
         if (!sampleStart) sampleStart = now;
         sampleFrames += 1;
         const elapsed = now - sampleStart;
-        if (elapsed >= 4000) {
+        if (elapsed >= sampleWindowMs) {
             const fps = Math.round((sampleFrames * 1000) / elapsed);
             settings.fps = fps;
             const canChange = now - lastChangeAt >= 12000;
-            if (canChange && fps < 38) {
+            if (fps < lowFpsThreshold) lowWindows += 1;
+            else lowWindows = 0;
+
+            // Require two consecutive slow windows. Initial loading, route
+            // changes and one isolated long task must not trigger the banner.
+            if (canChange && lowWindows >= 2 && settings.tier !== 'lite') {
                 const nextTier = settings.tier === 'high' ? 'balanced' : 'lite';
                 showLagBanner(fps, nextTier, 'low-fps');
                 lastChangeAt = now;
-                strongWindows = 0;
-            } else if (fps >= 56) {
-                strongWindows += 1;
-                if (canChange && strongWindows >= 3 && tierRank[settings.tier] < tierRank[maxTier]) {
-                    applyTier(settings.tier === 'lite' ? 'balanced' : 'high', 'stable-fps');
-                    lastChangeAt = now;
-                    strongWindows = 0;
-                }
-            } else {
-                strongWindows = 0;
+                lowWindows = 0;
             }
             sampleStart = now;
             sampleFrames = 0;
         }
         requestAnimationFrame(sample);
     };
-    window.addEventListener('load', () => requestAnimationFrame(sample), { once: true });
+    window.addEventListener('load', () => {
+        monitorReadyAt = (window.performance?.now?.() || 0) + warmupMs;
+        requestAnimationFrame(sample);
+    }, { once: true });
 })();

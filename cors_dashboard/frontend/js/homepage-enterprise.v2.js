@@ -25,6 +25,21 @@ const VietnamSVG = () => {
         if (!container) return;
         const abortController = new AbortController();
         let mapTimeline = null;
+        let mapNearViewport = true;
+        let pageVisible = document.visibilityState === 'visible';
+        const syncMapAnimation = () => {
+            if (mapTimeline) mapTimeline.paused(!(mapNearViewport && pageVisible));
+        };
+        const onVisibilityChange = () => {
+            pageVisible = document.visibilityState === 'visible';
+            syncMapAnimation();
+        };
+        const observer = new IntersectionObserver(([entry]) => {
+            mapNearViewport = entry.isIntersecting;
+            syncMapAnimation();
+        }, { rootMargin: '240px' });
+        observer.observe(container);
+        document.addEventListener('visibilitychange', onVisibilityChange);
         // Fetch the SVG and inject inline for GSAP draw-on
         fetch('/img/vietnam-map.svg', { signal: abortController.signal })
             .then(r => r.text())
@@ -38,6 +53,9 @@ const VietnamSVG = () => {
                 svgEl.setAttribute('aria-hidden', 'true');
                 svgEl.style.width = '100%';
                 svgEl.style.height = 'auto';
+                // The SVG already has a static glow. Prevent the legacy CSS
+                // filter animation from repainting the complete map layer.
+                svgEl.style.animation = 'none';
                 requestAnimationFrame(() => {
                     if (typeof ScrollTrigger !== 'undefined') ScrollTrigger.refresh();
                 });
@@ -64,16 +82,18 @@ const VietnamSVG = () => {
                         ease: 'power2.inOut'
                     }, 0);
 
-                    // Phase 2: Glow flash after draw completes (0.6s)
+                    // Phase 2: Glow flash after draw completes (0.6s). Opacity
+                    // stays compositor-only; animating SVG filters forces a
+                    // large repaint on mobile Safari.
                     mapTimeline.to(svgEl, {
-                        filter: 'brightness(3.55) saturate(2.3) drop-shadow(0 0 54px rgba(0, 242, 255, 0.85))',
+                        opacity: 1,
                         duration: 0.6,
                         ease: 'power2.out'
                     }, 2.2);
 
                     // Phase 3: Settle back to idle glow (0.8s)
                     mapTimeline.to(svgEl, {
-                        filter: 'brightness(2.55) saturate(1.9) drop-shadow(0 0 34px rgba(0, 242, 255, 0.52))',
+                        opacity: 0.9,
                         duration: 0.8,
                         ease: 'power2.inOut'
                     }, 2.8);
@@ -88,10 +108,11 @@ const VietnamSVG = () => {
 
                     // Phase 5: Dim the SVG while erased (0.3s)
                     mapTimeline.to(svgEl, {
-                        filter: 'brightness(1.5) saturate(1) drop-shadow(0 0 10px rgba(0, 242, 255, 0.2))',
+                        opacity: 0.66,
                         duration: 0.3,
                         ease: 'power2.in'
                     }, 7.5);
+                    syncMapAnimation();
                 }
             })
             .catch((error) => {
@@ -100,6 +121,8 @@ const VietnamSVG = () => {
         return () => {
             abortController.abort();
             mapTimeline?.kill();
+            observer.disconnect();
+            document.removeEventListener('visibilitychange', onVisibilityChange);
         };
     }, []);
 
@@ -184,8 +207,15 @@ const ParticleField = () => {
         const performanceSettings = window.CorsPerformance || {};
         const maxParticleCount = 95;
         const particles = [];
+        const lineBuckets = [[], [], [], []];
+        let spatialGrid = [];
+        let gridColumns = 0;
+        let gridRows = 0;
+        let gridCellSize = 0;
         let active = document.visibilityState === 'visible';
         let lastFrameAt = 0;
+
+        const supportsFinePointer = window.matchMedia?.('(hover: hover) and (pointer: fine)').matches ?? true;
 
         // Mouse coordinates for interaction
         const mouse = { x: null, y: null, radius: 155 };
@@ -207,9 +237,11 @@ const ParticleField = () => {
             mouse.y = null;
         };
 
-        window.addEventListener('resize', handleResize);
-        window.addEventListener('mousemove', handleMouseMove);
-        document.body.addEventListener('mouseleave', handleMouseLeave);
+        window.addEventListener('resize', handleResize, { passive: true });
+        if (supportsFinePointer) {
+            window.addEventListener('mousemove', handleMouseMove, { passive: true });
+            document.body.addEventListener('mouseleave', handleMouseLeave);
+        }
 
         const onVisibility = () => {
             active = document.visibilityState === 'visible';
@@ -303,26 +335,68 @@ const ParticleField = () => {
                 ctx.fill();
             }
 
-            // Draw lines connecting particles
+            // Draw connections through a spatial grid. This keeps the same
+            // particle density while avoiding a full O(n^2) scan every frame.
+            const cellSize = maxDistance;
+            const nextColumns = Math.max(1, Math.ceil(width / cellSize));
+            const nextRows = Math.max(1, Math.ceil(height / cellSize));
+            if (nextColumns !== gridColumns || nextRows !== gridRows || cellSize !== gridCellSize) {
+                gridColumns = nextColumns;
+                gridRows = nextRows;
+                gridCellSize = cellSize;
+                spatialGrid = Array.from({ length: gridColumns * gridRows }, () => []);
+            } else {
+                spatialGrid.forEach(bucket => { bucket.length = 0; });
+            }
+            for (let i = 0; i < activeParticleCount; i++) {
+                const p = particles[i];
+                const cellX = Math.min(gridColumns - 1, Math.max(0, Math.floor(p.x / cellSize)));
+                const cellY = Math.min(gridRows - 1, Math.max(0, Math.floor(p.y / cellSize)));
+                spatialGrid[cellY * gridColumns + cellX].push(i);
+            }
+
+            // Four alpha buckets reduce hundreds of canvas stroke calls to at
+            // most four without changing the visible distance fade.
+            lineBuckets.forEach(bucket => { bucket.length = 0; });
+            const maxDistanceSquared = maxDistance * maxDistance;
             for (let i = 0; i < activeParticleCount; i++) {
                 const p1 = particles[i];
-                for (let j = i + 1; j < activeParticleCount; j++) {
-                    const p2 = particles[j];
-                    const dx = p1.x - p2.x;
-                    const dy = p1.y - p2.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-
-                    if (dist < maxDistance) {
-                        const alpha = (1 - dist / maxDistance) * 0.35;
-                        ctx.beginPath();
-                        ctx.moveTo(p1.x, p1.y);
-                        ctx.lineTo(p2.x, p2.y);
-                        ctx.strokeStyle = `rgba(0, 242, 255, ${alpha})`;
-                        ctx.lineWidth = 0.55;
-                        ctx.stroke();
+                const cellX = Math.min(gridColumns - 1, Math.max(0, Math.floor(p1.x / cellSize)));
+                const cellY = Math.min(gridRows - 1, Math.max(0, Math.floor(p1.y / cellSize)));
+                for (let offsetX = -1; offsetX <= 1; offsetX++) {
+                    for (let offsetY = -1; offsetY <= 1; offsetY++) {
+                        const nearbyX = cellX + offsetX;
+                        const nearbyY = cellY + offsetY;
+                        if (nearbyX < 0 || nearbyX >= gridColumns || nearbyY < 0 || nearbyY >= gridRows) continue;
+                        const nearby = spatialGrid[nearbyY * gridColumns + nearbyX];
+                        for (let nearbyIndex = 0; nearbyIndex < nearby.length; nearbyIndex++) {
+                            const j = nearby[nearbyIndex];
+                            if (j <= i) continue;
+                            const p2 = particles[j];
+                            const dx = p1.x - p2.x;
+                            const dy = p1.y - p2.y;
+                            const distanceSquared = dx * dx + dy * dy;
+                            if (distanceSquared >= maxDistanceSquared) continue;
+                            const distanceRatio = Math.sqrt(distanceSquared) / maxDistance;
+                            const alphaBucket = Math.min(3, Math.floor((1 - distanceRatio) * 4));
+                            lineBuckets[alphaBucket].push(p1.x, p1.y, p2.x, p2.y);
+                        }
                     }
                 }
             }
+
+            ctx.lineWidth = 0.55;
+            lineBuckets.forEach((lines, bucketIndex) => {
+                if (!lines.length) return;
+                ctx.beginPath();
+                for (let index = 0; index < lines.length; index += 4) {
+                    ctx.moveTo(lines[index], lines[index + 1]);
+                    ctx.lineTo(lines[index + 2], lines[index + 3]);
+                }
+                const alpha = ((bucketIndex + 0.5) / 4) * 0.35;
+                ctx.strokeStyle = `rgba(0, 242, 255, ${alpha})`;
+                ctx.stroke();
+            });
 
             animationFrameId = requestAnimationFrame(animate);
         };
@@ -332,8 +406,10 @@ const ParticleField = () => {
         return () => {
             cancelAnimationFrame(animationFrameId);
             window.removeEventListener('resize', handleResize);
-            window.removeEventListener('mousemove', handleMouseMove);
-            document.body.removeEventListener('mouseleave', handleMouseLeave);
+            if (supportsFinePointer) {
+                window.removeEventListener('mousemove', handleMouseMove);
+                document.body.removeEventListener('mouseleave', handleMouseLeave);
+            }
             document.removeEventListener('visibilitychange', onVisibility);
             observer.disconnect();
         };
@@ -362,36 +438,56 @@ const SignalWaveform = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        let animationFrameId;
+        let animationFrameId = null;
         let width = canvas.width = canvas.offsetWidth;
         let height = canvas.height = canvas.offsetHeight || 40;
+        let gradient = null;
+        let pageVisible = document.visibilityState === 'visible';
+        let sectionVisible = true;
 
         const handleResize = () => {
             if (!canvas) return;
             width = canvas.width = canvas.offsetWidth;
             height = canvas.height = canvas.offsetHeight || 40;
+            gradient = null;
         };
 
-        window.addEventListener('resize', handleResize);
+        const scheduleIfVisible = () => {
+            if (pageVisible && sectionVisible && !animationFrameId) {
+                animationFrameId = requestAnimationFrame(draw);
+            }
+        };
+
+        const onVisibilityChange = () => {
+            pageVisible = document.visibilityState === 'visible';
+            scheduleIfVisible();
+        };
+
+        window.addEventListener('resize', handleResize, { passive: true });
+        document.addEventListener('visibilitychange', onVisibilityChange);
 
         let phase1 = 0;
         let phase2 = Math.PI / 2;
 
         const draw = () => {
+            animationFrameId = null;
+            if (!pageVisible || !sectionVisible) return;
             ctx.clearRect(0, 0, width, height);
 
-            const grad = ctx.createLinearGradient(0, 0, width, 0);
-            grad.addColorStop(0, 'rgba(0, 242, 255, 0)');
-            grad.addColorStop(0.15, 'rgba(0, 242, 255, 0.45)');
-            grad.addColorStop(0.5, 'rgba(0, 136, 255, 0.7)');
-            grad.addColorStop(0.85, 'rgba(0, 242, 255, 0.45)');
-            grad.addColorStop(1, 'rgba(0, 242, 255, 0)');
+            if (!gradient) {
+                gradient = ctx.createLinearGradient(0, 0, width, 0);
+                gradient.addColorStop(0, 'rgba(0, 242, 255, 0)');
+                gradient.addColorStop(0.15, 'rgba(0, 242, 255, 0.45)');
+                gradient.addColorStop(0.5, 'rgba(0, 136, 255, 0.7)');
+                gradient.addColorStop(0.85, 'rgba(0, 242, 255, 0.45)');
+                gradient.addColorStop(1, 'rgba(0, 242, 255, 0)');
+            }
 
             // Wave 1
             ctx.beginPath();
             ctx.lineWidth = 1.5;
-            ctx.strokeStyle = grad;
-            for (let x = 0; x < width; x++) {
+            ctx.strokeStyle = gradient;
+            for (let x = 0; x <= width; x += 2) {
                 const y = height / 2 + Math.sin(x * 0.015 + phase1) * 8 * Math.sin(x * 0.002);
                 if (x === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
@@ -401,8 +497,8 @@ const SignalWaveform = () => {
             // Wave 2 (interfering signal)
             ctx.beginPath();
             ctx.lineWidth = 1.0;
-            ctx.strokeStyle = grad;
-            for (let x = 0; x < width; x++) {
+            ctx.strokeStyle = gradient;
+            for (let x = 0; x <= width; x += 2) {
                 const y = height / 2 + Math.cos(x * 0.025 + phase2) * 6 * Math.sin(x * 0.004);
                 if (x === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
@@ -415,11 +511,18 @@ const SignalWaveform = () => {
             animationFrameId = requestAnimationFrame(draw);
         };
 
-        draw();
+        const observer = new IntersectionObserver(([entry]) => {
+            sectionVisible = entry.isIntersecting;
+            scheduleIfVisible();
+        }, { rootMargin: '120px' });
+        observer.observe(canvas);
+        scheduleIfVisible();
 
         return () => {
-            cancelAnimationFrame(animationFrameId);
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
             window.removeEventListener('resize', handleResize);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            observer.disconnect();
         };
     }, []);
 
@@ -755,6 +858,7 @@ const HeroThreeScene = () => {
             camera.updateProjectionMatrix();
             renderer.setSize(width, height, false);
         };
+        const handleResize = qualitySettings.rafThrottle ? qualitySettings.rafThrottle(resize) : resize;
 
         const onQualityChange = () => {
             renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualitySettings.threePixelRatio || 1));
@@ -767,6 +871,8 @@ const HeroThreeScene = () => {
         };
 
         const clock = new THREE.Clock();
+        const coreWorldPosition = new THREE.Vector3();
+        const satelliteWorldPosition = new THREE.Vector3();
         const animate = () => {
             if (!visible || !sectionVisible) {
                 rafId = null;
@@ -816,13 +922,11 @@ const HeroThreeScene = () => {
                     ring.rotation.z += 0.0025 + index * 0.001;
                     ring.material.opacity = Math.max(0, 0.26 * (1 - cycle));
                 });
-                const coreWorldPosition = new THREE.Vector3();
                 coreGroup.getWorldPosition(coreWorldPosition);
                 satellites.forEach(({ pivot, tracker, satellite, beam, cfg }, index) => {
                     pivot.rotation.y = elapsed * cfg.speed + cfg.phase;
                     satellite.rotation.x += 0.045;
                     satellite.rotation.y += 0.035;
-                    const satelliteWorldPosition = new THREE.Vector3();
                     tracker.getWorldPosition(satelliteWorldPosition);
                     const positions = beam.geometry.attributes.position.array;
                     positions[0] = satelliteWorldPosition.x;
@@ -854,7 +958,7 @@ const HeroThreeScene = () => {
 
         resize();
         animate();
-        window.addEventListener('resize', resize);
+        window.addEventListener('resize', handleResize, { passive: true });
         window.addEventListener('cors:qualitychange', onQualityChange);
         document.addEventListener('visibilitychange', onVisibilityChange);
         const observer = new IntersectionObserver(([entry]) => {
@@ -864,7 +968,7 @@ const HeroThreeScene = () => {
         observer.observe(mount);
 
         return () => {
-            window.removeEventListener('resize', resize);
+            window.removeEventListener('resize', handleResize);
             window.removeEventListener('cors:qualitychange', onQualityChange);
             document.removeEventListener('visibilitychange', onVisibilityChange);
             observer.disconnect();
@@ -1132,28 +1236,93 @@ const TypingHeadline = () => {
 /* Live Data Bars Continuous Animation Hook */
 const useLiveDataAnimation = () => {
     React.useEffect(() => {
-        let intervalId;
-        const startAnimation = () => {
-            intervalId = setInterval(() => {
-                const bars = document.querySelectorAll('.livedata-bar');
-                if (!bars.length) return;
-                bars.forEach(bar => {
-                    const newHeight = 20 + Math.random() * 60;
-                    bar.style.transition = 'height 1.5s cubic-bezier(0.4, 0, 0.2, 1)';
-                    bar.style.height = newHeight + '%';
-                });
-            }, 2000);
+        const section = document.querySelector('.livedata-section');
+        if (!section) return;
+        const bars = section.querySelectorAll('.livedata-bar');
+        let intervalId = null;
+        let ready = false;
+        let sectionVisible = false;
+        let pageVisible = document.visibilityState === 'visible';
+
+        const updateBars = () => {
+            bars.forEach(bar => {
+                const newHeight = 20 + Math.random() * 60;
+                bar.style.height = newHeight + '%';
+            });
         };
+        const syncAnimation = () => {
+            const shouldRun = ready && sectionVisible && pageVisible;
+            if (shouldRun && !intervalId) {
+                updateBars();
+                intervalId = setInterval(updateBars, 2000);
+            } else if (!shouldRun && intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+        };
+        const onVisibilityChange = () => {
+            pageVisible = document.visibilityState === 'visible';
+            syncAnimation();
+        };
+        const observer = new IntersectionObserver(([entry]) => {
+            sectionVisible = entry.isIntersecting;
+            syncAnimation();
+        }, { rootMargin: '180px' });
+        observer.observe(section);
+
         // Start after initial scroll animations have had time to play
-        const delay = setTimeout(startAnimation, 3000);
-        return () => { clearTimeout(delay); clearInterval(intervalId); };
+        const delay = setTimeout(() => {
+            ready = true;
+            syncAnimation();
+        }, 3000);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            clearTimeout(delay);
+            if (intervalId) clearInterval(intervalId);
+            observer.disconnect();
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, []);
+};
+
+/* Pause CSS-only motion for sections that are well outside the viewport. The
+   complete animation resumes before a section becomes visible. */
+const useSectionAnimationVisibility = () => {
+    React.useEffect(() => {
+        const root = document.querySelector('.enterprise-homepage');
+        if (!root) return;
+        const sections = Array.from(root.querySelectorAll('section, footer'));
+        const margin = Math.max(180, window.innerHeight * 0.2);
+        sections.forEach(section => {
+            section.classList.add('landing-perf-section');
+            const rect = section.getBoundingClientRect();
+            section.classList.toggle('is-near-viewport', rect.bottom >= -margin && rect.top <= window.innerHeight + margin);
+        });
+
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => entry.target.classList.toggle('is-near-viewport', entry.isIntersecting));
+        }, { rootMargin: '20% 0px' });
+        sections.forEach(section => observer.observe(section));
+
+        const onVisibilityChange = () => {
+            root.classList.toggle('landing-page-hidden', document.visibilityState === 'hidden');
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        onVisibilityChange();
+
+        return () => {
+            observer.disconnect();
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            sections.forEach(section => section.classList.remove('landing-perf-section', 'is-near-viewport'));
+            root.classList.remove('landing-page-hidden');
+        };
     }, []);
 };
 
 /* Mouse Parallax Hook - shifts map and orbs based on cursor position */
 const useMouseParallax = () => {
     React.useEffect(() => {
-        if (typeof gsap === 'undefined') return;
+        if (typeof gsap === 'undefined' || !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
         const hero = document.querySelector('.hero-section');
         if (!hero) return;
 
@@ -1238,13 +1407,13 @@ const useCinematicScroll = () => {
         gsap.registerPlugin(ScrollTrigger);
         let lenis = null;
         let lenisTicker = null;
+        const supportsSmoothWheel = window.matchMedia?.('(hover: hover) and (pointer: fine)').matches ?? true;
         try {
-            if (!liteMode && typeof Lenis !== 'undefined') {
+            if (!liteMode && supportsSmoothWheel && typeof Lenis !== 'undefined') {
                 lenis = new Lenis({ duration: 1.2, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), smoothWheel: true });
                 lenis.on('scroll', ScrollTrigger.update);
                 lenisTicker = (time) => lenis.raf(time * 1000);
                 gsap.ticker.add(lenisTicker);
-                gsap.ticker.lagSmoothing(0);
             }
         } catch(e) {}
 
@@ -1718,7 +1887,7 @@ const useCinematicScroll = () => {
             const el = document.querySelector('.scroll-indicator');
             if (el) el.classList.toggle('hidden', window.scrollY > 200);
         };
-        window.addEventListener('scroll', hideIndicator);
+        window.addEventListener('scroll', hideIndicator, { passive: true });
 
         return () => {
             clearTimeout(initTimer);
@@ -1924,6 +2093,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
     const [loginOpen, setLoginOpen] = React.useState(false);
     useCinematicScroll();
     useLiveDataAnimation();
+    useSectionAnimationVisibility();
     useMouseParallax();
     useCardTilt();
     useMagneticButtons();

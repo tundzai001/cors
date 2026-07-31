@@ -30,6 +30,10 @@ import random
 import unicodedata
 import urllib.parse
 import urllib.request
+try:
+    from control_plane_failover import ControlPlaneFailover, resolve_effective_stream_switch
+except ImportError:
+    from geodetic.control_plane_failover import ControlPlaneFailover, resolve_effective_stream_switch
 HAS_RTCM_DECODER = True
 
 
@@ -102,6 +106,9 @@ MQTT_USERNAME = DEFAULT_MQTT_USERNAME
 MQTT_PASSWORD = DEFAULT_MQTT_PASSWORD
 DEFAULT_BAUDRATE = 115200 if IS_RASPBERRY_PI else 460800
 STATUS_PUBLISH_INTERVAL_SECONDS = 5
+CONTROL_PLANE_STALE_SECONDS = max(15.0, float(os.getenv("CONTROL_PLANE_STALE_SECONDS", "45")))
+CONTROL_PLANE_RECOVERY_SECONDS = max(0.0, float(os.getenv("CONTROL_PLANE_RECOVERY_SECONDS", "5")))
+CONTROL_PLANE_CHECK_INTERVAL_SECONDS = max(1.0, float(os.getenv("CONTROL_PLANE_CHECK_INTERVAL_SECONDS", "2")))
 NMEA_IDLE_PUBLISH_INTERVAL_SECONDS = 1.0
 NMEA_MQTT_PUBLISH_INTERVAL_SECONDS = 1.0
 SYSTEM_INFO_INTERVAL_SECONDS = 30
@@ -121,6 +128,7 @@ serial_port_lock = threading.Lock()
 telemetry_lock = threading.Lock()
 current_state = "INITIALIZING"
 active_websocket_connection = None
+control_plane_fail_open_event = threading.Event()
 is_remotely_locked = False 
 initialization_complete = asyncio.Event()
 last_command_result = {}
@@ -425,7 +433,7 @@ def _normalize_mountpoint_value(value):
     return cleaned.lower() if cleaned else None
 
 
-def _get_server_stream_switches(cfg: dict, server_id: int) -> dict:
+def _get_server_stream_switches(cfg: dict, server_id: int, *, apply_fail_open: bool = False) -> dict:
     global_on_demand = _to_bool(cfg.get('stream_on_demand', False), False)
     global_active = _to_bool(cfg.get('stream_active', False), False)
 
@@ -445,19 +453,28 @@ def _get_server_stream_switches(cfg: dict, server_id: int) -> dict:
         active = global_active
 
     enabled = _to_bool(cfg.get(f'server{server_id}_enabled'), False)
-    can_push = enabled and ((not on_demand) or active)
+    effective = resolve_effective_stream_switch(
+        enabled=enabled,
+        on_demand=on_demand,
+        active=active,
+        fail_open=apply_fail_open and control_plane_fail_open_event.is_set(),
+    )
 
     return {
         'enabled': enabled,
         'on_demand': on_demand,
         'active': active,
-        'can_push': can_push,
+        **effective,
     }
 
 
-def _compute_any_server_can_push(cfg: dict) -> bool:
+def _compute_any_server_can_push(cfg: dict, *, apply_fail_open: bool = False) -> bool:
     for server_id in (1, 2):
-        if _get_server_stream_switches(cfg, server_id)['can_push']:
+        if _get_server_stream_switches(
+            cfg,
+            server_id,
+            apply_fail_open=apply_fail_open,
+        )['can_push']:
             return True
     return False
 
@@ -2667,7 +2684,31 @@ class NMEAPublisher(threading.Thread):
                 should_forward = _should_forward_nmea_to_backend(data_chunk)
                 if not should_forward:
                     _telemetry_inc("queue", "nmea_filtered")
-                if active_websocket_connection and self.loop and not self.loop.is_closed() and should_forward:
+                mqtt_delivered = False
+                if self.mqtt_client and self.mqtt_client.is_connected() and should_forward:
+                    try:
+                        result = self.mqtt_client.publish(topic, data_chunk, qos=0)
+                        if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                            mqtt_delivered = True
+                            _telemetry_inc("queue", "nmea_mqtt_published")
+                        else:
+                            _telemetry_inc("queue", "nmea_mqtt_publish_failures")
+                            logging.warning(f"Failed to publish NMEA to MQTT: rc={result.rc}")
+                    except Exception as e:
+                        _telemetry_inc("queue", "nmea_mqtt_publish_failures")
+                        logging.warning(f"Failed to publish NMEA to MQTT: {e}")
+
+                # Raw telemetry uses one transport at a time. MQTT is the
+                # primary path; WebSocket is a fallback when MQTT cannot
+                # accept the packet, avoiding duplicate hot-path work in the
+                # backend while preserving delivery during broker outages.
+                if (
+                    not mqtt_delivered
+                    and active_websocket_connection
+                    and self.loop
+                    and not self.loop.is_closed()
+                    and should_forward
+                ):
                     try:
                         ws_message = {
                             "type": "nmea_update",
@@ -2680,18 +2721,6 @@ class NMEAPublisher(threading.Thread):
                         _telemetry_inc("queue", "nmea_ws_forwarded")
                     except Exception as e:
                         logging.debug(f"Failed to send NMEA over websocket: {e}")
-
-                if self.mqtt_client and self.mqtt_client.is_connected() and should_forward:
-                    try:
-                        result = self.mqtt_client.publish(topic, data_chunk, qos=0)
-                        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                            _telemetry_inc("queue", "nmea_mqtt_published")
-                        else:
-                            _telemetry_inc("queue", "nmea_mqtt_publish_failures")
-                            logging.warning(f"Failed to publish NMEA to MQTT: rc={result.rc}")
-                    except Exception as e:
-                        _telemetry_inc("queue", "nmea_mqtt_publish_failures")
-                        logging.warning(f"Failed to publish NMEA to MQTT: {e}")
 
             except Empty:
                 continue
@@ -2815,7 +2844,20 @@ class RTCMPublisherMQTT(threading.Thread):
                                         "satellites": sats,
                                         "timestamp": round(time.time(), 3)
                                     }
-                                    if active_websocket_connection and self.loop and not self.loop.is_closed():
+                                    payload = json.dumps(decoded_payload).encode('ascii')
+                                    mqtt_delivered = False
+                                    if self.mqtt_client and self.mqtt_client.is_connected():
+                                        try:
+                                            result = self.mqtt_client.publish(topic, payload, qos=0)
+                                            mqtt_delivered = result.rc == mqtt.MQTT_ERR_SUCCESS
+                                        except Exception as e:
+                                            logging.error(f"Failed to publish RTCM skyview: {e}")
+                                    if (
+                                        not mqtt_delivered
+                                        and active_websocket_connection
+                                        and self.loop
+                                        and not self.loop.is_closed()
+                                    ):
                                         try:
                                             asyncio.run_coroutine_threadsafe(
                                                 active_websocket_connection.send(json.dumps({
@@ -2826,14 +2868,6 @@ class RTCMPublisherMQTT(threading.Thread):
                                             )
                                         except Exception as e:
                                             logging.debug(f"Failed to send RTCM skyview over websocket: {e}")
-                                    payload = json.dumps(decoded_payload).encode('ascii')
-                                    if self.mqtt_client and self.mqtt_client.is_connected():
-                                        try:
-                                            self.mqtt_client.publish(topic, payload, qos=0)
-                                        except Exception as e:
-                                            logging.error(f"Failed to publish RTCM skyview: {e}")
-                                    else:
-                                        logging.warning(f"RTCMPublisherMQTT: MQTT not connected!")
                             
                             # Feed empty bytes to drain any remaining packets in the buffer
                             parsed = self.decoder.decode_sync(self.serial_number, b"")
@@ -2901,7 +2935,11 @@ class NTRIPServerWorker(threading.Thread):
                 time.sleep(2)
                 continue
                 
-            server_switches = _get_server_stream_switches(self.config, self.server_id)
+            server_switches = _get_server_stream_switches(
+                self.config,
+                self.server_id,
+                apply_fail_open=True,
+            )
             if not server_switches['can_push']:
                 with self.stats_lock:
                     self.connection_status[f'server{self.server_id}'] = False
@@ -2967,7 +3005,11 @@ class NTRIPServerWorker(threading.Thread):
                 while not self._stop_event.is_set() and not is_remote_locked():
                     try:
                         # Per-server gate: each server can be configured independently.
-                        server_switches = _get_server_stream_switches(self.config, self.server_id)
+                        server_switches = _get_server_stream_switches(
+                            self.config,
+                            self.server_id,
+                            apply_fail_open=True,
+                        )
                         if not server_switches['can_push']:
                             if not standby_logged:
                                 self.log("INFO", f"S{self.server_id}: RTCM stream inactive for this server, disconnecting to enter standby.")
@@ -3751,6 +3793,7 @@ class GNSSReader(threading.Thread):
 
 class AgentManager:
     def __init__(self, serial_number):
+        control_plane_fail_open_event.clear()
         self.serial_number = serial_number
         self.config = {}
         self.detected_chip = {"port": None, "type": "UNKNOWN"}
@@ -3766,6 +3809,11 @@ class AgentManager:
         self.last_savings_calc_time = time.time()
         self.log = lambda lvl, msg: logging.log(getattr(logging, lvl.upper(), logging.INFO), msg)
         self.rtcm_stream_active = False
+        self.control_plane_failover = ControlPlaneFailover(
+            STATUS_BOOT_ID,
+            stale_after_seconds=CONTROL_PLANE_STALE_SECONDS,
+            recovery_after_seconds=CONTROL_PLANE_RECOVERY_SECONDS,
+        )
         # Last-known RTK/GGA fix status (updated asynchronously by NMEA dispatcher)
         self.last_gga_fix_status = globals().get('LAST_GGA_FIX_STATUS', 'NO_FIX')
         self.load_config()
@@ -3876,7 +3924,7 @@ class AgentManager:
         self.config['services'] = cfg
         
         # Sync current engine state
-        self.rtcm_stream_active = _compute_any_server_can_push(cfg)
+        self.rtcm_stream_active = _compute_any_server_can_push(cfg, apply_fail_open=True)
         
         global rtcm_stream_active_flag
         rtcm_stream_active_flag = self.rtcm_stream_active
@@ -3983,7 +4031,10 @@ class AgentManager:
                         new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
                         should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
 
-        self.rtcm_stream_active = _compute_any_server_can_push(services)
+        self.rtcm_stream_active = _compute_any_server_can_push(
+            services,
+            apply_fail_open=True,
+        )
         rtcm_stream_active_flag = self.rtcm_stream_active  # Update global dispatch gate
         self.save_config()
         if should_restart:
@@ -3997,6 +4048,36 @@ class AgentManager:
     
     def get_service_config(self):
         return self.config.get('services', {})
+
+    def apply_control_plane_failover(self, active: bool, reason: str) -> bool:
+        """Apply a runtime-only Always-On overlay without saving config."""
+        global rtcm_stream_active_flag
+        requested = bool(active)
+        if control_plane_fail_open_event.is_set() == requested:
+            return False
+
+        if requested:
+            control_plane_fail_open_event.set()
+            self.log(
+                "CRITICAL",
+                "[CONTROL FAIL-SAFE] WebSocket and MQTT ACKs are stale; "
+                "temporarily forcing every enabled output server Always-On.",
+            )
+        else:
+            control_plane_fail_open_event.clear()
+            self.log(
+                "WARNING",
+                "[CONTROL FAIL-SAFE] Backend ACK recovered; restoring saved stream modes.",
+            )
+
+        services = self.get_service_config() or {}
+        self.rtcm_stream_active = _compute_any_server_can_push(
+            services,
+            apply_fail_open=True,
+        )
+        rtcm_stream_active_flag = self.rtcm_stream_active
+        self.restart_services()
+        return True
     
     def get_full_status(self):
         base_status = "online" 
@@ -4006,7 +4087,7 @@ class AgentManager:
         # New: Three-state (Online/Sleep/Offline) logic
         services = self.config.get('services', {})
         stream_on_demand = services.get('stream_on_demand') == True
-        any_server_can_push = _compute_any_server_can_push(services)
+        any_server_can_push = _compute_any_server_can_push(services, apply_fail_open=True)
         
         if base_status == "online" and stream_on_demand and not any_server_can_push:
             base_status = "sleep"
@@ -4156,8 +4237,8 @@ class AgentManager:
 
             # Backward-compatible UI keys: keep server1_bps/server2_bps present even in standby mode.
             cfg = self.get_service_config() or {}
-            server1_switch = _get_server_stream_switches(cfg, 1)
-            server2_switch = _get_server_stream_switches(cfg, 2)
+            server1_switch = _get_server_stream_switches(cfg, 1, apply_fail_open=True)
+            server2_switch = _get_server_stream_switches(cfg, 2, apply_fail_open=True)
             can_push_server1 = server1_switch['can_push']
             can_push_server2 = server2_switch['can_push']
             selected_mountpoint = self._normalize_mountpoint(cfg.get('active_mountpoint'))
@@ -4201,6 +4282,9 @@ class AgentManager:
                     "on_demand": bool(server1_switch['on_demand']),
                     "active": bool(server1_switch['active']),
                     "can_push": bool(server1_switch['can_push']),
+                    "configured_can_push": bool(server1_switch['configured_can_push']),
+                    "effective_can_push": bool(server1_switch['can_push']),
+                    "fail_open_forced": bool(server1_switch['fail_open_forced']),
                     "sleep": bool(server1_switch['enabled'] and server1_switch['on_demand'] and not server1_switch['active']),
                     "connected": server1_connected,
                     "bps": int(status["ntrip_stats"].get("server1_bps", 0)),
@@ -4211,6 +4295,9 @@ class AgentManager:
                     "on_demand": bool(server2_switch['on_demand']),
                     "active": bool(server2_switch['active']),
                     "can_push": bool(server2_switch['can_push']),
+                    "configured_can_push": bool(server2_switch['configured_can_push']),
+                    "effective_can_push": bool(server2_switch['can_push']),
+                    "fail_open_forced": bool(server2_switch['fail_open_forced']),
                     "sleep": bool(server2_switch['enabled'] and server2_switch['on_demand'] and not server2_switch['active']),
                     "connected": server2_connected,
                     "bps": int(status["ntrip_stats"].get("server2_bps", 0)),
@@ -4224,6 +4311,7 @@ class AgentManager:
 
         telemetry = _snapshot_agent_telemetry()
         status.update(telemetry)
+        status["control_plane_failover"] = self.control_plane_failover.snapshot()
 
         serial_health = {
             "port": self.detected_chip.get("port"),
@@ -4290,14 +4378,19 @@ class AgentManager:
             return
         
         cfg = self.config.get("services", {})
-        self.rtcm_stream_active = _compute_any_server_can_push(cfg)
+        self.rtcm_stream_active = _compute_any_server_can_push(cfg, apply_fail_open=True)
         rtcm_stream_active_flag = self.rtcm_stream_active
         selected_mountpoint = self._normalize_mountpoint(cfg.get('active_mountpoint'))
 
         def _server_can_publish(server_id: int) -> bool:
-            server_switch = _get_server_stream_switches(cfg, server_id)
+            server_switch = _get_server_stream_switches(cfg, server_id, apply_fail_open=True)
             if not server_switch['enabled']:
                 return False
+
+            # During control-plane failure the runtime overlay deliberately
+            # ignores On-Demand active/mountpoint selectors for enabled outputs.
+            if control_plane_fail_open_event.is_set():
+                return True
             
             # Non-on-demand (Always-On) servers ALWAYS publish if enabled.
             if not server_switch['on_demand']:
@@ -4349,6 +4442,7 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
     status_payload["status_boot_id"] = STATUS_BOOT_ID
     status_payload["status_sequence"] = STATUS_SEQUENCE
     status_payload["agent_timestamp"] = status_payload.get("timestamp", time.time())
+    agent.control_plane_failover.record_probe(STATUS_SEQUENCE)
     
     try:
         system_info = get_cached_system_info()
@@ -4376,7 +4470,10 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
     if active_websocket_connection:
         try:
             ws_message = {"type": "status_update", "payload": status_payload}
-            await active_websocket_connection.send(json.dumps(ws_message))
+            await asyncio.wait_for(
+                active_websocket_connection.send(json.dumps(ws_message)),
+                timeout=2.0,
+            )
         except Exception as e:
             _set_transport_state("websocket", False)
             logging.error(f"Failed to send status via WebSocket: {e}")
@@ -4583,7 +4680,10 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                 pass
             active_auto_base_client = None
             active_auto_base_task = None
-            rtcm_stream_active_flag = _compute_any_server_can_push(agent.get_service_config() or {})
+            rtcm_stream_active_flag = _compute_any_server_can_push(
+                agent.get_service_config() or {},
+                apply_fail_open=True,
+            )
             if gnss_reader:
                 try:
                     gnss_reader.resume()
@@ -4721,8 +4821,16 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
         elif command == "SET_RTCM_STREAM_ACTIVE":
             active = bool(payload.get("active", False))
             mountpoint = payload.get("mountpoint")
-            address = payload.get("address") or payload.get("ip") or payload.get("host")
-            raw_server_id = payload.get("server_id", payload.get("server"))
+            address = (
+                payload.get("address")
+                or payload.get("caster_host")
+                or payload.get("ip")
+                or payload.get("host")
+            )
+            raw_server_id = payload.get(
+                "server_id",
+                payload.get("server_idx", payload.get("server")),
+            )
             server_id = None
             try:
                 if raw_server_id is not None:
@@ -4854,6 +4962,7 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
         f"pi/devices/{MACHINE_SERIAL}/commands",
         f"pi/device/{MACHINE_SERIAL}/command",
     ]
+    control_ack_topic = f"pi/devices/{MACHINE_SERIAL}/control_ack"
 
     def on_connect(c, userdata, flags, rc, properties=None):
         if rc == 0:
@@ -4862,6 +4971,8 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
             for topic in command_topics:
                 result, mid = c.subscribe(topic, qos=1)
                 logging.info(f"MQTT subscribe topic='{topic}' result={result} mid={mid}")
+            result, mid = c.subscribe(control_ack_topic, qos=1)
+            logging.info(f"MQTT control ACK subscription result={result} mid={mid}")
             asyncio.run_coroutine_threadsafe(send_status(userdata["agent"], c), loop)
         else:
             _telemetry_inc("reconnect", "mqtt")
@@ -4880,8 +4991,15 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
     
     def on_message(c, userdata, msg):
         try:
-            logging.info(f"MQTT message received topic='{msg.topic}' bytes={len(msg.payload)}")
             data = json.loads(msg.payload.decode())
+            if msg.topic == control_ack_topic and data.get("type") == "control_plane_ack":
+                userdata["agent"].control_plane_failover.record_ack(
+                    "mqtt",
+                    data,
+                    retained=bool(getattr(msg, "retain", False)),
+                )
+                return
+            logging.info(f"MQTT command received topic='{msg.topic}' bytes={len(msg.payload)}")
             future = asyncio.run_coroutine_threadsafe(
                 process_command('mqtt', data, userdata["agent"], userdata["gnss_reader"], c),
                 loop
@@ -4955,6 +5073,9 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
                 
                 async for message in websocket:
                     data = json.loads(message)
+                    if data.get("type") == "control_plane_ack":
+                        agent.control_plane_failover.record_ack("websocket", data)
+                        continue
                     await process_command('websocket', data, agent, gnss_reader, mqtt_client)
 
         except asyncio.CancelledError:
@@ -4963,18 +5084,15 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
         except asyncio.TimeoutError:
             _telemetry_inc("reconnect", "websocket")
             logging.warning("WebSocket connection timeout. Retrying in 10s...")
-            await asyncio.sleep(10)
         except websockets.exceptions.WebSocketException as e:
             _telemetry_inc("reconnect", "websocket")
             logging.warning(f"WebSocket error: {e}. Retrying in 10s...")
-            await asyncio.sleep(10)
         except Exception as e:
             _telemetry_inc("reconnect", "websocket")
             if mqtt_client and mqtt_client.is_connected():
                 logging.info(f"Secondary channel (WebSocket) failed. Main MQTT OK. Retry in 10s. Error: {e}")
             else:
                 logging.warning(f"WARNING: Both MQTT and WebSocket failed. Retry in 10s. Error: {e}")
-            await asyncio.sleep(10)
         finally:
             active_websocket_connection = None
             _set_transport_state("websocket", False)
@@ -5013,6 +5131,19 @@ async def status_publisher_task(agent: AgentManager, mqtt_client: mqtt.Client):
             await send_status(agent, mqtt_client)
     except asyncio.CancelledError:
         logging.info("status_publisher_task cancelled")
+        raise
+
+
+async def control_plane_watchdog_task(agent: AgentManager):
+    """Fail open only when neither backend transport returns a fresh ACK."""
+    try:
+        while True:
+            await asyncio.sleep(CONTROL_PLANE_CHECK_INTERVAL_SECONDS)
+            transition = agent.control_plane_failover.evaluate()
+            if transition.changed:
+                agent.apply_control_plane_failover(transition.active, transition.reason)
+    except asyncio.CancelledError:
+        logging.info("control_plane_watchdog_task cancelled")
         raise
 
 # ==============================================================================
@@ -5641,11 +5772,18 @@ async def main():
     # ========== Start Background Tasks ==========
     status_task = asyncio.create_task(status_publisher_task(agent, mqtt_client))
     ws_task = asyncio.create_task(websocket_task(agent, gnss_reader, mqtt_client))
+    control_plane_task = asyncio.create_task(control_plane_watchdog_task(agent))
     auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
     mem_guard_task = asyncio.create_task(memory_guard_task())
     
     try:
-        await asyncio.gather(status_task, ws_task, auto_base_task, mem_guard_task)
+        await asyncio.gather(
+            status_task,
+            ws_task,
+            control_plane_task,
+            auto_base_task,
+            mem_guard_task,
+        )
     except asyncio.CancelledError:
         logging.info("Tasks cancelled - shutting down gracefully")
     finally:

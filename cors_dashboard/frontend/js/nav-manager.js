@@ -21,8 +21,8 @@ const NavigationManager = {
             this.setupTopbar();
             this.setupLogoutButton();
         } catch (error) {
-            console.error('[Nav] init failed:', error);
             if (error.message === 'Unauthorized') return;
+            console.error('[Nav] init failed:', error);
             window.CorsUI?.showToast?.('danger', 'Cannot initialize admin navigation');
         }
     },

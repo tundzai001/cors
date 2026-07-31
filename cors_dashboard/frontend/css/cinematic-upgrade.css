@@ -37,12 +37,22 @@ html[data-quality="lite"] * {
     width: 100%; height: auto;
     opacity: 0.88;
     filter: brightness(2.55) saturate(1.9) drop-shadow(0 0 34px rgba(0, 242, 255, 0.52));
-    will-change: transform, opacity, filter;
+    will-change: transform, opacity;
     transform-origin: center center;
 }
 .vietnam-map-inline svg path {
     transition: none;
-    will-change: stroke-dashoffset;
+}
+
+/* CSS animations below the fold do not need compositor time until their
+   section approaches the viewport. Max quality remains unchanged while seen. */
+.enterprise-homepage .landing-perf-section:not(.is-near-viewport) *,
+.enterprise-homepage .landing-perf-section:not(.is-near-viewport) *::before,
+.enterprise-homepage .landing-perf-section:not(.is-near-viewport) *::after,
+.enterprise-homepage.landing-page-hidden *,
+.enterprise-homepage.landing-page-hidden *::before,
+.enterprise-homepage.landing-page-hidden *::after {
+    animation-play-state: paused !important;
 }
 
 /* SCROLL PROGRESS BAR */
@@ -243,19 +253,21 @@ html[data-quality="lite"] * {
     pointer-events: none;
     background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
     animation: noiseShift 0.2s steps(4) infinite;
+    contain: strict;
+    will-change: transform;
 }
 @keyframes noiseShift {
-    0% { transform: translate(0, 0); }
-    10% { transform: translate(-1%, -1%); }
-    20% { transform: translate(-2%, 1%); }
-    30% { transform: translate(1%, -2%); }
-    40% { transform: translate(-1%, 3%); }
-    50% { transform: translate(-2%, 1%); }
-    60% { transform: translate(1%, 2%); }
-    70% { transform: translate(3%, -2%); }
-    80% { transform: translate(-1%, 1%); }
-    90% { transform: translate(2%, -1%); }
-    100% { transform: translate(0, 0); }
+    0% { transform: translate3d(0, 0, 0); }
+    10% { transform: translate3d(-1%, -1%, 0); }
+    20% { transform: translate3d(-2%, 1%, 0); }
+    30% { transform: translate3d(1%, -2%, 0); }
+    40% { transform: translate3d(-1%, 3%, 0); }
+    50% { transform: translate3d(-2%, 1%, 0); }
+    60% { transform: translate3d(1%, 2%, 0); }
+    70% { transform: translate3d(3%, -2%, 0); }
+    80% { transform: translate3d(-1%, 1%, 0); }
+    90% { transform: translate3d(2%, -1%, 0); }
+    100% { transform: translate3d(0, 0, 0); }
 }
 
 /* AURORA BOREALIS GLOW EFFECT */
@@ -267,6 +279,7 @@ html[data-quality="lite"] * {
     z-index: 0;
     opacity: 0.75;
     mix-blend-mode: screen;
+    contain: strict;
 }
 .aurora-band {
     position: absolute;
@@ -397,12 +410,13 @@ html[data-quality="lite"] * {
 /* CONTINUOUS STAGGERED FEATURE CARD SCANNER BEAMS */
 .feature-card-scan-continuous {
     position: absolute;
-    top: 0; bottom: 0; left: -45%; z-index: 4;
+    top: 0; bottom: 0; left: 0; z-index: 4;
     width: 42%; pointer-events: none;
     background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.14), rgba(255, 255, 255, 0.1), transparent);
-    transform: skewX(-16deg);
+    transform: translate3d(-110%, 0, 0) skewX(-16deg);
     mix-blend-mode: screen;
     animation: scanBeamContinuous 6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    will-change: transform, opacity;
 }
 .col-lg-3:nth-child(1) .feature-card-scan-continuous { animation-delay: 0s; }
 .col-lg-3:nth-child(2) .feature-card-scan-continuous { animation-delay: 1.5s; }
@@ -410,10 +424,10 @@ html[data-quality="lite"] * {
 .col-lg-3:nth-child(4) .feature-card-scan-continuous { animation-delay: 4.5s; }
 
 @keyframes scanBeamContinuous {
-    0% { left: -45%; opacity: 0; }
+    0% { transform: translate3d(-110%, 0, 0) skewX(-16deg); opacity: 0; }
     5% { opacity: 1; }
-    30% { left: 115%; opacity: 1; }
-    35%, 100% { left: 115%; opacity: 0; }
+    30% { transform: translate3d(275%, 0, 0) skewX(-16deg); opacity: 1; }
+    35%, 100% { transform: translate3d(275%, 0, 0) skewX(-16deg); opacity: 0; }
 }
 
 /* THREE.JS PREMIUM HERO SCENE */

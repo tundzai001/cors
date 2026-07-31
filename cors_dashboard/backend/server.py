@@ -22,7 +22,12 @@ import logging
 
 class UvicornWebsocketFilter(logging.Filter):
     def filter(self, record):
-        if record.levelname == "ERROR" and "data transfer failed" in record.getMessage():
+        message = record.getMessage()
+        if record.levelname == "ERROR" and "data transfer failed" in message:
+            return False
+        # These two lines become thousands of synchronous writes during a
+        # reconnect herd and carry no station identity or diagnostic value.
+        if record.levelno <= logging.INFO and message in {"connection open", "connection closed"}:
             return False
         return True
 

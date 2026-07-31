@@ -7,6 +7,7 @@ import asyncio
 import os
 import time
 import hashlib
+import threading
 from typing import Awaitable, Callable, Optional
 import paho.mqtt.client as mqtt
 from sqlalchemy import select
@@ -17,6 +18,7 @@ from .database import settings, device_session_scope
 from . import crud, nmea_parser, models
 from .rtcm_signal_decoder import rtcm_signal_decoder
 from .status_reconciler import status_reconciler
+from .control_plane_ack import build_control_plane_ack
 
 # Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
 mqtt_db_write_lock = asyncio.Lock()
@@ -48,7 +50,107 @@ device_sync_cache = {}       # Lưu trạng thái sync (True/False)
 device_last_sync_check = {}  # Lưu thời gian lần cuối check DB
 device_name_cache = {}       # Lưu tên trạm để ghép vào bản tin offline (LWT không kèm tên)
 device_telemetry_cache = {}  # Snapshot live cho bot/API đọc tọa độ và vệ tinh hiện tại
+device_metadata_cache = {}
+device_metadata_locks = {}
+device_deletion_tombstones = set()
+device_deletion_tombstones_lock = threading.Lock()
+DEVICE_METADATA_CACHE_TTL_SECONDS = max(
+    5.0,
+    float(os.getenv("DEVICE_METADATA_CACHE_TTL_SECONDS", "60")),
+)
 RTCM_SATELLITE_CACHE_TTL_MS = 10_000
+
+
+def _metadata_snapshot(device) -> dict:
+    if not device:
+        return {"exists": False, "cached_at": time.monotonic()}
+    system_info = getattr(device, "system_info", None)
+    return {
+        "exists": True,
+        "cached_at": time.monotonic(),
+        "name": getattr(device, "name", None),
+        "device_token": str(getattr(device, "device_token", "") or "").strip(),
+        "is_synced": bool(getattr(device, "is_synced", False)),
+        "license_bypass": bool(
+            isinstance(system_info, dict)
+            and system_info.get("auth_license_bypass")
+        ),
+        "base_config": getattr(device, "base_config", None) or {},
+        "service_config": getattr(device, "service_config", None) or {},
+        "detected_chip_type": getattr(device, "detected_chip_type", None),
+    }
+
+
+async def get_device_metadata(serial: str, *, force_refresh: bool = False) -> dict:
+    """Return a short-lived primitive snapshot instead of SELECTing every heartbeat."""
+    serial_key = str(serial)
+    cached = device_metadata_cache.get(serial_key)
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and cached
+        and now - float(cached.get("cached_at") or 0) < DEVICE_METADATA_CACHE_TTL_SECONDS
+    ):
+        return cached
+
+    lock = device_metadata_locks.setdefault(serial_key, asyncio.Lock())
+    async with lock:
+        cached = device_metadata_cache.get(serial_key)
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and cached
+            and now - float(cached.get("cached_at") or 0) < DEVICE_METADATA_CACHE_TTL_SECONDS
+        ):
+            return cached
+        async with device_session_scope() as session:
+            device = await crud.get_device_by_serial(session, serial_key)
+        snapshot = _metadata_snapshot(device)
+        device_metadata_cache[serial_key] = snapshot
+        return snapshot
+
+
+async def cache_device_metadata(device) -> None:
+    """Publish a committed ORM device into the auth cache without another SELECT.
+
+    Taking the same per-device lock as ``get_device_metadata`` prevents an
+    older in-flight lookup from overwriting a freshly rotated token or bypass
+    setting after the mutation endpoint returns.
+    """
+    serial_key = str(getattr(device, "serial", "") or "").strip()
+    if not serial_key:
+        return
+    lock = device_metadata_locks.setdefault(serial_key, asyncio.Lock())
+    async with lock:
+        device_metadata_cache[serial_key] = _metadata_snapshot(device)
+        with device_deletion_tombstones_lock:
+            device_deletion_tombstones.discard(serial_key)
+
+
+async def mark_device_metadata_missing(serial: str) -> None:
+    """Install a locked tombstone after deletion so retained status stays ignored."""
+    serial_key = str(serial or "").strip()
+    if not serial_key:
+        return
+    lock = device_metadata_locks.setdefault(serial_key, asyncio.Lock())
+    async with lock:
+        device_metadata_cache[serial_key] = {
+            "exists": False,
+            "cached_at": time.monotonic(),
+        }
+        with device_deletion_tombstones_lock:
+            device_deletion_tombstones.add(serial_key)
+
+
+def device_metadata_is_missing(serial: str) -> bool:
+    cached = device_metadata_cache.get(str(serial or "").strip()) or {}
+    return cached.get("exists") is False
+
+
+def device_was_deleted(serial: str) -> bool:
+    serial_key = str(serial or "").strip()
+    with device_deletion_tombstones_lock:
+        return serial_key in device_deletion_tombstones
 
 
 def _cache_rtcm_signal_snapshot(serial: str, decoded: dict) -> None:
@@ -120,6 +222,170 @@ DB_WRITE_INTERVAL = 120.0    # Ghi DB định kỳ 2 phút/lần nếu không c�
 IS_SHUTTING_DOWN = False 
 external_command_handler: Optional[Callable[[str, bytes], Awaitable[None]]] = None
 status_broadcast_handler: Optional[Callable[[dict], Awaitable[None]]] = None
+MQTT_INGRESS_MAX_PENDING = max(100, int(os.getenv("MQTT_INGRESS_MAX_PENDING", "2000")))
+MQTT_INGRESS_CONCURRENCY = max(1, int(os.getenv("MQTT_INGRESS_CONCURRENCY", "8")))
+MQTT_INGRESS_CONTROL_TYPES = frozenset({
+    "status",
+    "status_update",
+    "base_config_state",
+    "service_config_state",
+})
+mqtt_ingress_lock = threading.Lock()
+mqtt_ingress_pending = {}
+mqtt_ingress_drain_scheduled = False
+mqtt_control_ack_pending = {}
+mqtt_control_ack_drain_scheduled = False
+mqtt_ingress_metrics = {
+    "received": 0,
+    "coalesced": 0,
+    "dropped": 0,
+    "processed": 0,
+    "control_ack_coalesced": 0,
+    "control_ack_dropped": 0,
+    "control_ack_published": 0,
+}
+
+
+def _mqtt_ingress_key(topic: str, payload: bytes) -> tuple[str, str]:
+    message_type = str(topic).rsplit("/", 1)[-1]
+    if message_type == "raw_data":
+        if payload.startswith(b"$") and len(payload) >= 6:
+            return topic, payload[3:6].decode("ascii", errors="ignore") or "nmea"
+        if payload.startswith(b"{"):
+            return topic, "json"
+        return topic, "binary"
+    return topic, message_type
+
+
+def _start_mqtt_ingress_drain() -> None:
+    asyncio.create_task(_drain_mqtt_ingress())
+
+
+def _drain_mqtt_control_acks() -> None:
+    """Run on asyncio's thread so an ACK proves the event loop is responsive."""
+    global mqtt_control_ack_drain_scheduled
+    with mqtt_ingress_lock:
+        pending = list(mqtt_control_ack_pending.values())
+        mqtt_control_ack_pending.clear()
+        mqtt_control_ack_drain_scheduled = False
+
+    for topic, payload in pending:
+        try:
+            topic_parts = str(topic).split("/")
+            if len(topic_parts) < 4 or topic_parts[-1] != "status":
+                continue
+            serial = topic_parts[2]
+            data = json.loads(payload.decode())
+            control_ack = build_control_plane_ack(data, channel="mqtt", serial=serial)
+            if not control_ack:
+                continue
+            result = mqtt_client.publish(
+                f"pi/devices/{serial}/control_ack",
+                json.dumps(control_ack),
+                qos=1,
+                retain=False,
+            )
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                with mqtt_ingress_lock:
+                    mqtt_ingress_metrics["control_ack_published"] += 1
+        except Exception as exc:
+            logging.debug("MQTT control ACK fast-path failed for %s: %s", topic, exc)
+
+
+def _enqueue_mqtt_control_ack(topic: str, payload: bytes) -> None:
+    """Coalesce newest status probe per topic without waiting for persistence."""
+    global mqtt_control_ack_drain_scheduled
+    if str(topic).rsplit("/", 1)[-1] != "status":
+        return
+    should_schedule = False
+    with mqtt_ingress_lock:
+        topic_key = str(topic)
+        if topic_key in mqtt_control_ack_pending:
+            mqtt_ingress_metrics["control_ack_coalesced"] += 1
+        elif len(mqtt_control_ack_pending) >= MQTT_INGRESS_MAX_PENDING:
+            mqtt_control_ack_pending.pop(next(iter(mqtt_control_ack_pending)), None)
+            mqtt_ingress_metrics["control_ack_dropped"] += 1
+        mqtt_control_ack_pending[topic_key] = (topic_key, bytes(payload))
+        if not mqtt_control_ack_drain_scheduled:
+            mqtt_control_ack_drain_scheduled = True
+            should_schedule = True
+    if should_schedule:
+        try:
+            if not main_loop or not main_loop.is_running():
+                raise RuntimeError("asyncio loop is not running")
+            main_loop.call_soon_threadsafe(_drain_mqtt_control_acks)
+        except RuntimeError:
+            with mqtt_ingress_lock:
+                mqtt_control_ack_drain_scheduled = False
+
+
+def _enqueue_mqtt_ingress(topic: str, payload: bytes, is_retained: bool) -> None:
+    """Called from Paho's thread; keep only bounded newest telemetry."""
+    global mqtt_ingress_drain_scheduled
+    key = _mqtt_ingress_key(topic, payload)
+    should_schedule = False
+    with mqtt_ingress_lock:
+        mqtt_ingress_metrics["received"] += 1
+        if key in mqtt_ingress_pending:
+            mqtt_ingress_metrics["coalesced"] += 1
+        elif len(mqtt_ingress_pending) >= MQTT_INGRESS_MAX_PENDING:
+            if key[1] in {"binary", "json", "GGA", "GSA", "GSV", "GST", "nmea"}:
+                mqtt_ingress_metrics["dropped"] += 1
+                return
+            mqtt_ingress_pending.pop(next(iter(mqtt_ingress_pending)), None)
+            mqtt_ingress_metrics["dropped"] += 1
+        mqtt_ingress_pending[key] = (topic, payload, is_retained)
+        if not mqtt_ingress_drain_scheduled:
+            mqtt_ingress_drain_scheduled = True
+            should_schedule = True
+    if should_schedule:
+        try:
+            if not main_loop or not main_loop.is_running():
+                raise RuntimeError("asyncio loop is not running")
+            main_loop.call_soon_threadsafe(_start_mqtt_ingress_drain)
+        except RuntimeError:
+            with mqtt_ingress_lock:
+                mqtt_ingress_drain_scheduled = False
+
+
+async def _drain_mqtt_ingress() -> None:
+    global mqtt_ingress_drain_scheduled
+    while not IS_SHUTTING_DOWN:
+        with mqtt_ingress_lock:
+            batch = []
+            while mqtt_ingress_pending and len(batch) < MQTT_INGRESS_CONCURRENCY:
+                # Control/status packets carry fail-safe ACKs and config state,
+                # so serve their oldest key first. FIFO within each class keeps
+                # continuously reinserted raw-data keys from starving peers.
+                selected_key = next(
+                    (
+                        key for key in mqtt_ingress_pending
+                        if key[1] in MQTT_INGRESS_CONTROL_TYPES
+                    ),
+                    next(iter(mqtt_ingress_pending)),
+                )
+                envelope = mqtt_ingress_pending.pop(selected_key)
+                batch.append(envelope)
+            if not batch:
+                mqtt_ingress_drain_scheduled = False
+                return
+
+        results = await asyncio.gather(
+            *(
+                handle_message_async(topic, payload, is_retained=is_retained)
+                for topic, payload, is_retained in batch
+            ),
+            return_exceptions=True,
+        )
+        with mqtt_ingress_lock:
+            mqtt_ingress_metrics["processed"] += len(batch)
+        for result in results:
+            if isinstance(result, Exception):
+                logging.error("MQTT ingress worker error: %s", result)
+        await asyncio.sleep(0)
+
+    with mqtt_ingress_lock:
+        mqtt_ingress_drain_scheduled = False
 
 def invalidate_device_cache(serial: str):
     """Xóa cache của thiết bị để buộc background worker fetch lại từ DB."""
@@ -129,6 +395,9 @@ def invalidate_device_cache(serial: str):
     device_sync_cache[serial] = False
     device_last_sync_check.pop(serial, None)
     device_write_cache.pop(serial, None)
+    device_metadata_cache.pop(serial, None)
+    with device_deletion_tombstones_lock:
+        device_deletion_tombstones.discard(str(serial))
     logging.info(f"♻️ Cache invalidated for device {serial}")
 
 # ==============================================================================
@@ -170,13 +439,12 @@ def on_message(client, userdata, msg):
         return
     
     if main_loop and main_loop.is_running():
-        try:
-            asyncio.run_coroutine_threadsafe(
-                handle_message_async(msg.topic, msg.payload, is_retained=bool(getattr(msg, 'retain', False))), 
-                main_loop
-            )
-        except RuntimeError:
-            pass
+        _enqueue_mqtt_control_ack(msg.topic, msg.payload)
+        _enqueue_mqtt_ingress(
+            msg.topic,
+            msg.payload,
+            bool(getattr(msg, 'retain', False)),
+        )
 
 # ==============================================================================
 # 🔥 BACKGROUND TASK: BATCH SYNC CHECKER (Chạy 60s/lần)
@@ -395,20 +663,33 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 serial_upper.startswith("RELAY_")
                 or serial_upper.startswith("MONITOR_")
             )
+            metadata = None
 
             # MQTT retained snapshots from old publishers can resurrect phantom relay rows.
             # Ignore retained relay-like status if the device does not exist in DB.
             if is_retained and is_relay_like:
                 try:
-                    async with device_session_scope() as _db:
-                        existing = await crud.get_device_by_serial(_db, serial)
-                    if not existing:
+                    metadata = await get_device_metadata(serial)
+                    if not metadata.get("exists"):
                         logging.info(f"Ignoring retained ghost status for unknown serial: {serial}")
                         return
                 except Exception as e:
                     logging.warning(f"Retained ghost-check failed for {serial}: {e}")
+                    return
 
             now = time.time()
+            # Reject duplicate/out-of-order dual-channel heartbeats before any
+            # DB lookup or enrichment work.
+            status_decision = await status_reconciler.accept(
+                data,
+                source="mqtt",
+                retained=is_retained,
+                received_at=now,
+            )
+            if not status_decision.accepted:
+                logging.debug("Ignored MQTT status for %s: %s", serial, status_decision.reason)
+                return
+            data = status_decision.payload
             
             # --- 2.1. TÍNH TOÁN BPS ---
             ntrip_stats = data.get('ntrip_stats')
@@ -449,19 +730,18 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 if err_msg not in sync_errors:
                     sync_errors.append(err_msg)
 
-            db_device = None
             agent_token_fp = data.get("agent_token_fingerprint")
-            try:
-                async with device_session_scope() as _db:
-                    db_device = await crud.get_device_by_serial(_db, serial)
-            except Exception as e:
-                logging.debug("Device lookup for sync metadata failed for %s: %s", serial, e)
+            if metadata is None:
+                try:
+                    metadata = await get_device_metadata(serial)
+                except Exception as e:
+                    metadata = {"exists": False}
+                    logging.debug("Device metadata lookup failed for %s: %s", serial, e)
 
-            if db_device:
+            if metadata.get("exists"):
                 agent_reported_status = raw_status
-                db_system_info = getattr(db_device, "system_info", None)
-                license_bypass = bool(isinstance(db_system_info, dict) and db_system_info.get("auth_license_bypass"))
-                expected_fp = _fingerprint_token(getattr(db_device, "device_token", None))
+                license_bypass = bool(metadata.get("license_bypass"))
+                expected_fp = _fingerprint_token(metadata.get("device_token"))
                 token_synced = bool(expected_fp and agent_token_fp and expected_fp == agent_token_fp)
                 token_check_available = bool(agent_token_fp) or not is_offline_packet
                 needs_token_deploy = False if license_bypass else ((not expected_fp) or (token_check_available and not token_synced))
@@ -488,8 +768,8 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     "token_check_available": token_check_available,
                 }
                 data["system_info"] = system_info
-                if db_device.name:
-                    data["name"] = db_device.name
+                if metadata.get("name"):
+                    data["name"] = metadata["name"]
 
             # Ensure savings_stats and antenna_status are persisted in system_info JSONB
             system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
@@ -513,36 +793,17 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             new_status = data.get('status')
             if not data.get('name') or new_status == 'offline':
                 try:
-                    async with device_session_scope() as _db:
-                        _dev = await crud.get_device_by_serial(_db, serial)
-                        if _dev:
-                            if _dev.name:
-                                data['name'] = _dev.name
-                            # FIX: Khi offline, ghép config từ DB vào broadcast
-                            # để UI/map không mất vị trí trạm
-                            if new_status == 'offline':
-                                if not data.get('base_config') and _dev.base_config:
-                                    data['base_config'] = _dev.base_config
-                                if not data.get('service_config') and _dev.service_config:
-                                    data['service_config'] = _dev.service_config
-                                if not data.get('detected_chip_type') and _dev.detected_chip_type:
-                                    data['detected_chip_type'] = _dev.detected_chip_type
+                    if metadata.get("name"):
+                        data['name'] = metadata["name"]
+                    if new_status == 'offline':
+                        if not data.get('base_config') and metadata.get("base_config"):
+                            data['base_config'] = metadata["base_config"]
+                        if not data.get('service_config') and metadata.get("service_config"):
+                            data['service_config'] = metadata["service_config"]
+                        if not data.get('detected_chip_type') and metadata.get("detected_chip_type"):
+                            data['detected_chip_type'] = metadata["detected_chip_type"]
                 except Exception:
                     pass  # Không tên vẫn broadcast được, không chặn luồng
-
-            # MQTT and the direct WebSocket carry the same heartbeat. Reconcile
-            # them before touching live state so retained/out-of-order packets
-            # cannot make a station jump backwards.
-            status_decision = await status_reconciler.accept(
-                data,
-                source="mqtt",
-                retained=is_retained,
-                received_at=now,
-            )
-            if not status_decision.accepted:
-                logging.debug("Ignored MQTT status for %s: %s", serial, status_decision.reason)
-                return
-            data = status_decision.payload
 
             # --- 2.5. BROADCAST REAL-TIME TO UI ---
             live_snapshot = dict(device_telemetry_cache.get(serial) or {})
@@ -550,7 +811,10 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             device_telemetry_cache[serial] = live_snapshot
             status_message = {
                 "type": "status_update", 
-                "data": data
+                "data": data,
+                # Main's coalescing boundary rechecks this after taking its
+                # queue lock, closing the delete-vs-retained-broadcast race.
+                "_drop_if_device_missing": bool(is_retained and is_relay_like),
             }
             if status_broadcast_handler:
                 await status_broadcast_handler(status_message)
@@ -610,16 +874,32 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     try:
                         # Single-writer section: avoids pool exhaustion under reconnect storms.
                         async with mqtt_db_write_lock:
+                            if is_retained and is_relay_like:
+                                current_metadata = device_metadata_cache.get(serial) or {}
+                                if current_metadata.get("exists") is False:
+                                    logging.info(
+                                        "Skipping retained relay write after deletion: %s",
+                                        serial,
+                                    )
+                                    return
+                            latest_write_time = device_write_cache.get(serial, 0)
+                            latest_known_status = device_status_cache.get(serial, "unknown")
+                            still_needs_write = bool(
+                                command_source_changed
+                                or (new_status and new_status != latest_known_status)
+                                or (now - latest_write_time) > DB_WRITE_INTERVAL
+                            )
+                            if not still_needs_write:
+                                break
                             async with device_session_scope() as session:
                                 await crud.update_or_create_device(
                                     session,
                                     device_data=db_data
                                 )
                                 await session.commit()
-                        
-                        device_write_cache[serial] = now
-                        if new_status:
-                            device_status_cache[serial] = new_status
+                            device_write_cache[serial] = time.time()
+                            if new_status:
+                                device_status_cache[serial] = new_status
                         
                         break # Success
                     except Exception as db_error:

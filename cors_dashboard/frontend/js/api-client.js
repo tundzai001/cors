@@ -25,9 +25,11 @@
                 window.history.replaceState({}, '', '/');
             }
         } catch (_) {}
-        if (typeof window.switchView === 'function') {
+        if (typeof window.switchView === 'function' && window.homepageRoot) {
             window.switchView('homepage');
+            return true;
         }
+        return false;
     }
 
     function getToken() {
@@ -56,8 +58,12 @@
         sessionInvalidated = true;
         clearToken();
         window.dispatchEvent(new CustomEvent('cors:session-expired', { detail: { reason } }));
-        if (isPublicRoute()) return;
-        goHomeSoft();
+        if (goHomeSoft()) return;
+
+        // During bootstrap there is no mounted homepage root yet. Reload once
+        // after clearing the stale token so initializeCorsApp enters guest mode.
+        const target = isPublicRoute() ? window.location.href : '/';
+        window.location.replace(target);
     }
 
     function isSessionInvalidated() {
@@ -113,7 +119,7 @@
             clearTimeout(timeoutId);
 
             if (response.status === 401) {
-                if (!isPublicRoute() && !isPublicApiUrl(url)) {
+                if (!isPublicApiUrl(url)) {
                     forceLogout('unauthorized');
                 }
                 throw new Error('Unauthorized');
@@ -147,7 +153,7 @@
         }, { once: true });
 
         ws.addEventListener('close', (event) => {
-            if (isAuthWebSocketClose(event) && !isPublicRoute()) {
+            if (isAuthWebSocketClose(event)) {
                 forceLogout('websocket_auth_failed');
             }
         });

@@ -2061,9 +2061,16 @@ height: 250px;
 }
 /* === TOUCH DEVICES === */
 @media (hover: none) and (pointer: coarse) {
-button, a, .btn, .nav-link, .form-check-input {
+button, a, .btn, .nav-link {
 min-height: 44px;
 min-width: 44px;
+}
+.form-check {
+min-height: 44px;
+}
+.form-check .form-check-input {
+min-height: 0;
+min-width: 0;
 }
 .device-card:hover {
     transform: none;

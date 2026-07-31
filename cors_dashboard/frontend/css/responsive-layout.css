@@ -612,8 +612,25 @@ code,
     touch-action: manipulation;
 }
 
-:is(.btn, button, .nav-link, .form-control, .form-select, .form-check-input) {
+:is(.btn, button, .nav-link, .form-control, .form-select) {
     min-height: var(--app-tap-size);
+}
+
+/* Keep Bootstrap checkbox/radio/switch geometry intact. The surrounding row
+   provides the touch target; forcing 44px onto the input turns switches into
+   vertical pills and stretches radio buttons. */
+.form-check {
+    min-height: var(--app-tap-size);
+}
+
+.form-check .form-check-input {
+    min-width: 0;
+    min-height: 0;
+}
+
+.form-switch {
+    display: flex;
+    align-items: center;
 }
 
 .btn-sm,

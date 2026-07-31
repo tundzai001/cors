@@ -631,6 +631,11 @@ async def auto_deploy_device_token(
                 status_code=400, 
                 detail="This device token is already used by another device. This usually happens if you have duplicate devices with the same serial number. Please remove the old device first."
             )
+
+    # WebSocket authentication and MQTT license reconciliation use this cache.
+    # Refresh it before dispatching the rotated token so the new credential is
+    # accepted immediately and an older in-flight lookup cannot overwrite it.
+    await mqtt_handler.cache_device_metadata(device)
         
     payload = {"command": "DEPLOY_LICENSE", "payload": {"license_key": license_key}}
     
@@ -669,6 +674,7 @@ async def set_device_license_bypass(
 
     await db.commit()
     await db.refresh(device)
+    await mqtt_handler.cache_device_metadata(device)
 
     await crud.log_system_event(
         db=db,

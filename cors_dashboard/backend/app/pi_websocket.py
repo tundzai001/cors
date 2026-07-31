@@ -1,4 +1,5 @@
 # backend/app/pi_websocket.py
+import asyncio
 import logging
 from typing import Dict
 from fastapi import WebSocket, WebSocketDisconnect
@@ -7,14 +8,19 @@ from starlette.websockets import WebSocketState
 class PiConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
+        self.connection_locks: Dict[str, asyncio.Lock] = {}
 
     async def connect(self, serial: str, websocket: WebSocket):
         await websocket.accept()
         previous = self.active_connections.get(serial)
         self.active_connections[serial] = websocket
+        self.connection_locks[serial] = asyncio.Lock()
         if previous and previous is not websocket:
             try:
-                await previous.close(code=1012, reason="superseded by newer connection")
+                await asyncio.wait_for(
+                    previous.close(code=1012, reason="superseded by newer connection"),
+                    timeout=1.0,
+                )
             except Exception:
                 pass
         # logging.info(f"Pi '{serial}' connected via WebSocket.")
@@ -23,6 +29,7 @@ class PiConnectionManager:
         current = self.active_connections.get(serial)
         if current is not None and (websocket is None or current is websocket):
             del self.active_connections[serial]
+            self.connection_locks.pop(serial, None)
             # logging.info(f"Pi '{serial}' disconnected from WebSocket.")
 
     def has_replacement(self, serial: str, websocket: WebSocket) -> bool:
@@ -32,12 +39,16 @@ class PiConnectionManager:
     async def send_personal_message(self, serial: str, message: dict) -> bool:
         if serial in self.active_connections:
             websocket = self.active_connections[serial]
+            lock = self.connection_locks.get(serial)
+            if lock is None:
+                return False
             try:
                 if websocket.client_state != WebSocketState.CONNECTED:
                     self.disconnect(serial, websocket)
                     return False
 
-                await websocket.send_json(message)
+                async with lock:
+                    await asyncio.wait_for(websocket.send_json(message), timeout=2.0)
                 return True
             except (WebSocketDisconnect, RuntimeError, OSError):
                 # Lỗi mạng -> Xóa kết nối im lặng

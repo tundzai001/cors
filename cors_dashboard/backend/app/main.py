@@ -51,7 +51,7 @@ from starlette.responses import Response
 from .database import (
     engine, auth_engine, get_db, get_auth_db, 
     AuthBase, AsyncAuthSession, AsyncSessionLocal, settings,
-    device_session_scope, auth_session_scope
+    device_session_scope, auth_session_scope, DatabaseBusyError
 )
 
 from .websocket import manager as ui_manager, visitor_manager
@@ -67,6 +67,14 @@ from .monitoring import health_monitor
 from .caster_client import CasterClient
 from .schema_compat import ensure_auth_zalo_runtime_columns, ensure_device_runtime_columns
 from .status_reconciler import status_reconciler
+from .control_plane_ack import build_control_plane_ack
+from .nonblocking_logging import configure_nonblocking_logging
+from .rtcm_stream_state import (
+    apply_stream_control_state,
+    build_stream_control_payload,
+    collect_reapable_server_streams,
+    normalize_mountpoint as normalize_stream_mountpoint,
+)
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -93,17 +101,11 @@ class QuietEndpointAccessFilter(logging.Filter):
             return True
 
 # Tạo FileHandler một lần để dùng chung
-file_handler = logging.FileHandler(log_file, encoding='utf-8')
-file_handler.setFormatter(logging.Formatter(log_format))
-
-# Cấu hình Root Logger
-logging.basicConfig(
+logging_runtime = configure_nonblocking_logging(
+    log_file=log_file,
+    log_format=log_format,
     level=logging.INFO,
-    format=log_format,
-    handlers=[
-        file_handler,
-        logging.StreamHandler()
-    ]
+    queue_size=int(os.getenv("LOG_QUEUE_SIZE", "20000")),
 )
 
 # httpx logs full request URLs. Zalo embeds the bot credential in its URL, so
@@ -111,11 +113,6 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Chèn FileHandler vào log của Uvicorn để bắt lỗi startup/server
-for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-    l = logging.getLogger(logger_name)
-    l.addHandler(file_handler)
-    l.propagate = False # Tránh bị lặp log ra console vì basicConfig đã bắt root rồi
-
 logging.getLogger("uvicorn.access").addFilter(QuietEndpointAccessFilter())
 
 
@@ -322,6 +319,11 @@ pi_status_ingest_queue: asyncio.Queue = asyncio.Queue(maxsize=PI_STATUS_INGEST_Q
 pending_ui_status_updates: Dict[str, dict] = {}
 pending_ui_status_lock = asyncio.Lock()
 pending_ui_status_event = asyncio.Event()
+ui_status_emit_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _get_ui_status_emit_lock(serial: str) -> asyncio.Lock:
+    return ui_status_emit_locks.setdefault(str(serial), asyncio.Lock())
 
 # TỐI ƯU CỰC ĐỘ: Cache mapping Mountpoint -> Serial để tránh quét DB liên tục
 # Giúp xử lý hàng nghìn yêu cầu wake-station mỗi giây mà không làm treo Backend.
@@ -428,6 +430,11 @@ async def enqueue_ui_broadcast(message: dict) -> None:
         serial = str(message.get("serial") or data.get("serial") or "").strip()
         if serial:
             async with pending_ui_status_lock:
+                if (
+                    message.get("_drop_if_device_missing")
+                    and mqtt_handler.device_metadata_is_missing(serial)
+                ):
+                    return
                 previous_message = pending_ui_status_updates.get(serial) or {}
                 previous_data = previous_message.get("data") or {}
                 revision = int(data.get("status_revision") or 0)
@@ -482,7 +489,18 @@ async def ui_status_broadcast_worker_task():
             pending_ui_status_event.clear()
         for message in batch:
             try:
-                await ui_manager.broadcast(message)
+                data = message.get("data") or {}
+                serial = str(message.get("serial") or data.get("serial") or "").strip()
+                async with _get_ui_status_emit_lock(serial):
+                    if mqtt_handler.device_was_deleted(serial):
+                        continue
+                    if message.get("_drop_if_device_missing") and mqtt_handler.device_metadata_is_missing(serial):
+                        continue
+                    outbound = message
+                    if "_drop_if_device_missing" in message:
+                        outbound = dict(message)
+                        outbound.pop("_drop_if_device_missing", None)
+                    await ui_manager.broadcast(outbound)
             except Exception as exc:
                 logger.warning("UI status broadcast worker error: %s", exc)
 
@@ -515,14 +533,18 @@ async def pi_status_ingest_worker_task():
     while True:
         payload = await pi_status_ingest_queue.get()
         try:
+            serial = payload.get("serial") if isinstance(payload, dict) else None
             # Preserve reconciler order before any slower broadcast/DB lookup can
-            # let another worker overtake this station update.
-            async with device_update_buffer_lock:
-                device_update_buffer.append(payload)
-            await enqueue_ui_broadcast({"type": "status_update", "data": payload})
+            # let another worker overtake this station update. The lifecycle
+            # lock also orders these buffered writes against explicit deletion.
+            async with mqtt_handler.mqtt_db_write_lock:
+                if serial and mqtt_handler.device_was_deleted(serial):
+                    continue
+                async with device_update_buffer_lock:
+                    device_update_buffer.append(payload)
+                await enqueue_ui_broadcast({"type": "status_update", "data": payload})
             
             # === CASTER STATUS SYNC: Detect per-server status changes ===
-            serial = payload.get("serial") if isinstance(payload, dict) else None
             if serial:
                 live_snapshot = dict(latest_device_telemetry_cache.get(str(serial)) or {})
                 live_snapshot.update(payload)
@@ -630,10 +652,7 @@ def _extract_station_mountpoints(device: models.Device) -> List[str]:
 
 
 def _normalize_mountpoint(value: Optional[str]) -> Optional[str]:
-    if value is None:
-        return None
-    cleaned = str(value).strip().strip('/')
-    return cleaned.lower() if cleaned else None
+    return normalize_stream_mountpoint(value)
 
 
 def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[str], requested_address: Optional[str] = None) -> Optional[int]:
@@ -716,6 +735,25 @@ def _extract_active_mountpoint(device: Optional[models.Device]) -> Optional[str]
     return str(active_mp) if active_mp else None
 
 
+def _extract_reapable_server_streams(
+    device: Optional[models.Device],
+) -> tuple[tuple[Optional[int], str], ...]:
+    """Return server-scoped On-Demand streams eligible for session reaping.
+
+    Per-server state is authoritative for modern configurations. The legacy
+    aggregate fallback is kept only when no per-server stream flags exist.
+    """
+
+    if not device:
+        return ()
+
+    cfg = device.service_config or {}
+    return collect_reapable_server_streams(
+        cfg,
+        legacy_active_mountpoint=_extract_active_mountpoint(device),
+    )
+
+
 def _build_rtcm_client_id(current_user: models.User, client_instance_id: Optional[str]) -> str:
     base_id = f"user:{current_user.id}"
     if not client_instance_id:
@@ -745,28 +783,41 @@ def _resolve_stream_status(device: Optional[models.Device], force_starting: bool
     return "starting"
 
 
-async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[str] = None, requested_address: Optional[str] = None) -> None:
+async def _set_station_stream(
+    serial: str,
+    active: bool,
+    mountpoint: Optional[str] = None,
+    requested_address: Optional[str] = None,
+    server_id: Optional[int] = None,
+) -> None:
     requested_mp_norm = _normalize_mountpoint(mountpoint) if mountpoint else None
-    payload = {"active": bool(active)}
-    if mountpoint:
-        payload["mountpoint"] = str(mountpoint)
-    if requested_address:
-        payload["caster_host"] = str(requested_address)
+    try:
+        target_server_id = int(server_id) if server_id is not None else None
+    except (TypeError, ValueError):
+        target_server_id = None
+    if target_server_id not in (1, 2):
+        target_server_id = None
+
+    if target_server_id is None and requested_mp_norm and (bool(active) or requested_address):
         # Tự động phân giải server_idx (1 hoặc 2) dựa vào cấu hình trạm
         try:
             async with device_session_scope() as db:
                 device = await crud.get_device_by_serial(db, serial)
-                if device and device.service_config:
-                    cfg = device.service_config
-                    if isinstance(cfg, dict):
-                        h = requested_address.strip().lower()
-                        for sid in (1, 2):
-                            host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
-                            if host and (h in host or host in h):
-                                payload["server_idx"] = sid
-                                break
+                if device:
+                    target_server_id = _resolve_preferred_server_id_for_mountpoint(
+                        device.service_config or {},
+                        requested_mp_norm,
+                        requested_address,
+                    )
         except Exception:
             pass
+
+    payload = build_stream_control_payload(
+        active=active,
+        mountpoint=mountpoint,
+        address=requested_address,
+        server_id=target_server_id,
+    )
 
     await send_command_to_pi(
         serial,
@@ -785,65 +836,22 @@ async def _set_station_stream(serial: str, active: bool, mountpoint: Optional[st
                 return
 
             cfg = dict(device.service_config or {})
-            cfg["stream_on_demand"] = True
 
-            target_server_id = None
-            if bool(active) or requested_address:
+            if target_server_id is None and requested_mp_norm and (bool(active) or requested_address):
                 target_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, requested_mp_norm, requested_address)
 
-            # Keep per-server flags aligned so UI and control plane remain consistent
-            # before the next status heartbeat from agent.
-            if bool(active) and requested_mp_norm:
-                if target_server_id in (1, 2):
-                    cfg[f"server{target_server_id}_stream_on_demand"] = True
-                    cfg[f"server{target_server_id}_stream_active"] = True
-                else:
-                    for sid in (1, 2):
-                        sid_mp_norm = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
-                        if sid_mp_norm and sid_mp_norm == requested_mp_norm:
-                            cfg[f"server{sid}_stream_on_demand"] = True
-                            cfg[f"server{sid}_stream_active"] = True
+            cfg = apply_stream_control_state(
+                cfg,
+                active=active,
+                mountpoint=mountpoint,
+                server_id=target_server_id,
+            )
 
-            if not bool(active):
-                if target_server_id in (1, 2):
-                    sid_on_demand_key = f"server{target_server_id}_stream_on_demand"
-                    sid_active_key = f"server{target_server_id}_stream_active"
-                    sid_on_demand = bool(cfg.get(sid_on_demand_key, cfg.get("stream_on_demand", False)))
-                    if sid_on_demand:
-                        cfg[sid_on_demand_key] = True
-                        cfg[sid_active_key] = False
-                else:
-                    for sid in (1, 2):
-                        sid_mp_norm = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
-                        if (not requested_mp_norm) or (sid_mp_norm == requested_mp_norm):
-                            sid_on_demand_key = f"server{sid}_stream_on_demand"
-                            sid_active_key = f"server{sid}_stream_active"
-                            sid_on_demand = bool(cfg.get(sid_on_demand_key, cfg.get("stream_on_demand", False)))
-                            if sid_on_demand:
-                                cfg[sid_on_demand_key] = True
-                                cfg[sid_active_key] = False
-
-            if bool(active):
-                if mountpoint:
-                    cfg["active_mountpoint"] = str(mountpoint)
-            else:
-                cfg.pop("active_mountpoint", None)
-                # Reflect immediate off state in top-level flags.
+            # These are aggregate metrics. Keep S2 telemetry intact when an
+            # On-Demand S1 is the only stream being put to sleep.
+            if not bool(active) and not bool(cfg.get("stream_active", False)):
                 device.ntrip_connected = False
                 device.bps = 0
-
-            # Keep top-level stream_active aligned with effective per-server push state.
-            any_server_can_push = False
-            for sid in (1, 2):
-                sid_enabled = bool(cfg.get(f"server{sid}_enabled", False))
-                if not sid_enabled:
-                    continue
-                sid_on_demand = bool(cfg.get(f"server{sid}_stream_on_demand", cfg.get("stream_on_demand", False)))
-                sid_active = bool(cfg.get(f"server{sid}_stream_active", cfg.get("stream_active", False)))
-                if (not sid_on_demand) or sid_active:
-                    any_server_can_push = True
-                    break
-            cfg["stream_active"] = any_server_can_push
 
             device.service_config = cfg
             await db.commit()
@@ -1444,11 +1452,11 @@ async def rtcm_ntrip_clienttable_keepalive_task():
         except Exception as e:
             logger.error(f"[RTCM] Keepalive task error: {e}", exc_info=True)
 
-async def rtcm_session_reaper_task():
+async def _rtcm_session_reaper_loop():
     while True:
         await asyncio.sleep(5)
         now = int(time.time())
-        stations_to_deactivate: Set[tuple[str, str]] = set()
+        stations_to_deactivate: Set[tuple[str, Optional[int], str]] = set()
 
         async with rtcm_session_lock:
             async with device_session_scope() as db:
@@ -1471,49 +1479,80 @@ async def rtcm_session_reaper_task():
 
                     for serial, expired_mountpoint in expired_pairs:
                         device = await crud.get_device_by_serial(db, serial)
-                        active_mountpoint = _extract_active_mountpoint(device)
-                        if _normalize_mountpoint(active_mountpoint) != _normalize_mountpoint(expired_mountpoint):
-                            continue
-
-                        # CRITICAL: Skip deactivation if station is Always-On
-                        cfg = device.service_config or {}
-                        if not cfg.get("stream_on_demand", True):
-                            continue
-
-                        active_count = await _count_active_mountpoint_sessions(db, serial, expired_mountpoint, now)
-                        if active_count == 0:
-                            stations_to_deactivate.add((serial, _normalize_mountpoint(expired_mountpoint) or ""))
+                        expired_mp_norm = _normalize_mountpoint(expired_mountpoint)
+                        for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
+                            if mountpoint_norm != expired_mp_norm:
+                                continue
+                            active_count = await _count_active_mountpoint_sessions(
+                                db,
+                                serial,
+                                mountpoint_norm,
+                                now,
+                            )
+                            if active_count == 0:
+                                stations_to_deactivate.add((serial, server_id, mountpoint_norm))
 
                 # Safety sweep: if stream is marked active but there are no sessions for active mountpoint,
                 # force stream off. This covers manual DB cleanup and stale state scenarios.
                 devices_rs = await db.execute(select(models.Device))
                 for device in devices_rs.scalars().all():
-                    cfg = device.service_config or {}
-                    if not cfg.get("stream_on_demand"):
-                        continue
-                    if not bool(cfg.get("stream_active", False)):
-                        continue
+                    for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
+                        remaining_for_active_mp = await _count_active_mountpoint_sessions(
+                            db,
+                            str(device.serial),
+                            mountpoint_norm,
+                            now,
+                        )
+                        if remaining_for_active_mp == 0:
+                            stations_to_deactivate.add(
+                                (str(device.serial), server_id, mountpoint_norm)
+                            )
 
-                    active_mountpoint = _extract_active_mountpoint(device)
-                    if not active_mountpoint:
-                        continue
-
-                    remaining_for_active_mp = await _count_active_mountpoint_sessions(
-                        db,
-                        str(device.serial),
-                        active_mountpoint,
-                        now,
-                    )
-                    if remaining_for_active_mp == 0:
-                        stations_to_deactivate.add((str(device.serial), _normalize_mountpoint(active_mountpoint) or ""))
-
-        for serial, mountpoint_norm in stations_to_deactivate:
+        for serial, server_id, mountpoint_norm in stations_to_deactivate:
             try:
-                device_label = f"{serial}@{mountpoint_norm}" if mountpoint_norm else serial
-                logger.info(f"[RTCM REAPER] Sending deactivation command to station {device_label}")
-                await _set_station_stream(serial, active=False, mountpoint=mountpoint_norm or None)
+                # A wake may arrive between the initial scan and command send.
+                # Re-check under the session lock so a fresh rover is never put
+                # back to sleep by a stale reaper candidate.
+                async with rtcm_session_lock:
+                    async with device_session_scope() as db:
+                        device = await crud.get_device_by_serial(db, serial)
+                        current_targets = set(_extract_reapable_server_streams(device))
+                        if (server_id, mountpoint_norm) not in current_targets:
+                            continue
+                        remaining = await _count_active_mountpoint_sessions(
+                            db,
+                            serial,
+                            mountpoint_norm,
+                            int(time.time()),
+                        )
+                        if remaining > 0:
+                            continue
+
+                    server_label = f" S{server_id}" if server_id in (1, 2) else ""
+                    device_label = f"{serial}@{mountpoint_norm}{server_label}"
+                    logger.info(f"[RTCM REAPER] Sending deactivation command to station {device_label}")
+                    await _set_station_stream(
+                        serial,
+                        active=False,
+                        mountpoint=mountpoint_norm or None,
+                        server_id=server_id,
+                    )
             except Exception as e:
                 logger.warning(f"[RTCM REAPER] Failed to auto-deactivate station '{serial}': {e}")
+
+
+async def rtcm_session_reaper_task():
+    """Keep the session reaper alive through transient DB admission failures."""
+    while True:
+        try:
+            await _rtcm_session_reaper_loop()
+        except asyncio.CancelledError:
+            raise
+        except DatabaseBusyError as exc:
+            logger.warning("[RTCM REAPER] Database busy; retrying: %s", exc)
+        except Exception:
+            logger.exception("[RTCM REAPER] Loop crashed; restarting")
+        await asyncio.sleep(5)
 
 async def log_system_event(
     db: AsyncSession,
@@ -6586,8 +6625,20 @@ async def delete_device_from_list(
 
     # Xóa khỏi database
     deleted_chip_type = str(device.detected_chip_type or "").upper()
-    await db.delete(device)
-    await db.commit()
+    # Serialize deletion with MQTT status writes. If a retained relay status
+    # was already writing, it finishes first and this delete wins; if deletion
+    # wins, the metadata tombstone is visible before later writes proceed.
+    async with mqtt_handler.mqtt_db_write_lock:
+        await db.delete(device)
+        await db.commit()
+        await mqtt_handler.mark_device_metadata_missing(serial)
+        async with device_update_buffer_lock:
+            retained_updates = [
+                item for item in device_update_buffer
+                if str((item or {}).get("serial") or "") != str(serial)
+            ]
+            device_update_buffer.clear()
+            device_update_buffer.extend(retained_updates)
 
     # Thêm: Dọn dẹp in-memory MQTT cache để tránh thiết bị bị zombie hóa
     for cache in [
@@ -6605,13 +6656,20 @@ async def delete_device_from_list(
         if str(key).startswith(f"{serial}_"):
             mqtt_handler.device_sync_cache.pop(key, None)
 
-    logging.info(f"User '{current_user.username}' deleted device '{serial}' from list (not reset)")
-    
-    # Broadcast để các client khác cập nhật UI
-    await ui_manager.broadcast({
-        "type": "device_deleted",
-        "serial": serial
-    })
+    # Serialize deletion with an already-extracted status broadcast for the
+    # same station. If status started first, delete is sent last; if delete
+    # started first, the retained status sees the tombstone and is dropped.
+    async with _get_ui_status_emit_lock(serial):
+        async with pending_ui_status_lock:
+            pending_ui_status_updates.pop(serial, None)
+
+        logging.info(f"User '{current_user.username}' deleted device '{serial}' from list (not reset)")
+
+        # Broadcast để các client khác cập nhật UI
+        await ui_manager.broadcast({
+            "type": "device_deleted",
+            "serial": serial
+        })
 
     
     await crud.log_system_event(
@@ -7815,8 +7873,16 @@ async def flush_device_buffer(db: AsyncSession):
 
     if final_batch:
         try:
-            # Call batch update in crud.py
-            await crud.batch_update_devices(db, final_batch)
+            # Order UPSERT against explicit device deletion and re-check the
+            # tombstone only after acquiring that ordering lock.
+            async with mqtt_handler.mqtt_db_write_lock:
+                final_batch = [
+                    item for item in final_batch
+                    if not mqtt_handler.device_was_deleted(item.get("serial"))
+                ]
+                if not final_batch:
+                    return
+                await crud.batch_update_devices(db, final_batch)
 
             # Update metrics
             buffer_metrics["flush_count"] += 1
@@ -7838,25 +7904,43 @@ async def flush_device_buffer(db: AsyncSession):
 async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = Query(None)):
     import os
     enforce_auth = os.getenv("ENFORCE_AGENT_AUTH", "true").lower() != "false"
-    # --- Token Auth ---
-    async with device_session_scope() as db:
-        device = await crud.get_device_by_serial(db, serial)
-        expected_token = str(getattr(device, "device_token", "") or "").strip() if device else ""
-        device_system_info = getattr(device, "system_info", None) if device else None
-        db_sync_state = bool(getattr(device, "is_synced", False)) if device else False
-        license_bypass = bool(isinstance(device_system_info, dict) and device_system_info.get("auth_license_bypass"))
-        provided_token = str(token or "").strip()
-        
-        logger.warning(f"DEBUG TOKEN: Serial='{serial}', Expected='{expected_token}', Provided='{provided_token}', Bypass={license_bypass}")
+    # Never leave an unaccepted socket queued behind a saturated DB pool.  The
+    # short-lived metadata cache removes the per-reconnect SELECT in steady state.
+    try:
+        metadata = await asyncio.wait_for(
+            mqtt_handler.get_device_metadata(serial),
+            timeout=float(os.getenv("AGENT_WS_AUTH_TIMEOUT_SECONDS", "3")),
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.warning("Pi '%s' auth lookup timed out; asking agent to retry", serial)
+        await websocket.close(code=1013, reason="Server busy; retry")
+        return
+    except Exception as exc:
+        logger.warning("Pi '%s' auth lookup failed; asking agent to retry: %s", serial, exc)
+        await websocket.close(code=1013, reason="Server busy; retry")
+        return
 
-        if enforce_auth and expected_token and provided_token != expected_token and not license_bypass:
-            logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        if expected_token and provided_token != expected_token and not license_bypass:
-            logger.warning("Pi '%s' connection allowed with invalid/missing token because ENFORCE_AGENT_AUTH=false.", serial)
-        if license_bypass and expected_token and provided_token != expected_token:
-            logger.warning("Pi '%s' connection allowed with invalid/missing token because per-device license bypass is enabled.", serial)
+    expected_token = str(metadata.get("device_token") or "").strip()
+    db_sync_state = bool(metadata.get("is_synced", False))
+    license_bypass = bool(metadata.get("license_bypass"))
+    provided_token = str(token or "").strip()
+
+    logger.debug(
+        "Agent WS auth serial=%s expected_token=%s provided_token=%s bypass=%s",
+        serial,
+        bool(expected_token),
+        bool(provided_token),
+        license_bypass,
+    )
+
+    if enforce_auth and expected_token and provided_token != expected_token and not license_bypass:
+        logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    if expected_token and provided_token != expected_token and not license_bypass:
+        logger.warning("Pi '%s' connection allowed with invalid/missing token because ENFORCE_AGENT_AUTH=false.", serial)
+    if license_bypass and expected_token and provided_token != expected_token:
+        logger.warning("Pi '%s' connection allowed with invalid/missing token because per-device license bypass is enabled.", serial)
 
     await pi_manager.connect(serial, websocket)
     
@@ -7867,6 +7951,13 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
             payload = data.get("payload")
 
             if message_type == "status_update" and payload:
+                control_ack = build_control_plane_ack(
+                    payload,
+                    channel="websocket",
+                    serial=serial,
+                )
+                if control_ack:
+                    await pi_manager.send_personal_message(serial, control_ack)
                 payload = dict(payload)
                 payload["serial"] = serial
                 sync_errors = list(mqtt_handler.device_sync_cache.get(f"{serial}_errors", []) or [])
@@ -7997,18 +8088,22 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                     })
 
     except WebSocketDisconnect:
-        logging.info(f"Pi '{serial}' disconnected.")
+        logging.debug("Pi '%s' disconnected", serial)
         pi_manager.disconnect(serial, websocket)
         if pi_manager.has_replacement(serial, websocket):
-            logger.info("Pi '%s' old WebSocket closed after a newer connection replaced it", serial)
+            logger.debug("Pi '%s' old WebSocket closed after a newer connection replaced it", serial)
+            return
+        if not metadata.get("exists") or mqtt_handler.device_was_deleted(serial):
             return
 
         # WebSocket is the secondary channel. Give MQTT/LWT time to prove the
         # device is still alive before changing the effective station status.
         disconnected_at = time.time()
         await asyncio.sleep(12)
+        if mqtt_handler.device_was_deleted(serial):
+            return
         if await status_reconciler.has_update_after(serial, disconnected_at):
-            logger.info("Pi '%s' WebSocket dropped but another status channel is active", serial)
+            logger.debug("Pi '%s' WebSocket dropped but another status channel is active", serial)
             return
         if await status_reconciler.current_status(serial) == "offline":
             return
@@ -8062,20 +8157,37 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                     device.timestamp = now_ts
                     await offline_db.commit()
                     logger.info(f"Device '{serial}' set to offline (config preserved in DB)")
+                else:
+                    return
         except Exception as e:
             logger.warning(f"[OFFLINE] DB lookup/update failed for '{serial}': {e}")
 
         # Broadcast FULL payload (with config) to UI so map keeps station
+        if mqtt_handler.device_was_deleted(serial):
+            return
         await enqueue_ui_broadcast({
             "type": "status_update",
             "data": ui_broadcast_payload
         })
     
     except Exception as e:
-        logging.error(f"WS Error '{serial}': {e}")
+        if isinstance(e, RuntimeError) and "accept" in str(e).lower():
+            logging.debug("Stale WS '%s' closed before accept completed: %s", serial, e)
+        else:
+            logging.warning("WS Error '%s': %s", serial, e)
         pi_manager.disconnect(serial, websocket)
         
 # === GLOBAL EXCEPTION HANDLER ===
+@app.exception_handler(DatabaseBusyError)
+async def database_busy_exception_handler(request: Request, exc: DatabaseBusyError):
+    logger.warning("Database admission timeout for %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Server database is busy; retry shortly"},
+        headers={"Retry-After": "3"},
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Bắt mọi unhandled exceptions"""
@@ -8245,6 +8357,12 @@ async def buffer_metrics_endpoint(
             "ui_queue_depth": ui_broadcast_queue.qsize(),
             "pi_ingest_queue_depth": pi_status_ingest_queue.qsize(),
             "event_loop": dict(event_loop_watchdog_metrics),
+            "logging": logging_runtime.snapshot(),
+            "mqtt_ingress": {
+                **dict(mqtt_handler.mqtt_ingress_metrics),
+                "pending": len(mqtt_handler.mqtt_ingress_pending),
+                "max_pending": mqtt_handler.MQTT_INGRESS_MAX_PENDING,
+            },
         },
         "config": {
             "flush_interval_min_sec": BUFFER_FLUSH_INTERVAL_MIN,

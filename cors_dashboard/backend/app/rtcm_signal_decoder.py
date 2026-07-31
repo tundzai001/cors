@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from typing import Any, NamedTuple
@@ -495,7 +496,7 @@ class RTCMSignalDecoder:
     async def decode(self, serial: str, payload: bytes) -> dict[str, Any] | None:
         if not payload or (not self._buffers.get(serial) and not self._looks_like_rtcm(payload)):
             return None
-        return self.decode_sync(serial, payload)
+        return await asyncio.to_thread(self.decode_sync, serial, payload)
 
     def decode_json(self, serial: str, data: dict) -> dict[str, Any] | None:
         nav_system = data.get("navSystem")

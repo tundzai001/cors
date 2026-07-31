@@ -60,7 +60,7 @@ class ConnectionManager:
                     return
                 if not self._can_receive(connection, message):
                     return
-                await connection.send_json(message)
+                await asyncio.wait_for(connection.send_json(message), timeout=2.0)
         except (WebSocketDisconnect, RuntimeError, OSError):
             self.disconnect(connection)
         except Exception as exc:

@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     DB_ECHO: bool = False
     DB_SESSION_RESERVE_CONNECTIONS: int = 5
     DB_TOTAL_CONNECTION_BUDGET: int = 80
+    DB_SESSION_ACQUIRE_TIMEOUT: float = 5.0
     DEVICE_DB_CONNECTION_BUDGET: int | None = None
     AUTH_DB_CONNECTION_BUDGET: int | None = None
     
@@ -90,6 +91,10 @@ class Settings(BaseSettings):
         extra = "ignore" # Bỏ qua các biến thừa nếu có
 
 settings = Settings()
+
+
+class DatabaseBusyError(RuntimeError):
+    """Raised when work cannot obtain a database slot promptly."""
 
 DEFAULT_DEVICE_DB_POOL_SIZE = 40
 DEFAULT_DEVICE_DB_MAX_OVERFLOW = 40
@@ -287,7 +292,14 @@ _device_db_semaphore = asyncio.Semaphore(_device_session_limit)
 @asynccontextmanager
 async def device_session_scope():
     """Session scope dùng nội bộ cho background tasks, có giới hạn đồng thời."""
-    async with _device_db_semaphore:
+    try:
+        await asyncio.wait_for(
+            _device_db_semaphore.acquire(),
+            timeout=max(0.5, float(settings.DB_SESSION_ACQUIRE_TIMEOUT)),
+        )
+    except asyncio.TimeoutError as exc:
+        raise DatabaseBusyError("Device database is busy") from exc
+    try:
         async with AsyncSessionLocal() as session:
             try:
                 yield session
@@ -296,6 +308,8 @@ async def device_session_scope():
                 raise
             finally:
                 await session.close()
+    finally:
+        _device_db_semaphore.release()
 
 async def get_db():
     """Dependency Injection cho FastAPI"""
@@ -362,7 +376,14 @@ logger.info(
 @asynccontextmanager
 async def auth_session_scope():
     """Session scope cho auth background flow, giữ behavior nhất quán với dependency."""
-    async with _auth_db_semaphore:
+    try:
+        await asyncio.wait_for(
+            _auth_db_semaphore.acquire(),
+            timeout=max(0.5, float(settings.DB_SESSION_ACQUIRE_TIMEOUT)),
+        )
+    except asyncio.TimeoutError as exc:
+        raise DatabaseBusyError("Authentication database is busy") from exc
+    try:
         async with AsyncAuthSession() as session:
             try:
                 yield session
@@ -371,6 +392,8 @@ async def auth_session_scope():
                 raise
             finally:
                 await session.close()
+    finally:
+        _auth_db_semaphore.release()
 
 async def get_auth_db():
     """Dependency Injection cho Auth"""
