@@ -63,6 +63,7 @@ REQUIRED_RELAY_MAPPINGS = (
         "lat": 19.8486278,
         "lon": 105.4820400,
         "alt": 0.0,
+        "stream_on_demand": False,
         "stream_active": True,
     },
 )
@@ -1675,6 +1676,9 @@ class RelayWorker(threading.Thread):
     def _keep_target_connected(self):
         return bool(self.cfg.get("keep_target_connected", False))
 
+    def _stream_on_demand(self):
+        return bool(self.cfg.get("stream_on_demand", True))
+
     def _source_send_gga(self):
         return bool(self.cfg.get("source_send_gga", False))
     
@@ -1740,7 +1744,9 @@ class RelayWorker(threading.Thread):
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['target_mp'],
                 "serverhost1": self._target_host(),
-                "stream_on_demand": True,
+                "stream_on_demand": self._stream_on_demand(),
+                "server1_stream_on_demand": self._stream_on_demand(),
+                "server1_stream_active": bool(self.desired_active),
                 "stream_active": bool(self.desired_active),
                 "active_mountpoint": self.cfg['target_mp'] if self.desired_active else None
             },
@@ -1759,6 +1765,11 @@ class RelayWorker(threading.Thread):
             logging.debug(f"Error publishing/saving status: {e}")
 
     def set_stream_active(self, active: bool, mountpoint=None):
+        if not active and not self._stream_on_demand():
+            self.log("INFO", "Ignoring sleep command for always-on relay")
+            self.desired_active = True
+            self.publish_status()
+            return
         self.desired_active = bool(active)
         if not self.desired_active:
             self.bytes_sent = 0
