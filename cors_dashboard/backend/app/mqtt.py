@@ -19,6 +19,7 @@ from . import crud, nmea_parser, models
 from .rtcm_signal_decoder import rtcm_signal_decoder
 from .status_reconciler import status_reconciler
 from .control_plane_ack import build_control_plane_ack
+from .license_sync import evaluate_license_sync
 
 # Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
 mqtt_db_write_lock = asyncio.Lock()
@@ -720,7 +721,6 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # 🔥 THAY ĐỔI CHÍNH: Không check DB mỗi message nữa!
             # Batch checker sẽ update cache mỗi 60s
             raw_status = str(data.get("status") or "").strip().lower()
-            is_offline_packet = raw_status == "offline"
             is_synced = device_sync_cache.get(serial, True)
             sync_errors = device_sync_cache.get(f"{serial}_errors", [])[:]
             agent_version = data.get("version")
@@ -742,9 +742,14 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 agent_reported_status = raw_status
                 license_bypass = bool(metadata.get("license_bypass"))
                 expected_fp = _fingerprint_token(metadata.get("device_token"))
-                token_synced = bool(expected_fp and agent_token_fp and expected_fp == agent_token_fp)
-                token_check_available = bool(agent_token_fp) or not is_offline_packet
-                needs_token_deploy = False if license_bypass else ((not expected_fp) or (token_check_available and not token_synced))
+                license_state = evaluate_license_sync(
+                    expected_fp,
+                    agent_token_fp,
+                    license_bypass=license_bypass,
+                )
+                token_check_available = license_state.token_check_available
+                token_synced = license_state.token_synced
+                needs_token_deploy = license_state.needs_token_deploy
                 if needs_token_deploy:
                     is_synced = False
                     if expected_fp:

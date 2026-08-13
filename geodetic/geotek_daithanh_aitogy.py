@@ -280,9 +280,6 @@ LICENSE_PATH = os.path.join(SCRIPT_DIR, "license.key")
 config_mgr = ConfigManager(CONFIG_PATH)
 status_mgr = StatusManager(DB_PATH)
 
-_LICENSE_CACHE = {}
-_LICENSE_CACHE_LOCK = threading.Lock()
-
 
 def _safe_license_serial(serial):
     value = str(serial or "").strip()
@@ -297,11 +294,14 @@ def get_license_path(serial=None):
 
 
 def has_license(serial=None):
-    return bool(get_license_fingerprint(serial))
+    path = get_license_path(serial)
+    try:
+        return os.path.exists(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
 
 
 def get_license_fingerprint(serial=None):
-    cache_key = _safe_license_serial(serial)
     try:
         path = get_license_path(serial)
         if not os.path.exists(path):
@@ -310,13 +310,9 @@ def get_license_fingerprint(serial=None):
             token = f.read().strip()
         if not token:
             return None
-        fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
-        with _LICENSE_CACHE_LOCK:
-            _LICENSE_CACHE[cache_key] = fingerprint
-        return fingerprint
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
     except Exception:
-        with _LICENSE_CACHE_LOCK:
-            return _LICENSE_CACHE.get(cache_key)
+        return None
 
 
 def save_license(serial, token):
@@ -334,9 +330,6 @@ def save_license(serial, token):
         except OSError:
             pass
     os.replace(tmp_path, path)
-    fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
-    with _LICENSE_CACHE_LOCK:
-        _LICENSE_CACHE[_safe_license_serial(serial)] = fingerprint
     return path
 
 
