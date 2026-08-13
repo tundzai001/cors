@@ -60,13 +60,6 @@
             "target_mp": "BG.TP"
         },
         {
-            "source_mp": "HN.QuocOai",
-            "lat": 20.926164,
-            "lon": 105.600298,
-            "alt": 0.0,
-            "target_mp": "HN.QuocOai"
-        },
-        {
             "source_mp": "BG.LucNam",
             "lat": 21.311513,
             "lon": 106.386418,
@@ -74,11 +67,19 @@
             "target_mp": "BG.LucNam"
         },
         {
-            "source_mp": "HB.TP",
-            "lat": 20.806464,
-            "lon": 105.358762,
+            "lat": 19.8486278,
+            "lon": 105.48204,
             "alt": 0.0,
-            "target_mp": "HB.TP"
+            "stream_active": true,
+            "target_host": "aitogy.com.vn",
+            "source_mp": "ATGDT",
+            "source_host": "aitogy.com.vn",
+            "source_port": 2101,
+            "source_user": "atg",
+            "source_pass_env": "ATG_DT_SOURCE_PASS",
+            "source_send_gga": true,
+            "target_mp": "ATG_DT",
+            "target_port": 2101
         }
     ],
     "monitor_list": [],
