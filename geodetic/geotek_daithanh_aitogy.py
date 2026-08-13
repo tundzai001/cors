@@ -63,8 +63,6 @@ REQUIRED_RELAY_MAPPINGS = (
         "lat": 19.8486278,
         "lon": 105.4820400,
         "alt": 0.0,
-        "stream_on_demand": False,
-        "stream_active": True,
     },
 )
 
@@ -1765,12 +1763,19 @@ class RelayWorker(threading.Thread):
             logging.debug(f"Error publishing/saving status: {e}")
 
     def set_stream_active(self, active: bool, mountpoint=None):
-        if not active and not self._stream_on_demand():
-            self.log("INFO", "Ignoring sleep command for always-on relay")
-            self.desired_active = True
-            self.publish_status()
-            return
-        self.desired_active = bool(active)
+        next_active = bool(active)
+        state_changed = self.desired_active != next_active
+        self.desired_active = next_active
+        self.cfg["stream_active"] = next_active
+        self.cfg["server1_stream_active"] = next_active
+        if state_changed:
+            config_mgr.update_relay_config(
+                self.serial,
+                {
+                    "stream_active": next_active,
+                    "server1_stream_active": next_active,
+                },
+            )
         if not self.desired_active:
             self.bytes_sent = 0
             self.current_bps = 0
