@@ -185,10 +185,14 @@ class ConfigManager:
         return False
 
 class StatusManager:
+    SAVE_INTERVAL_SECONDS = 10.0
+
     def __init__(self, db_path):
         self.db_path = db_path
         self.status_data = {"workers": {}, "system": {}, "last_update": ""}
         self._lock = threading.Lock()
+        self._dirty = False
+        self._last_save_monotonic = 0.0
         self._load()
 
     def _load(self):
@@ -210,7 +214,8 @@ class StatusManager:
         with self._lock:
             self.status_data["workers"][serial] = status_dict
             self.status_data["last_update"] = datetime.now().isoformat()
-            self._save()
+            self._dirty = True
+            self._save_if_due()
 
     def get_runtime_config(self, serial):
         with self._lock:
@@ -221,7 +226,8 @@ class StatusManager:
         with self._lock:
             self.status_data.setdefault("runtime_config", {})[serial] = runtime_config
             self.status_data["last_update"] = datetime.now().isoformat()
-            self._save()
+            self._dirty = True
+            self._save(force=True)
 
     def update_system_status(self):
         with self._lock:
@@ -233,18 +239,31 @@ class StatusManager:
                     "boot_time": datetime.fromtimestamp(psutil.boot_time()).isoformat()
                 }
                 self.status_data["last_update"] = datetime.now().isoformat()
-                self._save()
+                self._dirty = True
+                self._save_if_due()
             except Exception as e:
                 logging.debug(f"System status update error: {e}")
 
-    def _save(self):
+    def flush(self):
+        with self._lock:
+            self._save(force=True)
+
+    def _save_if_due(self):
+        if time.monotonic() - self._last_save_monotonic >= self.SAVE_INTERVAL_SECONDS:
+            self._save()
+
+    def _save(self, force=False):
+        if not self._dirty and not force:
+            return
         tmp_path = self.db_path + ".tmp"
         last_error = None
         for _ in range(5):
             try:
                 with open(tmp_path, 'w', encoding='utf-8') as f:
-                    json.dump(self.status_data, f, indent=4, ensure_ascii=False)
+                    json.dump(self.status_data, f, ensure_ascii=False, separators=(",", ":"))
                 os.replace(tmp_path, self.db_path)
+                self._dirty = False
+                self._last_save_monotonic = time.monotonic()
                 return
             except Exception as e:
                 last_error = e
@@ -261,6 +280,9 @@ LICENSE_PATH = os.path.join(SCRIPT_DIR, "license.key")
 config_mgr = ConfigManager(CONFIG_PATH)
 status_mgr = StatusManager(DB_PATH)
 
+_LICENSE_CACHE = {}
+_LICENSE_CACHE_LOCK = threading.Lock()
+
 
 def _safe_license_serial(serial):
     value = str(serial or "").strip()
@@ -275,14 +297,11 @@ def get_license_path(serial=None):
 
 
 def has_license(serial=None):
-    path = get_license_path(serial)
-    try:
-        return os.path.exists(path) and os.path.getsize(path) > 0
-    except OSError:
-        return False
+    return bool(get_license_fingerprint(serial))
 
 
 def get_license_fingerprint(serial=None):
+    cache_key = _safe_license_serial(serial)
     try:
         path = get_license_path(serial)
         if not os.path.exists(path):
@@ -291,9 +310,13 @@ def get_license_fingerprint(serial=None):
             token = f.read().strip()
         if not token:
             return None
-        return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+        fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+        with _LICENSE_CACHE_LOCK:
+            _LICENSE_CACHE[cache_key] = fingerprint
+        return fingerprint
     except Exception:
-        return None
+        with _LICENSE_CACHE_LOCK:
+            return _LICENSE_CACHE.get(cache_key)
 
 
 def save_license(serial, token):
@@ -311,6 +334,9 @@ def save_license(serial, token):
         except OSError:
             pass
     os.replace(tmp_path, path)
+    fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    with _LICENSE_CACHE_LOCK:
+        _LICENSE_CACHE[_safe_license_serial(serial)] = fingerprint
     return path
 
 
