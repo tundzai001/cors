@@ -49,6 +49,25 @@ except ValueError:
 # ==============================================================================
 # === MANAGERS ===
 # ==============================================================================
+REQUIRED_RELAY_MAPPINGS = (
+    {
+        "source_mp": "ATGDT",
+        "source_host": "aitogy.com.vn",
+        "source_port": 2101,
+        "source_user": "atg",
+        "source_pass_env": "ATG_DT_SOURCE_PASS",
+        "source_send_gga": True,
+        "target_mp": "ATG_DT",
+        "target_host": "aitogy.com.vn",
+        "target_port": 2101,
+        "lat": 19.8486278,
+        "lon": 105.4820400,
+        "alt": 0.0,
+        "stream_active": True,
+    },
+)
+
+
 class ConfigManager:
     def __init__(self, config_path):
         self.config_path = config_path
@@ -86,6 +105,39 @@ class ConfigManager:
                 "station_list": [],
                 "monitor_list": []
             }
+        self._ensure_required_relay_mappings()
+
+    def _ensure_required_relay_mappings(self):
+        """Upsert operational relay mappings without replacing known coordinates."""
+        stations = self.data.setdefault("station_list", [])
+        changed = False
+        for required in REQUIRED_RELAY_MAPPINGS:
+            match = next(
+                (
+                    cfg for cfg in stations
+                    if str(cfg.get("target_mp") or "").strip() == required["target_mp"]
+                    or str(cfg.get("source_mp") or "").strip() == required["source_mp"]
+                ),
+                None,
+            )
+            if match is None:
+                stations.append({
+                    "lat": 0.0,
+                    "lon": 0.0,
+                    "alt": 0.0,
+                    "stream_active": False,
+                    "target_host": "aitogy.com.vn",
+                    **required,
+                })
+                changed = True
+                continue
+            for key, value in required.items():
+                if match.get(key) != value:
+                    match[key] = value
+                    changed = True
+        if changed:
+            self.save()
+            logging.info("Updated required relay mountpoint mappings")
 
     def save(self):
         try:
@@ -1577,6 +1629,11 @@ class RelayWorker(threading.Thread):
         return self.cfg.get('source_user', SOURCE_USER)
 
     def _source_pass(self):
+        env_name = str(self.cfg.get('source_pass_env') or '').strip()
+        if env_name:
+            env_value = os.environ.get(env_name)
+            if env_value:
+                return env_value
         return self.cfg.get('source_pass', SOURCE_PASS)
 
     def _target_host(self):
