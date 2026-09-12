@@ -117,7 +117,8 @@
         const [findingNearest, setFindingNearest] = useState(false);
         const [tileMode, setTileMode] = useState('hybrid');
         const [mapError, setMapError] = useState('');
-        const canViewRovers = ['admin', 'viewer', 'coordinator'].includes(String(currentUser?.role || '').toLowerCase());
+        const role = String(currentUser?.role || '').toLowerCase();
+        const canViewRovers = role === 'admin' || currentUser?.can_view_rovers === true || currentUser?.permissions?.includes('view:rovers');
 
         const allowedMountpoints = useMemo(() => {
             if (String(currentUser?.role || '').toLowerCase() === 'admin') return null;

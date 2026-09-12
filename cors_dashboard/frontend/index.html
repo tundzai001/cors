@@ -19,7 +19,7 @@
     <meta name="keywords"
         content="Aitogy, CORS, GNSS, RTK, trạm tham chiếu, định vị chính xác, khảo sát đo đạc, quản lý trạm CORS">
     <meta name="author" content="AITOGY .,JSC">
-    <link rel="icon" type="image/png" href="/img/aitogy.png">
+    <link rel="icon" type="image/png" href="/assets/img/aitogy.png">
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website">
@@ -27,7 +27,7 @@
     <meta property="og:title" content="Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao">
     <meta property="og:description"
         content="Quản lý và vận hành mạng lưới trạm CORS Aitogy. Giải pháp định vị chính xác cao hàng đầu.">
-    <meta property="og:image" content="https://cors.aitogy.com/img/aitogy.png">
+    <meta property="og:image" content="https://cors.aitogy.com/assets/img/aitogy.png">
 
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image">
@@ -35,7 +35,7 @@
     <meta property="twitter:title" content="Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao">
     <meta property="twitter:description"
         content="Quản lý và vận hành mạng lưới trạm CORS Aitogy. Giải pháp định vị chính xác cao hàng đầu.">
-    <meta property="twitter:image" content="https://cors.aitogy.com/img/aitogy.png">
+    <meta property="twitter:image" content="https://cors.aitogy.com/assets/img/aitogy.png">
 
     <link rel="canonical" href="https://cors.aitogy.com/" />
     <title>Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>
@@ -48,7 +48,7 @@
       "name": "AITOGY .,JSC",
       "legalName": "Aitogy Infrastructure Technology Joint Stock Company",
       "url": "https://cors.aitogy.com/",
-      "logo": "https://cors.aitogy.com/img/aitogy.png",
+      "logo": "https://cors.aitogy.com/assets/img/aitogy.png",
       "address": {
         "@type": "PostalAddress",
         "streetAddress": "Số 16B Ngõ 187 phố Mai Dịch, phường Phú Diễn",
@@ -110,13 +110,13 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
     <!-- Local CSS -->
-    <link rel="stylesheet" href="/css/style.css?v=20260730-toggle-fix-v1">
-    <link rel="stylesheet" href="/css/enterprise-theme.css?v=20260730-landing-perf-v1">
-    <link rel="stylesheet" href="/css/cinematic-cards.css?v=20260521-v4">
-    <link rel="stylesheet" href="/css/cinematic-upgrade.css?v=20260730-landing-perf-v1">
-    <link rel="stylesheet" href="/css/dashboard.css?v=20260728-mobile-fluid-v1">
-    <link rel="stylesheet" href="/css/ops-ui.css?v=20260728-mobile-fluid-v2">
-    <link rel="stylesheet" href="/css/responsive-layout.css?v=20260730-toggle-fix-v1">
+    <link rel="stylesheet" href="/assets/css/style.css?v=20260730-toggle-fix-v1">
+    <link rel="stylesheet" href="/assets/css/enterprise-theme.css?v=20260730-landing-perf-v1">
+    <link rel="stylesheet" href="/assets/css/cinematic-cards.css?v=20260521-v4">
+    <link rel="stylesheet" href="/assets/css/cinematic-upgrade.css?v=20260825-capability-v2">
+    <link rel="stylesheet" href="/assets/css/dashboard.css?v=20260728-mobile-fluid-v1">
+    <link rel="stylesheet" href="/assets/css/ops-ui.css?v=20260728-mobile-fluid-v2">
+    <link rel="stylesheet" href="/assets/css/responsive-layout.css?v=20260730-toggle-fix-v1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
 
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -130,7 +130,7 @@
     <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lenis@1.1.18/dist/lenis.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="/js/performance-runtime.js?v=20260730-landing-perf-v1"></script>
+    <script src="/assets/js/performance-runtime.js?v=20260825-capability-v2"></script>
     <style>
         #app-preloader {
             position: fixed;
@@ -244,7 +244,7 @@
             <div class="app-preloader__mark" aria-hidden="true">
                 <div class="app-preloader__ring"></div>
                 <div class="app-preloader__core">
-                    <img src="/img/aitogy.png" alt="">
+                    <img src="/assets/img/aitogy.png" alt="">
                 </div>
             </div>
             <p class="app-preloader__title">CORS Control Center</p>
@@ -492,27 +492,27 @@
         crossorigin="anonymous"></script>
 
     <!-- JSX entrypoints are precompiled into /js/dist by scripts/build_frontend_js.ps1. -->
-    <script src="/js/api-routes.js?v=20260727-source-v1"></script>
-    <script src="/js/api-client.js?v=20260731-auth-recovery-v3"></script>
-    <script src="/js/ops-ui.js?v=20260727-source-v1"></script>
-    <script src="/js/dashboard-shared.js?v=20260728-leaflet-guard-v3"></script>
-    <script src="/js/stations-map-utils.js?v=20260727-source-v1"></script>
+    <script src="/assets/js/api-routes.js?v=20260912-auto-cors-v1"></script>
+    <script src="/assets/js/api-client.js?v=20260731-auth-recovery-v3"></script>
+    <script src="/assets/js/ops-ui.js?v=20260727-source-v1"></script>
+    <script src="/assets/js/dashboard-shared.js?v=20260728-leaflet-guard-v3"></script>
+    <script src="/assets/js/stations-map-utils.js?v=20260727-source-v1"></script>
 
-    <script src="/js/dist/react-components.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/dashboard-forms.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/dashboard-list.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/dashboard-live.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/stations-map-search.js?v=20260728-leaflet-guard-v1"></script>
-    <script src="/js/dist/dashboard-detail.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/stations-map.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/homepage-enterprise.v2.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/enterprise-station-detail.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/blog-system.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/api-docs.js?v=20260731-precompiled-v1"></script>
-    <script src="/js/dist/advanced-features.js?v=20260731-precompiled-v1"></script>
+    <script src="/assets/js/dist/react-components.js?v=20260912-rover-access-v1"></script>
+    <script src="/assets/js/dist/dashboard-forms.js?v=20260912-auto-cors-v1"></script>
+    <script src="/assets/js/dist/dashboard-list.js?v=20260911-gnss-status-v1"></script>
+    <script src="/assets/js/dist/dashboard-live.js?v=20260911-gnss-status-v1"></script>
+    <script src="/assets/js/stations-map-search.js?v=20260728-leaflet-guard-v1"></script>
+    <script src="/assets/js/dist/dashboard-detail.js?v=20260912-rover-access-v1"></script>
+    <script src="/assets/js/dist/stations-map.js?v=20260912-rover-access-v1"></script>
+    <script src="/assets/js/dist/homepage-enterprise.v2.js?v=20260825-capability-v2"></script>
+    <script src="/assets/js/dist/enterprise-station-detail.js?v=20260731-precompiled-v1"></script>
+    <script src="/assets/js/dist/blog-system.js?v=20260731-precompiled-v1"></script>
+    <script src="/assets/js/dist/api-docs.js?v=20260731-precompiled-v1"></script>
+    <script src="/assets/js/dist/advanced-features.js?v=20260731-precompiled-v1"></script>
 
-    <script src="/js/nav-manager.js?v=20260731-auth-recovery-v3"></script>
-    <script src="/js/main.js?v=20260731-auth-recovery-v3"></script>
+    <script src="/assets/js/nav-manager.js?v=20260912-rover-access-v1"></script>
+    <script src="/assets/js/main.js?v=20260731-auth-recovery-v3"></script>
 </body>
 
 </html>

@@ -76,7 +76,7 @@ const NavigationManager = {
             this.addNavItem(navContainer, { id: 'users', icon: 'bi-people-fill', text: 'Users', href: '/users.html', active: this.currentPage === 'users' });
         }
 
-        if (this.currentUser?.role === 'admin' || (this.currentUser?.role === 'coordinator' && this.currentUser?.can_create_rovers)) {
+        if (this.currentUser?.role === 'admin' || this.currentUser?.can_view_rovers || this.currentUser?.permissions?.includes('view:rovers')) {
             this.addGroup(navContainer, 'System');
             this.addNavItem(navContainer, { id: 'rovers', icon: 'bi-hdd-network-fill', text: 'Rover & Caster', href: '/rovers-global.html', active: this.currentPage === 'rovers' });
         }

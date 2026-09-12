@@ -133,12 +133,12 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
 // ===============================================================================
 
 const flags = { us: new Image(), ru: new Image(), eu: new Image(), cn: new Image(), jp: new Image(), un: new Image() };
-flags.us.src = '/img/flags/us.jpg';
-flags.ru.src = '/img/flags/ru.jpg';
-flags.eu.src = '/img/flags/eu.jpg';
-flags.cn.src = '/img/flags/cn.jpg';
-flags.jp.src = '/img/flags/jp.jpg';
-flags.un.src = '/img/flags/un.jpg';
+flags.us.src = '/assets/img/flags/us.jpg';
+flags.ru.src = '/assets/img/flags/ru.jpg';
+flags.eu.src = '/assets/img/flags/eu.jpg';
+flags.cn.src = '/assets/img/flags/cn.jpg';
+flags.jp.src = '/assets/img/flags/jp.jpg';
+flags.un.src = '/assets/img/flags/un.jpg';
 
 const colors = { us: '#00d47e', ru: '#ff5c5c', eu: '#5c9cff', cn: '#ffb95c', jp: '#ff77a9', un: '#aaaaaa' };
 const constellationNames = { us: "GPS (USA)", ru: "GLONASS (Russia)", eu: "Galileo (EU)", cn: "BeiDou (China)", jp: "QZSS (Japan)", un: "Unknown" };
@@ -219,12 +219,22 @@ function getVisibleSatellites(satellites, maxAgeMs) {
 // === ENHANCED DASHBOARD COMPONENT (REPLACED)
 // ===============================================================================
 
+function isDeviceStaleOffline(device) {
+    const rawStatus = String(device?.status || '').toLowerCase();
+    if (rawStatus === 'offline') return true;
+    const timestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    return Boolean(timestamp && (Date.now() / 1000) - timestamp > 180);
+}
+
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
-    const rtk_status = device.rtk_fix_status || 'NO_FIX';
+    const liveDataAvailable = !isDeviceStaleOffline(device);
+    const rtk_status = liveDataAvailable ? (device.rtk_fix_status || 'NO_FIX') : 'NO_FIX';
 
-    let fixInfo = { label: 'NO FIX', color: '#ff0000', icon: '❌' };
+    let fixInfo = liveDataAvailable
+        ? { label: 'NO FIX', color: '#ff0000', icon: '❌' }
+        : { label: 'OFFLINE', color: '#6c757d', icon: '⏸️' };
 
-    const isAutoSetupStatus = (device.status || '').startsWith('auto_setup');
+    const isAutoSetupStatus = liveDataAvailable && (device.status || '').startsWith('auto_setup');
 
     if (isAutoSetupStatus) {
         const AUTO_SETUP_STEPS = {
@@ -235,7 +245,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         };
         const stepInfo = AUTO_SETUP_STEPS[device.status] || { label: 'Auto Setup...', color: '#17a2b8', icon: '⏳', step: 0 };
         fixInfo = { label: stepInfo.label, color: stepInfo.color, icon: stepInfo.icon };
-    } else if (device.base_mode_active) {
+    } else if (liveDataAvailable && device.base_mode_active) {
         const baseConfig = device.base_config || {};
         if (baseConfig.auto_configured) {
             fixInfo = { label: 'BASE (Auto CORS)', color: '#00ff00', icon: '🏯' };
@@ -248,7 +258,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 fixInfo = { label: 'SURVEYING...', color: '#ffaa00', icon: '⏳' };
             }
         }
-    } else {
+    } else if (liveDataAvailable) {
         const FIX_STATUS_MAP = {
             'RTK_FIXED': { label: 'RTK FIXED', color: '#00ff00', icon: '🎯' },
             'RTK_FLOAT': { label: 'RTK FLOAT', color: '#ffaa00', icon: '📍' },
@@ -280,7 +290,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             signalBarsContainerRef.current.innerHTML = '';
         }
         setSatStats({ total: 0, tracking: 0, bySystem: {} });
-    }, [device?.serial]);
+    }, [device?.serial, liveDataAvailable]);
 
     // 🆕 METRIC TRACKING STATE
     const [metrics, setMetrics] = useState({
@@ -292,10 +302,24 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         throughput: { value: 0, history: [] }
     });
 
+    useEffect(() => {
+        if (liveDataAvailable) return;
+        setMetrics({
+            fixQuality: { value: 0, history: [] },
+            satellites: { value: 0, history: [] },
+            accuracy: { value: undefined, history: [] },
+            hdop: { value: 0, history: [] },
+            signalStrength: { value: 0, history: [] },
+            throughput: { value: 0, history: [] }
+        });
+    }, [device?.serial, liveDataAvailable]);
+
     const satelliteBufferRef = useRef(new Map());
     const SATELLITE_TIMEOUT = 5000;
     const FADE_DURATION = 2000;
-    const safeNmeaData = nmeaData || { gga: null, gsa: null, satellites: {} };
+    const safeNmeaData = liveDataAvailable
+        ? (nmeaData || { gga: null, gsa: null, satellites: {} })
+        : { gga: null, gsa: null, satellites: {} };
     const safeNmeaDataRef = useRef(safeNmeaData);
     useEffect(() => {
         safeNmeaDataRef.current = safeNmeaData;
@@ -322,10 +346,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const BARS_INTERVAL = 500;
 
     // 🆕 METRICS UPDATE LOGIC
-    const metricsNmeaDataRef = useRef(nmeaData);
+    const metricsNmeaDataRef = useRef(safeNmeaData);
     useEffect(() => {
-        metricsNmeaDataRef.current = nmeaData;
-    }, [nmeaData]);
+        metricsNmeaDataRef.current = safeNmeaData;
+    }, [safeNmeaData]);
 
     useEffect(() => {
         if (!device) return;
@@ -369,13 +393,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     history: [...prev.signalStrength.history, avgSnr].slice(-30)
                 },
                 throughput: {
-                    value: device.bps || 0,
-                    history: [...prev.throughput.history, device.bps || 0].slice(-30)
+                    value: liveDataAvailable ? (device.bps || 0) : 0,
+                    history: [...prev.throughput.history, liveDataAvailable ? (device.bps || 0) : 0].slice(-30)
                 }
             }));
         }, 2000);
         return () => clearInterval(interval);
-    }, [device?.serial, device?.bps, device?.hacc]); // Update logic dependencies
+    }, [device?.serial, device?.bps, device?.hacc, liveDataAvailable]); // Update logic dependencies
 
     // SKYPLOT & CANVAS LOGIC
     useEffect(() => {
@@ -913,13 +937,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
                             const isAntennaFault = antennaStatus && antennaStatus.state === "FAULT";
                             
-                            const rtcmInputBps = Number(
+                            const rtcmInputBps = liveDataAvailable ? Number(
                                 device.rtcm_input_bps ||
                                 device.ntrip_stats?.rtcm_input_bps ||
                                 device.ntrip_stats?.rtcm_in_bps ||
                                 device.mqtt_stats?.source_bps ||
                                 0
-                            );
+                            ) : 0;
 
                             const hasMsm = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => {
                                 const t = Number(k);
@@ -993,7 +1017,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <div className="card-body pt-0 pb-3 px-3">
                         {(() => {
                             const savings = device.savings_stats || device.system_info?.savings_stats || {};
-                            let isAwake = (device.status !== "sleep");
+                            let isAwake = liveDataAvailable && (device.status !== "sleep");
                             if (savings.is_sleeping !== undefined && savings.is_sleeping !== null) {
                                 isAwake = !savings.is_sleeping;
                             } else {
@@ -1005,14 +1029,15 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                     }
                                 }
                             }
+                            if (!liveDataAvailable) isAwake = false;
 
-                            const rtcmBps = Number(
+                            const rtcmBps = liveDataAvailable ? Number(
                                 device.rtcm_input_bps ||
                                 device.ntrip_stats?.rtcm_input_bps ||
                                 device.ntrip_stats?.rtcm_in_bps ||
                                 device.mqtt_stats?.source_bps ||
                                 0
-                            );
+                            ) : 0;
                             const telemetryBps = savings.telemetry_bps || 0;
                             const currentVolts = device.system_info?.cpu?.core_volts || null;
 

@@ -7,12 +7,12 @@
 const { useState, useEffect, useRef, memo } = React;
 
 const flags = { us: new Image(), ru: new Image(), eu: new Image(), cn: new Image(), jp: new Image(), un: new Image() };
-flags.us.src = '/img/flags/us.jpg';
-flags.ru.src = '/img/flags/ru.jpg';
-flags.eu.src = '/img/flags/eu.jpg';
-flags.cn.src = '/img/flags/cn.jpg';
-flags.jp.src = '/img/flags/jp.jpg';
-flags.un.src = '/img/flags/un.jpg';
+flags.us.src = '/assets/img/flags/us.jpg';
+flags.ru.src = '/assets/img/flags/ru.jpg';
+flags.eu.src = '/assets/img/flags/eu.jpg';
+flags.cn.src = '/assets/img/flags/cn.jpg';
+flags.jp.src = '/assets/img/flags/jp.jpg';
+flags.un.src = '/assets/img/flags/un.jpg';
 
 const colors = { us: '#00d47e', ru: '#ff5c5c', eu: '#5c9cff', cn: '#ffb95c', jp: '#ff77a9', un: '#aaaaaa' };
 const constellationNames = { us: 'GPS (USA)', ru: 'GLONASS (Russia)', eu: 'Galileo (EU)', cn: 'BeiDou (China)', jp: 'QZSS (Japan)', un: 'Unknown' };

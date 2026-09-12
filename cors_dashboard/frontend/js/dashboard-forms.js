@@ -260,6 +260,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [altitude, setAltitude] = useState('');
     const [fixedAccuracyMm, setFixedAccuracyMm] = useState('10'); // Đơn vị mm cho Fixed
 
+    // CORS connection for Auto Base (kept in this form only; never read from .env)
+    const [corsHost, setCorsHost] = useState('');
+    const [corsPort, setCorsPort] = useState('2101');
+    const [corsUsername, setCorsUsername] = useState('');
+    const [corsPassword, setCorsPassword] = useState('');
+    const [corsSources, setCorsSources] = useState([]);
+    const [selectedMountpoint, setSelectedMountpoint] = useState('');
+    const [isLoadingCorsSources, setIsLoadingCorsSources] = useState(false);
+    const [corsLookupError, setCorsLookupError] = useState('');
+
     // Survey-In Params
     const [svinDuration, setSvinDuration] = useState('300'); // Giây
     const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
@@ -285,6 +295,13 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setLongitude('');
         setAltitude('');
         setFixedAccuracyMm('10');
+        setCorsHost('');
+        setCorsPort('2101');
+        setCorsUsername('');
+        setCorsPassword('');
+        setCorsSources([]);
+        setSelectedMountpoint('');
+        setCorsLookupError('');
         setSvinDuration('300');
         setSvinAccuracyM('3.00');
         setOutputMode('diagnostics_rtcm');
@@ -350,6 +367,57 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         }
     };
 
+    const handleCorsFieldChange = (setter) => (e) => {
+        setter(e.target.value);
+        setCorsSources([]);
+        setSelectedMountpoint('');
+        setCorsLookupError('');
+    };
+
+    const handleLoadCorsMountpoints = async () => {
+        const host = corsHost.trim();
+        const port = Number(corsPort);
+        const username = corsUsername.trim();
+        if (!host || !Number.isInteger(port) || port < 1 || port > 65535 || !username || !corsPassword) {
+            setCorsLookupError('Vui lòng nhập đủ IP/Host, Port, Username và Password của CORS.');
+            return;
+        }
+
+        setIsLoadingCorsSources(true);
+        setCorsLookupError('');
+        try {
+            const response = await window.apiFetch(window.ApiRoutes.devices.corsMountpoints(device.serial), {
+                method: 'POST',
+                body: JSON.stringify({ host, port, username, password: corsPassword })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.detail || 'Không thể đọc danh sách mountpoint từ CORS.');
+            }
+
+            const sources = Array.isArray(data.sources)
+                ? data.sources.filter(source => source && String(source.mountpoint || '').trim())
+                : [];
+            setCorsSources(sources);
+            setSelectedMountpoint(current => (
+                sources.some(source => source.mountpoint === current)
+                    ? current
+                    : (sources[0]?.mountpoint || '')
+            ));
+            if (!sources.length) {
+                setCorsLookupError('CORS đã kết nối nhưng chưa trả về mountpoint nào.');
+            } else {
+                window.showSuccess(`Đã tải ${sources.length} mountpoint từ CORS.`);
+            }
+        } catch (error) {
+            setCorsSources([]);
+            setSelectedMountpoint('');
+            setCorsLookupError(error.message);
+        } finally {
+            setIsLoadingCorsSources(false);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (disabled) return;
@@ -375,7 +443,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
                 params.survey_in_accuracy = parseFloat(svinAccuracyM);
             } else if (method === 'AUTO_CORS') {
-                // Auto CORS uses backend config directly, no frontend parameters needed beyond the method
+                const port = Number(corsPort);
+                if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
+                    window.showError('Vui lòng nhập đủ thông tin kết nối CORS.');
+                    return;
+                }
+                if (!selectedMountpoint) {
+                    window.showError('Vui lòng bấm "Kết nối CORS & lấy mountpoint" rồi chọn một mountpoint.');
+                    return;
+                }
             }
             if (isAdmin && !isLteStation) {
                 params.gnss_options = {
@@ -398,6 +474,17 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 mode: 'BASE',
                 params: params
             };
+
+            if (method === 'AUTO_CORS') {
+                payload.auto_cors = {
+                    ip: corsHost.trim(),
+                    port: Number(corsPort),
+                    user: corsUsername.trim(),
+                    password: corsPassword,
+                    mountpoint: selectedMountpoint
+                };
+                delete params.auto_cors;
+            }
 
             await onConfigureChip(device.serial, payload);
         } finally {
@@ -458,7 +545,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
             <fieldset disabled={disabled}>
                 {method === 'AUTO_CORS' ? (
-                    <div className="row g-3">
+                    <div className="row g-3 auto-cors-config">
                         {isAutoSetupStatus && (
                             <div className="col-12">
                                 <div className="alert alert-info small mb-2">
@@ -487,6 +574,125 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </div>
                             </div>
                         )}
+                        <div className="col-12">
+                            <div className="auto-cors-config__panel p-3 rounded border border-info-subtle bg-dark-subtle">
+                                <div className="d-flex align-items-start gap-2 mb-3">
+                                    <i className="bi bi-broadcast-pin text-info fs-5" aria-hidden="true"></i>
+                                    <div>
+                                        <div className="fw-bold text-info">Thông tin CORS liên kết</div>
+                                        <div className="form-text mt-1">
+                                            Nhập đúng tài khoản CORS tại đây. Các giá trị này chỉ dùng cho lần Auto Base này và được gửi trực tiếp xuống agent.
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="row g-3">
+                                    <div className="col-md-8">
+                                        <label htmlFor={`cors-host-${device.serial}`} className="form-label small fw-bold">IP / Host CORS</label>
+                                        <input
+                                            id={`cors-host-${device.serial}`}
+                                            type="text"
+                                            className="form-control"
+                                            value={corsHost}
+                                            onChange={handleCorsFieldChange(setCorsHost)}
+                                            placeholder="Ví dụ: 14.238.1.125"
+                                            autoComplete="off"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="col-md-4">
+                                        <label htmlFor={`cors-port-${device.serial}`} className="form-label small fw-bold">Port</label>
+                                        <input
+                                            id={`cors-port-${device.serial}`}
+                                            type="number"
+                                            min="1"
+                                            max="65535"
+                                            className="form-control"
+                                            value={corsPort}
+                                            onChange={handleCorsFieldChange(setCorsPort)}
+                                            placeholder="2101"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label htmlFor={`cors-user-${device.serial}`} className="form-label small fw-bold">Username CORS</label>
+                                        <input
+                                            id={`cors-user-${device.serial}`}
+                                            type="text"
+                                            className="form-control"
+                                            value={corsUsername}
+                                            onChange={handleCorsFieldChange(setCorsUsername)}
+                                            placeholder="Tài khoản NTRIP"
+                                            autoComplete="username"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="col-md-6">
+                                        <label htmlFor={`cors-password-${device.serial}`} className="form-label small fw-bold">Password CORS</label>
+                                        <input
+                                            id={`cors-password-${device.serial}`}
+                                            type="password"
+                                            className="form-control"
+                                            value={corsPassword}
+                                            onChange={handleCorsFieldChange(setCorsPassword)}
+                                            placeholder="Mật khẩu NTRIP"
+                                            autoComplete="current-password"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="col-12">
+                                        <button
+                                            type="button"
+                                            className="btn btn-outline-info w-100"
+                                            onClick={handleLoadCorsMountpoints}
+                                            disabled={isLoadingCorsSources || isSubmitting}
+                                        >
+                                            {isLoadingCorsSources ? (
+                                                <>
+                                                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                    Đang kết nối CORS...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <i className="bi bi-search me-2" aria-hidden="true"></i>
+                                                    Kết nối CORS & lấy danh sách mountpoint
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                    {corsLookupError && (
+                                        <div className="col-12">
+                                            <div className="alert alert-warning small mb-0" role="alert">
+                                                <i className="bi bi-exclamation-triangle-fill me-2" aria-hidden="true"></i>
+                                                {corsLookupError}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div className="col-12">
+                                        <label htmlFor={`cors-mountpoint-${device.serial}`} className="form-label small fw-bold">Mountpoint</label>
+                                        <select
+                                            id={`cors-mountpoint-${device.serial}`}
+                                            className="form-select"
+                                            value={selectedMountpoint}
+                                            onChange={(e) => setSelectedMountpoint(e.target.value)}
+                                            disabled={!corsSources.length || isSubmitting}
+                                            required
+                                        >
+                                            <option value="">-- Chọn mountpoint từ CORS --</option>
+                                            {corsSources.map((source) => (
+                                                <option key={source.mountpoint} value={source.mountpoint}>
+                                                    {source.mountpoint}{source.identifier ? ` · ${source.identifier}` : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <div className="form-text">
+                                            {corsSources.length
+                                                ? `${corsSources.length} mountpoint đã tải. Chọn đúng MP rồi mới áp dụng Auto Base.`
+                                                : 'Bấm nút kết nối để tải danh sách mountpoint.'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <div className="col-12">
                             <div className="alert alert-success small mb-2">
                                 <i className="bi bi-robot me-2"></i>
@@ -671,7 +877,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 )}
 
                 {!disabled && (
-                    <button type="submit" className="btn btn-primary mt-4 w-100 base-config-submit" disabled={isSubmitting}>
+                    <button
+                        type="submit"
+                        className="btn btn-primary mt-4 w-100 base-config-submit"
+                        disabled={isSubmitting || isLoadingCorsSources || (method === 'AUTO_CORS' && !selectedMountpoint)}
+                    >
                         {isSubmitting ? (
                             <>
                                 <span className="spinner-border spinner-border-sm me-2"></span>

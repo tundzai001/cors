@@ -20,6 +20,9 @@ DEVICE_SCHEMA_STATEMENTS = (
 
 
 AUTH_ZALO_SCHEMA_STATEMENTS = (
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_rovers BOOLEAN NOT NULL DEFAULT FALSE",
+    "UPDATE users SET can_view_rovers = TRUE WHERE can_create_rovers = TRUE",
+    "ALTER TABLE users ALTER COLUMN can_view_rovers DROP DEFAULT",
     "ALTER TABLE zalo_chat_bindings ADD COLUMN IF NOT EXISTS station_scope_mode VARCHAR NOT NULL DEFAULT 'all'",
     "ALTER TABLE zalo_chat_bindings ADD COLUMN IF NOT EXISTS allowed_bases JSON NOT NULL DEFAULT '[]'::json",
     "ALTER TABLE zalo_link_codes ADD COLUMN IF NOT EXISTS link_type VARCHAR NOT NULL DEFAULT 'private'",

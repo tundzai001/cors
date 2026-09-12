@@ -40,6 +40,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const selectedRoverKeys = new Set();
     const connectionClockCache = new Map();
 
+    const hasRoverPageAccess = () => (
+        String(currentUser?.role || '').toLowerCase() === 'admin'
+        || currentUser?.can_view_rovers === true
+        || currentUser?.permissions?.includes('view:rovers')
+    );
+    const hasRoverEditAccess = () => (
+        String(currentUser?.role || '').toLowerCase() === 'admin'
+        || currentUser?.permissions?.includes('edit:rovers')
+        || (hasRoverPageAccess() && currentUser?.can_create_rovers === true)
+    );
+
     // === 2. AUTH & PERMISSIONS CHECK ===
     try {
         const userRes = await apiFetchRaw('/api/auth/me', { headers: API_HEADERS });
@@ -69,8 +80,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('d-none'));
         }
 
-        // Ẩn nút chức năng tạo, sửa, xóa, bulk action với tài khoản Viewer
-        if (String(currentUser.role || '').toLowerCase() === 'viewer') {
+        // Chỉ tài khoản có quyền tạo/sửa mới thấy các công cụ ghi dữ liệu.
+        if (!hasRoverEditAccess()) {
             document.querySelectorAll('[data-bs-target="#createRoverModal"]').forEach(el => el.classList.add('d-none'));
             const bulkToolbar = document.getElementById('rover-bulk-toolbar');
             if (bulkToolbar) bulkToolbar.classList.add('d-none');
@@ -1061,24 +1072,28 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        if (currentUser.role !== 'viewer') {
+        if (hasRoverEditAccess() || currentUser.role !== 'viewer') {
             if (r.type === 'db') {
-                actionHtml += `
+                if (hasRoverEditAccess()) actionHtml += `
                     <button class="rover-action-btn edit-btn" 
                         data-id="${r.id}" data-username="${r.username}" title="Sửa">
                         <i class="bi bi-pencil-square"></i>
                     </button>
+                `;
+                if (currentUser.role !== 'viewer') actionHtml += `
                     <button class="rover-action-btn danger delete-btn" 
                         data-id="${r.id}" data-user="${r.username}" title="Xóa">
                         <i class="bi bi-trash3-fill"></i>
                     </button>
                 `;
             } else if (r.type === 'unknown') {
-                actionHtml += `
+                if (hasRoverEditAccess()) actionHtml += `
                     <button class="rover-action-btn edit-btn" 
                         data-id="0" data-username="${r.username}" title="Chỉnh sửa và Đồng bộ về Web">
                         <i class="bi bi-pencil-square"></i>
                     </button>
+                `;
+                if (currentUser.role !== 'viewer') actionHtml += `
                     <button class="rover-action-btn danger caster-delete-btn" 
                         data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
                         <i class="bi bi-trash3"></i>

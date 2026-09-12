@@ -608,13 +608,14 @@ async def get_all_users(db: AsyncSession) -> list[models.User]:
 
 import json
 
-async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, can_create_users: bool = False, extra_mountpoints: str | None = None, parent_id: int | None = None, allowed_bases: list[str] | None = None, allowed_rovers: list[str] | None = None) -> models.User:
+async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, can_create_users: bool = False, extra_mountpoints: str | None = None, parent_id: int | None = None, allowed_bases: list[str] | None = None, allowed_rovers: list[str] | None = None, can_view_rovers: bool = False) -> models.User:
     db_user = models.User(
         username=username, 
         hashed_password=hashed_password, 
         full_name=full_name, 
         role=role, 
         is_active=is_active, 
+        can_view_rovers=can_view_rovers,
         can_create_rovers=can_create_rovers,
         can_create_users=can_create_users,
         extra_mountpoints=extra_mountpoints,
@@ -753,6 +754,35 @@ async def get_all_rovers_by_user(db: AsyncSession, user_id: int, role: str) -> l
     
     return []
 
+def _json_string_set(value, *, lowercase: bool = False) -> set[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = []
+    if not isinstance(value, list):
+        return set()
+    result = {str(item).strip() for item in value if str(item).strip()}
+    return {item.lower() for item in result} if lowercase else result
+
+def get_allowed_base_serials(user: models.User) -> set[str]:
+    return {serial.upper() for serial in _json_string_set(getattr(user, "allowed_bases", None))}
+
+def get_allowed_rover_usernames(user: models.User) -> set[str]:
+    return _json_string_set(getattr(user, "allowed_rovers", None), lowercase=True)
+
+async def get_rover_manageable_base_serials(db: AsyncSession, user: models.User) -> set[str]:
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    if role == "admin":
+        result = await db.execute(select(models.Device.serial))
+        return {str(serial).strip().upper() for serial in result.scalars().all() if serial}
+    if role == "viewer":
+        return get_allowed_base_serials(user)
+    if role == "coordinator":
+        result = await db.execute(select(models.Device.serial).where(models.Device.user_id == user.id))
+        return {str(serial).strip().upper() for serial in result.scalars().all() if serial}
+    return set()
+
 async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current_user: models.User) -> tuple[set[str], set[str]]:
     managed_devices_res = await devices_db.execute(
         select(models.Device).where(models.Device.user_id == current_user.id)
@@ -786,12 +816,12 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
         return all_rovers
         
     if current_user.role == "viewer":
-        import json
-        try:
-            allowed = json.loads(current_user.allowed_rovers) if current_user.allowed_rovers else []
-        except:
-            allowed = []
-        return [r for r in all_rovers if r.username in allowed]
+        allowed = get_allowed_rover_usernames(current_user)
+        return [
+            r for r in all_rovers
+            if r.created_by_user_id == current_user.id
+            or str(r.username or "").strip().lower() in allowed
+        ]
         
         
     managed_mps, managed_serials = await _get_manager_mountpoints_and_serials(devices_db, current_user)
@@ -818,8 +848,24 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
     return visible_rovers
 
 async def check_rover_management_permission(rover: models.RoverAccount, current_user: models.User, devices_db: AsyncSession) -> bool:
-    if current_user.role == "admin":
+    role = str(getattr(current_user, "role", "") or "").strip().lower()
+    if role == "admin":
         return True
+
+    if role == "viewer":
+        if not getattr(current_user, "can_view_rovers", False) or not getattr(current_user, "can_create_rovers", False):
+            return False
+        return (
+            rover.created_by_user_id == current_user.id
+            or str(rover.username or "").strip().lower() in get_allowed_rover_usernames(current_user)
+        )
+
+    if (
+        role != "coordinator"
+        or not getattr(current_user, "can_view_rovers", False)
+        or not getattr(current_user, "can_create_rovers", False)
+    ):
+        return False
         
     if rover.created_by_user_id == current_user.id:
         return True

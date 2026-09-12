@@ -113,6 +113,7 @@ class Role:
     ADMIN, VIEWER, COORDINATOR = "admin", "viewer", "coordinator"
 class Permission:
     VIEW_DEVICES, VIEW_CONFIG = "view:devices", "view:config"
+    VIEW_ROVERS, EDIT_ROVERS = "view:rovers", "edit:rovers"
     EDIT_DEVICE_NAME, EDIT_COORDINATES = "edit:device_name", "edit:coordinates"
     EDIT_CHIP_CONFIG, EDIT_SERVICE_CONFIG = "edit:chip_config", "edit:service_config"
     MANAGE_LICENSE, DELETE_DEVICE = "manage:license", "delete:device"
@@ -136,8 +137,7 @@ ROLE_PERMISSIONS = {
     ],
     Role.COORDINATOR: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG, Permission.EDIT_CHIP_CONFIG,
-        Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME, 
-        Permission.MANAGE_CASTER,
+        Permission.EDIT_COORDINATES, Permission.EDIT_SERVICE_CONFIG, Permission.EDIT_DEVICE_NAME,
     ],
     Role.VIEWER: [
         Permission.VIEW_DEVICES, Permission.VIEW_CONFIG,
@@ -188,9 +188,31 @@ def require_permission(permission: str):
 def has_permission(user: models.User, permission: str) -> bool:
     return permission in get_user_permissions(user)
 
+def can_view_rover_page(user: models.User) -> bool:
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    return role == Role.ADMIN or (
+        role in (Role.VIEWER, Role.COORDINATOR)
+        and bool(getattr(user, "can_view_rovers", False))
+    )
+
+def can_edit_rovers(user: models.User) -> bool:
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    return role == Role.ADMIN or (
+        role in (Role.VIEWER, Role.COORDINATOR)
+        and can_view_rover_page(user)
+        and bool(getattr(user, "can_create_rovers", False))
+    )
+
 def get_user_permissions(user: models.User) -> list[str]:
     perms = list(ROLE_PERMISSIONS.get(user.role, []))
+    if can_view_rover_page(user) and Permission.VIEW_ROVERS not in perms:
+        perms.append(Permission.VIEW_ROVERS)
+    if can_edit_rovers(user) and Permission.EDIT_ROVERS not in perms:
+        perms.append(Permission.EDIT_ROVERS)
     if user.role == Role.COORDINATOR and getattr(user, 'can_create_users', False):
         if Permission.MANAGE_USERS not in perms:
             perms.append(Permission.MANAGE_USERS)
+    if user.role == Role.COORDINATOR and can_edit_rovers(user):
+        if Permission.MANAGE_CASTER not in perms:
+            perms.append(Permission.MANAGE_CASTER)
     return perms

@@ -22,7 +22,32 @@ const STATUS_TEXT_MAP = {
 
 function getDeviceOpsFlags(device) {
     const status = String(device?.status || 'offline').toLowerCase();
-    const noStream = false;
+    const config = device?.service_config || {};
+    const ntripStatus = device?.ntrip_status || {};
+    const ntripStats = device?.ntrip_stats || {};
+    const toBool = (value, defaultValue = false) => {
+        if (value === null || value === undefined) return defaultValue;
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value !== 0;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+            if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+        }
+        return Boolean(value);
+    };
+    const isServerConfigured = (serverId) => Boolean(
+        String(config[`serverhost${serverId}`] || '').trim() &&
+        String(config[`port${serverId}`] || '').trim() &&
+        String(config[`mountpoint${serverId}`] || '').trim()
+    );
+    const s1Enabled = toBool(config.server1_enabled, isServerConfigured(1));
+    const s2Enabled = toBool(config.server2_enabled, isServerConfigured(2));
+    const outputBps = Number(ntripStatus.server1?.bps || ntripStats.server1_bps || 0) +
+        Number(ntripStatus.server2?.bps || ntripStats.server2_bps || 0);
+    const noStream = !isDeviceStaleOffline(device) &&
+        ['online', 'streaming'].includes(status) &&
+        (s1Enabled || s2Enabled) && outputBps <= 0;
     const unsynced = device?.is_synced === false;
     const syncErrors = Array.isArray(device?.sync_errors) ? device.sync_errors : [];
 
@@ -37,7 +62,7 @@ function getDeviceOpsFlags(device) {
     const antennaFault = (antennaStatus && antennaStatus.state === "FAULT") ||
         (['online', 'sleep', 'streaming', 'starting'].includes(status) && rtcmInputBps > 0 && rtcmInputBps < 100);
 
-    const alert = status === 'locked' || unsynced || antennaFault;
+    const alert = status === 'locked' || unsynced || antennaFault || noStream;
     let alertTitle = 'Needs attention';
     if (unsynced) {
         alertTitle = syncErrors.join('\n') || 'Unsynced';
@@ -47,6 +72,9 @@ function getDeviceOpsFlags(device) {
         alertTitle = (antennaStatus && antennaStatus.message) || `Lỗi Ăng-ten (Dòng RTCM cực thấp: ${rtcmInputBps} B/s)`;
     }
 
+    if (noStream && alertTitle === 'Needs attention') {
+        alertTitle = 'NTRIP đã cấu hình nhưng chưa có dữ liệu correction';
+    }
     return { alert, unsynced, noStream, syncErrors, alertTitle, antennaFault };
 }
 
@@ -149,6 +177,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const mqttStats = device.mqtt_stats || {};
         const streamState = device.ntrip_stream_state || {};
         const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
+        const sourceOffline = rawStatus === 'offline';
         const tokenGap = hasAccessTokenGap(device);
         const displayStatusKey = tokenGap && rawStatus !== 'offline' ? 'awaiting_license' : rawStatus;
 
@@ -270,15 +299,14 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(rawStatus);
 
         // Per-server individual color: pushing=green, sleep/input-only=blue, idle=disconnected
-        const sourceOffline = rawStatus === 'offline';
         const s1StatusClass = sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1SleepMode && rawStatus === 'sleep' ? 'sleep' : 'disconnected'));
         const s2StatusClass = sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2SleepMode && rawStatus === 'sleep' ? 'sleep' : 'disconnected'));
 
         return {
-            s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(s1UseRtcmSleepUi ? rtcmInputBps : s1.bps),
-            s2Enabled, s2SleepMode, s2UseRtcmSleepUi, s2Speed: formatSpeed(s2UseRtcmSleepUi ? rtcmInputBps : s2.bps),
+            s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(sourceOffline ? 0 : (s1UseRtcmSleepUi ? rtcmInputBps : s1.bps)),
+            s2Enabled, s2SleepMode, s2UseRtcmSleepUi, s2Speed: formatSpeed(sourceOffline ? 0 : (s2UseRtcmSleepUi ? rtcmInputBps : s2.bps)),
             s1StatusClass, s2StatusClass,
-            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps
+            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps, sourceOffline
         };
     }, [device, device.ntrip_status, device.service_config, device.ntrip_stats]);
     const opsFlags = React.useMemo(() => getDeviceOpsFlags(device), [device, device.ntrip_status, device.service_config]);
@@ -325,10 +353,13 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                     )}
             </div>
 
-            {(['online', 'sleep'].includes(metrics.statusColorClass)) && (metrics.s1Enabled || metrics.s2Enabled) && (
+            {(metrics.s1Enabled || metrics.s2Enabled) && (
                 <div className="server-indicators">
                     {metrics.s1Enabled && (
-                        <div className={`server-status-item ${metrics.s1StatusClass}`}>
+                        <div
+                            className={`server-status-item ${metrics.s1StatusClass}`}
+                            title={metrics.sourceOffline ? 'S1 đã cấu hình nhưng trạm offline; không có dữ liệu trực tiếp.' : undefined}
+                        >
                             <div className="server-label">
                                 <i className={`bi ${metrics.s1UseRtcmSleepUi ? 'bi-cpu-fill' : 'bi-hdd-network-fill'}`}></i>
                                 {metrics.s1UseRtcmSleepUi ? 'S1 RTCM' : 'S1'}
@@ -341,7 +372,10 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                     )}
 
                     {metrics.s2Enabled && (
-                        <div className={`server-status-item ${metrics.s2StatusClass}`}>
+                        <div
+                            className={`server-status-item ${metrics.s2StatusClass}`}
+                            title={metrics.sourceOffline ? 'S2 đã cấu hình nhưng trạm offline; không có dữ liệu trực tiếp.' : undefined}
+                        >
                             <div className="server-label">
                                 <i className={`bi ${metrics.s2UseRtcmSleepUi ? 'bi-cpu-fill' : 'bi-hdd-network-fill'}`}></i>
                                 {metrics.s2UseRtcmSleepUi ? 'S2 RTCM' : 'S2'}

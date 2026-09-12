@@ -657,6 +657,11 @@ const DetailsPanel = memo(function DetailsPanel({
 }) {
     console.log("[DetailsPanel] RENDERING CYCLE! device:", device, "currentUser:", currentUser, "nmeaData:", nmeaData);
     const isAdmin = currentUser?.role === 'admin';
+    const lifecycleStatus = String(device?.status || 'offline').toLowerCase();
+    const isDeviceRebooting = ['rebooting', 'rebooting_for_reset'].includes(lifecycleStatus);
+    const isDeviceAwaitingLicense = lifecycleStatus === 'awaiting_license';
+    const isDeviceUnprovisioned = lifecycleStatus === 'unprovisioned';
+    const isRelayLikeStation = String(device?.serial || '').toUpperCase().startsWith('MONITOR_');
     const [activeTab, setActiveTab] = useState('');
 
     const [isEditingName, setIsEditingName] = useState(false);
@@ -672,6 +677,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const baseConfigSignature = isGnssConfigured ? JSON.stringify(device.base_config) : '';
     const serviceConfigSignature = isServiceConfigured ? JSON.stringify(device.service_config) : '';
     const authStatus = device?.system_info?.auth_status || {};
+    const staleOffline = isDeviceStaleOffline(device);
     const licenseBypass = authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true;
     const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
         ? authStatus.server_token_present
@@ -685,7 +691,7 @@ const DetailsPanel = memo(function DetailsPanel({
         'needs_token_deploy'
     ].some(key => Object.prototype.hasOwnProperty.call(authStatus, key));
     const hasAccessTokenGap =
-        isDeviceStaleOffline(device)
+        staleOffline
             ? serverTokenPresent === false
             : (
                 authStatus.needs_token_deploy === true ||
@@ -693,13 +699,33 @@ const DetailsPanel = memo(function DetailsPanel({
                 (tokenCheckAvailable && authStatus.agent_token_present === false) ||
                 (tokenCheckAvailable && authStatus.token_synced === false)
             );
-    const rawStatusKey = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
+    const rawStatusKey = staleOffline ? 'offline' : lifecycleStatus;
     const displayStatusKey = rawStatusKey !== 'offline' && (hasAccessTokenGap || rawStatusKey === 'awaiting_license')
         ? 'awaiting_license'
         : rawStatusKey;
+    const storedCoords = device?.base_config?.coords || device?.base_coords || {};
+    const stationHasConfiguration = isGnssConfigured || isServiceConfigured || (
+        Number.isFinite(Number(storedCoords.lat)) && Number(storedCoords.lat) !== 0 &&
+        Number.isFinite(Number(storedCoords.lon)) && Number(storedCoords.lon) !== 0
+    );
     const shouldShowLicenseTab =
-        !licenseBypass && hasAccessTokenGap;
+        !licenseBypass && (
+            hasAccessTokenGap ||
+            (isDeviceAwaitingLicense && !stationHasConfiguration)
+        );
     const showLicenseTab = shouldShowLicenseTab || (licenseBypass && hasAuthTokenState && hasAccessTokenGap);
+    const showConfigTabs = !isDeviceRebooting && (!isDeviceAwaitingLicense || licenseBypass || stationHasConfiguration);
+    const showServiceAndDashboardTabs = showConfigTabs && (!isDeviceUnprovisioned || isRelayLikeStation);
+    const showOverviewTab = showServiceAndDashboardTabs;
+
+    const isTabVisible = (tabName) => {
+        if (tabName === 'license') return showLicenseTab;
+        if (tabName === 'chip') return showConfigTabs;
+        if (tabName === 'service' || tabName === 'rovers') return showServiceAndDashboardTabs;
+        if (tabName === 'dashboard') return showOverviewTab;
+        if (tabName === 'operations') return !isDeviceRebooting;
+        return false;
+    };
 
     useEffect(() => {
         console.log("[DetailsPanel] useEffect triggered! device.serial:", device?.serial, "device.status:", device?.status, "activeTab:", activeTab);
@@ -714,11 +740,11 @@ const DetailsPanel = memo(function DetailsPanel({
         let newActiveTab = '';
 
         if (shouldShowLicenseTab) {
-            if (!isDeviceSwitched && activeTab) {
+            if (!isDeviceSwitched && activeTab === 'license') {
                 return;
             }
             newActiveTab = 'license';
-        } else switch (device.status) {
+        } else switch (lifecycleStatus) {
             case 'unprovisioned':
                 newActiveTab = 'chip';
                 break;
@@ -732,12 +758,12 @@ const DetailsPanel = memo(function DetailsPanel({
                 if (!isDeviceSwitched && activeTab) {
                     if (activeTab === 'chip' && !wasGnssConfigured && isGnssConfigured) {
                         newActiveTab = 'service';
-                    } else {
+                    } else if (isTabVisible(activeTab)) {
                         return;
                     }
                 }
 
-                if (!isDeviceSwitched && userSelectedTab && activeTab) {
+                if (!isDeviceSwitched && userSelectedTab && activeTab && isTabVisible(activeTab)) {
                     return;
                 }
 
@@ -745,8 +771,16 @@ const DetailsPanel = memo(function DetailsPanel({
                     newActiveTab = 'chip';
                 } else if (!isServiceConfigured) {
                     newActiveTab = 'service';
-                } else {
+                } else if (showOverviewTab) {
                     newActiveTab = 'dashboard';
+                } else if (showServiceAndDashboardTabs) {
+                    newActiveTab = 'service';
+                } else if (showConfigTabs) {
+                    newActiveTab = 'chip';
+                } else if (showLicenseTab) {
+                    newActiveTab = 'license';
+                } else {
+                    newActiveTab = 'operations';
                 }
                 break;
         }
@@ -759,7 +793,7 @@ const DetailsPanel = memo(function DetailsPanel({
         setTempName(device.name || '');
         setIsEditingName(false);
 
-    }, [device?.serial, device?.status, baseConfigSignature, serviceConfigSignature, shouldShowLicenseTab]);
+    }, [device?.serial, device?.status, baseConfigSignature, serviceConfigSignature, shouldShowLicenseTab, showLicenseTab, showConfigTabs, showServiceAndDashboardTabs, showOverviewTab]);
 
     const handleTabClick = (tabName) => {
         setActiveTab(tabName);
@@ -797,16 +831,11 @@ const DetailsPanel = memo(function DetailsPanel({
         perms.includes('EDIT_SERVICE_CONFIG') ||
         perms.includes('manage:station_mode') ||
         perms.includes('MANAGE_STATION_MODE');
-    const serialUpper = String(device?.serial || '').toUpperCase();
-    const chipUpper = String(device?.detected_chip_type || '').toUpperCase();
-    const isRelayLikeStation =
-        serialUpper.startsWith('MONITOR_');
-
     const canEdit = role === 'admin' ||
         (role === 'coordinator' && device.user_id === currentUser?.id);
     const canEditService = canEdit || (isRelayLikeStation && hasServiceEditPermission);
     // REBOOTING STATE
-    if (device.status === 'rebooting' || device.status === 'rebooting_for_reset') {
+    if (isDeviceRebooting) {
         return (
             <div className="card dashboard-detail-card bg-dark-tertiary h-100">
                 <div className="card-body text-center d-flex flex-column justify-content-center align-items-center">
@@ -867,10 +896,8 @@ const DetailsPanel = memo(function DetailsPanel({
         }
     };
 
-    const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_create_rovers));
-    const showConfigTabs = !['rebooting', 'rebooting_for_reset'].includes(device.status) && (device.status !== 'awaiting_license' || licenseBypass);
-    const showServiceAndDashboardTabs = showConfigTabs && (device.status !== 'unprovisioned' || isRelayLikeStation);
-    const showStationOperationsTab = !['rebooting', 'rebooting_for_reset'].includes(device.status) && (isAdmin || canEditService);
+    const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_view_rovers && currentUser?.can_create_rovers));
+    const showStationOperationsTab = !isDeviceRebooting && (isAdmin || canEditService);
 
     const isDeviceLocked = device.is_locked || device.status === 'locked';
 
@@ -970,6 +997,14 @@ const DetailsPanel = memo(function DetailsPanel({
                             <span className={`badge ${STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary'}`}>
                                 {STATUS_TEXT_MAP[displayStatusKey] || displayStatusKey}
                             </span>
+                            {staleOffline && lifecycleStatus !== 'offline' && (
+                                <span
+                                    className="badge bg-secondary"
+                                    title="Trạng thái cuối cùng của agent; dữ liệu GNSS hiện không còn trực tiếp."
+                                >
+                                    Last: {STATUS_TEXT_MAP[lifecycleStatus] || lifecycleStatus.toUpperCase()}
+                                </span>
+                            )}
                             {device.is_synced ? (
                                 <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ`} style={{ fontSize: '1rem' }}></i>
                             ) : (
@@ -1076,6 +1111,13 @@ const DetailsPanel = memo(function DetailsPanel({
                     </span>
                 </div>
 
+                {rawStatusKey === 'offline' && (
+                    <div className="alert alert-warning py-2 px-3 small mb-3" role="status">
+                        <i className="bi bi-broadcast-pin me-2"></i>
+                        GNSS/RTCM hiện không có dữ liệu trực tiếp. Độ chính xác chỉ được xác nhận lại khi trạm kết nối trở lại.
+                    </div>
+                )}
+
                 <ul className="nav nav-tabs dashboard-tabs mb-3" role="tablist">
                     {showLicenseTab && (
                         <li className="nav-item">
@@ -1117,7 +1159,7 @@ const DetailsPanel = memo(function DetailsPanel({
                         </li>
                     )}
 
-                    {(['online', 'sleep', 'configuring'].includes(device.status) || (device.status || '').startsWith('auto_setup')) ? (
+                    {showOverviewTab ? (
                         <li className="nav-item">
                             <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => handleTabClick('dashboard')}>
                                 <i className="bi bi-speedometer2 me-1"></i>Overview

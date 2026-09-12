@@ -9,6 +9,7 @@ from .. import crud, models, schemas, auth, license_manager, command_builder
 from .. import mqtt as mqtt_handler
 from ..command_dispatcher import send_command_to_pi
 from ..caster_helpers import _read_caster_config_from_env, get_caster_client, global_caster_cache_lock
+from ..caster_client import CasterClient
 from ..database import settings
 from ..websocket import manager as ui_manager
 import base64
@@ -19,6 +20,36 @@ import re
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Devices"])
+
+
+def _normalize_auto_cors_config(payload: dict) -> dict:
+    raw_config = payload.get("auto_cors") if isinstance(payload, dict) else None
+    if not isinstance(raw_config, dict):
+        raise ValueError("AUTO_CORS requires the CORS connection fields")
+
+    host = str(raw_config.get("ip") or "").strip()
+    user = str(raw_config.get("user") or "").strip()
+    password = str(raw_config.get("password") or "")
+    mountpoint = str(raw_config.get("mountpoint") or "").strip()
+    if not host or not user or not password or not mountpoint:
+        raise ValueError("CORS IP, port, username, password, and mountpoint are required")
+    if any(char in "\r\n" for char in f"{host}{user}{password}{mountpoint}"):
+        raise ValueError("CORS connection fields contain invalid line breaks")
+
+    try:
+        port = int(raw_config.get("port"))
+    except (TypeError, ValueError):
+        raise ValueError("CORS port must be a valid number") from None
+    if not 1 <= port <= 65535:
+        raise ValueError("CORS port must be between 1 and 65535")
+
+    return {
+        "ip": host,
+        "port": port,
+        "user": user,
+        "password": password,
+        "mountpoint": mountpoint,
+    }
 
 
 def _with_runtime_sync_flags(devices: list[models.Device]) -> list[models.Device]:
@@ -114,6 +145,97 @@ async def send_generic_command(
     )
     return await send_command_to_pi(serial, command.model_dump())
 
+
+@router.post("/api/devices/{serial}/reference-check")
+async def start_base_reference_check(
+    serial: str,
+    request: schemas.BaseReferenceCheckRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_COORDINATES)),
+):
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    command = {
+        "command": "TRIGGER_BASE_REFERENCE_CHECK",
+        "payload": {
+            "ip": request.ntrip_host,
+            "port": request.ntrip_port,
+            "user": request.ntrip_username,
+            "password": request.ntrip_password,
+            "mountpoint": request.mountpoint,
+            "timeout": request.timeout,
+            "samples": request.samples,
+            "sensor_type": "Ublox",
+            "reference_coords": {
+                "lat": request.reference_lat,
+                "lon": request.reference_lon,
+                "alt": request.reference_alt,
+            },
+        },
+    }
+    await crud.log_system_event(
+        db=db,
+        type="info",
+        message=f"Base reference check requested for '{device.name}' via {request.mountpoint}",
+        user_id=current_user.id,
+        serial=serial,
+    )
+    return await send_command_to_pi(serial, command)
+
+@router.post("/api/devices/{serial}/cors-mountpoints")
+async def get_device_cors_mountpoints(
+    serial: str,
+    request: schemas.CasterMountpointLookupRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_COORDINATES)),
+):
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    host = request.host.strip()
+    username = request.username.strip()
+    if any(char in "\r\n/" for char in host):
+        raise HTTPException(status_code=400, detail="CORS host must be a hostname or IP address")
+    if not host or not username or not request.password:
+        raise HTTPException(status_code=400, detail="CORS host, username, and password are required")
+
+    try:
+        caster = CasterClient(
+            host,
+            request.port,
+            admin_user=username,
+            admin_password=request.password,
+        )
+        sources = await caster.get_sources()
+    except Exception as exc:
+        logger.warning("CORS sourcetable lookup failed for %s:%s: %s", host, request.port, exc)
+        raise HTTPException(status_code=502, detail="Không thể kết nối hoặc đọc sourcetable từ CORS") from exc
+
+    if sources is None:
+        raise HTTPException(status_code=502, detail="CORS không trả về sourcetable hợp lệ")
+
+    # Do not send source-table passwords or other caster-side secrets to the browser.
+    safe_sources = []
+    seen_mountpoints = set()
+    for source in sources[:500]:
+        mountpoint = str(source.get("mountpoint") or "").strip()
+        if not mountpoint or mountpoint in seen_mountpoints:
+            continue
+        seen_mountpoints.add(mountpoint)
+        safe_sources.append({
+            "identifier": str(source.get("identifier") or "").strip(),
+            "mountpoint": mountpoint,
+            "latitude": source.get("latitude"),
+            "longitude": source.get("longitude"),
+            "auth_required": bool(source.get("auth_required", True)),
+            "gga_required": bool(source.get("gga_required", False)),
+        })
+
+    return {"host": host, "port": request.port, "sources": safe_sources}
+
+
 @router.post("/api/devices/{serial}/configure-chip")
 async def configure_chip_endpoint(
     serial: str,
@@ -134,6 +256,13 @@ async def configure_chip_endpoint(
 
     if not sensor_type or not mode:
         raise HTTPException(status_code=400, detail="Missing required fields: sensor_type or mode")
+
+    auto_cors_config = None
+    if mode == "BASE" and method == "AUTO_CORS":
+        try:
+            auto_cors_config = _normalize_auto_cors_config(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         device_in_db.detected_chip_type = sensor_type
@@ -176,16 +305,16 @@ async def configure_chip_endpoint(
                 pi_command = {
                     "command": "TRIGGER_AUTO_BASE",
                     "payload": {
-                        "ip": os.getenv("AUTO_BASE_CORS_IP", "14.238.1.125"),
-                        "port": int(os.getenv("AUTO_BASE_CORS_PORT", "2101")),
-                        "user": os.getenv("AUTO_BASE_CORS_USER", ""),
-                        "password": os.getenv("AUTO_BASE_CORS_PASS", ""),
-                        "mountpoint": os.getenv("AUTO_BASE_CORS_MOUNTPOINT", "VRS.105M3"),
+                        **auto_cors_config,
                         "timeout": 3600,
                         "samples": 60,
                         "sensor_type": sensor_type,
                     },
-                    "original_config": config_request.payload,
+                    "original_config": {
+                        "sensor_type": sensor_type,
+                        "mode": mode,
+                        "params": params,
+                    },
                 }
             elif method == "SURVEY_IN":
                 survey_duration = params.get("survey_in_duration")
@@ -266,9 +395,24 @@ async def get_rovers_for_base(
 
     # Coordinator chỉ có thể xem Rover của các trạm họ quản lý
     if current_user.role == auth.Role.COORDINATOR:
+        if not auth.can_view_rover_page(current_user):
+            raise HTTPException(status_code=403, detail="Bạn chưa được cấp quyền xem trang Rover.")
         device = await crud.get_device_by_serial(devices_db, serial)
         if device and device.user_id == current_user.id:
             return await crud.get_rovers_by_base_serial(db, base_serial=serial)
+
+    if current_user.role == auth.Role.VIEWER:
+        if not auth.can_view_rover_page(current_user):
+            raise HTTPException(status_code=403, detail="Bạn không có quyền xem trang Rover.")
+        if str(serial).strip().upper() not in crud.get_allowed_base_serials(current_user):
+            raise HTTPException(status_code=403, detail="Bạn không có quyền xem Rover của trạm này.")
+        allowed_rovers = crud.get_allowed_rover_usernames(current_user)
+        rovers = await crud.get_rovers_by_base_serial(db, base_serial=serial)
+        return [
+            rover for rover in rovers
+            if rover.created_by_user_id == current_user.id
+            or str(rover.username or "").strip().lower() in allowed_rovers
+        ]
     
     # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
     raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm nÃ y.")
@@ -283,18 +427,22 @@ async def create_rover_for_base(
 ):
     # 1. Kiểm tra quyền
     is_admin = current_user.role == auth.Role.ADMIN
-    is_authorized_coordinator = (
-        current_user.role == auth.Role.COORDINATOR and 
-        current_user.can_create_rovers
+    is_authorized_rover_editor = (
+        current_user.role in (auth.Role.COORDINATOR, auth.Role.VIEWER) and 
+        auth.can_edit_rovers(current_user)
     )
 
-    if not is_admin and not is_authorized_coordinator:
+    if not is_admin and not is_authorized_rover_editor:
         raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tÃ i khoản Rover.")
 
     if not is_admin:
-        device = await crud.get_device_by_serial(devices_db, serial)
-        if not device or device.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base nÃ y.")
+        if current_user.role == auth.Role.VIEWER:
+            if str(serial).strip().upper() not in crud.get_allowed_base_serials(current_user):
+                raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
+        else:
+            device = await crud.get_device_by_serial(devices_db, serial)
+            if not device or device.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
 
     # 2. Kiểm tra trùng lặp trong DB Local
     existing_rover = await crud.get_rover_by_username(db, rover_data.username)
@@ -414,6 +562,15 @@ async def update_rover(
 
     # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
     new_password = update_req.password if update_req.password else rover.password
+    if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
+        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user)
+        selected_serials = {
+            str(serial).strip().upper()
+            for serial in update_req.selected_serials
+            if str(serial).strip()
+        }
+        if not selected_serials.issubset(manageable_serials):
+            raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
     # Empty string is intentional: it means remove every allowed mountpoint.
     # Only None means "keep the current value".
     new_mountpoints = update_req.mountpoints if update_req.mountpoints is not None else rover.mountpoints
@@ -575,6 +732,9 @@ async def delete_rover(
     devices_db: AsyncSession = Depends(get_db), # Add devices_db here
     current_user: models.User = Depends(auth.get_current_user)
 ):
+    if current_user.role == auth.Role.VIEWER:
+        raise HTTPException(status_code=403, detail="Viewer chỉ được tạo và sửa Rover, không được xóa.")
+
     # 1. Lấy thông tin Rover
     rover_to_delete = await crud.get_rover_by_id(db, rover_id)
     if not rover_to_delete:

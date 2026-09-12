@@ -1236,11 +1236,19 @@ function handleWebSocketMessage(message) {
         }
         enqueueStatusUpdate(data);
 
+        const statusValue = String(data?.status || '').toLowerCase();
+        if (statusSerial === globalState.selectedDeviceSerial && ['offline', 'awaiting_license'].includes(statusValue)) {
+            const savedBaseCoords = currentNmeaData.base_coords;
+            currentNmeaData = { gga: null, gsa: null, satellites: {} };
+            if (savedBaseCoords) currentNmeaData.base_coords = savedBaseCoords;
+            requestDetailsPanelUpdate('high');
+        }
+
         if (statusSerial === globalState.selectedDeviceSerial && data.base_coords) {
             currentNmeaData.base_coords = data.base_coords;
             requestDetailsPanelUpdate('high');
         }
-        if (statusSerial === globalState.selectedDeviceSerial && data.nmea_data) {
+        if (statusSerial === globalState.selectedDeviceSerial && data.nmea_data && !['offline', 'awaiting_license'].includes(statusValue)) {
             const nmea = data.nmea_data || {};
             if (nmea.gga) currentNmeaData.gga = nmea.gga;
             if (nmea.gsa) currentNmeaData.gsa = nmea.gsa;

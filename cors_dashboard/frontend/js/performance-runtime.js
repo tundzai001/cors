@@ -16,10 +16,14 @@
     }
 
     const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
+    const hardwareConcurrency = Number(navigator.hardwareConcurrency || 4);
+    const saveData = !!navigator.connection?.saveData;
     const webgl = supportsWebGL();
-    // Every visit starts at the complete Max composition. Runtime monitoring
-    // may offer a lower tier, but it never changes quality without consent.
-    let tier = 'high';
+    const lowPowerDevice = hardwareConcurrency <= 2 || saveData;
+    const canUse3D = webgl && !prefersReducedMotion && !lowPowerDevice;
+    let tier = prefersReducedMotion || lowPowerDevice || !webgl
+        ? 'lite'
+        : hardwareConcurrency <= 4 ? 'balanced' : 'high';
 
     const profiles = {
         high: { particleCount: 95, threePixelRatio: 1.8, frameInterval: 0, effectIntensity: 1 },
@@ -30,9 +34,12 @@
     const maxTier = 'high';
     const settings = {
         tier,
-        reducedMotion: false,
+        reducedMotion: prefersReducedMotion,
         prefersReducedMotion,
+        hardwareConcurrency,
+        saveData,
         webgl,
+        canUse3D,
         fps: 60,
         ...profiles[tier]
     };
@@ -50,8 +57,8 @@
         }
     }
 
-    applyTier(tier, 'initial-high');
-    document.documentElement.classList.remove('reduced-motion');
+    applyTier(tier, 'capability');
+    document.documentElement.classList.toggle('reduced-motion', prefersReducedMotion);
 
     const lagBannerState = {
         element: null,

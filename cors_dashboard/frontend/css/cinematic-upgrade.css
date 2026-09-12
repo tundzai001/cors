@@ -32,6 +32,24 @@ html[data-quality="balanced"] .data-pulse-ring {
 html[data-quality="lite"] * {
     scroll-behavior: auto !important;
 }
+
+html.reduced-motion .enterprise-homepage *,
+html.reduced-motion .enterprise-homepage *::before,
+html.reduced-motion .enterprise-homepage *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .enterprise-homepage *,
+    .enterprise-homepage *::before,
+    .enterprise-homepage *::after {
+        animation: none !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
 .vietnam-map-inline svg {
     display: block;
     width: 100%; height: auto;

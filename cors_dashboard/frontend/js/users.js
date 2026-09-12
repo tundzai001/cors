@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const roleSelect = document.getElementById('role');
     const deviceAssignmentSection = document.getElementById('device-assignment-section');
     const roverAssignmentSection = document.getElementById('rover-assignment-section');
+    const roverPagePermissionSection = document.getElementById('rover-page-permission-section');
     const roverPermissionSection = document.getElementById('rover-permission-section');
     const userPermissionSection = document.getElementById('user-permission-section');
     const deviceChecklist = document.getElementById('device-checklist');
@@ -170,6 +171,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         return ['coordinator', 'viewer'].includes(role);
     }
 
+    function syncRoverPermissionState() {
+        const canViewRovers = document.getElementById('can_view_rovers');
+        const canCreateRovers = document.getElementById('can_create_rovers');
+        if (!canViewRovers || !canCreateRovers) return;
+        canCreateRovers.disabled = !canViewRovers.checked;
+        if (!canViewRovers.checked) canCreateRovers.checked = false;
+    }
+
     function updateRoleSections() {
         const show = shouldShowAccessSections(roleSelect.value);
         deviceAssignmentSection.classList.toggle('d-none', !show);
@@ -183,10 +192,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Only Admin can see extra mountpoints and permission sections
         const isAdmin = currentUser.role === 'admin';
         extraMountpointsSection.classList.toggle('d-none', !(show && isAdmin));
+        roverPagePermissionSection.classList.toggle('d-none', !(show && isAdmin));
         roverPermissionSection.classList.toggle('d-none', !(show && isAdmin));
         if (userPermissionSection) {
             userPermissionSection.classList.toggle('d-none', !(show && isAdmin));
         }
+        syncRoverPermissionState();
     }
 
     function renderDeviceChecklist(assignedSerials = []) {
@@ -311,6 +322,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             isActiveCheckbox.title = "";
         }
 
+        document.getElementById('can_view_rovers').checked = user.can_view_rovers ?? !!user.can_create_rovers;
         document.getElementById('can_create_rovers').checked = !!user.can_create_rovers;
         if (document.getElementById('can_create_users')) {
             document.getElementById('can_create_users').checked = !!user.can_create_users;
@@ -386,6 +398,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             full_name: document.getElementById('full_name').value.trim(),
             role: document.getElementById('role').value || 'viewer',
             is_active: document.getElementById('is_active').checked,
+            can_view_rovers: document.getElementById('can_view_rovers').checked,
             can_create_rovers: document.getElementById('can_create_rovers').checked,
             can_create_users: document.getElementById('can_create_users') ? document.getElementById('can_create_users').checked : false,
             assigned_devices: Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value),
@@ -456,6 +469,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     userForm.addEventListener('submit', (event) => saveUser(event).catch(error => window.CorsUI.showToast('danger', error.message)));
     roleSelect.addEventListener('change', updateRoleSections);
+    document.getElementById('can_view_rovers')?.addEventListener('change', syncRoverPermissionState);
     searchExtraMpsInput.addEventListener('input', () => renderExtraMpsChecklist(Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value)));
     [userSearch, roleFilter, statusFilter].forEach(el => el.addEventListener('input', applyFilters));
 

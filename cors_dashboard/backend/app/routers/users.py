@@ -194,6 +194,7 @@ async def create_user(
         role=user_data.role, 
         full_name=user_data.full_name,
         is_active=user_data.is_active,
+        can_view_rovers=user_data.can_view_rovers,
         can_create_rovers=user_data.can_create_rovers,
         extra_mountpoints=user_data.extra_mountpoints,
         parent_id=parent_id,

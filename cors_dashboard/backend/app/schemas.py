@@ -60,6 +60,27 @@ class Command(BaseModel):
     command: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
+
+class BaseReferenceCheckRequest(BaseModel):
+    ntrip_host: str = Field(..., min_length=1, max_length=255)
+    ntrip_port: int = Field(..., ge=1, le=65535)
+    ntrip_username: str = Field(..., min_length=1, max_length=128)
+    ntrip_password: str = Field(..., min_length=1, max_length=256)
+    mountpoint: str = Field(..., min_length=1, max_length=128)
+    reference_lat: float = Field(..., ge=-90, le=90)
+    reference_lon: float = Field(..., ge=-180, le=180)
+    reference_alt: float = Field(..., ge=-1000, le=100000)
+    timeout: int = Field(300, ge=30, le=3600)
+    samples: int = Field(60, ge=15, le=300)
+
+
+class CasterMountpointLookupRequest(BaseModel):
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(..., ge=1, le=65535)
+    username: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=1, max_length=256)
+
+
 class DeviceRenameSerial(BaseModel):
     new_serial: str
 
@@ -149,6 +170,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     assigned_devices: List[str] | None = Field(default_factory=list)
+    can_view_rovers: bool = False
     can_create_rovers: bool = False
     can_create_users: bool = False
     extra_mountpoints: str | None = None
@@ -169,6 +191,7 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     password: str | None = None
     assigned_devices: List[str] | None = None
+    can_view_rovers: bool | None = None
     can_create_rovers: bool | None = None
     can_create_users: bool | None = None
     extra_mountpoints: str | None = None
@@ -192,6 +215,7 @@ class UserResponse(UserBase):
     id: int
     created_at: int
     permissions: list[str] = []
+    can_view_rovers: bool = False
     can_create_rovers: bool = False
     can_create_users: bool = False
     extra_mountpoints: str | None = None

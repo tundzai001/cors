@@ -4704,18 +4704,8 @@ async def get_caster_clienttable(
     current_user: models.User = Depends(auth.get_current_user),
 ):
     """Aggregate clienttable from all scanned casters to show on map."""
-    # Viewer chỉ được truy cập nếu có allowed_rovers
-    has_caster_perm = auth.has_permission(current_user, auth.Permission.MANAGE_CASTER)
-    import json as _json
-    raw_allowed = getattr(current_user, 'allowed_rovers', None)
-    if isinstance(raw_allowed, str):
-        try:
-            raw_allowed = _json.loads(raw_allowed)
-        except Exception:
-            raw_allowed = []
-    viewer_has_rovers = isinstance(raw_allowed, list) and len(raw_allowed) > 0
-    
-    if not has_caster_perm and not viewer_has_rovers:
+    has_rover_view_permission = auth.has_permission(current_user, auth.Permission.VIEW_ROVERS)
+    if not has_rover_view_permission:
         raise HTTPException(status_code=403, detail="Bạn không có quyền xem rover trên bản đồ.")
     all_clients = []
     
@@ -4739,36 +4729,11 @@ async def get_caster_clienttable(
 
     # --- PHÂN QUYỀN HIỂN THỊ TRÊN MAP ---
     if current_user.role != auth.Role.ADMIN:
-        # 1. Lấy danh sách trạm mà user quản lý
-        managed_devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
-        managed_serials = {d.serial.upper().strip() for d in managed_devices}
-
-        # 2. Lấy danh sách rover mà user quản lý
+        # get_visible_rovers_for_user is the single source of truth for rover scope.
         my_rovers = await crud.get_visible_rovers_for_user(db, devices_db, current_user)
-        
-        # 3. Lọc: Rover vừa do user tạo, vừa được gán vào trạm user quản lý
-        allowed_usernames = set()
-        for r in my_rovers:
-            # base_serial có thể là "SN1, SN2"
-            r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
-            # Nếu có ít nhất 1 trạm của coordinator trong danh sách trạm của rover
-            if any(s in managed_serials for s in r_serials):
-                allowed_usernames.add(str(r.username).strip().lower())
-
-        # 4. Bổ sung allowed_rovers từ DB (cho viewer được cấp quyền xem rover)
-        import json as _json
-        raw_allowed = getattr(current_user, 'allowed_rovers', None)
-        if raw_allowed:
-            if isinstance(raw_allowed, str):
-                try:
-                    raw_allowed = _json.loads(raw_allowed)
-                except Exception:
-                    raw_allowed = []
-            if isinstance(raw_allowed, list):
-                for uname in raw_allowed:
-                    allowed_usernames.add(str(uname).strip().lower())
-
-        # 5. Chỉ giữ lại những client trên map thuộc danh sách allowed
+        allowed_usernames = {
+            str(r.username).strip().lower() for r in my_rovers if r.username
+        }
         filtered_clients = [c for c in filtered_clients if str(c.get("username", "")).strip().lower() in allowed_usernames]
     
     return {
@@ -4781,7 +4746,7 @@ async def get_caster_clienttable(
 async def get_caster_users(
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
 ):
     """Aggregate total users from all scanned casters with enrichment."""
     all_caster_users = []
@@ -4797,29 +4762,11 @@ async def get_caster_users(
 
     # --- PHÂN QUYỀN HIỂN THỊ (ĐỒNG BỘ VỚI MAP) ---
     if current_user.role != auth.Role.ADMIN:
-        # 1. Lấy danh sách trạm mà user quản lý
-        managed_devices = await crud.get_devices_by_user_id(devices_db, current_user.id)
-        managed_serials = {d.serial.upper().strip() for d in managed_devices}
-
-        # 2. Lấy danh sách rover mà user quản lý
+        # Use the same resolved rover scope as the DB list and map endpoint.
         my_rovers = await crud.get_visible_rovers_for_user(auth_db, devices_db, current_user)
-        
-        # 3. Lọc: 
-        # - Cho phép những Rover do chính User tạo ra (đã lấy ở bước 2)
-        # - HOẶC Rover thuộc trạm mà User quản lý
-        allowed_usernames = set()
-        for r in my_rovers:
-            # Luôn cho phép nếu chính user là người tạo (bao gồm cả Caster-only MP)
-            if r.created_by_user_id == current_user.id:
-                allowed_usernames.add(str(r.username).strip().lower())
-                continue
-                
-            # Nếu không phải người tạo, kiểm tra xem có thuộc trạm mình quản lý không
-            r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
-            if any(s in managed_serials for s in r_serials):
-                allowed_usernames.add(str(r.username).strip().lower())
-
-        # 4. Lọc lại danh sách toàn bộ caster users
+        allowed_usernames = {
+            str(r.username).strip().lower() for r in my_rovers if r.username
+        }
         all_caster_users = [u for u in all_caster_users if str(u.get("username", "")).strip().lower() in allowed_usernames]
 
 
@@ -5923,7 +5870,7 @@ async def get_all_rovers_global(
 ):
 
     # 1. Kiểm tra quyền cơ bản
-    if current_user.role == auth.Role.COORDINATOR and not current_user.can_create_rovers:
+    if not auth.has_permission(current_user, auth.Permission.VIEW_ROVERS):
         raise HTTPException(
             status_code=403, 
             detail="Bạn chưa được cấp quyền quản lý Rover."
@@ -5972,12 +5919,22 @@ async def sync_rover_by_username(
     Nếu đã có, nó cập nhật thông tin.
     """
     # 1. Kiểm tra Admin/Creator
-    is_admin = current_user.role == auth.Role.ADMIN
-    if not is_admin and not (current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers):
+    if not auth.can_edit_rovers(current_user):
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover.")
 
     # 2. Tìm trong DB
     rover = await crud.get_rover_by_username(db, username)
+    if current_user.role == auth.Role.VIEWER and not rover and not update_req.selected_serials:
+        raise HTTPException(status_code=403, detail="Viewer phải chọn ít nhất một trạm trong Rover Access.")
+    if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
+        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user)
+        selected_serials = {
+            str(serial).strip().upper()
+            for serial in update_req.selected_serials
+            if str(serial).strip()
+        }
+        if not selected_serials.issubset(manageable_serials):
+            raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
     
     if rover:
         has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
@@ -6109,7 +6066,7 @@ async def create_multi_base_rover(
 ):
     # 1. Kiểm tra quyền (như cũ)
     is_admin = current_user.role == auth.Role.ADMIN
-    if not is_admin and not (current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers):
+    if not auth.can_edit_rovers(current_user):
         raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tÃ i khoản Rover.")
 
     # 2. Kiểm tra trùng (như cũ)
@@ -6140,6 +6097,16 @@ async def create_multi_base_rover(
     target_mountpoints = request.mountpoint_override.strip()
     
     selected_serials = list(request.selected_serials or [])
+
+    if current_user.role == auth.Role.VIEWER:
+        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user)
+        selected_serials_upper = {
+            str(serial).strip().upper()
+            for serial in selected_serials
+            if str(serial).strip()
+        }
+        if not selected_serials_upper.issubset(manageable_serials):
+            raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi Rover Access của bạn.")
     
     # 3. Xác định danh sÃ¡ch Mountpoint hợp lệ (Đặc biệt cho Coordinator)
     if current_user.role == auth.Role.COORDINATOR:
@@ -7091,6 +7058,8 @@ async def _ops_visible_rovers(
     devices_db: AsyncSession,
     current_user: models.User,
 ) -> list[models.RoverAccount]:
+    if not auth.can_view_rover_page(current_user):
+        return []
     return await crud.get_visible_rovers_for_user(auth_db, devices_db, current_user)
     
 async def _ops_cached_rover_status(usernames: set[str] | None = None) -> list[dict]:
@@ -7420,7 +7389,7 @@ async def validate_rover_username(
     mountpoints: Optional[str] = Query(None),
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_ROVERS)),
 ):
     clean_username = username.strip()
     existing = await crud.get_rover_by_username(auth_db, clean_username)
@@ -7458,7 +7427,7 @@ async def bulk_renew_rovers(
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
-    if current_user.role != auth.Role.ADMIN and not (current_user.role == auth.Role.COORDINATOR and current_user.can_create_rovers):
+    if not auth.can_edit_rovers(current_user):
         raise HTTPException(status_code=403, detail="You cannot renew rover accounts")
     names = {name.strip().lower() for name in request.usernames if name.strip()}
     if not names:
@@ -7495,7 +7464,7 @@ async def bulk_renew_rovers(
 async def export_rovers_csv(
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
 ):
     rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
     stream = io.StringIO()
@@ -7524,7 +7493,7 @@ async def get_rover_history(
     username: str,
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
 ):
     rover = await crud.get_rover_by_username(auth_db, username)
     scoped = await _ops_visible_rovers(auth_db, devices_db, current_user)
@@ -7547,7 +7516,7 @@ async def sync_rover_status(
     request: schemas.RoverSyncStatusRequest,
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
 ):
     scoped = await _ops_visible_rovers(auth_db, devices_db, current_user)
     allowed = {str(r.username).strip().lower() for r in scoped}
@@ -8484,6 +8453,9 @@ async def serve_spa():
     return FileResponse("../frontend/index.html")
 
 # === STATIC FILES ===
+app.mount("/assets/js", StaticFiles(directory="../frontend/js"), name="asset-scripts")
+app.mount("/assets/css", StaticFiles(directory="../frontend/css"), name="asset-styles")
+app.mount("/assets/img", StaticFiles(directory="../frontend/img"), name="asset-images")
 app.mount("/img", StaticFiles(directory="../frontend/img"), name="images")
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="static")
 

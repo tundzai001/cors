@@ -41,7 +41,7 @@ const VietnamSVG = () => {
         observer.observe(container);
         document.addEventListener('visibilitychange', onVisibilityChange);
         // Fetch the SVG and inject inline for GSAP draw-on
-        fetch('/img/vietnam-map.svg', { signal: abortController.signal })
+        fetch('/assets/img/vietnam-map.svg', { signal: abortController.signal })
             .then(r => r.text())
             .then(svgText => {
                 const svgHolder = container.querySelector('.vietnam-map-inline');
@@ -61,7 +61,7 @@ const VietnamSVG = () => {
                 });
                 // GSAP Draw-on with PERIODIC REDRAW LOOP
                 const paths = svgEl.querySelectorAll('path');
-                if (typeof gsap !== 'undefined' && paths.length) {
+if (typeof gsap !== 'undefined' && paths.length && !window.CorsPerformance?.reducedMotion) {
                     // Prepare all paths with dasharray
                     const pathLengths = [];
                     paths.forEach(p => {
@@ -398,7 +398,7 @@ const ParticleField = () => {
                 ctx.stroke();
             });
 
-            animationFrameId = requestAnimationFrame(animate);
+            animationFrameId = performanceSettings.reducedMotion ? null : requestAnimationFrame(animate);
         };
 
         animate();
@@ -438,6 +438,7 @@ const SignalWaveform = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
+        const reducedMotion = !!window.CorsPerformance?.reducedMotion;
         let animationFrameId = null;
         let width = canvas.width = canvas.offsetWidth;
         let height = canvas.height = canvas.offsetHeight || 40;
@@ -508,7 +509,7 @@ const SignalWaveform = () => {
             phase1 += 0.025;
             phase2 += 0.035;
 
-            animationFrameId = requestAnimationFrame(draw);
+            animationFrameId = reducedMotion ? null : requestAnimationFrame(draw);
         };
 
         const observer = new IntersectionObserver(([entry]) => {
@@ -603,12 +604,12 @@ const HeroThreeScene = () => {
 
     React.useEffect(() => {
         const mount = mountRef.current;
-        if (!mount || !window.THREE) {
+        const qualitySettings = window.CorsPerformance || {};
+        if (!mount || !window.THREE || qualitySettings.canUse3D === false) {
             if (mount) mount.classList.add('three-scene-fallback');
             return;
         }
 
-        const qualitySettings = window.CorsPerformance || {};
         const prefersReducedMotion = !!qualitySettings.reducedMotion;
         const THREE = window.THREE;
         const scene = new THREE.Scene();
@@ -1028,6 +1029,7 @@ const HeroThreeScene = () => {
 /* 3D Tilt Hook for Feature Cards (Interactive Hologram Effect) */
 const useCardTilt = () => {
     React.useEffect(() => {
+        if (window.CorsPerformance?.reducedMotion) return;
         const cards = document.querySelectorAll('.landing-feature-card-inner');
         if (!cards.length) return;
 
@@ -1110,6 +1112,7 @@ const useCardTilt = () => {
 /* Magnetic Button Hook for Hero Call-To-Actions */
 const useMagneticButtons = () => {
     React.useEffect(() => {
+        if (window.CorsPerformance?.reducedMotion) return;
         if (typeof gsap === 'undefined') return;
         const buttons = document.querySelectorAll('.btn-enterprise, .btn-outline-cyan');
         if (!buttons.length) return;
@@ -1201,11 +1204,13 @@ const TypingHeadline = () => {
         'Hạ tầng GNSS thế hệ mới',
         'Định vị chính xác centimet'
     ];
-    const [displayed, setDisplayed] = React.useState('');
+    const reducedMotion = !!window.CorsPerformance?.reducedMotion;
+    const [displayed, setDisplayed] = React.useState(reducedMotion ? phrases[0] : '');
     const [phraseIdx, setPhraseIdx] = React.useState(0);
     const [isDeleting, setIsDeleting] = React.useState(false);
 
     React.useEffect(() => {
+        if (reducedMotion) return;
         const current = phrases[phraseIdx];
         let timeout;
 
@@ -1236,6 +1241,7 @@ const TypingHeadline = () => {
 /* Live Data Bars Continuous Animation Hook */
 const useLiveDataAnimation = () => {
     React.useEffect(() => {
+        if (window.CorsPerformance?.reducedMotion) return;
         const section = document.querySelector('.livedata-section');
         if (!section) return;
         const bars = section.querySelectorAll('.livedata-bar');
@@ -1322,6 +1328,7 @@ const useSectionAnimationVisibility = () => {
 /* Mouse Parallax Hook - shifts map and orbs based on cursor position */
 const useMouseParallax = () => {
     React.useEffect(() => {
+        if (window.CorsPerformance?.reducedMotion) return;
         if (typeof gsap === 'undefined' || !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
         const hero = document.querySelector('.hero-section');
         if (!hero) return;
@@ -1349,6 +1356,10 @@ const useCounter = (targetStr, duration = 1600) => {
     React.useEffect(() => {
         if (targetStr === undefined || targetStr === null || targetStr === '') return;
         const target = String(targetStr);
+        if (window.CorsPerformance?.reducedMotion) {
+            setDisplayValue(target);
+            return;
+        }
         
         // Extract digits and symbols
         const chars = target.split('');
@@ -1400,6 +1411,7 @@ const useCinematicScroll = () => {
     React.useEffect(() => {
         const performanceProfile = window.CorsPerformance || {};
         const liteMode = performanceProfile.tier === 'lite';
+        if (performanceProfile.reducedMotion) return;
         if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
             console.warn('[Cinematic] GSAP not loaded');
             return;
@@ -1954,7 +1966,7 @@ const LoginPanel = ({ isOpen, onClose }) => {
             }, '×'),
             React.createElement('div', { className: 'login-panel-header' },
                 React.createElement('img', {
-                    src: '/img/aitogy.png', alt: 'Aitogy',
+                    src: '/assets/img/aitogy.png', alt: 'Aitogy',
                     className: 'login-panel-logo'
                 }),
                 React.createElement('div', { className: 'login-panel-title' }, 'TRUNG TÂM ĐIỀU HÀNH CORS')
@@ -2213,7 +2225,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
         // === NAVBAR ===
         React.createElement('nav', { className: 'landing-navbar', id: 'landing-navbar' },
             React.createElement('a', { href: '/', className: 'landing-nav-brand' },
-                React.createElement('img', { src: '/img/aitogy.png', alt: 'Aitogy' }),
+                React.createElement('img', { src: '/assets/img/aitogy.png', alt: 'Aitogy' }),
                 React.createElement('div', null,
                     'Aitogy ',
                     React.createElement('span', null, 'Mạng CORS')
@@ -2380,7 +2392,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                 React.createElement('div', { className: 'col-lg-7', style: { position: 'relative', height: '450px' } },
                     React.createElement('img', {
                         className: 'network-mobile-map',
-                        src: '/img/vietnam-map.svg',
+                        src: '/assets/img/vietnam-map.svg',
                         alt: 'Bản đồ mạng lưới CORS Việt Nam',
                         width: 634,
                         height: 875,
@@ -2607,7 +2619,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                         rel: 'noopener noreferrer',
                         className: 'cta-contact-link'
                     },
-                        React.createElement('img', { src: '/img/Facebook_icon.svg', alt: '', className: 'cta-contact-icon', 'aria-hidden': 'true' }),
+                        React.createElement('img', { src: '/assets/img/Facebook_icon.svg', alt: '', className: 'cta-contact-icon', 'aria-hidden': 'true' }),
                         React.createElement('span', null, 'Facebook')
                     ),
                     React.createElement('a', {
@@ -2670,7 +2682,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                         rel: 'noopener noreferrer',
                         className: 'landing-footer-link d-flex align-items-center gap-2 mb-2'
                     },
-                        React.createElement('img', { src: '/img/Facebook_icon.svg', alt: '', className: 'cta-contact-icon', 'aria-hidden': 'true' }),
+                        React.createElement('img', { src: '/assets/img/Facebook_icon.svg', alt: '', className: 'cta-contact-icon', 'aria-hidden': 'true' }),
                         React.createElement('span', null, 'Facebook')
                     ),
                     React.createElement('a', {

@@ -67,6 +67,7 @@
             command: serial => `/api/devices/${encodeURIComponent(serial)}/command`,
             autoDeployToken: serial => `/api/devices/${encodeURIComponent(serial)}/auto-deploy-token`,
             licenseBypass: serial => `/api/devices/${encodeURIComponent(serial)}/license-bypass`,
+            corsMountpoints: serial => `/api/devices/${encodeURIComponent(serial)}/cors-mountpoints`,
             configureChip: serial => `/api/devices/${encodeURIComponent(serial)}/configure-chip`,
             configureService: serial => `/api/devices/${encodeURIComponent(serial)}/configure-service`,
             lock: serial => `/api/devices/${encodeURIComponent(serial)}/lock`,
