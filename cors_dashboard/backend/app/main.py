@@ -7043,13 +7043,10 @@ async def _ops_visible_devices(
         return await crud.get_all_devices(devices_db)
     if current_user.role == auth.Role.COORDINATOR:
         return await crud.get_devices_by_user_id(devices_db, current_user.id)
-    setting_key = f"viewer_devices_{current_user.id}"
-    result = await auth_db.execute(select(models.SystemSetting).filter_by(key=setting_key))
-    setting = result.scalars().first()
-    serials = setting.value if setting and isinstance(setting.value, list) else []
+    serials = crud.get_allowed_base_serials(current_user)
     if not serials:
         return []
-    rs = await devices_db.execute(select(models.Device).where(models.Device.serial.in_(serials)).order_by(models.Device.name))
+    rs = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(serials)).order_by(models.Device.name))
     return rs.scalars().all()
 
 
@@ -7744,13 +7741,11 @@ async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
             if user.role == auth.Role.COORDINATOR:
                 async with device_session_scope() as devices_db:
                     devices = await crud.get_devices_by_user_id(devices_db, user.id)
-                    context["allowed_serials"] = {str(d.serial) for d in devices if d.serial}
+                    context["allowed_serials"] = {
+                        str(d.serial).strip().upper() for d in devices if str(d.serial).strip()
+                    }
             elif user.role == auth.Role.VIEWER:
-                setting_key = f"viewer_devices_{user.id}"
-                rs = await auth_db.execute(select(models.SystemSetting).filter_by(key=setting_key))
-                setting = rs.scalars().first()
-                serials = setting.value if setting and isinstance(setting.value, list) else []
-                context["allowed_serials"] = {str(serial) for serial in serials if serial}
+                context["allowed_serials"] = crud.get_allowed_base_serials(user)
 
             return context
     except asyncio.TimeoutError:

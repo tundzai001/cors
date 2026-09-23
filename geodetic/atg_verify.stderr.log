@@ -1,0 +1,63 @@
+2026-08-13 17:03:28,839 [INFO] \u2713 Loaded config from C:\Users\len\Desktop\other_projects\cors\geodetic\geotek_config.json
+2026-08-13 17:03:28,893 [INFO] [YB.VanYen] Connecting SOURCE: rtkvietnam.vn:1508/YBI_XuanAI
+2026-08-13 17:03:28,893 [INFO] \u2713 Started Relay: YBI_XuanAI \u2192 YB.VanYen
+2026-08-13 17:03:28,918 [INFO] ✓ MQTT Connected
+2026-08-13 17:03:28,919 [INFO] MQTT control broker 45.117.179.134:1883; waiting for dashboard commands
+2026-08-13 17:03:29,017 [INFO] [YB.VanYen] \u2713 Source connected
+2026-08-13 17:03:29,163 [INFO] [YB.VanYen] Connecting TARGET: aitogy.com.vn:2101/YB.VanYen (v1.0)
+2026-08-13 17:03:29,286 [INFO] [YB.VanYen] RELAY ACTIVE: YBI_XuanAI -> YB.VanYen
+2026-08-13 17:03:29,921 [INFO] [TN.VoNhai] Connecting SOURCE: rtkvietnam.vn:1508/TNN_VoNhai
+2026-08-13 17:03:29,922 [INFO] \u2713 Started Relay: TNN_VoNhai \u2192 TN.VoNhai
+2026-08-13 17:03:29,940 [INFO] [TN.VoNhai] \u2713 Source connected
+2026-08-13 17:03:30,166 [INFO] [TN.VoNhai] Connecting TARGET: aitogy.com.vn:2101/TN.VoNhai (v1.0)
+2026-08-13 17:03:30,185 [INFO] [TN.VoNhai] RELAY ACTIVE: TNN_VoNhai -> TN.VoNhai
+2026-08-13 17:03:30,931 [INFO] [TN.TP] Connecting SOURCE: rtkvietnam.vn:1508/TNN_TPThaiNguyen
+2026-08-13 17:03:30,931 [INFO] \u2713 Started Relay: TNN_TPThaiNguyen \u2192 TN.TP
+2026-08-13 17:03:30,973 [INFO] [TN.TP] \u2713 Source connected
+2026-08-13 17:03:31,262 [INFO] [TN.TP] Connecting TARGET: aitogy.com.vn:2101/TN.TP (v1.0)
+2026-08-13 17:03:31,280 [INFO] [TN.TP] RELAY ACTIVE: TNN_TPThaiNguyen -> TN.TP
+2026-08-13 17:03:31,687 [INFO] Control MQTT received topic=pi/devices/RELAY_YB_VanYen/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:03:31,696 [INFO] [RELAY_YB_VanYen] SET_RTCM_STREAM_ACTIVE active=False mountpoint=yb.vanyen
+2026-08-13 17:03:31,720 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_VoNhai/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:03:31,722 [INFO] [RELAY_TN_VoNhai] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.vonhai
+2026-08-13 17:03:31,941 [INFO] [TN.DaiTu] Connecting SOURCE: rtkvietnam.vn:1508/TNN_DaiTu
+2026-08-13 17:03:31,941 [INFO] \u2713 Started Relay: TNN_DaiTu \u2192 TN.DaiTu
+2026-08-13 17:03:31,959 [INFO] [TN.DaiTu] \u2713 Source connected
+2026-08-13 17:03:32,265 [INFO] [TN.VoNhai] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:03:32,268 [INFO] [TN.DaiTu] Connecting TARGET: aitogy.com.vn:2101/TN.DaiTu (v1.0)
+2026-08-13 17:03:32,284 [INFO] [TN.DaiTu] RELAY ACTIVE: TNN_DaiTu -> TN.DaiTu
+2026-08-13 17:03:32,469 [INFO] [YB.VanYen] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:03:32,952 [INFO] [TN.PhoYen] Connecting SOURCE: rtkvietnam.vn:1508/TNN_PhoYen
+2026-08-13 17:03:32,952 [INFO] \u2713 Started Relay: TNN_PhoYen \u2192 TN.PhoYen
+2026-08-13 17:03:32,973 [INFO] [TN.PhoYen] \u2713 Source connected
+2026-08-13 17:03:33,338 [INFO] [TN.PhoYen] Connecting TARGET: aitogy.com.vn:2101/TN.PhoYen (v1.0)
+2026-08-13 17:03:33,569 [INFO] [TN.PhoYen] RELAY ACTIVE: TNN_PhoYen -> TN.PhoYen
+2026-08-13 17:03:33,965 [INFO] [BG.TP] Connecting SOURCE: rtkvietnam.vn:1508/BG.TP
+2026-08-13 17:03:33,965 [INFO] \u2713 Started Relay: BG.TP \u2192 BG.TP
+2026-08-13 17:03:34,084 [INFO] [BG.TP] \u2713 Source connected
+2026-08-13 17:03:34,975 [INFO] [ATG_DT] Connecting SOURCE: aitogy.com.vn:2101/ATGDT
+2026-08-13 17:03:34,975 [INFO] \u2713 Started Relay: ATGDT \u2192 ATG_DT
+2026-08-13 17:03:35,010 [INFO] [ATG_DT] \u2713 Source connected
+2026-08-13 17:03:35,307 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:03:35,338 [INFO] [ATG_DT] RELAY ACTIVE: ATGDT -> ATG_DT
+2026-08-13 17:03:35,992 [INFO] \u2713 Started MQTT Source: device/860549070087338/upload \u2192 HT.VuQuang
+2026-08-13 17:03:35,993 [INFO] [device/860549070087338/upload -> HT.VuQuang] Logged offline event: Monitoring started for HT.VuQuang (860549070087338)
+2026-08-13 17:03:36,154 [INFO] [device/860549070087338/upload -> HT.VuQuang] Subscribed MQTT source topic: device/860549070087338/upload
+2026-08-13 17:03:36,977 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_TP/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:03:36,979 [INFO] [RELAY_TN_TP] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.tp
+2026-08-13 17:03:37,000 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_PhoYen/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:03:37,001 [INFO] [RELAY_TN_PhoYen] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.phoyen
+2026-08-13 17:03:37,002 [INFO] ======================================================================
+2026-08-13 17:03:37,017 [INFO] 🚀 ALL WORKERS RUNNING
+2026-08-13 17:03:37,018 [INFO] ======================================================================
+2026-08-13 17:03:37,043 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_DaiTu/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:03:37,044 [INFO] [RELAY_TN_DaiTu] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.daitu
+2026-08-13 17:03:37,273 [INFO] [TN.PhoYen] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:03:37,275 [INFO] [TN.DaiTu] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:03:37,291 [INFO] [TN.TP] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:03:43,947 [INFO] [BG.TP] Source EOF; reconnecting source socket.
+2026-08-13 17:03:43,956 [INFO] [BG.TP] Source loop ended, reconnecting in 15s...
+2026-08-13 17:03:59,119 [INFO] [BG.TP] Connecting SOURCE: rtkvietnam.vn:1508/BG.TP
+2026-08-13 17:03:59,265 [INFO] [BG.TP] \u2713 Source connected
+2026-08-13 17:03:59,293 [INFO] [BG.TP] Source EOF; reconnecting source socket.
+2026-08-13 17:03:59,353 [INFO] [BG.TP] Source loop ended, reconnecting in 15s...

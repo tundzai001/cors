@@ -290,14 +290,6 @@ async def update_user(
             
         elif target_role == 'viewer':
             await devices_db.commit() # commit việc gỡ ownership
-            # Broadcast để UI Viewer cập nhật ngay lập tức
-            await ui_manager.broadcast({
-                "type": "user_assignment_updated",
-                "data": {
-                    "user_id": user_id,
-                    "role": "viewer"
-                }
-            })
         else:
             await devices_db.commit()
     # ===================================================================
@@ -306,6 +298,13 @@ async def update_user(
         update_dict['hashed_password'] = await auth.get_password_hash(update_dict.pop('password'))
     
     updated_user = await crud.update_user(auth_db, user_id, update_dict)
+
+    if assigned_serials is not None or 'allowed_bases' in update_dict or 'role' in update_dict:
+        # Notify after commit so the browser reloads the new device scope.
+        await ui_manager.broadcast({
+            "type": "user_assignment_updated",
+            "data": {"user_id": user_id, "role": updated_user.role},
+        })
     
     permissions = auth.get_user_permissions(updated_user)
     user_response = schemas.UserResponse.from_orm(updated_user)

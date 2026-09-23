@@ -531,6 +531,7 @@ window.switchView = function (viewName) {
         if (navbar) navbar.classList.remove('d-none');
 
         mapNeedsUpdate = true;
+        queueMapRender();
         setTimeout(() => {
             if (window.mapInstance) window.mapInstance.invalidateSize();
         }, 100);
@@ -1204,12 +1205,16 @@ function handleWebSocketMessage(message) {
     }
 
     if (type === 'status_update') {
-        const statusSerial = serial || data?.serial;
-        // --- LOGIC CHẶN TRẠM LẠ CHO ROLES BỊ GIỚI HẠN (COORDINATOR, VIEWER) ---
-        if (globalState.currentUser && ['coordinator', 'viewer'].includes(globalState.currentUser.role)) {
-
-            // Trường hợp 1: Admin vừa gán/thu hồi quyền sở hữu (Bản tin có chứa user_id)
-            // Lưu ý: Viewers không dựa trên user_id ownership nên sẽ rơi vào Trường hợp 2
+        const incomingSerial = serial || data?.serial;
+        const knownDevice = globalState.devices.find(d =>
+            String(d.serial || '').trim().toUpperCase() === String(incomingSerial || '').trim().toUpperCase()
+        );
+        const statusSerial = knownDevice?.serial || incomingSerial;
+        if (data && statusSerial) data.serial = statusSerial;
+        // Coordinators are scoped by device ownership; viewers are scoped by
+        // their allowed_bases list, so a viewer must not be filtered by owner.
+        const userRole = String(globalState.currentUser?.role || '').toLowerCase();
+        if (userRole === 'coordinator') {
             if (data.user_id !== undefined && data.user_id !== null) {
                 if (data.user_id !== globalState.currentUser.id) {
                     const exists = globalState.devices.some(d => d.serial === statusSerial);
@@ -1220,15 +1225,14 @@ function handleWebSocketMessage(message) {
                     return;
                 }
             }
-
-            // Trường hợp 2: Trạm gửi Heartbeat/Status hoặc các bản tin khác
-            else {
-                // Kiểm tra xem trạm này có nằm trong danh sách đang hiển thị hay không
+            if (data.user_id === undefined || data.user_id === null) {
                 const isMyDevice = globalState.devices.some(d => d.serial === statusSerial);
-                if (!isMyDevice) {
-                    return;
-                }
+                if (!isMyDevice) return;
             }
+        } else if (userRole === 'viewer') {
+            // The backend already enforces the viewer's allowed serial scope.
+            // Keep this client-side guard for defense in depth, but ignore owner user_id.
+            if (!knownDevice) return;
         }
 
         if (data && data.timestamp) {
@@ -1271,20 +1275,9 @@ function handleWebSocketMessage(message) {
     }
 
     if (type === 'user_assignment_updated') {
-        // Nếu chính mình là user bị thay đổi gán trạm -> Load lại toàn bộ devices
         if (data.user_id === globalState.currentUser?.id) {
-            //console.log("Assignment updated for current user. Reloading devices...");
-            // Gọi lại hàm lấy danh sách trạm ban đầu
-            if (window.fetchInitialDevices) {
-                window.fetchInitialDevices();
-            } else {
-                // Fallback: refresh data in place instead of forcing a full reload
-                loadInitialDevices().then(() => {
-                    deviceListNeedsUpdate = true;
-                    detailsPanelNeedsUpdate = true;
-                    scheduleRender('high');
-                }).catch(() => {});
-            }
+            // Reopen the WebSocket with the newly committed station permissions.
+            window.location.reload();
         }
     }
 

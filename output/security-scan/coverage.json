@@ -1,0 +1,33 @@
+{
+  "documentType": "codex-security.coverage",
+  "schemaVersion": "1.0",
+  "scanId": "13546e7b992a_20260809T233452",
+  "mode": "repository",
+  "completeness": "partial",
+  "inventoryStrategy": "repository",
+  "includePaths": [
+    "."
+  ],
+  "excludePaths": [],
+  "surfaces": [
+    {
+      "id": "repository",
+      "label": "Full repository worklist (110 files)",
+      "disposition": "reported",
+      "receiptRefs": []
+    }
+  ],
+  "explicitExclusions": [],
+  "deferred": [
+    {
+      "id": "deferred-candidates",
+      "count": 22,
+      "reason": "Validated but attack-path evidence remains bounded or needs environment confirmation."
+    },
+    {
+      "id": "suppressed-candidates",
+      "count": 12,
+      "reason": "Suppressed or not applicable after centralized validation."
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "documentType": "codex-security.scan-manifest",
+  "schemaVersion": "1.0",
+  "scan": {
+    "id": "13546e7b992a_20260809T233452",
+    "producer": {
+      "name": "codex-security-plugin",
+      "version": "0.1.0"
+    },
+    "status": "completed",
+    "startedAt": "2026-08-10T01:34:52Z",
+    "completedAt": "2026-08-12T00:00:00Z",
+    "sealedAt": "2026-08-12T00:00:00Z",
+    "target": {
+      "kind": "git_worktree",
+      "targetId": "target_sha256_a933a0c003ae1cb9aa57d91b1e587af1bdd7bd54df1a885effd58bb3451fb5eb",
+      "displayName": "cors",
+      "revision": "13546e7b992aefb3237e9e56d5e6c70c529db3ff",
+      "snapshotDigest": "codex-security-snapshot/v1:sha256:32c72b8edad7b25495bf771955ed951c46bc67644dec918876744c2d10a6fad0"
+    },
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "excludePaths": []
+    },
+    "coverageRef": "coverage.json",
+    "findingsRef": "findings.json",
+    "hardening": {
+      "portfolioPath": "hardening/hardening.md"
+    },
+    "artifacts": [
+      {
+        "path": "findings.json",
+        "sha256": "d833858b2e8eead9b9fcc1298f03097de7a721c9409659eed5fc71e043b19521",
+        "mediaType": "application/json"
+      },
+      {
+        "path": "coverage.json",
+        "sha256": "7066c5215657deb9ec5181c31d6f47216a2e0b14eb78073cd561ad81fa8a30d4",
+        "mediaType": "application/json"
+      }
+    ]
+  }
+}

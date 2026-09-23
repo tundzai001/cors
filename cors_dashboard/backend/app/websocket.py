@@ -45,7 +45,8 @@ class ConnectionManager:
                 return False
             data = message.get("data") or {}
             serial = message.get("serial") or data.get("serial")
-            return str(serial or "") in allowed_serials
+            normalized_serial = str(serial or "").strip().upper()
+            return normalized_serial in allowed_serials
 
         return True
 

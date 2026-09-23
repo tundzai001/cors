@@ -228,6 +228,9 @@ function isDeviceStaleOffline(device) {
 
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const liveDataAvailable = !isDeviceStaleOffline(device);
+    const deviceStatus = String(device?.status || '').toLowerCase();
+    const isSleeping = deviceStatus === 'sleep' || deviceStatus === 'sleeping';
+    const canAssessSignal = liveDataAvailable && !isSleeping;
     const rtk_status = liveDataAvailable ? (device.rtk_fix_status || 'NO_FIX') : 'NO_FIX';
 
     let fixInfo = liveDataAvailable
@@ -952,6 +955,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                             return (
                                 <ul className="mb-0 text-light small ps-3" style={{ listStyleType: "circle" }}>
+                                    {!canAssessSignal ? (
+                                        <li className="text-info mb-1">
+                                            {isSleeping
+                                                ? 'Trạm đang ở chế độ ngủ; tạm dừng đánh giá GNSS/RTCM.'
+                                                : 'Chưa có dữ liệu GNSS/RTCM trực tiếp để đánh giá.'}
+                                        </li>
+                                    ) : <>
                                     {isAntennaFault && (
                                         <li className="text-danger mb-1 fw-bold">
                                             <i className="bi bi-exclamation-octagon-fill me-1"></i>
@@ -999,6 +1009,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                     {avgSnr >= 35 && avgSnr < 38 && (
                                         <li className="text-info mb-1">Tín hiệu ăng-ten đạt mức khá (SNR trung bình {avgSnr.toFixed(1)} dB-Hz).</li>
                                     )}
+                                    </>}
                                 </ul>
                             );
                         })()}

@@ -1,0 +1,95 @@
+2026-08-13 17:12:58,527 [INFO] \u2713 Loaded config from C:\Users\len\Desktop\other_projects\cors\geodetic\geotek_config.json
+2026-08-13 17:12:58,591 [INFO] [YB.VanYen] Connecting SOURCE: rtkvietnam.vn:1508/YBI_XuanAI
+2026-08-13 17:12:58,591 [INFO] \u2713 Started Relay: YBI_XuanAI \u2192 YB.VanYen
+2026-08-13 17:12:58,640 [INFO] ✓ MQTT Connected
+2026-08-13 17:12:58,644 [INFO] MQTT control broker 45.117.179.134:1883; waiting for dashboard commands
+2026-08-13 17:12:58,737 [INFO] [YB.VanYen] \u2713 Source connected
+2026-08-13 17:12:59,299 [INFO] [YB.VanYen] Connecting TARGET: aitogy.com.vn:2101/YB.VanYen (v1.0)
+2026-08-13 17:12:59,393 [INFO] [YB.VanYen] RELAY ACTIVE: YBI_XuanAI -> YB.VanYen
+2026-08-13 17:12:59,647 [INFO] [TN.VoNhai] Connecting SOURCE: rtkvietnam.vn:1508/TNN_VoNhai
+2026-08-13 17:12:59,647 [INFO] \u2713 Started Relay: TNN_VoNhai \u2192 TN.VoNhai
+2026-08-13 17:12:59,664 [INFO] [TN.VoNhai] \u2713 Source connected
+2026-08-13 17:13:00,249 [INFO] [TN.VoNhai] Connecting TARGET: aitogy.com.vn:2101/TN.VoNhai (v1.0)
+2026-08-13 17:13:00,260 [INFO] [TN.VoNhai] RELAY ACTIVE: TNN_VoNhai -> TN.VoNhai
+2026-08-13 17:13:00,662 [INFO] [TN.TP] Connecting SOURCE: rtkvietnam.vn:1508/TNN_TPThaiNguyen
+2026-08-13 17:13:00,662 [INFO] \u2713 Started Relay: TNN_TPThaiNguyen \u2192 TN.TP
+2026-08-13 17:13:00,674 [INFO] [TN.TP] \u2713 Source connected
+2026-08-13 17:13:01,252 [INFO] [TN.TP] Connecting TARGET: aitogy.com.vn:2101/TN.TP (v1.0)
+2026-08-13 17:13:01,275 [INFO] [TN.TP] RELAY ACTIVE: TNN_TPThaiNguyen -> TN.TP
+2026-08-13 17:13:01,664 [INFO] [TN.DaiTu] Connecting SOURCE: rtkvietnam.vn:1508/TNN_DaiTu
+2026-08-13 17:13:01,665 [INFO] \u2713 Started Relay: TNN_DaiTu \u2192 TN.DaiTu
+2026-08-13 17:13:01,682 [INFO] [TN.DaiTu] \u2713 Source connected
+2026-08-13 17:13:02,256 [INFO] [TN.DaiTu] Connecting TARGET: aitogy.com.vn:2101/TN.DaiTu (v1.0)
+2026-08-13 17:13:02,288 [INFO] [TN.DaiTu] RELAY ACTIVE: TNN_DaiTu -> TN.DaiTu
+2026-08-13 17:13:02,678 [INFO] [TN.PhoYen] Connecting SOURCE: rtkvietnam.vn:1508/TNN_PhoYen
+2026-08-13 17:13:02,680 [INFO] \u2713 Started Relay: TNN_PhoYen \u2192 TN.PhoYen
+2026-08-13 17:13:02,698 [INFO] [TN.PhoYen] \u2713 Source connected
+2026-08-13 17:13:03,257 [INFO] [TN.PhoYen] Connecting TARGET: aitogy.com.vn:2101/TN.PhoYen (v1.0)
+2026-08-13 17:13:03,298 [INFO] [TN.PhoYen] RELAY ACTIVE: TNN_PhoYen -> TN.PhoYen
+2026-08-13 17:13:03,694 [INFO] [BG.TP] Connecting SOURCE: rtkvietnam.vn:1508/BG.TP
+2026-08-13 17:13:03,695 [INFO] \u2713 Started Relay: BG.TP \u2192 BG.TP
+2026-08-13 17:13:03,771 [INFO] [BG.TP] \u2713 Source connected
+2026-08-13 17:13:04,699 [INFO] [ATG_DT] Connecting SOURCE: aitogy.com.vn:2101/ATGDT
+2026-08-13 17:13:04,699 [INFO] \u2713 Started Relay: ATGDT \u2192 ATG_DT
+2026-08-13 17:13:04,828 [INFO] [ATG_DT] \u2713 Source connected
+2026-08-13 17:13:04,999 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_VoNhai/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:13:05,018 [INFO] [RELAY_TN_VoNhai] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.vonhai
+2026-08-13 17:13:05,058 [INFO] Control MQTT received topic=pi/devices/RELAY_YB_VanYen/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:13:05,063 [INFO] [RELAY_YB_VanYen] SET_RTCM_STREAM_ACTIVE active=False mountpoint=yb.vanyen
+2026-08-13 17:13:05,133 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_DaiTu/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:13:05,155 [INFO] [RELAY_TN_DaiTu] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.daitu
+2026-08-13 17:13:05,168 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_TP/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:13:05,634 [INFO] [YB.VanYen] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:13:05,640 [INFO] [TN.DaiTu] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:13:05,642 [INFO] [TN.VoNhai] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:13:05,642 [INFO] [TN.TP] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:13:05,646 [INFO] [RELAY_TN_TP] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.tp
+2026-08-13 17:13:05,717 [INFO] \u2713 Started MQTT Source: device/860549070087338/upload \u2192 HT.VuQuang
+2026-08-13 17:13:05,761 [INFO] [device/860549070087338/upload -> HT.VuQuang] Logged offline event: Monitoring started for HT.VuQuang (860549070087338)
+2026-08-13 17:13:05,975 [INFO] Control MQTT received topic=pi/devices/RELAY_TN_PhoYen/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:13:05,982 [INFO] [RELAY_TN_PhoYen] SET_RTCM_STREAM_ACTIVE active=False mountpoint=tn.phoyen
+2026-08-13 17:13:06,115 [INFO] [device/860549070087338/upload -> HT.VuQuang] Subscribed MQTT source topic: device/860549070087338/upload
+2026-08-13 17:13:06,415 [INFO] [TN.PhoYen] Stream deactivated -> closing TARGET socket only.
+2026-08-13 17:13:06,969 [INFO] ======================================================================
+2026-08-13 17:13:07,031 [INFO] 🚀 ALL WORKERS RUNNING
+2026-08-13 17:13:07,182 [INFO] ======================================================================
+2026-08-13 17:13:18,988 [INFO] Control MQTT received topic=pi/devices/RELAY_ATG_DT/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:13:19,008 [INFO] [RELAY_ATG_DT] SET_RTCM_STREAM_ACTIVE active=True mountpoint=ATG_DT
+2026-08-13 17:13:19,714 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:19,850 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:19,883 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:19,931 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:20,318 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:20,342 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:20,351 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:20,369 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:21,537 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:21,558 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:21,567 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:21,603 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:22,382 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:22,395 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:22,406 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:22,419 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:23,316 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:23,336 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:23,337 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:23,357 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:24,338 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:24,657 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:25,453 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:25,501 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:25,583 [INFO] [ATG_DT] Connecting TARGET: aitogy.com.vn:2101/ATG_DT (v1.0)
+2026-08-13 17:13:25,611 [WARNING] [ATG_DT] Target connection failed: Connection closed
+2026-08-13 17:13:26,111 [INFO] Control MQTT received topic=pi/devices/RELAY_ATG_DT/command command=SET_RTCM_STREAM_ACTIVE
+2026-08-13 17:13:26,158 [INFO] [RELAY_ATG_DT] SET_RTCM_STREAM_ACTIVE active=False mountpoint=ATG_DT
+2026-08-13 17:13:52,214 [INFO] [BG.TP] Source EOF; reconnecting source socket.
+2026-08-13 17:13:52,568 [INFO] [BG.TP] Source loop ended, reconnecting in 15s...
+2026-08-13 17:14:13,475 [INFO] [BG.TP] Connecting SOURCE: rtkvietnam.vn:1508/BG.TP
+2026-08-13 17:14:13,806 [INFO] [BG.TP] \u2713 Source connected
+2026-08-13 17:14:13,853 [INFO] [BG.TP] Source EOF; reconnecting source socket.
+2026-08-13 17:14:13,883 [INFO] [BG.TP] Source loop ended, reconnecting in 15s...
+2026-08-13 17:14:28,906 [INFO] [BG.TP] Connecting SOURCE: rtkvietnam.vn:1508/BG.TP
+2026-08-13 17:14:29,284 [INFO] [BG.TP] \u2713 Source connected
+2026-08-13 17:14:29,304 [INFO] [BG.TP] Source EOF; reconnecting source socket.
+2026-08-13 17:14:29,304 [INFO] [BG.TP] Source loop ended, reconnecting in 15s...

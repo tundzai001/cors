@@ -98,21 +98,16 @@ async def get_initial_devices(
         return _with_runtime_sync_flags(devices)
     elif target_role == auth.Role.VIEWER:
         from sqlalchemy import select as _select
+        from sqlalchemy import func as _func
         from .. import models as _models
         user_info = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
-        if not user_info or not user_info.allowed_bases:
+        if not user_info:
             return []
-        
-        import json
-        try:
-            viewer_serials = json.loads(user_info.allowed_bases)
-        except:
-            viewer_serials = []
-            
+        viewer_serials = crud.get_allowed_base_serials(user_info)
         if not viewer_serials:
             return []
         
-        result = await db.execute(_select(_models.Device).where(_models.Device.serial.in_(viewer_serials)).order_by(_models.Device.name))
+        result = await db.execute(_select(_models.Device).where(_func.upper(_models.Device.serial).in_(viewer_serials)).order_by(_models.Device.name))
         devices = result.scalars().all()
         logger.info(f"[DEVICES] Viewer '{current_user.username}' → returning {len(devices)} devices")
         return _with_runtime_sync_flags(devices)
