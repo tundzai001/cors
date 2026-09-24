@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let showExpiringSoonOnly = false;
     const selectedRoverKeys = new Set();
     const connectionClockCache = new Map();
+    const expiryDeadlineCache = new Map();
 
     const hasRoverPageAccess = () => (
         String(currentUser?.role || '').toLowerCase() === 'admin'
@@ -312,7 +313,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 throw new Error(err.detail || 'Không thể tải danh sách user từ Caster');
             }
             const data = await res.json();
-            casterUsers = data.items || [];
+            const serverTime = Number(data.server_time) || Date.now() / 1000;
+            const receivedAt = Date.now() / 1000;
+            casterUsers = (data.items || []).map(item => {
+                const status = Number(item.status);
+                if (!Number.isFinite(status) || status <= 0 || status >= 315360000) return item;
+                const sampledAt = Number(item.last_update) || serverTime;
+                const observedDeadline = receivedAt + status - Math.max(0, serverTime - sampledAt);
+                const key = `${normalizeUsername(item.username)}|${String(item.server || '').toLowerCase()}`;
+                const previous = expiryDeadlineCache.get(key);
+                const sameSnapshot = previous?.sampledAt === sampledAt && previous?.status === status;
+                const deadline = sameSnapshot || (previous && Math.abs(previous.deadline - observedDeadline) <= 3)
+                    ? previous.deadline : observedDeadline;
+                expiryDeadlineCache.set(key, { sampledAt, status, deadline });
+                return { ...item, expiry_deadline: deadline };
+            }).sort((a, b) => String(a.server || '').localeCompare(String(b.server || '')));
             casterStats = {
                 total: data.total || 0,
                 in_db_count: data.in_db_count || 0,
@@ -875,9 +890,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     function formatExpiryCell(r, infos) {
         const live = infos.find(i => i?.status != null && Number.isFinite(Number(i.status)));
         const nowSec = Math.floor(Date.now() / 1000);
-        const remainingSeconds = live
-            ? Number(live.status)
-            : r.expires_at ? Math.floor(Number(r.expires_at) - nowSec) : null;
+        let remainingSeconds = r.expires_at ? Math.floor(Number(r.expires_at) - nowSec) : null;
+        if (live) {
+            const status = Number(live.status);
+            remainingSeconds = status <= 0 || status >= 315360000
+                ? status
+                : Math.floor((Number(live.expiry_deadline) || nowSec + status) - nowSec);
+        }
         if (remainingSeconds === null || !Number.isFinite(remainingSeconds)) return '<span class="text-muted small">--</span>';
         if (remainingSeconds <= 0) return '<span class="rover-expiry-badge badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill">HẾT HẠN</span>';
         if (remainingSeconds >= 315360000) return '<span class="rover-expiry-badge badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill">VĨNH VIỄN</span>';
@@ -1468,17 +1487,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isBlocked = infos.some(i => i?.is_blocked);
             const isOnline = infos.some(i => i?.nclient > 0);
             
-            let isExpired = false;
-            if (r.type === 'db') {
-                if (r.expires_at && r.expires_at < Date.now() / 1000) {
-                    isExpired = true;
-                }
-            } else {
-                const liveStatus = r.caster_info?.status;
-                if (typeof liveStatus !== 'undefined' && liveStatus <= 0) {
-                    isExpired = true;
-                }
-            }
+            const liveExpiry = infos.find(i => i?.status != null && Number.isFinite(Number(i.status)));
+            const isExpired = liveExpiry
+                ? Number(liveExpiry.status) <= 0 || (
+                    Number(liveExpiry.status) < 315360000 && Number(liveExpiry.expiry_deadline) <= Date.now() / 1000
+                )
+                : Boolean(r.expires_at && Number(r.expires_at) <= Date.now() / 1000);
             
             let matchStatus = true;
             if (statusFilter === 'active') matchStatus = isOnline;
@@ -1502,7 +1516,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="12" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="11" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
             updateRoverBulkToolbar();
             return;
         }
@@ -1569,8 +1583,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const expirySelect = document.getElementById('edit-expiry');
         
         // Cập nhật text hiển thị của tùy chọn "Giữ nguyên" (options[0])
-        if (rover.expires_at) {
-            const remainingDays = Math.ceil((rover.expires_at - Date.now()/1000) / 86400);
+        const liveExpiry = getCasterInfosForUsername(rover.username).find(i => Number.isFinite(Number(i?.status)));
+        const remainingSeconds = liveExpiry
+            ? Number(liveExpiry.status)
+            : (rover.expires_at ? rover.expires_at - Date.now() / 1000 : null);
+        if (remainingSeconds !== null) {
+            const remainingDays = Math.ceil(remainingSeconds / 86400);
             if (remainingDays >= 3650) {
                 expirySelect.options[0].text = '--- Giữ nguyên (Vĩnh viễn) ---';
             } else if (remainingDays > 0) {
@@ -1582,23 +1600,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             expirySelect.options[0].text = '--- Giữ nguyên (Vĩnh viễn) ---';
         }
 
-        // Tự động chọn gói ban đầu dựa trên hiệu số (expires_at - created_at)
-        let matchedValue = '';
-        if (rover.expires_at && rover.created_at) {
-            const diffSeconds = rover.expires_at - rover.created_at;
-            const diffDays = Math.round(diffSeconds / 86400);
-            
-            if (diffDays >= 3000) {
-                matchedValue = '3650';
-            } else if (diffDays >= 360 && diffDays <= 370) {
-                matchedValue = '365';
-            } else if (diffDays >= 170 && diffDays <= 190) {
-                matchedValue = '180';
-            } else if (diffDays >= 25 && diffDays <= 35) {
-                matchedValue = '30';
-            }
-        }
-        expirySelect.value = matchedValue; 
+        expirySelect.value = '';
         const liveMaxClients = getCasterInfosForUsername(rover.username)
             .map(i => Number(i?.maxclient))
             .filter(v => Number.isFinite(v) && v >= 0);

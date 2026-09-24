@@ -237,6 +237,11 @@ class CasterClient:
             return users
         except Exception: return []
 
+    async def get_user_remaining_seconds(self, username: str) -> Optional[int]:
+        users = await self.get_users()
+        user = next((u for u in users if u["username"].lower() == username.lower()), None)
+        return int(user["status"]) if user is not None else None
+
     async def create_user(
         self,
         creator: str,

@@ -4759,6 +4759,7 @@ async def get_caster_users(
             for u in users:
                 u_copy = dict(u)
                 u_copy["server"] = host # Tag with server
+                u_copy["last_update"] = int(cache_data.get("users_last_update") or cache_data.get("last_update") or 0)
                 all_caster_users.append(u_copy)
 
     # --- PHÂN QUYỀN HIỂN THỊ (ĐỒNG BỘ VỚI MAP) ---
@@ -4863,6 +4864,7 @@ async def get_caster_users(
             mountpoints=cu.get("mountpoints", []),
             datacount=cu.get("datacount", 0),
             status=cu.get("status", 0),
+            last_update=cu.get("last_update", 0),
             identifier=str(cu.get("identifier", "")),
             nclient=cu.get("nclient", 0),
             maxclient=cu.get("maxclient", 0),
@@ -4877,6 +4879,7 @@ async def get_caster_users(
         ))
 
     return schemas.CasterUsersResponse(
+        server_time=int(time.time()),
         total=len(enriched_items),
         in_db_count=in_db_count,
         unknown_count=len(enriched_items) - in_db_count,
@@ -5567,8 +5570,12 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
         from app.caster_client import CasterClient
         caster = CasterClient(host, port, admin_user=user, admin_password=password)
         # Fetch data in parallel
-        users, clients = await asyncio.gather(
-            caster.get_users(),
+        async def fetch_users_snapshot():
+            users = await caster.get_users()
+            return users, int(time.time())
+
+        (users, users_sampled_at), clients = await asyncio.gather(
+            fetch_users_snapshot(),
             caster.get_clienttable(mountpoint="all")
         )
 
@@ -5576,6 +5583,7 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
         async with global_caster_cache_lock:
             await _set_caster_cache(key, {
                 "last_update": scan_timestamp,
+                "users_last_update": users_sampled_at,
                 "users": users or [],
                 "clients": clients or [],
                 "error": None,
@@ -5597,11 +5605,9 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
     except Exception as e:
         logger.warning(f"[CASTER MONITOR] Failed to scan {key}: {e}")
         async with global_caster_cache_lock:
-            if key not in global_caster_data_cache:
-                global_caster_data_cache[key] = {"users": [], "clients": [], "host": host, "port": port}
-            global_caster_data_cache[key]["error"] = str(e)
-            global_caster_data_cache[key]["last_update"] = int(time.time())
-            await _set_caster_cache(key, global_caster_data_cache[key])
+            cached = dict((await _get_caster_cache(key)) or {"users": [], "clients": [], "host": host, "port": port})
+            cached["error"] = str(e)
+            await _set_caster_cache(key, cached)
 
 
 def _rover_history_session_key(server: str, username: str, mountpoint: str, client_id: str, receiver_id: str) -> tuple[str, str, str, str]:
@@ -6160,15 +6166,18 @@ async def sync_rover_by_username(
         seen_hosts = set()
         target_hosts = [h for h in target_hosts if h and not (h in seen_hosts or seen_hosts.add(h))]
 
-        # Tính toán thời hạn
-        duration_seconds = 315360000 # Default 10 years
-        if update_req.expiry_days:
-            duration_seconds = update_req.expiry_days * 86400
-
         for host in target_hosts:
             try:
                 from app.caster_client import CasterClient
                 caster = CasterClient(host, port)
+                if update_req.expiry_days is not None:
+                    duration_seconds = update_req.expiry_days * 86400
+                else:
+                    duration_seconds = await caster.get_user_remaining_seconds(username)
+                    if duration_seconds is None:
+                        if host in (rover.target_casters or "").split(";"):
+                            raise ValueError(f"Không đọc được thời hạn Rover '{username}' trên Caster {host}")
+                        duration_seconds = max(0, int(rover.expires_at - time.time())) if rover.expires_at else 315360000
                 created_ok = await caster.create_user(
                     creator=current_user.username,
                     username=username,
@@ -8643,11 +8652,41 @@ async def serve_spa():
     return FileResponse("../frontend/index.html")
 
 # === STATIC FILES ===
-app.mount("/assets/js", StaticFiles(directory="../frontend/js"), name="asset-scripts")
-app.mount("/assets/css", StaticFiles(directory="../frontend/css"), name="asset-styles")
-app.mount("/assets/img", StaticFiles(directory="../frontend/img"), name="asset-images")
-app.mount("/img", StaticFiles(directory="../frontend/img"), name="images")
-app.mount("/", StaticFiles(directory="../frontend", html=True), name="static")
+class PublicAssetFiles(StaticFiles):
+    def __init__(self, directory: str, suffixes: tuple[str, ...], nested: bool = False):
+        super().__init__(directory=directory)
+        self.suffixes = suffixes
+        self.nested = nested
+
+    async def get_response(self, path: str, scope):
+        if (not self.nested and ("/" in path or "\\" in path)) or not path.lower().endswith(self.suffixes):
+            raise HTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+async def serve_index():
+    return FileResponse("../frontend/index.html")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def serve_robots():
+    return FileResponse("../frontend/robots.txt")
+
+
+@app.get("/{page_name}.html", include_in_schema=False)
+async def serve_public_html(page_name: str):
+    if page_name not in {"operations", "rovers-global", "security", "users", "zalo"}:
+        raise HTTPException(status_code=404)
+    return FileResponse(f"../frontend/{page_name}.html")
+
+
+app.mount("/assets/js/dist", PublicAssetFiles("../frontend/js/dist", (".min.js",)), name="asset-scripts")
+app.mount("/assets/css/dist", PublicAssetFiles("../frontend/css/dist", (".min.css",)), name="asset-styles")
+images = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".ico")
+app.mount("/assets/img", PublicAssetFiles("../frontend/img", images, nested=True), name="asset-images")
+app.mount("/img", PublicAssetFiles("../frontend/img", images, nested=True), name="images")
 
 class MonitoringMiddleware(BaseHTTPMiddleware):
     """Middleware để ghi nhận metrics"""

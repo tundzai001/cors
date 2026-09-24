@@ -585,11 +585,6 @@ async def update_rover(
         if not await crud.rover_mountpoints_within_scope(devices_db, current_user, serials_for_mps, update_req.mountpoints):
             raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
     
-    # Xử lý thời hạn (Mặc định reset lại thời hạn nếu có gửi expiry_days)
-    duration_seconds = 315360000 # Default
-    if update_req.expiry_days:
-        duration_seconds = update_req.expiry_days * 86400
-    
     # 4. GỌI CASTER ĐỂ CẬP NHẬT
     try:
         from app.caster_client import CasterClient
@@ -659,10 +654,21 @@ async def update_rover(
             if ident_s and ident_s not in id_candidates:
                 id_candidates.append(ident_s)
 
+        durations_by_host = {}
+        if update_req.expiry_days is None:
+            for host in updated_target_hosts:
+                remaining = await CasterClient(host, port).get_user_remaining_seconds(rover.username)
+                if remaining is None:
+                    if host in old_hosts_set or host in live_hosts_set:
+                        raise HTTPException(status_code=502, detail=f"Không đọc được thời hạn Rover '{rover.username}' trên Caster {host}.")
+                    remaining = max(0, int(rover.expires_at - time.time())) if rover.expires_at else 315360000
+                durations_by_host[host] = remaining
+
         # 4a. Update/Create on selected hosts
         for host in updated_target_hosts:
             try:
                 caster = CasterClient(host, port)
+                duration_seconds = update_req.expiry_days * 86400 if update_req.expiry_days is not None else durations_by_host[host]
                 created_ok = await caster.create_user(
                     creator=creator_username,
                     username=rover.username,
@@ -708,6 +714,8 @@ async def update_rover(
             except Exception as e:
                 logger.warning(f"Failed to cleanup rover from removed caster {host}: {e}")
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Caster Multi-Update Error: {e}")
         raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(e)}")
@@ -730,6 +738,9 @@ async def update_rover(
         
     if update_req.is_shared_with_managers is not None:
         update_data["is_shared_with_managers"] = update_req.is_shared_with_managers
+
+    if update_req.expiry_days is not None:
+        update_data["expires_at"] = int(time.time()) + update_req.expiry_days * 86400
         
     updated_rover = await crud.update_rover_account(db, rover_id, update_data)
     

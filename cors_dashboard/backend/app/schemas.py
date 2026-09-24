@@ -432,6 +432,7 @@ class CasterRoverItem(BaseModel):
     mountpoints: List[str] = Field(default_factory=list)
     datacount: int = 0
     status: int = 0
+    last_update: int = 0
     identifier: str = ""
     nclient: int = 0
     maxclient: int = 0
@@ -446,6 +447,7 @@ class CasterRoverItem(BaseModel):
 
 
 class CasterUsersResponse(BaseModel):
+    server_time: int = 0
     total: int
     in_db_count: int
     unknown_count: int
