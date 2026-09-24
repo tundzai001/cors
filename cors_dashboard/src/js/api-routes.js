@@ -19,6 +19,8 @@
         },
         ops: {
             summary: '/api/ops/summary',
+            exportOptions: '/api/ops/export/options',
+            exportXlsx: '/api/ops/export/xlsx',
             alerts: '/api/ops/alerts',
             events: '/api/ops/events',
             ackAlert: alertId => `/api/ops/alerts/${encodeURIComponent(alertId)}/ack`,

@@ -107,13 +107,14 @@
     }
 
     async function apiFetch(url, options = {}, retries = 3) {
+        const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
             const response = await fetch(url, {
-                ...options,
-                headers: authHeaders(options.headers),
+                ...fetchOptions,
+                headers: authHeaders(fetchOptions.headers),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);

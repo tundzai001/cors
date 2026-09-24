@@ -1,4 +1,32 @@
 // Static Operations layout. Live data is populated by operations.js.
+const stationFieldGroups = [
+    ['Thông tin chung', [
+        ['serial', 'Số sê-ri', true], ['name', 'Tên trạm', true], ['status', 'Trạng thái', true],
+        ['updated_at', 'Cập nhật lúc', true], ['version', 'Phiên bản'], ['chip', 'Loại chip'],
+        ['coordinator', 'Điều phối viên', true], ['synced', 'Đã đồng bộ', true],
+        ['locked', 'Đã khóa'], ['ntrip_connected', 'NTRIP kết nối'],
+        ['total_bps', 'Tổng lưu lượng']
+    ]],
+    ['Tọa độ Base', [
+        ['base_method', 'Chế độ Base'], ['base_lat', 'Vĩ độ'],
+        ['base_lon', 'Kinh độ'], ['base_alt', 'Cao độ'],
+        ['base_accuracy', 'Độ chính xác']
+    ]],
+    ['Luồng dữ liệu', [
+        ['server1_enabled', 'Bật luồng 1'], ['server1_version', 'NTRIP phiên bản 1'],
+        ['server1_host', 'Caster 1'], ['server1_port', 'Cổng 1'],
+        ['server1_mountpoint', 'Mountpoint 1'], ['server1_bps', 'Lưu lượng 1'],
+        ['server1_username', 'Tài khoản 1'], ['server1_connected', 'Kết nối 1'],
+        ['server2_enabled', 'Bật luồng 2'], ['server2_version', 'NTRIP phiên bản 2'],
+        ['server2_host', 'Caster 2'], ['server2_port', 'Cổng 2'],
+        ['server2_mountpoint', 'Mountpoint 2'], ['server2_bps', 'Lưu lượng 2'],
+        ['server2_username', 'Tài khoản 2'], ['server2_connected', 'Kết nối 2'],
+        ['rtcm_enabled', 'Bật RTCM client'], ['rtcm_server', 'RTCM server'],
+        ['rtcm_port', 'RTCM port'], ['rtcm_mountpoint', 'RTCM mountpoint'],
+        ['rtcm_username', 'RTCM tài khoản']
+    ]]
+];
+
 function OperationsView() {
     return (
         <>
@@ -105,12 +133,15 @@ function OperationsView() {
         </div>
 
         <section className="ops-card ops-export-card" aria-labelledby="ops-export-title">
-            <div className="ops-export-intro">
-                <span className="ops-export-icon"><i className="bi bi-file-earmark-arrow-down" aria-hidden="true"></i></span>
-                <div><div className="ops-section-title" id="ops-export-title">Xuất dữ liệu</div><p>Chọn một trong 11 bộ dữ liệu, tải file CSV mở bằng Excel.</p></div>
+            <div className="ops-export-heading">
+                <div className="ops-export-intro">
+                    <span className="ops-export-icon"><i className="bi bi-file-earmark-excel" aria-hidden="true"></i></span>
+                    <div><div className="ops-section-title" id="ops-export-title">Xuất dữ liệu</div><p>Chọn dữ liệu và phạm vi, tải bảng Excel có thể lọc theo cột.</p></div>
+                </div>
+                <button className="btn btn-outline-info ops-export-button" id="ops-export-btn" type="button"><i className="bi bi-download me-2" aria-hidden="true"></i>Tải Excel</button>
             </div>
             <div className="ops-export-controls">
-                <label className="visually-hidden" htmlFor="ops-export-kind">Chọn dữ liệu cần tải</label>
+                <label className="form-label" htmlFor="ops-export-kind">Bộ dữ liệu</label>
                 <select id="ops-export-kind" className="form-select ops-input">
                     <optgroup label="Trạm và Rover">
                         <option value="devices">Toàn bộ thông tin trạm</option>
@@ -130,7 +161,32 @@ function OperationsView() {
                         <option value="templates">Mẫu cấu hình trạm</option>
                     </optgroup>
                 </select>
-                <button className="btn btn-outline-info" id="ops-export-btn" type="button"><i className="bi bi-download me-1" aria-hidden="true"></i>Tải CSV</button>
+                <div id="ops-export-rover-options" className="ops-export-scope" hidden>
+                    <label className="form-label" htmlFor="ops-export-rover">Tài khoản Rover</label>
+                    <input id="ops-export-rover" className="form-control ops-input" list="ops-export-rover-list" placeholder="Chọn Rover; để trống để xuất tất cả" autoComplete="off" />
+                    <datalist id="ops-export-rover-list"></datalist>
+                </div>
+                <div id="ops-export-device-options" className="ops-export-scope" hidden>
+                    <label className="form-label" htmlFor="ops-export-device">Trạm Base</label>
+                    <input id="ops-export-device" className="form-control ops-input" list="ops-export-device-list" placeholder="Chọn số sê-ri; để trống để xuất tất cả" autoComplete="off" />
+                    <datalist id="ops-export-device-list"></datalist>
+                    <details className="ops-export-fields">
+                        <summary>Chọn thông số trạm <span id="ops-export-field-count"></span><i className="bi bi-chevron-down" aria-hidden="true"></i></summary>
+                        <div className="ops-export-field-actions">
+                            <button id="ops-export-select-all" type="button">Chọn tất cả</button>
+                            <button id="ops-export-select-default" type="button">Thông số cơ bản</button>
+                        </div>
+                        <div className="ops-export-field-groups">
+                            {stationFieldGroups.map(([group, fields]) => <fieldset key={group}>
+                                <legend>{group}</legend>
+                                <div className="ops-export-field-list">{fields.map(([key, label, checked]) => <label key={key}>
+                                    <input type="checkbox" name="ops-device-field" value={key} defaultChecked={Boolean(checked)} />
+                                    <span>{label}</span>
+                                </label>)}</div>
+                            </fieldset>)}
+                        </div>
+                    </details>
+                </div>
             </div>
         </section>
 

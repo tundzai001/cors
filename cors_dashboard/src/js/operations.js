@@ -186,95 +186,72 @@
         setJson($('ops-rover-result'), await apiJson(`${window.ApiRoutes.rovers.validate}?${params.toString()}`));
     }
 
-    function csvCell(value) {
-        const raw = typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '');
-        const safe = /^\s*[=+\-@]/.test(raw) ? `'${raw}` : raw;
-        return `"${safe.replace(/"/g, '""')}"`;
+    function updateExportOptions() {
+        const kind = $('ops-export-kind').value;
+        $('ops-export-rover-options').hidden = !['rovers', 'rover-history'].includes(kind);
+        $('ops-export-device-options').hidden = kind !== 'devices';
     }
 
-    function csvRows(items, fields) {
-        return [fields.map(([label]) => csvCell(label)).join(','), ...items.map(item =>
-            fields.map(([, key]) => csvCell(item[key])).join(',')
-        )].join('\r\n');
+    function updateExportFieldCount() {
+        const count = document.querySelectorAll('[name="ops-device-field"]:checked').length;
+        $('ops-export-field-count').textContent = `${count} thông số`;
+    }
+
+    async function loadExportTargets() {
+        const options = await apiJson(window.ApiRoutes.ops.exportOptions);
+        $('ops-export-rover-list').replaceChildren(...options.rovers.map(username => {
+            const option = document.createElement('option');
+            option.value = username;
+            return option;
+        }));
+        $('ops-export-device-list').replaceChildren(...options.devices.map(device => {
+            const option = document.createElement('option');
+            option.value = device.serial;
+            option.label = device.name || device.serial;
+            return option;
+        }));
     }
 
     async function exportData() {
         const kind = $('ops-export-kind').value;
         const button = $('ops-export-btn');
+        const deviceFields = [...document.querySelectorAll('[name="ops-device-field"]:checked')].map(field => field.value);
+        if (kind === 'devices' && !deviceFields.length) {
+            window.CorsUI.showToast('warning', 'Chọn ít nhất một thông số trạm');
+            return;
+        }
         button.disabled = true;
+        const originalLabel = button.innerHTML;
+        button.textContent = 'Đang tạo file…';
         try {
-            let csv;
-            const serverExports = {
-                devices: window.ApiRoutes.devices.exportCsv,
-                rovers: window.ApiRoutes.rovers.exportCsv,
-                'rover-history': window.ApiRoutes.rovers.historyExportCsv
-            };
-            if (serverExports[kind]) {
-                const route = serverExports[kind];
-                const response = await window.ApiClient.apiFetch(route);
-                if (!response.ok) {
-                    const error = await response.json().catch(() => ({}));
-                    throw new Error(error.detail || `Không thể xuất dữ liệu (${response.status})`);
-                }
-                csv = await response.text();
-            } else {
-                const alertFields = [
-                    ['Mức độ', 'severity'], ['Loại', 'type'], ['Tiêu đề', 'title'],
-                    ['Nội dung', 'message'], ['Trạm', 'device_serial'],
-                    ['Rover', 'rover_username'], ['Caster', 'caster_host'],
-                    ['Trạng thái', 'state'], ['Thời gian Unix', 'created_at']
-                ];
-                const exports = {
-                    'caster-users': [window.ApiRoutes.caster.users, data => data.items, [
-                        ['Tài khoản', 'username'], ['Caster', 'server'], ['Mountpoint', 'mountpoints'],
-                        ['Kết nối', 'nclient'], ['Giới hạn kết nối', 'maxclient'],
-                        ['Trong DB', 'in_db'], ['Bị chặn', 'is_blocked'], ['Lần cập nhật Unix', 'last_update']
-                    ]],
-                    blocklist: [window.ApiRoutes.caster.blocklist, data => data, [
-                        ['Tài khoản', 'username'], ['Mountpoint', 'mountpoint'],
-                        ['Thời gian chặn Unix', 'blocked_at'], ['Người chặn', 'blocked_by'], ['Lý do', 'reason']
-                    ]],
-                    alerts: [window.ApiRoutes.ops.alerts, data => data.items, alertFields],
-                    'resolved-alerts': [`${window.ApiRoutes.ops.alerts}?state=resolved`, data => data.items, alertFields],
-                    events: [`${window.ApiRoutes.ops.events}?limit=200`, data => data.items, [
-                        ['Thời gian Unix', 'timestamp'], ['Mức độ', 'severity'],
-                        ['Sự kiện', 'message'], ['Trạm', 'device_serial'],
-                        ['Người dùng ID', 'actor_user_id'], ['IP', 'ip_address']
-                    ]],
-                    casters: [window.ApiRoutes.ops.summary, data => data.casters, [
-                        ['Máy chủ', 'host'], ['Cổng', 'port'], ['Tài khoản', 'users'],
-                        ['Kết nối', 'clients'], ['Lỗi', 'error'],
-                        ['Dữ liệu cũ', 'stale'], ['Lần cập nhật Unix', 'last_update']
-                    ]],
-                    users: [window.ApiRoutes.users.list, data => data, [
-                        ['ID', 'id'], ['Tài khoản', 'username'], ['Họ tên', 'full_name'],
-                        ['Vai trò', 'role'], ['Đang hoạt động', 'is_active'],
-                        ['Trạm được sửa', 'allowed_bases'], ['Trạm chỉ xem', 'view_only_bases'],
-                        ['Được xem Rover', 'can_view_rovers'], ['Được tạo Rover', 'can_create_rovers'],
-                        ['Được tạo tài khoản', 'can_create_users'], ['Ngày tạo Unix', 'created_at']
-                    ]],
-                    templates: [window.ApiRoutes.devices.templates, data => data.items, [
-                        ['Tên mẫu', 'name'], ['Mô tả', 'description'], ['Cấu hình Base', 'base_config'],
-                        ['Cấu hình dịch vụ', 'service_config'], ['Người tạo', 'created_by'],
-                        ['Ngày tạo Unix', 'created_at']
-                    ]]
-                };
-                const selected = exports[kind];
-                if (!selected) throw new Error('Loại dữ liệu không hợp lệ');
-                const data = await apiJson(selected[0]);
-                csv = csvRows(selected[1](data) || [], selected[2]);
+            const response = await window.ApiClient.apiFetch(window.ApiRoutes.ops.exportXlsx, {
+                method: 'POST',
+                timeoutMs: 120000,
+                body: JSON.stringify({
+                    kind,
+                    rover_username: $('ops-export-rover').value.trim(),
+                    device_serial: $('ops-export-device').value.trim(),
+                    device_fields: deviceFields
+                })
+            }, 0);
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || `Không thể tạo file Excel (${response.status})`);
             }
-            const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
+            const url = URL.createObjectURL(await response.blob());
             const link = document.createElement('a');
             link.href = url;
-            link.download = `${kind}-${new Date().toISOString().slice(0, 10)}.csv`;
+            const today = new Date();
+            const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            link.download = `${kind}-${localDate}.xlsx`;
             document.body.appendChild(link);
             link.click();
             link.remove();
-            URL.revokeObjectURL(url);
-            window.CorsUI.showToast('success', 'Đã tải file CSV');
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+            window.CorsUI.showToast('success', 'Đã tải file Excel');
         } finally {
             button.disabled = false;
+            button.innerHTML = originalLabel;
         }
     }
 
@@ -360,6 +337,19 @@
         $('ops-rover-renew-btn')?.addEventListener('click', () => bulkRenewRovers().catch(e => window.CorsUI.showToast('danger', e.message)));
         $('ops-rover-validate-btn')?.addEventListener('click', () => validateRover().catch(e => window.CorsUI.showToast('danger', e.message)));
         $('ops-export-btn')?.addEventListener('click', () => exportData().catch(e => window.CorsUI.showToast('danger', e.message)));
+        $('ops-export-kind')?.addEventListener('change', updateExportOptions);
+        document.querySelectorAll('[name="ops-device-field"]').forEach(field => field.addEventListener('change', updateExportFieldCount));
+        $('ops-export-select-all')?.addEventListener('click', () => {
+            document.querySelectorAll('[name="ops-device-field"]').forEach(field => { field.checked = true; });
+            updateExportFieldCount();
+        });
+        $('ops-export-select-default')?.addEventListener('click', () => {
+            document.querySelectorAll('[name="ops-device-field"]').forEach(field => { field.checked = field.defaultChecked; });
+            updateExportFieldCount();
+        });
+        updateExportOptions();
+        updateExportFieldCount();
+        loadExportTargets().catch(e => window.CorsUI.showToast('warning', `Không tải được danh sách chọn: ${e.message}`));
         $('ops-device-action-btn')?.addEventListener('click', () => runDeviceAction().catch(e => window.CorsUI.showToast('danger', e.message)));
         $('ops-template-create-btn')?.addEventListener('click', () => createTemplate().catch(e => window.CorsUI.showToast('danger', e.message)));
         $('ops-template-apply-btn')?.addEventListener('click', () => applyTemplate().catch(e => window.CorsUI.showToast('danger', e.message)));
