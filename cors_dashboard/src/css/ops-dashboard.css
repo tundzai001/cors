@@ -53,6 +53,34 @@
     color: #e0f2fe;
 }
 
+.cors-dashboard .dashboard-list-toolbar .dashboard-filter-toggle {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
+}
+
+.dashboard-active-filter {
+    color: #7dd3fc;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: capitalize;
+}
+
+.cors-dashboard .dashboard-filter-menu {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: min(320px, 40vh);
+    overflow-y: auto;
+}
+
+.dashboard-filter-menu .dashboard-status-chip {
+    justify-content: space-between;
+    min-height: 40px;
+    min-width: 0;
+    white-space: nowrap;
+}
+
 .device-card.dashboard-device-card {
     background: rgba(13, 20, 32, 0.78);
     border: 1px solid var(--ops-border-soft);

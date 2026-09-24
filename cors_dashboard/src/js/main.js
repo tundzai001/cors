@@ -1600,17 +1600,6 @@ async function loadInitialDevices() {
 }
 
 function setupUIbasedOnPermissions() {
-    const exportBtn = document.getElementById('export-csv-btn');
-    if (exportBtn) {
-        if (hasPermission('export:data')) {
-            exportBtn.classList.remove('disabled');
-            exportBtn.removeAttribute('title');
-        } else {
-            exportBtn.classList.add('disabled');
-            exportBtn.title = 'Bạn không có quyền xuất dữ liệu';
-        }
-    }
-
     // === HIỂN THỊ WIDGET MONITORING CHO ADMIN ===
     const monitorWidget = document.getElementById('admin-monitoring-widget');
     if (monitorWidget) {
@@ -1632,32 +1621,6 @@ function setupEventListeners() {
         });
     }
 
-    const exportBtn = document.getElementById('export-csv-btn');
-    if (exportBtn) {
-        exportBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            if (exportBtn.classList.contains('disabled')) return;
-
-            try {
-                const response = await apiFetch('/api/devices/export/csv');
-                if (!response.ok) throw new Error('Export failed');
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `cors_devices_${new Date().toISOString().split('T')[0]}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-                showSuccess('File CSV đã được tải xuống!');
-            } catch (error) {
-                if (error.message !== 'Unauthorized') {
-                    showError('Không thể export: ' + error.message);
-                }
-            }
-        });
-    }
 }
 
 // === ENTRY POINT ===

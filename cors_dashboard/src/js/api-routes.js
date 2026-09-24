@@ -46,6 +46,7 @@
             validate: '/api/rovers/validate',
             bulkRenew: '/api/rovers/bulk-renew',
             exportCsv: '/api/rovers/export/csv',
+            historyExportCsv: '/api/rovers/history/export/csv',
             history: username => `/api/rovers/${encodeURIComponent(username)}/history`,
             syncStatus: '/api/rovers/sync-status',
             detail: roverId => `/api/rovers/${encodeURIComponent(roverId)}`,

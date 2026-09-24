@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = 'cors_dashboard/src';
 const publicRoot = 'cors_dashboard/frontend';
 const jsx = [
-    'react-components.js', 'dashboard-forms.js', 'dashboard-list.js',
+    'react-components.js', 'operations-view.js', 'dashboard-forms.js', 'dashboard-list.js',
     'dashboard-live.js', 'dashboard-detail.js', 'stations-map.js',
     'homepage-enterprise.v2.js', 'enterprise-station-detail.js',
     'blog-system.js', 'api-docs.js', 'advanced-features.js',

@@ -403,8 +403,14 @@ window.DeviceListItem = DeviceListItem;
 const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
     const [statusFilter, setStatusFilter] = useState('all');
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const searchTimeoutRef = useRef(null);
     const isAdmin = currentUser?.role === 'admin';
+    const filterOptions = [
+        ['all', 'All'], ['online', 'Online'], ['sleep', 'Sleep'],
+        ['offline', 'Offline'], ['locked', 'Locked'], ['alerts', 'Alerts'],
+        ['unsynced', 'Unsynced'], ['no_stream', 'No stream']
+    ];
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
     const getListStatus = React.useCallback((device) => {
         const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
@@ -455,12 +461,17 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             {/* Header: Số lượng & Search */}
             <div className="dashboard-list-toolbar p-3">
                 <div className="d-flex justify-content-between align-items-center mb-2">
-                    <h6 className="text-white mb-0 fw-bold">Trạm ({devices.length})</h6>
-                    <div className="d-flex align-items-center gap-2">
-                        <button className="btn btn-sm btn-link text-muted text-decoration-none p-0">
-                            <i className="bi bi-filter-right fs-5"></i>
-                        </button>
-                    </div>
+                    <h6 className="text-white mb-0 fw-bold">Trạm ({devices.length}){statusFilter !== 'all' && <span className="dashboard-active-filter ms-2">{filterOptions.find(([key]) => key === statusFilter)?.[1]}</span>}</h6>
+                    <button
+                        className="btn btn-sm btn-link text-muted text-decoration-none p-0 dashboard-filter-toggle"
+                        type="button"
+                        aria-label="Bộ lọc danh sách trạm"
+                        aria-expanded={filtersOpen}
+                        aria-controls="dashboard-station-filters"
+                        onClick={() => setFiltersOpen(open => !open)}
+                    >
+                        <i className="bi bi-filter-right fs-5" aria-hidden="true"></i>
+                    </button>
                 </div>
                 <div className="input-group input-group-sm">
                     <span className="input-group-text bg-dark border-secondary text-secondary">
@@ -483,28 +494,20 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                         </button>
                     )}
                 </div>
-                <div className="dashboard-status-chips">
-                    {[
-                        ['all', 'All'],
-                        ['online', 'Online'],
-                        ['sleep', 'Sleep'],
-                        ['offline', 'Offline'],
-                        ['locked', 'Locked'],
-                        ['alerts', 'Alerts'],
-                        ['unsynced', 'Unsynced'],
-                        ['no_stream', 'No stream']
-                    ].map(([key, label]) => (
+                {filtersOpen && <div className="dashboard-status-chips dashboard-filter-menu" id="dashboard-station-filters" role="group" aria-label="Lọc trạm theo trạng thái">
+                    {filterOptions.map(([key, label]) => (
                         <button
                             key={key}
                             type="button"
                             className={`dashboard-status-chip ${statusFilter === key ? 'active' : ''}`}
-                            onClick={() => setStatusFilter(key)}
+                            aria-pressed={statusFilter === key}
+                            onClick={() => { setStatusFilter(key); setFiltersOpen(false); }}
                         >
                             <span>{label}</span>
                             <strong>{counts[key] || 0}</strong>
                         </button>
                     ))}
-                </div>
+                </div>}
             </div>
 
             {/* List */}
