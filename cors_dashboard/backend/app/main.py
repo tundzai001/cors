@@ -7657,7 +7657,6 @@ async def get_rover_history(
     return {
         "username": username,
         "in_db": bool(rover),
-        "profile": schemas.RoverAccountResponse.from_orm(rover).model_dump() if rover else None,
         "caster_status": statuses,
         "sessions": sessions,
         "events": events,

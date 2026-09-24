@@ -1217,72 +1217,162 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function ensureRoverHistoryModal() {
+        const mount = document.getElementById('rover-history-modal-root');
+        if (!mount) return null;
+        const existing = mount.querySelector('#roverHistoryModal');
+        if (existing) return existing;
+
+        mount.innerHTML = `
+            <div class="modal fade" id="roverHistoryModal" tabindex="-1" aria-labelledby="rover-history-title" aria-hidden="true">
+                <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable rover-history-dialog">
+                    <div class="modal-content bg-dark border-secondary shadow-lg">
+                        <div class="modal-header border-secondary">
+                            <div class="rover-history-heading">
+                                <div class="rover-history-heading-icon"><i class="bi bi-clock-history" aria-hidden="true"></i></div>
+                                <div class="rover-history-heading-copy">
+                                    <div class="rover-history-heading-title">
+                                        <h5 class="modal-title text-white" id="rover-history-title">Lịch sử Rover</h5>
+                                        <span class="rover-history-rover-name" id="rover-history-rover-name">Chưa chọn rover</span>
+                                    </div>
+                                    <p>Phiên kết nối, vị trí cuối và hoạt động gần đây</p>
+                                </div>
+                            </div>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                        </div>
+                        <div class="modal-body p-4 rover-history-body" id="rover-history-content" aria-live="polite" aria-busy="false">
+                            <div class="text-muted py-3">Chọn rover để xem lịch sử.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        return mount.querySelector('#roverHistoryModal');
+    }
+
     async function handleRoverHistory(e) {
         const username = e.currentTarget.dataset.username;
         if (!username) return;
-        const title = document.getElementById('rover-history-title');
-        const body = document.getElementById('rover-history-content');
-        if (title) title.textContent = `Rover history - ${username}`;
-        if (body) body.innerHTML = '<div class="text-muted py-3">Loading history...</div>';
-        const modalEl = document.getElementById('roverHistoryModal');
-        if (modalEl && window.bootstrap) bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        const modalEl = ensureRoverHistoryModal();
+        if (!modalEl) return;
+        const roverName = modalEl.querySelector('#rover-history-rover-name');
+        const body = modalEl.querySelector('#rover-history-content');
+        if (roverName) roverName.textContent = username;
+        if (body) {
+            body.setAttribute('aria-busy', 'true');
+            body.innerHTML = '<div class="rover-history-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải lịch sử…</span></div>';
+        }
+        if (window.bootstrap) bootstrap.Modal.getOrCreateInstance(modalEl).show();
         try {
             const response = await apiFetchRaw(window.ApiRoutes.rovers.history(username), { headers: API_HEADERS });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || `History failed: ${response.status}`);
+            if (!response.ok) throw new Error(data.detail || `Không tải được lịch sử (${response.status}).`);
             if (body) {
-            const events = data.events || [];
-            const statuses = data.caster_status || [];
-            const connections = statuses.flatMap(item => item.active_connections || []);
-            const sessions = data.sessions || [];
-            const sessionHistoryHtml = sessions.length ? sessions.map(session => {
-                const position = session.last_position;
-                const hasPosition = position
-                    && Number.isFinite(Number(position.lat))
-                    && Number.isFinite(Number(position.lon))
-                    && !(Number(position.lat) === 0 && Number(position.lon) === 0);
-                const positionHtml = hasPosition
-                    ? `<div class="small text-white mt-2">
-                            <span class="me-3">Lat: <strong>${Number(position.lat).toFixed(7)}</strong></span>
-                            <span class="me-3">Lon: <strong>${Number(position.lon).toFixed(7)}</strong></span>
-                            <div class="text-muted mt-1">Ghi nhận lúc: ${formatDateTime(position.recorded_at)}</div>
-                        </div>`
-                    : '<div class="small text-muted mt-2">Chưa có đủ lat/lon cho phiên này.</div>';
-                return `<div class="rover-history-event">
-                    <div class="d-flex justify-content-between align-items-start gap-2">
-                        <strong>${escapeHtml(session.mountpoint || 'Không rõ mountpoint')}</strong>
-                        <span class="badge ${session.ended_at ? 'bg-secondary' : 'bg-success'}">${session.ended_at ? 'Đã kết thúc' : 'Đang hoạt động'}</span>
-                    </div>
-                    <span>${escapeHtml(session.server || 'Caster')} · Bắt đầu: ${formatDateTime(session.started_at)} · ${session.ended_at ? `Kết thúc: ${formatDateTime(session.ended_at)}` : `Cập nhật cuối: ${formatDateTime(session.last_seen_at)}`}</span>
-                    ${positionHtml}
-                </div>`;
-            }).join('') : '<div class="text-muted small">Chưa có phiên nào được ghi nhận.</div>';
-                body.innerHTML = `
-                    <div class="row g-3">
-                        <div class="col-md-3"><div class="rover-history-card"><span>DB profile</span><strong>${data.profile ? 'Available' : 'Missing'}</strong></div></div>
-                        <div class="col-md-3"><div class="rover-history-card"><span>Caster records</span><strong>${statuses.length}</strong></div></div>
-                        <div class="col-md-3"><div class="rover-history-card"><span>Active sessions</span><strong>${connections.length}</strong></div></div>
-                        <div class="col-md-3"><div class="rover-history-card"><span>Saved sessions</span><strong>${sessions.length}</strong></div></div>
-                    </div>
-                    <div class="mt-3">
-                        <h6 class="text-white">Vị trí cuối theo từng phiên</h6>
-                        ${sessionHistoryHtml}
-                    </div>
-                    <div class="mt-3">
-                        <h6 class="text-white">Recent events</h6>
-                        ${events.length ? events.map(item => `
-                            <div class="rover-history-event">
-                                <span>${formatDateTime(item.timestamp)}</span>
-                                <strong>${escapeHtml(item.severity || item.type || 'info')}</strong>
-                                <p>${escapeHtml(item.message || '')}</p>
+                const events = data.events || [];
+                const statuses = data.caster_status || [];
+                const connections = statuses.flatMap(item => item.active_connections || []);
+                const sessions = data.sessions || [];
+                const sessionHistoryHtml = sessions.length ? sessions.map(session => {
+                    const position = session.last_position;
+                    const hasPosition = position
+                        && position.lat !== null && position.lat !== ''
+                        && position.lon !== null && position.lon !== ''
+                        && Number.isFinite(Number(position.lat))
+                        && Number.isFinite(Number(position.lon))
+                        && !(Number(position.lat) === 0 && Number(position.lon) === 0);
+                    const latitude = hasPosition ? Number(position.lat).toFixed(7) : '';
+                    const longitude = hasPosition ? Number(position.lon).toFixed(7) : '';
+                    const positionHtml = hasPosition
+                        ? `<div class="rover-history-position">
+                                <div class="rover-history-position-heading">
+                                    <span><i class="bi bi-crosshair2" aria-hidden="true"></i> Vị trí cuối</span>
+                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${latitude}%2C${longitude}" target="_blank" rel="noopener noreferrer" aria-label="Mở vị trí ${latitude}, ${longitude} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Google Maps</span></a>
+                                </div>
+                                <div class="rover-history-coordinate-grid">
+                                    <div class="rover-history-coordinate">
+                                        <div class="rover-history-coordinate-heading"><span>Vĩ độ</span><button class="rover-history-copy" type="button" data-copy-value="${latitude}" aria-label="Sao chép vĩ độ" title="Sao chép vĩ độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div>
+                                        <strong>${latitude}</strong>
+                                    </div>
+                                    <div class="rover-history-coordinate">
+                                        <div class="rover-history-coordinate-heading"><span>Kinh độ</span><button class="rover-history-copy" type="button" data-copy-value="${longitude}" aria-label="Sao chép kinh độ" title="Sao chép kinh độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div>
+                                        <strong>${longitude}</strong>
+                                    </div>
+                                </div>
+                                <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)}</div>
+                            </div>`
+                        : '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận đủ vĩ độ và kinh độ cho phiên này.</span></div>';
+                    const ended = Boolean(session.ended_at);
+                    return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
+                        <div class="rover-history-session-heading">
+                            <div class="min-w-0">
+                                <span class="rover-history-label">Mountpoint</span>
+                                <h6>${escapeHtml(session.mountpoint || 'Không rõ mountpoint')}</h6>
                             </div>
-                        `).join('') : '<div class="text-muted small">No events for this rover.</div>'}
+                            <span class="rover-history-status ${ended ? 'is-ended' : 'is-active'}"><i aria-hidden="true"></i>${ended ? 'Đã kết thúc' : 'Đang hoạt động'}</span>
+                        </div>
+                        <div class="rover-history-meta">
+                            <div><span>Máy chủ</span><strong>${escapeHtml(session.server || 'Caster')}</strong></div>
+                            <div><span>Bắt đầu</span><strong>${formatDateTime(session.started_at)}</strong></div>
+                            <div><span>${ended ? 'Kết thúc' : 'Cập nhật cuối'}</span><strong>${formatDateTime(ended ? session.ended_at : session.last_seen_at)}</strong></div>
+                        </div>
+                        ${positionHtml}
+                    </article>`;
+                }).join('') : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
+                const eventHistoryHtml = events.length ? events.map(item => {
+                    const level = String(item.severity || item.type || '').toLowerCase();
+                    const tone = ['critical', 'error', 'danger'].includes(level) ? 'danger'
+                        : level === 'warning' ? 'warning'
+                        : level === 'success' ? 'success' : 'info';
+                    const labels = { critical: 'Khẩn cấp', error: 'Lỗi', danger: 'Lỗi', warning: 'Cảnh báo', success: 'Thành công', info: 'Thông tin' };
+                    return `<article class="rover-history-event is-${tone}">
+                        <span class="rover-history-event-time"><i class="bi bi-clock" aria-hidden="true"></i>${formatDateTime(item.timestamp)}</span>
+                        <div class="rover-history-event-copy"><strong>${escapeHtml(labels[level] || item.type || 'Thông tin')}</strong><p>${escapeHtml(item.message || '')}</p></div>
+                    </article>`;
+                }).join('') : '<div class="rover-history-empty"><i class="bi bi-inbox" aria-hidden="true"></i><span>Chưa có sự kiện nào được ghi nhận.</span></div>';
+
+                body.innerHTML = `
+                    <div class="row g-3 rover-history-summary" aria-label="Tổng quan Rover">
+                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Hồ sơ CSDL</span><strong>${data.in_db ? 'Đã lưu' : 'Chưa có'}</strong></div><i class="bi bi-person-vcard" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Caster đang theo dõi</span><strong>${statuses.length}</strong></div><i class="bi bi-broadcast" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Phiên hoạt động</span><strong>${connections.length}</strong></div><i class="bi bi-activity" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tổng số phiên</span><strong>${sessions.length}</strong></div><i class="bi bi-clock-history" aria-hidden="true"></i></div></div>
                     </div>
-                    <pre class="rover-history-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+                    <section class="rover-history-section" aria-labelledby="rover-history-sessions-title">
+                        <div class="rover-history-section-heading">
+                            <div>
+                                <h6 id="rover-history-sessions-title"><i class="bi bi-geo-alt" aria-hidden="true"></i>Vị trí cuối theo phiên</h6>
+                                <p>Tọa độ gần nhất rover gửi trong mỗi phiên kết nối.</p>
+                            </div>
+                            <span class="rover-history-count">${sessions.length} phiên</span>
+                        </div>
+                        <div class="rover-history-session-list">${sessionHistoryHtml}</div>
+                    </section>
+                    <section class="rover-history-section" aria-labelledby="rover-history-events-title">
+                        <div class="rover-history-section-heading">
+                            <div>
+                                <h6 id="rover-history-events-title"><i class="bi bi-activity" aria-hidden="true"></i>Sự kiện gần đây</h6>
+                                <p>Hoạt động mới nhất được ghi nhận cho rover này.</p>
+                            </div>
+                        </div>
+                        <div class="rover-history-event-list">${eventHistoryHtml}</div>
+                    </section>
                 `;
+                body.setAttribute('aria-busy', 'false');
+                body.querySelectorAll('.rover-history-copy').forEach(button => {
+                    button.addEventListener('click', async () => {
+                        try {
+                            await navigator.clipboard.writeText(button.dataset.copyValue || '');
+                            showToast('Đã sao chép tọa độ', 'success');
+                        } catch {
+                            showToast('Không thể sao chép tọa độ trên trình duyệt này.', 'danger');
+                        }
+                    });
+                });
             }
         } catch (error) {
-            if (body) body.innerHTML = `<div class="text-danger py-3">${escapeHtml(error.message)}</div>`;
+            if (body) {
+                body.setAttribute('aria-busy', 'false');
+                body.innerHTML = `<div class="rover-history-empty text-danger" role="alert">${escapeHtml(error.message)}</div>`;
+            }
         }
     }
 
