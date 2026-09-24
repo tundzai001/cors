@@ -1889,7 +1889,7 @@ body.ops-admin-page {
     text-transform: uppercase;
 }
 
-.rover-history-stat strong { color: #f1f5f9; display: block; font-size: 1.08rem; line-height: 1.25; margin-top: 6px; }
+.rover-history-stat strong { color: #f1f5f9; display: block; font-size: 1.08rem; line-height: 1.25; margin-top: 6px; overflow-wrap: anywhere; }
 .rover-history-stat > i {
     align-items: center;
     background: rgba(14, 165, 233, 0.11);

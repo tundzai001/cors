@@ -1258,6 +1258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const body = modalEl.querySelector('#rover-history-content');
         if (roverName) roverName.textContent = username;
         if (body) {
+            body.scrollTop = 0;
             body.setAttribute('aria-busy', 'true');
             body.innerHTML = '<div class="rover-history-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải lịch sử…</span></div>';
         }
@@ -1271,6 +1272,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const statuses = data.caster_status || [];
                 const connections = statuses.flatMap(item => item.active_connections || []);
                 const sessions = data.sessions || [];
+                const accountName = escapeHtml(data.account?.username || data.username || username);
+                const machineNumber = escapeHtml(data.account?.base_serial || 'Chưa gán');
                 const sessionHistoryHtml = sessions.length ? sessions.map(session => {
                     const position = session.last_position;
                     const hasPosition = position
@@ -1331,10 +1334,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 body.innerHTML = `
                     <div class="row g-3 rover-history-summary" aria-label="Tổng quan Rover">
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Hồ sơ CSDL</span><strong>${data.in_db ? 'Đã lưu' : 'Chưa có'}</strong></div><i class="bi bi-person-vcard" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Caster đang theo dõi</span><strong>${statuses.length}</strong></div><i class="bi bi-broadcast" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Phiên hoạt động</span><strong>${connections.length}</strong></div><i class="bi bi-activity" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tổng số phiên</span><strong>${sessions.length}</strong></div><i class="bi bi-clock-history" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl"><div class="rover-history-stat"><div><span>Tên tài khoản</span><strong title="${accountName}">${accountName}</strong></div><i class="bi bi-person-vcard" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl"><div class="rover-history-stat"><div><span>Số máy</span><strong title="${machineNumber}">${machineNumber}</strong></div><i class="bi bi-hdd-network" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl"><div class="rover-history-stat"><div><span>Caster đang theo dõi</span><strong>${statuses.length}</strong></div><i class="bi bi-broadcast" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl"><div class="rover-history-stat"><div><span>Phiên hoạt động</span><strong>${connections.length}</strong></div><i class="bi bi-activity" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl"><div class="rover-history-stat"><div><span>Tổng số phiên</span><strong>${sessions.length}</strong></div><i class="bi bi-clock-history" aria-hidden="true"></i></div></div>
                     </div>
                     <section class="rover-history-section" aria-labelledby="rover-history-sessions-title">
                         <div class="rover-history-section-heading">
@@ -1356,6 +1360,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <div class="rover-history-event-list">${eventHistoryHtml}</div>
                     </section>
                 `;
+                body.scrollTop = 0;
                 body.setAttribute('aria-busy', 'false');
                 body.querySelectorAll('.rover-history-copy').forEach(button => {
                     button.addEventListener('click', async () => {
