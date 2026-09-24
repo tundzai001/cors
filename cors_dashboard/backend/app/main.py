@@ -7,6 +7,7 @@ import uuid
 import hashlib
 import json
 import asyncio
+import math
 from datetime import datetime, timedelta
 import gc
 import sys
@@ -5553,15 +5554,25 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
             caster.get_clienttable(mountpoint="all")
         )
 
+        scan_timestamp = int(time.time())
         async with global_caster_cache_lock:
             await _set_caster_cache(key, {
-                "last_update": int(time.time()),
+                "last_update": scan_timestamp,
                 "users": users or [],
                 "clients": clients or [],
                 "error": None,
                 "host": host,
                 "port": port
             })
+
+        # A failed clienttable query must not end every recorded session. An
+        # empty list, on the other hand, is a successful scan with no clients.
+        if clients is not None:
+            try:
+                await _record_rover_session_snapshots(host, clients, scan_timestamp)
+            except Exception as history_error:
+                logger.warning("[CASTER HISTORY] Could not persist sessions for %s: %s", host, history_error)
+
         if RTCM_KEEPALIVE_DEBUG:
             logger.info(f"[CASTER MONITOR] Scanned {key}: {len(users or [])} users, {len(clients or [])} clients")
 
@@ -5573,6 +5584,123 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
             global_caster_data_cache[key]["error"] = str(e)
             global_caster_data_cache[key]["last_update"] = int(time.time())
             await _set_caster_cache(key, global_caster_data_cache[key])
+
+
+def _rover_history_session_key(server: str, username: str, mountpoint: str, client_id: str, receiver_id: str) -> tuple[str, str, str, str]:
+    session_identifier = str(client_id or receiver_id or "").strip().casefold()
+    return (
+        str(server or "").strip().casefold(),
+        str(username or "").strip().casefold(),
+        str(mountpoint or "").strip().casefold(),
+        session_identifier,
+    )
+
+
+def _rover_history_position(client: dict) -> tuple[float, float] | None:
+    try:
+        if int(client.get("status") or 0) <= 0:
+            return None
+    except (TypeError, ValueError):
+        return None
+    raw_latitude = client.get("latitude", client.get("lat"))
+    raw_longitude = client.get("longitude", client.get("lon"))
+    if raw_latitude is None or raw_longitude is None:
+        return None
+    try:
+        latitude, longitude = float(raw_latitude), float(raw_longitude)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (latitude, longitude)):
+        return None
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return None
+    # Aicaster reports 0/0 when position sharing is disabled.
+    if latitude == 0 and longitude == 0:
+        return None
+    return latitude, longitude
+
+
+async def _record_rover_session_snapshots(host: str, clients: list[dict], observed_at: int) -> None:
+    """Keep one history row per observed caster connection session."""
+    async with auth_session_scope() as db:
+        active_result = await db.execute(
+            select(models.RoverSessionHistory).where(
+                models.RoverSessionHistory.server == host,
+                models.RoverSessionHistory.ended_at.is_(None),
+            )
+        )
+        active_rows = list(active_result.scalars().all())
+        active_by_key = {
+            _rover_history_session_key(
+                row.server, row.username, row.mountpoint, row.client_id, row.receiver_id
+            ): row
+            for row in active_rows
+        }
+        observed_keys = set()
+
+        for client in clients:
+            if not isinstance(client, dict):
+                continue
+            username = str(client.get("username") or "").strip()
+            if not username:
+                continue
+            mountpoint = str(client.get("mountpoint") or "").strip()
+            client_id = str(client.get("client_id") or "").strip()
+            receiver_id = str(client.get("receiver_id") or "").strip()
+            session_key = _rover_history_session_key(host, username, mountpoint, client_id, receiver_id)
+            if session_key in observed_keys:
+                continue
+            observed_keys.add(session_key)
+
+            raw_uptime = client.get("uptime")
+            try:
+                uptime_seconds = max(0, int(raw_uptime)) if raw_uptime is not None else None
+            except (TypeError, ValueError):
+                uptime_seconds = None
+
+            row = active_by_key.pop(session_key, None)
+            if (
+                row is not None
+                and uptime_seconds is not None
+                and row.uptime_seconds is not None
+                and uptime_seconds + 10 < row.uptime_seconds
+            ):
+                # The caster reused a client identifier after a reconnect.
+                row.ended_at = observed_at
+                row = None
+
+            if row is None:
+                row = models.RoverSessionHistory(
+                    username=username,
+                    server=host,
+                    mountpoint=mountpoint,
+                    client_id=client_id,
+                    receiver_id=receiver_id,
+                    started_at=observed_at - uptime_seconds if uptime_seconds else observed_at,
+                    last_seen_at=observed_at,
+                    uptime_seconds=uptime_seconds,
+                )
+                db.add(row)
+            else:
+                row.username = username
+                row.mountpoint = mountpoint
+                row.client_id = client_id
+                row.receiver_id = receiver_id
+                row.last_seen_at = observed_at
+                if uptime_seconds is not None:
+                    if row.uptime_seconds is None or row.started_at is None:
+                        row.started_at = observed_at - uptime_seconds
+                    row.uptime_seconds = uptime_seconds
+
+            position = _rover_history_position(client)
+            if position is not None:
+                row.latitude, row.longitude = position
+                row.position_updated_at = observed_at
+
+        for row in active_by_key.values():
+            row.ended_at = observed_at
+
+        await db.commit()
 
 
 @app.post("/api/rtcm/ntrip/stop")
@@ -7499,11 +7627,39 @@ async def get_rover_history(
         raise HTTPException(status_code=403, detail="Rover is outside your scope")
     events = await _ops_events_query(devices_db, limit=100, q=username)
     statuses = await _ops_cached_rover_status({username.strip().lower()})
+    sessions_result = await auth_db.execute(
+        select(models.RoverSessionHistory)
+        .where(func.lower(models.RoverSessionHistory.username) == username.strip().lower())
+        .order_by(models.RoverSessionHistory.last_seen_at.desc())
+        .limit(100)
+    )
+    sessions = []
+    for session in sessions_result.scalars().all():
+        has_complete_position = (
+            session.latitude is not None
+            and session.longitude is not None
+        )
+        sessions.append({
+            "id": session.id,
+            "server": session.server,
+            "mountpoint": session.mountpoint,
+            "client_id": session.client_id,
+            "receiver_id": session.receiver_id,
+            "started_at": session.started_at,
+            "last_seen_at": session.last_seen_at,
+            "ended_at": session.ended_at,
+            "last_position": {
+                "lat": session.latitude,
+                "lon": session.longitude,
+                "recorded_at": session.position_updated_at,
+            } if has_complete_position else None,
+        })
     return {
         "username": username,
         "in_db": bool(rover),
         "profile": schemas.RoverAccountResponse.from_orm(rover).model_dump() if rover else None,
         "caster_status": statuses,
+        "sessions": sessions,
         "events": events,
     }
 
@@ -8504,4 +8660,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-

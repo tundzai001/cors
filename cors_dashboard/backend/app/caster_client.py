@@ -320,7 +320,7 @@ class CasterClient:
                     "longitude": float(parts[5]) if parts[5] else None,
                     "status": int(parts[6]) if parts[6].isdigit() else 1,
                     "nsv": int(parts[7]) if parts[7].isdigit() else 0,
-                    "uptime": int(parts[8]) if len(parts) > 8 and parts[8].isdigit() else 0,
+                    "uptime": int(parts[8]) if len(parts) > 8 and parts[8].isdigit() else None,
                     "client_id": parts[9].strip() if len(parts) > 9 else "",
                 })
             except: continue

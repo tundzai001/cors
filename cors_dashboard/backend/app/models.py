@@ -2,7 +2,7 @@
 # == backend/app/models.py ==
 # ==============================================================================
 
-from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index, Text, ForeignKey, UniqueConstraint, Float
 from sqlalchemy.dialects.postgresql import JSONB
 from .database import Base, AuthBase 
 
@@ -52,6 +52,30 @@ class RoverAccount(AuthBase):
     rtcm_disconnect_duration_seconds = Column(Integer, default=10) # Pause duration
     expires_at = Column(BigInteger, nullable=True) # Unix timestamp of expiration, None = infinite
     is_shared_with_managers = Column(Boolean, default=False)
+
+
+class RoverSessionHistory(AuthBase):
+    __tablename__ = "rover_session_history"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String, nullable=False, index=True)
+    server = Column(String, nullable=False, index=True)
+    mountpoint = Column(String, nullable=False, default="")
+    client_id = Column(String, nullable=False, default="")
+    receiver_id = Column(String, nullable=False, default="")
+    started_at = Column(BigInteger, nullable=True)
+    last_seen_at = Column(BigInteger, nullable=False, index=True)
+    ended_at = Column(BigInteger, nullable=True, index=True)
+    uptime_seconds = Column(Integer, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    position_updated_at = Column(BigInteger, nullable=True)
+
+    __table_args__ = (
+        Index("ix_rover_session_history_lookup", "username", "server", "last_seen_at"),
+    )
+
+
 class User(AuthBase):
     __tablename__ = "users"
 

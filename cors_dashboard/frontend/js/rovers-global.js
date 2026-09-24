@@ -816,6 +816,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        })[char]);
+    }
+
     function normalizeUsername(username) {
         return String(username || '').trim().toLowerCase();
     }
@@ -1224,27 +1234,55 @@ document.addEventListener('DOMContentLoaded', async () => {
             const events = data.events || [];
             const statuses = data.caster_status || [];
             const connections = statuses.flatMap(item => item.active_connections || []);
+            const sessions = data.sessions || [];
+            const sessionHistoryHtml = sessions.length ? sessions.map(session => {
+                const position = session.last_position;
+                const hasPosition = position
+                    && Number.isFinite(Number(position.lat))
+                    && Number.isFinite(Number(position.lon))
+                    && !(Number(position.lat) === 0 && Number(position.lon) === 0);
+                const positionHtml = hasPosition
+                    ? `<div class="small text-white mt-2">
+                            <span class="me-3">Lat: <strong>${Number(position.lat).toFixed(7)}</strong></span>
+                            <span class="me-3">Lon: <strong>${Number(position.lon).toFixed(7)}</strong></span>
+                            <div class="text-muted mt-1">Ghi nhận lúc: ${formatDateTime(position.recorded_at)}</div>
+                        </div>`
+                    : '<div class="small text-muted mt-2">Chưa có đủ lat/lon cho phiên này.</div>';
+                return `<div class="rover-history-event">
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <strong>${escapeHtml(session.mountpoint || 'Không rõ mountpoint')}</strong>
+                        <span class="badge ${session.ended_at ? 'bg-secondary' : 'bg-success'}">${session.ended_at ? 'Đã kết thúc' : 'Đang hoạt động'}</span>
+                    </div>
+                    <span>${escapeHtml(session.server || 'Caster')} · Bắt đầu: ${formatDateTime(session.started_at)} · ${session.ended_at ? `Kết thúc: ${formatDateTime(session.ended_at)}` : `Cập nhật cuối: ${formatDateTime(session.last_seen_at)}`}</span>
+                    ${positionHtml}
+                </div>`;
+            }).join('') : '<div class="text-muted small">Chưa có phiên nào được ghi nhận.</div>';
                 body.innerHTML = `
                     <div class="row g-3">
-                        <div class="col-md-4"><div class="rover-history-card"><span>DB profile</span><strong>${data.profile ? 'Available' : 'Missing'}</strong></div></div>
-                        <div class="col-md-4"><div class="rover-history-card"><span>Caster records</span><strong>${statuses.length}</strong></div></div>
-                        <div class="col-md-4"><div class="rover-history-card"><span>Active sessions</span><strong>${connections.length}</strong></div></div>
+                        <div class="col-md-3"><div class="rover-history-card"><span>DB profile</span><strong>${data.profile ? 'Available' : 'Missing'}</strong></div></div>
+                        <div class="col-md-3"><div class="rover-history-card"><span>Caster records</span><strong>${statuses.length}</strong></div></div>
+                        <div class="col-md-3"><div class="rover-history-card"><span>Active sessions</span><strong>${connections.length}</strong></div></div>
+                        <div class="col-md-3"><div class="rover-history-card"><span>Saved sessions</span><strong>${sessions.length}</strong></div></div>
+                    </div>
+                    <div class="mt-3">
+                        <h6 class="text-white">Vị trí cuối theo từng phiên</h6>
+                        ${sessionHistoryHtml}
                     </div>
                     <div class="mt-3">
                         <h6 class="text-white">Recent events</h6>
                         ${events.length ? events.map(item => `
                             <div class="rover-history-event">
                                 <span>${formatDateTime(item.timestamp)}</span>
-                                <strong>${item.severity || item.type || 'info'}</strong>
-                                <p>${item.message || ''}</p>
+                                <strong>${escapeHtml(item.severity || item.type || 'info')}</strong>
+                                <p>${escapeHtml(item.message || '')}</p>
                             </div>
                         `).join('') : '<div class="text-muted small">No events for this rover.</div>'}
                     </div>
-                    <pre class="rover-history-json">${JSON.stringify(data, null, 2)}</pre>
+                    <pre class="rover-history-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
                 `;
             }
         } catch (error) {
-            if (body) body.innerHTML = `<div class="text-danger py-3">${error.message}</div>`;
+            if (body) body.innerHTML = `<div class="text-danger py-3">${escapeHtml(error.message)}</div>`;
         }
     }
 
