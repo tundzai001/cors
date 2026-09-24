@@ -38,6 +38,15 @@ async def _get_ownership_info(db: AsyncSession, creator_id: int) -> tuple[set[in
 
 router = APIRouter(tags=["Users"])
 
+
+async def _notify_station_scope_changed(db: AsyncSession, user_ids: set[int]) -> None:
+    """Refresh affected coordinators and the viewers whose scope depends on them."""
+    if not user_ids:
+        return
+    children = await db.execute(select(models.User.id).where(models.User.parent_id.in_(user_ids)))
+    for affected_id in user_ids | set(children.scalars().all()):
+        await ui_manager.broadcast({"type": "user_assignment_updated", "data": {"user_id": affected_id}})
+
 # === USER MANAGEMENT ===
 @router.get("/api/users", response_model=list[schemas.UserResponse])
 async def get_users(db: AsyncSession = Depends(get_auth_db),
@@ -213,16 +222,20 @@ async def create_user(
         allowed_rovers=user_data.allowed_rovers
     )
     
+    previous_owners = set()
     if user_data.assigned_devices:
         if new_user.role == 'coordinator':
             for serial in user_data.assigned_devices:
                 device = await crud.get_device_by_serial(devices_db, serial)
                 if device:
+                    if device.user_id is not None:
+                        previous_owners.add(device.user_id)
                     device.user_id = new_user.id
             await devices_db.commit()
+            await _notify_station_scope_changed(auth_db, previous_owners)
     
     permissions = auth.get_user_permissions(new_user)
-    user_response = schemas.UserResponse.from_orm(new_user)
+    user_response = schemas.UserResponse.model_validate(new_user)
     user_response.permissions = permissions
     await crud.log_system_event(
         db=devices_db,
@@ -275,6 +288,7 @@ async def update_user(
     # FIX: LOGIC CẬP NHẬT DANH SÁCH THIẾT BỊ (ASSIGN/UNASSIGN)
     # ===================================================================
     assigned_serials = update_dict.pop("assigned_devices", None)
+    affected_users = {user_id}
     
     if assigned_serials is not None:
         target_role = update_dict.get('role', user_to_update.role)
@@ -296,6 +310,8 @@ async def update_user(
             for serial in assigned_serials:
                 device = await crud.get_device_by_serial(devices_db, serial)
                 if device:
+                    if device.user_id is not None:
+                        affected_users.add(device.user_id)
                     device.user_id = user_id
                     # Broadcast cập nhật UI: Trạm nÃ y đã có chủ mới
                     await ui_manager.broadcast({
@@ -321,15 +337,15 @@ async def update_user(
     
     updated_user = await crud.update_user(auth_db, user_id, update_dict)
 
-    if assigned_serials is not None or 'allowed_bases' in update_dict or 'view_only_bases' in update_dict or 'role' in update_dict:
+    if assigned_serials is not None or set(update_dict).intersection({
+        'allowed_bases', 'view_only_bases', 'allowed_rovers', 'extra_mountpoints',
+        'can_view_rovers', 'can_create_rovers', 'can_create_users', 'role', 'is_active',
+    }):
         # Notify after commit so the browser reloads the new device scope.
-        await ui_manager.broadcast({
-            "type": "user_assignment_updated",
-            "data": {"user_id": user_id, "role": updated_user.role},
-        })
+        await _notify_station_scope_changed(auth_db, affected_users)
     
     permissions = auth.get_user_permissions(updated_user)
-    user_response = schemas.UserResponse.from_orm(updated_user)
+    user_response = schemas.UserResponse.model_validate(updated_user)
     user_response.permissions = permissions
     
     await crud.log_system_event(
@@ -388,10 +404,16 @@ async def delete_user(
         # Không raise lỗi để tiếp tục xóa user
     # ===================================================================
 
+    # Capture children before deleting their parent so open pages lose stale scope.
+    children = await auth_db.execute(select(models.User.id).where(models.User.parent_id == user_id))
+    child_ids = set(children.scalars().all())
+
     # 3. Xóa user trong Auth DB
     success = await crud.delete_user(auth_db, user_id) 
     if not success:
          raise HTTPException(status_code=404, detail="User not found during deletion")
+    for child_id in child_ids:
+        await ui_manager.broadcast({"type": "user_assignment_updated", "data": {"user_id": child_id}})
 
     await crud.log_system_event(
         db=devices_db,

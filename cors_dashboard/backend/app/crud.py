@@ -781,19 +781,67 @@ async def get_coordinator_visible_base_serials(db: AsyncSession, user: models.Us
     ))
     return {str(serial).strip().upper() for serial in result.scalars().all() if serial}
 
+
+async def get_viewer_visible_base_serials(auth_db: AsyncSession, devices_db: AsyncSession, user: models.User) -> set[str]:
+    allowed = get_allowed_base_serials(user)
+    if not user.parent_id:
+        return allowed
+    parent = await get_user_by_id(auth_db, user.parent_id)
+    if not parent or parent.role != "coordinator" or not parent.is_active:
+        return set()
+    return allowed & await get_coordinator_visible_base_serials(devices_db, parent)
+
 def get_allowed_rover_usernames(user: models.User) -> set[str]:
     return _json_string_set(getattr(user, "allowed_rovers", None), lowercase=True)
 
-async def get_rover_manageable_base_serials(db: AsyncSession, user: models.User) -> set[str]:
+async def get_rover_manageable_base_serials(db: AsyncSession, user: models.User, auth_db: AsyncSession) -> set[str]:
     role = str(getattr(user, "role", "") or "").strip().lower()
     if role == "admin":
         result = await db.execute(select(models.Device.serial))
         return {str(serial).strip().upper() for serial in result.scalars().all() if serial}
     if role == "viewer":
-        return get_allowed_base_serials(user)
+        return await get_viewer_visible_base_serials(auth_db, db, user)
     if role == "coordinator":
         return await get_coordinator_visible_base_serials(db, user)
     return set()
+
+
+async def _viewer_rover_scope(auth_db: AsyncSession, devices_db: AsyncSession, user: models.User) -> tuple[set[str], set[str]]:
+    serials = await get_viewer_visible_base_serials(auth_db, devices_db, user)
+    if not serials:
+        return set(), set()
+    result = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(serials)))
+    mountpoints = set()
+    for device in result.scalars().all():
+        config = device.service_config or {}
+        for index in (1, 2):
+            if config.get(f"server{index}_enabled") and config.get(f"mountpoint{index}"):
+                mountpoints.add(str(config[f"mountpoint{index}"]).strip().lower())
+    return serials, mountpoints
+
+
+def _rover_matches_station_scope(rover: models.RoverAccount, serials: set[str], mountpoints: set[str]) -> bool:
+    rover_serials = {value.strip().upper() for value in (rover.base_serial or "").split(",") if value.strip()}
+    rover_mountpoints = {value.strip().lower() for value in (rover.mountpoints or "").split(";") if value.strip()}
+    return bool(rover_serials & serials or rover_mountpoints & mountpoints)
+
+
+async def rover_mountpoints_within_scope(devices_db: AsyncSession, user: models.User, serials: list[str], mountpoints: str) -> bool:
+    requested = {part.strip().lower() for part in re.split(r"[;,\s]+", mountpoints or "") if part.strip()}
+    if not requested:
+        return True
+    selected = {str(serial).strip().upper() for serial in serials if str(serial).strip()}
+    allowed = set()
+    if selected:
+        result = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(selected)))
+        for device in result.scalars().all():
+            config = device.service_config or {}
+            for index in (1, 2):
+                if config.get(f"server{index}_enabled") and config.get(f"mountpoint{index}"):
+                    allowed.add(str(config[f"mountpoint{index}"]).strip().lower())
+    if user.role == "coordinator" and user.extra_mountpoints:
+        allowed.update(part.strip().lower() for part in re.split(r"[;,\s]+", user.extra_mountpoints) if part.strip())
+    return requested.issubset(allowed)
 
 async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current_user: models.User) -> tuple[set[str], set[str]]:
     visible_serials = await get_coordinator_visible_base_serials(devices_db, current_user)
@@ -830,6 +878,11 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
         
     if current_user.role == "viewer":
         allowed = get_allowed_rover_usernames(current_user)
+        if current_user.parent_id:
+            serials, mountpoints = await _viewer_rover_scope(auth_db, devices_db, current_user)
+            if not serials:
+                return []
+            all_rovers = [r for r in all_rovers if _rover_matches_station_scope(r, serials, mountpoints)]
         return [
             r for r in all_rovers
             if r.created_by_user_id == current_user.id
@@ -860,7 +913,7 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
             
     return visible_rovers
 
-async def check_rover_management_permission(rover: models.RoverAccount, current_user: models.User, devices_db: AsyncSession) -> bool:
+async def check_rover_management_permission(rover: models.RoverAccount, current_user: models.User, devices_db: AsyncSession, auth_db: AsyncSession) -> bool:
     role = str(getattr(current_user, "role", "") or "").strip().lower()
     if role == "admin":
         return True
@@ -868,6 +921,10 @@ async def check_rover_management_permission(rover: models.RoverAccount, current_
     if role == "viewer":
         if not getattr(current_user, "can_view_rovers", False) or not getattr(current_user, "can_create_rovers", False):
             return False
+        if current_user.parent_id:
+            serials, mountpoints = await _viewer_rover_scope(auth_db, devices_db, current_user)
+            if not _rover_matches_station_scope(rover, serials, mountpoints):
+                return False
         return (
             rover.created_by_user_id == current_user.id
             or str(rover.username or "").strip().lower() in get_allowed_rover_usernames(current_user)

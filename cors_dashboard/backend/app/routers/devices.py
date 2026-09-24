@@ -108,7 +108,7 @@ async def get_initial_devices(
         user_info = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
         if not user_info:
             return []
-        viewer_serials = crud.get_allowed_base_serials(user_info)
+        viewer_serials = await crud.get_viewer_visible_base_serials(auth_db, db, user_info)
         if not viewer_serials:
             return []
         
@@ -410,7 +410,7 @@ async def get_rovers_for_base(
     if current_user.role == auth.Role.VIEWER:
         if not auth.can_view_rover_page(current_user):
             raise HTTPException(status_code=403, detail="Bạn không có quyền xem trang Rover.")
-        if str(serial).strip().upper() not in crud.get_allowed_base_serials(current_user):
+        if str(serial).strip().upper() not in await crud.get_viewer_visible_base_serials(db, devices_db, current_user):
             raise HTTPException(status_code=403, detail="Bạn không có quyền xem Rover của trạm này.")
         allowed_rovers = crud.get_allowed_rover_usernames(current_user)
         rovers = await crud.get_rovers_by_base_serial(db, base_serial=serial)
@@ -443,7 +443,7 @@ async def create_rover_for_base(
 
     if not is_admin:
         if current_user.role == auth.Role.VIEWER:
-            if str(serial).strip().upper() not in crud.get_allowed_base_serials(current_user):
+            if str(serial).strip().upper() not in await crud.get_viewer_visible_base_serials(db, devices_db, current_user):
                 raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
         else:
             device = await crud.get_device_by_serial(devices_db, serial)
@@ -561,7 +561,7 @@ async def update_rover(
         raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
 
     # 2. Kiểm tra quyền
-    has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+    has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
     if not has_perm:
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
 
@@ -569,7 +569,7 @@ async def update_rover(
     # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
     new_password = update_req.password if update_req.password else rover.password
     if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
-        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user)
+        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
         selected_serials = {
             str(serial).strip().upper()
             for serial in update_req.selected_serials
@@ -580,6 +580,10 @@ async def update_rover(
     # Empty string is intentional: it means remove every allowed mountpoint.
     # Only None means "keep the current value".
     new_mountpoints = update_req.mountpoints if update_req.mountpoints is not None else rover.mountpoints
+    if current_user.role != auth.Role.ADMIN and update_req.mountpoints is not None:
+        serials_for_mps = update_req.selected_serials or (rover.base_serial.split(",") if rover.base_serial else [])
+        if not await crud.rover_mountpoints_within_scope(devices_db, current_user, serials_for_mps, update_req.mountpoints):
+            raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
     
     # Xử lý thời hạn (Mặc định reset lại thời hạn nếu có gửi expiry_days)
     duration_seconds = 315360000 # Default
@@ -747,7 +751,7 @@ async def delete_rover(
         raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
 
     # 2. Kiểm tra quyền
-    has_perm = await crud.check_rover_management_permission(rover_to_delete, current_user, devices_db)
+    has_perm = await crud.check_rover_management_permission(rover_to_delete, current_user, devices_db, db)
     if not has_perm:
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
 

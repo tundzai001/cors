@@ -5041,7 +5041,7 @@ async def block_caster_user(
     # Permission check if rover exists in DB
     rover = await crud.get_rover_by_username(auth_db, username)
     if rover:
-        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, auth_db)
         if not has_perm:
             raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
             
@@ -5134,7 +5134,7 @@ async def unblock_caster_user(
     # Permission check if rover exists in DB
     rover = await crud.get_rover_by_username(auth_db, username)
     if rover:
-        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, auth_db)
         if not has_perm:
             raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
             
@@ -5245,16 +5245,28 @@ async def ntrip_auth_check(
         return PlainTextResponse("OK", status_code=200)
 
 
+async def _rtcm_visible_serials(auth_db: AsyncSession, devices_db: AsyncSession, user: models.User) -> set[str] | None:
+    if user.role == auth.Role.ADMIN:
+        return None
+    if user.role == auth.Role.COORDINATOR:
+        return await crud.get_coordinator_visible_base_serials(devices_db, user)
+    return await crud.get_viewer_visible_base_serials(auth_db, devices_db, user)
+
+
 @app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse)
 async def activate_rtcm_station(
     serial: str,
     req: schemas.RTCMStationActivateRequest,
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
 ):
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Station not found")
+    visible_serials = await _rtcm_visible_serials(auth_db, db, current_user)
+    if visible_serials is not None and str(serial).strip().upper() not in visible_serials:
+        raise HTTPException(status_code=403, detail="Station is outside your scope")
 
     mountpoints = _extract_station_mountpoints(device)
     selected_mountpoint = _resolve_requested_mountpoint(mountpoints, req.mountpoint)
@@ -5336,6 +5348,7 @@ async def activate_rtcm_station(
 async def ntrip_start_forward(
     req: schemas.RTCMNtripStartRequest,
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
 ):
     # Wrapper endpoint for NTRIP server integration.
@@ -5348,6 +5361,7 @@ async def ntrip_start_forward(
             mountpoint=req.mountpoint,
         ),
         db=db,
+        auth_db=auth_db,
         current_user=current_user,
     )
 
@@ -5357,6 +5371,7 @@ async def heartbeat_rtcm_session(
     session_id: str,
     req: schemas.RTCMSessionHeartbeatRequest,
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
 ):
     ttl = _sanitize_ttl(req.ttl_seconds)
@@ -5376,6 +5391,9 @@ async def heartbeat_rtcm_session(
         expected_prefix = f"user:{current_user.id}"
         if not str(session.client_id).startswith(expected_prefix):
             raise HTTPException(status_code=403, detail="Session does not belong to this user")
+        visible_serials = await _rtcm_visible_serials(auth_db, db, current_user)
+        if visible_serials is not None and str(session.serial).strip().upper() not in visible_serials:
+            raise HTTPException(status_code=403, detail="Station is outside your scope")
 
         session.expires_at = expires_at
         session.last_heartbeat_at = now
@@ -5770,6 +5788,7 @@ async def ntrip_stop_forward(
 @app.get("/api/rtcm/stations/active", response_model=list[schemas.RTCMActiveStationResponse])
 async def get_active_rtcm_stations(
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
 ):
     now = int(time.time())
@@ -5785,7 +5804,11 @@ async def get_active_rtcm_stations(
             .where(models.RTCMStreamSession.expires_at > now)
             .distinct()
         )
-        serials = sorted(str(r[0]) for r in active_serials_rs.all() if r and r[0])
+        visible_serials = await _rtcm_visible_serials(auth_db, db, current_user)
+        serials = sorted(
+            str(r[0]) for r in active_serials_rs.all()
+            if r and r[0] and (visible_serials is None or str(r[0]).strip().upper() in visible_serials)
+        )
 
         items: list[schemas.RTCMActiveStationResponse] = []
         for serial in serials:
@@ -6055,7 +6078,7 @@ async def sync_rover_by_username(
     if current_user.role == auth.Role.VIEWER and not rover and not update_req.selected_serials:
         raise HTTPException(status_code=403, detail="Viewer phải chọn ít nhất một trạm trong Rover Access.")
     if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
-        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user)
+        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
         selected_serials = {
             str(serial).strip().upper()
             for serial in update_req.selected_serials
@@ -6063,9 +6086,13 @@ async def sync_rover_by_username(
         }
         if not selected_serials.issubset(manageable_serials):
             raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
+    if current_user.role != auth.Role.ADMIN and update_req.mountpoints is not None:
+        serials_for_mps = update_req.selected_serials or ((rover.base_serial or "").split(",") if rover else [])
+        if not await crud.rover_mountpoints_within_scope(devices_db, current_user, serials_for_mps, update_req.mountpoints):
+            raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
     
     if rover:
-        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db)
+        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
         if not has_perm:
             raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
     
@@ -6223,7 +6250,7 @@ async def create_multi_base_rover(
     selected_serials = list(request.selected_serials or [])
 
     if current_user.role == auth.Role.VIEWER:
-        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user)
+        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
         selected_serials_upper = {
             str(serial).strip().upper()
             for serial in selected_serials
@@ -6231,6 +6258,8 @@ async def create_multi_base_rover(
         }
         if not selected_serials_upper.issubset(manageable_serials):
             raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi Rover Access của bạn.")
+        if not await crud.rover_mountpoints_within_scope(devices_db, current_user, selected_serials, target_mountpoints):
+            raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
     
     # 3. Xác định danh sÃ¡ch Mountpoint hợp lệ (Đặc biệt cho Coordinator)
     if current_user.role == auth.Role.COORDINATOR:
@@ -7175,7 +7204,7 @@ async def _ops_visible_devices(
         serials = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
         rs = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(serials)).order_by(models.Device.name))
         return rs.scalars().all()
-    serials = crud.get_allowed_base_serials(current_user)
+    serials = await crud.get_viewer_visible_base_serials(auth_db, devices_db, current_user)
     if not serials:
         return []
     rs = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(serials)).order_by(models.Device.name))
@@ -7910,7 +7939,8 @@ async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
                 async with device_session_scope() as devices_db:
                     context["allowed_serials"] = await crud.get_coordinator_visible_base_serials(devices_db, user)
             elif user.role == auth.Role.VIEWER:
-                context["allowed_serials"] = crud.get_allowed_base_serials(user)
+                async with device_session_scope() as devices_db:
+                    context["allowed_serials"] = await crud.get_viewer_visible_base_serials(auth_db, devices_db, user)
 
             return context
     except asyncio.TimeoutError:

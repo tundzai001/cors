@@ -37,7 +37,11 @@ class ConnectionManager:
 
         if message_type == "user_assignment_updated":
             data = message.get("data") or {}
-            return data.get("user_id") == context.get("user_id")
+            if data.get("user_id") != context.get("user_id"):
+                return False
+            # The browser reconnects after this event. Stop using its old scope now.
+            context["allowed_serials"] = set()
+            return True
 
         if message_type in {"status_update", "nmea_update", "rtcm_signal_update", "device_deleted"}:
             allowed_serials = context.get("allowed_serials")
