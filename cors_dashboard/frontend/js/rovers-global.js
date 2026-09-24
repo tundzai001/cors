@@ -958,35 +958,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? infos.every(i => i?.show_position !== false)
             : r.show_position;
         const showPosIcon = actualShowPos
-            ? '<i class="bi bi-eye-fill text-primary ms-1" title="Vị trí đang HIỆN (Live)"></i>'
-            : '<i class="bi bi-eye-slash text-muted opacity-50 ms-1" title="Vị trí đang ẨN (Live)"></i>';
+            ? '<i class="bi bi-eye-fill text-primary" title="Vị trí đang HIỆN (Live)"></i>'
+            : '<i class="bi bi-eye-slash text-muted opacity-50" title="Vị trí đang ẨN (Live)"></i>';
 
         const mps = normalizeMountpointList(r.mountpoints);
         const mpsDisplay = mps.length > 0
-            ? mps.map(m => `<code class="rover-mount-chip">${m}</code>`).join('')
-            : '<span class="text-muted small">N/A</span>';
-
-        // Identify "orphan" mountpoints (those not belonging to any physical station)
-        const stationMps = new Set();
-        allDevices.forEach(d => {
-            const s = d.service_config || {};
-            if (s.mountpoint1) stationMps.add(s.mountpoint1);
-            if (s.mountpoint2) stationMps.add(s.mountpoint2);
-        });
-
-        const manualMps = mps.filter(m => !stationMps.has(m));
-        
-        let displayItems = [];
-        if (r.base_name && r.base_name.trim()) {
-            displayItems.push(r.base_name);
-        }
-        manualMps.forEach(m => {
-            if (!displayItems.includes(m)) displayItems.push(m);
-        });
-
-        const baseDisplay = displayItems.length > 0 
-            ? displayItems.join(', ')
-            : (mps.length > 0 ? mps[0] : 'N/A');
+            ? mps.map(m => `<code class="rover-mount-chip">${escapeHtml(m)}</code>`).join('')
+            : '<span class="text-muted small">Chưa cấp MP</span>';
+        const mpsTitle = escapeHtml(mps.join(', '));
 
         // Connection Limit computation & UI representation.
         // Prefer live caster data when available because caster uses 0 as "unlimited".
@@ -1141,8 +1120,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="rover-user-avatar ${r.type === 'db' ? '' : 'is-unknown'}">
                         <i class="bi bi-person-fill"></i>
                     </div>
-                    <div>
-                        <div class="rover-user-name">${r.username} ${dbBadge} ${showPosIcon}</div>
+                    <div class="rover-user-copy">
+                        <div class="rover-user-heading">
+                            <span class="rover-user-name">${escapeHtml(r.username)}</span>
+                            <span class="rover-user-indicators">${dbBadge}${showPosIcon}</span>
+                        </div>
                         <div class="rover-user-meta">${r.type === 'db' ? 'Database account' : 'Caster only user'}</div>
                     </div>
                 </div>
@@ -1150,8 +1132,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <td><code class="rover-password-chip">${r.password || '******'}</code></td>
             <td>
                 <div class="rover-mount-cell">
-                    <span>${baseDisplay}</span>
-                    <div>${mpsDisplay}</div>
+                    <div class="rover-mountpoint-list" title="${mpsTitle}" aria-label="Mountpoints được cấp">${mpsDisplay}</div>
                 </div>
             </td>
             <td>
@@ -1164,7 +1145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <td class="text-center">${blockedHtml}</td>
             <td class="text-center">${casterStatusBadge}</td>
             <td class="text-center">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
-            <td class="text-end"><div class="rover-row-actions">${actionHtml}</div></td>
+            <td class="rover-actions-cell"><div class="rover-row-actions">${actionHtml}</div></td>
         `;
 
         return tr;

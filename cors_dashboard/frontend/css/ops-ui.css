@@ -1120,6 +1120,13 @@ body.ops-admin-page {
     min-width: 190px;
 }
 
+.rover-user-copy { min-width: 0; }
+.rover-user-heading,
+.rover-user-indicators { align-items: center; display: flex; }
+.rover-user-heading { gap: 7px; min-width: 0; }
+.rover-user-indicators { flex: 0 0 auto; gap: 5px; }
+.rover-user-indicators i { line-height: 1; margin: 0 !important; }
+
 .rover-user-avatar {
     align-items: center;
     background: rgba(14, 165, 233, 0.14);
@@ -1141,9 +1148,14 @@ body.ops-admin-page {
 
 .rover-user-name {
     color: var(--ops-text);
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 0.83rem;
     font-weight: 900;
     line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .rover-user-meta,
@@ -1174,23 +1186,27 @@ body.ops-admin-page {
     font-family: Consolas, Monaco, monospace;
 }
 
-.rover-mount-cell > span {
-    color: #93c5fd;
-    display: block;
-    font-size: 0.76rem;
-    font-weight: 900;
-    margin-bottom: 5px;
-}
-
-.rover-mount-cell > div,
+.rover-mountpoint-list,
 .rover-server-list {
+    align-content: flex-start;
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
 }
 
+.rover-mountpoint-list {
+    max-height: 58px;
+    min-width: 170px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1px 2px 2px 0;
+}
+
 .rover-mount-chip {
     color: #67e8f9;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .rover-server-chip.warn {
@@ -1274,10 +1290,19 @@ body.ops-admin-page {
 .rover-state-pill.blocked > span,
 .rover-state-pill.expired > span { background: #ef4444; }
 
+.rover-actions-cell {
+    text-align: right;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
 .rover-row-actions {
-    display: inline-flex;
-    gap: 4px;
+    align-items: center;
+    display: flex;
+    gap: 5px;
     justify-content: flex-end;
+    min-height: 32px;
+    white-space: nowrap;
 }
 
 .rover-action-btn {
@@ -1287,6 +1312,7 @@ body.ops-admin-page {
     border-radius: 6px;
     color: #cbd5e1;
     display: inline-flex;
+    flex: 0 0 28px;
     height: 28px;
     justify-content: center;
     width: 28px;
