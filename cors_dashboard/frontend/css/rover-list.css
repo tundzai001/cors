@@ -1,4 +1,4 @@
-/* Rover list: table, row details, responsive cards. */
+/* Rover list: compact table on desktop, cards on small screens. */
 
 .ops-rovers-page .rover-list-table {
     table-layout: fixed;
@@ -258,7 +258,25 @@
     color: #7dd3fc;
 }
 
-@media (max-width: 1599.98px) {
+@media (min-width: 1200px) and (max-width: 1599.98px) {
+    .ops-rovers-page .rover-list-table th,
+    .ops-rovers-page .rover-list-table td {
+        padding: 8px 6px;
+    }
+
+    .ops-rovers-page .rover-list-table th:nth-child(12) { width: 12%; }
+    .ops-rovers-page .rover-list-table th:nth-child(5) { width: 12%; }
+    .ops-rovers-page .rover-list-table th:nth-child(11) { width: 8%; }
+
+    .ops-rovers-page .rover-row-actions { gap: 3px; }
+    .ops-rovers-page .rover-action-btn {
+        flex-basis: 24px;
+        height: 24px;
+        width: 24px;
+    }
+}
+
+@media (max-width: 1199.98px) {
     .ops-rovers-page .rover-list-table,
     .ops-rovers-page .rover-list-table tbody {
         display: block;

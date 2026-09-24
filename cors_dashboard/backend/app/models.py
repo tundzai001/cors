@@ -92,6 +92,7 @@ class User(AuthBase):
     extra_mountpoints = Column(String, nullable=True) # Danh sÃ¡ch MP bÃ´Ì‰ sung (dÃ¢Ì u ; ngÄƒn caÌ ch)
     parent_id = Column(Integer, index=True, nullable=True) # ID của coordinator đã tạo ra viewer này
     allowed_bases = Column(String, nullable=True) # JSON array các serial trạm Base
+    view_only_bases = Column(String, nullable=True)  # Coordinator stations with read-only access
     allowed_rovers = Column(String, nullable=True) # JSON array các username của Rover
 
 class IpSecurityLog(AuthBase):

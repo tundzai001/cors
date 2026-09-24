@@ -2,7 +2,7 @@ from ..redis_client import redis_client
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from ..database import get_auth_db, get_db
 from .. import crud, models, schemas, auth, license_manager, command_builder
@@ -93,7 +93,12 @@ async def get_initial_devices(
             target_role = user_info.role
 
     if target_role == auth.Role.COORDINATOR:
-        devices = await crud.get_devices_by_user_id(db, user_id=target_user_id)
+        coordinator = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
+        if not coordinator:
+            return []
+        visible_serials = await crud.get_coordinator_visible_base_serials(db, coordinator)
+        result = await db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(visible_serials)).order_by(models.Device.name))
+        devices = result.scalars().all()
         logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → {len(devices)} devices by user_id={target_user_id}")
         return _with_runtime_sync_flags(devices)
     elif target_role == auth.Role.VIEWER:
@@ -131,6 +136,8 @@ async def send_generic_command(
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
     await crud.log_system_event(
         db=db,
         type="info",
@@ -151,6 +158,8 @@ async def start_base_reference_check(
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
     command = {
         "command": "TRIGGER_BASE_REFERENCE_CHECK",
         "payload": {
@@ -241,6 +250,8 @@ async def configure_chip_endpoint(
     device_in_db = await crud.get_device_by_serial(db, serial)
     if not device_in_db:
         raise HTTPException(status_code=404, detail="Device not found in database")
+    if current_user.role == auth.Role.COORDINATOR and device_in_db.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
 
     payload = config_request.payload or {}
     sensor_type = payload.get("sensor_type")
@@ -393,7 +404,7 @@ async def get_rovers_for_base(
         if not auth.can_view_rover_page(current_user):
             raise HTTPException(status_code=403, detail="Bạn chưa được cấp quyền xem trang Rover.")
         device = await crud.get_device_by_serial(devices_db, serial)
-        if device and device.user_id == current_user.id:
+        if device and (device.user_id == current_user.id or str(serial).strip().upper() in crud.get_coordinator_view_base_serials(current_user)):
             return await crud.get_rovers_by_base_serial(db, base_serial=serial)
 
     if current_user.role == auth.Role.VIEWER:
@@ -436,7 +447,7 @@ async def create_rover_for_base(
                 raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
         else:
             device = await crud.get_device_by_serial(devices_db, serial)
-            if not device or device.user_id != current_user.id:
+            if not device or (device.user_id != current_user.id and str(serial).strip().upper() not in crud.get_coordinator_view_base_serials(current_user)):
                 raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
 
     # 2. Kiểm tra trùng lặp trong DB Local

@@ -1211,24 +1211,10 @@ function handleWebSocketMessage(message) {
         );
         const statusSerial = knownDevice?.serial || incomingSerial;
         if (data && statusSerial) data.serial = statusSerial;
-        // Coordinators are scoped by device ownership; viewers are scoped by
-        // their allowed_bases list, so a viewer must not be filtered by owner.
+        // The backend scopes station updates by the user's visible serials.
         const userRole = String(globalState.currentUser?.role || '').toLowerCase();
         if (userRole === 'coordinator') {
-            if (data.user_id !== undefined && data.user_id !== null) {
-                if (data.user_id !== globalState.currentUser.id) {
-                    const exists = globalState.devices.some(d => d.serial === statusSerial);
-                    if (exists) {
-                        //console.log(`Removed unassigned device: ${statusSerial}`);
-                        removeDeviceLocal(statusSerial);
-                    }
-                    return;
-                }
-            }
-            if (data.user_id === undefined || data.user_id === null) {
-                const isMyDevice = globalState.devices.some(d => d.serial === statusSerial);
-                if (!isMyDevice) return;
-            }
+            if (!knownDevice) return;
         } else if (userRole === 'viewer') {
             // The backend already enforces the viewer's allowed serial scope.
             // Keep this client-side guard for defense in depth, but ignore owner user_id.

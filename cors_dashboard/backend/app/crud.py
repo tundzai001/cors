@@ -608,7 +608,7 @@ async def get_all_users(db: AsyncSession) -> list[models.User]:
 
 import json
 
-async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, can_create_users: bool = False, extra_mountpoints: str | None = None, parent_id: int | None = None, allowed_bases: list[str] | None = None, allowed_rovers: list[str] | None = None, can_view_rovers: bool = False) -> models.User:
+async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, can_create_users: bool = False, extra_mountpoints: str | None = None, parent_id: int | None = None, allowed_bases: list[str] | None = None, view_only_bases: list[str] | None = None, allowed_rovers: list[str] | None = None, can_view_rovers: bool = False) -> models.User:
     db_user = models.User(
         username=username, 
         hashed_password=hashed_password, 
@@ -621,6 +621,7 @@ async def create_user(db: AsyncSession, username: str, hashed_password: str, rol
         extra_mountpoints=extra_mountpoints,
         parent_id=parent_id,
         allowed_bases=json.dumps(allowed_bases) if allowed_bases is not None else None,
+        view_only_bases=json.dumps(view_only_bases) if view_only_bases is not None else None,
         allowed_rovers=json.dumps(allowed_rovers) if allowed_rovers is not None else None,
         created_at=int(time.time())
     )
@@ -634,7 +635,7 @@ async def update_user(db: AsyncSession, user_id: int, update_data: dict) -> mode
     if not user: 
         return None
     for key, value in update_data.items():
-        if key in ("allowed_bases", "allowed_rovers"):
+        if key in ("allowed_bases", "view_only_bases", "allowed_rovers"):
             setattr(user, key, json.dumps(value) if value is not None else None)
         elif hasattr(user, key): 
             setattr(user, key, value)
@@ -768,6 +769,18 @@ def _json_string_set(value, *, lowercase: bool = False) -> set[str]:
 def get_allowed_base_serials(user: models.User) -> set[str]:
     return {serial.upper() for serial in _json_string_set(getattr(user, "allowed_bases", None))}
 
+
+def get_coordinator_view_base_serials(user: models.User) -> set[str]:
+    return {serial.upper() for serial in _json_string_set(getattr(user, "view_only_bases", None))}
+
+
+async def get_coordinator_visible_base_serials(db: AsyncSession, user: models.User) -> set[str]:
+    allowed = get_coordinator_view_base_serials(user)
+    result = await db.execute(select(models.Device.serial).where(
+        or_(models.Device.user_id == user.id, func.upper(models.Device.serial).in_(allowed))
+    ))
+    return {str(serial).strip().upper() for serial in result.scalars().all() if serial}
+
 def get_allowed_rover_usernames(user: models.User) -> set[str]:
     return _json_string_set(getattr(user, "allowed_rovers", None), lowercase=True)
 
@@ -779,13 +792,13 @@ async def get_rover_manageable_base_serials(db: AsyncSession, user: models.User)
     if role == "viewer":
         return get_allowed_base_serials(user)
     if role == "coordinator":
-        result = await db.execute(select(models.Device.serial).where(models.Device.user_id == user.id))
-        return {str(serial).strip().upper() for serial in result.scalars().all() if serial}
+        return await get_coordinator_visible_base_serials(db, user)
     return set()
 
 async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current_user: models.User) -> tuple[set[str], set[str]]:
+    visible_serials = await get_coordinator_visible_base_serials(devices_db, current_user)
     managed_devices_res = await devices_db.execute(
-        select(models.Device).where(models.Device.user_id == current_user.id)
+        select(models.Device).where(func.upper(models.Device.serial).in_(visible_serials))
     )
     managed_devices = managed_devices_res.scalars().all()
     

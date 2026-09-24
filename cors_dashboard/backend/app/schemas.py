@@ -175,6 +175,7 @@ class UserCreate(UserBase):
     can_create_users: bool = False
     extra_mountpoints: str | None = None
     allowed_bases: List[str] | None = None
+    view_only_bases: List[str] | None = None
     allowed_rovers: List[str] | None = None
     @validator('password')
     def validate_password(cls, v):
@@ -196,6 +197,7 @@ class UserUpdate(BaseModel):
     can_create_users: bool | None = None
     extra_mountpoints: str | None = None
     allowed_bases: List[str] | None = None
+    view_only_bases: List[str] | None = None
     allowed_rovers: List[str] | None = None
     @validator('role')
     def validate_role(cls, v):
@@ -221,10 +223,11 @@ class UserResponse(UserBase):
     extra_mountpoints: str | None = None
     parent_id: int | None = None
     allowed_bases: List[str] | None = None
+    view_only_bases: List[str] | None = None
     allowed_rovers: List[str] | None = None
     app_version: str | None = None
     
-    @validator("allowed_bases", "allowed_rovers", pre=True)
+    @validator("allowed_bases", "view_only_bases", "allowed_rovers", pre=True)
     def parse_json_lists(cls, v):
         if isinstance(v, str):
             import json

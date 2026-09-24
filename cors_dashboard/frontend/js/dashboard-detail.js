@@ -825,15 +825,9 @@ const DetailsPanel = memo(function DetailsPanel({
     }
 
     const role = String(currentUser?.role || '').toLowerCase();
-    const perms = Array.isArray(currentUser?.permissions) ? currentUser.permissions : [];
-    const hasServiceEditPermission =
-        perms.includes('edit:service_config') ||
-        perms.includes('EDIT_SERVICE_CONFIG') ||
-        perms.includes('manage:station_mode') ||
-        perms.includes('MANAGE_STATION_MODE');
     const canEdit = role === 'admin' ||
         (role === 'coordinator' && device.user_id === currentUser?.id);
-    const canEditService = canEdit || (isRelayLikeStation && hasServiceEditPermission);
+    const canEditService = canEdit;
     // REBOOTING STATE
     if (isDeviceRebooting) {
         return (
@@ -885,7 +879,7 @@ const DetailsPanel = memo(function DetailsPanel({
                 if (!DashboardPanel) return missingPanel('DashboardPanel');
                 return <DashboardPanel device={device} nmeaData={nmeaData} />;
             case 'rovers':
-                if (!canEdit) {
+                if (!canManageRovers) {
                     return <div className="alert alert-danger">Bạn không có quyền truy cập mục này.</div>;
                 }
                 return <RoverManagementPanel device={device} />;
@@ -952,6 +946,7 @@ const DetailsPanel = memo(function DetailsPanel({
                             <h4 className="mb-0 me-2 text-truncate" style={{ maxWidth: 'min(350px, calc(100vw - 120px))' }} title={device.name}>
                                 {device.name}
                             </h4>
+                            {role === 'coordinator' && !canEdit && <span className="badge bg-secondary">Chỉ xem</span>}
                             {canEdit && (
                                 <button
                                     className="btn btn-link text-muted p-0 ms-1"

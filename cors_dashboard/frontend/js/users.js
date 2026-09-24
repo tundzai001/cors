@@ -180,8 +180,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function updateRoleSections() {
+        const previousAccess = Array.from(document.querySelectorAll('.device-access-select')).reduce((result, input) => {
+            if (input.value !== 'none') result[input.value].push(input.dataset.serial);
+            return result;
+        }, { view: [], edit: [] });
+        const previousChecks = Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value);
         const show = shouldShowAccessSections(roleSelect.value);
         deviceAssignmentSection.classList.toggle('d-none', !show);
+        if (roleSelect.value === 'coordinator' && !deviceChecklist.querySelector('.device-access-select')) {
+            renderDeviceChecklist(previousChecks, []);
+        } else if (roleSelect.value === 'viewer' && !deviceChecklist.querySelector('.device-checkbox')) {
+            renderDeviceChecklist([...previousAccess.edit, ...previousAccess.view], []);
+        }
         
         if (roleSelect.value === 'viewer' || roleSelect.value === 'coordinator') {
             roverAssignmentSection.classList.toggle('d-none', false);
@@ -200,18 +210,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         syncRoverPermissionState();
     }
 
-    function renderDeviceChecklist(assignedSerials = []) {
+    function renderDeviceChecklist(editSerials = [], viewSerials = []) {
         if (!allDevices.length) {
             deviceChecklist.innerHTML = '<div class="ops-empty-state"><i class="bi bi-inbox"></i><span>No devices</span></div>';
             return;
         }
-        const assigned = new Set(assignedSerials.map(String));
-        deviceChecklist.innerHTML = allDevices.map(device => `
-            <label class="form-check d-flex align-items-center gap-2 mb-2">
-                <input class="form-check-input device-checkbox" type="checkbox" value="${device.serial}" ${assigned.has(String(device.serial)) ? 'checked' : ''}>
-                <span><strong>${device.name || device.serial}</strong><span class="text-muted ms-2">${device.serial}</span></span>
-            </label>
-        `).join('');
+        const editable = new Set(editSerials.map(String));
+        const viewable = new Set(viewSerials.map(String));
+        deviceChecklist.innerHTML = allDevices.map(device => {
+            const serial = String(device.serial);
+            const label = `<span><strong>${escapeHtml(device.name || serial)}</strong><span class="text-muted ms-2">${escapeHtml(serial)}</span></span>`;
+            if (roleSelect.value === 'coordinator') {
+                const access = editable.has(serial) ? 'edit' : viewable.has(serial) ? 'view' : 'none';
+                return `<label class="d-flex align-items-center justify-content-between gap-2 mb-2">${label}
+                    <select class="form-select form-select-sm device-access-select w-auto" data-serial="${escapeHtml(serial)}" aria-label="Quyền trạm ${escapeHtml(serial)}" ${currentUser.role !== 'admin' ? 'disabled' : ''}>
+                        <option value="none" ${access === 'none' ? 'selected' : ''}>Không cấp</option>
+                        <option value="view" ${access === 'view' ? 'selected' : ''}>Chỉ xem</option>
+                        <option value="edit" ${access === 'edit' ? 'selected' : ''}>Được sửa</option>
+                    </select></label>`;
+            }
+            return `<label class="form-check d-flex align-items-center gap-2 mb-2">
+                <input class="form-check-input device-checkbox" type="checkbox" value="${escapeHtml(serial)}" ${editable.has(serial) ? 'checked' : ''}>
+                ${label}</label>`;
+        }).join('');
     }
 
     function renderRoverChecklist(assignedUsernames = []) {
@@ -334,6 +355,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const extraMps = String(user.extra_mountpoints || '').split(/[;,\s\n]+/).map(v => v.trim()).filter(Boolean);
         
         let assignedSerials = [];
+        let viewSerials = [];
         if (user.role === 'viewer') {
             if (Array.isArray(user.allowed_bases)) {
                 assignedSerials = user.allowed_bases;
@@ -341,7 +363,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 try { assignedSerials = JSON.parse(user.allowed_bases); } catch(e) {}
             }
         } else {
-            assignedSerials = (userDevices || []).map(d => d.serial);
+            assignedSerials = (userDevices || []).filter(d => Number(d.user_id) === Number(user.id)).map(d => d.serial);
+            viewSerials = (user.view_only_bases || []).filter(serial => !assignedSerials.includes(serial));
         }
         
         let assignedRovers = [];
@@ -351,7 +374,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             try { assignedRovers = JSON.parse(user.allowed_rovers); } catch(e) {}
         }
 
-        renderDeviceChecklist(assignedSerials);
+        renderDeviceChecklist(assignedSerials, viewSerials);
         renderRoverChecklist(assignedRovers);
         renderExtraMpsChecklist(extraMps);
         updateRoleSections();
@@ -393,19 +416,28 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        const stationAccess = Array.from(document.querySelectorAll('.device-access-select'));
+        const checkedStations = Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value);
         const payload = {
             username: document.getElementById('username').value.trim(),
             full_name: document.getElementById('full_name').value.trim(),
             role: document.getElementById('role').value || 'viewer',
             is_active: document.getElementById('is_active').checked,
-            can_view_rovers: document.getElementById('can_view_rovers').checked,
-            can_create_rovers: document.getElementById('can_create_rovers').checked,
-            can_create_users: document.getElementById('can_create_users') ? document.getElementById('can_create_users').checked : false,
-            assigned_devices: Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value),
-            allowed_bases: Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value),
+            assigned_devices: stationAccess.filter(input => input.value === 'edit').map(input => input.dataset.serial),
+            allowed_bases: stationAccess.length ? [] : checkedStations,
+            view_only_bases: stationAccess.filter(input => input.value === 'view').map(input => input.dataset.serial),
             allowed_rovers: Array.from(document.querySelectorAll('.rover-checkbox:checked')).map(input => input.value),
-            extra_mountpoints: Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value).join(';')
         };
+        if (currentUser.role === 'admin') {
+            payload.can_view_rovers = document.getElementById('can_view_rovers').checked;
+            payload.can_create_rovers = document.getElementById('can_create_rovers').checked;
+            payload.can_create_users = document.getElementById('can_create_users')?.checked || false;
+            payload.extra_mountpoints = Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value).join(';');
+        } else {
+            delete payload.assigned_devices;
+            delete payload.view_only_bases;
+            if (Number(userId) === Number(currentUser.id)) delete payload.allowed_bases;
+        }
         if (password) payload.password = password;
 
         const url = userId ? window.ApiRoutes.users.detail(userId) : window.ApiRoutes.users.list;

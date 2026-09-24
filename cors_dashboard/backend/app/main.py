@@ -6202,17 +6202,13 @@ async def create_multi_base_rover(
     if existing:
         raise HTTPException(status_code=400, detail="Username đã tồn tại.")
 
-    # 2.1 Kiểm tra Quyền sở hữu trạm (Nếu là COORDINATOR)
+    # 2.1 Coordinator may create Rover for editable or view-only stations.
     if current_user.role == auth.Role.COORDINATOR:
-        # Lấy danh sách serial của các trạm do Coordinator này quản lý
-        coord_devices_res = await devices_db.execute(
-            select(models.Device.serial).where(models.Device.user_id == current_user.id)
-        )
-        coord_owned_serials = set(coord_devices_res.scalars().all())
+        coord_visible_serials = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
         
-        # Kiểm tra xem toàn bộ các trạm trong request có thuộc quyền quản lý không
+        # Every requested station must be in the coordinator's visible scope.
         for serial in request.selected_serials:
-            if serial not in coord_owned_serials:
+            if str(serial).strip().upper() not in coord_visible_serials:
                 raise HTTPException(
                     status_code=403, 
                     detail=f"Bạn không có quyền quản lý trạm '{serial}'."
@@ -6244,7 +6240,7 @@ async def create_multi_base_rover(
         if request.selected_serials:
             for serial in request.selected_serials:
                 dev = await crud.get_device_by_serial(devices_db, serial)
-                if dev and dev.user_id == current_user.id:
+                if dev and str(dev.serial).strip().upper() in coord_visible_serials:
                     sc = dev.service_config or {}
                     if sc.get('server1_enabled') and sc.get('mountpoint1'): 
                         valid_mps.add(sc.get('mountpoint1'))
@@ -6363,6 +6359,8 @@ async def configure_chip_endpoint(
             status_code=404, 
             detail="Device not found in database"
         )
+    if current_user.role == auth.Role.COORDINATOR and device_in_db.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
     
     # ==================== BƯỚC 2: PARSE PAYLOAD ====================
     payload = config_request.payload
@@ -6782,6 +6780,8 @@ async def lock_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được khóa trạm")
     device = await crud.get_device_by_serial(db, serial)
     try:
         response = await send_command_to_pi(serial, {"command": "LOCK_DEVICE", "payload": {}})
@@ -6805,6 +6805,8 @@ async def unlock_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được mở khóa trạm")
     device = await crud.get_device_by_serial(db, serial)
     try:
         response = await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
@@ -7170,7 +7172,9 @@ async def _ops_visible_devices(
     if current_user.role == auth.Role.ADMIN:
         return await crud.get_all_devices(devices_db)
     if current_user.role == auth.Role.COORDINATOR:
-        return await crud.get_devices_by_user_id(devices_db, current_user.id)
+        serials = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
+        rs = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(serials)).order_by(models.Device.name))
+        return rs.scalars().all()
     serials = crud.get_allowed_base_serials(current_user)
     if not serials:
         return []
@@ -7740,6 +7744,8 @@ async def bulk_device_action(
         raise HTTPException(status_code=400, detail="action must be lock, unlock, or reset")
     if action in {"lock", "unlock"} and not auth.has_permission(current_user, auth.Permission.MANAGE_USERS):
         raise HTTPException(status_code=403, detail="Missing permission for lock/unlock")
+    if action in {"lock", "unlock"} and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Only admin can lock or unlock stations")
     if action == "reset" and not auth.has_permission(current_user, auth.Permission.EDIT_SERVICE_CONFIG):
         raise HTTPException(status_code=403, detail="Missing permission for reset")
 
@@ -7750,6 +7756,9 @@ async def bulk_device_action(
         device = visible_map.get(serial)
         if not device:
             results.append({"serial": serial, "status": "skipped", "detail": "outside scope or not found"})
+            continue
+        if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+            results.append({"serial": serial, "status": "skipped", "detail": "view only station"})
             continue
         try:
             if action == "lock":
@@ -7844,6 +7853,9 @@ async def apply_device_config_template(
         if not device:
             results.append({"serial": serial, "status": "skipped", "detail": "outside scope or not found"})
             continue
+        if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+            results.append({"serial": serial, "status": "skipped", "detail": "view only station"})
+            continue
         if request.apply_base_config and isinstance(template.get("base_config"), dict) and template.get("base_config"):
             device.base_config = template["base_config"]
         if request.apply_service_config and isinstance(template.get("service_config"), dict) and template.get("service_config"):
@@ -7896,10 +7908,7 @@ async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
 
             if user.role == auth.Role.COORDINATOR:
                 async with device_session_scope() as devices_db:
-                    devices = await crud.get_devices_by_user_id(devices_db, user.id)
-                    context["allowed_serials"] = {
-                        str(d.serial).strip().upper() for d in devices if str(d.serial).strip()
-                    }
+                    context["allowed_serials"] = await crud.get_coordinator_visible_base_serials(devices_db, user)
             elif user.role == auth.Role.VIEWER:
                 context["allowed_serials"] = crud.get_allowed_base_serials(user)
 

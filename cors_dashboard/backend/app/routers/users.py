@@ -9,9 +9,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# === HELPER: Lấy danh sách ownership từ SystemSettings ===
+# === HELPER: Coordinator-created viewer ownership ===
 async def _get_ownership_info(db: AsyncSession, creator_id: int) -> tuple[set[int], set[int]]:
-    """Truy vấn SystemSettings để tìm thông tin ownership.
+    """Find viewers created by this coordinator, including legacy records.
     Returns:
         - my_created_ids: set user_id do creator_id tạo
         - all_owned_ids: set tất cả user_id đã có owner (bất kỳ ai tạo)
@@ -32,6 +32,8 @@ async def _get_ownership_info(db: AsyncSession, creator_id: int) -> tuple[set[in
                 my_created_ids.add(uid)
         except (ValueError, TypeError):
             pass
+    children = await db.execute(select(models.User.id).where(models.User.parent_id == creator_id))
+    my_created_ids.update(children.scalars().all())
     return my_created_ids, all_owned_ids
 
 router = APIRouter(tags=["Users"])
@@ -90,6 +92,8 @@ async def rename_device(
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
 
     if not request.name.strip():
         raise HTTPException(status_code=400, detail="Tên không được để trống")
@@ -174,6 +178,11 @@ async def create_user(
     
     if current_user.role != 'admin' and user_data.role != 'viewer':
         raise HTTPException(status_code=403, detail="Chỉ admin mới được tạo tài khoản khác ngoài Viewer")
+    if current_user.role == 'coordinator':
+        visible = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
+        requested = {str(serial).strip().upper() for serial in user_data.allowed_bases or [] if str(serial).strip()}
+        if not requested.issubset(visible):
+            raise HTTPException(status_code=403, detail="Chỉ được cấp trạm trong phạm vi của bạn")
 
     existing = await crud.get_user_by_username(auth_db, username=user_data.username)
     if existing:
@@ -194,11 +203,13 @@ async def create_user(
         role=user_data.role, 
         full_name=user_data.full_name,
         is_active=user_data.is_active,
-        can_view_rovers=user_data.can_view_rovers,
-        can_create_rovers=user_data.can_create_rovers,
-        extra_mountpoints=user_data.extra_mountpoints,
+        can_view_rovers=user_data.can_view_rovers if current_user.role == 'admin' else False,
+        can_create_rovers=user_data.can_create_rovers if current_user.role == 'admin' else False,
+        can_create_users=user_data.can_create_users if current_user.role == 'admin' and user_data.role == 'coordinator' else False,
+        extra_mountpoints=user_data.extra_mountpoints if current_user.role == 'admin' else None,
         parent_id=parent_id,
         allowed_bases=user_data.allowed_bases,
+        view_only_bases=user_data.view_only_bases if current_user.role == 'admin' and user_data.role == 'coordinator' else None,
         allowed_rovers=user_data.allowed_rovers
     )
     
@@ -248,6 +259,17 @@ async def update_user(
         raise HTTPException(status_code=400, detail="Không thể vô hiệu hóa tài khoản của chính bạn")
 
     update_dict = user_data.dict(exclude_unset=True)
+    if current_user.role != 'admin':
+        forbidden = {'assigned_devices', 'view_only_bases', 'can_view_rovers', 'can_create_rovers', 'can_create_users', 'extra_mountpoints'}
+        if any(field in update_dict for field in forbidden):
+            raise HTTPException(status_code=403, detail="Chỉ admin được thay đổi quyền tài khoản")
+        if 'allowed_bases' in update_dict:
+            if user_to_update.id == current_user.id:
+                raise HTTPException(status_code=403, detail="Không thể tự cấp quyền trạm")
+            visible = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
+            requested = {str(serial).strip().upper() for serial in update_dict['allowed_bases'] or [] if str(serial).strip()}
+            if not requested.issubset(visible):
+                raise HTTPException(status_code=403, detail="Chỉ được cấp trạm trong phạm vi của bạn")
     
     # ===================================================================
     # FIX: LOGIC CẬP NHẬT DANH SÁCH THIẾT BỊ (ASSIGN/UNASSIGN)
@@ -299,7 +321,7 @@ async def update_user(
     
     updated_user = await crud.update_user(auth_db, user_id, update_dict)
 
-    if assigned_serials is not None or 'allowed_bases' in update_dict or 'role' in update_dict:
+    if assigned_serials is not None or 'allowed_bases' in update_dict or 'view_only_bases' in update_dict or 'role' in update_dict:
         # Notify after commit so the browser reloads the new device scope.
         await ui_manager.broadcast({
             "type": "user_assignment_updated",
@@ -379,7 +401,3 @@ async def delete_user(
     )
     
     return {"status": "deleted", "user_id": user_id}
-
-
-
-
