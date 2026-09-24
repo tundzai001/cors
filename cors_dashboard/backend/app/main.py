@@ -7657,10 +7657,7 @@ async def get_rover_history(
     return {
         "username": username,
         "in_db": bool(rover),
-        "account": {
-            "username": rover.username,
-            "base_serial": rover.base_serial,
-        } if rover else None,
+        "account": {"username": rover.username} if rover else None,
         "caster_status": statuses,
         "sessions": sessions,
         "events": events,
