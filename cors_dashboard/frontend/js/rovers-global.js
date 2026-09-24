@@ -684,7 +684,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const elapsed = nowSec - fetchedAt;
                 const newRemaining = Math.max(0, initialRemaining - elapsed);
                 if (newRemaining <= 0) {
-                    el.className = 'badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill';
+                    el.className = 'rover-expiry-badge badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill';
                     el.textContent = 'HẾT HẠN';
                 } else {
                     el.textContent = formatDuration(newRemaining);
@@ -873,15 +873,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function formatExpiryCell(r, infos) {
-        if (r.type === 'db' && r.expires_at) {
-            const remainingDays = Math.ceil((Number(r.expires_at) - Date.now() / 1000) / 86400);
-            if (remainingDays <= 0) return '<span class="badge bg-danger">Expired</span>';
-            if (remainingDays <= 14) return `<span class="badge bg-warning text-dark">${remainingDays}d</span>`;
-            return `<span class="text-muted small">${remainingDays}d</span>`;
-        }
-        const live = infos.find(i => typeof i?.status !== 'undefined');
-        if (live) return `<span class="text-muted small">${formatDuration(Number(live.status || 0))}</span>`;
-        return '<span class="text-muted small">--</span>';
+        const live = infos.find(i => i?.status != null && Number.isFinite(Number(i.status)));
+        const nowSec = Math.floor(Date.now() / 1000);
+        const remainingSeconds = live
+            ? Number(live.status)
+            : r.expires_at ? Math.floor(Number(r.expires_at) - nowSec) : null;
+        if (remainingSeconds === null || !Number.isFinite(remainingSeconds)) return '<span class="text-muted small">--</span>';
+        if (remainingSeconds <= 0) return '<span class="rover-expiry-badge badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill">HẾT HẠN</span>';
+        if (remainingSeconds >= 315360000) return '<span class="rover-expiry-badge badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill">VĨNH VIỄN</span>';
+        return `<span class="rover-expiry-badge badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill live-countdown" data-remaining-seconds="${remainingSeconds}" data-fetched-at="${nowSec}">${formatDuration(remainingSeconds)}</span>`;
     }
 
     function isRoverExpiringSoon(r) {
@@ -897,37 +897,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const infos = r.caster_infos || [r.caster_info].filter(i => i);
         const isBlocked = infos.some(i => i.is_blocked);
-        const isOnline = infos.some(i => i.nclient > 0);
-        const totalClients = infos.reduce((sum, i) => sum + (i.nclient || 0), 0);
-
-        let casterStatusBadge = '<span class="rover-state-pill standby"><span></span>Offline</span>';
-        if (isBlocked) {
-            casterStatusBadge = '<span class="rover-state-pill blocked"><span></span>Blocked</span>';
-        } else if (isOnline) {
-            casterStatusBadge = `<span class="rover-state-pill active"><span></span>Online (${totalClients})</span>`;
-        } else if (infos.length > 0) {
-            const remainingSeconds = infos[0].status || 0;
-            if (remainingSeconds <= 0) {
-                casterStatusBadge = '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill">HẾT HẠN</span>';
-            } else if (remainingSeconds >= 315360000) {
-                casterStatusBadge = '<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill">VĨNH VIỄN</span>';
-            } else {
-                const nowSec = Math.floor(Date.now() / 1000);
-                casterStatusBadge = `<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 rounded-pill live-countdown" data-remaining-seconds="${remainingSeconds}" data-fetched-at="${nowSec}">${formatDuration(remainingSeconds)}</span>`;
-            }
-        }
 
         let dbBadge = '';
         if (r.type === 'db') {
             dbBadge = r.is_active ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>' : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>';
-            if (r.expires_at) {
-                const remainingDays = Math.ceil((r.expires_at - Date.now()/1000) / 86400);
-                if (remainingDays <= 0) {
-                    dbBadge += ' <span class="badge bg-danger ms-2 px-2 py-1">Hết hạn</span>';
-                } else if (remainingDays < 3650) {
-                    dbBadge += ' <span class="badge bg-warning text-dark ms-2 opacity-75">Còn ' + remainingDays + ' ngày</span>';
-                }
-            }
         } else {
             dbBadge = '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
         }
@@ -939,16 +912,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const isPresent = infos.some(i => i.server === h);
                 const color = isPresent ? 'text-success' : 'text-danger fw-bold';
                 const icon = isPresent ? 'bi-server' : 'bi-exclamation-triangle';
-                return `<span class="rover-server-chip" title="${h}">
-                            <i class="bi ${icon} ${color} me-1"></i>
-                            ${h}
+                return `<span class="rover-server-chip" title="${escapeHtml(h)}">
+                            <i class="bi ${icon} ${color}" aria-hidden="true"></i>
+                            <span class="rover-server-name">${escapeHtml(h)}</span>
                         </span>`;
             }).join('');
         } else if (infos.length > 0) {
             serverBadges = infos.map(i => {
-                return `<span class="rover-server-chip" title="${i.server}">
-                            <i class="bi bi-server text-warning me-1"></i>
-                            ${i.server}
+                return `<span class="rover-server-chip" title="${escapeHtml(i.server)}">
+                            <i class="bi bi-server text-warning" aria-hidden="true"></i>
+                            <span class="rover-server-name">${escapeHtml(i.server)}</span>
                         </span>`;
             }).join('');
         }
@@ -1123,9 +1096,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="rover-user-copy">
                         <div class="rover-user-heading">
                             <span class="rover-user-name">${escapeHtml(r.username)}</span>
-                            <span class="rover-user-indicators">${dbBadge}${showPosIcon}</span>
                         </div>
-                        <div class="rover-user-meta">${r.type === 'db' ? 'Database account' : 'Caster only user'}</div>
+                        <div class="rover-user-indicators">${dbBadge}${showPosIcon}${r.type === 'db' ? '' : '<span class="rover-user-meta">Caster only</span>'}</div>
                     </div>
                 </div>
             </td>
@@ -1139,12 +1111,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div>${activeConnsHtml}</div>
                 ${limitHtml}
             </td>
-            <td class="text-center" data-label="Expires">${expiresHtml}</td>
             <td class="text-center" data-label="Caster sync">${syncHtml}</td>
             <td class="text-center" data-label="Sessions">${sessionHtml}</td>
             <td class="text-center" data-label="Blocked">${blockedHtml}</td>
-            <td class="text-center" data-label="Status">${casterStatusBadge}</td>
-            <td class="text-center" data-label="Server">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
+            <td class="text-center" data-label="Expired">${expiresHtml}</td>
+            <td class="text-center" data-label="Server"><div class="rover-server-list">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</div></td>
             <td class="rover-actions-cell" data-label="Actions"><div class="rover-row-actions">${actionHtml}</div></td>
         `;
 
