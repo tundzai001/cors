@@ -1,0 +1,148 @@
+/* Security ops */
+.ops-health-card {
+    min-height: 92px;
+    padding: 14px;
+}
+
+.monitor-label,
+.stat-circle-label {
+    color: var(--ops-muted);
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.monitor-value,
+.stat-circle-value {
+    color: var(--ops-text);
+    font-weight: 900;
+}
+
+.ops-meter {
+    background: rgba(148, 163, 184, 0.16);
+    height: 6px;
+}
+
+.ops-switch-row,
+.ops-security-scan-row {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+}
+
+.ops-switch-row {
+    background: rgba(8, 13, 24, 0.54);
+    border: 1px solid var(--ops-border-soft);
+    border-radius: var(--ops-radius-sm);
+    padding: 10px 12px;
+}
+
+.ops-security-scan-row {
+    border-top: 1px solid var(--ops-border-soft);
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 14px;
+    padding-top: 14px;
+}
+
+.threat-level {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: repeat(5, minmax(34px, 1fr));
+    margin-top: 8px;
+}
+
+.threat-bar {
+    background: rgba(148, 163, 184, 0.16);
+    border-radius: 999px;
+    height: 8px;
+}
+
+.threat-bar.active { background: var(--ops-success); }
+.threat-bar.warning { background: var(--ops-warning); }
+.threat-bar.danger { background: var(--ops-danger); }
+
+.stat-circle-container {
+    height: 150px;
+    margin: 0 auto;
+    position: relative;
+    width: 150px;
+}
+
+.stat-circle { height: 100%; width: 100%; }
+.circle-bg { fill: none; stroke: rgba(148, 163, 184, 0.14); stroke-width: 8; }
+.circle-progress { fill: none; stroke-width: 8; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; transition: stroke-dashoffset 180ms ease; }
+.circle-warning { stroke: var(--ops-warning); }
+.circle-success { stroke: var(--ops-success); }
+.circle-danger { stroke: var(--ops-danger); }
+.circle-info { stroke: var(--ops-primary); }
+
+.stat-circle-content {
+    left: 50%;
+    position: absolute;
+    text-align: center;
+    top: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.ops-text-ok { color: var(--ops-success) !important; }
+.ops-text-danger { color: var(--ops-danger) !important; }
+.ops-text-warn { color: var(--ops-warning) !important; }
+.ops-text-info { color: var(--ops-primary) !important; }
+
+.ops-traffic-canvas {
+    display: block;
+    height: 250px;
+    width: 100%;
+}
+
+.ops-live-rate {
+    color: var(--ops-text);
+    position: absolute;
+    right: 16px;
+    text-align: right;
+    top: 12px;
+}
+
+.ops-scroll-panel {
+    max-height: 250px;
+    overflow: auto;
+}
+
+.ops-attack-alert {
+    background: rgba(239, 68, 68, 0.13);
+    border: 1px solid rgba(239, 68, 68, 0.36);
+    border-radius: var(--ops-radius);
+    color: #fecdd3;
+    font-weight: 900;
+    padding: 14px 16px;
+    width: 100%;
+}
+
+/* Legacy admin surface normalization */
+.ops-admin-page .terminal-table,
+.ops-admin-page .stat-card-hacker,
+.ops-admin-page .premium-table-card,
+.ops-admin-page .stat-card {
+    background: rgba(13, 20, 32, 0.86) !important;
+    border: 1px solid var(--ops-border-soft) !important;
+    border-radius: var(--ops-radius) !important;
+    box-shadow: var(--ops-shadow-sm) !important;
+}
+
+.ops-admin-page .btn-hacker,
+.ops-admin-page .action-btn,
+.ops-admin-page .btn-premium-primary {
+    border-radius: var(--ops-radius-sm) !important;
+}
+
+.ops-admin-page .matrix-bg,
+.ops-admin-page .terminal-dot,
+.ops-admin-page .terminal-cursor,
+.ops-admin-page .radar-line,
+.ops-admin-page .data-flow,
+.ops-admin-page .scan-line,
+.ops-admin-page .loading-bar {
+    display: none !important;
+}

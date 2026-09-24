@@ -1,0 +1,257 @@
+/* Users administration */
+.ops-users-shell {
+    padding: 20px 22px 24px;
+}
+
+.ops-users-page .ops-page-head {
+    background: linear-gradient(180deg, rgba(17, 27, 42, 0.92), rgba(10, 16, 27, 0.92));
+    box-shadow: none;
+    margin-bottom: 12px;
+    min-height: 58px;
+    padding: 12px 14px;
+}
+
+.ops-users-page .ops-page-title {
+    font-size: 1rem;
+}
+
+.ops-users-page .ops-page-subtitle {
+    font-size: 0.76rem;
+}
+
+.ops-users-page .ops-toolbar {
+    background: rgba(9, 15, 25, 0.78);
+    box-shadow: none;
+    margin-bottom: 10px;
+    padding: 10px 12px;
+}
+
+.ops-users-page .ops-toolbar .input-group {
+    max-width: 320px !important;
+}
+
+.ops-users-page .ops-toolbar .form-select {
+    width: 136px !important;
+}
+
+.ops-users-table-card {
+    box-shadow: none;
+    overflow: hidden;
+}
+
+.ops-users-table-card .table-responsive {
+    max-height: calc(100vh - 216px);
+}
+
+.ops-users-page .ops-table thead th {
+    color: #8fb2d9;
+    font-size: 0.68rem;
+    padding: 10px 12px;
+}
+
+.ops-users-page .ops-table td {
+    border-color: rgba(148, 163, 184, 0.13);
+    padding: 9px 12px;
+}
+
+.ops-users-page .ops-table tbody tr {
+    transition: background 120ms ease;
+}
+
+.ops-users-page .ops-table tbody tr:hover {
+    background: rgba(14, 165, 233, 0.06);
+}
+
+.ops-table-id,
+.ops-muted-cell {
+    color: #a8b6c7;
+}
+
+.ops-user-cell {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+}
+
+.ops-user-avatar {
+    align-items: center;
+    background: rgba(14, 165, 233, 0.13);
+    border: 1px solid rgba(56, 189, 248, 0.24);
+    border-radius: 50%;
+    color: #bae6fd;
+    display: inline-flex;
+    font-size: 0.72rem;
+    font-weight: 900;
+    height: 26px;
+    justify-content: center;
+    width: 26px;
+}
+
+.ops-role-badge,
+.ops-status-pill {
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 0.7rem;
+    font-weight: 850;
+    line-height: 1;
+    min-height: 24px;
+    padding: 5px 9px;
+}
+
+.ops-role-admin {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(248, 113, 113, 0.28);
+    color: #fecaca;
+}
+
+.ops-role-coordinator {
+    background: rgba(14, 165, 233, 0.12);
+    border-color: rgba(56, 189, 248, 0.28);
+    color: #bae6fd;
+}
+
+.ops-role-operator {
+    background: rgba(6, 182, 212, 0.13);
+    border-color: rgba(34, 211, 238, 0.28);
+    color: #a5f3fc;
+}
+
+.ops-role-viewer {
+    background: rgba(148, 163, 184, 0.1);
+    border-color: rgba(148, 163, 184, 0.22);
+    color: #cbd5e1;
+}
+
+.ops-status-pill {
+    gap: 7px;
+}
+
+.ops-status-pill span {
+    border-radius: 50%;
+    display: inline-block;
+    height: 7px;
+    width: 7px;
+}
+
+.ops-status-pill.is-active {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(74, 222, 128, 0.24);
+    color: #bbf7d0;
+}
+
+.ops-status-pill.is-active span {
+    background: #22c55e;
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+}
+
+.ops-status-pill.is-inactive {
+    background: rgba(148, 163, 184, 0.08);
+    border-color: rgba(148, 163, 184, 0.2);
+    color: #cbd5e1;
+}
+
+.ops-status-pill.is-inactive span {
+    background: #94a3b8;
+}
+
+.ops-row-actions {
+    white-space: nowrap;
+}
+
+.ops-table-action {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--ops-radius-sm);
+    color: #9fb3c8;
+    display: inline-flex;
+    height: 30px;
+    justify-content: center;
+    margin-left: 3px;
+    width: 30px;
+}
+
+.ops-table-action:hover {
+    background: rgba(14, 165, 233, 0.14);
+    color: #e0f2fe;
+}
+
+.ops-table-action.danger:hover {
+    background: rgba(239, 68, 68, 0.14);
+    color: #fecaca;
+}
+
+.ops-alert {
+    border-radius: var(--ops-radius-sm);
+    font-size: 0.86rem;
+    padding: 11px 12px;
+}
+
+.ops-alert-danger {
+    background: rgba(239, 68, 68, 0.11);
+    border: 1px solid rgba(239, 68, 68, 0.32);
+    color: #fecdd3;
+}
+
+.ops-toast {
+    animation: opsToastIn 160ms ease-out;
+    background: rgba(13, 20, 32, 0.98);
+    border: 1px solid var(--ops-border-soft);
+    border-radius: var(--ops-radius);
+    box-shadow: var(--ops-shadow);
+    color: var(--ops-text);
+}
+
+.ops-toast.success { border-color: rgba(34, 197, 94, 0.38); }
+.ops-toast.danger { border-color: rgba(239, 68, 68, 0.42); }
+.ops-toast.warning { border-color: rgba(245, 158, 11, 0.42); }
+.ops-toast.info { border-color: rgba(14, 165, 233, 0.42); }
+
+.ops-confirm-backdrop {
+    align-items: center;
+    background: rgba(2, 6, 23, 0.72);
+    display: flex;
+    inset: 0;
+    justify-content: center;
+    padding: 16px;
+    position: fixed;
+    z-index: 20000;
+}
+
+.ops-confirm {
+    background: #0d1420;
+    border: 1px solid var(--ops-border);
+    border-radius: var(--ops-radius);
+    box-shadow: var(--ops-shadow);
+    max-width: 430px;
+    width: 100%;
+}
+
+.ops-confirm-head,
+.ops-confirm-body,
+.ops-confirm-actions {
+    padding: 16px;
+}
+
+.ops-confirm-head {
+    border-bottom: 1px solid var(--ops-border-soft);
+    font-weight: 900;
+}
+
+.ops-confirm-body {
+    color: #cbd5e1;
+}
+
+.ops-confirm-actions {
+    border-top: 1px solid var(--ops-border-soft);
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+@keyframes opsToastIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}

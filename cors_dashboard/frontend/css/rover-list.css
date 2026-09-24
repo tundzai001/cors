@@ -1,0 +1,368 @@
+/* Rover list: table, row details, responsive cards. */
+
+.ops-rovers-page .rover-list-table {
+    table-layout: fixed;
+    width: 100%;
+}
+
+.ops-rovers-page .rover-list-table th:nth-child(1) { width: 2.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(2) { width: 15%; }
+.ops-rovers-page .rover-list-table th:nth-child(3) { width: 6%; }
+.ops-rovers-page .rover-list-table th:nth-child(4) { width: 11%; }
+.ops-rovers-page .rover-list-table th:nth-child(5) { width: 13.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(6) { width: 5.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(7) { width: 7%; }
+.ops-rovers-page .rover-list-table th:nth-child(8) { width: 5.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(9) { width: 6.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(10) { width: 8.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(11) { width: 8.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(12) { width: 10.5%; }
+
+.ops-rovers-page .rover-list-table td {
+    overflow-wrap: anywhere;
+}
+
+.ops-rovers-page .premium-table-card .rover-list-scroll {
+    overflow-x: hidden;
+}
+
+.rover-user-cell {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+}
+
+.rover-user-copy { min-width: 0; }
+.rover-user-heading,
+.rover-user-indicators { align-items: center; display: flex; }
+.rover-user-heading { gap: 7px; min-width: 0; }
+.rover-user-indicators { flex: 0 0 auto; gap: 5px; }
+.rover-user-indicators i { line-height: 1; margin: 0 !important; }
+
+.rover-user-avatar {
+    align-items: center;
+    background: rgba(14, 165, 233, 0.14);
+    border: 1px solid rgba(14, 165, 233, 0.26);
+    border-radius: 50%;
+    color: #67e8f9;
+    display: inline-flex;
+    flex: 0 0 30px;
+    height: 30px;
+    justify-content: center;
+    width: 30px;
+}
+
+.rover-user-avatar.is-unknown {
+    background: rgba(245, 158, 11, 0.13);
+    border-color: rgba(245, 158, 11, 0.28);
+    color: #fbbf24;
+}
+
+.rover-user-name {
+    color: var(--ops-text);
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.83rem;
+    font-weight: 900;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rover-user-meta,
+.rover-limit-note {
+    color: var(--ops-muted);
+    font-size: 0.68rem;
+}
+
+.rover-password-chip,
+.rover-mount-chip,
+.rover-server-chip {
+    align-items: center;
+    background: rgba(5, 10, 18, 0.62);
+    border: 1px solid var(--ops-border-soft);
+    border-radius: 999px;
+    color: #cbd5e1;
+    display: inline-flex;
+    font-size: 0.68rem;
+    gap: 5px;
+    line-height: 1;
+    padding: 5px 8px;
+    white-space: nowrap;
+}
+
+.rover-password-chip {
+    border-radius: 6px;
+    color: #fbbf24;
+    font-family: Consolas, Monaco, monospace;
+}
+
+.rover-list-table .rover-password-chip {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.rover-mountpoint-list,
+.rover-server-list {
+    align-content: flex-start;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.rover-mountpoint-list {
+    max-height: 58px;
+    min-width: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1px 2px 2px 0;
+}
+
+.rover-mount-chip {
+    color: #67e8f9;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rover-server-chip.warn {
+    color: var(--ops-warning);
+}
+
+.rover-server-chip {
+    line-height: 1.2;
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.rover-connection-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 3px;
+}
+
+.rover-connection-mp {
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    border-radius: 999px;
+    color: #86efac;
+    font-size: 0.68rem;
+    font-weight: 800;
+    padding: 4px 7px;
+}
+
+.rover-connection-time {
+    color: var(--ops-muted);
+    font-size: 0.7rem;
+}
+
+.rover-connection-start {
+    color: #64748b;
+    font-size: 0.64rem;
+    margin-left: 4px;
+}
+
+.rover-state-pill {
+    align-items: center;
+    border: 1px solid var(--ops-border-soft);
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 0.68rem;
+    font-weight: 900;
+    gap: 6px;
+    justify-content: center;
+    max-width: 100%;
+    min-width: 86px;
+    padding: 5px 8px;
+    text-transform: none;
+}
+
+.rover-state-pill > span {
+    border-radius: 50%;
+    height: 7px;
+    width: 7px;
+}
+
+.rover-state-pill.active {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.24);
+    color: #86efac;
+}
+
+.rover-state-pill.active > span { background: #22c55e; }
+
+.rover-state-pill.standby,
+.rover-state-pill.permanent {
+    background: rgba(14, 165, 233, 0.11);
+    border-color: rgba(14, 165, 233, 0.24);
+    color: #7dd3fc;
+}
+
+.rover-state-pill.standby > span,
+.rover-state-pill.permanent > span { background: #38bdf8; }
+
+.rover-state-pill.blocked,
+.rover-state-pill.expired {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.26);
+    color: #fca5a5;
+}
+
+.rover-state-pill.blocked > span,
+.rover-state-pill.expired > span { background: #ef4444; }
+
+.ops-rovers-page .rover-list-table td:nth-child(10) .badge {
+    line-height: 1.25;
+    max-width: 100%;
+    white-space: normal;
+}
+
+.rover-actions-cell {
+    text-align: right;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.rover-row-actions {
+    align-items: center;
+    display: flex;
+    gap: 5px;
+    justify-content: flex-end;
+    min-height: 32px;
+    white-space: nowrap;
+}
+
+.rover-action-btn {
+    align-items: center;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    color: #cbd5e1;
+    display: inline-flex;
+    flex: 0 0 28px;
+    height: 28px;
+    justify-content: center;
+    width: 28px;
+}
+
+.rover-action-btn:hover {
+    background: rgba(14, 165, 233, 0.16);
+    border-color: rgba(14, 165, 233, 0.38);
+    color: #7dd3fc;
+}
+
+@media (max-width: 1599.98px) {
+    .ops-rovers-page .rover-list-table,
+    .ops-rovers-page .rover-list-table tbody {
+        display: block;
+        min-width: 0;
+        width: 100%;
+    }
+
+    .ops-rovers-page .rover-list-table thead {
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
+    }
+
+    .ops-rovers-page .rover-list-table tbody {
+        display: grid;
+        gap: 10px;
+        padding: 10px;
+    }
+
+    .ops-rovers-page .rover-list-table tbody tr {
+        background: rgba(13, 20, 32, 0.9);
+        border: 1px solid var(--ops-border-soft);
+        border-radius: 8px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        overflow: hidden;
+        position: relative;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td {
+        border-bottom: 0;
+        border-top: 1px solid var(--ops-border-soft);
+        display: block;
+        min-width: 0;
+        padding: 10px 12px;
+        text-align: left !important;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td[data-label]::before {
+        color: var(--ops-muted);
+        content: attr(data-label);
+        display: block;
+        font-size: 0.65rem;
+        font-weight: 700;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td:first-child:not([colspan]) {
+        border: 0;
+        padding: 0;
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        z-index: 1;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td:nth-child(2) {
+        border-top: 0;
+        grid-column: 1 / -1;
+        padding-right: 48px;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td:nth-child(2)::before {
+        display: none;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td.rover-actions-cell,
+    .ops-rovers-page .rover-list-table tbody td[colspan] {
+        grid-column: 1 / -1;
+    }
+
+    .ops-rovers-page .rover-row-actions {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        white-space: normal;
+    }
+}
+
+@media (max-width: 899.98px) {
+    .ops-rovers-page .rover-list-table tbody tr {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 559.98px) {
+    .ops-rovers-page .rover-list-table tbody tr {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ops-rovers-page .rover-user-heading {
+        flex-wrap: wrap;
+    }
+
+    .ops-rovers-page .rover-user-name {
+        flex-basis: 100%;
+    }
+}
+
+.rover-action-btn.danger:hover {
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.34);
+    color: #fca5a5;
+}

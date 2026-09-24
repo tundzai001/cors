@@ -1,0 +1,45 @@
+.station-ops-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.station-ops-alert.critical {
+    color: #fecaca;
+}
+
+.station-ops-alert.warning {
+    color: #fde68a;
+}
+
+.device-ops-alert-badge {
+    align-items: center;
+    background: rgba(250, 204, 21, 0.16);
+    border: 1px solid rgba(250, 204, 21, 0.35);
+    border-radius: 999px;
+    color: #facc15;
+    display: inline-flex;
+    height: 22px;
+    justify-content: center;
+    margin-right: 6px;
+    width: 22px;
+}
+
+.ops-alert-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+@media (max-width: 767.98px) {
+    .rover-bulk-toolbar,
+    .station-ops-grid {
+        display: block;
+    }
+
+    .rover-bulk-toolbar > * + *,
+    .station-ops-grid > * + * {
+        margin-top: 10px;
+    }
+}

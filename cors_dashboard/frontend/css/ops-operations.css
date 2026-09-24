@@ -1,0 +1,238 @@
+/* Operations Center */
+.ops-center-shell {
+    padding: 18px 22px 48px;
+}
+
+.ops-center-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ops-center-stat {
+    min-height: 104px;
+    padding: 16px;
+}
+
+.ops-center-stat span {
+    color: var(--ops-muted);
+    display: block;
+    font-size: 0.74rem;
+    margin-bottom: 6px;
+}
+
+.ops-center-stat strong {
+    color: var(--ops-text);
+    display: block;
+    font-size: 1.65rem;
+    line-height: 1.1;
+}
+
+.ops-center-stat small {
+    color: #94a3b8;
+    display: block;
+    font-size: 0.72rem;
+    margin-top: 8px;
+}
+
+.ops-center-list {
+    display: grid;
+    gap: 8px;
+    max-height: 430px;
+    overflow: auto;
+    padding-right: 2px;
+}
+
+.ops-alert-item {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-left: 3px solid #38bdf8;
+    border-radius: 7px;
+    padding: 10px 12px;
+}
+
+.ops-alert-item.critical {
+    border-left-color: #ef4444;
+}
+
+.ops-alert-item.warning {
+    border-left-color: #f59e0b;
+}
+
+.ops-alert-item.info {
+    border-left-color: #38bdf8;
+}
+
+.ops-alert-item strong {
+    color: #f8fafc;
+    font-size: 0.82rem;
+}
+
+.ops-alert-message {
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    margin-top: 5px;
+}
+
+.ops-alert-meta {
+    color: #64748b;
+    display: flex;
+    font-size: 0.7rem;
+    gap: 10px;
+    justify-content: space-between;
+    margin-top: 7px;
+}
+
+.ops-center-subpanel {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.ops-json-output {
+    background: rgba(2, 6, 23, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 6px;
+    color: #bfdbfe;
+    font-size: 0.72rem;
+    max-height: 170px;
+    min-height: 34px;
+    overflow: auto;
+    padding: 8px;
+    white-space: pre-wrap;
+}
+
+@media (max-width: 991.98px) {
+    .ops-admin-nav .navbar-nav {
+        align-items: stretch;
+        padding-top: 8px;
+    }
+
+    .ops-nav-group-label {
+        margin: 12px 0 4px;
+    }
+
+    .ops-page-head,
+    .ops-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    #map-root,
+    .station-map-container {
+        height: calc(100vh - 72px);
+        min-height: 520px;
+    }
+
+    .station-map-toolbar {
+        flex-wrap: wrap;
+        right: 14px;
+    }
+
+    .station-map-drawer {
+        border-left: 0;
+        border-top: 1px solid var(--ops-border-soft);
+        height: 56vh;
+        left: 0;
+        top: auto;
+        transform: translateY(100%);
+        width: 100%;
+    }
+
+    .station-map-drawer.open {
+        transform: translateY(0);
+    }
+
+    .station-map-legend {
+        bottom: 10px;
+        left: 10px;
+        right: auto;
+    }
+
+    .ops-rovers-page .rover-create-modal .modal-dialog {
+        max-width: calc(100vw - 18px);
+    }
+
+    .ops-rovers-page #create-rover-form {
+        max-height: calc(100vh - 70px);
+    }
+
+    .ops-rovers-page #create-rover-form > .row {
+        padding: 12px;
+    }
+
+    .ops-rovers-page #create-rover-form > .row > [class*="col-"] {
+        margin-bottom: 12px;
+    }
+
+    .ops-rovers-page .rover-create-modal .modal-header,
+    .ops-rovers-page #create-rover-form .modal-footer {
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+    }
+
+    .ops-center-shell {
+        padding: 14px;
+    }
+
+    .ops-center-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 575.98px) {
+    .ops-center-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.rover-bulk-toolbar {
+    align-items: center;
+    background: rgba(15, 23, 42, 0.86);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+    margin-top: 12px;
+    padding: 10px 12px;
+}
+
+.rover-bulk-toolbar .active {
+    background: rgba(250, 204, 21, 0.18);
+}
+
+.station-ops-card {
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.station-ops-title {
+    color: #94a3b8;
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.station-ops-event,
+.station-ops-alert {
+    border-top: 1px solid rgba(148, 163, 184, 0.16);
+    padding: 8px 0;
+}
+
+.station-ops-event span {
+    color: #94a3b8;
+    display: block;
+    font-size: 0.72rem;
+}
+
+.station-ops-alert span {
+    color: #cbd5e1;
+    display: block;
+    font-size: 0.82rem;
+    margin: 2px 0 0;
+}

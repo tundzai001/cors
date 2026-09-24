@@ -1,0 +1,425 @@
+/* Rover and caster administration */
+.ops-rovers-page.cors-manager-page {
+    background: #050a12;
+}
+
+.ops-rovers-page .dashboard-bg {
+    background: #050a12;
+}
+
+.ops-rovers-page .container-wide,
+.ops-rovers-shell {
+    max-width: none;
+    padding: 18px 22px 48px;
+}
+
+.ops-rovers-page .ops-page-head {
+    margin-bottom: 12px;
+}
+
+.ops-rovers-page .ops-page-head h1 {
+    align-items: center;
+    color: var(--ops-text);
+    display: flex;
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: 0;
+    margin: 0 0 3px;
+}
+
+.ops-rovers-page .ops-page-head p {
+    color: var(--ops-muted);
+    font-size: 0.74rem;
+    margin: 0;
+}
+
+.ops-head-action {
+    align-items: center;
+    display: inline-flex;
+    gap: 8px;
+    min-height: 34px;
+}
+
+.ops-rovers-page .stats-grid {
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 12px;
+}
+
+.ops-rovers-page .stat-card {
+    background: rgba(13, 20, 32, 0.88) !important;
+    border-color: var(--ops-border-soft) !important;
+    border-radius: var(--ops-radius-sm) !important;
+    box-shadow: none !important;
+    padding: 12px 14px;
+}
+
+.ops-rovers-page .stat-card:hover {
+    transform: none;
+}
+
+.ops-rovers-page .stat-card::after {
+    display: none;
+}
+
+.ops-rovers-page .stat-label {
+    color: var(--ops-muted);
+    font-size: 0.68rem;
+    letter-spacing: 0;
+    margin-bottom: 5px;
+    text-transform: none;
+}
+
+.ops-rovers-page .stat-value {
+    color: var(--ops-text);
+    font-family: inherit;
+    font-size: 1.42rem;
+    font-weight: 900;
+    letter-spacing: 0;
+}
+
+.ops-rovers-page .premium-tabs {
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--ops-border-soft);
+    border-radius: 0;
+    display: flex;
+    gap: 2px;
+    margin-bottom: 12px;
+    padding: 0;
+}
+
+.ops-rovers-page .premium-tabs .nav-link {
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--ops-muted);
+    font-size: 0.78rem;
+    padding: 9px 12px;
+}
+
+.ops-rovers-page .premium-tabs .nav-link.active {
+    background: transparent;
+    border-bottom-color: var(--ops-primary);
+    box-shadow: none;
+    color: var(--ops-text);
+}
+
+.ops-rovers-page .filter-row {
+    background: rgba(13, 20, 32, 0.72);
+    border: 1px solid var(--ops-border-soft);
+    border-radius: var(--ops-radius-sm);
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+}
+
+.ops-rovers-page .premium-input,
+.ops-rovers-page .premium-select {
+    background-color: rgba(5, 10, 18, 0.74);
+    border-color: var(--ops-border-soft);
+    border-radius: 6px;
+    color: var(--ops-text);
+    font-size: 0.78rem;
+    min-height: 32px;
+    padding-bottom: 6px;
+    padding-top: 6px;
+}
+
+.ops-rovers-page .premium-input {
+    padding-left: 34px;
+}
+
+.ops-rovers-page .search-input-wrapper i {
+    left: 11px;
+}
+
+.ops-rovers-page .action-btn,
+.ops-rovers-page .btn-premium-primary {
+    border-radius: 6px !important;
+    min-height: 32px;
+}
+
+.ops-rovers-page .premium-alert {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.2);
+    border-radius: var(--ops-radius-sm);
+    margin-bottom: 12px;
+    padding: 10px 12px;
+}
+
+.ops-rovers-page .premium-table-card {
+    background: rgba(13, 20, 32, 0.9) !important;
+    border-radius: 7px !important;
+    box-shadow: none !important;
+}
+
+.ops-rovers-page .premium-table {
+    color: var(--ops-text);
+    table-layout: auto;
+}
+
+.ops-rovers-page .premium-table th {
+    background: rgba(5, 10, 18, 0.74);
+    border-bottom-color: var(--ops-border-soft);
+    color: #cbd5e1;
+    font-size: 0.68rem;
+    letter-spacing: 0;
+    padding: 9px 12px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.ops-rovers-page .premium-table td {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.13);
+    padding: 9px 12px;
+    vertical-align: middle;
+}
+
+.ops-rovers-page .premium-table tr:hover td {
+    background: rgba(14, 165, 233, 0.05);
+}
+
+/* Create Rover modal */
+.ops-rovers-page .rover-create-modal .modal-dialog {
+    max-width: min(980px, calc(100vw - 36px));
+}
+
+.ops-rovers-page .rover-create-modal .modal-content {
+    background: #111820 !important;
+    border: 1px solid rgba(148, 163, 184, 0.24) !important;
+    border-radius: 8px;
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.48) !important;
+    overflow: hidden;
+}
+
+.ops-rovers-page .rover-create-modal .modal-header {
+    align-items: flex-start;
+    background: #151c24;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18) !important;
+    padding: 14px 18px;
+}
+
+.ops-rovers-page .rover-modal-title-wrap {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    min-width: 0;
+}
+
+.ops-rovers-page .rover-modal-icon {
+    align-items: center;
+    background: rgba(14, 165, 233, 0.14);
+    border: 1px solid rgba(14, 165, 233, 0.28);
+    border-radius: 8px;
+    color: #67e8f9;
+    display: inline-flex;
+    flex: 0 0 38px;
+    height: 38px;
+    justify-content: center;
+    width: 38px;
+}
+
+.ops-rovers-page .rover-create-modal .modal-title {
+    font-size: 1rem;
+    font-weight: 900;
+    line-height: 1.2;
+    margin: 0;
+}
+
+.ops-rovers-page .rover-modal-title-wrap p {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    margin: 3px 0 0;
+}
+
+.ops-rovers-page .rover-create-modal .modal-body {
+    background: #0d131b;
+    padding: 0 !important;
+}
+
+.ops-rovers-page #create-rover-form {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 132px);
+    min-height: 0;
+}
+
+.ops-rovers-page #create-rover-form > .row {
+    flex: 1 1 auto;
+    margin: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: 18px;
+}
+
+.ops-rovers-page #create-rover-form > .row > [class*="col-"] {
+    background: #141b23;
+    border: 1px solid rgba(148, 163, 184, 0.16) !important;
+    border-radius: 8px;
+    padding: 16px !important;
+}
+
+.ops-rovers-page #create-rover-form > .row > .col-lg-5 {
+    border-right: 1px solid rgba(148, 163, 184, 0.16) !important;
+}
+
+.ops-rovers-page #create-rover-form h6 {
+    align-items: center;
+    background: rgba(14, 165, 233, 0.08);
+    border: 1px solid rgba(14, 165, 233, 0.16);
+    border-radius: 7px;
+    color: #7dd3fc !important;
+    display: flex;
+    font-size: 0.68rem;
+    gap: 7px;
+    letter-spacing: 0;
+    margin-bottom: 12px !important;
+    padding: 8px 10px;
+}
+
+.ops-rovers-page #create-rover-form .form-label {
+    color: #b6c2cf !important;
+    font-size: 0.72rem;
+    margin-bottom: 6px;
+}
+
+.ops-rovers-page #create-rover-form .form-control,
+.ops-rovers-page #create-rover-form .form-select,
+.ops-rovers-page #create-rover-form .input-group-text {
+    background-color: #090f18 !important;
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 0.82rem;
+    min-height: 38px;
+}
+
+.ops-rovers-page #create-rover-form .input-group > .input-group-text {
+    border-bottom-right-radius: 0;
+    border-top-right-radius: 0;
+    width: 42px;
+}
+
+.ops-rovers-page #create-rover-form .input-group > .form-control {
+    border-bottom-left-radius: 0;
+    border-top-left-radius: 0;
+}
+
+.ops-rovers-page #create-rover-form .form-control:focus,
+.ops-rovers-page #create-rover-form .form-select:focus {
+    border-color: rgba(14, 165, 233, 0.72) !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.14);
+}
+
+.ops-rovers-page #create-rover-form .bg-dark-subtle,
+.ops-rovers-page #create-rover-form .premium-card-inner {
+    background: #101821 !important;
+    border-color: rgba(148, 163, 184, 0.18) !important;
+    border-radius: 8px !important;
+}
+
+.ops-rovers-page #target-caster-container {
+    gap: 8px !important;
+    max-height: 108px !important;
+    padding: 10px !important;
+}
+
+.ops-rovers-page #target-caster-container .form-check-inline {
+    align-items: center;
+    background: rgba(148, 163, 184, 0.07);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 999px;
+    display: inline-flex;
+    gap: 6px;
+    margin: 0;
+    padding: 6px 10px 6px 30px;
+}
+
+.ops-rovers-page #target-caster-container .form-check-input {
+    margin-left: -20px;
+    margin-top: 0;
+}
+
+.ops-rovers-page #station-checklist,
+.ops-rovers-page #admin-live-mountpoints-list {
+    background: #0a111a !important;
+    border-color: rgba(148, 163, 184, 0.18) !important;
+    border-radius: 8px !important;
+}
+
+.ops-rovers-page #station-checklist {
+    max-height: 152px;
+    min-height: 112px;
+}
+
+.ops-rovers-page #admin-live-mountpoints-list {
+    height: 132px !important;
+}
+
+.ops-rovers-page #station-checklist .form-check,
+.ops-rovers-page #admin-live-mountpoints-list .form-check {
+    align-items: center;
+    border-radius: 6px;
+    display: flex;
+    gap: 8px;
+    margin: 0 !important;
+    min-height: 27px;
+    padding: 4px 6px 4px 28px;
+}
+
+.ops-rovers-page #station-checklist .form-check:hover,
+.ops-rovers-page #admin-live-mountpoints-list .form-check:hover {
+    background: rgba(14, 165, 233, 0.08);
+}
+
+.ops-rovers-page #station-checklist .form-check-input,
+.ops-rovers-page #admin-live-mountpoints-list .form-check-input {
+    margin-left: -20px;
+    margin-top: 0;
+}
+
+.ops-rovers-page #station-checklist .form-check-label,
+.ops-rovers-page #admin-live-mountpoints-list .form-check-label {
+    line-height: 1.25;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.ops-rovers-page #new-mountpoints {
+    color: #bfdbfe;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 0.78rem;
+}
+
+.ops-rovers-page #admin-live-mountpoints-box {
+    border-style: solid !important;
+    margin-top: 2px;
+}
+
+.ops-rovers-page #admin-live-mountpoints-box .btn-link {
+    color: #22d3ee !important;
+    font-size: 0.74rem;
+    text-decoration: none;
+}
+
+.ops-rovers-page #apply-live-mountpoints-btn {
+    border-color: rgba(34, 211, 238, 0.5);
+    border-radius: 6px;
+    color: #67e8f9;
+    font-size: 0.78rem;
+    min-height: 32px;
+}
+
+.ops-rovers-page #create-rover-form .modal-footer {
+    background: #151c24;
+    border-top: 1px solid rgba(148, 163, 184, 0.18) !important;
+    flex: 0 0 auto;
+    margin: 0 !important;
+    padding: 12px 18px !important;
+}
+
+.ops-rovers-page #create-rover-form .modal-footer .btn {
+    border-radius: 6px;
+    min-height: 36px;
+}
