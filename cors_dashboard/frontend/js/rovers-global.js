@@ -1113,7 +1113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         tr.innerHTML = `
             <td class="text-center">
-                <input type="checkbox" class="form-check-input rover-row-check" data-username-key="${roverKey}" ${checkedAttr}>
+                <input type="checkbox" class="form-check-input rover-row-check" data-username-key="${roverKey}" aria-label="Chọn rover ${escapeHtml(r.username)}" ${checkedAttr}>
             </td>
             <td>
                 <div class="rover-user-cell">
@@ -1129,23 +1129,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </div>
             </td>
-            <td><code class="rover-password-chip">${r.password || '******'}</code></td>
-            <td>
+            <td data-label="Password"><code class="rover-password-chip">${r.password || '******'}</code></td>
+            <td data-label="Mountpoints">
                 <div class="rover-mount-cell">
                     <div class="rover-mountpoint-list" title="${mpsTitle}" aria-label="Mountpoints được cấp">${mpsDisplay}</div>
                 </div>
             </td>
-            <td>
+            <td data-label="Connection">
                 <div>${activeConnsHtml}</div>
                 ${limitHtml}
             </td>
-            <td class="text-center">${expiresHtml}</td>
-            <td class="text-center">${syncHtml}</td>
-            <td class="text-center">${sessionHtml}</td>
-            <td class="text-center">${blockedHtml}</td>
-            <td class="text-center">${casterStatusBadge}</td>
-            <td class="text-center">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
-            <td class="rover-actions-cell"><div class="rover-row-actions">${actionHtml}</div></td>
+            <td class="text-center" data-label="Expires">${expiresHtml}</td>
+            <td class="text-center" data-label="Caster sync">${syncHtml}</td>
+            <td class="text-center" data-label="Sessions">${sessionHtml}</td>
+            <td class="text-center" data-label="Blocked">${blockedHtml}</td>
+            <td class="text-center" data-label="Status">${casterStatusBadge}</td>
+            <td class="text-center" data-label="Server">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</td>
+            <td class="rover-actions-cell" data-label="Actions"><div class="rover-row-actions">${actionHtml}</div></td>
         `;
 
         return tr;

@@ -1092,6 +1092,24 @@ body.ops-admin-page {
     table-layout: auto;
 }
 
+.ops-rovers-page .rover-list-table {
+    table-layout: fixed;
+    width: 100%;
+}
+
+.ops-rovers-page .rover-list-table th:nth-child(1) { width: 2.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(2) { width: 15%; }
+.ops-rovers-page .rover-list-table th:nth-child(3) { width: 6%; }
+.ops-rovers-page .rover-list-table th:nth-child(4) { width: 11%; }
+.ops-rovers-page .rover-list-table th:nth-child(5) { width: 13.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(6) { width: 5.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(7) { width: 7%; }
+.ops-rovers-page .rover-list-table th:nth-child(8) { width: 5.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(9) { width: 6.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(10) { width: 8.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(11) { width: 8.5%; }
+.ops-rovers-page .rover-list-table th:nth-child(12) { width: 10.5%; }
+
 .ops-rovers-page .premium-table th {
     background: rgba(5, 10, 18, 0.74);
     border-bottom-color: var(--ops-border-soft);
@@ -1109,15 +1127,23 @@ body.ops-admin-page {
     vertical-align: middle;
 }
 
+.ops-rovers-page .rover-list-table td {
+    overflow-wrap: anywhere;
+}
+
 .ops-rovers-page .premium-table tr:hover td {
     background: rgba(14, 165, 233, 0.05);
+}
+
+.ops-rovers-page .premium-table-card .rover-list-scroll {
+    overflow-x: hidden;
 }
 
 .rover-user-cell {
     align-items: center;
     display: flex;
     gap: 10px;
-    min-width: 190px;
+    min-width: 0;
 }
 
 .rover-user-copy { min-width: 0; }
@@ -1186,6 +1212,12 @@ body.ops-admin-page {
     font-family: Consolas, Monaco, monospace;
 }
 
+.rover-list-table .rover-password-chip {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
 .rover-mountpoint-list,
 .rover-server-list {
     align-content: flex-start;
@@ -1196,7 +1228,7 @@ body.ops-admin-page {
 
 .rover-mountpoint-list {
     max-height: 58px;
-    min-width: 170px;
+    min-width: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 1px 2px 2px 0;
@@ -1211,6 +1243,14 @@ body.ops-admin-page {
 
 .rover-server-chip.warn {
     color: var(--ops-warning);
+}
+
+.rover-server-chip {
+    line-height: 1.2;
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
 }
 
 .rover-connection-row {
@@ -1251,6 +1291,7 @@ body.ops-admin-page {
     font-weight: 900;
     gap: 6px;
     justify-content: center;
+    max-width: 100%;
     min-width: 86px;
     padding: 5px 8px;
     text-transform: none;
@@ -1290,6 +1331,12 @@ body.ops-admin-page {
 .rover-state-pill.blocked > span,
 .rover-state-pill.expired > span { background: #ef4444; }
 
+.ops-rovers-page .rover-list-table td:nth-child(10) .badge {
+    line-height: 1.25;
+    max-width: 100%;
+    white-space: normal;
+}
+
 .rover-actions-cell {
     text-align: right;
     vertical-align: middle;
@@ -1322,6 +1369,109 @@ body.ops-admin-page {
     background: rgba(14, 165, 233, 0.16);
     border-color: rgba(14, 165, 233, 0.38);
     color: #7dd3fc;
+}
+
+@media (max-width: 1599.98px) {
+    .ops-rovers-page .rover-list-table,
+    .ops-rovers-page .rover-list-table tbody {
+        display: block;
+        min-width: 0;
+        width: 100%;
+    }
+
+    .ops-rovers-page .rover-list-table thead {
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
+    }
+
+    .ops-rovers-page .rover-list-table tbody {
+        display: grid;
+        gap: 10px;
+        padding: 10px;
+    }
+
+    .ops-rovers-page .rover-list-table tbody tr {
+        background: rgba(13, 20, 32, 0.9);
+        border: 1px solid var(--ops-border-soft);
+        border-radius: 8px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        overflow: hidden;
+        position: relative;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td {
+        border-bottom: 0;
+        border-top: 1px solid var(--ops-border-soft);
+        display: block;
+        min-width: 0;
+        padding: 10px 12px;
+        text-align: left !important;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td[data-label]::before {
+        color: var(--ops-muted);
+        content: attr(data-label);
+        display: block;
+        font-size: 0.65rem;
+        font-weight: 700;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td:first-child:not([colspan]) {
+        border: 0;
+        padding: 0;
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        z-index: 1;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td:nth-child(2) {
+        border-top: 0;
+        grid-column: 1 / -1;
+        padding-right: 48px;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td:nth-child(2)::before {
+        display: none;
+    }
+
+    .ops-rovers-page .rover-list-table tbody td.rover-actions-cell,
+    .ops-rovers-page .rover-list-table tbody td[colspan] {
+        grid-column: 1 / -1;
+    }
+
+    .ops-rovers-page .rover-row-actions {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        white-space: normal;
+    }
+}
+
+@media (max-width: 899.98px) {
+    .ops-rovers-page .rover-list-table tbody tr {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 559.98px) {
+    .ops-rovers-page .rover-list-table tbody tr {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ops-rovers-page .rover-user-heading {
+        flex-wrap: wrap;
+    }
+
+    .ops-rovers-page .rover-user-name {
+        flex-basis: 100%;
+    }
 }
 
 .rover-action-btn.danger:hover {
@@ -2423,7 +2573,7 @@ body.ops-admin-page {
         width: 100%;
     }
 
-    .ops-rovers-page .premium-table,
+    .ops-rovers-page .premium-table:not(.rover-list-table),
     .ops-users-page .ops-table,
     .ops-admin-page .ops-table {
         min-width: 720px;
