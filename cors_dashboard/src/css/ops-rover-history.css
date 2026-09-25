@@ -268,6 +268,7 @@
 .rover-history-points { border-top: 1px solid rgba(148, 163, 184, 0.13); margin-top: 14px; padding-top: 12px; }
 .rover-history-points-heading { align-items: center; color: #dbeafe; display: flex; font-size: 0.8rem; justify-content: space-between; margin-bottom: 9px; }
 .rover-history-points-heading span { color: #8fa2b8; font-size: 0.75rem; }
+.rover-history-auto-save-note { color: #90a6bb; font-size: 0.74rem; margin: -3px 0 9px; }
 .rover-history-point-list { display: grid; gap: 9px; }
 .rover-history-point { background: rgba(2, 10, 22, 0.42); border: 1px solid rgba(52, 211, 153, 0.18); border-radius: 11px; display: grid; gap: 9px; padding: 10px; }
 .rover-history-point-heading { align-items: center; display: flex; gap: 10px; justify-content: space-between; min-width: 0; }

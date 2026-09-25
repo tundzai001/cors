@@ -578,6 +578,17 @@ def _get_env_preferring_dotenv(key: str, default: str) -> str:
     return str(os.getenv(key, default))
 
 
+try:
+    ROVER_FIXED_POINT_INTERVAL_SECONDS = int(
+        _get_env_preferring_dotenv("ROVER_FIXED_POINT_INTERVAL_SECONDS", "300")
+    )
+    if ROVER_FIXED_POINT_INTERVAL_SECONDS <= 0:
+        raise ValueError("must be positive")
+except (TypeError, ValueError):
+    ROVER_FIXED_POINT_INTERVAL_SECONDS = 300
+    logger.warning("Invalid ROVER_FIXED_POINT_INTERVAL_SECONDS; using 300 seconds")
+
+
 RTCM_MIN_TTL = 30
 RTCM_MAX_TTL = 600
 RTCM_NTRIP_CLIENTTABLE_CHECK_INTERVAL = float(
@@ -5667,6 +5678,18 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             ): row
             for row in active_rows
         }
+        latest_points_by_session = {}
+        active_session_ids = [row.id for row in active_rows if row.id is not None]
+        if active_session_ids:
+            point_result = await db.execute(
+                select(
+                    models.RoverFixedPoint.session_id,
+                    func.max(models.RoverFixedPoint.recorded_at),
+                )
+                .where(models.RoverFixedPoint.session_id.in_(active_session_ids))
+                .group_by(models.RoverFixedPoint.session_id)
+            )
+            latest_points_by_session = dict(point_result.all())
         observed_keys = set()
 
         for client in clients:
@@ -5741,6 +5764,25 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                 row.position_fix_quality = 4
                 row.position_updated_at = observed_at
                 row.position_satellite_count = satellite_count
+                last_point_at = latest_points_by_session.get(row.id)
+                if (
+                    last_point_at is None
+                    or observed_at - last_point_at >= ROVER_FIXED_POINT_INTERVAL_SECONDS
+                ):
+                    if row.id is None:
+                        await db.flush()
+                    db.add(models.RoverFixedPoint(
+                        session_id=row.id,
+                        label="Điểm tự động",
+                        latitude=position[0],
+                        longitude=position[1],
+                        fix_quality=4,
+                        satellite_count=satellite_count,
+                        recorded_at=observed_at,
+                        saved_at=observed_at,
+                        created_by="Tự động",
+                    ))
+                    latest_points_by_session[row.id] = observed_at
 
         for row in active_by_key.values():
             row.ended_at = observed_at
@@ -8061,6 +8103,7 @@ async def get_rover_history(
         "username": username,
         "in_db": bool(rover),
         "account": {"username": rover.username} if rover else None,
+        "fixed_point_auto_interval_seconds": ROVER_FIXED_POINT_INTERVAL_SECONDS,
         "caster_status": statuses,
         "sessions": sessions,
         "events": events,

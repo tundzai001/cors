@@ -1239,6 +1239,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail || `Không tải được lịch sử (${response.status}).`);
             if (body) {
+                const autoPointIntervalSeconds = Number(data.fixed_point_auto_interval_seconds) || 300;
+                const autoPointIntervalLabel = autoPointIntervalSeconds % 60 === 0
+                    ? `${autoPointIntervalSeconds / 60} phút`
+                    : `${autoPointIntervalSeconds} giây`;
                 const events = data.events || [];
                 const statuses = data.caster_status || [];
                 const connections = statuses.flatMap(item => item.active_connections || []);
@@ -1302,12 +1306,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }).join('')}</div>` : '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
                     const pointCaptureHtml = isAdmin && !ended ? `
                         <div class="rover-history-point-capture">
-                            <label for="rover-point-label-${session.id}">Tên điểm / thửa</label>
+                            <label for="rover-point-label-${session.id}">Tên điểm lưu thủ công</label>
                             <div class="rover-history-point-capture-row">
                                 <input id="rover-point-label-${session.id}" class="rover-history-point-label" type="text" maxlength="80" value="Điểm ${points.length + 1}" aria-describedby="rover-point-help-${session.id}">
-                                <button class="rover-history-action-button rover-history-save-point" type="button" data-session-id="${session.id}" ${canSavePoint ? '' : 'disabled'}><i class="bi bi-geo-alt" aria-hidden="true"></i><span>Lưu điểm Fixed</span></button>
+                                <button class="rover-history-action-button rover-history-save-point" type="button" data-session-id="${session.id}" ${canSavePoint ? '' : 'disabled'}><i class="bi bi-geo-alt" aria-hidden="true"></i><span>Lưu điểm ngay</span></button>
                             </div>
-                            <p id="rover-point-help-${session.id}">${canSavePoint ? `Đang RTK Fixed · ${session.satellites == null ? 'chưa rõ số' : escapeHtml(session.satellites)} vệ tinh.` : 'Chỉ lưu được khi phiên có tọa độ RTK Fixed mới.'}</p>
+                            <p id="rover-point-help-${session.id}">${canSavePoint ? `Đang RTK Fixed · ${session.satellites == null ? 'chưa rõ số' : escapeHtml(session.satellites)} vệ tinh.` : 'Lưu thủ công được khi phiên có tọa độ RTK Fixed mới.'}</p>
                         </div>` : '';
                     const deleteSessionHtml = isAdmin
                         ? ended
@@ -1335,6 +1339,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         ${positionHtml}
                         <section class="rover-history-points" aria-label="Các điểm đo trong phiên ${session.id}">
                             <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><span>${points.length} điểm</span></div>
+                            ${ended ? '' : `<p class="rover-history-auto-save-note">Tự lưu điểm Fixed đầu tiên ngay khi có fix, sau đó mỗi ${autoPointIntervalLabel}.</p>`}
                             ${pointsHtml}
                         </section>
                         ${(pointCaptureHtml || deleteSessionHtml) ? `<div class="rover-history-session-actions">${pointCaptureHtml}${deleteSessionHtml}</div>` : ''}
