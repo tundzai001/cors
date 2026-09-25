@@ -8032,7 +8032,7 @@ async def get_rover_history(
     sessions = []
     for session in session_rows:
         has_complete_position = (
-            session.position_fix_quality == 4
+            session.position_fix_quality in (None, 4)
             and session.latitude is not None
             and session.longitude is not None
         )
@@ -8052,7 +8052,7 @@ async def get_rover_history(
                 "lat": session.latitude,
                 "lon": session.longitude,
                 "recorded_at": session.position_updated_at,
-                "fix_quality": session.position_fix_quality,
+                "fix_quality": session.position_fix_quality if session.position_fix_quality is not None else 4,
                 "satellites": session.position_satellite_count,
             } if has_complete_position else None,
             "points": points_by_session[session.id],
