@@ -52,6 +52,7 @@ class RoverAccount(AuthBase):
     rtcm_disconnect_duration_seconds = Column(Integer, default=10) # Pause duration
     expires_at = Column(BigInteger, nullable=True) # Unix timestamp of expiration, None = infinite
     is_shared_with_managers = Column(Boolean, default=False)
+    auto_save_fixed_points = Column(Boolean, default=True, server_default="true", nullable=False)
 
 
 class RoverSessionHistory(AuthBase):

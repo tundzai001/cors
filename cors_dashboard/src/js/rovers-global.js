@@ -1243,6 +1243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const autoPointIntervalLabel = autoPointIntervalSeconds % 60 === 0
                     ? `${autoPointIntervalSeconds / 60} phút`
                     : `${autoPointIntervalSeconds} giây`;
+                const autoSaveFixedPointsEnabled = data.auto_save_fixed_points === true;
                 const events = data.events || [];
                 const statuses = data.caster_status || [];
                 const connections = statuses.flatMap(item => item.active_connections || []);
@@ -1266,9 +1267,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const currentFixLabel = Number.isFinite(currentFixQuality)
                         ? fixLabels[currentFixQuality] || `Fix ${currentFixQuality}`
                         : 'Chưa có dữ liệu';
-                    const canSavePoint = isAdmin && !ended && currentFixQuality === 4 && hasPosition
-                        && Number(position.recorded_at) === Number(session.last_seen_at)
-                        && Date.now() / 1000 - Number(session.last_seen_at) <= 120;
                     const positionHtml = hasPosition
                         ? `<div class="rover-history-position">
                                 <div class="rover-history-position-heading">
@@ -1304,15 +1302,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <div class="rover-history-point-meta"><span><i class="bi bi-clock" aria-hidden="true"></i> Đo lúc ${formatDateTime(point.recorded_at)}</span><span><i class="bi bi-broadcast" aria-hidden="true"></i> ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span><span><i class="bi bi-save" aria-hidden="true"></i> Lưu lúc ${formatDateTime(point.saved_at)}</span><span><i class="bi bi-person" aria-hidden="true"></i> Lưu bởi ${escapeHtml(point.created_by || 'admin')}</span></div>
                         </article>`;
                     }).join('')}</div>` : '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
-                    const pointCaptureHtml = isAdmin && !ended ? `
-                        <div class="rover-history-point-capture">
-                            <label for="rover-point-label-${session.id}">Tên điểm lưu thủ công</label>
-                            <div class="rover-history-point-capture-row">
-                                <input id="rover-point-label-${session.id}" class="rover-history-point-label" type="text" maxlength="80" value="Điểm ${points.length + 1}" aria-describedby="rover-point-help-${session.id}">
-                                <button class="rover-history-action-button rover-history-save-point" type="button" data-session-id="${session.id}" ${canSavePoint ? '' : 'disabled'}><i class="bi bi-geo-alt" aria-hidden="true"></i><span>Lưu điểm ngay</span></button>
-                            </div>
-                            <p id="rover-point-help-${session.id}">${canSavePoint ? `Đang RTK Fixed · ${session.satellites == null ? 'chưa rõ số' : escapeHtml(session.satellites)} vệ tinh.` : 'Lưu thủ công được khi phiên có tọa độ RTK Fixed mới.'}</p>
-                        </div>` : '';
                     const deleteSessionHtml = isAdmin
                         ? ended
                             ? `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`
@@ -1339,10 +1328,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         ${positionHtml}
                         <section class="rover-history-points" aria-label="Các điểm đo trong phiên ${session.id}">
                             <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><span>${points.length} điểm</span></div>
-                            ${ended ? '' : `<p class="rover-history-auto-save-note">Tự lưu điểm Fixed đầu tiên ngay khi có fix, sau đó mỗi ${autoPointIntervalLabel}.</p>`}
+                            ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu RTK Fixed đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu RTK Fixed đang tắt cho tài khoản này.'}</p>`}
                             ${pointsHtml}
                         </section>
-                        ${(pointCaptureHtml || deleteSessionHtml) ? `<div class="rover-history-session-actions">${pointCaptureHtml}${deleteSessionHtml}</div>` : ''}
+                        ${deleteSessionHtml ? `<div class="rover-history-session-actions">${deleteSessionHtml}</div>` : ''}
                     </article>`;
                 }).join('') : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
                 const eventHistoryHtml = events.length ? events.map(item => {
@@ -1393,31 +1382,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                             showToast('Đã sao chép tọa độ', 'success');
                         } catch {
                             showToast('Không thể sao chép tọa độ trên trình duyệt này.', 'danger');
-                        }
-                    });
-                });
-                body.querySelectorAll('.rover-history-save-point').forEach(button => {
-                    button.addEventListener('click', async () => {
-                        const sessionId = button.dataset.sessionId;
-                        const card = button.closest('.rover-history-session');
-                        const label = card?.querySelector('.rover-history-point-label')?.value?.trim() || '';
-                        const buttonContent = button.innerHTML;
-                        button.disabled = true;
-                        button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang lưu…</span>';
-                        try {
-                            const response = await apiFetchRaw(window.ApiRoutes.rovers.historyPoints(username, sessionId), {
-                                method: 'POST',
-                                headers: API_HEADERS,
-                                body: JSON.stringify({ label })
-                            });
-                            const result = await response.json().catch(() => ({}));
-                            if (!response.ok) throw new Error(result.detail || `Không lưu được điểm đo (${response.status}).`);
-                            showToast(`Đã lưu điểm “${escapeHtml(result.point?.label || label || 'Điểm đo')}”.`, 'success');
-                            await handleRoverHistory({ currentTarget: { dataset: { username } } });
-                        } catch (error) {
-                            button.disabled = false;
-                            button.innerHTML = buttonContent;
-                            showToast(error.message, 'danger');
                         }
                     });
                 });
@@ -1671,6 +1635,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     password: cu.password,
                     mountpoints: cu.mountpoints.join(';'),
                     show_position: cu.show_position,
+                    auto_save_fixed_points: true,
                     max_connections: (typeof cu.maxclient !== 'undefined' && cu.maxclient !== null) ? cu.maxclient : 1
                 };
             }
@@ -1718,7 +1683,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             : (Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1);
         const showPosToggle = document.getElementById('edit-show-position');
         const isSharedToggle = document.getElementById('edit-is-shared');
+        const autoSaveFixedPointsToggle = document.getElementById('edit-auto-save-fixed-points');
         if (isSharedToggle) isSharedToggle.checked = rover.is_shared_with_managers || false;
+        if (autoSaveFixedPointsToggle) autoSaveFixedPointsToggle.checked = rover.auto_save_fixed_points !== false;
         if (showPosToggle) {
             const liveInfos = getCasterInfosForUsername(rover.username);
             const hasLiveShowPos = liveInfos.some(i => typeof i?.show_position !== 'undefined');
@@ -1859,6 +1826,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 rtcm_disconnect_duration_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10),
                 is_shared_with_managers: document.getElementById('edit-is-shared')?.checked || false
             };
+            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                payload.auto_save_fixed_points = document.getElementById('edit-auto-save-fixed-points')?.checked !== false;
+            }
             if (newPass) payload.password = newPass;
             if (newExpiry) payload.expiry_days = parseInt(newExpiry);
             const maxConn = document.getElementById('edit-max-connections')?.value;

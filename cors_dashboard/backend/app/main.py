@@ -5678,6 +5678,23 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             ): row
             for row in active_rows
         }
+        client_usernames = {
+            str(client.get("username") or "").strip().lower()
+            for client in clients
+            if isinstance(client, dict) and str(client.get("username") or "").strip()
+        }
+        auto_save_enabled_by_username = {}
+        if client_usernames:
+            auto_save_result = await db.execute(
+                select(
+                    func.lower(models.RoverAccount.username),
+                    models.RoverAccount.auto_save_fixed_points,
+                ).where(func.lower(models.RoverAccount.username).in_(client_usernames))
+            )
+            auto_save_enabled_by_username = {
+                username: bool(enabled)
+                for username, enabled in auto_save_result.all()
+            }
         latest_points_by_session = {}
         active_session_ids = [row.id for row in active_rows if row.id is not None]
         if active_session_ids:
@@ -5764,25 +5781,26 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                 row.position_fix_quality = 4
                 row.position_updated_at = observed_at
                 row.position_satellite_count = satellite_count
-                last_point_at = latest_points_by_session.get(row.id)
-                if (
-                    last_point_at is None
-                    or observed_at - last_point_at >= ROVER_FIXED_POINT_INTERVAL_SECONDS
-                ):
-                    if row.id is None:
-                        await db.flush()
-                    db.add(models.RoverFixedPoint(
-                        session_id=row.id,
-                        label="Điểm tự động",
-                        latitude=position[0],
-                        longitude=position[1],
-                        fix_quality=4,
-                        satellite_count=satellite_count,
-                        recorded_at=observed_at,
-                        saved_at=observed_at,
-                        created_by="Tự động",
-                    ))
-                    latest_points_by_session[row.id] = observed_at
+                if auto_save_enabled_by_username.get(username.lower(), False):
+                    last_point_at = latest_points_by_session.get(row.id)
+                    if (
+                        last_point_at is None
+                        or observed_at - last_point_at >= ROVER_FIXED_POINT_INTERVAL_SECONDS
+                    ):
+                        if row.id is None:
+                            await db.flush()
+                        db.add(models.RoverFixedPoint(
+                            session_id=row.id,
+                            label="Điểm tự động",
+                            latitude=position[0],
+                            longitude=position[1],
+                            fix_quality=4,
+                            satellite_count=satellite_count,
+                            recorded_at=observed_at,
+                            saved_at=observed_at,
+                            created_by="Tự động",
+                        ))
+                        latest_points_by_session[row.id] = observed_at
 
         for row in active_by_key.values():
             row.ended_at = observed_at
@@ -6141,6 +6159,8 @@ async def sync_rover_by_username(
     # 1. Kiểm tra Admin/Creator
     if not auth.can_edit_rovers(current_user):
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover.")
+    if update_req.auto_save_fixed_points is not None and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình tự lưu điểm Fixed.")
 
     # 2. Tìm trong DB
     rover = await crud.get_rover_by_username(db, username)
@@ -6183,6 +6203,7 @@ async def sync_rover_by_username(
             show_position=update_req.show_position if update_req.show_position is not None else True,
             rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
             rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300),
+            auto_save_fixed_points=update_req.auto_save_fixed_points if update_req.auto_save_fixed_points is not None else True,
             is_shared_with_managers=getattr(update_req, 'is_shared_with_managers', False)
         )
         logger.info(f"âœ“ Adopted unknown rover '{username}' into DB")
@@ -6197,6 +6218,7 @@ async def sync_rover_by_username(
         if update_req.show_position is not None: update_data["show_position"] = update_req.show_position
         if update_req.rtcm_cycle_enabled is not None: update_data["rtcm_cycle_enabled"] = update_req.rtcm_cycle_enabled
         if update_req.rtcm_disconnect_interval_seconds is not None: update_data["rtcm_disconnect_interval_seconds"] = update_req.rtcm_disconnect_interval_seconds
+        if update_req.auto_save_fixed_points is not None: update_data["auto_save_fixed_points"] = update_req.auto_save_fixed_points
         
         if update_data:
             # 🔥 FIX: Cập nhật base_serial nếu có gửi trạm đích
@@ -8103,6 +8125,7 @@ async def get_rover_history(
         "username": username,
         "in_db": bool(rover),
         "account": {"username": rover.username} if rover else None,
+        "auto_save_fixed_points": bool(getattr(rover, "auto_save_fixed_points", False)) if rover else False,
         "fixed_point_auto_interval_seconds": ROVER_FIXED_POINT_INTERVAL_SECONDS,
         "caster_status": statuses,
         "sessions": sessions,
@@ -8134,69 +8157,6 @@ async def delete_rover_history_session(
     await auth_db.delete(session)
     await auth_db.commit()
     return {"status": "deleted", "session_id": session_id}
-
-
-@app.post("/api/rovers/{username}/history/{session_id}/points")
-async def save_rover_fixed_point(
-    username: str,
-    session_id: int,
-    request: schemas.RoverFixedPointCreate,
-    auth_db: AsyncSession = Depends(get_auth_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
-):
-    if current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Chỉ admin được lưu điểm đo Rover")
-    result = await auth_db.execute(
-        select(models.RoverSessionHistory).where(
-            models.RoverSessionHistory.id == session_id,
-            func.lower(models.RoverSessionHistory.username) == username.strip().lower(),
-        )
-    )
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Không tìm thấy phiên Rover")
-    now = int(time.time())
-    if session.ended_at is not None:
-        raise HTTPException(status_code=409, detail="Chỉ lưu điểm khi phiên Rover đang hoạt động")
-    if (
-        session.latest_fix_quality != 4
-        or session.position_fix_quality != 4
-        or session.position_updated_at is None
-        or session.position_updated_at != session.last_seen_at
-        or now - session.last_seen_at > 120
-        or session.latitude is None
-        or session.longitude is None
-    ):
-        raise HTTPException(status_code=409, detail="Phiên chưa có tọa độ RTK Fixed mới để lưu")
-
-    point = models.RoverFixedPoint(
-        session_id=session.id,
-        label=request.label,
-        latitude=session.latitude,
-        longitude=session.longitude,
-        fix_quality=4,
-        satellite_count=session.satellite_count,
-        recorded_at=session.position_updated_at,
-        saved_at=now,
-        created_by=current_user.username,
-    )
-    auth_db.add(point)
-    await auth_db.commit()
-    await auth_db.refresh(point)
-    return {
-        "status": "saved",
-        "point": {
-            "id": point.id,
-            "label": point.label,
-            "lat": point.latitude,
-            "lon": point.longitude,
-            "fix_quality": point.fix_quality,
-            "satellites": point.satellite_count,
-            "recorded_at": point.recorded_at,
-            "saved_at": point.saved_at,
-            "created_by": point.created_by,
-        },
-    }
 
 
 @app.post("/api/rovers/sync-status")

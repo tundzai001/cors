@@ -268,6 +268,7 @@ class RoverAccountResponse(RoverAccountBase):
     rtcm_disconnect_duration_seconds: int = 10
     expires_at: Optional[int] = None
     is_shared_with_managers: bool = False
+    auto_save_fixed_points: bool = True
     
     class Config: from_attributes = True
 
@@ -295,6 +296,7 @@ class RoverUpdate(BaseModel):
     rtcm_disconnect_interval_seconds: int | None = None
     rtcm_disconnect_duration_seconds: int | None = None
     is_shared_with_managers: bool | None = None
+    auto_save_fixed_points: bool | None = None
     selected_serials: list[str] | None = None # For syncing unknown users
     target_casters: list[str] | None = None
     
@@ -383,14 +385,6 @@ class RoverBulkRenewRequest(BaseModel):
     usernames: List[str] = Field(default_factory=list)
     expiry_days: int = Field(365, ge=1, le=3650)
     sync_caster: bool = False
-
-
-class RoverFixedPointCreate(BaseModel):
-    label: str = Field("Điểm đo", max_length=80)
-
-    @validator("label")
-    def normalize_label(cls, value):
-        return value.strip() or "Điểm đo"
 
 
 class RoverSyncStatusRequest(BaseModel):

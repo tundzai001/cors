@@ -51,7 +51,6 @@
             historyExportCsv: '/api/rovers/history/export/csv',
             history: username => `/api/rovers/${encodeURIComponent(username)}/history`,
             historySession: (username, sessionId) => `/api/rovers/${encodeURIComponent(username)}/history/${encodeURIComponent(sessionId)}`,
-            historyPoints: (username, sessionId) => `/api/rovers/${encodeURIComponent(username)}/history/${encodeURIComponent(sessionId)}/points`,
             syncStatus: '/api/rovers/sync-status',
             detail: roverId => `/api/rovers/${encodeURIComponent(roverId)}`,
             syncByUsername: username => `/api/rovers/sync/by-username/${encodeURIComponent(username)}`
