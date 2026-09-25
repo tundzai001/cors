@@ -68,7 +68,7 @@
 }
 
 .rover-history-heading-copy p { color: var(--rh-muted); font-size: 0.78rem; margin: 5px 0 0; }
-#roverHistoryModal .modal-header .btn-close { flex: 0 0 auto; margin-left: 12px; opacity: 0.75; }
+#roverHistoryModal .modal-header .btn-close { flex: 0 0 auto; margin-left: auto; opacity: 0.75; }
 #roverHistoryModal .modal-header .btn-close:hover { opacity: 1; }
 
 .rover-history-body { display: grid; gap: 22px; overscroll-behavior: contain; padding: 22px 24px 26px !important; }

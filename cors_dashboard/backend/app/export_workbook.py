@@ -126,9 +126,9 @@ def make_workbook(title, subtitle, headers, rows):
                 for index, value in enumerate(values, 1):
                     write(_cell(f'{_column(index)}{last_row}', value, style))
                 write('</row>')
+            write('</sheetData>')
+            write(f'<autoFilter ref="A4:{last_column}{last_row}"/>')
             if len(headers) > 1:
-                write(f'</sheetData><mergeCells count="2"><mergeCell ref="A1:{last_column}1"/><mergeCell ref="A2:{last_column}2"/></mergeCells>')
-            else:
-                write('</sheetData>')
-            write(f'<autoFilter ref="A4:{last_column}{last_row}"/></worksheet>')
+                write(f'<mergeCells count="2"><mergeCell ref="A1:{last_column}1"/><mergeCell ref="A2:{last_column}2"/></mergeCells>')
+            write('</worksheet>')
     return output.getvalue()
