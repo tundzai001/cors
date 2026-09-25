@@ -47,11 +47,27 @@ AUTH_ZALO_SCHEMA_STATEMENTS = (
         position_updated_at BIGINT NULL
     )""",
     "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS position_fix_quality SMALLINT",
+    "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS position_satellite_count INTEGER",
+    "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS latest_fix_quality SMALLINT",
+    "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS satellite_count INTEGER",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_username ON rover_session_history (username)",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_server ON rover_session_history (server)",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_last_seen_at ON rover_session_history (last_seen_at)",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_ended_at ON rover_session_history (ended_at)",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_lookup ON rover_session_history (username, server, last_seen_at)",
+    """CREATE TABLE IF NOT EXISTS rover_fixed_points (
+        id SERIAL PRIMARY KEY,
+        session_id INTEGER NOT NULL REFERENCES rover_session_history(id) ON DELETE CASCADE,
+        label VARCHAR(80) NOT NULL DEFAULT 'Điểm đo',
+        latitude DOUBLE PRECISION NOT NULL,
+        longitude DOUBLE PRECISION NOT NULL,
+        fix_quality SMALLINT NOT NULL DEFAULT 4,
+        satellite_count INTEGER NULL,
+        recorded_at BIGINT NOT NULL,
+        saved_at BIGINT NOT NULL,
+        created_by VARCHAR NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_rover_fixed_points_session_recorded ON rover_fixed_points (session_id, recorded_at)",
 )
 
 

@@ -71,9 +71,31 @@ class RoverSessionHistory(AuthBase):
     longitude = Column(Float, nullable=True)
     position_fix_quality = Column(SmallInteger, nullable=True)
     position_updated_at = Column(BigInteger, nullable=True)
+    position_satellite_count = Column(Integer, nullable=True)
+    latest_fix_quality = Column(SmallInteger, nullable=True)
+    satellite_count = Column(Integer, nullable=True)
 
     __table_args__ = (
         Index("ix_rover_session_history_lookup", "username", "server", "last_seen_at"),
+    )
+
+
+class RoverFixedPoint(AuthBase):
+    __tablename__ = "rover_fixed_points"
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("rover_session_history.id", ondelete="CASCADE"), nullable=False)
+    label = Column(String(80), nullable=False, default="Điểm đo")
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    fix_quality = Column(SmallInteger, nullable=False, default=4)
+    satellite_count = Column(Integer, nullable=True)
+    recorded_at = Column(BigInteger, nullable=False)
+    saved_at = Column(BigInteger, nullable=False)
+    created_by = Column(String, nullable=False)
+
+    __table_args__ = (
+        Index("ix_rover_fixed_points_session_recorded", "session_id", "recorded_at"),
     )
 
 

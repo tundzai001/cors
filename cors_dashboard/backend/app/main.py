@@ -5688,6 +5688,14 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                 uptime_seconds = max(0, int(raw_uptime)) if raw_uptime is not None else None
             except (TypeError, ValueError):
                 uptime_seconds = None
+            try:
+                latest_fix_quality = int(client.get("status")) if client.get("status") is not None else None
+            except (TypeError, ValueError):
+                latest_fix_quality = None
+            try:
+                satellite_count = max(0, int(client.get("nsv", client.get("satellites"))))
+            except (TypeError, ValueError):
+                satellite_count = None
 
             row = active_by_key.pop(session_key, None)
             if (
@@ -5710,6 +5718,8 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                     started_at=observed_at - uptime_seconds if uptime_seconds else observed_at,
                     last_seen_at=observed_at,
                     uptime_seconds=uptime_seconds,
+                    latest_fix_quality=latest_fix_quality,
+                    satellite_count=satellite_count,
                 )
                 db.add(row)
             else:
@@ -5718,6 +5728,8 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                 row.client_id = client_id
                 row.receiver_id = receiver_id
                 row.last_seen_at = observed_at
+                row.latest_fix_quality = latest_fix_quality
+                row.satellite_count = satellite_count
                 if uptime_seconds is not None:
                     if row.uptime_seconds is None or row.started_at is None:
                         row.started_at = observed_at - uptime_seconds
@@ -5728,6 +5740,7 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                 row.latitude, row.longitude = position
                 row.position_fix_quality = 4
                 row.position_updated_at = observed_at
+                row.position_satellite_count = satellite_count
 
         for row in active_by_key.values():
             row.ended_at = observed_at
@@ -7994,8 +8007,30 @@ async def get_rover_history(
         .order_by(models.RoverSessionHistory.last_seen_at.desc())
         .limit(100)
     )
+    session_rows = sessions_result.scalars().all()
+    session_ids = [session.id for session in session_rows]
+    points_by_session: dict[int, list[dict]] = {session_id: [] for session_id in session_ids}
+    if session_ids:
+        point_result = await auth_db.execute(
+            select(models.RoverFixedPoint)
+            .where(models.RoverFixedPoint.session_id.in_(session_ids))
+            .order_by(models.RoverFixedPoint.recorded_at, models.RoverFixedPoint.id)
+        )
+        for point in point_result.scalars().all():
+            points_by_session[point.session_id].append({
+                "id": point.id,
+                "label": point.label,
+                "lat": point.latitude,
+                "lon": point.longitude,
+                "fix_quality": point.fix_quality,
+                "satellites": point.satellite_count,
+                "recorded_at": point.recorded_at,
+                "saved_at": point.saved_at,
+                "created_by": point.created_by,
+            })
+
     sessions = []
-    for session in sessions_result.scalars().all():
+    for session in session_rows:
         has_complete_position = (
             session.position_fix_quality == 4
             and session.latitude is not None
@@ -8010,12 +8045,17 @@ async def get_rover_history(
             "started_at": session.started_at,
             "last_seen_at": session.last_seen_at,
             "ended_at": session.ended_at,
+            "uptime_seconds": session.uptime_seconds,
+            "current_fix_quality": session.latest_fix_quality,
+            "satellites": session.satellite_count,
             "last_position": {
                 "lat": session.latitude,
                 "lon": session.longitude,
                 "recorded_at": session.position_updated_at,
                 "fix_quality": session.position_fix_quality,
+                "satellites": session.position_satellite_count,
             } if has_complete_position else None,
+            "points": points_by_session[session.id],
         })
     return {
         "username": username,
@@ -8024,6 +8064,95 @@ async def get_rover_history(
         "caster_status": statuses,
         "sessions": sessions,
         "events": events,
+    }
+
+
+@app.delete("/api/rovers/{username}/history/{session_id}")
+async def delete_rover_history_session(
+    username: str,
+    session_id: int,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xóa phiên Rover")
+    result = await auth_db.execute(
+        select(models.RoverSessionHistory).where(
+            models.RoverSessionHistory.id == session_id,
+            func.lower(models.RoverSessionHistory.username) == username.strip().lower(),
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên Rover")
+    if session.ended_at is None:
+        raise HTTPException(status_code=409, detail="Chỉ xóa được phiên đã kết thúc")
+
+    await auth_db.delete(session)
+    await auth_db.commit()
+    return {"status": "deleted", "session_id": session_id}
+
+
+@app.post("/api/rovers/{username}/history/{session_id}/points")
+async def save_rover_fixed_point(
+    username: str,
+    session_id: int,
+    request: schemas.RoverFixedPointCreate,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được lưu điểm đo Rover")
+    result = await auth_db.execute(
+        select(models.RoverSessionHistory).where(
+            models.RoverSessionHistory.id == session_id,
+            func.lower(models.RoverSessionHistory.username) == username.strip().lower(),
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên Rover")
+    now = int(time.time())
+    if session.ended_at is not None:
+        raise HTTPException(status_code=409, detail="Chỉ lưu điểm khi phiên Rover đang hoạt động")
+    if (
+        session.latest_fix_quality != 4
+        or session.position_fix_quality != 4
+        or session.position_updated_at is None
+        or session.position_updated_at != session.last_seen_at
+        or now - session.last_seen_at > 120
+        or session.latitude is None
+        or session.longitude is None
+    ):
+        raise HTTPException(status_code=409, detail="Phiên chưa có tọa độ RTK Fixed mới để lưu")
+
+    point = models.RoverFixedPoint(
+        session_id=session.id,
+        label=request.label,
+        latitude=session.latitude,
+        longitude=session.longitude,
+        fix_quality=4,
+        satellite_count=session.satellite_count,
+        recorded_at=session.position_updated_at,
+        saved_at=now,
+        created_by=current_user.username,
+    )
+    auth_db.add(point)
+    await auth_db.commit()
+    await auth_db.refresh(point)
+    return {
+        "status": "saved",
+        "point": {
+            "id": point.id,
+            "label": point.label,
+            "lat": point.latitude,
+            "lon": point.longitude,
+            "fix_quality": point.fix_quality,
+            "satellites": point.satellite_count,
+            "recorded_at": point.recorded_at,
+            "saved_at": point.saved_at,
+            "created_by": point.created_by,
+        },
     }
 
 

@@ -385,6 +385,14 @@ class RoverBulkRenewRequest(BaseModel):
     sync_caster: bool = False
 
 
+class RoverFixedPointCreate(BaseModel):
+    label: str = Field("Điểm đo", max_length=80)
+
+    @validator("label")
+    def normalize_label(cls, value):
+        return value.strip() or "Điểm đo"
+
+
 class RoverSyncStatusRequest(BaseModel):
     usernames: List[str] | None = None
 

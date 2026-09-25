@@ -1243,6 +1243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const statuses = data.caster_status || [];
                 const connections = statuses.flatMap(item => item.active_connections || []);
                 const sessions = data.sessions || [];
+                const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
                 const accountName = escapeHtml(data.account?.username || data.username || username);
                 const sessionHistoryHtml = sessions.length ? sessions.map(session => {
                     const position = session.last_position;
@@ -1252,8 +1253,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                         && Number.isFinite(Number(position.lat))
                         && Number.isFinite(Number(position.lon))
                         && !(Number(position.lat) === 0 && Number(position.lon) === 0);
-                    const latitude = hasPosition ? Number(position.lat).toFixed(7) : '';
-                    const longitude = hasPosition ? Number(position.lon).toFixed(7) : '';
+                    const latitude = hasPosition ? String(position.lat) : '';
+                    const longitude = hasPosition ? String(position.lon) : '';
+                    const ended = Boolean(session.ended_at);
+                    const points = Array.isArray(session.points) ? session.points : [];
+                    const fixLabels = { 0: 'Không có fix', 1: 'GPS', 2: 'DGPS', 3: 'PPS', 4: 'RTK Fixed', 5: 'RTK Float', 6: 'Ước tính' };
+                    const currentFixQuality = session.current_fix_quality == null ? NaN : Number(session.current_fix_quality);
+                    const currentFixLabel = Number.isFinite(currentFixQuality)
+                        ? fixLabels[currentFixQuality] || `Fix ${currentFixQuality}`
+                        : 'Chưa có dữ liệu';
+                    const canSavePoint = isAdmin && !ended && currentFixQuality === 4 && hasPosition
+                        && Number(position.recorded_at) === Number(session.last_seen_at)
+                        && Date.now() / 1000 - Number(session.last_seen_at) <= 120;
                     const positionHtml = hasPosition
                         ? `<div class="rover-history-position">
                                 <div class="rover-history-position-heading">
@@ -1270,10 +1281,39 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         <strong>${longitude}</strong>
                                     </div>
                                 </div>
-                                <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)}</div>
+                                <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)}${position.satellites == null ? '' : ` · ${escapeHtml(position.satellites)} vệ tinh`}</div>
                             </div>`
                         : '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận tọa độ RTK Fixed cho phiên này.</span></div>';
-                    const ended = Boolean(session.ended_at);
+                    const pointsHtml = points.length ? `<div class="rover-history-point-list">${points.map(point => {
+                        const pointLatitude = String(point.lat);
+                        const pointLongitude = String(point.lon);
+                        const pointMapQuery = encodeURIComponent(`${pointLatitude},${pointLongitude}`);
+                        return `<article class="rover-history-point">
+                            <div class="rover-history-point-heading">
+                                <div><strong>${escapeHtml(point.label || 'Điểm đo')}</strong><span class="rover-history-point-fix">RTK Fixed</span></div>
+                                <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'đo')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
+                            </div>
+                            <div class="rover-history-coordinate-grid">
+                                <div class="rover-history-coordinate"><div class="rover-history-coordinate-heading"><span>Vĩ độ</span><button class="rover-history-copy" type="button" data-copy-value="${pointLatitude}" aria-label="Sao chép vĩ độ điểm đo" title="Sao chép vĩ độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div><strong>${pointLatitude}</strong></div>
+                                <div class="rover-history-coordinate"><div class="rover-history-coordinate-heading"><span>Kinh độ</span><button class="rover-history-copy" type="button" data-copy-value="${pointLongitude}" aria-label="Sao chép kinh độ điểm đo" title="Sao chép kinh độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div><strong>${pointLongitude}</strong></div>
+                            </div>
+                            <div class="rover-history-point-meta"><span><i class="bi bi-clock" aria-hidden="true"></i> Đo lúc ${formatDateTime(point.recorded_at)}</span><span><i class="bi bi-broadcast" aria-hidden="true"></i> ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span><span><i class="bi bi-save" aria-hidden="true"></i> Lưu lúc ${formatDateTime(point.saved_at)}</span><span><i class="bi bi-person" aria-hidden="true"></i> Lưu bởi ${escapeHtml(point.created_by || 'admin')}</span></div>
+                        </article>`;
+                    }).join('')}</div>` : '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
+                    const pointCaptureHtml = isAdmin && !ended ? `
+                        <div class="rover-history-point-capture">
+                            <label for="rover-point-label-${session.id}">Tên điểm / thửa</label>
+                            <div class="rover-history-point-capture-row">
+                                <input id="rover-point-label-${session.id}" class="rover-history-point-label" type="text" maxlength="80" value="Điểm ${points.length + 1}" aria-describedby="rover-point-help-${session.id}">
+                                <button class="rover-history-action-button rover-history-save-point" type="button" data-session-id="${session.id}" ${canSavePoint ? '' : 'disabled'}><i class="bi bi-geo-alt" aria-hidden="true"></i><span>Lưu điểm Fixed</span></button>
+                            </div>
+                            <p id="rover-point-help-${session.id}">${canSavePoint ? `Đang RTK Fixed · ${session.satellites == null ? 'chưa rõ số' : escapeHtml(session.satellites)} vệ tinh.` : 'Chỉ lưu được khi phiên có tọa độ RTK Fixed mới.'}</p>
+                        </div>` : '';
+                    const deleteSessionHtml = isAdmin
+                        ? ended
+                            ? `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`
+                            : '<span class="rover-history-delete-note">Phiên đang chạy chỉ xóa được sau khi kết thúc.</span>'
+                        : '';
                     return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
                         <div class="rover-history-session-heading">
                             <div class="min-w-0">
@@ -1285,10 +1325,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <div class="rover-history-meta">
                             <div><span>Máy chủ</span><strong>${escapeHtml(session.server || 'Caster')}</strong></div>
                             <div><span>Receiver</span><strong>${escapeHtml(session.receiver_id || 'Không rõ')}</strong></div>
+                            <div><span>Client</span><strong>${escapeHtml(session.client_id || 'Không rõ')}</strong></div>
                             <div><span>Bắt đầu</span><strong>${formatDateTime(session.started_at)}</strong></div>
+                            <div><span>Fix gần nhất</span><strong>${escapeHtml(currentFixLabel)}</strong></div>
+                            <div><span>Vệ tinh gần nhất</span><strong>${session.satellites == null ? 'Không rõ' : escapeHtml(session.satellites)}</strong></div>
+                            <div><span>Uptime</span><strong>${session.uptime_seconds == null ? 'Không rõ' : escapeHtml(formatDuration(session.uptime_seconds))}</strong></div>
                             <div><span>${ended ? 'Kết thúc' : 'Cập nhật cuối'}</span><strong>${formatDateTime(ended ? session.ended_at : session.last_seen_at)}</strong></div>
                         </div>
                         ${positionHtml}
+                        <section class="rover-history-points" aria-label="Các điểm đo trong phiên ${session.id}">
+                            <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><span>${points.length} điểm</span></div>
+                            ${pointsHtml}
+                        </section>
+                        ${(pointCaptureHtml || deleteSessionHtml) ? `<div class="rover-history-session-actions">${pointCaptureHtml}${deleteSessionHtml}</div>` : ''}
                     </article>`;
                 }).join('') : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
                 const eventHistoryHtml = events.length ? events.map(item => {
@@ -1339,6 +1388,60 @@ document.addEventListener('DOMContentLoaded', async () => {
                             showToast('Đã sao chép tọa độ', 'success');
                         } catch {
                             showToast('Không thể sao chép tọa độ trên trình duyệt này.', 'danger');
+                        }
+                    });
+                });
+                body.querySelectorAll('.rover-history-save-point').forEach(button => {
+                    button.addEventListener('click', async () => {
+                        const sessionId = button.dataset.sessionId;
+                        const card = button.closest('.rover-history-session');
+                        const label = card?.querySelector('.rover-history-point-label')?.value?.trim() || '';
+                        const buttonContent = button.innerHTML;
+                        button.disabled = true;
+                        button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang lưu…</span>';
+                        try {
+                            const response = await apiFetchRaw(window.ApiRoutes.rovers.historyPoints(username, sessionId), {
+                                method: 'POST',
+                                headers: API_HEADERS,
+                                body: JSON.stringify({ label })
+                            });
+                            const result = await response.json().catch(() => ({}));
+                            if (!response.ok) throw new Error(result.detail || `Không lưu được điểm đo (${response.status}).`);
+                            showToast(`Đã lưu điểm “${escapeHtml(result.point?.label || label || 'Điểm đo')}”.`, 'success');
+                            await handleRoverHistory({ currentTarget: { dataset: { username } } });
+                        } catch (error) {
+                            button.disabled = false;
+                            button.innerHTML = buttonContent;
+                            showToast(error.message, 'danger');
+                        }
+                    });
+                });
+                body.querySelectorAll('.rover-history-delete-session').forEach(button => {
+                    button.addEventListener('click', async () => {
+                        const sessionId = button.dataset.sessionId;
+                        const ok = await window.CorsUI.confirmAction({
+                            title: 'Xóa phiên Rover',
+                            message: 'Phiên này và toàn bộ điểm đo đã lưu bên trong sẽ bị xóa vĩnh viễn.',
+                            confirmText: 'Xóa phiên',
+                            tone: 'danger'
+                        });
+                        if (!ok) return;
+                        const buttonContent = button.innerHTML;
+                        button.disabled = true;
+                        button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang xóa…</span>';
+                        try {
+                            const response = await apiFetchRaw(window.ApiRoutes.rovers.historySession(username, sessionId), {
+                                method: 'DELETE',
+                                headers: API_HEADERS
+                            });
+                            const result = await response.json().catch(() => ({}));
+                            if (!response.ok) throw new Error(result.detail || `Không xóa được phiên (${response.status}).`);
+                            showToast('Đã xóa phiên Rover.', 'success');
+                            await handleRoverHistory({ currentTarget: { dataset: { username } } });
+                        } catch (error) {
+                            button.disabled = false;
+                            button.innerHTML = buttonContent;
+                            showToast(error.message, 'danger');
                         }
                     });
                 });
