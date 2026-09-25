@@ -1257,7 +1257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const positionHtml = hasPosition
                         ? `<div class="rover-history-position">
                                 <div class="rover-history-position-heading">
-                                    <span><i class="bi bi-crosshair2" aria-hidden="true"></i> Vị trí cuối</span>
+                                    <span><i class="bi bi-crosshair2" aria-hidden="true"></i> Vị trí RTK Fixed cuối</span>
                                     <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${latitude}%2C${longitude}" target="_blank" rel="noopener noreferrer" aria-label="Mở vị trí ${latitude}, ${longitude} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Google Maps</span></a>
                                 </div>
                                 <div class="rover-history-coordinate-grid">
@@ -1272,7 +1272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 </div>
                                 <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)}</div>
                             </div>`
-                        : '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận đủ vĩ độ và kinh độ cho phiên này.</span></div>';
+                        : '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận tọa độ RTK Fixed cho phiên này.</span></div>';
                     const ended = Boolean(session.ended_at);
                     return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
                         <div class="rover-history-session-heading">

@@ -43,8 +43,10 @@ AUTH_ZALO_SCHEMA_STATEMENTS = (
         uptime_seconds INTEGER NULL,
         latitude DOUBLE PRECISION NULL,
         longitude DOUBLE PRECISION NULL,
+        position_fix_quality SMALLINT NULL,
         position_updated_at BIGINT NULL
     )""",
+    "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS position_fix_quality SMALLINT",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_username ON rover_session_history (username)",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_server ON rover_session_history (server)",
     "CREATE INDEX IF NOT EXISTS ix_rover_session_history_last_seen_at ON rover_session_history (last_seen_at)",

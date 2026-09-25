@@ -2,7 +2,7 @@
 # == backend/app/models.py ==
 # ==============================================================================
 
-from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index, Text, ForeignKey, UniqueConstraint, Float
+from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index, Text, ForeignKey, UniqueConstraint, Float, SmallInteger
 from sqlalchemy.dialects.postgresql import JSONB
 from .database import Base, AuthBase 
 
@@ -69,6 +69,7 @@ class RoverSessionHistory(AuthBase):
     uptime_seconds = Column(Integer, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
+    position_fix_quality = Column(SmallInteger, nullable=True)
     position_updated_at = Column(BigInteger, nullable=True)
 
     __table_args__ = (

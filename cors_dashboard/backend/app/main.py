@@ -5627,7 +5627,9 @@ def _rover_history_session_key(server: str, username: str, mountpoint: str, clie
 
 def _rover_history_position(client: dict) -> tuple[float, float] | None:
     try:
-        if int(client.get("status") or 0) <= 0:
+        # clienttable status is the GGA fix quality: only 4 is RTK fixed.
+        # Do not label float or standalone positions as the rover's last fix.
+        if int(client.get("status") or 0) != 4:
             return None
     except (TypeError, ValueError):
         return None
@@ -5724,6 +5726,7 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             position = _rover_history_position(client)
             if position is not None:
                 row.latitude, row.longitude = position
+                row.position_fix_quality = 4
                 row.position_updated_at = observed_at
 
         for row in active_by_key.values():
@@ -7688,6 +7691,7 @@ async def export_rover_session_history_csv(
             "username", "server", "mountpoint", "receiver_id", "client_id",
             "started_at_unix", "last_seen_at_unix", "ended_at_unix",
             "latitude", "longitude", "position_updated_at_unix", "google_maps_url",
+            "position_fix_quality",
         ])
         yield "\ufeff" + buffer.getvalue()
         buffer.seek(0)
@@ -7697,7 +7701,11 @@ async def export_rover_session_history_csv(
             result = await db.stream_scalars(query)
             count = 0
             async for session in result:
-                has_position = session.latitude is not None and session.longitude is not None
+                has_position = (
+                    session.position_fix_quality == 4
+                    and session.latitude is not None
+                    and session.longitude is not None
+                )
                 maps_url = (
                     f"https://www.google.com/maps/search/?api=1&query={session.latitude},{session.longitude}"
                     if has_position else ""
@@ -7708,6 +7716,7 @@ async def export_rover_session_history_csv(
                     safe(session.started_at), safe(session.last_seen_at), safe(session.ended_at),
                     session.latitude if has_position else "", session.longitude if has_position else "",
                     safe(session.position_updated_at) if has_position else "", maps_url,
+                    session.position_fix_quality if has_position else "",
                 ])
                 count += 1
                 if count % 256 == 0:
@@ -7882,7 +7891,7 @@ async def export_ops_xlsx(
             if rover_name and not sessions:
                 raise HTTPException(status_code=404, detail="Rover này chưa có phiên được lưu")
             headers = ["Tài khoản", "Caster", "Mountpoint", "Receiver", "Bắt đầu", "Cập nhật cuối", "Kết thúc", "Vĩ độ cuối", "Kinh độ cuối", "Ghi nhận vị trí", "Google Maps"]
-            rows = [[s.username, s.server, s.mountpoint, s.receiver_id, when(s.started_at), when(s.last_seen_at), when(s.ended_at), s.latitude, s.longitude, when(s.position_updated_at), f"https://www.google.com/maps/search/?api=1&query={s.latitude},{s.longitude}" if s.latitude is not None and s.longitude is not None else ""] for s in sessions]
+            rows = [[s.username, s.server, s.mountpoint, s.receiver_id, when(s.started_at), when(s.last_seen_at), when(s.ended_at), s.latitude if s.position_fix_quality == 4 else None, s.longitude if s.position_fix_quality == 4 else None, when(s.position_updated_at) if s.position_fix_quality == 4 else None, f"https://www.google.com/maps/search/?api=1&query={s.latitude},{s.longitude}" if s.position_fix_quality == 4 and s.latitude is not None and s.longitude is not None else ""] for s in sessions]
             title = "LỊCH SỬ PHIÊN ROVER"
         subtitle += f" · {len(rows)} dòng" + (f" · Rover {rover_name}" if rover_name else "")
     elif kind == "caster-users":
@@ -7988,7 +7997,8 @@ async def get_rover_history(
     sessions = []
     for session in sessions_result.scalars().all():
         has_complete_position = (
-            session.latitude is not None
+            session.position_fix_quality == 4
+            and session.latitude is not None
             and session.longitude is not None
         )
         sessions.append({
@@ -8004,6 +8014,7 @@ async def get_rover_history(
                 "lat": session.latitude,
                 "lon": session.longitude,
                 "recorded_at": session.position_updated_at,
+                "fix_quality": session.position_fix_quality,
             } if has_complete_position else None,
         })
     return {
