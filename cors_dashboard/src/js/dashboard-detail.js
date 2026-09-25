@@ -640,6 +640,79 @@ const StationOperationsPanel = memo(function StationOperationsPanel({ device, ca
     );
 });
 
+const ConfiguredRelayPowerControl = memo(function ConfiguredRelayPowerControl({ device, currentUser }) {
+    const serviceConfig = device?.service_config || {};
+    const isConfiguredRelay = String(device?.serial || '').toUpperCase().startsWith('RELAY_')
+        && serviceConfig.agent_station_power_control === true;
+    const role = String(currentUser?.role || '').toLowerCase();
+    const permissions = currentUser?.permissions || [];
+    const canControl = role === 'admin'
+        || permissions.includes('manage:station_mode')
+        || permissions.includes('MANAGE_STATION_MODE');
+    const [stationEnabled, setStationEnabled] = useState(serviceConfig.agent_station_enabled !== false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+        setStationEnabled(device?.service_config?.agent_station_enabled !== false);
+    }, [device?.serial, device?.service_config?.agent_station_enabled]);
+
+    if (!isConfiguredRelay || !canControl) return null;
+
+    const toggleStation = async () => {
+        const nextActive = !stationEnabled;
+        if (!nextActive) {
+            const confirmed = await window.CorsUI.confirmAction({
+                title: 'Tắt hẳn trạm Relay',
+                message: `Ngắt cả kết nối SOURCE lấy dữ liệu và TARGET đẩy dữ liệu của ${device.name || device.serial}. Trạm sẽ không tự kết nối lại cho đến khi được bật.`,
+                confirmText: 'Tắt hẳn trạm',
+                tone: 'danger'
+            });
+            if (!confirmed) return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            const response = await window.apiFetch(window.ApiRoutes.devices.configuredRelayPower(device.serial), {
+                method: 'POST',
+                body: JSON.stringify({ active: nextActive })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.detail || 'Không gửi được lệnh đến Relay.');
+            setStationEnabled(nextActive);
+            window.showSuccess(nextActive
+                ? 'Đã gửi lệnh bật trạm Relay.'
+                : 'Đã gửi lệnh tắt hẳn trạm Relay.');
+        } catch (error) {
+            window.showError(error.message);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="d-flex align-items-center gap-2 ms-2 flex-shrink-0" aria-label="Điều khiển nguồn trạm Relay">
+            <span className={`badge ${stationEnabled ? 'bg-success' : 'bg-secondary'}`}>
+                {stationEnabled ? 'RELAY BẬT' : 'RELAY ĐÃ TẮT'}
+            </span>
+            <button
+                type="button"
+                className={`btn btn-sm py-2 ${stationEnabled ? 'btn-outline-danger' : 'btn-outline-success'}`}
+                style={{ minHeight: '44px' }}
+                aria-label={stationEnabled ? 'Tắt hẳn trạm Relay' : 'Bật trạm Relay'}
+                aria-pressed={stationEnabled}
+                disabled={isSubmitting}
+                onClick={toggleStation}
+            >
+                {isSubmitting ? (
+                    <><span className="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Đang gửi</>
+                ) : (
+                    <><i className={`bi ${stationEnabled ? 'bi-power' : 'bi-play-fill'} me-1`} aria-hidden="true"></i>{stationEnabled ? 'Tắt trạm' : 'Bật trạm'}</>
+                )}
+            </button>
+        </div>
+    );
+});
+
 // =========================================
 // === COMPONENT CHÍNH: DetailsPanel ===
 // =========================================
@@ -1016,6 +1089,8 @@ const DetailsPanel = memo(function DetailsPanel({
                         )}
                     </div>
                 </div>
+
+                <ConfiguredRelayPowerControl device={device} currentUser={currentUser} />
 
                 {/* Nút Reset */}
                 {canEdit && !isEditingName && (

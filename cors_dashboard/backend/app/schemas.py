@@ -61,6 +61,10 @@ class Command(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class ConfiguredRelayPowerRequest(BaseModel):
+    active: bool
+
+
 class BaseReferenceCheckRequest(BaseModel):
     ntrip_host: str = Field(..., min_length=1, max_length=255)
     ntrip_port: int = Field(..., ge=1, le=65535)

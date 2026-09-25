@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V2.2.3"
+RELAY_VERSION = "V2.2.4"
 
 import json
 import logging
@@ -1577,6 +1577,7 @@ class RelayWorker(threading.Thread):
         
         self.name = f"Relay-{self.cfg['target_mp']}"
         self.desired_active = bool(self.cfg.get("stream_active", True))
+        self.station_enabled = bool(self.cfg.get("station_enabled", True))
         self.wakeup_event = threading.Event()
         self.socket_lock = threading.Lock()
         self._source_sock = None
@@ -1635,9 +1636,9 @@ class RelayWorker(threading.Thread):
         if not self.mqtt_client or not self.mqtt_client.is_connected():
             pass # Vẫn cập nhật DB cục bộ dù mất MQTT
         
-        source_has_data = bool(self.source_connected and self.current_source_bps > 0)
-        output_connected = bool(self.desired_active and self.is_connected)
-        output_bps = self.current_bps if self.desired_active else 0
+        source_has_data = bool(self.station_enabled and self.source_connected and self.current_source_bps > 0)
+        output_connected = bool(self.station_enabled and self.desired_active and self.is_connected)
+        output_bps = self.current_bps if self.station_enabled and self.desired_active else 0
         if not source_has_data:
             status_value = "offline"
         elif not self.desired_active:
@@ -1694,7 +1695,9 @@ class RelayWorker(threading.Thread):
                 "server1_stream_on_demand": self._stream_on_demand(),
                 "server1_stream_active": bool(self.desired_active),
                 "stream_active": bool(self.desired_active),
-                "active_mountpoint": self.cfg['target_mp'] if self.desired_active else None
+                "active_mountpoint": self.cfg['target_mp'] if self.desired_active else None,
+                "agent_station_power_control": True,
+                "agent_station_enabled": self.station_enabled,
             },
             "source_mountpoint": self.cfg['source_mp'],
             "rtk_fix_status": "FIXED",
@@ -1727,6 +1730,19 @@ class RelayWorker(threading.Thread):
         if not self.desired_active:
             self.bytes_sent = 0
             self.current_bps = 0
+        self.wakeup_event.set()
+        self.publish_status()
+
+    def set_station_active(self, active: bool):
+        self.station_enabled = bool(active)
+        self.cfg["station_enabled"] = self.station_enabled
+        config_mgr.update_relay_config(self.serial, {"station_enabled": self.station_enabled})
+        if not self.station_enabled:
+            self._close_live_sockets()
+            self.is_connected = False
+            self.source_connected = False
+            self.current_bps = 0
+            self.current_source_bps = 0
         self.wakeup_event.set()
         self.publish_status()
 
@@ -1817,10 +1833,20 @@ class RelayWorker(threading.Thread):
     
     def run(self):
         while not self.stop_event.is_set():
+            if not self.station_enabled:
+                self.is_connected = False
+                self.source_connected = False
+                self.current_bps = 0
+                self.current_source_bps = 0
+                self.publish_status()
+                if self.wakeup_event.wait(30):
+                    self.wakeup_event.clear()
+                continue
+
             source_sock = None
             target_sock = None
             try:
-                # XÓA sleep logic để luồng SOURCE luôn được kết nối và parse RTCM
+                # Kết nối SOURCE khi trạm bật, kể cả khi stream output đang ở chế độ ngủ.
                 source_host = self._source_host()
                 source_port = self._source_port()
                 source_user = self._source_user()
@@ -1828,15 +1854,17 @@ class RelayWorker(threading.Thread):
                 target_host = self._target_host()
                 target_port = self._target_port()
                 target_pass = self._target_pass()
-                # === LUÔN KẾT NỐI SOURCE VÀ LẤY DATA (Kể cả khi bị OFF trên web) ===
+                # Kết nối SOURCE để lấy dữ liệu khi bật nguồn trạm.
                 self.log("INFO", f"Connecting SOURCE: {source_host}:{source_port}/{self.cfg['source_mp']}")
                 with SOURCE_CONNECT_LIMIT:
-                    if self.stop_event.is_set():
-                        break
+                    if self.stop_event.is_set() or not self.station_enabled:
+                        continue
                     source_sock = socket.create_connection((source_host, source_port), timeout=10)
                 enable_tcp_keepalive(source_sock)
                 with self.socket_lock:
                     self._source_sock = source_sock
+                if not self.station_enabled:
+                    continue
                 
                 auth = base64.b64encode(f"{source_user}:{source_pass}".encode()).decode()
                 source_request = (
@@ -1878,14 +1906,18 @@ class RelayWorker(threading.Thread):
                 source_sock.settimeout(5.0)
                 
                 while not self.stop_event.is_set():
-                    # XÓA disconnect logic: luồng SOURCE không bị ngắt dù cho TARGET có bị chặn                    # 1. KẾT NỐI TARGET NẾU TRẠM BẬT (desired_active = True) MÀ CHƯA KẾT NỐI
-                    if source_has_rtcm and target_sock is None and (self.desired_active or self._keep_target_connected()):
+                    if not self.station_enabled:
+                        break
+                    # 1. Kết nối TARGET khi stream đang bật hoặc cấu hình giữ kết nối standby.
+                    if self.station_enabled and source_has_rtcm and target_sock is None and (self.desired_active or self._keep_target_connected()):
                         self.log("INFO", f"Connecting TARGET: {target_host}:{target_port}/{self.cfg['target_mp']} (v1.0)")
                         try:
                             target_sock = socket.create_connection((target_host, target_port), timeout=10)
                             enable_tcp_keepalive(target_sock)
                             with self.socket_lock:
                                 self._target_sock = target_sock
+                            if not self.station_enabled:
+                                break
                             
                             target_request = (
                                 f"SOURCE {target_pass} /{self.cfg['target_mp']}\r\n"
@@ -1982,7 +2014,7 @@ class RelayWorker(threading.Thread):
                             self.satellites[sat_key] = existing
 
                     # 4. CHỈ GỬI ĐI NẾU ĐANG BẬT TARGET
-                    if self.desired_active and target_sock is not None and frames:
+                    if self.station_enabled and self.desired_active and target_sock is not None and frames:
                         for frame in frames:
                             try:
                                 target_sock.sendall(frame)
@@ -3370,6 +3402,17 @@ def setup_mqtt(worker_map):
                         logging.info(f"[{serial}] Received CHANGE_SERIAL command. Applied new serial '{new_serial}' without exiting")
                 except Exception as e:
                     logging.error(f"[{serial}] Failed to update serial: {e}")
+            return
+
+        if command == "SET_CONFIGURED_RELAY_ACTIVE":
+            worker = worker_map.get(serial)
+            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            active = cmd_payload.get("active")
+            if not isinstance(worker, RelayWorker) or not isinstance(active, bool):
+                logging.warning(f"[{serial}] Ignore invalid configured-relay power command")
+                return
+            worker.set_station_active(active)
+            logging.info(f"[{serial}] Configured relay station active={active}")
             return
 
         if command != "SET_RTCM_STREAM_ACTIVE":

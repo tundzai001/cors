@@ -74,6 +74,7 @@
             corsMountpoints: serial => `/api/devices/${encodeURIComponent(serial)}/cors-mountpoints`,
             configureChip: serial => `/api/devices/${encodeURIComponent(serial)}/configure-chip`,
             configureService: serial => `/api/devices/${encodeURIComponent(serial)}/configure-service`,
+            configuredRelayPower: serial => `/api/devices/${encodeURIComponent(serial)}/configured-relay-power`,
             lock: serial => `/api/devices/${encodeURIComponent(serial)}/lock`,
             unlock: serial => `/api/devices/${encodeURIComponent(serial)}/unlock`,
             alerts: '/api/devices/alerts',

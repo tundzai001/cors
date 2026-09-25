@@ -6716,6 +6716,50 @@ async def configure_service_endpoint(
     except HTTPException as e:
         raise HTTPException(status_code=503, detail=f"Config saved to DB, but failed to send command to Pi: {e.detail}")
 
+@app.post("/api/devices/{serial}/configured-relay-power")
+async def set_configured_relay_power(
+    serial: str,
+    request: schemas.ConfiguredRelayPowerRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
+    if not serial.strip().upper().startswith("RELAY_"):
+        raise HTTPException(status_code=404, detail="Thiết bị không phải Relay cấu hình")
+    if not auth.has_permission(current_user, auth.Permission.MANAGE_STATION_MODE):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền bật/tắt trạm Relay.")
+    if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị này.")
+
+    service_config = _device_service_config(device)
+    if service_config.get("agent_station_power_control") is not True:
+        raise HTTPException(status_code=409, detail="Relay chưa hỗ trợ điều khiển bật/tắt toàn trạm.")
+
+    try:
+        response = await send_command_to_pi(
+            serial,
+            {"command": "SET_CONFIGURED_RELAY_ACTIVE", "payload": {"active": request.active}},
+        )
+    except HTTPException as exc:
+        raise HTTPException(status_code=503, detail=f"Không gửi được lệnh đến Relay: {exc.detail}")
+
+    service_config["agent_station_enabled"] = request.active
+    device.service_config = service_config
+    await db.commit()
+    await db.refresh(device)
+    await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+    await crud.log_system_event(
+        db=db,
+        type="info" if request.active else "warning",
+        message=f"Relay '{device.name or serial}' {'enabled' if request.active else 'fully disabled'} by {current_user.username}",
+        user_id=current_user.id,
+        serial=serial,
+    )
+    return {"status": "command_sent", "active": request.active, "channel": response.get("channel", "unknown")}
+
+
 @app.post("/api/devices/{serial}/reset")
 async def reset_pi_device(
     serial: str,
