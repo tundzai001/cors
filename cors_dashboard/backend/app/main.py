@@ -643,8 +643,12 @@ def _sanitize_ttl(ttl_seconds: int) -> int:
     return max(RTCM_MIN_TTL, min(RTCM_MAX_TTL, ttl))
 
 
+def _device_service_config(device: Optional[models.Device]) -> dict:
+    return crud.normalize_service_config(getattr(device, "service_config", None) if device else None)
+
+
 def _extract_station_mountpoints(device: models.Device) -> List[str]:
-    cfg = device.service_config or {}
+    cfg = _device_service_config(device)
     result: List[str] = []
     if cfg.get("server1_enabled") and cfg.get("mountpoint1"):
         result.append(str(cfg.get("mountpoint1")))
@@ -728,7 +732,7 @@ def _resolve_requested_mountpoint(available: List[str], requested: Optional[str]
 def _extract_active_mountpoint(device: Optional[models.Device]) -> Optional[str]:
     if not device:
         return None
-    cfg = device.service_config or {}
+    cfg = _device_service_config(device)
     active_mp = cfg.get("active_mountpoint")
     if not active_mp:
         is_active = bool(cfg.get("stream_active", cfg.get("server1_stream_active", False)))
@@ -749,7 +753,7 @@ def _extract_reapable_server_streams(
     if not device:
         return ()
 
-    cfg = device.service_config or {}
+    cfg = _device_service_config(device)
     return collect_reapable_server_streams(
         cfg,
         legacy_active_mountpoint=_extract_active_mountpoint(device),
@@ -779,7 +783,7 @@ def _resolve_stream_status(device: Optional[models.Device], force_starting: bool
     if bool(getattr(device, "ntrip_connected", False)):
         return "streaming"
 
-    cfg = (getattr(device, "service_config", None) or {})
+    cfg = _device_service_config(device)
     if cfg.get("stream_on_demand") and not cfg.get("stream_active", True):
         return "sleep"
     return "starting"
@@ -807,7 +811,7 @@ async def _set_station_stream(
                 device = await crud.get_device_by_serial(db, serial)
                 if device:
                     target_server_id = _resolve_preferred_server_id_for_mountpoint(
-                        device.service_config or {},
+                        _device_service_config(device),
                         requested_mp_norm,
                         requested_address,
                     )
@@ -837,7 +841,7 @@ async def _set_station_stream(
             if not device:
                 return
 
-            cfg = dict(device.service_config or {})
+            cfg = dict(_device_service_config(device))
 
             if target_server_id is None and requested_mp_norm and (bool(active) or requested_address):
                 target_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, requested_mp_norm, requested_address)
@@ -1064,7 +1068,7 @@ def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bo
     if not requested:
         return False
 
-    cfg = device.service_config or {}
+    cfg = _device_service_config(device)
     s1_ok = bool(cfg.get("server1_enabled")) and _normalize_mountpoint(cfg.get("mountpoint1")) == requested
     s2_ok = bool(cfg.get("server2_enabled")) and _normalize_mountpoint(cfg.get("mountpoint2")) == requested
     return s1_ok or s2_ok
@@ -1445,7 +1449,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
 
                     if remaining == 0:
                         device = await crud.get_device_by_serial(db, serial)
-                        cfg = device.service_config or {} if device else {}
+                        cfg = _device_service_config(device)
                         if not cfg.get("stream_on_demand", True):
                             continue
                         await _set_station_stream(serial, active=False)
@@ -2916,7 +2920,7 @@ async def lifespan(app: FastAPI):
                                 unknown = sorted(set(changes) - allowed_fields)
                                 if unknown:
                                     raise ValueError(f"Config key không hợp lệ: {', '.join(unknown)}")
-                                merged = dict(device.service_config or {})
+                                merged = dict(_device_service_config(device))
                                 merged.update({key: _zalo_parse_scalar(value) for key, value in changes.items()})
                                 service_payload = schemas.ServiceConfig(**merged)
                                 result = await configure_service_endpoint(device.serial, service_payload, devices_db, execution_user)
@@ -2930,7 +2934,7 @@ async def lifespan(app: FastAPI):
                                     wait_time += 1
                                     await devices_db.refresh(device)
                                     agent_service = device_sync_cache.get(f"{device.serial}_service_config", {})
-                                    db_service = device.service_config or {}
+                                    db_service = _device_service_config(device)
                                     srv_ok, _ = _compare_configs(agent_service, db_service, "Service", is_relay=is_relay)
                                     if srv_ok:
                                         is_synced = True
@@ -6280,7 +6284,7 @@ async def create_multi_base_rover(
             for serial in request.selected_serials:
                 dev = await crud.get_device_by_serial(devices_db, serial)
                 if dev and str(dev.serial).strip().upper() in coord_visible_serials:
-                    sc = dev.service_config or {}
+                    sc = _device_service_config(dev)
                     if sc.get('server1_enabled') and sc.get('mountpoint1'): 
                         valid_mps.add(sc.get('mountpoint1'))
                     if sc.get('server2_enabled') and sc.get('mountpoint2'): 
@@ -6572,7 +6576,7 @@ async def configure_service_endpoint(
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị nÃ y.")
 
     # 2. Kiểm tra MANAGE_STATION_MODE (Nếu thay đổi mode sleep/always-on toàn cục hoặc theo server)
-    old_service_cfg = device_in_db.service_config or {}
+    old_service_cfg = _device_service_config(device_in_db)
     old_on_demand = old_service_cfg.get("stream_on_demand", False)
     new_on_demand = payload.stream_on_demand
     old_s1_on_demand = old_service_cfg.get("server1_stream_on_demand")
@@ -8614,7 +8618,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                     # Include config in broadcast payload so UI keeps full data
                     ui_broadcast_payload["name"] = device.name
                     ui_broadcast_payload["base_config"] = device.base_config or {}
-                    ui_broadcast_payload["service_config"] = device.service_config or {}
+                    ui_broadcast_payload["service_config"] = _device_service_config(device)
                     ui_broadcast_payload["detected_chip_type"] = device.detected_chip_type
                     ui_broadcast_payload["is_provisioned"] = device.is_provisioned
                     ui_broadcast_payload["version"] = device.version

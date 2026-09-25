@@ -460,7 +460,7 @@ async def create_rover_for_base(
     if not device_info:
         raise HTTPException(status_code=404, detail="Trạm Base không tồn tại.")
     
-    service_conf = device_info.service_config or {}
+    service_conf = crud.normalize_service_config(device_info.service_config)
     
     # 2. Xác định Mountpoint (Logic mới)
     target_mountpoint = rover_data.mountpoint_allow

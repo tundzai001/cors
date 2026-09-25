@@ -12,6 +12,7 @@ import time
 import logging
 import asyncio
 import re
+import json
 
 logger = logging.getLogger(__name__)
  
@@ -20,6 +21,15 @@ def _ensure_dict(val) -> dict:
     if isinstance(val, dict):
         return val
     return {}
+
+
+def normalize_service_config(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = None
+    return value if isinstance(value, dict) else {}
 
 
 def _has_usable_value(value) -> bool:
@@ -128,7 +138,9 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                 normalized_name = _normalize_optional_text(device.get('name'))
                 normalized_chip_type = _normalize_optional_text(device.get('detected_chip_type'))
                 normalized_base_config = _normalize_optional_json(device.get('base_config'), require_coords=True)
-                normalized_service_config = _normalize_optional_json(device.get('service_config'))
+                normalized_service_config = _normalize_optional_json(
+                    normalize_service_config(device.get('service_config'))
+                )
                 normalized_system_info = _normalize_optional_json(device.get('system_info'))
 
                 device_record = {
@@ -199,7 +211,11 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     'service_config': case(
                         (models.Device.is_synced == False, models.Device.service_config),
                         (and_(models.Device.service_config != None, stmt.excluded.service_config != None), 
-                         models.Device.service_config.op('||')(stmt.excluded.service_config)),
+                         case(
+                             (func.jsonb_typeof(models.Device.service_config) == 'object',
+                              models.Device.service_config.op('||')(stmt.excluded.service_config)),
+                             else_=stmt.excluded.service_config,
+                         )),
                         (stmt.excluded.service_config != None, stmt.excluded.service_config),
                         else_=models.Device.service_config
                     ),
@@ -351,7 +367,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     existing_device = await get_device_by_serial(db, serial)
 
     new_base_config = normalize_base_config(device_data.get("base_config", {}))
-    new_service_config = device_data.get("service_config", {})
+    new_service_config = normalize_service_config(device_data.get("service_config"))
     new_system_info = _ensure_dict(device_data.get("system_info"))
     command_source = _ensure_dict(device_data.get("command_source"))
     if command_source:
@@ -813,7 +829,7 @@ async def _viewer_rover_scope(auth_db: AsyncSession, devices_db: AsyncSession, u
     result = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(serials)))
     mountpoints = set()
     for device in result.scalars().all():
-        config = device.service_config or {}
+        config = normalize_service_config(device.service_config)
         for index in (1, 2):
             if config.get(f"server{index}_enabled") and config.get(f"mountpoint{index}"):
                 mountpoints.add(str(config[f"mountpoint{index}"]).strip().lower())
@@ -835,7 +851,7 @@ async def rover_mountpoints_within_scope(devices_db: AsyncSession, user: models.
     if selected:
         result = await devices_db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(selected)))
         for device in result.scalars().all():
-            config = device.service_config or {}
+            config = normalize_service_config(device.service_config)
             for index in (1, 2):
                 if config.get(f"server{index}_enabled") and config.get(f"mountpoint{index}"):
                     allowed.add(str(config[f"mountpoint{index}"]).strip().lower())
@@ -854,7 +870,7 @@ async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current
     managed_mps = set()
     
     for d in managed_devices:
-        cfg = d.service_config or {}
+        cfg = normalize_service_config(d.service_config)
         if cfg.get("server1_enabled") and cfg.get("mountpoint1"):
             managed_mps.add(str(cfg.get("mountpoint1")).strip().lower())
         if cfg.get("server2_enabled") and cfg.get("mountpoint2"):

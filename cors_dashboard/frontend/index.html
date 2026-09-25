@@ -289,12 +289,12 @@
             errDiv.innerHTML = `
                 <div class="d-flex align-items-start gap-3">
                     <i class="bi bi-bug-fill fs-3 text-warning"></i>
-                    <div class="flex-grow-1">
+                    <div class="flex-grow-1 pe-4">
                         <h6 class="alert-heading fw-bold mb-1">CẢNH BÁO: Lỗi hệ thống phát hiện (Uncaught Exception)</h6>
                         <p class="small mb-2">Đã xảy ra lỗi thực thi script trên trình duyệt của bạn. Hãy gửi ảnh chụp hoặc thông tin chi tiết bên dưới cho đội ngũ hỗ trợ:</p>
                         <pre class="global-error-reporter__body" style="white-space: pre-wrap; background: rgba(0,0,0,0.85); padding: 12px; border-radius: 6px; color: #ffc107; font-family: monospace; font-size: 0.85rem; max-height: 250px; overflow-y: auto; margin-bottom: 0;"></pre>
                     </div>
-                    <button type="button" class="btn-close" onclick="this.parentElement.parentElement.remove()" aria-label="Close"></button>
+                    <button type="button" class="btn-close" style="position:absolute;top:12px;right:12px" onclick="this.closest('.global-error-reporter').remove()" aria-label="Đóng thông báo"></button>
                 </div>
             `;
             const body = errDiv.querySelector('.global-error-reporter__body');
@@ -326,11 +326,11 @@
             errDiv.innerHTML = `
                 <div class="d-flex align-items-start gap-3">
                     <i class="bi bi-exclamation-triangle-fill fs-3 text-dark"></i>
-                    <div class="flex-grow-1 text-dark">
+                    <div class="flex-grow-1 text-dark pe-4">
                         <h6 class="alert-heading fw-bold mb-1">CẢNH BÁO: Unhandled Rejection (Async Promise)</h6>
                         <pre class="global-error-reporter__body" style="white-space: pre-wrap; background: rgba(0,0,0,0.85); padding: 12px; border-radius: 6px; color: #ffc107; font-family: monospace; font-size: 0.85rem; max-height: 250px; overflow-y: auto; margin-bottom: 0;"></pre>
                     </div>
-                    <button type="button" class="btn-close" onclick="this.parentElement.parentElement.remove()" aria-label="Close"></button>
+                    <button type="button" class="btn-close" style="position:absolute;top:12px;right:12px" onclick="this.closest('.global-error-reporter').remove()" aria-label="Đóng thông báo"></button>
                 </div>
             `;
             const body = errDiv.querySelector('.global-error-reporter__body');

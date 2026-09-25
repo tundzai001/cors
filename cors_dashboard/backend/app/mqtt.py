@@ -77,7 +77,7 @@ def _metadata_snapshot(device) -> dict:
             and system_info.get("auth_license_bypass")
         ),
         "base_config": getattr(device, "base_config", None) or {},
-        "service_config": getattr(device, "service_config", None) or {},
+        "service_config": crud.normalize_service_config(getattr(device, "service_config", None)),
         "detected_chip_type": getattr(device, "detected_chip_type", None),
     }
 
@@ -497,11 +497,13 @@ async def batch_sync_checker():
                     
                     # Lấy config từ cache (đã nhận qua MQTT)
                     agent_base = device_sync_cache.get(f"{serial}_base_config", {})
-                    agent_service = device_sync_cache.get(f"{serial}_service_config", {})
+                    agent_service = crud.normalize_service_config(
+                        device_sync_cache.get(f"{serial}_service_config")
+                    )
                     
                     # DB config (chuẩn)
                     db_base = device.base_config or {}
-                    db_service = device.service_config or {}
+                    db_service = crud.normalize_service_config(device.service_config)
                     
                     is_relay_like = serial.startswith(("RELAY_", "MONITOR_"))
                     
@@ -700,7 +702,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # --- 2.2. LƯU CONFIG VÀO CACHE ĐỂ BATCH CHECKER DÙNG ---
             # 🔥 QUAN TRỌNG: Lưu config vào cache để batch checker có thể so sánh
             agent_base = data.get('base_config', {})
-            agent_service = data.get('service_config', {})
+            agent_service = crud.normalize_service_config(data.get('service_config'))
             command_source = data.get('command_source')
             command_source_changed = False
             if isinstance(command_source, dict):
