@@ -555,6 +555,7 @@
         ['AUTO: CHỜ RTK FIX', 'AUTO: WAITING FOR RTK FIX'],
         ['AUTO: LẤY MẪU TỌA ĐỘ', 'AUTO: SAMPLING COORDINATES'],
         ['AUTO: CÀI ĐẶT BASE', 'AUTO: SETTING UP BASE'],
+        ['Agent đã báo có Access Token cục bộ, nhưng server chưa có token để đối chiếu. Bấm nút bên dưới để tạo token trên server và gửi lại xuống agent qua MQTT.', 'The agent reports a local Access Token, but the server has no token to verify it. Use the button below to create the server token and send it to the agent over MQTT.'],
         ['Thiết bị chưa có Access Token trên server. Bấm nút bên dưới để tạo token và gửi xuống agent qua MQTT.', 'This device has no Access Token on the server. Use the button below to create a token and send it to the agent over MQTT.'],
         ['Access Token đã đồng bộ với agent. Bạn có thể gửi lại token nếu cần.', 'The Access Token is synced with the agent. You can resend it if needed.'],
         ['Access Token trên agent không khớp với server. Bấm nút bên dưới để gửi lại token đúng.', 'The agent Access Token does not match the server. Use the button below to resend the correct token.'],

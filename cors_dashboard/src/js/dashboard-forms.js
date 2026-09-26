@@ -31,7 +31,9 @@ const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDepl
     const agentTokenPresent = authStatus.agent_token_present === true;
     const tokenSynced = authStatus.token_synced === true;
     const authMessage = serverTokenPresent === false
-        ? 'Thiết bị chưa có Access Token trên server. Bấm nút bên dưới để tạo token và gửi xuống agent qua MQTT.'
+        ? agentTokenPresent
+            ? 'Agent đã báo có Access Token cục bộ, nhưng server chưa có token để đối chiếu. Bấm nút bên dưới để tạo token trên server và gửi lại xuống agent qua MQTT.'
+            : 'Thiết bị chưa có Access Token trên server. Bấm nút bên dưới để tạo token và gửi xuống agent qua MQTT.'
         : tokenSynced
             ? 'Access Token đã đồng bộ với agent. Bạn có thể gửi lại token nếu cần.'
             : agentTokenPresent
