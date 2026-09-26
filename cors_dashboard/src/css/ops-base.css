@@ -39,6 +39,7 @@ body.ops-admin-page {
 .ops-admin-nav .navbar-brand {
     font-size: 0.95rem;
     letter-spacing: 0;
+    white-space: nowrap;
 }
 
 .ops-admin-nav .navbar-nav {
@@ -53,6 +54,7 @@ body.ops-admin-page {
     font-weight: 800;
     letter-spacing: 0.09em;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 
 .ops-admin-nav .nav-link {
@@ -65,6 +67,38 @@ body.ops-admin-page {
     gap: 6px;
     min-height: 34px;
     padding: 7px 10px !important;
+    white-space: nowrap;
+}
+
+@media (min-width: 992px) {
+    .ops-admin-nav .container-fluid {
+        display: grid;
+        gap: 4px 16px;
+        grid-template-areas: "brand account" "navigation navigation";
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding-bottom: 8px;
+        padding-top: 8px;
+    }
+
+    .ops-admin-nav .navbar-brand { grid-area: brand; }
+    .ops-admin-nav .navbar-collapse { grid-area: navigation; min-width: 0; }
+    .ops-admin-nav .container-fluid > .d-flex {
+        flex-wrap: nowrap;
+        grid-area: account;
+        justify-self: end;
+        min-width: 0;
+    }
+
+    .ops-admin-nav #user-info {
+        max-width: min(25vw, 280px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .ops-admin-nav #logout-btn { flex: 0 0 auto; white-space: nowrap; }
+    .ops-admin-nav .navbar-nav { flex-wrap: wrap; gap: 4px 6px; }
+    .ops-admin-nav .navbar-nav > .nav-item { flex: 0 0 auto; }
 }
 
 .ops-admin-nav .nav-link:hover {
