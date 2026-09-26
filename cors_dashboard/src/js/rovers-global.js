@@ -1402,7 +1402,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const title = document.getElementById('rover-activity-track-title');
         const meta = document.getElementById('rover-activity-track-meta');
         if (title) title.textContent = `Receiver ${receiverId}`;
-        if (meta && machine) meta.textContent = `${Number(machine.session_count) || 0} phiên · ${Number(machine.point_count) || 0} điểm RTK Fixed · nối theo thời gian (đầu xanh, cuối đỏ)`;
+        if (meta && machine) meta.textContent = `${Number(machine.session_count) || 0} phiên · ${Number(machine.point_count) || 0} điểm RTK Fixed · nối theo thời gian (đầu xanh, cuối đỏ) · điểm gần nhau có thể chồng, bấm + để phóng to`;
         clearRoverActivityTrack();
         await loadRoverActivityTrack(receiverId);
     }
@@ -1462,7 +1462,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             && Number(point.lat) >= -90 && Number(point.lat) <= 90 && Number(point.lon) >= -180 && Number(point.lon) <= 180);
         const googlePointUrl = point => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${point.lat},${point.lon}`)}`;
         pointList.innerHTML = validPoints.length ? validPoints.map((point, index) => `<div class="rover-activity-point-row">
-            <span><strong>${index + 1}.</strong> ${formatDateTime(point.recorded_at)} · ${escapeHtml(point.username || '')}${point.mountpoint ? ` · ${escapeHtml(point.mountpoint)}` : ''}</span>
+            <div class="rover-activity-point-details">
+                <span><strong>${index + 1}.</strong> ${formatDateTime(point.recorded_at)} · ${escapeHtml(point.username || '')}${point.mountpoint ? ` · ${escapeHtml(point.mountpoint)}` : ''}</span>
+                <span class="rover-activity-point-coordinates">Tọa độ (vĩ độ, kinh độ): ${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}</span>
+            </div>
             <a href="${googlePointUrl(point)}" target="_blank" rel="noopener noreferrer" aria-label="Mở tọa độ điểm ${index + 1} trên Google Maps">Bản đồ</a>
         </div>`).join('') : '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Tọa độ không hợp lệ.</span></div>';
         const lastPoint = validPoints[validPoints.length - 1];
@@ -1497,7 +1500,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     weight: 1
                 }).addTo(roverActivityMap).bindPopup(`<strong>Điểm ${index + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
             });
-            if (coordinates.length > 1) roverActivityMap.fitBounds(line.getBounds(), { padding: [22, 22], maxZoom: 17 });
+            if (coordinates.length > 1) roverActivityMap.fitBounds(line.getBounds(), { padding: [22, 22], maxZoom: 19 });
             else roverActivityMap.setView(coordinates[0], 17);
             requestAnimationFrame(() => roverActivityMap?.invalidateSize());
         } catch (error) {
@@ -1575,7 +1578,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     weight: 1
                 }).addTo(map).bindPopup(`<strong>Điểm ${originalIndex + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
             });
-            if (line) map.fitBounds(line.getBounds(), { padding: [28, 28], maxZoom: 17 });
+            if (line) map.fitBounds(line.getBounds(), { padding: [28, 28], maxZoom: 19 });
             else map.setView(coordinates[0], 17);
             requestAnimationFrame(() => map.invalidateSize());
             return map;
@@ -1755,7 +1758,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const sessionMapHtml = points.length
                         ? `<div class="rover-history-session-map" hidden>
                                 <div class="rover-history-session-map-canvas" role="region" aria-label="Bản đồ nối toàn bộ điểm FIX trong phiên ${escapeHtml(session.id)}"></div>
-                                <div class="rover-history-session-map-directions"><span>Đường xanh nối điểm FIX theo thứ tự đo.</span></div>
+                                <div class="rover-history-session-map-directions"><span>Đường xanh nối điểm FIX theo thứ tự đo. Điểm gần nhau có thể chồng; bấm + để phóng to.</span></div>
                                 ${googleMapsRoutesHtml ? `<div class="rover-history-session-map-directions"><span>Chỉ đường Google Maps:</span>${googleMapsRoutesHtml}</div>` : ''}
                             </div>`
                         : '';
