@@ -1524,6 +1524,51 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function roverHistoryGoogleMapsRoutes(points) {
+        const coordinates = (Array.isArray(points) ? points : []).flatMap(point => {
+            if (point?.lat == null || point?.lon == null || point.lat === '' || point.lon === '') return [];
+            const latitude = Number(point.lat);
+            const longitude = Number(point.lon);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+                || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180
+                || (latitude === 0 && longitude === 0)) return [];
+            return [`${latitude.toFixed(7)},${longitude.toFixed(7)}`];
+        });
+        if (coordinates.length < 2) return '';
+
+        const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+        const pointsPerRoute = (isMobile ? 3 : 9) + 2;
+        const segments = [];
+        for (let start = 0; start < coordinates.length - 1;) {
+            const end = Math.min(start + pointsPerRoute - 1, coordinates.length - 1);
+            const segment = coordinates.slice(start, end + 1);
+            const query = new URLSearchParams({
+                api: '1',
+                origin: segment[0],
+                destination: segment[segment.length - 1],
+                travelmode: 'driving'
+            });
+            if (segment.length > 2) query.set('waypoints', segment.slice(1, -1).join('|'));
+            segments.push({
+                href: `https://www.google.com/maps/dir/?${query.toString()}`,
+                firstPoint: start + 1,
+                lastPoint: end + 1,
+            });
+            start = end;
+        }
+
+        const links = segments.map((segment, index) => {
+            const label = segments.length === 1
+                ? `Nối ${coordinates.length} điểm trên Google Maps`
+                : `Tuyến ${index + 1}/${segments.length} · điểm ${segment.firstPoint}–${segment.lastPoint}`;
+            return `<a class="rover-history-map-link rover-history-route-link" href="${segment.href}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(label)}"><i class="bi bi-map" aria-hidden="true"></i>${escapeHtml(label)}</a>`;
+        }).join('');
+        const note = segments.length > 1
+            ? `<span class="rover-history-route-note">Các tuyến nối tiếp nhau tại điểm cuối mỗi chặng.</span>`
+            : '';
+        return `${links}${note}`;
+    }
+
     function roverHistoryPaginationHtml(totalPages, page, username, dateValue) {
         if (totalPages <= 1) return '';
         const pages = new Set([1, totalPages]);
@@ -1639,6 +1684,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <div class="rover-history-point-meta"><span><i class="bi bi-clock" aria-hidden="true"></i> Đo lúc ${formatDateTime(point.recorded_at)}</span><span><i class="bi bi-broadcast" aria-hidden="true"></i> ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span><span><i class="bi bi-save" aria-hidden="true"></i> Lưu lúc ${formatDateTime(point.saved_at)}</span><span><i class="bi bi-person" aria-hidden="true"></i> Lưu bởi ${escapeHtml(point.created_by || 'admin')}</span></div>
                         </article>`;
                     }).join('')}</div>` : '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
+                    const googleMapsRoutesHtml = roverHistoryGoogleMapsRoutes(points);
                     const deleteSessionHtml = isAdmin
                         ? ended
                             ? `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`
@@ -1664,7 +1710,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         </div>
                         ${positionHtml}
                         <section class="rover-history-points" aria-label="Các điểm đo trong phiên ${session.id}">
-                            <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><span>${points.length} điểm</span></div>
+                            <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><div class="rover-history-route-tools"><span>${points.length} điểm</span>${googleMapsRoutesHtml}</div></div>
                             ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu RTK Fixed đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu RTK Fixed đang tắt cho tài khoản này.'}</p>`}
                             ${pointsHtml}
                         </section>
