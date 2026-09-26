@@ -20,7 +20,8 @@ DEVICE_SCHEMA_STATEMENTS = (
 
 
 AUTH_ZALO_SCHEMA_STATEMENTS = (
-    "ALTER TABLE rover_accounts ADD COLUMN IF NOT EXISTS auto_save_fixed_points BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE rover_accounts ADD COLUMN IF NOT EXISTS auto_save_fixed_points BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE rover_accounts ALTER COLUMN auto_save_fixed_points SET DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS view_only_bases VARCHAR",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_rovers BOOLEAN NOT NULL DEFAULT FALSE",
     "UPDATE users SET can_view_rovers = TRUE WHERE can_create_rovers = TRUE",

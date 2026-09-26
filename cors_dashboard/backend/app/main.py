@@ -6203,7 +6203,7 @@ async def sync_rover_by_username(
             show_position=update_req.show_position if update_req.show_position is not None else True,
             rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
             rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300),
-            auto_save_fixed_points=update_req.auto_save_fixed_points if update_req.auto_save_fixed_points is not None else True,
+            auto_save_fixed_points=update_req.auto_save_fixed_points if update_req.auto_save_fixed_points is not None else False,
             is_shared_with_managers=getattr(update_req, 'is_shared_with_managers', False)
         )
         logger.info(f"âœ“ Adopted unknown rover '{username}' into DB")
@@ -8473,6 +8473,38 @@ async def delete_rover_history_session(
     await auth_db.delete(session)
     await auth_db.commit()
     return {"status": "deleted", "session_id": session_id}
+
+
+@app.delete("/api/rovers/{username}/history/{session_id}/points/{point_id}")
+async def delete_rover_history_point(
+    username: str,
+    session_id: int,
+    point_id: int,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xóa điểm Rover")
+
+    result = await auth_db.execute(
+        select(models.RoverFixedPoint)
+        .join(
+            models.RoverSessionHistory,
+            models.RoverFixedPoint.session_id == models.RoverSessionHistory.id,
+        )
+        .where(
+            models.RoverFixedPoint.id == point_id,
+            models.RoverFixedPoint.session_id == session_id,
+            func.lower(models.RoverSessionHistory.username) == username.strip().lower(),
+        )
+    )
+    point = result.scalar_one_or_none()
+    if point is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy điểm đo trong phiên Rover")
+
+    await auth_db.delete(point)
+    await auth_db.commit()
+    return {"status": "deleted", "point_id": point_id, "session_id": session_id}
 
 
 @app.post("/api/rovers/sync-status")

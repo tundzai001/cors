@@ -1617,10 +1617,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                         const pointLatitude = String(point.lat);
                         const pointLongitude = String(point.lon);
                         const pointMapQuery = encodeURIComponent(`${pointLatitude},${pointLongitude}`);
+                        const deletePointButton = isAdmin
+                            ? `<button class="rover-history-action-button rover-history-delete-point" type="button" data-point-id="${escapeHtml(point.id)}" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}" aria-label="Xóa điểm ${escapeHtml(point.label || 'đo')}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa điểm</span></button>`
+                            : '';
                         return `<article class="rover-history-point">
                             <div class="rover-history-point-heading">
                                 <div><strong>${escapeHtml(point.label || 'Điểm đo')}</strong><span class="rover-history-point-fix">RTK Fixed</span></div>
-                                <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'đo')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
+                                <div class="rover-history-point-actions">
+                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'đo')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
+                                    ${deletePointButton}
+                                </div>
                             </div>
                             <div class="rover-history-coordinate-grid">
                                 <div class="rover-history-coordinate"><div class="rover-history-coordinate-heading"><span>Vĩ độ</span><button class="rover-history-copy" type="button" data-copy-value="${pointLatitude}" aria-label="Sao chép vĩ độ điểm đo" title="Sao chép vĩ độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div><strong>${pointLatitude}</strong></div>
@@ -1752,6 +1758,37 @@ document.addEventListener('DOMContentLoaded', async () => {
                             const result = await response.json().catch(() => ({}));
                             if (!response.ok) throw new Error(result.detail || `Không xóa được phiên (${response.status}).`);
                             showToast('Đã xóa phiên Rover.', 'success');
+                            await handleRoverHistory({ currentTarget: { dataset: { username, date: button.dataset.date, page: button.dataset.page } } });
+                        } catch (error) {
+                            button.disabled = false;
+                            button.innerHTML = buttonContent;
+                            showToast(error.message, 'danger');
+                        }
+                    });
+                });
+                body.querySelectorAll('.rover-history-delete-point').forEach(button => {
+                    button.addEventListener('click', async () => {
+                        const pointId = button.dataset.pointId;
+                        const sessionId = button.dataset.sessionId;
+                        const ok = await window.CorsUI.confirmAction({
+                            title: 'Xóa điểm FIX',
+                            message: 'Điểm đo này sẽ bị xóa vĩnh viễn khỏi phiên Rover.',
+                            confirmText: 'Xóa điểm',
+                            tone: 'danger'
+                        });
+                        if (!ok) return;
+                        const buttonContent = button.innerHTML;
+                        button.disabled = true;
+                        button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang xóa…</span>';
+                        try {
+                            const sessionUrl = window.ApiRoutes.rovers.historySession(username, sessionId);
+                            const response = await apiFetchRaw(`${sessionUrl}/points/${encodeURIComponent(pointId)}`, {
+                                method: 'DELETE',
+                                headers: API_HEADERS
+                            });
+                            const result = await response.json().catch(() => ({}));
+                            if (!response.ok) throw new Error(result.detail || `Không xóa được điểm (${response.status}).`);
+                            showToast('Đã xóa điểm FIX.', 'success');
                             await handleRoverHistory({ currentTarget: { dataset: { username, date: button.dataset.date, page: button.dataset.page } } });
                         } catch (error) {
                             button.disabled = false;
@@ -1982,7 +2019,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     password: cu.password,
                     mountpoints: cu.mountpoints.join(';'),
                     show_position: cu.show_position,
-                    auto_save_fixed_points: true,
+                    auto_save_fixed_points: false,
                     max_connections: (typeof cu.maxclient !== 'undefined' && cu.maxclient !== null) ? cu.maxclient : 1
                 };
             }
@@ -2032,7 +2069,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const isSharedToggle = document.getElementById('edit-is-shared');
         const autoSaveFixedPointsToggle = document.getElementById('edit-auto-save-fixed-points');
         if (isSharedToggle) isSharedToggle.checked = rover.is_shared_with_managers || false;
-        if (autoSaveFixedPointsToggle) autoSaveFixedPointsToggle.checked = rover.auto_save_fixed_points !== false;
+        if (autoSaveFixedPointsToggle) autoSaveFixedPointsToggle.checked = rover.auto_save_fixed_points === true;
         if (showPosToggle) {
             const liveInfos = getCasterInfosForUsername(rover.username);
             const hasLiveShowPos = liveInfos.some(i => typeof i?.show_position !== 'undefined');

@@ -272,7 +272,7 @@ class RoverAccountResponse(RoverAccountBase):
     rtcm_disconnect_duration_seconds: int = 10
     expires_at: Optional[int] = None
     is_shared_with_managers: bool = False
-    auto_save_fixed_points: bool = True
+    auto_save_fixed_points: bool = False
     
     class Config: from_attributes = True
 
