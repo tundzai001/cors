@@ -1239,7 +1239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail || `Không tải được lịch sử (${response.status}).`);
             if (body) {
-                const autoPointIntervalSeconds = Number(data.fixed_point_auto_interval_seconds) || 300;
+                const autoPointIntervalSeconds = Number(data.fixed_point_auto_interval_seconds) || 120;
                 const autoPointIntervalLabel = autoPointIntervalSeconds % 60 === 0
                     ? `${autoPointIntervalSeconds / 60} phút`
                     : `${autoPointIntervalSeconds} giây`;
