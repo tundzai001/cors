@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let roverActivityDailyRequest = 0;
     let roverActivityDayRequest = 0;
     let roverActivityTrackRequest = 0;
+    const roverHistorySessionMaps = new Map();
     let roverHistoryRequest = 0;
 
     const hasRoverPageAccess = () => (
@@ -1230,7 +1231,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </div>
             </div>`;
-        return mount.querySelector('#roverHistoryModal');
+        const modal = mount.querySelector('#roverHistoryModal');
+        modal?.addEventListener('hidden.bs.modal', clearRoverHistorySessionMaps);
+        return modal;
     }
 
     function localDateValue(value) {
@@ -1524,6 +1527,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function clearRoverHistorySessionMaps() {
+        roverHistorySessionMaps.forEach(map => map.remove());
+        roverHistorySessionMaps.clear();
+    }
+
+    function renderRoverHistorySessionMap(sessionId, mapElement, points) {
+        const validPoints = (Array.isArray(points) ? points : []).map((point, index) => ({ point, index }))
+            .filter(({ point }) => {
+                if (point?.lat == null || point?.lon == null || point.lat === '' || point.lon === '') return false;
+                const latitude = Number(point.lat);
+                const longitude = Number(point.lon);
+                return Number.isFinite(latitude) && Number.isFinite(longitude)
+                    && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+                    && !(latitude === 0 && longitude === 0);
+            });
+        const leaflet = window.L;
+        if (!leaflet || typeof leaflet.map !== 'function') {
+            mapElement.innerHTML = '<div class="rover-activity-empty">Bản đồ chưa tải được.</div>';
+            return null;
+        }
+        if (!validPoints.length) {
+            mapElement.innerHTML = '<div class="rover-activity-empty">Phiên này không có tọa độ hợp lệ.</div>';
+            return null;
+        }
+
+        mapElement.replaceChildren();
+        try {
+            const coordinates = validPoints.map(({ point }) => [Number(point.lat), Number(point.lon)]);
+            const map = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
+            roverHistorySessionMaps.set(String(sessionId), map);
+            leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                attribution: 'Google Maps'
+            }).addTo(map);
+            const line = coordinates.length > 1
+                ? leaflet.polyline(coordinates, { color: '#22d3ee', weight: 4, opacity: 0.9 }).addTo(map)
+                : null;
+            coordinates.forEach((coordinate, index) => {
+                const { point, index: originalIndex } = validPoints[index];
+                const isEndpoint = index === 0 || index === validPoints.length - 1;
+                leaflet.circleMarker(coordinate, {
+                    radius: isEndpoint ? 7 : 5,
+                    color: index === 0 ? '#34d399' : index === validPoints.length - 1 ? '#fb7185' : '#e0f2fe',
+                    fillColor: index === 0 ? '#34d399' : index === validPoints.length - 1 ? '#fb7185' : '#0ea5e9',
+                    fillOpacity: 0.95,
+                    weight: 1
+                }).addTo(map).bindPopup(`<strong>Điểm ${originalIndex + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
+            });
+            if (line) map.fitBounds(line.getBounds(), { padding: [28, 28], maxZoom: 17 });
+            else map.setView(coordinates[0], 17);
+            requestAnimationFrame(() => map.invalidateSize());
+            return map;
+        } catch (error) {
+            mapElement.innerHTML = '<div class="rover-activity-empty">Không thể dựng bản đồ.</div>';
+            console.warn('Could not render Rover session map', error);
+            return null;
+        }
+    }
+
     function roverHistoryGoogleMapsRoutes(points) {
         const coordinates = (Array.isArray(points) ? points : []).flatMap(point => {
             if (point?.lat == null || point?.lon == null || point.lat === '' || point.lon === '') return [];
@@ -1598,6 +1660,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const body = modalEl.querySelector('#rover-history-content');
         if (roverName) roverName.textContent = username;
         if (body) {
+            clearRoverHistorySessionMaps();
             body.scrollTop = 0;
             body.setAttribute('aria-busy', 'true');
             body.innerHTML = '<div class="rover-history-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải lịch sử…</span></div>';
@@ -1620,6 +1683,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const statuses = data.caster_status || [];
                 const connections = statuses.flatMap(item => item.active_connections || []);
                 const sessions = data.sessions || [];
+                const historyPointsBySession = new Map(sessions.map(session => [String(session.id), Array.isArray(session.points) ? session.points : []]));
                 const totalSessions = Number(data.total_sessions) || 0;
                 const receiverCount = Number(data.receiver_count) || 0;
                 const totalPages = Number(data.total_pages) || 0;
@@ -1685,6 +1749,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                         </article>`;
                     }).join('')}</div>` : '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
                     const googleMapsRoutesHtml = roverHistoryGoogleMapsRoutes(points);
+                    const showSessionMapHtml = points.length
+                        ? `<button class="rover-history-action-button rover-history-show-route" type="button" data-session-id="${escapeHtml(session.id)}" aria-expanded="false"><i class="bi bi-map" aria-hidden="true"></i><span>Xem toàn bộ trên bản đồ</span></button>`
+                        : '';
+                    const sessionMapHtml = points.length
+                        ? `<div class="rover-history-session-map" hidden>
+                                <div class="rover-history-session-map-canvas" role="region" aria-label="Bản đồ nối toàn bộ điểm FIX trong phiên ${escapeHtml(session.id)}"></div>
+                                <div class="rover-history-session-map-directions"><span>Đường xanh nối điểm FIX theo thứ tự đo.</span></div>
+                                ${googleMapsRoutesHtml ? `<div class="rover-history-session-map-directions"><span>Chỉ đường Google Maps:</span>${googleMapsRoutesHtml}</div>` : ''}
+                            </div>`
+                        : '';
                     const deleteSessionHtml = isAdmin
                         ? ended
                             ? `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`
@@ -1710,8 +1784,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         </div>
                         ${positionHtml}
                         <section class="rover-history-points" aria-label="Các điểm đo trong phiên ${session.id}">
-                            <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><div class="rover-history-route-tools"><span>${points.length} điểm</span>${googleMapsRoutesHtml}</div></div>
+                            <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><div class="rover-history-route-tools"><span>${points.length} điểm</span>${showSessionMapHtml}</div></div>
                             ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu RTK Fixed đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu RTK Fixed đang tắt cho tài khoản này.'}</p>`}
+                            ${sessionMapHtml}
                             ${pointsHtml}
                         </section>
                         ${deleteSessionHtml ? `<div class="rover-history-session-actions">${deleteSessionHtml}</div>` : ''}
@@ -1776,6 +1851,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
                 body.querySelectorAll('.rover-history-page-button').forEach(button => {
                     button.addEventListener('click', () => handleRoverHistory({ currentTarget: { dataset: button.dataset } }));
+                });
+                body.querySelectorAll('.rover-history-show-route').forEach(button => {
+                    button.addEventListener('click', () => {
+                        const pointsSection = button.closest('.rover-history-points');
+                        const mapPanel = pointsSection?.querySelector('.rover-history-session-map');
+                        const mapCanvas = mapPanel?.querySelector('.rover-history-session-map-canvas');
+                        if (!mapPanel || !mapCanvas) return;
+                        mapPanel.hidden = !mapPanel.hidden;
+                        button.setAttribute('aria-expanded', String(!mapPanel.hidden));
+                        if (mapPanel.hidden) return;
+
+                        const sessionId = String(button.dataset.sessionId || '');
+                        const map = roverHistorySessionMaps.get(sessionId)
+                            || renderRoverHistorySessionMap(sessionId, mapCanvas, historyPointsBySession.get(sessionId) || []);
+                        requestAnimationFrame(() => {
+                            map?.invalidateSize();
+                            mapPanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                        });
+                    });
                 });
                 body.querySelectorAll('.rover-history-copy').forEach(button => {
                     button.addEventListener('click', async () => {
