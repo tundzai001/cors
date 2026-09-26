@@ -961,6 +961,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const showPosIcon = actualShowPos
             ? '<i class="bi bi-eye-fill text-primary" title="Vị trí đang HIỆN (Live)"></i>'
             : '<i class="bi bi-eye-slash text-muted opacity-50" title="Vị trí đang ẨN (Live)"></i>';
+        const autoSaveFixedPointsEnabled = r.type === 'db' && r.auto_save_fixed_points === true;
+        const autoSaveFixedPointsIcon = r.type === 'db'
+            ? `<span role="img" aria-label="Tự lưu RTK Fixed đang ${autoSaveFixedPointsEnabled ? 'bật' : 'tắt'}" title="Tự lưu RTK Fixed đang ${autoSaveFixedPointsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi ${autoSaveFixedPointsEnabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'}" aria-hidden="true"></i></span>`
+            : '';
 
         const mps = normalizeMountpointList(r.mountpoints);
         const mpsDisplay = mps.length > 0
@@ -1125,7 +1129,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <div class="rover-user-heading">
                             <span class="rover-user-name">${escapeHtml(r.username)}</span>
                         </div>
-                        <div class="rover-user-indicators">${dbBadge}${showPosIcon}${r.type === 'db' ? '' : '<span class="rover-user-meta">Caster only</span>'}</div>
+                        <div class="rover-user-indicators">${dbBadge}${showPosIcon}${autoSaveFixedPointsIcon}${r.type === 'db' ? '' : '<span class="rover-user-meta">Caster only</span>'}</div>
                     </div>
                 </div>
             </td>
