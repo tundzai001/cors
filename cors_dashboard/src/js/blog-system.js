@@ -111,7 +111,7 @@ const BlogSystem = ({ slug }) => {
             <div className="container py-5 blog-shell">
                 <nav aria-label="breadcrumb" className="mb-4 blog-hero">
                     <ol className="breadcrumb">
-                        <li className="breadcrumb-item"><a href="#" onClick={() => window.switchView('blog')} className="text-primary text-decoration-none">Blog</a></li>
+                        <li className="breadcrumb-item"><a href="#" onClick={() => window.switchView('blog')} className="text-primary text-decoration-none">Bài viết</a></li>
                         <li className="breadcrumb-item active text-light">{currentPost.title}</li>
                     </ol>
                 </nav>
