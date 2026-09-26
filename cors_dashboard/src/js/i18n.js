@@ -6,6 +6,110 @@
     const ATTRIBUTE_SOURCES = new WeakMap();
     const ATTRIBUTE_OUTPUTS = new WeakMap();
     const translations = [
+        ['Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh CORS trên toàn lãnh thổ Việt Nam.', 'A system for managing and monitoring the CORS satellite positioning network across Vietnam.'],
+        ['Cung cấp hạ tầng RTK/NTRIP chuyên nghiệp cho khảo sát, đo đạc và tự động hóa.', 'Professional RTK/NTRIP infrastructure for surveying, measurement, and automation.'],
+        ['Nền tảng CORS duy nhất được thiết kế và vận hành bởi đội ngũ kỹ sư Việt Nam, tối ưu cho điều kiện thực tế trong nước.', 'The only CORS platform designed and operated by Vietnamese engineers, optimized for local conditions.'],
+        ['Hệ thống tích hợp toàn diện 4 hệ thống vệ tinh GPS, GLONASS, Galileo và BeiDou. Khả năng thu nhận tín hiệu đa tần số giúp loại bỏ sai số tầng điện ly, đảm bảo độ chính xác mức centimet ngay cả trong môi trường đô thị dày đặc hoặc tán cây.', 'The system integrates four satellite constellations: GPS, GLONASS, Galileo, and BeiDou. Multi-frequency signals reduce ionospheric errors and deliver centimeter-level accuracy, even in dense urban areas or under tree cover.'],
+        ['Hạ tầng truyền dẫn RTCM 3.x thời gian thực với băng thông cực lớn. Hệ thống cân bằng tải thông minh đảm bảo độ trễ luôn dưới 200ms trên toàn quốc, hỗ trợ kết nối đồng thời hàng ngàn thiết bị Rover mà không gây tắc nghẽn.', 'Real-time RTCM 3.x delivery with high bandwidth. Intelligent load balancing keeps latency below 200 ms nationwide and supports thousands of simultaneous Rover connections without congestion.'],
+        ['Hệ thống AI tự động phân tích sức khỏe trạm Base theo giây. Tự động chuyển đổi sang trạm dự phòng (Failover) khi phát hiện sự cố. Hệ thống cảnh báo qua Telegram giúp kỹ thuật viên xử lý kịp thời mọi tình huống.', 'AI checks Base station health every second and switches to a backup station when it detects a fault. Telegram alerts help technicians respond quickly.'],
+        ['Toàn bộ luồng dữ liệu được mã hóa TLS/SSL. Cơ chế phân quyền chi tiết cho phép quản lý từng tài khoản Rover, giới hạn khu vực hoạt động (Geofencing) và thời gian truy cập, bảo vệ tuyệt đối dữ liệu hạ tầng.', 'All data is encrypted with TLS/SSL. Detailed permissions manage each Rover account and restrict operating areas (geofencing) and access times to protect infrastructure data.'],
+        ['Liên hệ đội ngũ Aitogy để được tư vấn kiến trúc, hướng dẫn triển khai và hỗ trợ vận hành thực tế.', 'Contact Aitogy for architecture advice, deployment guidance, and operational support.'],
+        ['Từ thu tín hiệu vệ tinh đến hiệu chỉnh RTCM và phân phối NTRIP, toàn bộ hệ thống được tinh chỉnh cho độ trễ thấp và tính sẵn sàng cao.', 'From satellite reception to RTCM corrections and NTRIP delivery, the entire system is tuned for low latency and high availability.'],
+        ['Dữ liệu được xử lý real-time, tạo ra bản tin RTCM chứa thông số hiệu chỉnh sai số khí quyển và quỹ đạo.', 'Data is processed in real time to generate RTCM messages that correct atmospheric and orbital errors.'],
+        ['Bản tin hiệu chỉnh được gửi tới Caster và phân phối tới Rover qua mạng di động với độ trễ cực thấp.', 'Correction messages are sent to the caster and delivered to Rovers over mobile networks with very low latency.'],
+        ['Trạm CORS thu tín hiệu từ 4 hệ thống vệ tinh: GPS, GLONASS, Galileo, BeiDou với anten đa tần số chuyên dụng.', 'CORS stations receive signals from GPS, GLONASS, Galileo, and BeiDou using dedicated multi-frequency antennas.'],
+        ['Rover kết hợp dữ liệu vệ tinh và hiệu chỉnh để giải bài toán RTK, đạt độ chính xác mức mm-cm.', 'Rovers combine satellite and correction data to solve RTK positioning, achieving millimeter-to-centimeter accuracy.'],
+        ['Kiến trúc mở rộng ngang theo khu vực để giảm nghẽn cổ chai trong các đợt vận hành cao điểm.', 'The architecture scales horizontally by region to prevent bottlenecks during peak usage.'],
+        ['Mỗi trạm được kiểm tra sức khỏe theo chu kỳ ngắn để cảnh báo sớm trước khi rover mất FIX.', 'Stations are checked frequently to warn operators before a Rover loses FIX.'],
+        ['Dữ liệu trạm Base được lọc, chuẩn hóa sang RTCM và phân phối song song tới nhiều mountpoint.', 'Base station data is filtered, normalized into RTCM, and distributed to multiple mountpoints in parallel.'],
+        ['Hạ tầng CORS quy mô quốc gia cho khảo sát, xây dựng và giám sát với độ chính xác cao, vận hành ổn định.', 'Nationwide CORS infrastructure for high-precision surveying, construction, and monitoring with reliable operation.'],
+        ['Đội ngũ vận hành trực 24 giờ, xử lý sự cố trong vòng 15 phút qua Telegram và hotline.', 'Our operations team is on call 24/7 and responds to incidents within 15 minutes through Telegram and our hotline.'],
+        ['Doanh nghiệp khảo sát, xây dựng và viễn thám trên toàn quốc đã lựa chọn nền tảng Aitogy.', 'Surveying, construction, and remote-sensing organizations nationwide rely on the Aitogy platform.'],
+        ['Triển khai và vận hành hạ tầng GNSS/CORS quy mô quốc gia với đội ngũ kỹ sư chuyên sâu.', 'Deploying and operating nationwide GNSS/CORS infrastructure with a specialized engineering team.'],
+        ['Vui lòng nhập đầy đủ thông tin!', 'Please fill in all required fields!'],
+        ['Tỉnh/TP trên toàn quốc', 'Provinces and cities nationwide'],
+        ['Mạng lưới CORS Aitogy', 'Aitogy CORS Network'],
+        ['Mạng lưới CORS Việt Nam', 'Vietnam CORS Network'],
+        ['Bản đồ mạng lưới CORS Việt Nam', 'Vietnam CORS Network Map'],
+        ['Mạng CORS', 'CORS Network'],
+        ['Mạng lưới', 'Network'],
+        ['Bài viết', 'Articles'],
+        ['Tài liệu API', 'API Documentation'],
+        ['Hạ tầng GNSS thế hệ mới', 'Next-Generation GNSS Infrastructure'],
+        ['Trung tâm điều hành CORS', 'CORS Operations Center'],
+        ['Định vị chính xác centimet', 'Centimeter-Level Positioning'],
+        ['Giải pháp GNSS toàn diện', 'Complete GNSS Solutions'],
+        ['Thiết bị và hạ tầng CORS chính xác cao', 'High-Precision CORS Equipment and Infrastructure'],
+        ['Hệ thống trạm tham chiếu hoạt động liên tục toàn quốc', 'Nationwide Reference Stations Operating Around the Clock'],
+        ['Tính năng nổi bật', 'Key Features'],
+        ['Nền tảng CORS thế hệ mới cho hạ tầng đo đạc Việt Nam', 'A next-generation CORS platform for Vietnam’s surveying infrastructure'],
+        ['Năm kinh nghiệm', 'Years of Experience'],
+        ['Đối tác tin dùng', 'Trusted by Our Partners'],
+        ['Hỗ trợ kỹ thuật', 'Technical Support'],
+        ['Đồng hành cùng Việt Nam', 'Supporting Vietnam'],
+        ['Tại sao chọn Aitogy?', 'Why Choose Aitogy?'],
+        ['TRUNG TÂM ĐIỀU HÀNH CORS', 'CORS OPERATIONS CENTER'],
+        ['Tên đăng nhập', 'Username'],
+        ['Ghi nhớ đăng nhập', 'Remember me'],
+        ['Đang xử lý...', 'Processing...'],
+        ['Đăng nhập thất bại', 'Login failed'],
+        ['Tổng số trạm', 'Total Stations'],
+        ['Khu vực phủ sóng', 'Coverage Area'],
+        ['Tỷ lệ hoạt động', 'Uptime'],
+        ['Đa chòm sao vệ tinh', 'Multi-Constellation GNSS'],
+        ['Theo dõi GPS, GLONASS, Galileo, BeiDou để tối ưu độ chính xác định vị.', 'Track GPS, GLONASS, Galileo, and BeiDou for optimal positioning accuracy.'],
+        ['NTRIP Caster tốc độ cao', 'High-Speed NTRIP Caster'],
+        ['Truyền dữ liệu RTK/RTCM tối ưu với độ trễ cực thấp.', 'Optimized RTK/RTCM delivery with ultra-low latency.'],
+        ['Giám sát 24/7', '24/7 Monitoring'],
+        ['Tự động cảnh báo và phục hồi khi phát hiện sự cố, đảm bảo uptime tối đa.', 'Automatic alerts and recovery help maximize uptime.'],
+        ['Bảo mật cấp doanh nghiệp', 'Enterprise-Grade Security'],
+        ['Quản lý phân quyền đa cấp, mã hóa dữ liệu end-to-end.', 'Tiered access control and end-to-end data encryption.'],
+        ['Vào bảng điều khiển', 'Open Dashboard'],
+        ['Truy cập hệ thống', 'Access the System'],
+        ['Xem bản đồ trạm', 'View Station Map'],
+        ['Vệ tinh', 'Satellites'],
+        ['Độ trễ', 'Latency'],
+        ['Quy trình vận hành', 'How It Works'],
+        ['Từ vệ tinh đến rover - chỉ trong vài mili giây', 'From satellite to Rover in just a few milliseconds'],
+        ['Thu tín hiệu vệ tinh', 'Satellite Signal Reception'],
+        ['Xử lý & hiệu chỉnh', 'Processing & Corrections'],
+        ['Truyền dẫn NTRIP', 'NTRIP Delivery'],
+        ['Định vị centimet', 'Centimeter-Level Positioning'],
+        ['Dữ liệu thời gian thực', 'Real-Time Data'],
+        ['Lưu lượng mạng toàn hệ thống', 'System-Wide Network Traffic'],
+        ['Trực tiếp: RTCM 3.2 MSM7', 'Live: RTCM 3.2 MSM7'],
+        ['Độ ổn định Caster', 'Caster Stability'],
+        ['Độ ổn định hệ thống', 'System Stability'],
+        ['Công nghệ & giao thức hỗ trợ', 'Supported Technologies & Protocols'],
+        ['Chuỗi xử lý GNSS tối ưu cho vận hành thực tế', 'GNSS Processing Built for Real-World Operations'],
+        ['Chuỗi dữ liệu', 'Data Pipeline'],
+        ['Bộ phân tích RTCM MSM thời gian thực', 'Real-Time RTCM MSM Parser'],
+        ['Mountpoint dự phòng khi caster quá tải', 'Backup mountpoints prevent caster overload'],
+        ['Ưu tiên định tuyến mạng ít dao động', 'Routes prioritize stable network paths'],
+        ['Khả năng mở rộng', 'Scalability'],
+        ['Mở rộng ngang theo cụm tỉnh', 'Horizontal scaling by province cluster'],
+        ['Cân bằng phiên rover đồng thời', 'Balances concurrent Rover sessions'],
+        ['Giám sát SNR và mất gói liên tục', 'Continuous SNR and packet-loss monitoring'],
+        ['Độ tin cậy vận hành', 'Operational Reliability'],
+        ['Mục tiêu uptime 99.9%', '99.9% Uptime Target'],
+        ['Cảnh báo đa kênh cho đội vận hành', 'Multi-channel alerts for operations teams'],
+        ['Nhật ký kiểm tra cho điều tra sự cố', 'Audit logs for incident investigations'],
+        ['Sẵn sàng nâng cấp hạ tầng trắc địa?', 'Ready to upgrade your surveying infrastructure?'],
+        ['Bắt đầu ngay', 'Get Started'],
+        ['Tư vấn kỹ thuật', 'Technical Consultation'],
+        ['Số 16B Ngõ 187 phố Mai Dịch, Phường Phú Diễn, Hà Nội', 'No. 16B, Alley 187, Mai Dich Street, Phu Dien Ward, Hanoi, Vietnam'],
+        ['Danh mục trạm CORS', 'CORS Station Directory'],
+        ['trạm có tọa độ trên toàn Việt Nam', 'mapped stations across Vietnam'],
+        ['trạm có tọa độ bản đồ, băng thông lớn và kết nối ổn định toàn quốc', 'mapped stations with high bandwidth and reliable nationwide connectivity'],
+        ['trạm toàn mạng', 'stations across the network'],
+        ['trạm có tọa độ khác', 'more mapped stations'],
+        ['Quần đảo Hoàng Sa', 'Paracel Islands'],
+        ['Quần đảo Trường Sa', 'Spratly Islands'],
+        ['Trạng thái mạng', 'Network Status'],
+        ['Kiến thức', 'Resources'],
+        ['Nền tảng', 'Platform'],
+        ['Liên hệ', 'Contact'],
+        ['© 2025 Aitogy Network. Bảo lưu mọi quyền.', '© 2025 Aitogy Network. All rights reserved.'],
         ['Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK', 'Aitogy CORS Station System | High-Precision GNSS/RTK Positioning'],
         ['Quản lý tài khoản rover, mountpoint, kết nối live và blocklist trên caster.', 'Manage rover accounts, mountpoints, live connections, and the caster blocklist.'],
         ['Chạm vào một ngày để xem receiver và phiên đo.', 'Select a day to view receivers and measurement sessions.'],
@@ -250,10 +354,13 @@
 
     function updateButton() {
         if (!languageButton) return;
-        const targetLanguage = currentLanguage === 'vi' ? 'en' : 'vi';
-        languageButton.querySelector('span').textContent = targetLanguage.toUpperCase();
-        languageButton.title = targetLanguage === 'en' ? 'Switch language to English' : 'Chuyển sang tiếng Việt';
-        languageButton.setAttribute('aria-label', targetLanguage === 'en' ? 'Switch language to English' : 'Chuyển sang tiếng Việt');
+        languageButton.setAttribute('aria-label', currentLanguage === 'en' ? 'Select language' : 'Chọn ngôn ngữ');
+        languageButton.querySelectorAll('[data-language]').forEach(option => {
+            const selected = option.dataset.language === currentLanguage;
+            option.setAttribute('aria-pressed', String(selected));
+            option.title = option.dataset.language === 'en' ? 'English' : 'Tiếng Việt';
+            option.setAttribute('aria-label', option.title);
+        });
     }
 
     function installButton() {
@@ -262,13 +369,15 @@
             updateButton();
             return;
         }
-        languageButton = document.createElement('button');
+        languageButton = document.createElement('div');
         languageButton.id = 'app-language-switcher';
-        languageButton.type = 'button';
-        languageButton.className = 'btn btn-sm btn-outline-info app-language-switcher';
-        languageButton.innerHTML = '<i class="bi bi-globe2" aria-hidden="true"></i><span></span>';
+        languageButton.className = 'app-language-switcher';
+        languageButton.setAttribute('role', 'group');
+        languageButton.innerHTML = '<button type="button" class="app-language-option" data-language="vi"><img src="/assets/img/Flag_of_Vietnam.svg" alt=""><span>VI</span></button><button type="button" class="app-language-option" data-language="en"><img src="/assets/img/flags/us.jpg" alt=""><span>EN</span></button>';
         languageButton.setAttribute('data-no-translate', '');
-        languageButton.addEventListener('click', () => setLanguage(currentLanguage === 'vi' ? 'en' : 'vi', true));
+        languageButton.querySelectorAll('[data-language]').forEach(option => {
+            option.addEventListener('click', () => setLanguage(option.dataset.language, true));
+        });
 
         const anchor = document.getElementById('logout-btn') || document.getElementById('login-btn');
         const navbar = anchor?.closest('.navbar');
@@ -285,7 +394,7 @@
         if (document.getElementById('app-language-switcher-style')) return;
         const style = document.createElement('style');
         style.id = 'app-language-switcher-style';
-        style.textContent = '#app-language-switcher{align-items:center;display:inline-flex;flex:0 0 auto;gap:.4rem;justify-content:center;white-space:nowrap}.app-language-switcher-floating{position:fixed;right:14px;top:calc(10px + env(safe-area-inset-top,0px));z-index:1090}';
+        style.textContent = '#app-language-switcher{align-items:center;background:rgba(8,13,24,.88);border:1px solid rgba(56,189,248,.35);border-radius:999px;display:inline-flex;flex:0 0 auto;gap:3px;justify-content:center;padding:3px;white-space:nowrap}#app-language-switcher .app-language-option{align-items:center;background:transparent;border:0;border-radius:999px;color:#a9bbcf;cursor:pointer;display:inline-flex;font-family:inherit;font-size:.72rem;font-weight:700;gap:5px;justify-content:center;line-height:1;min-height:30px;padding:5px 8px}#app-language-switcher .app-language-option img{border-radius:2px;display:block;height:14px;object-fit:cover;width:20px}#app-language-switcher .app-language-option[aria-pressed=true]{background:rgba(14,165,233,.22);box-shadow:inset 0 0 0 1px rgba(56,189,248,.38);color:#e0f2fe}#app-language-switcher .app-language-option:hover,#app-language-switcher .app-language-option:focus-visible{color:#fff;outline:2px solid #38bdf8;outline-offset:1px}.app-language-switcher-floating{position:fixed;right:14px;top:calc(10px + env(safe-area-inset-top,0px));z-index:1090}';
         (document.head || document.documentElement).appendChild(style);
     }
 
