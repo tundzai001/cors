@@ -123,7 +123,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
             <div className="modal-dialog modal-xl">
                 <div className="modal-content bg-dark text-light border-secondary">
                     <div className="modal-header border-secondary">
-                        <h5 className="modal-title">ðŸ“¡ Tất cả Mountpoints trên Caster (ðŸ”’ Admin Only)</h5>
+                        <h5 className="modal-title">📡 Tất cả Mountpoints trên Caster (🔒 Admin Only)</h5>
                         <button type="button" className="btn-close btn-close-white" onClick={() => setIsOpen(false)}></button>
                     </div>
                     <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
@@ -138,7 +138,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                                             value="all" checked={selectedDomain === "all"}
                                             onChange={() => setSelectedDomain("all")} />
                                         <label className="btn btn-outline-primary" htmlFor="domain-all">
-                                            ðŸ“Š Tất cả ({sources.total})
+                                            📊 Tất cả ({sources.total})
                                         </label>
 
                                         {domains.map(domain => (
@@ -147,7 +147,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                                                     value={domain} checked={selectedDomain === domain}
                                                     onChange={() => setSelectedDomain(domain)} />
                                                 <label className="btn btn-outline-info" htmlFor={`domain-${domain}`}>
-                                                    ðŸŒ {domain} ({(sources.by_domain[domain] || []).length})
+                                                    🌐 {domain} ({(sources.by_domain[domain] || []).length})
                                                 </label>
                                             </span>
                                         ))}
@@ -182,7 +182,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                                                                     window.showSuccess(`Copied: ${src.mountpoint}`);
                                                                 }}
                                                                 title="Copy mountpoint">
-                                                                ðŸ“‹
+                                                                📋
                                                             </button>
                                                         </td>
                                                         <td><small className="text-muted">{src.identifier}</small></td>
@@ -232,7 +232,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                     <div className="modal-footer border-secondary">
                         <button type="button" className="btn btn-secondary" onClick={() => setIsOpen(false)}>Đóng</button>
                         <button type="button" className="btn btn-primary" onClick={fetchSources} disabled={loading}>
-                            ðŸ”„ Tải lại
+                            🔄 Tải lại
                         </button>
                     </div>
                 </div>

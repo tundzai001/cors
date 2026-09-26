@@ -726,27 +726,27 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             * Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).
                         </div>
                         <div className="col-md-6">
-                            <label className="form-label">Latitude (Vĩ độ)</label>
+                            <label className="form-label">Vĩ độ</label>
                             <input
                                 type="text" inputMode="decimal" className="form-control"
                                 value={latitude} onChange={handleDecimalInputChange(setLatitude)}
-                                required placeholder="VD: 21.028511"
+                                required placeholder="Ví dụ: 21.028511"
                             />
                         </div>
                         <div className="col-md-6">
-                            <label className="form-label">Longitude (Kinh độ)</label>
+                            <label className="form-label">Kinh độ</label>
                             <input
                                 type="text" inputMode="decimal" className="form-control"
                                 value={longitude} onChange={handleDecimalInputChange(setLongitude)}
-                                required placeholder="VD: 105.854167"
+                                required placeholder="Ví dụ: 105.854167"
                             />
                         </div>
                         <div className="col-md-6">
-                            <label className="form-label">Altitude (Độ cao - mét)</label>
+                            <label className="form-label">Độ cao (mét)</label>
                             <input
                                 type="text" inputMode="decimal" className="form-control"
                                 value={altitude} onChange={handleDecimalInputChange(setAltitude)}
-                                required placeholder="VD: 15.5"
+                                required placeholder="Ví dụ: 15.5"
                             />
                         </div>
                         <div className="col-md-6">
@@ -754,7 +754,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <input
                                 type="number" className="form-control"
                                 value={fixedAccuracyMm} onChange={(e) => setFixedAccuracyMm(e.target.value)}
-                                required placeholder="VD: 10"
+                                required placeholder="Ví dụ: 10"
                             />
                             <div className="form-text">Đơn vị: Milimet (Thường để 5mm - 20mm)</div>
                         </div>
@@ -778,7 +778,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <input
                                 type="number" step="0.01" className="form-control"
                                 value={svinAccuracyM} onChange={(e) => setSvinAccuracyM(e.target.value)}
-                                required placeholder="VD: 3.0"
+                                required placeholder="Ví dụ: 3.0"
                             />
                             <div className="form-text text-danger">Đơn vị: MÉT (Ví dụ nhập 3.0 là 3 mét)</div>
                         </div>

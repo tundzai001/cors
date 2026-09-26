@@ -107,7 +107,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
                             className={`btn ${mapType === 'm' ? 'btn-primary' : 'btn-outline-primary'}`}
                             onClick={() => setMapType('m')}
                         >
-                            Giao thông
+                            Bản đồ
                         </button>
                         <button
                             type="button"

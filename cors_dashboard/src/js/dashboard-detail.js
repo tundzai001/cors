@@ -201,7 +201,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                                 className="form-control"
                                 value={newUsername}
                                 onChange={e => setNewUsername(e.target.value)}
-                                placeholder="VD: khach_a_01"
+                                placeholder="Ví dụ: khach_a_01"
                             />
                         </div>
                         <div className="col-md-3">

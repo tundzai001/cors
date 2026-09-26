@@ -66,7 +66,7 @@
         ['Vào bảng điều khiển', 'Open Dashboard'],
         ['Truy cập hệ thống', 'Access the System'],
         ['Xem bản đồ trạm', 'View Station Map'],
-        ['Vệ tinh', 'Satellites'],
+        ['Vệ tinh', 'Satellite'],
         ['Độ trễ', 'Latency'],
         ['Quy trình vận hành', 'How It Works'],
         ['Từ vệ tinh đến rover - chỉ trong vài mili giây', 'From satellite to Rover in just a few milliseconds'],
@@ -1154,11 +1154,96 @@
         ['❌ Không', '❌ No'],
         ['Nhấn 📋 để sao chép tên mountpoint', 'Click 📋 to copy the mountpoint name'],
         ['Hoạt động cuối', 'Last activity'],
+        ['📡 Tất cả Mountpoints trên Caster (🔒 Admin Only)', '📡 All caster mountpoints (🔒 administrators only)'],
+        ['📊 Tất cả (', '📊 All ('],
+        ['Trở về trang chủ', 'Return to homepage'],
+        ['🔄 Tải lại', '🔄 Reload'],
+        ['Trạm này chưa bật NTRIP Server nào. Vui lòng sang tab', 'No NTRIP server is enabled for this station. Open the'],
+        ['để bật Server 1 hoặc Server 2 và đặt tên Mountpoint trước khi tạo tài khoản Rover.', 'tab to enable Server 1 or Server 2 and name a mountpoint before creating a Rover account.'],
+        ['Thêm tài khoản Rover (Khách hàng)', 'Add Rover account (customer)'],
+        ['Chưa có tài khoản Rover nào được tạo cho trạm này.', 'No Rover accounts have been created for this station.'],
+        ['Thiết bị đang khởi động lại.', 'The device is restarting.'],
+        ['Vui lòng đợi trong giây lát để thiết bị kết nối lại.', 'Please wait while the device reconnects.'],
+        ['chưa sẵn sàng. Vui lòng refresh lại trang.', 'is not ready yet. Please refresh the page.'],
+        ['Reset Mới Cứng', 'Hard reset'],
+        ['GNSS/RTCM hiện không có dữ liệu trực tiếp. Độ chính xác chỉ được xác nhận lại khi trạm kết nối trở lại.', 'GNSS/RTCM live data is unavailable. Accuracy will be confirmed again when the station reconnects.'],
+        ['Kích hoạt & GNSS', 'Activation & GNSS'],
+        ['Quản lý Rover', 'Rover management'],
+        ['Khóa Thiết Bị (Lock)', 'Lock device'],
+        ['Bạn có quyền quản lý trạm này.', 'You can manage this station.'],
+        ['Đang cấp phát tự động...', 'Provisioning automatically...'],
+        ['Tự động cấp & gửi Token', 'Create and send token automatically'],
+        ['Đang cập nhật bypass...', 'Updating license bypass...'],
+        ['Bỏ qua license cho trạm này', 'Bypass the license for this station'],
+        ['Bước 1: Kích hoạt trạm', 'Step 1: Activate station'],
+        ['Vui lòng đặt tên cho trạm phát của bạn để tiếp tục. Tên này sẽ được hiển thị trên toàn hệ thống.', 'Name your base station to continue. This name will appear throughout the system.'],
+        ['Chế độ xem: Bạn không có quyền kích hoạt trạm này.', 'View-only mode: You do not have permission to activate this station.'],
+        ['Đang kích hoạt...', 'Activating...'],
+        ['Lưu tên và Kích hoạt', 'Save name and activate'],
+        ['Đây là bước cấu hình tọa độ gốc cho trạm phát. Các thay đổi sẽ reset chip GNSS.', 'Set the base coordinates for this station here. Changes will reset the GNSS chip.'],
+        ['Chế độ xem: Không thể chỉnh sửa cấu hình GNSS.', 'View-only mode: GNSS settings cannot be edited.'],
+        ['Nhập đúng tài khoản CORS tại đây. Các giá trị này chỉ dùng cho lần Auto Base này và được gửi trực tiếp xuống agent.', 'Enter the correct CORS credentials here. They are used only for this Auto Base setup and sent directly to the agent.'],
+        ['Đang kết nối CORS...', 'Connecting to CORS...'],
+        ['* Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).', '* This mode requires known accurate coordinates from a control point.'],
+        ['* Chế độ này thiết bị sẽ tự đo trung bình cộng vị trí. Phù hợp thiết lập trạm tạm thời.', '* In this mode, the device averages its measured positions. Suitable for a temporary station.'],
+        ['Tối thiểu: 60s. Khuyên dùng: > 300s.', 'Minimum: 60 seconds. Recommended: over 300 seconds.'],
+        ['Thông tin Hệ vệ tinh & Bản tin RTCM', 'Satellite constellations and RTCM messages'],
+        ['Hệ vệ tinh hỗ trợ (Mặc định bật toàn bộ):', 'Supported constellations (all enabled by default):'],
+        ['Bản tin tọa độ trạm (', 'Station coordinate messages (' ],
+        [') cho các hệ vệ tinh GPS, GLONASS, Galileo, BeiDou.', ') for GPS, GLONASS, Galileo, and BeiDou constellations.'],
+        ['Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.', 'Configure output services (NTRIP Caster, RTCM, and more). Changes take effect after the service on the Pi restarts.'],
+        ['Trạm LTE giữ luồng hoạt động MQTT data -> NTRIP SOURCE. Chỉ cấu hình NTRIP Caster Server 1/2, mountpoint, password và chế độ sleep/always-on. Phần RTCM Client và NMEA vệ tinh không áp dụng cho LTE.', 'LTE stations keep the MQTT data -> NTRIP SOURCE flow. Configure only NTRIP Caster Server 1/2, mountpoint, password, and sleep/always-on mode. RTCM Client and satellite NMEA settings do not apply to LTE.'],
+        ['Chế độ xem: Không thể chỉnh sửa cấu hình dịch vụ.', 'View-only mode: Service settings cannot be edited.'],
+        ['Đây là SOURCE riêng để gửi lệnh cấu hình tọa độ/chip LTE. Giá trị này được khóa cứng theo cấu hình hệ thống, chỉ hiển thị để kiểm tra và không thể sửa từ màn Service Config.', 'This dedicated SOURCE sends LTE coordinate and chip configuration commands. Its value is fixed by system settings, shown for reference, and cannot be changed in Service Config.'],
+        ['Với LTE, Server 1 chỉ là đường Python bridge forward RTCM nhận từ MQTT ra caster. Các trường Host/Port/Password/Mountpoint ở đây sẽ được lưu đồng thời thành target_host, target_port, target_pass và target_mp. Nó không gửi lệnh vào chip.', 'For LTE, Server 1 is a Python bridge that forwards RTCM from MQTT to the caster. Host, port, password, and mountpoint are also saved as target_host, target_port, target_pass, and target_mp. No commands are sent to the chip.'],
+        ['Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0', 'If the caster rejects a v2.0 connection, try v1.0.'],
+        ['Với LTE, NTRIP version chỉ điều khiển cách bridge Python forward RTCM MQTT lên caster Server 1. Cấu hình tọa độ/chip vẫn đi qua LTE Command SOURCE.', 'For LTE, the NTRIP version controls how the Python bridge forwards RTCM from MQTT to caster Server 1. Coordinate and chip settings are still sent through the LTE Command SOURCE.'],
+        ['Mặc định: "source" (NTRIP v1). Caster hiện đại có thể yêu cầu username riêng.', 'Default: "source" (NTRIP v1). Newer casters may require a separate username.'],
+        ['Với LTE, NTRIP version chỉ điều khiển cách bridge Python forward RTCM MQTT lên caster Server 2. Cấu hình tọa độ/chip vẫn đi qua LTE Command SOURCE.', 'For LTE, the NTRIP version controls how the Python bridge forwards RTCM from MQTT to caster Server 2. Coordinate and chip settings are still sent through the LTE Command SOURCE.'],
+        ['LTE không dùng mục này để set NMEA/GSV hoặc bật vệ tinh. Bridge tự giữ luồng MQTT -> SOURCE, còn cấu hình chip LTE dùng profile RTCM-only cố định (MSM4 + MSM7) trên COM2. Các trường RTCM Client bên dưới sẽ bị bỏ qua.', 'LTE does not use this section to set NMEA/GSV or enable constellations. The bridge keeps the MQTT -> SOURCE flow; LTE chip settings use a fixed RTCM-only profile (MSM4 + MSM7) on COM2. The RTCM Client fields below are ignored.'],
+        ['Chức năng này dành cho trạm Rover nhận tín hiệu hiệu chỉnh từ Base Station. Không bật nếu thiết bị đang được cấu hình làm Base Station.', 'Use this feature on a Rover station that receives corrections from a Base Station. Do not enable it when the device is configured as a Base Station.'],
+        ['Lưu và Áp dụng Cấu hình', 'Save and apply configuration'],
+        ['Đang chờ dữ liệu giải mã RTCM từ trạm...', 'Waiting for decoded RTCM data from the station...'],
+        ['Lỗi Giải mã RTCM: Không nhận được bất kỳ trị đo vệ tinh nào (gói MSM). Rover không thể FIX RTK!', 'RTCM decoding error: No satellite measurements (MSM messages) were received. The Rover cannot get an RTK FIX.'],
+        ['Lỗi Tín hiệu: Không nhận được vệ tinh nào (0 Sats). Kiểm tra kết nối ăng-ten.', 'Signal error: No satellites received (0 sats). Check the antenna connection.'],
+        ['Trạng thái Thức', 'Awake status'],
+        ['Trạng thái Ngủ', 'Sleep status'],
+        ['Độ cao (mét)', 'Altitude (meters)'],
+        ['Không có hoạt động gần đây', 'No recent activity'],
+        ['Chưa có dữ liệu cảm biến', 'No sensor data'],
+        ['Chưa có dữ liệu ổ đĩa', 'No disk data'],
+        ['Không có cảnh báo thiết bị đang hoạt động.', 'No active device alerts.'],
+        ['Lịch sử thiết bị', 'Device history'],
+        ['Không có sự kiện gần đây cho trạm này.', 'No recent events for this station.'],
+        ['Chọn mẫu cấu hình', 'Select config template'],
+        ['Chỉ RTCM', 'RTCM only'],
+        ['MSM4 + MSM7 (chỉ RTCM)', 'MSM4 + MSM7 (RTCM only)'],
+        ['Chế độ trạm Base đang hoạt động', 'Base Station Mode Active'],
+        ['Góc nhìn vệ tinh', 'Sky View'],
+        ['SỐ SERIAL THIẾT BỊ', 'DEVICE SERIAL'],
+        ['Không phát hiện bất thường', 'No anomalies'],
+        ['Không có IP trong danh sách chặn', 'No blacklisted IPs'],
+        ['Không có lệnh chặn tạm thời', 'No temporary blocks'],
+        ['Không phát hiện hoạt động đáng ngờ', 'No suspicious activity'],
+        ['Không thể kết nối đến máy chủ giám sát bảo mật.', 'Cannot reach security monitoring server.'],
+        ['Mở chi tiết', 'Open detail'],
+        ['Không có thiết bị', 'No devices'],
+        ['Không có Rover khả dụng', 'No rovers available'],
+        ['Nhật ký hoạt động', 'Activity Feed'],
+        ['Mức sử dụng ổ đĩa', 'Disk Usage'],
+        ['Các Rover', 'Rovers'],
+        ['SNR trung bình', 'Avg SNR'],
+        ['Tìm trạm / số sê-ri / mountpoint', 'Find station / serial / mountpoint'],
+        ['Thống kê tổng quan', 'Overview stats'],
+        ['Trang', 'Page'],
+        ['Trang sau', 'Next page'],
     ].sort((a, b) => b[0].length - a[0].length);
 
     let currentLanguage = 'en';
     let observer = null;
+    let headerObserver = null;
     let languageButton = null;
+    let headerPlacementScheduled = false;
 
     const escapePattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const viNumericUnits = {
@@ -1336,30 +1421,65 @@
         });
     }
 
-    function installButton() {
-        if (document.getElementById('app-language-switcher')) {
-            languageButton = document.getElementById('app-language-switcher');
-            updateButton();
+    function isVisible(element) {
+        return Boolean(element && getComputedStyle(element).display !== 'none' && element.getClientRects().length);
+    }
+
+    function findLanguageHost() {
+        const landingNavbar = document.querySelector('.landing-navbar');
+        const landingActions = landingNavbar?.querySelector('.landing-nav-actions');
+        if (isVisible(landingNavbar) && isVisible(landingActions)) {
+            return { container: landingActions, before: landingActions.querySelector('.btn-login-nav') };
+        }
+
+        for (const navbar of document.querySelectorAll('nav.navbar')) {
+            if (!isVisible(navbar)) continue;
+            const accountButton = navbar.querySelector('#logout-btn, #login-btn');
+            const container = accountButton?.parentElement || navbar.querySelector('.container-fluid > .d-flex.align-items-center');
+            if (container) return { container, before: accountButton?.parentElement === container ? accountButton : null };
+        }
+        return null;
+    }
+
+    function placeLanguageButton() {
+        if (!languageButton) return;
+        const host = findLanguageHost();
+        if (host) {
+            languageButton.classList.remove('app-language-switcher-floating');
+            if (languageButton.parentElement !== host.container || (host.before && languageButton.nextElementSibling !== host.before)) {
+                host.container.insertBefore(languageButton, host.before);
+            }
             return;
         }
-        languageButton = document.createElement('div');
-        languageButton.id = 'app-language-switcher';
-        languageButton.className = 'app-language-switcher';
-        languageButton.setAttribute('role', 'group');
-        languageButton.innerHTML = '<button type="button" class="app-language-option" data-language="vi"><img src="/assets/img/Flag_of_Vietnam.svg" alt=""><span>VI</span></button><button type="button" class="app-language-option" data-language="en"><img src="/assets/img/flags/us.jpg" alt=""><span>EN</span></button>';
-        languageButton.setAttribute('data-no-translate', '');
-        languageButton.querySelectorAll('[data-language]').forEach(option => {
-            option.addEventListener('click', () => setLanguage(option.dataset.language, true));
-        });
+        languageButton.classList.add('app-language-switcher-floating');
+        if (languageButton.parentElement !== document.body) document.body.appendChild(languageButton);
+    }
 
-        const anchor = document.getElementById('logout-btn') || document.getElementById('login-btn');
-        const navbar = anchor?.closest('.navbar');
-        if (anchor?.parentElement && navbar && getComputedStyle(navbar).display !== 'none') {
-            anchor.parentElement.insertBefore(languageButton, anchor);
-        } else {
-            languageButton.classList.add('app-language-switcher-floating');
-            document.body.appendChild(languageButton);
+    function scheduleLanguageButtonPlacement() {
+        if (headerPlacementScheduled) return;
+        headerPlacementScheduled = true;
+        const place = () => {
+            headerPlacementScheduled = false;
+            placeLanguageButton();
+        };
+        if (window.requestAnimationFrame) window.requestAnimationFrame(place);
+        else setTimeout(place, 0);
+    }
+
+    function installButton() {
+        languageButton = document.getElementById('app-language-switcher');
+        if (!languageButton) {
+            languageButton = document.createElement('div');
+            languageButton.id = 'app-language-switcher';
+            languageButton.className = 'app-language-switcher';
+            languageButton.setAttribute('role', 'group');
+            languageButton.innerHTML = '<button type="button" class="app-language-option" data-language="vi"><img src="/assets/img/Flag_of_Vietnam.svg" alt=""><span>VI</span></button><button type="button" class="app-language-option" data-language="en"><img src="/assets/img/flags/us.jpg" alt=""><span>EN</span></button>';
+            languageButton.setAttribute('data-no-translate', '');
+            languageButton.querySelectorAll('[data-language]').forEach(option => {
+                option.addEventListener('click', () => setLanguage(option.dataset.language, true));
+            });
         }
+        placeLanguageButton();
         updateButton();
     }
 
@@ -1367,7 +1487,7 @@
         if (document.getElementById('app-language-switcher-style')) return;
         const style = document.createElement('style');
         style.id = 'app-language-switcher-style';
-        style.textContent = '#app-language-switcher{align-items:center;background:rgba(8,13,24,.88);border:1px solid rgba(56,189,248,.35);border-radius:999px;display:inline-flex;flex:0 0 auto;gap:3px;justify-content:center;padding:3px;white-space:nowrap}#app-language-switcher .app-language-option{align-items:center;background:transparent;border:0;border-radius:999px;color:#a9bbcf;cursor:pointer;display:inline-flex;font-family:inherit;font-size:.72rem;font-weight:700;gap:5px;justify-content:center;line-height:1;min-height:30px;padding:5px 8px}#app-language-switcher .app-language-option img{border-radius:2px;display:block;height:14px;object-fit:cover;width:20px}#app-language-switcher .app-language-option[aria-pressed=true]{background:rgba(14,165,233,.22);box-shadow:inset 0 0 0 1px rgba(56,189,248,.38);color:#e0f2fe}#app-language-switcher .app-language-option:hover,#app-language-switcher .app-language-option:focus-visible{color:#fff;outline:2px solid #38bdf8;outline-offset:1px}.app-language-switcher-floating{position:fixed;right:14px;top:calc(10px + env(safe-area-inset-top,0px));z-index:1090}';
+        style.textContent = '#app-language-switcher{align-items:center;background:rgba(8,13,24,.88);border:1px solid rgba(56,189,248,.35);border-radius:999px;display:inline-flex;flex:0 0 auto;gap:3px;justify-content:center;margin-inline:4px;padding:3px;white-space:nowrap}#app-language-switcher .app-language-option{align-items:center;background:transparent;border:0;border-radius:999px;color:#a9bbcf;cursor:pointer;display:inline-flex;font-family:inherit;font-size:.72rem;font-weight:700;gap:5px;justify-content:center;line-height:1;min-height:30px;padding:5px 8px}#app-language-switcher .app-language-option img{border-radius:2px;display:block;height:14px;object-fit:cover;width:20px}#app-language-switcher .app-language-option[aria-pressed=true]{background:rgba(14,165,233,.22);box-shadow:inset 0 0 0 1px rgba(56,189,248,.38);color:#e0f2fe}#app-language-switcher .app-language-option:hover,#app-language-switcher .app-language-option:focus-visible{color:#fff;outline:2px solid #38bdf8;outline-offset:1px}.app-language-switcher-floating{position:fixed;right:14px;top:calc(10px + env(safe-area-inset-top,0px));z-index:1090}@media(max-width:480px){#app-language-switcher .app-language-option{gap:0;padding-inline:6px}#app-language-switcher .app-language-option span{display:none}}';
         (document.head || document.documentElement).appendChild(style);
     }
 
@@ -1419,6 +1539,13 @@
             attributes: true,
             attributeFilter: ATTRIBUTE_NAMES,
             characterData: true,
+            childList: true,
+            subtree: true
+        });
+        headerObserver = new MutationObserver(scheduleLanguageButtonPlacement);
+        headerObserver.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden'],
             childList: true,
             subtree: true
         });
