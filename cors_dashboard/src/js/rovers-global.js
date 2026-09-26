@@ -40,6 +40,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const selectedRoverKeys = new Set();
     const connectionClockCache = new Map();
     const expiryDeadlineCache = new Map();
+    let roverActivityDaily = [];
+    let roverActivityMachines = [];
+    let roverActivitySelectedDate = '';
+    let roverActivitySelectedReceiver = '';
+    let roverActivityMap = null;
+    let roverActivityDailyRequest = 0;
+    let roverActivityDayRequest = 0;
+    let roverActivityTrackRequest = 0;
+    let roverHistoryRequest = 0;
 
     const hasRoverPageAccess = () => (
         String(currentUser?.role || '').toLowerCase() === 'admin'
@@ -1220,9 +1229,320 @@ document.addEventListener('DOMContentLoaded', async () => {
         return mount.querySelector('#roverHistoryModal');
     }
 
+    function localDateValue(value) {
+        const year = value.getFullYear();
+        const month = String(value.getMonth() + 1).padStart(2, '0');
+        const day = String(value.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    function activityDateLabel(value) {
+        const parsed = new Date(`${value}T12:00:00`);
+        return new Intl.DateTimeFormat('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' }).format(parsed);
+    }
+
+    function setRoverActivityStatus(message, isError = false) {
+        const status = document.getElementById('rover-activity-status');
+        if (!status) return;
+        status.textContent = message;
+        status.classList.toggle('is-error', isError);
+    }
+
+    function renderRoverActivityDays() {
+        const container = document.getElementById('rover-activity-days-list');
+        if (!container) return;
+        if (!roverActivityDaily.length) {
+            container.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-calendar-x" aria-hidden="true"></i><span>Không có ngày trong bộ lọc.</span></div>';
+            return;
+        }
+        const today = localDateValue(new Date());
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        const yesterday = localDateValue(yesterdayDate);
+        container.innerHTML = roverActivityDaily.slice().reverse().map(item => {
+            const dateValue = escapeHtml(item.date);
+            const label = item.date === today ? 'Hôm nay'
+                : item.date === yesterday ? 'Hôm qua'
+                    : activityDateLabel(item.date);
+            return `<button type="button" class="rover-activity-day-button ${item.date === roverActivitySelectedDate ? 'is-selected' : ''}" data-activity-date="${dateValue}" aria-pressed="${item.date === roverActivitySelectedDate}">
+                <span><strong>${label}</strong><br>${dateValue}</span>
+                <strong>${Number(item.machine_count) || 0} máy</strong>
+            </button>`;
+        }).join('');
+        container.querySelectorAll('[data-activity-date]').forEach(button => {
+            button.addEventListener('click', () => openRoverActivityDay(button.dataset.activityDate));
+        });
+    }
+
+    async function refreshRoverActivity() {
+        const fromInput = document.getElementById('rover-activity-date-from');
+        const toInput = document.getElementById('rover-activity-date-to');
+        if (!fromInput || !toInput) return;
+        const dateFrom = fromInput.value;
+        const dateTo = toInput.value;
+        if (!dateFrom || !dateTo || dateFrom > dateTo) {
+            setRoverActivityStatus('Chọn khoảng ngày hợp lệ để lọc.', true);
+            return;
+        }
+        const requestId = ++roverActivityDailyRequest;
+        roverActivityDayRequest += 1;
+        clearRoverActivityTrack();
+        setRoverActivityStatus('Đang tính số receiver hoạt động…');
+        const container = document.getElementById('rover-activity-days-list');
+        if (container) container.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải số máy…</span></div>';
+        try {
+            const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+            const response = await apiFetchRaw(`/api/rovers/activity/daily?${query}`, { headers: API_HEADERS });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || `Không tải được thống kê (${response.status}).`);
+            if (requestId !== roverActivityDailyRequest) return;
+            roverActivityDaily = data.days || [];
+            const hasSelectedDate = roverActivityDaily.some(item => item.date === roverActivitySelectedDate);
+            roverActivitySelectedDate = hasSelectedDate ? roverActivitySelectedDate : dateTo;
+            renderRoverActivityDays();
+            await openRoverActivityDay(roverActivitySelectedDate, { skipRender: true });
+            setRoverActivityStatus(`Đã tải ${roverActivityDaily.length} ngày. Mỗi receiver khác nhau được tính là một máy.`);
+        } catch (error) {
+            if (requestId !== roverActivityDailyRequest) return;
+            setRoverActivityStatus(error.message || 'Không tải được thống kê hoạt động.', true);
+            if (container) container.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được dữ liệu.')}</span></div>`;
+        }
+    }
+
+    async function openRoverActivityDay(dateValue, options = {}) {
+        if (!dateValue) return;
+        roverActivitySelectedDate = dateValue;
+        if (!options.skipRender) renderRoverActivityDays();
+        const requestId = ++roverActivityDayRequest;
+        const machinesContainer = document.getElementById('rover-activity-machines');
+        const subtitle = document.getElementById('rover-activity-detail-subtitle');
+        const countEl = document.getElementById('rover-activity-machine-count');
+        if (subtitle) subtitle.textContent = `Ngày ${dateValue} · đang tải danh sách receiver…`;
+        if (countEl) countEl.textContent = '… máy';
+        if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải máy đo…</span></div>';
+        clearRoverActivityTrack();
+        try {
+            const query = new URLSearchParams({ date: dateValue });
+            const response = await apiFetchRaw(`/api/rovers/activity/day?${query}`, { headers: API_HEADERS });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || `Không tải được danh sách máy (${response.status}).`);
+            if (requestId !== roverActivityDayRequest) return;
+            roverActivityMachines = data.machines || [];
+            const count = Number(data.machine_count) || 0;
+            const countEl = document.getElementById('rover-activity-machine-count');
+            if (countEl) countEl.textContent = `${count} máy`;
+            if (subtitle) subtitle.textContent = `Ngày ${dateValue} · ${count} receiver duy nhất`;
+            renderRoverActivityMachines();
+            const selected = roverActivityMachines.find(item => item.receiver_id.toLowerCase() === roverActivitySelectedReceiver.toLowerCase());
+            if (selected) await selectRoverActivityMachine(selected.receiver_id);
+            else if (roverActivityMachines.length) await selectRoverActivityMachine(roverActivityMachines[0].receiver_id);
+            else {
+                roverActivitySelectedReceiver = '';
+                const title = document.getElementById('rover-activity-track-title');
+                const meta = document.getElementById('rover-activity-track-meta');
+                if (title) title.textContent = 'Không có receiver trong ngày này';
+                if (meta) meta.textContent = 'Không ghi nhận phiên nào có receiver trong ngày được chọn.';
+                if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-router" aria-hidden="true"></i><span>Không có máy đo trong ngày này.</span></div>';
+                setRoverActivityStatus(`Ngày ${dateValue}: không có receiver hoạt động.`);
+            }
+        } catch (error) {
+            if (requestId !== roverActivityDayRequest) return;
+            if (subtitle) subtitle.textContent = 'Không tải được danh sách receiver.';
+            if (machinesContainer) machinesContainer.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được dữ liệu.')}</span></div>`;
+            setRoverActivityStatus(error.message || 'Không tải được danh sách máy.', true);
+        }
+    }
+
+    function renderRoverActivityMachines() {
+        const container = document.getElementById('rover-activity-machines');
+        if (!container) return;
+        if (!roverActivityMachines.length) {
+            container.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-router" aria-hidden="true"></i><span>Không có máy đo trong ngày này.</span></div>';
+            return;
+        }
+        container.innerHTML = roverActivityMachines.map(item => {
+            const receiver = String(item.receiver_id || '');
+            const selected = receiver.toLowerCase() === roverActivitySelectedReceiver.toLowerCase();
+            const usernames = (item.usernames || []).join(', ') || 'Không rõ tài khoản';
+            return `<button type="button" class="rover-activity-machine-button ${selected ? 'is-selected' : ''}" aria-pressed="${selected}" data-activity-receiver="${escapeHtml(receiver)}">
+                <strong>${escapeHtml(receiver)}</strong>
+                <span>${escapeHtml(usernames)}</span>
+                <small>${Number(item.session_count) || 0} phiên · ${Number(item.point_count) || 0} điểm FIX</small>
+            </button>`;
+        }).join('');
+        container.querySelectorAll('[data-activity-receiver]').forEach(button => {
+            button.addEventListener('click', () => selectRoverActivityMachine(button.dataset.activityReceiver));
+        });
+        filterRoverActivityMachines();
+    }
+
+    function filterRoverActivityMachines() {
+        const input = document.getElementById('rover-activity-machine-search');
+        const query = String(input?.value || '').trim().toLowerCase();
+        document.querySelectorAll('#rover-activity-machines [data-activity-receiver]').forEach(button => {
+            button.hidden = Boolean(query) && !button.textContent.toLowerCase().includes(query);
+        });
+    }
+
+    async function selectRoverActivityMachine(receiverId) {
+        roverActivitySelectedReceiver = receiverId;
+        document.querySelectorAll('#rover-activity-machines [data-activity-receiver]').forEach(button => {
+            const selected = button.dataset.activityReceiver.toLowerCase() === receiverId.toLowerCase();
+            button.classList.toggle('is-selected', selected);
+            button.setAttribute('aria-pressed', String(selected));
+        });
+        const machine = roverActivityMachines.find(item => item.receiver_id.toLowerCase() === receiverId.toLowerCase());
+        const title = document.getElementById('rover-activity-track-title');
+        const meta = document.getElementById('rover-activity-track-meta');
+        if (title) title.textContent = `Receiver ${receiverId}`;
+        if (meta && machine) meta.textContent = `${Number(machine.session_count) || 0} phiên · ${Number(machine.point_count) || 0} điểm RTK Fixed · nối theo thời gian (đầu xanh, cuối đỏ)`;
+        clearRoverActivityTrack();
+        await loadRoverActivityTrack(receiverId);
+    }
+
+    function clearRoverActivityTrack() {
+        roverActivityTrackRequest += 1;
+        if (roverActivityMap) {
+            roverActivityMap.remove();
+            roverActivityMap = null;
+        }
+        const map = document.getElementById('rover-activity-map');
+        if (map) map.innerHTML = '<div class="rover-activity-empty">Chọn receiver để xem đường đi của các điểm FIX.</div>';
+        const points = document.getElementById('rover-activity-points');
+        if (points) points.innerHTML = '';
+        const link = document.getElementById('rover-activity-google-link');
+        if (link) link.classList.add('d-none');
+    }
+
+    async function loadRoverActivityTrack(receiverId) {
+        const requestId = ++roverActivityTrackRequest;
+        const map = document.getElementById('rover-activity-map');
+        const pointList = document.getElementById('rover-activity-points');
+        if (map) map.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang vẽ tuyến FIX…</span></div>';
+        if (pointList) pointList.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải điểm FIX…</span></div>';
+        const query = new URLSearchParams({ date: roverActivitySelectedDate, receiver_id: receiverId });
+        try {
+            const response = await apiFetchRaw(`/api/rovers/activity/track?${query}`, { headers: API_HEADERS });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || `Không tải được tuyến FIX (${response.status}).`);
+            if (requestId !== roverActivityTrackRequest) return;
+            const points = data.points || [];
+            if (!points.length) {
+                clearRoverActivityTrack();
+                const title = document.getElementById('rover-activity-track-title');
+                const meta = document.getElementById('rover-activity-track-meta');
+                if (title) title.textContent = `Receiver ${receiverId}`;
+                if (meta) meta.textContent = 'Máy có phiên hoạt động nhưng chưa lưu điểm RTK Fixed trong ngày.';
+                if (pointList) pointList.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa có điểm FIX trong ngày.</span></div>';
+                return;
+            }
+            renderRoverActivityTrack(points);
+        } catch (error) {
+            if (requestId !== roverActivityTrackRequest) return;
+            if (pointList) pointList.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được điểm FIX.')}</span></div>`;
+            setRoverActivityStatus(error.message || 'Không tải được tuyến FIX.', true);
+        }
+    }
+
+    function renderRoverActivityTrack(points) {
+        const mapElement = document.getElementById('rover-activity-map');
+        const pointList = document.getElementById('rover-activity-points');
+        if (!mapElement || !pointList) return;
+        if (roverActivityMap) roverActivityMap.remove();
+        roverActivityMap = null;
+        mapElement.replaceChildren();
+        const validPoints = points.filter(point => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))
+            && Number(point.lat) >= -90 && Number(point.lat) <= 90 && Number(point.lon) >= -180 && Number(point.lon) <= 180);
+        const googlePointUrl = point => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${point.lat},${point.lon}`)}`;
+        pointList.innerHTML = validPoints.length ? validPoints.map((point, index) => `<div class="rover-activity-point-row">
+            <span><strong>${index + 1}.</strong> ${formatDateTime(point.recorded_at)} · ${escapeHtml(point.username || '')}${point.mountpoint ? ` · ${escapeHtml(point.mountpoint)}` : ''}</span>
+            <a href="${googlePointUrl(point)}" target="_blank" rel="noopener noreferrer" aria-label="Mở tọa độ điểm ${index + 1} trên Google Maps">Bản đồ</a>
+        </div>`).join('') : '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Tọa độ không hợp lệ.</span></div>';
+        const lastPoint = validPoints[validPoints.length - 1];
+        const googleLink = document.getElementById('rover-activity-google-link');
+        if (googleLink && lastPoint) {
+            googleLink.href = googlePointUrl(lastPoint);
+            googleLink.setAttribute('aria-label', 'Mở điểm FIX cuối trên Google Maps');
+            googleLink.classList.remove('d-none');
+        }
+        if (!validPoints.length) return;
+        const leaflet = window.L;
+        if (!leaflet || typeof leaflet.map !== 'function') {
+            mapElement.innerHTML = '<div class="rover-activity-empty">Bản đồ chưa tải được. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
+            return;
+        }
+        try {
+            const coordinates = validPoints.map(point => [Number(point.lat), Number(point.lon)]);
+            roverActivityMap = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
+            leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                attribution: 'Google Maps'
+            }).addTo(roverActivityMap);
+            const line = leaflet.polyline(coordinates, { color: '#22d3ee', weight: 4, opacity: 0.9 }).addTo(roverActivityMap);
+            coordinates.forEach((coordinate, index) => {
+                const point = validPoints[index];
+                const isEndpoint = index === 0 || index === validPoints.length - 1;
+                leaflet.circleMarker(coordinate, {
+                    radius: isEndpoint ? 6 : 3,
+                    color: index === 0 ? '#34d399' : index === validPoints.length - 1 ? '#fb7185' : '#e0f2fe',
+                    fillColor: index === 0 ? '#34d399' : index === validPoints.length - 1 ? '#fb7185' : '#0ea5e9',
+                    fillOpacity: 0.95,
+                    weight: 1
+                }).addTo(roverActivityMap).bindPopup(`<strong>Điểm ${index + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
+            });
+            if (coordinates.length > 1) roverActivityMap.fitBounds(line.getBounds(), { padding: [22, 22], maxZoom: 17 });
+            else roverActivityMap.setView(coordinates[0], 17);
+            requestAnimationFrame(() => roverActivityMap?.invalidateSize());
+        } catch (error) {
+            mapElement.innerHTML = '<div class="rover-activity-empty">Không thể dựng bản đồ. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
+            console.warn('Could not render Rover activity map', error);
+        }
+    }
+
+    function setupRoverActivity() {
+        const fromInput = document.getElementById('rover-activity-date-from');
+        const toInput = document.getElementById('rover-activity-date-to');
+        const form = document.getElementById('rover-activity-date-form');
+        if (!fromInput || !toInput || !form) return;
+        const today = new Date();
+        const from = new Date(today);
+        from.setDate(from.getDate() - 6);
+        fromInput.value = localDateValue(from);
+        toInput.value = localDateValue(today);
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            refreshRoverActivity();
+        });
+        document.getElementById('rover-activity-machine-search')?.addEventListener('input', filterRoverActivityMachines);
+        document.getElementById('tab-rover-activity')?.addEventListener('shown.bs.tab', () => {
+            if (!roverActivityDaily.length) refreshRoverActivity();
+            else requestAnimationFrame(() => roverActivityMap?.invalidateSize());
+        });
+    }
+
+    function roverHistoryPaginationHtml(totalPages, page, username, dateValue) {
+        if (totalPages <= 1) return '';
+        const pages = new Set([1, totalPages]);
+        for (let value = Math.max(1, page - 2); value <= Math.min(totalPages, page + 2); value += 1) pages.add(value);
+        let previousPage = 0;
+        const buttons = Array.from(pages).sort((a, b) => a - b).map(value => {
+            const gap = value - previousPage > 1 ? '<span aria-hidden="true">…</span>' : '';
+            previousPage = value;
+            return `${gap}<button type="button" class="rover-history-page-button" data-username="${escapeHtml(username)}" data-date="${escapeHtml(dateValue)}" data-page="${value}" ${value === page ? 'aria-current="page"' : ''} aria-label="Trang ${value}">${value}</button>`;
+        }).join('');
+        return `<nav class="rover-history-pagination" aria-label="Trang phiên Rover">
+            <button type="button" class="rover-history-page-button" data-username="${escapeHtml(username)}" data-date="${escapeHtml(dateValue)}" data-page="${Math.max(1, page - 1)}" ${page <= 1 ? 'disabled' : ''} aria-label="Trang trước"><i class="bi bi-chevron-left" aria-hidden="true"></i></button>
+            ${buttons}
+            <button type="button" class="rover-history-page-button" data-username="${escapeHtml(username)}" data-date="${escapeHtml(dateValue)}" data-page="${Math.min(totalPages, page + 1)}" ${page >= totalPages ? 'disabled' : ''} aria-label="Trang sau"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+        </nav>`;
+    }
+
     async function handleRoverHistory(e) {
         const username = e.currentTarget.dataset.username;
         if (!username) return;
+        const selectedDate = e.currentTarget.dataset.date || '';
+        const requestedPage = Math.max(1, Number(e.currentTarget.dataset.page) || 1);
+        const requestId = ++roverHistoryRequest;
         const modalEl = ensureRoverHistoryModal();
         if (!modalEl) return;
         const roverName = modalEl.querySelector('#rover-history-rover-name');
@@ -1235,8 +1555,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (window.bootstrap) bootstrap.Modal.getOrCreateInstance(modalEl).show();
         try {
-            const response = await apiFetchRaw(window.ApiRoutes.rovers.history(username), { headers: API_HEADERS });
+            const historyQuery = new URLSearchParams({ page: String(requestedPage) });
+            if (selectedDate) historyQuery.set('date', selectedDate);
+            const response = await apiFetchRaw(`${window.ApiRoutes.rovers.history(username)}?${historyQuery}`, { headers: API_HEADERS });
             const data = await response.json();
+            if (requestId !== roverHistoryRequest) return;
             if (!response.ok) throw new Error(data.detail || `Không tải được lịch sử (${response.status}).`);
             if (body) {
                 const autoPointIntervalSeconds = Number(data.fixed_point_auto_interval_seconds) || 120;
@@ -1248,6 +1571,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const statuses = data.caster_status || [];
                 const connections = statuses.flatMap(item => item.active_connections || []);
                 const sessions = data.sessions || [];
+                const totalSessions = Number(data.total_sessions) || 0;
+                const receiverCount = Number(data.receiver_count) || 0;
+                const totalPages = Number(data.total_pages) || 0;
+                const currentPage = Number(data.page) || 1;
                 const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
                 const accountName = escapeHtml(data.account?.username || data.username || username);
                 const sessionHistoryHtml = sessions.length ? sessions.map(session => {
@@ -1304,7 +1631,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }).join('')}</div>` : '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
                     const deleteSessionHtml = isAdmin
                         ? ended
-                            ? `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`
+                            ? `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`
                             : '<span class="rover-history-delete-note">Phiên đang chạy chỉ xóa được sau khi kết thúc.</span>'
                         : '';
                     return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
@@ -1349,19 +1676,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body.innerHTML = `
                     <div class="row g-3 rover-history-summary" aria-label="Tổng quan Rover">
                         <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tên tài khoản</span><strong title="${accountName}">${accountName}</strong></div><i class="bi bi-person-vcard" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Caster đang theo dõi</span><strong>${statuses.length}</strong></div><i class="bi bi-broadcast" aria-hidden="true"></i></div></div>
                         <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Phiên hoạt động</span><strong>${connections.length}</strong></div><i class="bi bi-activity" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tổng số phiên</span><strong>${sessions.length}</strong></div><i class="bi bi-clock-history" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Số receiver</span><strong>${receiverCount}</strong></div><i class="bi bi-router" aria-hidden="true"></i></div></div>
+                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tổng số phiên</span><strong>${totalSessions}</strong></div><i class="bi bi-clock-history" aria-hidden="true"></i></div></div>
                     </div>
+                    <form class="rover-history-filter" id="rover-history-filter">
+                        <div class="rover-history-filter-fields">
+                            <label for="rover-history-date">Lọc phiên theo ngày<input id="rover-history-date" type="date" value="${escapeHtml(selectedDate)}"></label>
+                            <button class="rover-history-action-button" type="submit"><i class="bi bi-funnel" aria-hidden="true"></i><span>Lọc</span></button>
+                            <button class="rover-history-action-button" type="button" id="rover-history-clear-date"><i class="bi bi-calendar3" aria-hidden="true"></i><span>Tất cả ngày</span></button>
+                        </div>
+                        <span class="rover-history-filter-summary">${selectedDate ? `Ngày ${escapeHtml(selectedDate)}` : 'Tất cả ngày'} · ${totalSessions} phiên · ${receiverCount} receiver</span>
+                    </form>
                     <section class="rover-history-section" aria-labelledby="rover-history-sessions-title">
                         <div class="rover-history-section-heading">
                             <div>
                                 <h6 id="rover-history-sessions-title"><i class="bi bi-geo-alt" aria-hidden="true"></i>Vị trí cuối theo phiên</h6>
                                 <p>Tọa độ gần nhất rover gửi trong mỗi phiên kết nối.</p>
                             </div>
-                            <span class="rover-history-count">${sessions.length} phiên</span>
+                            <span class="rover-history-count">${totalSessions} phiên · ${receiverCount} receiver</span>
                         </div>
                         <div class="rover-history-session-list">${sessionHistoryHtml}</div>
+                        ${roverHistoryPaginationHtml(totalPages, currentPage, username, selectedDate)}
                     </section>
                     <section class="rover-history-section" aria-labelledby="rover-history-events-title">
                         <div class="rover-history-section-heading">
@@ -1375,6 +1711,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 `;
                 body.scrollTop = 0;
                 body.setAttribute('aria-busy', 'false');
+                body.querySelector('#rover-history-filter')?.addEventListener('submit', event => {
+                    event.preventDefault();
+                    handleRoverHistory({ currentTarget: { dataset: { username, date: body.querySelector('#rover-history-date')?.value || '', page: '1' } } });
+                });
+                body.querySelector('#rover-history-clear-date')?.addEventListener('click', () => {
+                    handleRoverHistory({ currentTarget: { dataset: { username, date: '', page: '1' } } });
+                });
+                body.querySelectorAll('.rover-history-page-button').forEach(button => {
+                    button.addEventListener('click', () => handleRoverHistory({ currentTarget: { dataset: button.dataset } }));
+                });
                 body.querySelectorAll('.rover-history-copy').forEach(button => {
                     button.addEventListener('click', async () => {
                         try {
@@ -1406,7 +1752,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             const result = await response.json().catch(() => ({}));
                             if (!response.ok) throw new Error(result.detail || `Không xóa được phiên (${response.status}).`);
                             showToast('Đã xóa phiên Rover.', 'success');
-                            await handleRoverHistory({ currentTarget: { dataset: { username } } });
+                            await handleRoverHistory({ currentTarget: { dataset: { username, date: button.dataset.date, page: button.dataset.page } } });
                         } catch (error) {
                             button.disabled = false;
                             button.innerHTML = buttonContent;
@@ -1416,6 +1762,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             }
         } catch (error) {
+            if (requestId !== roverHistoryRequest) return;
             if (body) {
                 body.setAttribute('aria-busy', 'false');
                 body.innerHTML = `<div class="rover-history-empty text-danger" role="alert">${escapeHtml(error.message)}</div>`;
@@ -2276,6 +2623,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // ✅ ADMIN ONLY: Tab Mountpoints
     const mountpointsTab = document.getElementById('tab-mountpoints-li');
+    setupRoverActivity();
     if (mountpointsTab) {
         mountpointsTab.addEventListener('shown.bs.tab', async () => {
             await loadAndRenderMountpoints();

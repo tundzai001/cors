@@ -8,7 +8,7 @@ import hashlib
 import json
 import asyncio
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import gc
 import sys
 import traceback
@@ -7410,6 +7410,8 @@ async def _ops_events_query(
     severity: str | None = None,
     device_serial: str | None = None,
     q: str | None = None,
+    timestamp_from: int | None = None,
+    timestamp_to: int | None = None,
 ) -> list[dict]:
     stmt = select(models.ActivityLog)
     if severity:
@@ -7418,6 +7420,10 @@ async def _ops_events_query(
         stmt = stmt.where(models.ActivityLog.device_serial == device_serial)
     if q:
         stmt = stmt.where(models.ActivityLog.message.ilike(f"%{q}%"))
+    if timestamp_from is not None:
+        stmt = stmt.where(models.ActivityLog.timestamp >= timestamp_from)
+    if timestamp_to is not None:
+        stmt = stmt.where(models.ActivityLog.timestamp < timestamp_to)
     stmt = stmt.order_by(models.ActivityLog.timestamp.desc()).limit(max(1, min(int(limit or 50), 200)))
     result = await db.execute(stmt)
     return [_ops_event_payload(log) for log in result.scalars().all()]
@@ -8095,9 +8101,232 @@ async def export_ops_xlsx(
     )
 
 
+ROVER_HISTORY_LOCAL_TIMEZONE = timezone(timedelta(hours=7))
+ROVER_HISTORY_PAGE_SIZE = 10
+
+
+def _rover_history_day_bounds(day: date) -> tuple[int, int]:
+    start = datetime(day.year, day.month, day.day, tzinfo=ROVER_HISTORY_LOCAL_TIMEZONE)
+    return int(start.timestamp()), int((start + timedelta(days=1)).timestamp())
+
+
+def _rover_history_overlap_filters(start_at: int, end_at: int):
+    session = models.RoverSessionHistory
+    return (
+        func.coalesce(session.started_at, session.last_seen_at) < end_at,
+        func.coalesce(session.ended_at, session.last_seen_at) > start_at,
+    )
+
+
+async def _rover_history_user_scope(
+    auth_db: AsyncSession,
+    devices_db: AsyncSession,
+    current_user: models.User,
+) -> set[str] | None:
+    if current_user.role == auth.Role.ADMIN:
+        return None
+    rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
+    return {str(rover.username).strip().casefold() for rover in rovers if rover.username}
+
+
+@app.get("/api/rovers/activity/daily")
+async def get_rover_activity_daily(
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
+):
+    if date_to < date_from:
+        raise HTTPException(status_code=400, detail="Ngày kết thúc phải từ ngày bắt đầu trở đi")
+    if (date_to - date_from).days > 365:
+        raise HTTPException(status_code=400, detail="Khoảng ngày tối đa là 366 ngày")
+
+    visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
+    daily_receivers = {
+        date_from + timedelta(days=offset): set()
+        for offset in range((date_to - date_from).days + 1)
+    }
+    if visible_usernames is None or visible_usernames:
+        range_start, _ = _rover_history_day_bounds(date_from)
+        _, range_end = _rover_history_day_bounds(date_to)
+        stmt = select(
+            models.RoverSessionHistory.receiver_id,
+            models.RoverSessionHistory.started_at,
+            models.RoverSessionHistory.last_seen_at,
+            models.RoverSessionHistory.ended_at,
+        ).where(
+            *_rover_history_overlap_filters(range_start, range_end),
+            models.RoverSessionHistory.receiver_id.is_not(None),
+            func.trim(models.RoverSessionHistory.receiver_id) != "",
+        )
+        if visible_usernames is not None:
+            stmt = stmt.where(func.lower(models.RoverSessionHistory.username).in_(visible_usernames))
+        result = await auth_db.execute(stmt)
+        for receiver_id, started_at, last_seen_at, ended_at in result.all():
+            receiver_key = str(receiver_id or "").strip().casefold()
+            if not receiver_key:
+                continue
+            try:
+                first_active_at = int(started_at if started_at is not None else last_seen_at)
+                last_active_at = int(ended_at if ended_at is not None else last_seen_at)
+                first_active_day = datetime.fromtimestamp(
+                    first_active_at,
+                    ROVER_HISTORY_LOCAL_TIMEZONE,
+                ).date()
+                last_active_day = datetime.fromtimestamp(
+                    max(first_active_at, last_active_at - 1),
+                    ROVER_HISTORY_LOCAL_TIMEZONE,
+                ).date()
+            except (TypeError, ValueError, OverflowError, OSError):
+                continue
+            cursor = max(date_from, first_active_day)
+            last_day = min(date_to, last_active_day)
+            while cursor <= last_day:
+                daily_receivers[cursor].add(receiver_key)
+                cursor += timedelta(days=1)
+
+    return {
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "days": [
+            {"date": day.isoformat(), "machine_count": len(receivers)}
+            for day, receivers in daily_receivers.items()
+        ],
+    }
+
+
+@app.get("/api/rovers/activity/day")
+async def get_rover_activity_day(
+    activity_date: date = Query(..., alias="date"),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
+):
+    visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
+    start_at, end_at = _rover_history_day_bounds(activity_date)
+    items: dict[str, dict] = {}
+    if visible_usernames is not None and not visible_usernames:
+        return {"date": activity_date.isoformat(), "machine_count": 0, "machines": []}
+
+    session = models.RoverSessionHistory
+    stmt = select(
+        session.id,
+        session.username, session.mountpoint, session.receiver_id,
+    ).where(
+        *_rover_history_overlap_filters(start_at, end_at),
+        session.receiver_id.is_not(None),
+        func.trim(session.receiver_id) != "",
+    )
+    if visible_usernames is not None:
+        stmt = stmt.where(func.lower(session.username).in_(visible_usernames))
+    result = await auth_db.execute(stmt)
+    receiver_by_session: dict[int, str] = {}
+    for session_id, username, mountpoint, receiver_id in result.all():
+        receiver_key = str(receiver_id or "").strip().casefold()
+        if not receiver_key:
+            continue
+        item = items.setdefault(receiver_key, {
+            "receiver_id": str(receiver_id).strip(),
+            "usernames": set(),
+            "session_count": 0,
+            "point_count": 0,
+        })
+        if username:
+            item["usernames"].add(str(username))
+        item["session_count"] += 1
+        receiver_by_session[session_id] = receiver_key
+
+    if receiver_by_session:
+        point_stmt = select(
+            models.RoverFixedPoint.session_id,
+            func.count(models.RoverFixedPoint.id),
+        ).where(
+            models.RoverFixedPoint.session_id.in_(list(receiver_by_session)),
+            models.RoverFixedPoint.recorded_at >= start_at,
+            models.RoverFixedPoint.recorded_at < end_at,
+        ).group_by(models.RoverFixedPoint.session_id)
+        point_result = await auth_db.execute(point_stmt)
+        for session_id, point_count in point_result.all():
+            item = items.get(receiver_by_session.get(session_id, ""))
+            if item is not None:
+                item["point_count"] += int(point_count or 0)
+
+    machines = [
+        {
+            **item,
+            "usernames": sorted(item["usernames"], key=str.casefold),
+        }
+        for item in sorted(items.values(), key=lambda value: value["receiver_id"].casefold())
+    ]
+    return {"date": activity_date.isoformat(), "machine_count": len(machines), "machines": machines}
+
+
+@app.get("/api/rovers/activity/track")
+async def get_rover_activity_track(
+    activity_date: date = Query(..., alias="date"),
+    receiver_id: str = Query(..., min_length=1, max_length=256),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
+):
+    if not receiver_id.strip():
+        raise HTTPException(status_code=400, detail="Receiver không được để trống")
+    visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
+    if visible_usernames is not None and not visible_usernames:
+        return {"date": activity_date.isoformat(), "receiver_id": receiver_id, "points": []}
+
+    start_at, end_at = _rover_history_day_bounds(activity_date)
+    session = models.RoverSessionHistory
+    session_query = select(session.id, session.username, session.mountpoint).where(
+        *_rover_history_overlap_filters(start_at, end_at),
+        func.lower(func.trim(session.receiver_id)) == receiver_id.strip().casefold(),
+    )
+    if visible_usernames is not None:
+        session_query = session_query.where(func.lower(session.username).in_(visible_usernames))
+    session_result = await auth_db.execute(session_query)
+    session_info = {
+        session_id: {"username": username, "mountpoint": mountpoint}
+        for session_id, username, mountpoint in session_result.all()
+    }
+    if not session_info:
+        return {"date": activity_date.isoformat(), "receiver_id": receiver_id, "points": []}
+
+    point_result = await auth_db.execute(
+        select(
+            models.RoverFixedPoint.id,
+            models.RoverFixedPoint.latitude,
+            models.RoverFixedPoint.longitude,
+            models.RoverFixedPoint.recorded_at,
+            models.RoverFixedPoint.satellite_count,
+            models.RoverFixedPoint.session_id,
+        ).where(
+            models.RoverFixedPoint.session_id.in_(list(session_info)),
+            models.RoverFixedPoint.recorded_at >= start_at,
+            models.RoverFixedPoint.recorded_at < end_at,
+        ).order_by(models.RoverFixedPoint.recorded_at, models.RoverFixedPoint.id)
+    )
+    points = [
+        {
+            "id": point_id,
+            "lat": latitude,
+            "lon": longitude,
+            "recorded_at": recorded_at,
+            "satellites": satellite_count,
+            "username": session_info[session_id]["username"],
+            "mountpoint": session_info[session_id]["mountpoint"],
+            "session_id": session_id,
+        }
+        for point_id, latitude, longitude, recorded_at, satellite_count, session_id in point_result.all()
+    ]
+    return {"date": activity_date.isoformat(), "receiver_id": receiver_id, "points": points}
+
+
 @app.get("/api/rovers/{username}/history")
 async def get_rover_history(
     username: str,
+    activity_date: date | None = Query(None, alias="date"),
+    page: int = Query(1, ge=1),
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
@@ -8107,22 +8336,55 @@ async def get_rover_history(
     scoped_names = {str(r.username).strip().lower() for r in scoped}
     if current_user.role != auth.Role.ADMIN and username.strip().lower() not in scoped_names:
         raise HTTPException(status_code=403, detail="Rover is outside your scope")
-    events = await _ops_events_query(devices_db, limit=100, q=username)
+    date_start, date_end = _rover_history_day_bounds(activity_date) if activity_date else (None, None)
+    events = await _ops_events_query(
+        devices_db,
+        limit=100,
+        q=username,
+        timestamp_from=date_start,
+        timestamp_to=date_end,
+    )
     statuses = await _ops_cached_rover_status({username.strip().lower()})
+    session_query = select(models.RoverSessionHistory).where(
+        func.lower(models.RoverSessionHistory.username) == username.strip().lower()
+    )
+    if date_start is not None and date_end is not None:
+        session_query = session_query.where(*_rover_history_overlap_filters(date_start, date_end))
+    total_sessions_result = await auth_db.execute(
+        select(func.count()).select_from(session_query.order_by(None).subquery())
+    )
+    total_sessions = int(total_sessions_result.scalar_one() or 0)
+    receiver_count_result = await auth_db.execute(
+        select(func.count(func.distinct(func.lower(func.trim(models.RoverSessionHistory.receiver_id)))))
+        .where(
+            func.lower(models.RoverSessionHistory.username) == username.strip().lower(),
+            models.RoverSessionHistory.receiver_id.is_not(None),
+            func.trim(models.RoverSessionHistory.receiver_id) != "",
+            *(_rover_history_overlap_filters(date_start, date_end) if date_start is not None else ()),
+        )
+    )
+    receiver_count = int(receiver_count_result.scalar_one() or 0)
+    total_pages = (total_sessions + ROVER_HISTORY_PAGE_SIZE - 1) // ROVER_HISTORY_PAGE_SIZE
+    page = min(page, max(total_pages, 1))
     sessions_result = await auth_db.execute(
-        select(models.RoverSessionHistory)
-        .where(func.lower(models.RoverSessionHistory.username) == username.strip().lower())
-        .order_by(models.RoverSessionHistory.last_seen_at.desc())
-        .limit(100)
+        session_query.order_by(models.RoverSessionHistory.last_seen_at.desc())
+        .offset((page - 1) * ROVER_HISTORY_PAGE_SIZE)
+        .limit(ROVER_HISTORY_PAGE_SIZE)
     )
     session_rows = sessions_result.scalars().all()
     session_ids = [session.id for session in session_rows]
     points_by_session: dict[int, list[dict]] = {session_id: [] for session_id in session_ids}
     if session_ids:
+        point_query = select(models.RoverFixedPoint).where(
+            models.RoverFixedPoint.session_id.in_(session_ids)
+        )
+        if date_start is not None and date_end is not None:
+            point_query = point_query.where(
+                models.RoverFixedPoint.recorded_at >= date_start,
+                models.RoverFixedPoint.recorded_at < date_end,
+            )
         point_result = await auth_db.execute(
-            select(models.RoverFixedPoint)
-            .where(models.RoverFixedPoint.session_id.in_(session_ids))
-            .order_by(models.RoverFixedPoint.recorded_at, models.RoverFixedPoint.id)
+            point_query.order_by(models.RoverFixedPoint.recorded_at, models.RoverFixedPoint.id)
         )
         for point in point_result.scalars().all():
             points_by_session[point.session_id].append({
@@ -8143,6 +8405,10 @@ async def get_rover_history(
             session.position_fix_quality in (None, 4)
             and session.latitude is not None
             and session.longitude is not None
+            and (
+                date_start is None
+                or date_start <= int(session.position_updated_at or 0) < date_end
+            )
         )
         sessions.append({
             "id": session.id,
@@ -8173,6 +8439,12 @@ async def get_rover_history(
         "fixed_point_auto_interval_seconds": ROVER_FIXED_POINT_INTERVAL_SECONDS,
         "caster_status": statuses,
         "sessions": sessions,
+        "date": activity_date.isoformat() if activity_date else None,
+        "receiver_count": receiver_count,
+        "total_sessions": total_sessions,
+        "page": page,
+        "page_size": ROVER_HISTORY_PAGE_SIZE,
+        "total_pages": total_pages,
         "events": events,
     }
 

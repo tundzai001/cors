@@ -17,7 +17,8 @@
     <!-- Bootstrap 5 & Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/dist/rovers-global.min.css?v=20260925-rover-auto-fixed-config-v2">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/css/dist/rovers-global.min.css?v=20260926-rover-daily-activity-v1">
 </head>
 
 <body class="cors-manager-page ops-admin-page ops-rovers-page">
@@ -89,6 +90,7 @@
             <!-- Navigation Tabs -->
             <nav class="premium-tabs" role="tablist">
                 <button class="nav-link active" id="tab-rovers" data-bs-toggle="tab" data-bs-target="#tab-rovers-content" type="button" role="tab">Danh sách Rover</button>
+                <button class="nav-link" id="tab-rover-activity" data-bs-toggle="tab" data-bs-target="#tab-rover-activity-content" type="button" role="tab">Hoạt động theo ngày</button>
                 <button class="nav-link d-none" id="tab-mountpoints-li" data-bs-toggle="tab" data-bs-target="#tab-mountpoints-content" type="button" role="tab">Mountpoints</button>
                 <button class="nav-link" id="tab-blocklist-tab" data-bs-toggle="tab" data-bs-target="#tab-blocklist-content" type="button" role="tab">Blocklist</button>
             </nav>
@@ -173,6 +175,62 @@
                         <div>Displaying <span id="displayed-count" class="text-white fw-bold">0</span> of <span id="total-rovers" class="text-white fw-bold">0</span> rover accounts</div>
                         <div id="caster-sync-time">Last sync: --:--:--</div>
                     </div>
+                </div>
+
+                <!-- Tab: Daily rover activity -->
+                <div class="tab-pane fade" id="tab-rover-activity-content" role="tabpanel" aria-labelledby="tab-rover-activity">
+                    <section class="rover-activity-panel">
+                        <div class="rover-activity-heading">
+                            <div>
+                                <h2>Máy đo và điểm FIX theo ngày</h2>
+                                <p>Mỗi receiver được tính là một máy; nhiều client dùng cùng receiver chỉ tính một lần.</p>
+                            </div>
+                            <form id="rover-activity-date-form" class="rover-activity-date-form">
+                                <label>Từ ngày<input id="rover-activity-date-from" type="date" required></label>
+                                <label>Đến ngày<input id="rover-activity-date-to" type="date" required></label>
+                                <button class="rover-history-action-button" type="submit"><i class="bi bi-funnel" aria-hidden="true"></i><span>Lọc ngày</span></button>
+                            </form>
+                        </div>
+                        <div id="rover-activity-status" class="rover-activity-status" role="status" aria-live="polite">Chọn khoảng ngày để xem hoạt động.</div>
+                        <div class="rover-activity-grid">
+                            <section class="rover-activity-days" aria-labelledby="rover-activity-days-title">
+                                <div class="rover-activity-section-heading">
+                                    <div>
+                                        <h3 id="rover-activity-days-title">Số máy theo ngày</h3>
+                                        <p>Chạm vào một ngày để xem receiver và phiên đo.</p>
+                                    </div>
+                                </div>
+                                <div id="rover-activity-days-list" class="rover-activity-days-list"></div>
+                            </section>
+                            <section class="rover-activity-detail" aria-labelledby="rover-activity-detail-title">
+                                <div class="rover-activity-section-heading">
+                                    <div>
+                                        <h3 id="rover-activity-detail-title">Receiver trong ngày</h3>
+                                        <p id="rover-activity-detail-subtitle">Chọn ngày để xem các máy đã kết nối.</p>
+                                    </div>
+                                    <strong id="rover-activity-machine-count" class="rover-activity-total">— máy</strong>
+                                </div>
+                                <div class="rover-activity-detail-grid">
+                                    <div class="rover-activity-machine-panel">
+                                        <label for="rover-activity-machine-search">Lọc theo receiver hoặc tài khoản</label>
+                                        <input id="rover-activity-machine-search" type="search" class="form-control" placeholder="Nhập receiver / username">
+                                        <div id="rover-activity-machines" class="rover-activity-machines" role="group" aria-label="Máy đo theo receiver"></div>
+                                    </div>
+                                    <div class="rover-activity-track-panel">
+                                        <div class="rover-activity-track-heading">
+                                            <div>
+                                                <strong id="rover-activity-track-title">Chọn một receiver</strong>
+                                                <span id="rover-activity-track-meta">Các điểm RTK Fixed sẽ được nối theo thứ tự ghi nhận.</span>
+                                            </div>
+                                            <a id="rover-activity-google-link" class="rover-history-map-link d-none" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i><span>Google Maps</span></a>
+                                        </div>
+                                        <div id="rover-activity-map" class="rover-activity-map" role="region" aria-label="Bản đồ tuyến điểm FIX theo receiver"></div>
+                                        <div id="rover-activity-points" class="rover-activity-points" aria-label="Danh sách điểm FIX"></div>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </section>
                 </div>
 
                 <!-- Tab: Mountpoints -->
@@ -642,10 +700,11 @@
     <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
     <script src="/assets/js/dist/api-routes.min.js?v=20260925-rover-auto-fixed-config-v2" charset="UTF-8"></script>
     <script src="/assets/js/dist/api-client.min.js?v=20260731-auth-recovery-v3" charset="UTF-8"></script>
     <script src="/assets/js/dist/ops-ui.min.js?v=20260529-admin-hard-reset-v1" charset="UTF-8"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20260912-rover-access-v1" charset="UTF-8"></script>
-    <script src="/assets/js/dist/rovers-global.min.js?v=20260926-rover-fixed-point-interval-v3" charset="UTF-8"></script>
+    <script src="/assets/js/dist/rovers-global.min.js?v=20260926-rover-daily-activity-v1" charset="UTF-8"></script>
 </body>
 </html>
