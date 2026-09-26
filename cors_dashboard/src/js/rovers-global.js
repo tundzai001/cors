@@ -1790,13 +1790,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                         const pointLongitude = String(point.lon);
                         const pointMapQuery = encodeURIComponent(`${pointLatitude},${pointLongitude}`);
                         const deletePointButton = isAdmin
-                            ? `<button class="rover-history-action-button rover-history-delete-point" type="button" data-point-id="${escapeHtml(point.id)}" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}" aria-label="Xóa điểm ${escapeHtml(point.label || 'đo')}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa điểm</span></button>`
+                            ? `<button class="rover-history-action-button rover-history-delete-point" type="button" data-point-id="${escapeHtml(point.id)}" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}" aria-label="Xóa điểm ${escapeHtml(point.label || 'FIX')}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa điểm</span></button>`
                             : '';
                         return `<article class="rover-history-point">
                             <div class="rover-history-point-heading">
                                 <div><strong>${escapeHtml(point.label || 'Điểm đo')}</strong><span class="rover-history-point-fix">RTK Fixed</span></div>
                                 <div class="rover-history-point-actions">
-                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'đo')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
+                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'FIX')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
                                     ${deletePointButton}
                                 </div>
                             </div>

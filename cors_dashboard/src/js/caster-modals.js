@@ -199,12 +199,12 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                                                         <td><small>{src.format}</small></td>
                                                         <td>
                                                             <span className={`badge ${src.auth_required === 'B' ? 'bg-warning' : 'bg-success'}`}>
-                                                                {src.auth_required === 'B' ? 'ðŸ”’ Auth' : 'ðŸŸ¢ Public'}
+                                                                {src.auth_required === 'B' ? '🔒 Auth' : '🟢 Public'}
                                                             </span>
                                                         </td>
                                                         <td>
                                                             <span className={`badge ${src.gga_required ? 'bg-danger' : 'bg-info'}`}>
-                                                                {src.gga_required ? 'âœ… Yes' : 'âŒ No'}
+                                                                {src.gga_required ? '✅ Có' : '❌ Không'}
                                                             </span>
                                                         </td>
                                                     </tr>
@@ -219,9 +219,9 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                                 </div>
 
                                 <div className="mt-3 p-2 bg-dark-subtle rounded small text-muted">
-                                    <strong>ðŸ’¡ Tips:</strong>
+                                    <strong>💡 Mẹo:</strong>
                                     <ul className="mb-0 ms-3">
-                                        <li>Click ðŸ“‹ để copy mountpoint name</li>
+                                        <li>Nhấn 📋 để sao chép tên mountpoint</li>
                                         <li>Hãy tạo Rover với các mountpoint này mà không cần phải đăng nhập Caster Web</li>
                                         <li>Format: <code>GET /genuser HTTP/1.0/creator/username/password/MOUNTPOINT/...</code></li>
                                     </ul>
@@ -242,4 +242,3 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
 });
 window.CasterSourcesModal = CasterSourcesModal;
 })();
-

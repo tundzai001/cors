@@ -229,7 +229,7 @@
                 <td data-label="Phạm vi"><span class="badge ${badgeClass}">${escapeHtml(scopeLabel(item))}</span></td>
                 <td data-label="Cảnh báo">${notification.enabled ? `<span class="text-success"><i class="bi bi-bell-fill me-1"></i>${escapeHtml(notification.min_severity || 'critical')}</span>` : '<span class="text-muted"><i class="bi bi-bell-slash me-1"></i>Tắt</span>'}</td>
                 <td data-label="Lần cuối">${fmtTime(item.last_seen_at)}</td>
-                <td data-label="Trạng thái"><span class="badge ${item.is_active ? 'bg-success' : 'bg-secondary'}">${item.is_active ? 'Hoạt động' : 'Đã tắt'}</span></td>
+                <td data-label="Trạng thái"><span class="badge ${item.is_active ? 'bg-success' : 'bg-secondary'}">${item.is_active ? 'Đang hoạt động' : 'Đã tắt'}</span></td>
                 <td data-label="Thao tác" class="zalo-binding-actions text-end text-nowrap">${actions}</td>
             </tr>`;
         }).join('');

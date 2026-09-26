@@ -441,7 +441,7 @@
             getPreferredServer
         });
 
-        const findNearestFromCoords = (lat, lon, label = 'Vi tri cua ban') => {
+        const findNearestFromCoords = (lat, lon, label = 'Vị trí của bạn') => {
             window.StationsMapSearch?.findNearestFromCoords({
                 ...nearestSearchOptions(),
                 lat,
@@ -570,5 +570,4 @@
 
 window.AllStationsMap = React.memo(AllStationsMap);
 })();
-
 

@@ -11,7 +11,7 @@
             match: ['sin quyen', 'sinquyen'],
             lat: 22.585,
             lon: 103.82,
-            label: 'Mo dong Sin Quyen, Bat Xat, Lao Cai, Viet Nam (uoc luong)'
+            label: 'Mỏ đồng Sin Quyền, Bát Xát, Lào Cai, Việt Nam (ước lượng)'
         }
     ];
 
@@ -242,7 +242,7 @@
         const {
             lat,
             lon,
-            label = 'Vi tri cua ban',
+            label = 'Vị trí của bạn',
             map,
             devices,
             nearestRef,
@@ -287,11 +287,11 @@
                 ...options,
                 lat: pos.coords.latitude,
                 lon: pos.coords.longitude,
-                label: 'Vi tri cua ban'
+                label: 'Vị trí của bạn'
             });
             onDone?.();
         }, () => {
-            toast('warning', 'Khong the lay vi tri hien tai.');
+            toast('warning', 'Không thể lấy vị trí hiện tại.');
             onDone?.();
         }, { enableHighAccuracy: true, timeout: 10000 });
     }
