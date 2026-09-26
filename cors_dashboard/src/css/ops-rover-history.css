@@ -340,7 +340,7 @@
 .rover-activity-day-button > span strong { font-size: 0.72rem; }
 .rover-activity-day-button > strong { font-size: 0.77rem; }
 .rover-activity-detail-grid { display: grid; gap: 12px; grid-template-columns: minmax(190px, 0.33fr) minmax(0, 1fr); }
-.rover-activity-machine-panel { display: grid; gap: 8px; min-width: 0; }
+.rover-activity-machine-panel { align-content: start; align-self: start; display: grid; gap: 8px; min-width: 0; }
 .rover-activity-machine-button { align-items: flex-start; display: grid; gap: 3px; justify-content: stretch; min-height: 60px; }
 .rover-activity-machine-button span { overflow-wrap: anywhere; }
 .rover-activity-machine-button small { color: #7f93aa; font-size: 0.69rem; }
@@ -355,6 +355,7 @@
 .rover-activity-session-button strong { font-size: 0.72rem; }
 .rover-activity-session-button small { color: #8fa2b8; font-size: 0.65rem; }
 .rover-activity-map { background: #0a1321; border: 1px solid rgba(148, 163, 184, 0.17); border-radius: 10px; height: 360px; overflow: hidden; }
+.rover-activity-map.is-empty { align-items: center; display: flex; height: auto; justify-content: center; min-height: 86px; padding: 10px 14px; }
 .rover-activity-map .leaflet-container { background: #0a1321; font: inherit; }
 .rover-activity-points { display: grid; gap: 5px; max-height: 220px; overflow-y: auto; overscroll-behavior: contain; padding: 2px 5px 2px 2px; scrollbar-color: rgba(56, 189, 248, 0.38) rgba(15, 23, 42, 0.6); scrollbar-width: thin; }
 .rover-activity-point-row { align-items: center; background: rgba(2, 10, 22, 0.45); border: 1px solid rgba(148, 163, 184, 0.1); border-radius: 7px; color: #adc0d5; display: flex; font-size: 0.72rem; gap: 8px; justify-content: space-between; padding: 7px 9px; }

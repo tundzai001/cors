@@ -80,6 +80,8 @@ const NavigationManager = {
             this.addGroup(navContainer, 'System');
             this.addNavItem(navContainer, { id: 'rovers', icon: 'bi-hdd-network-fill', text: 'Rover & Caster', href: '/rovers-global.html', active: this.currentPage === 'rovers' });
         }
+
+        window.AppI18n?.apply?.(navContainer);
     },
 
     addGroup(container, label) {

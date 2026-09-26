@@ -1414,7 +1414,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             roverActivityMap = null;
         }
         const map = document.getElementById('rover-activity-map');
-        if (map) map.innerHTML = '<div class="rover-activity-empty">Chọn receiver để xem đường đi của các điểm FIX.</div>';
+        if (map) {
+            map.classList.add('is-empty');
+            map.innerHTML = '<div class="rover-activity-empty">Chọn receiver để xem đường đi của các điểm FIX.</div>';
+        }
         const sessions = document.getElementById('rover-activity-sessions');
         if (sessions) sessions.innerHTML = '';
         const points = document.getElementById('rover-activity-points');
@@ -1427,7 +1430,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const requestId = ++roverActivityTrackRequest;
         const map = document.getElementById('rover-activity-map');
         const pointList = document.getElementById('rover-activity-points');
-        if (map) map.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang vẽ tuyến FIX…</span></div>';
+        if (map) {
+            map.classList.remove('is-empty');
+            map.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang vẽ tuyến FIX…</span></div>';
+        }
         if (pointList) pointList.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải điểm FIX…</span></div>';
         const query = new URLSearchParams({ date: roverActivitySelectedDate, receiver_id: receiverId });
         try {
@@ -1511,12 +1517,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <a href="${googlePointUrl(point)}" target="_blank" rel="noopener noreferrer" aria-label="Mở tọa độ điểm ${index + 1}${selectedSession ? ` phiên ${sessionIndex}` : ''} trên Google Maps">Bản đồ</a>
             </div>`).join('') : '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Phiên này không có điểm FIX hợp lệ.</span></div>';
             if (!selectedPoints.length) {
+                mapElement.classList.add('is-empty');
                 mapElement.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Phiên này không có điểm FIX hợp lệ.</span></div>';
                 return;
             }
+            mapElement.classList.remove('is-empty');
 
             const leaflet = window.L;
             if (!leaflet || typeof leaflet.map !== 'function') {
+                mapElement.classList.add('is-empty');
                 mapElement.innerHTML = '<div class="rover-activity-empty">Bản đồ chưa tải được. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
                 return;
             }
@@ -1545,6 +1554,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 else roverActivityMap.setView(coordinates[0], 17);
                 requestAnimationFrame(() => roverActivityMap?.invalidateSize());
             } catch (error) {
+                mapElement.classList.add('is-empty');
                 mapElement.innerHTML = '<div class="rover-activity-empty">Không thể dựng bản đồ. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
                 console.warn('Could not render Rover activity map', error);
             }
