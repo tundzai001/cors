@@ -580,13 +580,13 @@ def _get_env_preferring_dotenv(key: str, default: str) -> str:
 
 try:
     ROVER_FIXED_POINT_INTERVAL_SECONDS = int(
-        _get_env_preferring_dotenv("ROVER_FIXED_POINT_INTERVAL_SECONDS", "300")
+        _get_env_preferring_dotenv("ROVER_FIXED_POINT_INTERVAL_SECONDS", "120")
     )
     if ROVER_FIXED_POINT_INTERVAL_SECONDS <= 0:
         raise ValueError("must be positive")
 except (TypeError, ValueError):
-    ROVER_FIXED_POINT_INTERVAL_SECONDS = 300
-    logger.warning("Invalid ROVER_FIXED_POINT_INTERVAL_SECONDS; using 300 seconds")
+    ROVER_FIXED_POINT_INTERVAL_SECONDS = 120
+    logger.warning("Invalid ROVER_FIXED_POINT_INTERVAL_SECONDS; using 120 seconds")
 
 
 RTCM_MIN_TTL = 30
