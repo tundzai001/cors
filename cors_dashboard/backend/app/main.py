@@ -658,6 +658,14 @@ def _device_service_config(device: Optional[models.Device]) -> dict:
     return crud.normalize_service_config(getattr(device, "service_config", None) if device else None)
 
 
+def _preserve_relay_source_config(serial: str, previous: dict, incoming: dict) -> dict:
+    updated = dict(incoming or {})
+    source = previous.get("relay_source") if isinstance(previous, dict) else None
+    if str(serial or "").strip().upper().startswith("RELAY_") and isinstance(source, dict):
+        updated["relay_source"] = source
+    return updated
+
+
 def _extract_station_mountpoints(device: models.Device) -> List[str]:
     cfg = _device_service_config(device)
     result: List[str] = []
@@ -6682,8 +6690,11 @@ async def configure_service_endpoint(
          raise HTTPException(status_code=403, detail="Bạn không có quyền sửa cấu hình dịch vụ.")
 
     # --- BƯỚC 1: LƯU CẤU HÌNH "CHUẨN" VÀO DATABASE ---
+    service_config_payload = _preserve_relay_source_config(
+        serial, old_service_cfg, payload.model_dump()
+    )
     try:
-        device_in_db.service_config = payload.model_dump()
+        device_in_db.service_config = service_config_payload
         await db.commit()
         await db.refresh(device_in_db)
         
@@ -6701,7 +6712,7 @@ async def configure_service_endpoint(
     # --- BƯỚC 2: GỬI LỆNH ĐẾN PI ---
     pi_command = {
         "command": "DEPLOY_SERVICE_CONFIG",
-        "payload": payload.model_dump()
+        "payload": service_config_payload
     }
     try:
         response = await send_command_to_pi(serial, pi_command)
@@ -8698,7 +8709,9 @@ async def apply_device_config_template(
         if request.apply_base_config and isinstance(template.get("base_config"), dict) and template.get("base_config"):
             device.base_config = template["base_config"]
         if request.apply_service_config and isinstance(template.get("service_config"), dict) and template.get("service_config"):
-            device.service_config = template["service_config"]
+            device.service_config = _preserve_relay_source_config(
+                serial, _device_service_config(device), template["service_config"]
+            )
         device.is_synced = False
         results.append({"serial": serial, "status": "applied"})
     await devices_db.commit()

@@ -122,12 +122,15 @@
         ['Không thể dựng bản đồ. Danh sách tọa độ vẫn có thể mở trên Google Maps.', 'Could not render the map. Coordinates can still be opened in Google Maps.'],
         ['Tọa độ (vĩ độ, kinh độ):', 'Coordinates (latitude, longitude):'],
         ['Điểm gần nhau có thể chồng; bấm + để phóng to.', 'Nearby points may overlap; press + to zoom in.'],
-        ['Lọc theo receiver hoặc tài khoản', 'Filter by receiver or account'],
+        ['Lọc theo số máy / receiver', 'Filter by receiver number'],
+        ['Lọc theo tài khoản', 'Filter by account'],
         ['Chỉ đường Google Maps theo phiên', 'Google Maps directions by session'],
         ['mỗi phiên một màu', 'each session in a different color'],
         ['Các tuyến nối tiếp nhau tại điểm cuối mỗi chặng.', 'Routes continue from the final point of each segment.'],
         ['Tuyến', 'Route'],
-        ['Nhập receiver / username', 'Enter receiver / username'],
+        ['Nhập số máy / receiver', 'Enter receiver number'],
+        ['Nhập username tài khoản', 'Enter account username'],
+        ['Không tìm thấy receiver khớp bộ lọc.', 'No receivers match these filters.'],
         ['Chọn receiver để xem đường đi của các điểm FIX.', 'Select a receiver to view its FIX track.'],
         ['Không có receiver trong ngày này', 'No receivers on this day'],
         ['Không có máy đo trong ngày này.', 'No receivers recorded on this day.'],
@@ -148,8 +151,8 @@
         ['Các điểm RTK Fixed sẽ được nối theo thời gian.', 'RTK Fixed points are connected in time order.'],
         ['Hệ thống trạm CORS Aitogy', 'Aitogy CORS Station System'],
         ['Trung tâm điều khiển CORS', 'CORS Control Center'],
-        ['Số máy theo ngày', 'Receivers per day'],
-        ['Receiver trong ngày', 'Receivers on selected day'],
+        ['Máy theo ngày', 'Receivers per day'],
+        ['Máy trong ngày', 'Receivers on selected day'],
         ['Chọn ngày để xem các máy đã kết nối.', 'Select a day to view connected receivers.'],
         ['Thứ 2', 'Mon'],
         ['Thứ 3', 'Tue'],
@@ -233,8 +236,6 @@
         ['Phát hiện VPN', 'VPN detection'],
         ['Phân tích mẫu', 'Pattern analysis'],
         ['Tường lửa', 'Firewall'],
-        ['Từ ngày', 'From'],
-        ['Đến ngày', 'To'],
         ['Lọc ngày', 'Filter dates'],
         ['Hôm nay', 'Today'],
         ['Hôm qua', 'Yesterday'],
@@ -1318,8 +1319,10 @@
     function translateText(value, language = currentLanguage) {
         const direction = language === 'vi' ? 'vi' : 'en';
         const numericPattern = numericUnitPatterns[direction];
+        const protectedValues = [];
         let result = String(value ?? '');
         if (direction === 'en') {
+            result = result.replace(/^Từ ngày$/iu, 'From').replace(/^Đến ngày$/iu, 'To');
             result = result.replace(/(^|[^\p{L}\p{N}])còn\s+(\d+)\s+ngày(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} days remaining`);
             result = result.replace(/KHỞI ĐỘNG LẠI/g, 'RESTARTING');
             result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+trực tuyến\s+·\s+([0-9,]+)\s+ngoại tuyến\s+·\s+([0-9,]+)\s+chưa đồng bộ(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, online, offline, unsynced) => `${prefix}${online} online · ${offline} offline · ${unsynced} unsynced`);
@@ -1333,6 +1336,14 @@
             result = result.replace(/(^|[^\p{L}\p{N}])Ngày\s+(\d{4}-\d{2}-\d{2})\s+·\s+đang tải danh sách receiver…(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, date) => `${prefix}Date ${date} · Loading the receiver list…`);
             result = result.replace(/(^|[^\p{L}\p{N}])Chặn\s+(.+?)\s+\((\d+)\s+trạm hiện tại\)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, username, count) => `${prefix}Block ${username} (${count} current station${Number(count) === 1 ? '' : 's'})`);
         } else {
+            result = result.replace(/^From$/iu, 'Từ ngày').replace(/^To$/iu, 'Đến ngày');
+            result = result.replace(/^Device '(.+)' removed from list by (.+)$/iu, (_match, deviceName, actor) => {
+                const protect = value => {
+                    const index = protectedValues.push(value) - 1;
+                    return `\uE000${index}\uE001`;
+                };
+                return `Thiết bị '${protect(deviceName)}' đã bị xóa khỏi danh sách bởi ${protect(actor)}`;
+            });
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+days\s+remaining(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}Còn ${count} ngày`);
             result = result.replace(/RESTARTING/g, 'KHỞI ĐỘNG LẠI');
             result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+online\s+·\s+([0-9,]+)\s+offline\s+·\s+([0-9,]+)\s+unsynced(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, online, offline, unsynced) => `${prefix}${online} trực tuyến · ${offline} ngoại tuyến · ${unsynced} chưa đồng bộ`);
@@ -1356,7 +1367,7 @@
         });
         result = applyTranslationPlan(result, shortTranslationPlans[direction]);
         if (direction === 'en') result = result.replace(/\s+\?/g, '?');
-        return result;
+        return result.replace(/\uE000(\d+)\uE001/gu, (_match, index) => protectedValues[Number(index)] ?? '');
     }
 
     function detectLanguage() {

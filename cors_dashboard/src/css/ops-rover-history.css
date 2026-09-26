@@ -292,7 +292,7 @@
 .rover-history-filter-fields { align-items: end; display: flex; flex-wrap: wrap; gap: 9px; }
 .rover-history-filter label,
 .rover-activity-date-form label,
-.rover-activity-machine-panel > label { color: #a9bbcf; display: grid; font-size: 0.73rem; font-weight: 700; gap: 5px; }
+.rover-activity-machine-filters label { color: #a9bbcf; display: grid; font-size: 0.73rem; font-weight: 700; gap: 5px; }
 .rover-history-filter input,
 .rover-activity-date-form input,
 .rover-activity-machine-panel input { background: #0a1321; border-color: rgba(148, 163, 184, 0.24); color: #e5edf6; min-height: 44px; }
@@ -341,6 +341,7 @@
 .rover-activity-day-button > strong { font-size: 0.77rem; }
 .rover-activity-detail-grid { display: grid; gap: 12px; grid-template-columns: minmax(190px, 0.33fr) minmax(0, 1fr); }
 .rover-activity-machine-panel { align-content: start; align-self: start; display: grid; gap: 8px; min-width: 0; }
+.rover-activity-machine-filters { display: grid; gap: 5px; min-width: 0; }
 .rover-activity-machine-button { align-items: flex-start; display: grid; gap: 3px; justify-content: stretch; line-height: 1.35; min-height: 78px; min-width: 0; padding: 9px 10px; }
 .rover-activity-machine-button strong,
 .rover-activity-machine-button span,
@@ -378,6 +379,7 @@
 .rover-activity-point-coordinates { color: #7dd3fc; font-size: 0.68rem; font-variant-numeric: tabular-nums; }
 .rover-activity-point-row a { color: #7dd3fc; flex: 0 0 auto; }
 .rover-activity-empty { align-items: center; color: #8fa2b8; display: flex; font-size: 0.79rem; gap: 8px; min-height: 54px; padding: 10px 4px; }
+.rover-activity-machines > [hidden] { display: none !important; }
 .rover-activity-empty i { color: #7dd3fc; }
 
 .rover-history-session-actions { align-items: flex-end; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-top: 12px; }

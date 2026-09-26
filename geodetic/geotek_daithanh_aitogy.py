@@ -1691,6 +1691,13 @@ class RelayWorker(threading.Thread):
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['target_mp'],
                 "serverhost1": self._target_host(),
+                "relay_source": {
+                    "host": self._source_host(),
+                    "port": self._source_port(),
+                    "username": self._source_user(),
+                    "password": self._source_pass(),
+                    "mountpoint": self.cfg['source_mp'],
+                },
                 "stream_on_demand": self._stream_on_demand(),
                 "server1_stream_on_demand": self._stream_on_demand(),
                 "server1_stream_active": bool(self.desired_active),
@@ -1761,6 +1768,10 @@ class RelayWorker(threading.Thread):
             self.cfg.get("target_pass"),
             self.cfg.get("target_mp"),
         )
+        before_source = (
+            self._source_host(), self._source_port(), self._source_user(),
+            self._source_pass(), self.cfg.get("source_mp"),
+        )
 
         updates = {}
         
@@ -1785,10 +1796,29 @@ class RelayWorker(threading.Thread):
                     updates[target_key] = val
                     break
 
+        source_config = service_config.get("relay_source")
+        if isinstance(source_config, dict):
+            source_aliases = {
+                "source_host": ("host", "source_host"),
+                "source_port": ("port", "source_port"),
+                "source_user": ("username", "user", "source_user"),
+                "source_pass": ("password", "pass", "source_pass"),
+                "source_mp": ("mountpoint", "source_mp"),
+            }
+            for target_key, aliases in source_aliases.items():
+                for alias in aliases:
+                    if alias in source_config and source_config[alias] is not None:
+                        updates[target_key] = source_config[alias]
+                        break
+
         if updates:
             self.cfg.update(updates)
             config_mgr.update_relay_config(self.serial, updates)
-            self.log("INFO", f"Saved remote config into geotek_config.json: {updates}")
+            safe_updates = {
+                key: "***" if "pass" in key.lower() else value
+                for key, value in updates.items()
+            }
+            self.log("INFO", f"Saved remote config into geotek_config.json: {safe_updates}")
 
         after_target = (
             self.cfg.get("target_host"),
@@ -1801,7 +1831,28 @@ class RelayWorker(threading.Thread):
             self.log("INFO", "Runtime target changed; reconnecting TARGET socket")
             self._close_target_socket()
 
+        after_source = (
+            self._source_host(), self._source_port(), self._source_user(),
+            self._source_pass(), self.cfg.get("source_mp"),
+        )
+        if after_source != before_source:
+            self.log("INFO", "Runtime source changed; reconnecting SOURCE socket")
+            self._close_source_socket()
+
         self.wakeup_event.set()
+
+    def _close_source_socket(self):
+        with self.socket_lock:
+            if self._source_sock:
+                try:
+                    self._source_sock.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    self._source_sock.close()
+                except Exception:
+                    pass
+            self._source_sock = None
 
     def _close_target_socket(self):
         with self.socket_lock:

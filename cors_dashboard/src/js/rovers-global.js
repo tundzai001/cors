@@ -1245,7 +1245,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function activityDateLabel(value) {
         const parsed = new Date(`${value}T12:00:00`);
-        return new Intl.DateTimeFormat('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' }).format(parsed);
+        const locale = window.AppI18n?.language === 'en' ? 'en-US' : 'vi-VN';
+        return new Intl.DateTimeFormat(locale, { weekday: 'short', day: '2-digit', month: '2-digit' }).format(parsed);
     }
 
     function setRoverActivityStatus(message, isError = false) {
@@ -1367,16 +1368,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             container.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-router" aria-hidden="true"></i><span>Không có máy đo trong ngày này.</span></div>';
             return;
         }
-        container.innerHTML = roverActivityMachines.map(item => {
+        container.innerHTML = `${roverActivityMachines.map(item => {
             const receiver = String(item.receiver_id || '');
             const selected = receiver.toLowerCase() === roverActivitySelectedReceiver.toLowerCase();
             const usernames = (item.usernames || []).join(', ') || 'Không rõ tài khoản';
-            return `<button type="button" class="rover-activity-machine-button ${selected ? 'is-selected' : ''}" aria-pressed="${selected}" data-activity-receiver="${escapeHtml(receiver)}">
+            return `<button type="button" class="rover-activity-machine-button ${selected ? 'is-selected' : ''}" aria-pressed="${selected}" data-activity-receiver="${escapeHtml(receiver)}" data-activity-usernames="${escapeHtml(usernames)}">
                 <strong>${escapeHtml(receiver)}</strong>
                 <span>${escapeHtml(usernames)}</span>
                 <small>${Number(item.session_count) || 0} phiên · ${Number(item.point_count) || 0} điểm FIX</small>
             </button>`;
-        }).join('');
+        }).join('')}<div class="rover-activity-empty rover-activity-filter-empty" hidden>Không tìm thấy receiver khớp bộ lọc.</div>`;
         container.querySelectorAll('[data-activity-receiver]').forEach(button => {
             button.addEventListener('click', () => selectRoverActivityMachine(button.dataset.activityReceiver));
         });
@@ -1384,11 +1385,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function filterRoverActivityMachines() {
-        const input = document.getElementById('rover-activity-machine-search');
-        const query = String(input?.value || '').trim().toLowerCase();
-        document.querySelectorAll('#rover-activity-machines [data-activity-receiver]').forEach(button => {
-            button.hidden = Boolean(query) && !button.textContent.toLowerCase().includes(query);
+        const receiverQuery = String(document.getElementById('rover-activity-receiver-filter')?.value || '').trim().toLowerCase();
+        const accountQuery = String(document.getElementById('rover-activity-account-filter')?.value || '').trim().toLowerCase();
+        const buttons = [...document.querySelectorAll('#rover-activity-machines [data-activity-receiver]')];
+        let visibleCount = 0;
+        buttons.forEach(button => {
+            const matchesReceiver = !receiverQuery || button.dataset.activityReceiver.toLowerCase().includes(receiverQuery);
+            const matchesAccount = !accountQuery || button.dataset.activityUsernames.toLowerCase().includes(accountQuery);
+            button.hidden = !matchesReceiver || !matchesAccount;
+            if (!button.hidden) visibleCount += 1;
         });
+        const emptyState = document.querySelector('#rover-activity-machines .rover-activity-filter-empty');
+        if (emptyState) emptyState.hidden = !buttons.length || visibleCount > 0;
     }
 
     async function selectRoverActivityMachine(receiverId) {
@@ -1601,7 +1609,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             event.preventDefault();
             refreshRoverActivity();
         });
-        document.getElementById('rover-activity-machine-search')?.addEventListener('input', filterRoverActivityMachines);
+        document.getElementById('rover-activity-receiver-filter')?.addEventListener('input', filterRoverActivityMachines);
+        document.getElementById('rover-activity-account-filter')?.addEventListener('input', filterRoverActivityMachines);
         document.getElementById('tab-rover-activity')?.addEventListener('shown.bs.tab', () => {
             if (!roverActivityDaily.length) refreshRoverActivity();
             else requestAnimationFrame(() => roverActivityMap?.invalidateSize());
