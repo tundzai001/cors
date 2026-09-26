@@ -353,12 +353,21 @@
 .rover-activity-track-heading { align-items: flex-start; min-height: 40px; }
 .rover-activity-track-heading strong { color: #e5edf6; display: block; font-size: 0.83rem; overflow-wrap: anywhere; }
 .rover-activity-track-heading span { color: #8fa2b8; display: block; font-size: 0.71rem; margin-top: 3px; }
-.rover-activity-sessions { display: flex; flex-wrap: wrap; gap: 6px; max-height: 116px; overflow-y: auto; overscroll-behavior: contain; }
-.rover-activity-session-button { background: rgba(2, 10, 22, 0.5); border: 1px solid rgba(148, 163, 184, 0.17); border-radius: 8px; color: #d5e2f0; cursor: pointer; display: grid; gap: 2px; min-width: 116px; padding: 7px 9px; text-align: left; }
+.rover-activity-sessions { display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; padding: 1px 2px 5px; scrollbar-color: rgba(56, 189, 248, 0.38) rgba(15, 23, 42, 0.6); scrollbar-width: thin; }
+.rover-activity-session-button { background: rgba(2, 10, 22, 0.5); border: 1px solid rgba(148, 163, 184, 0.17); border-radius: 8px; color: #d5e2f0; cursor: pointer; display: grid; flex: 0 0 auto; gap: 2px; max-width: min(320px, 78vw); min-height: 48px; min-width: 132px; padding: 7px 9px; text-align: left; }
 .rover-activity-session-button:hover { border-color: rgba(56, 189, 248, 0.45); }
 .rover-activity-session-button.is-selected { background: rgba(14, 165, 233, 0.17); border-color: rgba(56, 189, 248, 0.55); }
-.rover-activity-session-button strong { font-size: 0.72rem; }
-.rover-activity-session-button small { color: #8fa2b8; font-size: 0.65rem; }
+.rover-activity-session-button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+.rover-activity-session-button strong { align-items: center; display: flex; font-size: 0.72rem; gap: 6px; }
+.rover-activity-session-button[data-activity-session]:not([data-activity-session="all"]) strong::before { background: var(--rover-activity-route-color); border-radius: 50%; content: ""; flex: 0 0 8px; height: 8px; }
+.rover-activity-session-button small { color: #8fa2b8; display: -webkit-box; font-size: 0.65rem; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.rover-activity-google-links { align-items: center; display: flex; flex-wrap: nowrap; gap: 7px; max-height: 56px; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; padding: 1px 2px 5px; scrollbar-color: rgba(56, 189, 248, 0.38) rgba(15, 23, 42, 0.6); scrollbar-width: thin; }
+.rover-activity-google-links[hidden] { display: none; }
+.rover-activity-route-group { align-items: center; background: rgba(2, 10, 22, 0.32); border: 1px solid rgba(148, 163, 184, 0.12); border-left: 2px solid var(--rover-activity-route-color); border-radius: 8px; display: flex; flex: 0 0 auto; gap: 6px; padding: 4px 6px; }
+.rover-activity-route-group > strong { align-items: center; color: #cbd5e1; display: inline-flex; font-size: 0.67rem; gap: 5px; white-space: nowrap; }
+.rover-activity-route-group > strong::before { background: var(--rover-activity-route-color); border-radius: 50%; content: ""; flex: 0 0 7px; height: 7px; }
+.rover-activity-route-group .rover-history-map-link { min-height: 44px; }
+.rover-activity-route-group .rover-history-route-note { display: none; }
 .rover-activity-map { background: #0a1321; border: 1px solid rgba(148, 163, 184, 0.17); border-radius: 10px; height: 360px; overflow: hidden; }
 .rover-activity-map.is-empty { align-items: center; display: flex; height: auto; justify-content: center; min-height: 86px; padding: 10px 14px; }
 .rover-activity-map .leaflet-container { background: #0a1321; font: inherit; }

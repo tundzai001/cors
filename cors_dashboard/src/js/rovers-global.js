@@ -1422,8 +1422,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (sessions) sessions.innerHTML = '';
         const points = document.getElementById('rover-activity-points');
         if (points) points.innerHTML = '';
-        const link = document.getElementById('rover-activity-google-link');
-        if (link) link.classList.add('d-none');
+        const links = document.getElementById('rover-activity-google-links');
+        if (links) {
+            links.replaceChildren();
+            links.hidden = true;
+        }
     }
 
     async function loadRoverActivityTrack(receiverId) {
@@ -1464,8 +1467,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const pointList = document.getElementById('rover-activity-points');
         const sessionPicker = document.getElementById('rover-activity-sessions');
         if (!mapElement || !pointList || !sessionPicker) return;
-        const validPoints = points.filter(point => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))
-            && Number(point.lat) >= -90 && Number(point.lat) <= 90 && Number(point.lon) >= -180 && Number(point.lon) <= 180);
+        const validPoints = (Array.isArray(points) ? points : []).filter(point => {
+            if (point?.lat == null || point?.lon == null || point.lat === '' || point.lon === '') return false;
+            const latitude = Number(point.lat);
+            const longitude = Number(point.lon);
+            return Number.isFinite(latitude) && Number.isFinite(longitude)
+                && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+                && !(latitude === 0 && longitude === 0);
+        });
         const sessionGroups = new Map();
         validPoints.forEach(point => {
             const sessionId = String(point.session_id ?? 'unknown');
@@ -1473,15 +1482,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             sessionGroups.get(sessionId).push(point);
         });
         const sessions = Array.from(sessionGroups, ([id, sessionPoints]) => ({ id, points: sessionPoints }));
+        const sessionColor = index => `hsl(${(index * 137.508 + 188) % 360} 78% 58%)`;
         const initialSessionKey = sessions[0]?.id || 'all';
         sessionPicker.innerHTML = `<button type="button" class="rover-activity-session-button ${initialSessionKey === 'all' ? 'is-selected' : ''}" data-activity-session="all" aria-pressed="${initialSessionKey === 'all'}"><strong>Tất cả phiên</strong><small>${validPoints.length} điểm FIX · ${sessions.length} phiên</small></button>${sessions.map((session, index) => {
             const firstPoint = session.points[0];
             const lastPoint = session.points[session.points.length - 1];
             const selected = session.id === initialSessionKey;
-            return `<button type="button" class="rover-activity-session-button ${selected ? 'is-selected' : ''}" data-activity-session="${escapeHtml(session.id)}" aria-pressed="${selected}"><strong>Phiên ${index + 1}</strong><small>${session.points.length} điểm · ${formatDateTime(firstPoint.recorded_at)} – ${formatDateTime(lastPoint.recorded_at)}</small></button>`;
+            return `<button type="button" class="rover-activity-session-button ${selected ? 'is-selected' : ''}" style="--rover-activity-route-color:${sessionColor(index)}" data-activity-session="${escapeHtml(session.id)}" aria-pressed="${selected}"><strong>Phiên ${index + 1}</strong><small>${session.points.length} điểm · ${formatDateTime(firstPoint.recorded_at)} – ${formatDateTime(lastPoint.recorded_at)}</small></button>`;
         }).join('')}`;
         const googlePointUrl = point => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${point.lat},${point.lon}`)}`;
-        const googleLink = document.getElementById('rover-activity-google-link');
+        const googleLinks = document.getElementById('rover-activity-google-links');
         const title = document.getElementById('rover-activity-track-title');
         const meta = document.getElementById('rover-activity-track-meta');
         const selectSession = sessionKey => {
@@ -1496,18 +1506,22 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (title) title.textContent = `Receiver ${roverActivitySelectedReceiver}${selectedSession ? ` · Phiên ${sessionIndex}` : ''}`;
             if (meta) meta.textContent = selectedSession
                 ? `${selectedPoints.length} điểm RTK Fixed · ${formatDateTime(selectedPoints[0].recorded_at)} – ${formatDateTime(selectedPoints[selectedPoints.length - 1].recorded_at)} · nối từ đầu xanh đến cuối đỏ`
-                : `${validPoints.length} điểm RTK Fixed trong ${sessions.length} phiên có điểm · chọn phiên để xem riêng`;
+                : `${validPoints.length} điểm RTK Fixed trong ${sessions.length} phiên có điểm · mỗi phiên một màu`;
 
             if (roverActivityMap) roverActivityMap.remove();
             roverActivityMap = null;
             mapElement.replaceChildren();
-            const lastPoint = selectedPoints[selectedPoints.length - 1];
-            if (googleLink) {
-                if (lastPoint) {
-                    googleLink.href = googlePointUrl(lastPoint);
-                    googleLink.setAttribute('aria-label', `Mở điểm FIX cuối${selectedSession ? ` phiên ${sessionIndex}` : ''} trên Google Maps`);
-                    googleLink.classList.remove('d-none');
-                } else googleLink.classList.add('d-none');
+            const routeSessions = selectedSession
+                ? [{ session: selectedSession, index: sessionIndex - 1 }]
+                : sessions.map((session, index) => ({ session, index }));
+            if (googleLinks) {
+                googleLinks.innerHTML = routeSessions.map(({ session, index }) => {
+                    const routes = roverHistoryGoogleMapsRoutes(session.points);
+                    return routes
+                        ? `<div class="rover-activity-route-group" style="--rover-activity-route-color:${sessionColor(index)}"><strong>Phiên ${index + 1}</strong>${routes}</div>`
+                        : '';
+                }).join('');
+                googleLinks.hidden = !googleLinks.childElementCount;
             }
             pointList.innerHTML = selectedPoints.length ? selectedPoints.map((point, index) => `<div class="rover-activity-point-row">
                 <div class="rover-activity-point-details">
@@ -1530,28 +1544,36 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
             try {
-                const coordinates = selectedPoints.map(point => [Number(point.lat), Number(point.lon)]);
                 roverActivityMap = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
                 leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
                     maxZoom: 20,
                     attribution: 'Google Maps'
                 }).addTo(roverActivityMap);
-                const line = coordinates.length > 1
-                    ? leaflet.polyline(coordinates, { color: '#22d3ee', weight: 4, opacity: 0.9 }).addTo(roverActivityMap)
-                    : null;
-                coordinates.forEach((coordinate, index) => {
-                    const point = selectedPoints[index];
-                    const isEndpoint = index === 0 || index === selectedPoints.length - 1;
-                    leaflet.circleMarker(coordinate, {
-                        radius: isEndpoint ? 6 : 3,
-                        color: index === 0 ? '#34d399' : index === selectedPoints.length - 1 ? '#fb7185' : '#e0f2fe',
-                        fillColor: index === 0 ? '#34d399' : index === selectedPoints.length - 1 ? '#fb7185' : '#0ea5e9',
-                        fillOpacity: 0.95,
-                        weight: 1
-                    }).addTo(roverActivityMap).bindPopup(`<strong>Điểm ${index + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
+                const visibleSessions = selectedSession ? [selectedSession] : sessions;
+                const mapCoordinates = [];
+                visibleSessions.forEach(session => {
+                    const originalSessionIndex = sessions.indexOf(session);
+                    const routeColor = sessionColor(originalSessionIndex);
+                    const coordinates = session.points.map(point => [Number(point.lat), Number(point.lon)]);
+                    if (coordinates.length > 1) {
+                        leaflet.polyline(coordinates, { color: routeColor, weight: 4, opacity: 0.9 }).addTo(roverActivityMap);
+                    }
+                    coordinates.forEach((coordinate, index) => {
+                        const point = session.points[index];
+                        const isStart = index === 0;
+                        const isEnd = index === session.points.length - 1;
+                        mapCoordinates.push(coordinate);
+                        leaflet.circleMarker(coordinate, {
+                            radius: isStart || isEnd ? 6 : 3,
+                            color: isStart ? '#34d399' : isEnd ? '#fb7185' : routeColor,
+                            fillColor: isStart ? '#34d399' : isEnd ? '#fb7185' : routeColor,
+                            fillOpacity: 0.95,
+                            weight: 1
+                        }).addTo(roverActivityMap).bindPopup(`<strong>${selectedSession ? `Điểm ${index + 1}` : `Phiên ${originalSessionIndex + 1} · điểm ${index + 1}`}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
+                    });
                 });
-                if (line) roverActivityMap.fitBounds(line.getBounds(), { padding: [22, 22], maxZoom: 19 });
-                else roverActivityMap.setView(coordinates[0], 17);
+                if (mapCoordinates.length > 1) roverActivityMap.fitBounds(leaflet.latLngBounds(mapCoordinates), { padding: [22, 22], maxZoom: 19 });
+                else roverActivityMap.setView(mapCoordinates[0], 17);
                 requestAnimationFrame(() => roverActivityMap?.invalidateSize());
             } catch (error) {
                 mapElement.classList.add('is-empty');
