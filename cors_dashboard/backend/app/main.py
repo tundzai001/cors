@@ -658,11 +658,15 @@ def _device_service_config(device: Optional[models.Device]) -> dict:
     return crud.normalize_service_config(getattr(device, "service_config", None) if device else None)
 
 
-def _preserve_relay_source_config(serial: str, previous: dict, incoming: dict) -> dict:
+def _preserve_relay_config_metadata(serial: str, previous: dict, incoming: dict) -> dict:
     updated = dict(incoming or {})
-    source = previous.get("relay_source") if isinstance(previous, dict) else None
-    if str(serial or "").strip().upper().startswith("RELAY_") and isinstance(source, dict):
-        updated["relay_source"] = source
+    if str(serial or "").strip().upper().startswith("RELAY_") and isinstance(previous, dict):
+        source = previous.get("relay_source")
+        if isinstance(source, dict):
+            updated["relay_source"] = source
+        for key in ("agent_station_power_control", "agent_station_enabled"):
+            if key in previous and key not in updated:
+                updated[key] = previous[key]
     return updated
 
 
@@ -6690,7 +6694,7 @@ async def configure_service_endpoint(
          raise HTTPException(status_code=403, detail="Bạn không có quyền sửa cấu hình dịch vụ.")
 
     # --- BƯỚC 1: LƯU CẤU HÌNH "CHUẨN" VÀO DATABASE ---
-    service_config_payload = _preserve_relay_source_config(
+    service_config_payload = _preserve_relay_config_metadata(
         serial, old_service_cfg, payload.model_dump()
     )
     try:
@@ -6745,8 +6749,16 @@ async def set_configured_relay_power(
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị này.")
 
     service_config = _device_service_config(device)
-    if service_config.get("agent_station_power_control") is not True:
+    agent_service_config = crud.normalize_service_config(
+        mqtt_handler.device_sync_cache.get(f"{serial}_service_config")
+    )
+    supports_power_control = (
+        service_config.get("agent_station_power_control") is True
+        or agent_service_config.get("agent_station_power_control") is True
+    )
+    if not supports_power_control:
         raise HTTPException(status_code=409, detail="Relay chưa hỗ trợ điều khiển bật/tắt toàn trạm.")
+    service_config["agent_station_power_control"] = True
 
     try:
         response = await send_command_to_pi(
@@ -8709,7 +8721,7 @@ async def apply_device_config_template(
         if request.apply_base_config and isinstance(template.get("base_config"), dict) and template.get("base_config"):
             device.base_config = template["base_config"]
         if request.apply_service_config and isinstance(template.get("service_config"), dict) and template.get("service_config"):
-            device.service_config = _preserve_relay_source_config(
+            device.service_config = _preserve_relay_config_metadata(
                 serial, _device_service_config(device), template["service_config"]
             )
         device.is_synced = False

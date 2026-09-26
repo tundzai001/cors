@@ -508,14 +508,26 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
     previous_service_config = _ensure_dict(existing_device.service_config)
     previous_relay_source = previous_service_config.get("relay_source")
+    is_relay_device = str(serial or "").strip().upper().startswith("RELAY_")
     if (
         new_service_config
-        and str(serial or "").strip().upper().startswith("RELAY_")
+        and is_relay_device
         and isinstance(previous_relay_source, dict)
         and "relay_source" not in new_service_config
     ):
         new_service_config = {**new_service_config, "relay_source": previous_relay_source}
-    if not is_out_of_sync and new_service_config and _ensure_dict(existing_device.service_config) != new_service_config:
+
+    if is_out_of_sync and is_relay_device and new_service_config:
+        relay_runtime_config = {
+            key: new_service_config[key]
+            for key in ("agent_station_power_control", "agent_station_enabled")
+            if key in new_service_config
+        }
+        updated_service_config = {**previous_service_config, **relay_runtime_config}
+        if updated_service_config != previous_service_config:
+            update_values["service_config"] = updated_service_config
+            should_update = True
+    elif not is_out_of_sync and new_service_config and previous_service_config != new_service_config:
         update_values["service_config"] = new_service_config
         should_update = True
     
