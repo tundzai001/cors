@@ -44,6 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let roverActivityMachines = [];
     let roverActivitySelectedDate = '';
     let roverActivitySelectedMachineKey = '';
+    let roverActivityAccountOptionIndex = -1;
     let roverActivityMap = null;
     let roverActivityDailyRequest = 0;
     let roverActivityDayRequest = 0;
@@ -308,6 +309,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             const res = await apiFetchRaw('/api/rovers/all', { headers: API_HEADERS });
             if (!res.ok) throw new Error('Không thể tải danh sách Rover');
             allRovers = await res.json();
+            const accountInput = document.getElementById('rover-activity-account-filter');
+            const accountOptions = document.getElementById('rover-activity-account-options');
+            if (accountInput && accountOptions && document.activeElement === accountInput && !accountOptions.hidden) {
+                renderRoverActivityAccountOptions();
+            }
             if (render) renderTable();
         } catch (error) {
             console.error("Rovers fetch error", error);
@@ -1396,6 +1402,67 @@ document.addEventListener('DOMContentLoaded', async () => {
         filterRoverActivityMachines();
     }
 
+    function roverActivityAccountNames() {
+        const accounts = new Map();
+        allRovers.forEach(rover => {
+            const username = String(rover?.username || '').trim();
+            const key = normalizeUsername(username);
+            if (key && !accounts.has(key)) accounts.set(key, username);
+        });
+        const locale = window.AppI18n?.language === 'en' ? 'en' : 'vi';
+        return [...accounts.values()].sort((left, right) => left.localeCompare(right, locale, { sensitivity: 'base' }));
+    }
+
+    function closeRoverActivityAccountOptions() {
+        const input = document.getElementById('rover-activity-account-filter');
+        const options = document.getElementById('rover-activity-account-options');
+        if (!input || !options) return;
+        options.hidden = true;
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
+        options.querySelectorAll('.is-active').forEach(option => option.classList.remove('is-active'));
+        roverActivityAccountOptionIndex = -1;
+    }
+
+    function renderRoverActivityAccountOptions({ showAll = false } = {}) {
+        const input = document.getElementById('rover-activity-account-filter');
+        const options = document.getElementById('rover-activity-account-options');
+        if (!input || !options) return;
+        const accounts = roverActivityAccountNames();
+        const query = showAll ? '' : normalizeUsername(input.value);
+        const matches = accounts.filter(username => normalizeUsername(username).includes(query));
+        options.innerHTML = matches.length
+            ? matches.map((username, index) => {
+                const selected = normalizeUsername(username) === normalizeUsername(input.value);
+                return `<button type="button" id="rover-activity-account-option-${index}" class="rover-activity-account-option ${selected ? 'is-selected' : ''}" role="option" aria-selected="${selected}" tabindex="-1" data-rover-activity-account="${escapeHtml(username)}">${escapeHtml(username)}</button>`;
+            }).join('')
+            : `<div class="rover-activity-account-options-empty" role="option" aria-disabled="true">${accounts.length ? 'Không tìm thấy tài khoản khớp.' : 'Chưa có tài khoản Rover để chọn.'}</div>`;
+        options.hidden = false;
+        input.setAttribute('aria-expanded', 'true');
+        input.removeAttribute('aria-activedescendant');
+        roverActivityAccountOptionIndex = -1;
+    }
+
+    function selectRoverActivityAccount(username) {
+        const input = document.getElementById('rover-activity-account-filter');
+        if (!input) return;
+        input.value = username;
+        closeRoverActivityAccountOptions();
+        filterRoverActivityMachines();
+    }
+
+    function setRoverActivityAccountOptionActive(index) {
+        const input = document.getElementById('rover-activity-account-filter');
+        const options = document.getElementById('rover-activity-account-options');
+        const choices = [...(options?.querySelectorAll('[data-rover-activity-account]') || [])];
+        if (!input || !options || !choices.length) return;
+        roverActivityAccountOptionIndex = (index + choices.length) % choices.length;
+        choices.forEach((choice, choiceIndex) => choice.classList.toggle('is-active', choiceIndex === roverActivityAccountOptionIndex));
+        const activeChoice = choices[roverActivityAccountOptionIndex];
+        input.setAttribute('aria-activedescendant', activeChoice.id);
+        activeChoice.scrollIntoView({ block: 'nearest' });
+    }
+
     function filterRoverActivityMachines() {
         const receiverQuery = String(document.getElementById('rover-activity-receiver-filter')?.value || '').trim().toLowerCase();
         const accountQuery = String(document.getElementById('rover-activity-account-filter')?.value || '').trim().toLowerCase();
@@ -1627,7 +1694,45 @@ document.addEventListener('DOMContentLoaded', async () => {
             refreshRoverActivity();
         });
         document.getElementById('rover-activity-receiver-filter')?.addEventListener('input', filterRoverActivityMachines);
-        document.getElementById('rover-activity-account-filter')?.addEventListener('input', filterRoverActivityMachines);
+        const accountInput = document.getElementById('rover-activity-account-filter');
+        const accountOptions = document.getElementById('rover-activity-account-options');
+        accountInput?.addEventListener('focus', () => renderRoverActivityAccountOptions({ showAll: true }));
+        accountInput?.addEventListener('input', () => {
+            filterRoverActivityMachines();
+            renderRoverActivityAccountOptions();
+        });
+        accountInput?.addEventListener('blur', () => setTimeout(closeRoverActivityAccountOptions, 120));
+        accountInput?.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                closeRoverActivityAccountOptions();
+                return;
+            }
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                if (accountOptions?.hidden) renderRoverActivityAccountOptions({ showAll: true });
+                const direction = event.key === 'ArrowDown' ? 1 : -1;
+                const count = accountOptions?.querySelectorAll('[data-rover-activity-account]').length || 0;
+                if (!count) return;
+                event.preventDefault();
+                setRoverActivityAccountOptionActive(roverActivityAccountOptionIndex < 0
+                    ? (direction > 0 ? 0 : count - 1)
+                    : roverActivityAccountOptionIndex + direction);
+                return;
+            }
+            if (event.key === 'Enter' && accountOptions && !accountOptions.hidden) {
+                const choice = accountOptions.querySelectorAll('[data-rover-activity-account]')[roverActivityAccountOptionIndex];
+                if (choice) {
+                    event.preventDefault();
+                    selectRoverActivityAccount(choice.dataset.roverActivityAccount);
+                }
+            }
+        });
+        accountOptions?.addEventListener('mousedown', event => {
+            if (event.target.closest('[data-rover-activity-account]')) event.preventDefault();
+        });
+        accountOptions?.addEventListener('click', event => {
+            const choice = event.target.closest('[data-rover-activity-account]');
+            if (choice) selectRoverActivityAccount(choice.dataset.roverActivityAccount);
+        });
         document.getElementById('tab-rover-activity')?.addEventListener('shown.bs.tab', () => {
             if (!roverActivityDaily.length) refreshRoverActivity();
             else requestAnimationFrame(() => roverActivityMap?.invalidateSize());

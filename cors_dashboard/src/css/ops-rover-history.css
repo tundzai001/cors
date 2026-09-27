@@ -296,6 +296,14 @@
 .rover-history-filter input,
 .rover-activity-date-form input,
 .rover-activity-machine-panel input { background: #0a1321; border-color: rgba(148, 163, 184, 0.24); color: #e5edf6; min-height: 44px; }
+.rover-activity-account-picker { min-width: 0; position: relative; }
+.rover-activity-account-options { background: #0d1726; border: 1px solid rgba(56, 189, 248, 0.34); border-radius: 9px; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42); display: grid; gap: 2px; inset-inline: 0; max-height: min(280px, 45vh); overflow-y: auto; overscroll-behavior: contain; padding: 5px; position: absolute; scrollbar-color: rgba(56, 189, 248, 0.38) rgba(15, 23, 42, 0.6); scrollbar-width: thin; top: calc(100% + 4px); z-index: 1200; }
+.rover-activity-account-options[hidden] { display: none !important; }
+.rover-activity-account-option { background: transparent; border: 1px solid transparent; border-radius: 6px; color: #cbd8e8; cursor: pointer; min-height: 38px; overflow: hidden; padding: 8px 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.rover-activity-account-option:hover,
+.rover-activity-account-option.is-active { background: rgba(14, 165, 233, 0.16); border-color: rgba(56, 189, 248, 0.3); color: #e0f2fe; }
+.rover-activity-account-option.is-selected { color: #7dd3fc; font-weight: 750; }
+.rover-activity-account-options-empty { color: #8fa2b8; font-size: 0.77rem; padding: 10px; }
 .rover-history-filter-summary { align-self: center; color: #93a4b9; font-size: 0.77rem; }
 .rover-history-pagination { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .rover-history-pagination button { background: #111d2e; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 7px; color: #cbd5e1; min-height: 44px; min-width: 44px; padding: 5px 10px; }
