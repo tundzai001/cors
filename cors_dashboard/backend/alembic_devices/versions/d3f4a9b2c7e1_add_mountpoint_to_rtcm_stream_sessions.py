@@ -8,7 +8,6 @@ Create Date: 2026-03-20 15:10:00.000000
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -19,22 +18,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
-    op.add_column(
-        'rtcm_stream_sessions',
-        sa.Column('mountpoint', sa.String(), nullable=False, server_default='')
+    """Upgrade schema, tolerating columns/indexes created before Alembic."""
+    op.execute(
+        "ALTER TABLE rtcm_stream_sessions "
+        "ADD COLUMN IF NOT EXISTS mountpoint VARCHAR NOT NULL DEFAULT ''"
     )
-    op.create_index(
-        op.f('ix_rtcm_stream_sessions_mountpoint'),
-        'rtcm_stream_sessions',
-        ['mountpoint'],
-        unique=False
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_rtcm_stream_sessions_mountpoint "
+        "ON rtcm_stream_sessions (mountpoint)"
     )
-    op.create_index(
-        'ix_rtcm_serial_mountpoint_expires',
-        'rtcm_stream_sessions',
-        ['serial', 'mountpoint', 'expires_at'],
-        unique=False
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_rtcm_serial_mountpoint_expires "
+        "ON rtcm_stream_sessions (serial, mountpoint, expires_at)"
     )
 
 

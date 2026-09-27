@@ -8,8 +8,6 @@ Create Date: 2026-05-31 03:05:00.000000
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 
 revision: str = "e7b9c4d1a2f3"
@@ -19,14 +17,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("devices", sa.Column("device_token", sa.String(), nullable=True))
-    op.add_column("devices", sa.Column("is_provisioned", sa.Boolean(), nullable=True, server_default=sa.false()))
-    op.add_column("devices", sa.Column("system_info", postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-    op.add_column("devices", sa.Column("rtk_fix_status", sa.String(), nullable=True, server_default="NO_FIX"))
-    op.add_column("devices", sa.Column("base_mode_active", sa.Boolean(), nullable=True, server_default=sa.false()))
-    op.add_column("devices", sa.Column("version", sa.String(), nullable=True))
-    op.add_column("devices", sa.Column("is_synced", sa.Boolean(), nullable=False, server_default=sa.true()))
-    op.create_index(op.f("ix_devices_device_token"), "devices", ["device_token"], unique=False)
+    # Runtime compatibility checks may have provisioned these before Alembic.
+    op.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_token VARCHAR")
+    op.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_provisioned BOOLEAN DEFAULT FALSE")
+    op.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS system_info JSONB")
+    op.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS rtk_fix_status VARCHAR DEFAULT 'NO_FIX'")
+    op.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS base_mode_active BOOLEAN DEFAULT FALSE")
+    op.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS version VARCHAR")
+    op.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_synced BOOLEAN NOT NULL DEFAULT TRUE")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_devices_device_token ON devices (device_token)")
 
 
 def downgrade() -> None:
