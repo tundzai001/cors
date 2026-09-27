@@ -70,6 +70,9 @@ def _metadata_snapshot(device) -> dict:
         "exists": True,
         "cached_at": time.monotonic(),
         "name": getattr(device, "name", None),
+        "status": getattr(device, "status", None),
+        "timestamp": getattr(device, "timestamp", None),
+        "offline_since": getattr(device, "offline_since", None),
         "device_token": str(getattr(device, "device_token", "") or "").strip(),
         "is_synced": bool(getattr(device, "is_synced", False)),
         "license_bypass": bool(
@@ -778,6 +781,23 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 if metadata.get("name"):
                     data["name"] = metadata["name"]
 
+            status_for_offline_time = str(data.get("status") or "").strip().lower()
+            if status_for_offline_time == "offline":
+                if str(metadata.get("status") or "").strip().lower() == "offline":
+                    data["offline_since"] = metadata.get("offline_since")
+                else:
+                    try:
+                        previous_timestamp = int(metadata.get("timestamp") or 0)
+                    except (TypeError, ValueError):
+                        previous_timestamp = 0
+                    data["offline_since"] = (
+                        min(int(now), previous_timestamp + 180)
+                        if previous_timestamp > 0 and now - previous_timestamp > 180
+                        else int(now)
+                    )
+            elif status_for_offline_time:
+                data["offline_since"] = None
+
             # Ensure savings_stats and antenna_status are persisted in system_info JSONB
             system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
             savings_stats = data.get("savings_stats")
@@ -899,11 +919,13 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                             if not still_needs_write:
                                 break
                             async with device_session_scope() as session:
-                                await crud.update_or_create_device(
+                                updated_device = await crud.update_or_create_device(
                                     session,
                                     device_data=db_data
                                 )
                                 await session.commit()
+                                if updated_device:
+                                    await cache_device_metadata(updated_device)
                             device_write_cache[serial] = time.time()
                             if new_status:
                                 device_status_cache[serial] = new_status

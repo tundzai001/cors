@@ -15,6 +15,9 @@
     };
     const translations = [
         ['Ngoại tuyến từ', 'Offline since'],
+        ['Thời lượng', 'Duration'],
+        ['Trạm đang offline', 'Station is offline'],
+        ['Chưa lưu mốc bắt đầu của đợt offline này. Hệ thống sẽ ghi chính xác từ lần chuyển sang offline tiếp theo.', 'The start time for this offline period was not saved. The next transition to offline will be recorded accurately.'],
         ['Dưới một phút', 'Less than a minute'],
         ['Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh CORS trên toàn lãnh thổ Việt Nam.', 'A system for managing and monitoring the CORS satellite positioning network across Vietnam.'],
         ['Cung cấp hạ tầng RTK/NTRIP chuyên nghiệp cho khảo sát, đo đạc và tự động hóa.', 'Professional RTK/NTRIP infrastructure for surveying, measurement, and automation.'],

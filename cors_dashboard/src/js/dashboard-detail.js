@@ -961,6 +961,39 @@ const DetailsPanel = memo(function DetailsPanel({
                 if (!ServiceConfigForm) return missingPanel('ServiceConfigForm');
                 return <ServiceConfigForm {...commonProps} disabled={!canEditService} onConfigureService={onConfigureService} />;
             case 'dashboard':
+                if (staleOffline) {
+                    return (
+                        <div className="card bg-dark border-danger" role="status">
+                            <div className="card-body d-flex align-items-center gap-3 p-4">
+                                <div className="rounded-circle bg-danger bg-opacity-10 text-danger d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: 56, height: 56 }}>
+                                    <i className="bi bi-wifi-off fs-3" aria-hidden="true"></i>
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="d-flex align-items-center gap-2 mb-2">
+                                        <span className="badge bg-danger">OFFLINE</span>
+                                        <strong>Station is offline</strong>
+                                    </div>
+                                    {offlineInfo?.sinceSeconds ? (
+                                        <>
+                                            <div className="small text-white-50">
+                                                <i className="bi bi-clock-history me-1" aria-hidden="true"></i>
+                                                <span>Offline since</span>{': '}
+                                                <time dateTime={new Date(offlineInfo.sinceSeconds * 1000).toISOString()}>{offlineInfo.sinceText}</time>
+                                            </div>
+                                            <div className="fs-5 fw-semibold mt-1">
+                                                <span>Duration</span>{': '}{offlineInfo.durationText}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="small text-white-50">
+                                            The start time for this offline period was not saved. The next transition to offline will be recorded accurately.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                }
                 if (!DashboardPanel) return missingPanel('DashboardPanel');
                 return <DashboardPanel device={device} nmeaData={nmeaData} />;
             case 'rovers':
@@ -1193,18 +1226,10 @@ const DetailsPanel = memo(function DetailsPanel({
                     </span>
                 </div>
 
-                {rawStatusKey === 'offline' && (
+                {rawStatusKey === 'offline' && !(activeTab === 'dashboard' && staleOffline) && (
                     <div className="alert alert-warning py-2 px-3 small mb-3" role="status">
                         <i className="bi bi-broadcast-pin me-2"></i>
                         GNSS/RTCM hiện không có dữ liệu trực tiếp. Độ chính xác chỉ được xác nhận lại khi trạm kết nối trở lại.
-                        {offlineInfo && (
-                            <div className="mt-1 fw-semibold">
-                                <i className="bi bi-clock-history me-1" aria-hidden="true"></i>
-                                <span>Offline since</span>{' '}
-                                <time dateTime={new Date(offlineInfo.sinceSeconds * 1000).toISOString()}>{offlineInfo.sinceText}</time>
-                                {' · '}{offlineInfo.durationText}
-                            </div>
-                        )}
                     </div>
                 )}
 

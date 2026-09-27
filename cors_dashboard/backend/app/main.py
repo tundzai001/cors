@@ -1780,7 +1780,8 @@ async def _do_heartbeat_check(db, timeout_threshold):
     from sqlalchemy import select
     
     now = int(time.time())
-    timeout_threshold = now - timeout_threshold
+    timeout_seconds = timeout_threshold
+    timeout_threshold = now - timeout_seconds
     
     result = await db.execute(
         select(models.Device).filter(
@@ -1793,6 +1794,7 @@ async def _do_heartbeat_check(db, timeout_threshold):
     if timed_out_devices:
         for device in timed_out_devices:
             device.status = 'offline'
+            device.offline_since = min(now, int(device.timestamp or now) + timeout_seconds)
             device.timestamp = now
             device.bps = 0
             device.ntrip_connected = False
@@ -1833,6 +1835,7 @@ async def check_device_heartbeats():
                 # Bulk update
                 for device in timed_out_devices:
                     device.status = 'offline'
+                    device.offline_since = min(now, int(device.timestamp or now) + HEARTBEAT_TIMEOUT)
                     device.timestamp = now
                     device.bps = 0
                     device.ntrip_connected = False
@@ -2028,6 +2031,7 @@ async def lifespan(app: FastAPI):
                                     if not decision.accepted:
                                         continue
                                     device.status = 'offline'
+                                    device.offline_since = min(now, int(device.timestamp or now) + HEARTBEAT_TIMEOUT)
                                     device.timestamp = now
                                     device.bps = 0
                                     device.ntrip_connected = False
@@ -3283,12 +3287,14 @@ async def lifespan(app: FastAPI):
         # --- BƯỚC 3: ĐÓNG KẾT NỐI DATABASE (QUAN TRỌNG NHẤT) ---
         try:
             logger.info("Setting all devices to OFFLINE...")
+            shutdown_at = int(time.time())
             async with device_session_scope() as db:
                 await db.execute(
                     update(models.Device)
                     .where(models.Device.status.in_(['online', 'sleep']))
                     .values(
                         status='offline',
+                        offline_since=shutdown_at,
                         ntrip_connected=False,
                         bps=0
                     )
@@ -4676,6 +4682,7 @@ async def get_public_map_stations(
                         "name": dev.name,
                         "status": dev.status,
                         "timestamp": dev.timestamp,
+                        "offline_since": dev.offline_since,
                         "lat": float(lat),
                         "lon": float(lon),
                         "alt": float(alt) if alt is not None else 0.0,
@@ -7283,7 +7290,7 @@ def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
             "title": "Station offline",
             "message": f"{device.name or device.serial} is offline",
             "device_serial": device.serial,
-            "created_at": int(device.timestamp or now_ts),
+            "created_at": int(device.offline_since or device.timestamp or now_ts),
         })
     elif stale_seconds > 900:
         alerts.append({
@@ -9134,6 +9141,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
             **(offline_decision.payload or {}),
             "serial": serial,
             "status": "offline",
+            "offline_since": now_ts,
             "ntrip_connected": False,
             "bps": 0,
             "ntrip_status": {
@@ -9158,6 +9166,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
 
                     # Only update status-related fields, do NOT touch config
                     device.status = "offline"
+                    device.offline_since = now_ts
                     device.bps = 0
                     device.ntrip_connected = False
                     device.ntrip_status = {

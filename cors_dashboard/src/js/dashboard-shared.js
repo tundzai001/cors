@@ -148,15 +148,20 @@ const getServerTelemetry = (device, serverId) => {
 
 const getOfflineInfo = (device, nowMs = Date.now()) => {
     const status = String(device?.status || '').toLowerCase();
-    const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
-    const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
-    if (!timestamp) return null;
-
     const nowSeconds = Number(nowMs) / 1000;
-    const stale = nowSeconds - timestamp > 180;
-    if (status !== 'offline' && !stale) return null;
+    let sinceSeconds;
 
-    const sinceSeconds = status === 'offline' ? timestamp : timestamp + 180;
+    if (status === 'offline') {
+        const rawOfflineSince = Number(device?.offline_since || 0);
+        if (!rawOfflineSince) return { sinceSeconds: null, sinceText: null, elapsedSeconds: null, durationText: null, unknown: true };
+        sinceSeconds = rawOfflineSince > 1e12 ? rawOfflineSince / 1000 : rawOfflineSince;
+    } else {
+        const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+        const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
+        if (!timestamp || nowSeconds - timestamp <= 180) return null;
+        sinceSeconds = timestamp + 180;
+    }
+
     const elapsedSeconds = Math.max(0, Math.floor(nowSeconds - sinceSeconds));
     const date = new Date(sinceSeconds * 1000);
     const pad = value => String(value).padStart(2, '0');
@@ -176,7 +181,7 @@ const getOfflineInfo = (device, nowMs = Date.now()) => {
                 ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
                 : 'Less than a minute';
 
-    return { sinceSeconds, sinceText, elapsedSeconds, durationText };
+    return { sinceSeconds, sinceText, elapsedSeconds, durationText, unknown: false };
 };
 
 const getMapEffectiveStatus = (device) => {

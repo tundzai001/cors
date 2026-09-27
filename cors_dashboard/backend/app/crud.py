@@ -199,6 +199,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     # Với payload partial (ví dụ offline event), không ép default để tránh ghi đè dữ liệu cũ.
                     'status': device.get('status'),
                     'timestamp': device.get('timestamp', int(time.time())),
+                    'offline_since': device.get('offline_since'),
                     'bps': device.get('bps'),
                     'ntrip_status': device.get('ntrip_status'),
                     'ntrip_connected': device.get('ntrip_connected'),
@@ -238,6 +239,32 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                 update_dict = {
                     'status': func.coalesce(stmt.excluded.status, models.Device.status),
                     'timestamp': stmt.excluded.timestamp,
+                    'offline_since': case(
+                        (stmt.excluded.status.is_(None), models.Device.offline_since),
+                        (
+                            stmt.excluded.status == 'offline',
+                            case(
+                                (
+                                    models.Device.status == 'offline',
+                                    func.coalesce(models.Device.offline_since, stmt.excluded.offline_since),
+                                ),
+                                else_=func.coalesce(
+                                    stmt.excluded.offline_since,
+                                    case(
+                                        (
+                                            and_(
+                                                models.Device.timestamp > 0,
+                                                stmt.excluded.timestamp - models.Device.timestamp > 180,
+                                            ),
+                                            models.Device.timestamp + 180,
+                                        ),
+                                        else_=stmt.excluded.timestamp,
+                                    ),
+                                ),
+                            ),
+                        ),
+                        else_=None,
+                    ),
                     'bps': func.coalesce(stmt.excluded.bps, models.Device.bps),
                     'ntrip_status': func.coalesce(stmt.excluded.ntrip_status, models.Device.ntrip_status),
                     'ntrip_connected': func.coalesce(stmt.excluded.ntrip_connected, models.Device.ntrip_connected),
@@ -467,6 +494,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
                 status=new_status or "offline",
                 is_provisioned=True, 
                 timestamp=current_ts,
+                offline_since=device_data.get("offline_since"),
                 base_config=new_base_config,
                 service_config=final_service_config,
                 system_info=new_system_info or None,
@@ -563,12 +591,27 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         should_update = True
     
     # Status
-    if new_status and new_status != existing_device.status:
+    normalized_new_status = str(new_status or "").strip().lower()
+    normalized_existing_status = str(existing_device.status or "").strip().lower()
+    if normalized_new_status and normalized_new_status != normalized_existing_status:
         update_values["status"] = new_status
         update_values["timestamp"] = current_ts
+        if normalized_new_status == "offline":
+            last_seen = int(existing_device.timestamp or 0)
+            update_values["offline_since"] = (
+                min(current_ts, last_seen + 180)
+                if last_seen > 0 and current_ts - last_seen > 180
+                else current_ts
+            )
+        else:
+            update_values["offline_since"] = None
         should_update = True
     else:
         update_values["timestamp"] = current_ts
+        if normalized_new_status == "offline" and existing_device.offline_since is None and device_data.get("offline_since"):
+            update_values["offline_since"] = int(device_data["offline_since"])
+        elif normalized_new_status and normalized_new_status != "offline" and existing_device.offline_since is not None:
+            update_values["offline_since"] = None
         should_update = True
 
     # NTRIP status

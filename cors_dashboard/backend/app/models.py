@@ -14,6 +14,7 @@ class Device(Base):
     status = Column(String, default="offline", index=True)
     device_token = Column(String, index=True, nullable=True)
     timestamp = Column(BigInteger, default=0, index=True)
+    offline_since = Column(BigInteger, nullable=True)
     bps = Column(Integer, default=0)
     detected_chip_type = Column(String, default="UNKNOWN")
     user_id = Column(Integer, nullable=True, index=True)

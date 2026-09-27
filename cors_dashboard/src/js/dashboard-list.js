@@ -185,11 +185,6 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const streamState = device.ntrip_stream_state || {};
         const rawStatus = isDeviceStaleOffline(device, offlineNow || Date.now()) ? 'offline' : String(device?.status || 'offline').toLowerCase();
         const sourceOffline = rawStatus === 'offline';
-        const offlineInfo = offlineNow
-            ? window.CorsDashboardShared?.getOfflineInfo?.(device, offlineNow) || null
-            : (String(device?.status || '').toLowerCase() === 'offline'
-                ? window.CorsDashboardShared?.getOfflineInfo?.(device) || null
-                : null);
         const tokenGap = hasAccessTokenGap(device);
 
         const toBool = (value, defaultValue = false) => {
@@ -263,7 +258,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(sourceOffline ? 0 : (s1UseRtcmSleepUi ? rtcmInputBps : s1.bps)),
             s2Enabled, s2SleepMode, s2UseRtcmSleepUi, s2Speed: formatSpeed(sourceOffline ? 0 : (s2UseRtcmSleepUi ? rtcmInputBps : s2.bps)),
             s1StatusClass, s2StatusClass,
-            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps, sourceOffline, offlineInfo
+            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps, sourceOffline
         };
     }, [device, device.ntrip_status, device.ntrip_stream_state, device.service_config, device.ntrip_stats, offlineNow]);
     const opsFlags = React.useMemo(() => getDeviceOpsFlags(device), [device, device.ntrip_status, device.service_config]);
@@ -282,14 +277,6 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                     <div className="device-name" title={device.name || device.serial}>
                         {device.name || device.serial}
                     </div>
-                    {metrics.offlineInfo && (
-                        <div className="device-offline-meta small text-danger mt-1" title={`Offline since ${metrics.offlineInfo.sinceText} · ${metrics.offlineInfo.durationText}`}>
-                            <i className="bi bi-clock-history me-1" aria-hidden="true"></i>
-                            <span>Offline since</span>{' '}
-                            <time dateTime={new Date(metrics.offlineInfo.sinceSeconds * 1000).toISOString()}>{metrics.offlineInfo.sinceText}</time>
-                            {' · '}{metrics.offlineInfo.durationText}
-                        </div>
-                    )}
                     {!metrics.hideStatusBadge && (
                         <div className="mt-1 d-flex align-items-center gap-1">
                             <span className={`badge ${metrics.statusBadgeClass}`}>
@@ -379,11 +366,11 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
     ];
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
     const getListStatus = React.useCallback((device) => {
-        const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
+        const rawStatus = isDeviceStaleOffline(device, clockNow) ? 'offline' : String(device?.status || 'offline').toLowerCase();
         const effective = getEffectiveStatus({ ...device, status: rawStatus });
         if (rawStatus === 'offline') return 'offline';
         return hasAccessTokenGap(device) && effective === 'offline' ? 'awaiting_license' : effective;
-    }, [getEffectiveStatus]);
+    }, [getEffectiveStatus, clockNow]);
     const counts = React.useMemo(() => {
         return devices.reduce((acc, device) => {
             const status = getListStatus(device);
@@ -513,7 +500,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                             onSelect={onSelect}
                             onDelete={onDelete}
                             currentUser={currentUser}
-                            offlineNow={window.CorsDashboardShared?.getOfflineInfo?.(device, clockNow) ? clockNow : null}
+                            offlineNow={clockNow}
                         />
                     ))
                 )}

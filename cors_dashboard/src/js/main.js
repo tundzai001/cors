@@ -130,7 +130,7 @@ const CONTROL_STATUS_VALUES = new Set([
     'unprovisioned', 'awaiting_license'
 ]);
 const LIVE_STATUS_FIELDS = [
-    'status', 'timestamp', 'agent_timestamp', 'server_received_at',
+    'status', 'timestamp', 'offline_since', 'agent_timestamp', 'server_received_at',
     'status_revision', 'status_source', 'bps', 'ntrip_connected',
     'ntrip_status', 'ntrip_stats', 'transport_status'
 ];
@@ -694,6 +694,18 @@ function updateGlobalDevices(newDeviceData) {
 
         // Giữ chip/config đã biết khi bản tin realtime chỉ là partial update (đặc biệt lúc offline).
         if (existingDevice) {
+            if (hasOwn(newDevice, 'status') && !hasOwn(newDevice, 'offline_since')) {
+                const nextStatus = String(newDevice.status || '').toLowerCase();
+                const previousStatus = String(existingDevice.status || '').toLowerCase();
+                if (nextStatus === 'offline') {
+                    newDevice.offline_since = previousStatus === 'offline'
+                        ? (existingDevice.offline_since ?? null)
+                        : (Number(newDevice.server_received_at || newDevice.timestamp || 0) || Math.floor(Date.now() / 1000));
+                } else {
+                    newDevice.offline_since = null;
+                }
+            }
+
             // Chip Type
             if (!newDevice.detected_chip_type || newDevice.detected_chip_type === 'UNKNOWN') {
                 if (existingDevice.detected_chip_type && existingDevice.detected_chip_type !== 'UNKNOWN') {
@@ -1604,6 +1616,7 @@ async function loadInitialDevices() {
                 name: d.name,
                 status: d.status,
                 timestamp: d.timestamp,
+                offline_since: d.offline_since,
                 bps: d.bps || 0,
                 ntrip_connected: !!d.ntrip_connected,
                 ntrip_status: d.ntrip_status || null,

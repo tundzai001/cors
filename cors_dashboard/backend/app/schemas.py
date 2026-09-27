@@ -21,6 +21,7 @@ class DeviceBase(BaseModel):
     name: str | None = None
     status: str | None = "offline"
     timestamp: int | None = 0
+    offline_since: int | None = None
     version: str | None = None
     system_info: Optional[dict] = None
     
