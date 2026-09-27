@@ -5,6 +5,14 @@
     const TEXT_OUTPUTS = new WeakMap();
     const ATTRIBUTE_SOURCES = new WeakMap();
     const ATTRIBUTE_OUTPUTS = new WeakMap();
+    const GNSS_FIX_TERMS = {
+        'rtk cố định': 'RTK Fixed',
+        'rtk fixed': 'RTK Fixed',
+        'rtk pha động': 'Float',
+        'rtk float': 'Float',
+        '3d': '3D',
+        'float': 'Float'
+    };
     const translations = [
         ['Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh CORS trên toàn lãnh thổ Việt Nam.', 'A system for managing and monitoring the CORS satellite positioning network across Vietnam.'],
         ['Cung cấp hạ tầng RTK/NTRIP chuyên nghiệp cho khảo sát, đo đạc và tự động hóa.', 'Professional RTK/NTRIP infrastructure for surveying, measurement, and automation.'],
@@ -924,7 +932,7 @@
         ['Phiên đang chạy chỉ xóa được sau khi kết thúc.', 'An active session can only be deleted after it ends.'],
         ['Không rõ mountpoint', 'Unknown mountpoint'],
         ['Không rõ', 'Unknown'],
-        ['Fix gần nhất', 'Most recent FIX'],
+        ['Fix gần nhất', 'Latest fix'],
         ['Vệ tinh gần nhất', 'Most recent satellite count'],
         ['Cập nhật cuối', 'Last updated'],
         ['Các điểm đo trong phiên', 'Measurement points in this session'],
@@ -1106,8 +1114,6 @@
         ['BASE CỐ ĐỊNH', 'BASE FIXED'],
         ['BASE (Tự động CORS)', 'BASE (Auto CORS)'],
         ['BASE SẴN SÀNG', 'BASE READY'],
-        ['RTK CỐ ĐỊNH', 'RTK FIXED'],
-        ['RTK PHA ĐỘNG', 'RTK FLOAT'],
         ['CHƯA FIX', 'NO FIX'],
         ['ĐANG KHẢO SÁT...', 'SURVEYING...'],
         ['Tự động cấu hình...', 'Auto Setup...'],
@@ -1321,6 +1327,10 @@
         const direction = language === 'vi' ? 'vi' : 'en';
         const numericPattern = numericUnitPatterns[direction];
         const protectedValues = [];
+        const protect = value => {
+            const index = protectedValues.push(value) - 1;
+            return `\uE000${index}\uE001`;
+        };
         let result = String(value ?? '');
         if (direction === 'en') {
             result = result.replace(/^Từ ngày$/iu, 'From').replace(/^Đến ngày$/iu, 'To');
@@ -1339,10 +1349,6 @@
         } else {
             result = result.replace(/^From$/iu, 'Từ ngày').replace(/^To$/iu, 'Đến ngày');
             result = result.replace(/^Device '(.+)' removed from list by (.+)$/iu, (_match, deviceName, actor) => {
-                const protect = value => {
-                    const index = protectedValues.push(value) - 1;
-                    return `\uE000${index}\uE001`;
-                };
                 return `Thiết bị '${protect(deviceName)}' đã bị xóa khỏi danh sách bởi ${protect(actor)}`;
             });
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+days\s+remaining(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}Còn ${count} ngày`);
@@ -1366,6 +1372,8 @@
             const [singular, plural] = viNumericUnits[unit.toLowerCase()];
             return `${prefix}${count} ${Number(count) === 1 ? singular : plural}`;
         });
+        result = result.replace(/(^|[^\p{L}\p{N}])(RTK\s+(?:CỐ ĐỊNH|FIXED|PHA ĐỘNG|FLOAT)|3D|FLOAT)(?=$|[^\p{L}\p{N}])/giu,
+            (_match, prefix, term) => `${prefix}${protect(GNSS_FIX_TERMS[term.replace(/\s+/gu, ' ').trim().toLowerCase()])}`);
         result = applyTranslationPlan(result, shortTranslationPlans[direction]);
         if (direction === 'en') result = result.replace(/\s+\?/g, '?');
         return result.replace(/\uE000(\d+)\uE001/gu, (_match, index) => protectedValues[Number(index)] ?? '');

@@ -52,7 +52,7 @@ class NMEAParser:
         try:
             fix_quality = int(parts[6]) if parts[6] else 0
             fix_map = {
-                0: "INVALID", 1: "GPS (SPS)", 2: "DGPS", 
+                0: "INVALID", 1: "3D", 2: "DGPS",
                 3: "PPS", 4: "RTK_FIXED", 5: "RTK_FLOAT", 6: "ESTIMATED"
             }
             

@@ -263,10 +263,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         }
     } else if (liveDataAvailable) {
         const FIX_STATUS_MAP = {
-            'RTK_FIXED': { label: 'RTK FIXED', color: '#00ff00', icon: '🎯' },
-            'RTK_FLOAT': { label: 'RTK FLOAT', color: '#ffaa00', icon: '📍' },
+            'RTK_FIXED': { label: 'RTK Fixed', color: '#00ff00', icon: '🎯' },
+            'RTK_FLOAT': { label: 'Float', color: '#ffaa00', icon: '📍' },
             'DGPS': { label: 'DGPS', color: '#ff9900', icon: '⚠️' },
-            'GPS_FIX': { label: 'GPS FIX', color: '#999999', icon: '📡' },
+            'GPS_FIX': { label: '3D', color: '#999999', icon: '📡' },
             'NO_FIX': { label: 'NO FIX', color: '#ff0000', icon: '❌' }
         };
         fixInfo = FIX_STATUS_MAP[rtk_status] || FIX_STATUS_MAP['NO_FIX'];
@@ -749,10 +749,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     }, []);
     /*
     const FIX_STATUS_MAP = {
-        'RTK_FIXED': { label: 'RTK FIXED', color: '#00ff00', icon: '🎯', priority: 5 },
-        'RTK_FLOAT': { label: 'RTK FLOAT', color: '#ffaa00', icon: '📍', priority: 4 },
+        'RTK_FIXED': { label: 'RTK Fixed', color: '#00ff00', icon: '🎯', priority: 5 },
+        'RTK_FLOAT': { label: 'Float', color: '#ffaa00', icon: '📍', priority: 4 },
         'DGPS': { label: 'DGPS', color: '#ff9900', icon: '⚠️', priority: 3 },
-        'GPS_FIX': { label: 'GPS FIX', color: '#999999', icon: '📡', priority: 2 },
+        'GPS_FIX': { label: '3D', color: '#999999', icon: '📡', priority: 2 },
         'NO_FIX': { label: 'NO FIX', color: '#ff0000', icon: '❌', priority: 1 }
     };
     

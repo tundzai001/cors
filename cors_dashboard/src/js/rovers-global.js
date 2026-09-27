@@ -1792,7 +1792,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const longitude = hasPosition ? String(position.lon) : '';
                     const ended = Boolean(session.ended_at);
                     const points = Array.isArray(session.points) ? session.points : [];
-                    const fixLabels = { 0: 'Không có fix', 1: 'GPS', 2: 'DGPS', 3: 'PPS', 4: 'RTK Fixed', 5: 'RTK Float', 6: 'Ước tính' };
+                    const fixLabels = { 0: 'Không có fix', 1: '3D', 2: 'DGPS', 3: 'PPS', 4: 'RTK Fixed', 5: 'Float', 6: 'Ước tính' };
                     const currentFixQuality = session.current_fix_quality == null ? NaN : Number(session.current_fix_quality);
                     const currentFixLabel = Number.isFinite(currentFixQuality)
                         ? fixLabels[currentFixQuality] || `Fix ${currentFixQuality}`
