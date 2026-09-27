@@ -71,6 +71,10 @@ body.ops-admin-page {
 }
 
 @media (min-width: 992px) {
+    .ops-admin-nav {
+        min-height: 106px;
+    }
+
     .ops-admin-nav .container-fluid {
         display: grid;
         gap: 4px 16px;
@@ -81,7 +85,15 @@ body.ops-admin-page {
     }
 
     .ops-admin-nav .navbar-brand { grid-area: brand; }
-    .ops-admin-nav .navbar-collapse { grid-area: navigation; min-width: 0; }
+    .ops-admin-nav .navbar-collapse {
+        grid-area: navigation;
+        min-width: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+    }
+
+    .ops-admin-nav .navbar-collapse::-webkit-scrollbar { display: none; }
     .ops-admin-nav .container-fluid > .d-flex {
         flex-wrap: nowrap;
         grid-area: account;
@@ -97,8 +109,17 @@ body.ops-admin-page {
     }
 
     .ops-admin-nav #logout-btn { flex: 0 0 auto; white-space: nowrap; }
-    .ops-admin-nav .navbar-nav { flex-wrap: wrap; gap: 4px 6px; }
+    .ops-admin-nav .navbar-nav {
+        flex-wrap: nowrap;
+        gap: 4px 6px;
+        min-width: 100%;
+        width: max-content;
+    }
     .ops-admin-nav .navbar-nav > .nav-item { flex: 0 0 auto; }
+
+    body.dashboard-fixed-layout > nav.ops-admin-nav ~ main.container-fluid {
+        height: calc(100vh - 106px);
+    }
 }
 
 .ops-admin-nav .nav-link:hover {
