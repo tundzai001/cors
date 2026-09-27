@@ -37,12 +37,13 @@ const STATUS_CLASS_MAP = {
     'auto_setup_base': 'bg-info'
 };
 
-function isDeviceStaleOffline(device) {
+function isDeviceStaleOffline(device, nowMs = Date.now()) {
     const rawStatus = String(device?.status || '').toLowerCase();
     if (rawStatus === 'offline') return true;
-    const timestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
     if (!timestamp) return false;
-    return (Date.now() / 1000) - timestamp > 180;
+    return (nowMs / 1000) - timestamp > 180;
 }
 const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
     const [rovers, setRovers] = useState([]);
@@ -736,6 +737,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const isDeviceUnprovisioned = lifecycleStatus === 'unprovisioned';
     const isRelayLikeStation = String(device?.serial || '').toUpperCase().startsWith('MONITOR_');
     const [activeTab, setActiveTab] = useState('');
+    const [offlineClockNow, setOfflineClockNow] = useState(Date.now());
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [tempName, setTempName] = useState('');
@@ -750,7 +752,8 @@ const DetailsPanel = memo(function DetailsPanel({
     const baseConfigSignature = isGnssConfigured ? JSON.stringify(device.base_config) : '';
     const serviceConfigSignature = isServiceConfigured ? JSON.stringify(device.service_config) : '';
     const authStatus = device?.system_info?.auth_status || {};
-    const staleOffline = isDeviceStaleOffline(device);
+    const staleOffline = isDeviceStaleOffline(device, offlineClockNow);
+    const offlineInfo = window.CorsDashboardShared?.getOfflineInfo?.(device, offlineClockNow) || null;
     const licenseBypass = authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true;
     const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
         ? authStatus.server_token_present
@@ -772,6 +775,12 @@ const DetailsPanel = memo(function DetailsPanel({
                 (tokenCheckAvailable && authStatus.agent_token_present === false) ||
                 (tokenCheckAvailable && authStatus.token_synced === false)
             );
+
+    useEffect(() => {
+        if (!device?.serial) return undefined;
+        const interval = setInterval(() => setOfflineClockNow(Date.now()), 30000);
+        return () => clearInterval(interval);
+    }, [device?.serial]);
     const rawStatusKey = staleOffline ? 'offline' : lifecycleStatus;
     const operationalStatus = ['online', 'sleep', 'streaming', 'starting'].includes(rawStatusKey)
         ? (window.CorsDashboardShared?.getMapEffectiveStatus?.({ ...device, status: rawStatusKey }) || rawStatusKey)
@@ -1188,6 +1197,14 @@ const DetailsPanel = memo(function DetailsPanel({
                     <div className="alert alert-warning py-2 px-3 small mb-3" role="status">
                         <i className="bi bi-broadcast-pin me-2"></i>
                         GNSS/RTCM hiện không có dữ liệu trực tiếp. Độ chính xác chỉ được xác nhận lại khi trạm kết nối trở lại.
+                        {offlineInfo && (
+                            <div className="mt-1 fw-semibold">
+                                <i className="bi bi-clock-history me-1" aria-hidden="true"></i>
+                                <span>Offline since</span>{' '}
+                                <time dateTime={new Date(offlineInfo.sinceSeconds * 1000).toISOString()}>{offlineInfo.sinceText}</time>
+                                {' · '}{offlineInfo.durationText}
+                            </div>
+                        )}
                     </div>
                 )}
 

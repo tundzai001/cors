@@ -14,6 +14,8 @@
         'float': 'Float'
     };
     const translations = [
+        ['Ngoại tuyến từ', 'Offline since'],
+        ['Dưới một phút', 'Less than a minute'],
         ['Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh CORS trên toàn lãnh thổ Việt Nam.', 'A system for managing and monitoring the CORS satellite positioning network across Vietnam.'],
         ['Cung cấp hạ tầng RTK/NTRIP chuyên nghiệp cho khảo sát, đo đạc và tự động hóa.', 'Professional RTK/NTRIP infrastructure for surveying, measurement, and automation.'],
         ['Nền tảng CORS duy nhất được thiết kế và vận hành bởi đội ngũ kỹ sư Việt Nam, tối ưu cho điều kiện thực tế trong nước.', 'The only CORS platform designed and operated by Vietnamese engineers, optimized for local conditions.'],
@@ -1273,7 +1275,7 @@
 
     const escapePattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const viNumericUnits = {
-        'ngày': ['day', 'days'], 'phiên': ['session', 'sessions'], 'máy': ['device', 'devices'],
+        'ngày': ['day', 'days'], 'giờ': ['hour', 'hours'], 'phiên': ['session', 'sessions'], 'máy': ['device', 'devices'],
         'điểm': ['point', 'points'], 'phút': ['minute', 'minutes'], 'giây': ['second', 'seconds'],
         'mét': ['meter', 'meters'], 'trạm': ['station', 'stations'], 'thông số': ['field', 'fields'],
         'vệ tinh': ['satellite', 'satellites'], 'máy chủ': ['server', 'servers'], 'lõi CPU': ['core', 'cores']

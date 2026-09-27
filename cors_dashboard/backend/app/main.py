@@ -4675,6 +4675,7 @@ async def get_public_map_stations(
                         "serial": dev.serial,
                         "name": dev.name,
                         "status": dev.status,
+                        "timestamp": dev.timestamp,
                         "lat": float(lat),
                         "lon": float(lon),
                         "alt": float(alt) if alt is not None else 0.0,

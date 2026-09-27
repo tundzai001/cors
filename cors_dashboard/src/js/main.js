@@ -1603,6 +1603,7 @@ async function loadInitialDevices() {
                 serial: d.serial,
                 name: d.name,
                 status: d.status,
+                timestamp: d.timestamp,
                 bps: d.bps || 0,
                 ntrip_connected: !!d.ntrip_connected,
                 ntrip_status: d.ntrip_status || null,

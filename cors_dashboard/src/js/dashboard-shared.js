@@ -146,6 +146,39 @@ const getServerTelemetry = (device, serverId) => {
     };
 };
 
+const getOfflineInfo = (device, nowMs = Date.now()) => {
+    const status = String(device?.status || '').toLowerCase();
+    const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
+    if (!timestamp) return null;
+
+    const nowSeconds = Number(nowMs) / 1000;
+    const stale = nowSeconds - timestamp > 180;
+    if (status !== 'offline' && !stale) return null;
+
+    const sinceSeconds = status === 'offline' ? timestamp : timestamp + 180;
+    const elapsedSeconds = Math.max(0, Math.floor(nowSeconds - sinceSeconds));
+    const date = new Date(sinceSeconds * 1000);
+    const pad = value => String(value).padStart(2, '0');
+    const sinceText = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+
+    let remaining = elapsedSeconds;
+    const days = Math.floor(remaining / 86400);
+    remaining %= 86400;
+    const hours = Math.floor(remaining / 3600);
+    remaining %= 3600;
+    const minutes = Math.floor(remaining / 60);
+    const durationText = days
+        ? `${days} ${days === 1 ? 'day' : 'days'}${hours ? ` ${hours} ${hours === 1 ? 'hour' : 'hours'}` : ''}`
+        : hours
+            ? `${hours} ${hours === 1 ? 'hour' : 'hours'}${minutes ? ` ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` : ''}`
+            : minutes
+                ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+                : 'Less than a minute';
+
+    return { sinceSeconds, sinceText, elapsedSeconds, durationText };
+};
+
 const getMapEffectiveStatus = (device) => {
     const authStatus = device?.system_info?.auth_status || {};
     const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
@@ -181,5 +214,5 @@ const getMapEffectiveStatus = (device) => {
     }
     return statusForOps;
 };
-window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getMapEffectiveStatus };
+window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, getMapEffectiveStatus };
 })();

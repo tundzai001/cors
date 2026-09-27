@@ -100,12 +100,13 @@ function hasAccessTokenGap(device) {
         (tokenCheckAvailable && authStatus.token_synced === false);
 }
 
-function isDeviceStaleOffline(device) {
+function isDeviceStaleOffline(device, nowMs = Date.now()) {
     const rawStatus = String(device?.status || '').toLowerCase();
     if (rawStatus === 'offline') return true;
-    const timestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
     if (!timestamp) return false;
-    return (Date.now() / 1000) - timestamp > 180;
+    return (nowMs / 1000) - timestamp > 180;
 }
 
 const STATUS_CLASS_MAP = {
@@ -129,7 +130,7 @@ const STATUS_CLASS_MAP = {
 // === DEVICE LIST COMPONENTS
 // ===============================================================================
 
-const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelected, onSelect, onDelete, currentUser }) {
+const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelected, onSelect, onDelete, currentUser, offlineNow = null }) {
     const isAdmin = currentUser?.role === 'admin';
     const canDelete = currentUser?.role === 'admin' ||
         (currentUser?.role === 'coordinator' && device.user_id === currentUser?.id);
@@ -182,8 +183,13 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const ntripStats = device.ntrip_stats || {};
         const mqttStats = device.mqtt_stats || {};
         const streamState = device.ntrip_stream_state || {};
-        const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
+        const rawStatus = isDeviceStaleOffline(device, offlineNow || Date.now()) ? 'offline' : String(device?.status || 'offline').toLowerCase();
         const sourceOffline = rawStatus === 'offline';
+        const offlineInfo = offlineNow
+            ? window.CorsDashboardShared?.getOfflineInfo?.(device, offlineNow) || null
+            : (String(device?.status || '').toLowerCase() === 'offline'
+                ? window.CorsDashboardShared?.getOfflineInfo?.(device) || null
+                : null);
         const tokenGap = hasAccessTokenGap(device);
 
         const toBool = (value, defaultValue = false) => {
@@ -257,9 +263,9 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(sourceOffline ? 0 : (s1UseRtcmSleepUi ? rtcmInputBps : s1.bps)),
             s2Enabled, s2SleepMode, s2UseRtcmSleepUi, s2Speed: formatSpeed(sourceOffline ? 0 : (s2UseRtcmSleepUi ? rtcmInputBps : s2.bps)),
             s1StatusClass, s2StatusClass,
-            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps, sourceOffline
+            statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps, sourceOffline, offlineInfo
         };
-    }, [device, device.ntrip_status, device.ntrip_stream_state, device.service_config, device.ntrip_stats]);
+    }, [device, device.ntrip_status, device.ntrip_stream_state, device.service_config, device.ntrip_stats, offlineNow]);
     const opsFlags = React.useMemo(() => getDeviceOpsFlags(device), [device, device.ntrip_status, device.service_config]);
 
     const handleDelete = (e) => {
@@ -276,6 +282,14 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
                     <div className="device-name" title={device.name || device.serial}>
                         {device.name || device.serial}
                     </div>
+                    {metrics.offlineInfo && (
+                        <div className="device-offline-meta small text-danger mt-1" title={`Offline since ${metrics.offlineInfo.sinceText} · ${metrics.offlineInfo.durationText}`}>
+                            <i className="bi bi-clock-history me-1" aria-hidden="true"></i>
+                            <span>Offline since</span>{' '}
+                            <time dateTime={new Date(metrics.offlineInfo.sinceSeconds * 1000).toISOString()}>{metrics.offlineInfo.sinceText}</time>
+                            {' · '}{metrics.offlineInfo.durationText}
+                        </div>
+                    )}
                     {!metrics.hideStatusBadge && (
                         <div className="mt-1 d-flex align-items-center gap-1">
                             <span className={`badge ${metrics.statusBadgeClass}`}>
@@ -355,6 +369,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
     const [statusFilter, setStatusFilter] = useState('all');
     const [filtersOpen, setFiltersOpen] = useState(false);
+    const [clockNow, setClockNow] = useState(Date.now());
     const searchTimeoutRef = useRef(null);
     const isAdmin = currentUser?.role === 'admin';
     const filterOptions = [
@@ -397,6 +412,11 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
     useEffect(() => {
         setLocalSearchTerm(searchTerm);
     }, [searchTerm]);
+
+    useEffect(() => {
+        const interval = setInterval(() => setClockNow(Date.now()), 30000);
+        return () => clearInterval(interval);
+    }, []);
 
     const handleSearchChange = (e) => {
         const value = e.target.value;
@@ -493,6 +513,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                             onSelect={onSelect}
                             onDelete={onDelete}
                             currentUser={currentUser}
+                            offlineNow={window.CorsDashboardShared?.getOfflineInfo?.(device, clockNow) ? clockNow : null}
                         />
                     ))
                 )}
