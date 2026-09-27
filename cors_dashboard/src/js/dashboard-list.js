@@ -179,7 +179,6 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
         const sourceOffline = rawStatus === 'offline';
         const tokenGap = hasAccessTokenGap(device);
-        const displayStatusKey = tokenGap && rawStatus !== 'offline' ? 'awaiting_license' : rawStatus;
 
         const toBool = (value, defaultValue = false) => {
             if (value === null || value === undefined) return defaultValue;
@@ -230,77 +229,22 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const s2SleepMode = s2Enabled && s2OnDemand && !s2Active;
         const s2UseRtcmSleepUi = rawStatus === 'sleep' && s2SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
 
-        const hasInputTraffic = hasRtcmInputMetric && rtcmInputBps > 0;
-        const hasAnyOutputTraffic = (s1Enabled && s1.bps > 0) || (s2Enabled && s2.bps > 0);
-        const hasAnySleepOnly = !hasAnyOutputTraffic && ((s1Enabled && s1SleepMode) || (s2Enabled && s2SleepMode));
-
-        const serialUpper = String(device?.serial || '').toUpperCase();
-        const chipUpper = String(device?.detected_chip_type || '').toUpperCase();
-
-        // --- CALCULATE STATUS COLOR WITH STRICT PRIMARY SERVER PRIORITY ---
-        let effectiveStatus = 'offline';
-
-        const okStatuses = ['online', 'streaming', 'sleep', 'starting'];
-        if (okStatuses.includes(rawStatus)) {
-            // 1. TRUST AGENT STATUS FIRST (Especially for 'sleep')
-            if (rawStatus === 'sleep') {
-                effectiveStatus = 'sleep';
-            } else if (rawStatus === 'starting') {
-                effectiveStatus = 'starting';
-            } else {
-                // 2. PRIMARY SERVER LOGIC: aitogy.com.vn (partial match for ports) > S1
-                const s1Host = String(config.serverhost1 || '').trim().toLowerCase();
-                const s2Host = String(config.serverhost2 || '').trim().toLowerCase();
-                const preferred = 'aitogy.com.vn';
-
-                let primarySid = 1;
-                if (s1Host.includes(preferred)) primarySid = 1;
-                else if (s2Host.includes(preferred)) primarySid = 2;
-                else primarySid = 1; // Default to S1
-
-                const pBps = primarySid === 1 ? s1.bps : s2.bps;
-                const pSleep = primarySid === 1 ? s1SleepMode : s2SleepMode;
-                const pEnabled = primarySid === 1 ? s1Enabled : s2Enabled;
-
-                if (pEnabled) {
-                    if (pBps > 0) {
-                        effectiveStatus = 'online';
-                    } else if (pSleep) {
-                        effectiveStatus = 'sleep';
-                    } else {
-                        effectiveStatus = 'online';
-                    }
-                } else {
-                    // Fallback to ANY enabled server if primary is disabled
-                    if (hasAnyOutputTraffic) {
-                        effectiveStatus = 'online';
-                    } else if (hasAnySleepOnly) {
-                        effectiveStatus = 'sleep';
-                    } else {
-                        effectiveStatus = 'offline';
-                    }
-                }
-            }
-        }
-
-        // SAFETY GUARD: If agent reports as Online/Sleep/Starting, use that as fallback if logic fails
-        if (effectiveStatus === 'offline' && okStatuses.includes(rawStatus)) {
-            effectiveStatus = rawStatus === 'offline' ? 'online' : rawStatus;
-        }
-
-        const operationalStatus = window.CorsDashboardShared?.getMapEffectiveStatus?.(device);
+        const statusDevice = { ...device, status: rawStatus };
+        const primaryServerId = window.CorsDashboardShared?.getPreferredOutputServerId?.(statusDevice);
+        const operationalStatus = window.CorsDashboardShared?.getMapEffectiveStatus?.(statusDevice) || rawStatus;
+        const effectiveStatus = sourceOffline ? 'offline' : operationalStatus;
+        const displayStatusKey = tokenGap && rawStatus !== 'offline' ? 'awaiting_license' : effectiveStatus;
         const statusColorClass = tokenGap && rawStatus !== 'offline'
             ? (['online', 'streaming', 'sleep', 'starting'].includes(operationalStatus) ? operationalStatus : 'awaiting_license')
             : effectiveStatus;
 
-        // Use the rawStatus declared above at line 265
         const statusText = STATUS_TEXT_MAP[displayStatusKey] || String(displayStatusKey || 'UNKNOWN').toUpperCase();
         const statusBadgeClass = STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary';
-        const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(rawStatus);
+        const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(effectiveStatus);
 
         // Per-server individual color: pushing=green, sleep/input-only=blue, idle=disconnected
-        const s1StatusClass = sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1SleepMode && rawStatus === 'sleep' ? 'sleep' : 'disconnected'));
-        const s2StatusClass = sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2SleepMode && rawStatus === 'sleep' ? 'sleep' : 'disconnected'));
+        const s1StatusClass = sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1SleepMode || (primaryServerId === 1 && effectiveStatus === 'sleep') ? 'sleep' : 'disconnected'));
+        const s2StatusClass = sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2SleepMode || (primaryServerId === 2 && effectiveStatus === 'sleep') ? 'sleep' : 'disconnected'));
 
         return {
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(sourceOffline ? 0 : (s1UseRtcmSleepUi ? rtcmInputBps : s1.bps)),
@@ -414,7 +358,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
     const getListStatus = React.useCallback((device) => {
         const rawStatus = isDeviceStaleOffline(device) ? 'offline' : String(device?.status || 'offline').toLowerCase();
-        const effective = getEffectiveStatus(device);
+        const effective = getEffectiveStatus({ ...device, status: rawStatus });
         if (rawStatus === 'offline') return 'offline';
         return hasAccessTokenGap(device) && effective === 'offline' ? 'awaiting_license' : effective;
     }, [getEffectiveStatus]);

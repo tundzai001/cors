@@ -105,6 +105,19 @@ const isPreferredHost = (hostValue) => {
     return PREFERRED_DOMAINS.some((d) => host.includes(d));
 };
 
+const getPreferredOutputServerId = (device) => {
+    const cfg = device?.service_config || {};
+    const enabled = [1, 2].filter((idx) => (
+        parseBoolCompat(cfg[`server${idx}_enabled`], isServerConfiguredCompat(cfg, idx))
+    ));
+    if (!enabled.length) return null;
+
+    const preferredServer = enabled.find((idx) => (
+        String(cfg[`serverhost${idx}`] || '').trim().toLowerCase().includes('aitogy.com.vn')
+    ));
+    return preferredServer || enabled[0];
+};
+
 const getMapEffectiveStatus = (device) => {
     const authStatus = device?.system_info?.auth_status || {};
     const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
@@ -126,35 +139,16 @@ const getMapEffectiveStatus = (device) => {
         return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
     }
 
-    const cfg = device?.service_config || {};
-    const s1Enabled = parseBoolCompat(cfg.server1_enabled, isServerConfiguredCompat(cfg, 1));
-    const s2Enabled = parseBoolCompat(cfg.server2_enabled, isServerConfiguredCompat(cfg, 2));
-
-    if (!s1Enabled && !s2Enabled) {
+    const primarySid = getPreferredOutputServerId(device);
+    if (!primarySid) {
         return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
     }
 
-    const s1Host = String(cfg.serverhost1 || '').trim().toLowerCase();
-    const s2Host = String(cfg.serverhost2 || '').trim().toLowerCase();
-    const preferred = 'aitogy.com.vn';
-
-    let primarySid = 1;
-    if (s1Host.includes(preferred)) primarySid = 1;
-    else if (s2Host.includes(preferred)) primarySid = 2;
-    else primarySid = 1;
-
     const ntripStatusMap = device?.ntrip_status || {};
-    const primaryBps = Number(ntripStatusMap[`server${primarySid}`]?.bps || 0);
-    if (primaryBps > 0) {
-        return 'online';
-    }
-
-    const onDemand = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
-    const active = onDemand ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
-    if (statusForOps === 'sleep' && (!onDemand || active)) {
-        return 'online';
-    }
-    return (!onDemand || active) ? 'online' : 'sleep';
+    const primaryBps = Number(
+        ntripStatusMap[`server${primarySid}`]?.bps ?? stats[`server${primarySid}_bps`] ?? 0
+    );
+    return primaryBps > 0 ? 'online' : 'sleep';
 };
-window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getMapEffectiveStatus };
+window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getMapEffectiveStatus };
 })();

@@ -773,9 +773,12 @@ const DetailsPanel = memo(function DetailsPanel({
                 (tokenCheckAvailable && authStatus.token_synced === false)
             );
     const rawStatusKey = staleOffline ? 'offline' : lifecycleStatus;
+    const operationalStatus = ['online', 'sleep', 'streaming', 'starting'].includes(rawStatusKey)
+        ? (window.CorsDashboardShared?.getMapEffectiveStatus?.({ ...device, status: rawStatusKey }) || rawStatusKey)
+        : rawStatusKey;
     const displayStatusKey = rawStatusKey !== 'offline' && (hasAccessTokenGap || rawStatusKey === 'awaiting_license')
         ? 'awaiting_license'
-        : rawStatusKey;
+        : operationalStatus;
     const storedCoords = device?.base_config?.coords || device?.base_coords || {};
     const stationHasConfiguration = isGnssConfigured || isServiceConfigured || (
         Number.isFinite(Number(storedCoords.lat)) && Number(storedCoords.lat) !== 0 &&

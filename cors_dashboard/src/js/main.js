@@ -1887,57 +1887,10 @@ window.openPublicMap = async function() {
         }
     };
 
-    const parseBoolCompat = (v, def = false) => {
-        if (v === null || v === undefined) return def;
-        if (typeof v === 'boolean') return v;
-        if (typeof v === 'string') {
-            const s = v.trim().toLowerCase();
-            if (['true', '1', 'yes', 'on'].includes(s)) return true;
-            if (['false', '0', 'no', 'off'].includes(s)) return false;
-        }
-        return Boolean(v);
-    };
-
-    const isServerConfigured = (cfg, idx) => {
-        const host = String(cfg[`serverhost${idx}`] || '').trim();
-        const port = String(cfg[`port${idx}`] || '').trim();
-        const mp = String(cfg[`mountpoint${idx}`] || '').trim();
-        return Boolean(host && port && mp);
-    };
-
-    const getMapEffectiveStatus = (dev) => {
-        const raw = String(dev?.status || '').toLowerCase();
-        const stats = dev?.ntrip_stats || {};
-        const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
-        const isVirtual = String(dev?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
-
-        if (raw === 'streaming') return 'streaming';
-        if (raw === 'starting') return 'starting';
-
-        if (!['online', 'streaming', 'sleep', 'starting'].includes(raw)) {
-            if (!(isVirtual && rtcmIn > 0)) return 'offline';
-        }
-
-        const cfg = dev?.service_config || {};
-        const s1Enabled = parseBoolCompat(cfg.server1_enabled, isServerConfigured(cfg, 1));
-        const s2Enabled = parseBoolCompat(cfg.server2_enabled, isServerConfigured(cfg, 2));
-        const enabledServers = [];
-        if (s1Enabled) enabledServers.push(1);
-        if (s2Enabled) enabledServers.push(2);
-        if (enabledServers.length === 0) return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
-
-        const s1h = String(cfg.serverhost1 || '').trim().toLowerCase();
-        const s2h = String(cfg.serverhost2 || '').trim().toLowerCase();
-        const pref = 'aitogy.com.vn';
-        const primarySid = s1h.includes(pref) ? 1 : (s2h.includes(pref) ? 2 : 1);
-        const primaryBps = Number(dev?.ntrip_status?.[`server${primarySid}`]?.bps || 0);
-        if (primaryBps > 0) return 'online';
-
-        const od = parseBoolCompat(cfg[`server${primarySid}_stream_on_demand`], parseBoolCompat(cfg.stream_on_demand, false));
-        const ac = od ? parseBoolCompat(cfg[`server${primarySid}_stream_active`], parseBoolCompat(cfg.stream_active, false)) : true;
-        if (raw === 'sleep' && (!od || ac)) return 'online';
-        return (!od || ac) ? 'online' : 'sleep';
-    };
+    const getMapEffectiveStatus = (dev) => (
+        window.CorsDashboardShared?.getMapEffectiveStatus?.(dev)
+        || String(dev?.status || 'offline').toLowerCase()
+    );
 
     const normalizeVietnamCoords = (rawLat, rawLon) => {
         let lat = Number(rawLat);
