@@ -8166,7 +8166,7 @@ async def get_rover_activity_daily(
         raise HTTPException(status_code=400, detail="Khoảng ngày tối đa là 366 ngày")
 
     visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
-    daily_receivers = {
+    daily_machines = {
         date_from + timedelta(days=offset): set()
         for offset in range((date_to - date_from).days + 1)
     }
@@ -8174,21 +8174,25 @@ async def get_rover_activity_daily(
         range_start, _ = _rover_history_day_bounds(date_from)
         _, range_end = _rover_history_day_bounds(date_to)
         stmt = select(
+            models.RoverSessionHistory.username,
             models.RoverSessionHistory.receiver_id,
             models.RoverSessionHistory.started_at,
             models.RoverSessionHistory.last_seen_at,
             models.RoverSessionHistory.ended_at,
         ).where(
             *_rover_history_overlap_filters(range_start, range_end),
+            models.RoverSessionHistory.username.is_not(None),
+            func.trim(models.RoverSessionHistory.username) != "",
             models.RoverSessionHistory.receiver_id.is_not(None),
             func.trim(models.RoverSessionHistory.receiver_id) != "",
         )
         if visible_usernames is not None:
-            stmt = stmt.where(func.lower(models.RoverSessionHistory.username).in_(visible_usernames))
+            stmt = stmt.where(func.lower(func.trim(models.RoverSessionHistory.username)).in_(visible_usernames))
         result = await auth_db.execute(stmt)
-        for receiver_id, started_at, last_seen_at, ended_at in result.all():
+        for username, receiver_id, started_at, last_seen_at, ended_at in result.all():
             receiver_key = str(receiver_id or "").strip().casefold()
-            if not receiver_key:
+            username_key = str(username or "").strip().casefold()
+            if not username_key or not receiver_key:
                 continue
             try:
                 first_active_at = int(started_at if started_at is not None else last_seen_at)
@@ -8206,15 +8210,15 @@ async def get_rover_activity_daily(
             cursor = max(date_from, first_active_day)
             last_day = min(date_to, last_active_day)
             while cursor <= last_day:
-                daily_receivers[cursor].add(receiver_key)
+                daily_machines[cursor].add((username_key, receiver_key))
                 cursor += timedelta(days=1)
 
     return {
         "date_from": date_from.isoformat(),
         "date_to": date_to.isoformat(),
         "days": [
-            {"date": day.isoformat(), "machine_count": len(receivers)}
-            for day, receivers in daily_receivers.items()
+            {"date": day.isoformat(), "machine_count": len(machines)}
+            for day, machines in daily_machines.items()
         ],
     }
 
@@ -8228,7 +8232,7 @@ async def get_rover_activity_day(
 ):
     visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
     start_at, end_at = _rover_history_day_bounds(activity_date)
-    items: dict[str, dict] = {}
+    items: dict[tuple[str, str], dict] = {}
     if visible_usernames is not None and not visible_usernames:
         return {"date": activity_date.isoformat(), "machine_count": 0, "machines": []}
 
@@ -8238,40 +8242,47 @@ async def get_rover_activity_day(
         session.username, session.mountpoint, session.receiver_id,
     ).where(
         *_rover_history_overlap_filters(start_at, end_at),
+        session.username.is_not(None),
+        func.trim(session.username) != "",
         session.receiver_id.is_not(None),
         func.trim(session.receiver_id) != "",
     )
     if visible_usernames is not None:
-        stmt = stmt.where(func.lower(session.username).in_(visible_usernames))
+        stmt = stmt.where(func.lower(func.trim(session.username)).in_(visible_usernames))
     result = await auth_db.execute(stmt)
-    receiver_by_session: dict[int, str] = {}
+    machine_by_session: dict[int, tuple[str, str]] = {}
     for session_id, username, mountpoint, receiver_id in result.all():
+        username_value = str(username or "").strip()
+        username_key = username_value.casefold()
         receiver_key = str(receiver_id or "").strip().casefold()
-        if not receiver_key:
+        if not username_key or not receiver_key:
             continue
-        item = items.setdefault(receiver_key, {
+        machine_key = (username_key, receiver_key)
+        item = items.setdefault(machine_key, {
+            "machine_key": json.dumps(machine_key, ensure_ascii=False, separators=(",", ":")),
+            "username": username_value,
             "receiver_id": str(receiver_id).strip(),
             "usernames": set(),
             "session_count": 0,
             "point_count": 0,
         })
-        if username:
-            item["usernames"].add(str(username))
+        if username_value:
+            item["usernames"].add(username_value)
         item["session_count"] += 1
-        receiver_by_session[session_id] = receiver_key
+        machine_by_session[session_id] = machine_key
 
-    if receiver_by_session:
+    if machine_by_session:
         point_stmt = select(
             models.RoverFixedPoint.session_id,
             func.count(models.RoverFixedPoint.id),
         ).where(
-            models.RoverFixedPoint.session_id.in_(list(receiver_by_session)),
+            models.RoverFixedPoint.session_id.in_(list(machine_by_session)),
             models.RoverFixedPoint.recorded_at >= start_at,
             models.RoverFixedPoint.recorded_at < end_at,
         ).group_by(models.RoverFixedPoint.session_id)
         point_result = await auth_db.execute(point_stmt)
         for session_id, point_count in point_result.all():
-            item = items.get(receiver_by_session.get(session_id, ""))
+            item = items.get(machine_by_session.get(session_id, ("", "")))
             if item is not None:
                 item["point_count"] += int(point_count or 0)
 
@@ -8280,7 +8291,7 @@ async def get_rover_activity_day(
             **item,
             "usernames": sorted(item["usernames"], key=str.casefold),
         }
-        for item in sorted(items.values(), key=lambda value: value["receiver_id"].casefold())
+        for item in sorted(items.values(), key=lambda value: (value["receiver_id"].casefold(), value["username"].casefold()))
     ]
     return {"date": activity_date.isoformat(), "machine_count": len(machines), "machines": machines}
 
@@ -8289,31 +8300,33 @@ async def get_rover_activity_day(
 async def get_rover_activity_track(
     activity_date: date = Query(..., alias="date"),
     receiver_id: str = Query(..., min_length=1, max_length=256),
+    username: str = Query(..., min_length=1, max_length=256),
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
 ):
-    if not receiver_id.strip():
-        raise HTTPException(status_code=400, detail="Receiver không được để trống")
+    if not receiver_id.strip() or not username.strip():
+        raise HTTPException(status_code=400, detail="Tài khoản và receiver không được để trống")
     visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
     if visible_usernames is not None and not visible_usernames:
-        return {"date": activity_date.isoformat(), "receiver_id": receiver_id, "points": []}
+        return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "points": []}
 
     start_at, end_at = _rover_history_day_bounds(activity_date)
     session = models.RoverSessionHistory
     session_query = select(session.id, session.username, session.mountpoint).where(
         *_rover_history_overlap_filters(start_at, end_at),
         func.lower(func.trim(session.receiver_id)) == receiver_id.strip().casefold(),
+        func.lower(func.trim(session.username)) == username.strip().casefold(),
     )
     if visible_usernames is not None:
-        session_query = session_query.where(func.lower(session.username).in_(visible_usernames))
+        session_query = session_query.where(func.lower(func.trim(session.username)).in_(visible_usernames))
     session_result = await auth_db.execute(session_query)
     session_info = {
         session_id: {"username": username, "mountpoint": mountpoint}
         for session_id, username, mountpoint in session_result.all()
     }
     if not session_info:
-        return {"date": activity_date.isoformat(), "receiver_id": receiver_id, "points": []}
+        return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "points": []}
 
     point_result = await auth_db.execute(
         select(
@@ -8342,7 +8355,7 @@ async def get_rover_activity_track(
         }
         for point_id, latitude, longitude, recorded_at, satellite_count, session_id in point_result.all()
     ]
-    return {"date": activity_date.isoformat(), "receiver_id": receiver_id, "points": points}
+    return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "points": points}
 
 
 @app.get("/api/rovers/{username}/history")

@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let roverActivityDaily = [];
     let roverActivityMachines = [];
     let roverActivitySelectedDate = '';
-    let roverActivitySelectedReceiver = '';
+    let roverActivitySelectedMachineKey = '';
     let roverActivityMap = null;
     let roverActivityDailyRequest = 0;
     let roverActivityDayRequest = 0;
@@ -1256,6 +1256,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         status.classList.toggle('is-error', isError);
     }
 
+    function roverActivityMachineKey(machine) {
+        return String(machine?.machine_key || JSON.stringify([
+            String(machine?.username || '').trim().toLowerCase(),
+            String(machine?.receiver_id || '').trim().toLowerCase()
+        ]));
+    }
+
+    function roverActivityMachineLabel(machine) {
+        return `Receiver ${machine?.receiver_id || 'Không rõ'} · ${machine?.username || 'Không rõ tài khoản'}`;
+    }
+
     function renderRoverActivityDays() {
         const container = document.getElementById('rover-activity-days-list');
         if (!container) return;
@@ -1295,7 +1306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const requestId = ++roverActivityDailyRequest;
         roverActivityDayRequest += 1;
         clearRoverActivityTrack();
-        setRoverActivityStatus('Đang tính số receiver hoạt động…');
+        setRoverActivityStatus('Đang tính số máy theo tài khoản và receiver…');
         const container = document.getElementById('rover-activity-days-list');
         if (container) container.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải số máy…</span></div>';
         try {
@@ -1309,7 +1320,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             roverActivitySelectedDate = hasSelectedDate ? roverActivitySelectedDate : dateTo;
             renderRoverActivityDays();
             await openRoverActivityDay(roverActivitySelectedDate, { skipRender: true });
-            setRoverActivityStatus(`Đã tải ${roverActivityDaily.length} ngày. Mỗi receiver khác nhau được tính là một máy.`);
+            setRoverActivityStatus(`Đã tải ${roverActivityDaily.length} ngày. Mỗi cặp tài khoản và receiver được tính là một máy.`);
         } catch (error) {
             if (requestId !== roverActivityDailyRequest) return;
             setRoverActivityStatus(error.message || 'Không tải được thống kê hoạt động.', true);
@@ -1325,7 +1336,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const machinesContainer = document.getElementById('rover-activity-machines');
         const subtitle = document.getElementById('rover-activity-detail-subtitle');
         const countEl = document.getElementById('rover-activity-machine-count');
-        if (subtitle) subtitle.textContent = `Ngày ${dateValue} · đang tải danh sách receiver…`;
+        if (subtitle) subtitle.textContent = `Ngày ${dateValue} · đang tải danh sách máy…`;
         if (countEl) countEl.textContent = '… máy';
         if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải máy đo…</span></div>';
         clearRoverActivityTrack();
@@ -1339,23 +1350,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             const count = Number(data.machine_count) || 0;
             const countEl = document.getElementById('rover-activity-machine-count');
             if (countEl) countEl.textContent = `${count} máy`;
-            if (subtitle) subtitle.textContent = `Ngày ${dateValue} · ${count} receiver duy nhất`;
+            if (subtitle) subtitle.textContent = `Ngày ${dateValue} · ${count} máy (tài khoản + receiver)`;
             renderRoverActivityMachines();
-            const selected = roverActivityMachines.find(item => item.receiver_id.toLowerCase() === roverActivitySelectedReceiver.toLowerCase());
-            if (selected) await selectRoverActivityMachine(selected.receiver_id);
-            else if (roverActivityMachines.length) await selectRoverActivityMachine(roverActivityMachines[0].receiver_id);
+            const selected = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
+            if (selected) await selectRoverActivityMachine(roverActivityMachineKey(selected));
+            else if (roverActivityMachines.length) await selectRoverActivityMachine(roverActivityMachineKey(roverActivityMachines[0]));
             else {
-                roverActivitySelectedReceiver = '';
+                roverActivitySelectedMachineKey = '';
                 const title = document.getElementById('rover-activity-track-title');
                 const meta = document.getElementById('rover-activity-track-meta');
-                if (title) title.textContent = 'Không có receiver trong ngày này';
-                if (meta) meta.textContent = 'Không ghi nhận phiên nào có receiver trong ngày được chọn.';
+                if (title) title.textContent = 'Không có máy trong ngày này';
+                if (meta) meta.textContent = 'Không ghi nhận phiên nào trong ngày được chọn.';
                 if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-router" aria-hidden="true"></i><span>Không có máy đo trong ngày này.</span></div>';
-                setRoverActivityStatus(`Ngày ${dateValue}: không có receiver hoạt động.`);
+                setRoverActivityStatus(`Ngày ${dateValue}: không có máy hoạt động.`);
             }
         } catch (error) {
             if (requestId !== roverActivityDayRequest) return;
-            if (subtitle) subtitle.textContent = 'Không tải được danh sách receiver.';
+            if (subtitle) subtitle.textContent = 'Không tải được danh sách máy.';
             if (machinesContainer) machinesContainer.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được dữ liệu.')}</span></div>`;
             setRoverActivityStatus(error.message || 'Không tải được danh sách máy.', true);
         }
@@ -1370,16 +1381,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         container.innerHTML = `${roverActivityMachines.map(item => {
             const receiver = String(item.receiver_id || '');
-            const selected = receiver.toLowerCase() === roverActivitySelectedReceiver.toLowerCase();
-            const usernames = (item.usernames || []).join(', ') || 'Không rõ tài khoản';
-            return `<button type="button" class="rover-activity-machine-button ${selected ? 'is-selected' : ''}" aria-pressed="${selected}" data-activity-receiver="${escapeHtml(receiver)}" data-activity-usernames="${escapeHtml(usernames)}">
-                <strong>${escapeHtml(receiver)}</strong>
-                <span>${escapeHtml(usernames)}</span>
+            const username = String(item.username || item.usernames?.[0] || 'Không rõ tài khoản');
+            const machineKey = roverActivityMachineKey(item);
+            const selected = machineKey === roverActivitySelectedMachineKey;
+            return `<button type="button" class="rover-activity-machine-button ${selected ? 'is-selected' : ''}" aria-pressed="${selected}" data-activity-machine-key="${escapeHtml(machineKey)}" data-activity-receiver="${escapeHtml(receiver)}" data-activity-username="${escapeHtml(username)}">
+                <strong>Receiver ${escapeHtml(receiver)}</strong>
+                <span>Tài khoản: ${escapeHtml(username)}</span>
                 <small>${Number(item.session_count) || 0} phiên · ${Number(item.point_count) || 0} điểm FIX</small>
             </button>`;
-        }).join('')}<div class="rover-activity-empty rover-activity-filter-empty" hidden>Không tìm thấy receiver khớp bộ lọc.</div>`;
-        container.querySelectorAll('[data-activity-receiver]').forEach(button => {
-            button.addEventListener('click', () => selectRoverActivityMachine(button.dataset.activityReceiver));
+        }).join('')}<div class="rover-activity-empty rover-activity-filter-empty" hidden>Không tìm thấy máy khớp bộ lọc.</div>`;
+        container.querySelectorAll('[data-activity-machine-key]').forEach(button => {
+            button.addEventListener('click', () => selectRoverActivityMachine(button.dataset.activityMachineKey));
         });
         filterRoverActivityMachines();
     }
@@ -1387,11 +1399,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     function filterRoverActivityMachines() {
         const receiverQuery = String(document.getElementById('rover-activity-receiver-filter')?.value || '').trim().toLowerCase();
         const accountQuery = String(document.getElementById('rover-activity-account-filter')?.value || '').trim().toLowerCase();
-        const buttons = [...document.querySelectorAll('#rover-activity-machines [data-activity-receiver]')];
+        const buttons = [...document.querySelectorAll('#rover-activity-machines [data-activity-machine-key]')];
         let visibleCount = 0;
         buttons.forEach(button => {
             const matchesReceiver = !receiverQuery || button.dataset.activityReceiver.toLowerCase().includes(receiverQuery);
-            const matchesAccount = !accountQuery || button.dataset.activityUsernames.toLowerCase().includes(accountQuery);
+            const matchesAccount = !accountQuery || button.dataset.activityUsername.toLowerCase().includes(accountQuery);
             button.hidden = !matchesReceiver || !matchesAccount;
             if (!button.hidden) visibleCount += 1;
         });
@@ -1399,20 +1411,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (emptyState) emptyState.hidden = !buttons.length || visibleCount > 0;
     }
 
-    async function selectRoverActivityMachine(receiverId) {
-        roverActivitySelectedReceiver = receiverId;
-        document.querySelectorAll('#rover-activity-machines [data-activity-receiver]').forEach(button => {
-            const selected = button.dataset.activityReceiver.toLowerCase() === receiverId.toLowerCase();
+    async function selectRoverActivityMachine(machineKey) {
+        const machine = roverActivityMachines.find(item => roverActivityMachineKey(item) === machineKey);
+        if (!machine) return;
+        roverActivitySelectedMachineKey = machineKey;
+        const receiverId = String(machine.receiver_id || '');
+        const username = String(machine.username || '');
+        document.querySelectorAll('#rover-activity-machines [data-activity-machine-key]').forEach(button => {
+            const selected = button.dataset.activityMachineKey === machineKey;
             button.classList.toggle('is-selected', selected);
             button.setAttribute('aria-pressed', String(selected));
         });
-        const machine = roverActivityMachines.find(item => item.receiver_id.toLowerCase() === receiverId.toLowerCase());
         const title = document.getElementById('rover-activity-track-title');
         const meta = document.getElementById('rover-activity-track-meta');
-        if (title) title.textContent = `Receiver ${receiverId}`;
+        if (title) title.textContent = roverActivityMachineLabel(machine);
         if (meta && machine) meta.textContent = `${Number(machine.session_count) || 0} phiên · ${Number(machine.point_count) || 0} điểm RTK Fixed · nối theo thời gian (đầu xanh, cuối đỏ) · điểm gần nhau có thể chồng, bấm + để phóng to`;
         clearRoverActivityTrack();
-        await loadRoverActivityTrack(receiverId);
+        await loadRoverActivityTrack(receiverId, username);
     }
 
     function clearRoverActivityTrack() {
@@ -1424,7 +1439,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const map = document.getElementById('rover-activity-map');
         if (map) {
             map.classList.add('is-empty');
-            map.innerHTML = '<div class="rover-activity-empty">Chọn receiver để xem đường đi của các điểm FIX.</div>';
+            map.innerHTML = '<div class="rover-activity-empty">Chọn máy để xem đường đi của các điểm FIX.</div>';
         }
         const sessions = document.getElementById('rover-activity-sessions');
         if (sessions) sessions.innerHTML = '';
@@ -1437,7 +1452,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function loadRoverActivityTrack(receiverId) {
+    async function loadRoverActivityTrack(receiverId, username) {
         const requestId = ++roverActivityTrackRequest;
         const map = document.getElementById('rover-activity-map');
         const pointList = document.getElementById('rover-activity-points');
@@ -1446,7 +1461,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             map.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang vẽ tuyến FIX…</span></div>';
         }
         if (pointList) pointList.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải điểm FIX…</span></div>';
-        const query = new URLSearchParams({ date: roverActivitySelectedDate, receiver_id: receiverId });
+        const query = new URLSearchParams({ date: roverActivitySelectedDate, receiver_id: receiverId, username });
         try {
             const response = await apiFetchRaw(`/api/rovers/activity/track?${query}`, { headers: API_HEADERS });
             const data = await response.json();
@@ -1457,7 +1472,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 clearRoverActivityTrack();
                 const title = document.getElementById('rover-activity-track-title');
                 const meta = document.getElementById('rover-activity-track-meta');
-                if (title) title.textContent = `Receiver ${receiverId}`;
+                const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
+                if (title) title.textContent = roverActivityMachineLabel(selectedMachine);
                 if (meta) meta.textContent = 'Máy có phiên hoạt động nhưng chưa lưu điểm RTK Fixed trong ngày.';
                 if (pointList) pointList.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa có điểm FIX trong ngày.</span></div>';
                 return;
@@ -1511,7 +1527,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 button.classList.toggle('is-selected', selected);
                 button.setAttribute('aria-pressed', String(selected));
             });
-            if (title) title.textContent = `Receiver ${roverActivitySelectedReceiver}${selectedSession ? ` · Phiên ${sessionIndex}` : ''}`;
+            const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
+            if (title) title.textContent = `${roverActivityMachineLabel(selectedMachine)}${selectedSession ? ` · Phiên ${sessionIndex}` : ''}`;
             if (meta) meta.textContent = selectedSession
                 ? `${selectedPoints.length} điểm RTK Fixed · ${formatDateTime(selectedPoints[0].recorded_at)} – ${formatDateTime(selectedPoints[selectedPoints.length - 1].recorded_at)} · nối từ đầu xanh đến cuối đỏ`
                 : `${validPoints.length} điểm RTK Fixed trong ${sessions.length} phiên có điểm · mỗi phiên một màu`;
