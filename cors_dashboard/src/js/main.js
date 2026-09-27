@@ -741,21 +741,49 @@ function updateGlobalDevices(newDeviceData) {
         }
         else {
             if (newDevice.ntrip_stats) {
-                const s1_bps = Number(newDevice.ntrip_stats.server1_bps) || 0;
-                const s2_bps = Number(newDevice.ntrip_stats.server2_bps) || 0;
-                const input_bps = Number(newDevice.ntrip_stats.rtcm_input_bps || newDevice.ntrip_stats.rtcm_in_bps) || 0;
-                const output_bps = s1_bps + s2_bps;
+                const stats = newDevice.ntrip_stats && typeof newDevice.ntrip_stats === 'object' ? newDevice.ntrip_stats : {};
+                const rawStatus = newDevice.ntrip_status && typeof newDevice.ntrip_status === 'object' ? newDevice.ntrip_status : {};
+                const streamState = newDevice.ntrip_stream_state && typeof newDevice.ntrip_stream_state === 'object' ? newDevice.ntrip_stream_state : {};
+                const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+                const normalizedStatus = { ...rawStatus };
+                let hasServerBps = false;
+                let totalBps = 0;
+                let anyServerConnected = false;
 
-                newDevice.ntrip_status = {
-                    server1: { connected: s1_bps > 0, bps: s1_bps },
-                    server2: { connected: s2_bps > 0, bps: s2_bps }
-                };
+                [1, 2].forEach((sid) => {
+                    const key = `server${sid}`;
+                    const rawServer = rawStatus[key];
+                    const serverStatus = rawServer && typeof rawServer === 'object' ? rawServer : {};
+                    const hasStatsBps = hasOwn(stats, `${key}_bps`) && stats[`${key}_bps`] != null;
+                    const hasStatusBps = hasOwn(serverStatus, 'bps') || hasOwn(rawStatus, `${key}_bps`);
+                    const hasConnection = typeof rawServer === 'boolean' || typeof serverStatus.connected === 'boolean';
+                    const rawBps = hasStatsBps ? stats[`${key}_bps`] : (serverStatus.bps ?? rawStatus[`${key}_bps`] ?? 0);
+                    const parsedBps = Number(rawBps);
+                    const bps = Number.isFinite(parsedBps) ? Math.max(0, parsedBps) : 0;
 
-                newDevice.rtcm_input_bps = input_bps;
-                newDevice.bps = output_bps;
-                // Prefer backend/agent truth if provided; fallback to bps heuristic.
-                if (typeof newDevice.ntrip_connected !== 'boolean') {
-                    newDevice.ntrip_connected = output_bps > 0;
+                    if (hasStatsBps || hasStatusBps || hasConnection) {
+                        hasServerBps = hasServerBps || hasStatsBps || hasStatusBps;
+                        const reportedConnected = typeof rawServer === 'boolean' ? rawServer : serverStatus.connected;
+                        const connected = reportedConnected === true || bps > 0;
+                        const normalizedServer = { ...serverStatus, connected, bps };
+                        const liveStream = streamState[key];
+                        if (liveStream && typeof liveStream === 'object') {
+                            for (const stateKey of ['enabled', 'on_demand', 'active', 'can_push', 'sleep', 'mountpoint']) {
+                                if (hasOwn(liveStream, stateKey)) normalizedServer[stateKey] = liveStream[stateKey];
+                            }
+                        }
+                        normalizedStatus[key] = normalizedServer;
+                        totalBps += bps;
+                        anyServerConnected = anyServerConnected || connected;
+                    }
+                });
+
+                if (Object.keys(normalizedStatus).length) newDevice.ntrip_status = normalizedStatus;
+                const inputBps = Number(stats.rtcm_input_bps ?? stats.rtcm_in_bps ?? 0);
+                newDevice.rtcm_input_bps = Number.isFinite(inputBps) ? Math.max(0, inputBps) : 0;
+                if (hasServerBps) newDevice.bps = totalBps;
+                if (typeof newDevice.ntrip_connected !== 'boolean' && (hasServerBps || anyServerConnected)) {
+                    newDevice.ntrip_connected = anyServerConnected;
                 }
             }
             else if (existingDevice && existingDevice.ntrip_status && existingDevice.bps > 0) {
@@ -1577,7 +1605,7 @@ async function loadInitialDevices() {
                 status: d.status,
                 bps: d.bps || 0,
                 ntrip_connected: !!d.ntrip_connected,
-                ntrip_status: d.ntrip_stats || null,
+                ntrip_status: d.ntrip_status || null,
                 service_config: d.service_config || {},
                 detected_chip_type: d.detected_chip_type,
                 is_provisioned: d.is_provisioned,

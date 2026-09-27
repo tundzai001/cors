@@ -396,6 +396,7 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "is_synced",
         "sync_errors",
         "ntrip_stats",
+        "ntrip_stream_state",
         "nmea_data",
         "nmea_health",
         "version",
@@ -4680,6 +4681,7 @@ async def get_public_map_stations(
                         "mountpoint": _extract_public_mountpoint(dev),
                         "streams": _extract_public_streams(dev),
                         "service_config": dev.service_config,
+                        "ntrip_status": dev.ntrip_status,
                         "is_provisioned": dev.is_provisioned,
                         "ntrip_connected": getattr(dev, "ntrip_connected", False),
                         "bps": _device_total_bps(dev)
@@ -7252,17 +7254,17 @@ def _split_ops_tokens(value: str | None) -> list[str]:
 def _device_total_bps(device: models.Device) -> int:
     status_data = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
     total = 0
-    has_detailed_bps = False
-    for key in ("server1_bps", "server2_bps", "rtcm_input_bps", "rtcm_in_bps"):
-        value = status_data.get(key)
+    has_server_bps = False
+    for server_id in (1, 2):
+        server = status_data.get(f"server{server_id}")
+        value = server.get("bps") if isinstance(server, dict) else status_data.get(f"server{server_id}_bps")
         if value is not None:
-            has_detailed_bps = True
-            total += int(value or 0)
-    for server_data in status_data.values():
-        if isinstance(server_data, dict):
-            has_detailed_bps = True
-            total += int(server_data.get("bps") or 0)
-    return total if has_detailed_bps else int(getattr(device, "bps", 0) or 0)
+            has_server_bps = True
+            try:
+                total += max(0, int(float(value or 0)))
+            except (TypeError, ValueError, OverflowError):
+                continue
+    return total if has_server_bps else int(getattr(device, "bps", 0) or 0)
 
 
 def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:

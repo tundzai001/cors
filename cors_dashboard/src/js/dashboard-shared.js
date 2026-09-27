@@ -118,6 +118,34 @@ const getPreferredOutputServerId = (device) => {
     return preferredServer || enabled[0];
 };
 
+const getServerTelemetry = (device, serverId) => {
+    const key = `server${serverId}`;
+    const stats = device?.ntrip_stats || {};
+    const statusMap = device?.ntrip_status || {};
+    const rawServer = statusMap[key];
+    const server = rawServer && typeof rawServer === 'object' ? rawServer : {};
+    const statsHasBps = Object.prototype.hasOwnProperty.call(stats, `${key}_bps`) && stats[`${key}_bps`] != null;
+    const statusHasBps = Object.prototype.hasOwnProperty.call(server, 'bps') ||
+        Object.prototype.hasOwnProperty.call(statusMap, `${key}_bps`);
+    const rawBps = statsHasBps ? stats[`${key}_bps`] : (server.bps ?? statusMap[`${key}_bps`] ?? 0);
+    const parsedBps = Number(rawBps);
+    const bps = Number.isFinite(parsedBps) ? Math.max(0, parsedBps) : 0;
+    const stream = device?.ntrip_stream_state?.[key] || server;
+    let reportedConnected = null;
+    if (typeof rawServer === 'boolean') reportedConnected = rawServer;
+    else if (typeof server.connected === 'boolean') reportedConnected = server.connected;
+
+    return {
+        bps,
+        hasBps: statsHasBps || statusHasBps,
+        connected: reportedConnected === true || bps > 0,
+        hasConnection: reportedConnected !== null,
+        sleep: typeof stream.sleep === 'boolean' ? stream.sleep : null,
+        onDemand: typeof stream.on_demand === 'boolean' ? stream.on_demand : null,
+        active: typeof stream.active === 'boolean' ? stream.active : null
+    };
+};
+
 const getMapEffectiveStatus = (device) => {
     const authStatus = device?.system_info?.auth_status || {};
     const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
@@ -130,7 +158,6 @@ const getMapEffectiveStatus = (device) => {
     const streamState = device?.ntrip_stream_state || {};
     const isVirtual = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
-    if (statusForOps === 'streaming') return 'streaming';
     if (statusForOps === 'starting') return 'starting';
 
     if (!['online', 'streaming', 'sleep', 'starting'].includes(statusForOps)) {
@@ -141,14 +168,18 @@ const getMapEffectiveStatus = (device) => {
 
     const primarySid = getPreferredOutputServerId(device);
     if (!primarySid) {
+        if (statusForOps === 'streaming') return 'streaming';
         return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
     }
 
-    const ntripStatusMap = device?.ntrip_status || {};
-    const primaryBps = Number(
-        ntripStatusMap[`server${primarySid}`]?.bps ?? stats[`server${primarySid}_bps`] ?? 0
-    );
-    return primaryBps > 0 ? 'online' : 'sleep';
+    const primary = getServerTelemetry(device, primarySid);
+    if (primary.bps > 0) return 'online';
+    if (primary.sleep === true || (primary.onDemand === true && primary.active === false)) return 'sleep';
+    if (primary.connected) return 'online';
+    if (primary.hasBps || primary.hasConnection || statusForOps === 'online' || statusForOps === 'streaming' || statusForOps === 'sleep') {
+        return 'sleep';
+    }
+    return statusForOps;
 };
-window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getMapEffectiveStatus };
+window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getMapEffectiveStatus };
 })();

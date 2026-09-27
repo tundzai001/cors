@@ -56,12 +56,11 @@
 
     function getPreferredServer(device) {
         const cfg = device?.service_config || {};
-        const ntrip = device?.ntrip_status || {};
         const servers = [1, 2].map((idx) => ({
             idx,
             host: String(cfg[`serverhost${idx}`] || '').trim(),
             mountpoint: String(cfg[`mountpoint${idx}`] || '').trim(),
-            bps: Number(ntrip[`server${idx}`]?.bps || 0)
+            bps: Number(window.CorsDashboardShared?.getServerTelemetry?.(device, idx)?.bps ?? device?.bps ?? 0)
         }));
         return (
             servers.find(s => s.host.toLowerCase().includes(PREFERRED_HOST)) ||
@@ -570,4 +569,3 @@
 
 window.AllStationsMap = React.memo(AllStationsMap);
 })();
-

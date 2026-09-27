@@ -32,6 +32,55 @@ def normalize_service_config(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def normalize_ntrip_status_payload(device_data: dict) -> dict:
+    """Normalize agent NTRIP telemetry into per-server bps and connection fields."""
+    stats = _ensure_dict(device_data.get("ntrip_stats"))
+    raw_status = _ensure_dict(device_data.get("ntrip_status"))
+    stream_state = _ensure_dict(device_data.get("ntrip_stream_state"))
+    server_keys = ("server1", "server2")
+    has_server_telemetry = any(
+        f"{key}_bps" in stats
+        or f"{key}_bps" in raw_status
+        or key in raw_status
+        for key in server_keys
+    )
+    if not has_server_telemetry:
+        return raw_status
+
+    normalized = {}
+    for key in server_keys:
+        raw_server = raw_status.get(key)
+        server_status = raw_server if isinstance(raw_server, dict) else {}
+        raw_bps = stats.get(f"{key}_bps")
+        if raw_bps is None:
+            raw_bps = server_status.get("bps", raw_status.get(f"{key}_bps", 0))
+        try:
+            bps = max(0, int(float(raw_bps or 0)))
+        except (TypeError, ValueError, OverflowError):
+            bps = 0
+
+        connected = server_status.get("connected")
+        if isinstance(raw_server, bool):
+            connected = raw_server
+        connected = (connected is True) or bps > 0
+        normalized_server = {**server_status, "connected": connected, "bps": bps}
+        stream_server = _ensure_dict(stream_state.get(key))
+        for state_key in (
+            "enabled", "on_demand", "active", "can_push", "sleep", "mountpoint"
+        ):
+            if state_key in stream_server:
+                normalized_server[state_key] = stream_server[state_key]
+        normalized[key] = normalized_server
+
+    for key in ("rtcm_input_bps", "rtcm_in_bps", "antenna_status"):
+        if key in stats:
+            normalized[key] = stats[key]
+        elif key in raw_status:
+            normalized[key] = raw_status[key]
+
+    return normalized
+
+
 def _has_usable_value(value) -> bool:
     if value is None:
         return False
@@ -114,24 +163,25 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                 if not serial:
                     continue
 
-                # --- Tự động tính toán lại ntrip_status nếu thiếu ---
-                # (Phòng trường hợp payload chỉ có ntrip_stats thô)
-                if 'ntrip_status' not in device and 'ntrip_stats' in device:
-                    raw_stats = _ensure_dict(device.get('ntrip_stats'))
-                    try:
-                        s1_bps = int(raw_stats.get('server1_bps', 0))
-                        s2_bps = int(raw_stats.get('server2_bps', 0))
-                    except:
-                        s1_bps, s2_bps = 0, 0
-                    
-                    device['ntrip_status'] = {
-                        "server1": {"connected": s1_bps > 0, "bps": s1_bps},
-                        "server2": {"connected": s2_bps > 0, "bps": s2_bps},
-                        "rtcm_input_bps": int(raw_stats.get('rtcm_input_bps', 0) or raw_stats.get('rtcm_in_bps', 0) or 0),
-                        "antenna_status": device.get('antenna_status')
-                    }
-                    device['bps'] = s1_bps + s2_bps
-                    device['ntrip_connected'] = (s1_bps + s2_bps) > 0
+                normalized_ntrip_status = normalize_ntrip_status_payload(device)
+                if normalized_ntrip_status:
+                    device['ntrip_status'] = normalized_ntrip_status
+                    has_server_rates = any(
+                        f"server{sid}_bps" in _ensure_dict(device.get('ntrip_stats'))
+                        or 'bps' in _ensure_dict(device['ntrip_status'].get(f'server{sid}'))
+                        or f"server{sid}_bps" in _ensure_dict(device.get('ntrip_status'))
+                        for sid in (1, 2)
+                    )
+                    if has_server_rates:
+                        device['bps'] = sum(
+                            int(_ensure_dict(device['ntrip_status'].get(f'server{sid}')).get('bps', 0) or 0)
+                            for sid in (1, 2)
+                        )
+                    if not isinstance(device.get('ntrip_connected'), bool):
+                        device['ntrip_connected'] = any(
+                            bool(_ensure_dict(device['ntrip_status'].get(f'server{sid}')).get('connected'))
+                            for sid in (1, 2)
+                        )
 
                 # Chuẩn bị record
                 # Lưu ý: Dùng .get(key, default) để tránh lỗi KeyError
@@ -383,31 +433,12 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     new_is_synced = device_data.get("is_synced", True)
     
     def build_ntrip_status(device_data: dict, service_config: dict) -> dict:
-        # 🔥 FIX: Phòng thủ trường hợp device_data hoặc service_config là list
         if not isinstance(device_data, dict):
             return {}
-        
-        ntrip_stats = device_data.get("ntrip_stats", {})
-        if not isinstance(ntrip_stats, dict):
-            ntrip_stats = {}
-            
-        ntrip_status = {}
-        
-        # 🔥 FIX: Defensive check for service_config type
-        if not isinstance(service_config, dict):
-            return {}
-
-        if service_config.get("server1_enabled"):
-            s1_bps = ntrip_stats.get("server1_bps", 0)
-            ntrip_status["server1"] = {"connected": s1_bps > 0, "bps": s1_bps}
-        if service_config.get("server2_enabled"):
-            s2_bps = ntrip_stats.get("server2_bps", 0)
-            ntrip_status["server2"] = {"connected": s2_bps > 0, "bps": s2_bps}
-        
-        ntrip_status["rtcm_input_bps"] = int(ntrip_stats.get("rtcm_input_bps", 0) or ntrip_stats.get("rtcm_in_bps", 0) or 0)
-        if "antenna_status" in device_data:
-            ntrip_status["antenna_status"] = device_data["antenna_status"]
-        return ntrip_status
+        normalized = normalize_ntrip_status_payload(device_data)
+        if "antenna_status" in device_data and "antenna_status" not in normalized:
+            normalized["antenna_status"] = device_data["antenna_status"]
+        return normalized
     
     # ✅ BƯỚC 2: TỰ ĐỘNG TẠO CHO RELAY / VIRTUAL / MONITOR
     if not existing_device:
@@ -563,7 +594,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     if new_ntrip is None and new_ntrip_status:
         s1 = new_ntrip_status.get("server1", {})
         s2 = new_ntrip_status.get("server2", {})
-        new_ntrip = (int(s1.get("bps", 0) or 0) + int(s2.get("bps", 0) or 0)) > 0
+        new_ntrip = bool(s1.get("connected") or s2.get("connected"))
     if new_ntrip is not None and new_ntrip != existing_device.ntrip_connected:
         update_values["ntrip_connected"] = new_ntrip
         should_update = True

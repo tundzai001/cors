@@ -43,8 +43,14 @@ function getDeviceOpsFlags(device) {
     );
     const s1Enabled = toBool(config.server1_enabled, isServerConfigured(1));
     const s2Enabled = toBool(config.server2_enabled, isServerConfigured(2));
-    const outputBps = Number(ntripStatus.server1?.bps || ntripStats.server1_bps || 0) +
-        Number(ntripStatus.server2?.bps || ntripStats.server2_bps || 0);
+    const getServerBps = (serverId) => {
+        const key = `server${serverId}`;
+        const server = ntripStatus[key];
+        const rawBps = ntripStats[`${key}_bps`] ?? server?.bps ?? ntripStatus[`${key}_bps`] ?? 0;
+        const value = Number(rawBps);
+        return Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    const outputBps = getServerBps(1) + getServerBps(2);
     const noStream = !isDeviceStaleOffline(device) &&
         ['online', 'streaming'].includes(status) &&
         (s1Enabled || s2Enabled) && outputBps <= 0;
@@ -206,8 +212,9 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             return { value: kbVal >= 10 ? Math.round(kbVal).toString() : kbVal.toFixed(1), unit: 'KB/s' };
         };
 
-        const s1 = ntripStatus.server1 || { connected: false, bps: 0 };
-        const s2 = ntripStatus.server2 || { connected: false, bps: 0 };
+        const getServerTelemetry = window.CorsDashboardShared?.getServerTelemetry;
+        const s1 = getServerTelemetry?.(device, 1) || { connected: false, bps: Number(ntripStats.server1_bps ?? ntripStatus.server1?.bps ?? 0) || 0 };
+        const s2 = getServerTelemetry?.(device, 2) || { connected: false, bps: Number(ntripStats.server2_bps ?? ntripStatus.server2?.bps ?? 0) || 0 };
 
         const s1Enabled = toBool(config.server1_enabled, isServerConfigured(1));
         const s2Enabled = toBool(config.server2_enabled, isServerConfigured(2));
@@ -221,13 +228,13 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const s1OnDemand = toBool(s1State.on_demand, toBool(config.server1_stream_on_demand, toBool(config.stream_on_demand, false)));
         const s1Active = toBool(s1State.active, toBool(config.server1_stream_active, !s1OnDemand));
         const s1SleepMode = s1Enabled && s1OnDemand && !s1Active;
-        const s1UseRtcmSleepUi = rawStatus === 'sleep' && s1SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
+        const s1UseRtcmSleepUi = s1.bps <= 0 && s1SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
 
         const s2State = streamState.server2 || {};
         const s2OnDemand = toBool(s2State.on_demand, toBool(config.server2_stream_on_demand, toBool(config.stream_on_demand, false)));
         const s2Active = toBool(s2State.active, toBool(config.server2_stream_active, !s2OnDemand));
         const s2SleepMode = s2Enabled && s2OnDemand && !s2Active;
-        const s2UseRtcmSleepUi = rawStatus === 'sleep' && s2SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
+        const s2UseRtcmSleepUi = s2.bps <= 0 && s2SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
 
         const statusDevice = { ...device, status: rawStatus };
         const primaryServerId = window.CorsDashboardShared?.getPreferredOutputServerId?.(statusDevice);
@@ -243,8 +250,8 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(effectiveStatus);
 
         // Per-server individual color: pushing=green, sleep/input-only=blue, idle=disconnected
-        const s1StatusClass = sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1SleepMode || (primaryServerId === 1 && effectiveStatus === 'sleep') ? 'sleep' : 'disconnected'));
-        const s2StatusClass = sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2SleepMode || (primaryServerId === 2 && effectiveStatus === 'sleep') ? 'sleep' : 'disconnected'));
+        const s1StatusClass = sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1.sleep === true || s1SleepMode ? 'sleep' : (s1.connected ? 'online' : (primaryServerId === 1 && effectiveStatus === 'sleep' ? 'sleep' : 'disconnected'))));
+        const s2StatusClass = sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2.sleep === true || s2SleepMode ? 'sleep' : (s2.connected ? 'online' : (primaryServerId === 2 && effectiveStatus === 'sleep' ? 'sleep' : 'disconnected'))));
 
         return {
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(sourceOffline ? 0 : (s1UseRtcmSleepUi ? rtcmInputBps : s1.bps)),
@@ -252,7 +259,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             s1StatusClass, s2StatusClass,
             statusColorClass, statusText, statusBadgeClass, hideStatusBadge, rtcmInputBps, sourceOffline
         };
-    }, [device, device.ntrip_status, device.service_config, device.ntrip_stats]);
+    }, [device, device.ntrip_status, device.ntrip_stream_state, device.service_config, device.ntrip_stats]);
     const opsFlags = React.useMemo(() => getDeviceOpsFlags(device), [device, device.ntrip_status, device.service_config]);
 
     const handleDelete = (e) => {
