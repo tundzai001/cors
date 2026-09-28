@@ -30,7 +30,9 @@ const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDepl
         : authStatus.token_required;
     const agentTokenPresent = authStatus.agent_token_present === true;
     const tokenSynced = authStatus.token_synced === true;
-    const authMessage = serverTokenPresent === false
+    const authMessage = authStatus.token_deployment_pending === true
+        ? 'Token đã tạo trên server; lệnh cấp token đã gửi. Đang chờ agent báo fingerprint khớp để xác nhận đồng bộ.'
+        : serverTokenPresent === false
         ? agentTokenPresent
             ? 'Agent đã báo có Access Token cục bộ, nhưng server chưa có token để đối chiếu. Bấm nút bên dưới để tạo token trên server và gửi lại xuống agent qua MQTT.'
             : 'Thiết bị chưa có Access Token trên server. Bấm nút bên dưới để tạo token và gửi xuống agent qua MQTT.'
@@ -52,7 +54,7 @@ const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDepl
                 const err = await response.json();
                 throw new Error(err.detail || 'Failed to auto-deploy token');
             }
-            window.showSuccess('Token đã được tự động cấp và gửi tới thiết bị thành công!');
+            window.showSuccess('Token đã tạo và lệnh cấp token đã gửi. Đang chờ agent xác nhận đồng bộ.');
         } catch (error) {
             window.showError('Không thể cấp token tự động: ' + error.message);
         } finally {

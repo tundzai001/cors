@@ -805,22 +805,42 @@ async def auto_deploy_device_token(
     if not license_key or "Lỗi" in license_key:
         raise HTTPException(status_code=500, detail="Failed to generate device license")
 
-    if getattr(device, "device_token", None) != license_key:
-        device.device_token = license_key
-        try:
-            await db.commit()
-            await db.refresh(device)
-        except IntegrityError:
-            await db.rollback()
-            raise HTTPException(
-                status_code=400, 
-                detail="This device token is already used by another device. This usually happens if you have duplicate devices with the same serial number. Please remove the old device first."
-            )
+    device.device_token = license_key
+    system_info = dict(device.system_info or {}) if isinstance(device.system_info, dict) else {}
+    current_auth_status = system_info.get("auth_status")
+    auth_status = dict(current_auth_status) if isinstance(current_auth_status, dict) else {}
+    auth_status.update({
+        "server_token_present": True,
+        "token_required": True,
+        "token_synced": False,
+        "agent_token_present": None,
+        "needs_token_deploy": True,
+        "token_check_available": False,
+        "token_deployment_pending": True,
+        "license_bypass": bool(system_info.get("auth_license_bypass")),
+        "agent_reported_status": device.status,
+    })
+    system_info["auth_status"] = auth_status
+    device.system_info = system_info
+    try:
+        await db.commit()
+        await db.refresh(device)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="This device token is already used by another device. This usually happens if you have duplicate devices with the same serial number. Please remove the old device first."
+        )
 
     # WebSocket authentication and MQTT license reconciliation use this cache.
     # Refresh it before dispatching the rotated token so the new credential is
     # accepted immediately and an older in-flight lookup cannot overwrite it.
     await mqtt_handler.cache_device_metadata(device)
+
+    await ui_manager.broadcast({
+        "type": "status_update",
+        "data": schemas.Device.from_orm(device).model_dump(),
+    })
         
     payload = {"command": "DEPLOY_LICENSE", "payload": {"license_key": license_key}}
     
@@ -832,7 +852,23 @@ async def auto_deploy_device_token(
         serial=serial
     )
     
-    return await send_command_to_pi(serial, payload)
+    try:
+        return await send_command_to_pi(serial, payload)
+    except Exception:
+        # The token exists on the server, but no command transport accepted it.
+        # Keep the retry action available and do not claim that delivery is pending.
+        auth_status["token_deployment_pending"] = False
+        auth_status["needs_token_deploy"] = True
+        auth_status["token_check_available"] = False
+        device.system_info = {**system_info, "auth_status": auth_status}
+        await db.commit()
+        await db.refresh(device)
+        await mqtt_handler.cache_device_metadata(device)
+        await ui_manager.broadcast({
+            "type": "status_update",
+            "data": schemas.Device.from_orm(device).model_dump(),
+        })
+        raise
 
 @router.post("/api/devices/{serial}/license-bypass")
 async def set_device_license_bypass(

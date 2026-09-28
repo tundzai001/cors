@@ -764,10 +764,13 @@ const DetailsPanel = memo(function DetailsPanel({
         'token_required',
         'token_synced',
         'agent_token_present',
-        'needs_token_deploy'
+        'needs_token_deploy',
+        'token_deployment_pending'
     ].some(key => Object.prototype.hasOwnProperty.call(authStatus, key));
     const hasAccessTokenGap =
-        staleOffline
+        authStatus.token_deployment_pending === true
+            ? true
+            : staleOffline
             ? serverTokenPresent === false
             : (
                 authStatus.needs_token_deploy === true ||

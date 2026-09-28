@@ -79,6 +79,11 @@ def _metadata_snapshot(device) -> dict:
             isinstance(system_info, dict)
             and system_info.get("auth_license_bypass")
         ),
+        "token_deployment_pending": bool(
+            isinstance(system_info, dict)
+            and isinstance(system_info.get("auth_status"), dict)
+            and system_info["auth_status"].get("token_deployment_pending")
+        ),
         "base_config": getattr(device, "base_config", None) or {},
         "service_config": crud.normalize_service_config(getattr(device, "service_config", None)),
         "detected_chip_type": getattr(device, "detected_chip_type", None),
@@ -754,7 +759,14 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 )
                 token_check_available = license_state.token_check_available
                 token_synced = license_state.token_synced
-                needs_token_deploy = license_state.needs_token_deploy
+                token_deployment_pending = bool(
+                    metadata.get("token_deployment_pending")
+                    and expected_fp
+                    and not (token_check_available and token_synced)
+                )
+                needs_token_deploy = license_state.needs_token_deploy or (
+                    token_deployment_pending and not license_bypass
+                )
                 if needs_token_deploy:
                     is_synced = False
                     if expected_fp:
@@ -776,6 +788,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     "license_bypass": license_bypass,
                     "agent_reported_status": agent_reported_status,
                     "token_check_available": token_check_available,
+                    "token_deployment_pending": token_deployment_pending,
                 }
                 data["system_info"] = system_info
                 if metadata.get("name"):
@@ -852,11 +865,26 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             last_write_time = device_write_cache.get(serial, 0)
             last_known_status = device_status_cache.get(serial, "unknown")
             new_status = data.get("status")
+            reported_system_info = data.get("system_info")
+            reported_auth_status = (
+                reported_system_info.get("auth_status")
+                if isinstance(reported_system_info, dict)
+                else None
+            )
+            token_pending_state_changed = (
+                bool(metadata.get("token_deployment_pending"))
+                != bool(
+                    isinstance(reported_auth_status, dict)
+                    and reported_auth_status.get("token_deployment_pending")
+                )
+            )
             
             should_write_db = False
             
             # Điều kiện 1: Trạng thái Online/Offline thay đổi
             if command_source_changed:
+                should_write_db = True
+            elif token_pending_state_changed:
                 should_write_db = True
             elif new_status and new_status != last_known_status:
                 should_write_db = True
@@ -913,6 +941,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                             latest_known_status = device_status_cache.get(serial, "unknown")
                             still_needs_write = bool(
                                 command_source_changed
+                                or token_pending_state_changed
                                 or (new_status and new_status != latest_known_status)
                                 or (now - latest_write_time) > DB_WRITE_INTERVAL
                             )

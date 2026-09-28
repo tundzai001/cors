@@ -89,6 +89,7 @@ function hasAccessTokenGap(device) {
     const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
         ? authStatus.server_token_present
         : authStatus.token_required;
+    if (authStatus.token_deployment_pending === true) return true;
     if (isDeviceStaleOffline(device)) {
         return serverTokenPresent === false;
     }

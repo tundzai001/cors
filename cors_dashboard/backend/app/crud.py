@@ -654,6 +654,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     if new_system_info:
         # Logic so sánh đơn giản để giảm update DB không cần thiết
         old_info = _ensure_dict(existing_device.system_info)
+        old_auth_status = _ensure_dict(old_info.get("auth_status"))
+        new_auth_status = _ensure_dict(new_system_info.get("auth_status"))
         
         # 🔥 FIX: Thêm bảo vệ sâu hơn cho các trường lồng nhau
         old_cpu_dict = _ensure_dict(old_info.get('cpu'))
@@ -663,7 +665,11 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         new_cpu = new_cpu_dict.get('usage_percent', 0)
         
         # Chỉ update nếu CPU thay đổi > 5% hoặc chưa có info
-        if not old_info or abs(float(old_cpu or 0) - float(new_cpu or 0)) > 5:
+        if (
+            not old_info
+            or abs(float(old_cpu or 0) - float(new_cpu or 0)) > 5
+            or old_auth_status != new_auth_status
+        ):
             # Merge to preserve backend-managed flags (e.g. auth_license_bypass)
             merged_info = old_info.copy()
             merged_info.update(new_system_info)
