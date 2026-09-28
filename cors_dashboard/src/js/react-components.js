@@ -435,11 +435,8 @@ const createColoredIcon = (color) => {
 };
 
 const getRoverStatusMeta = (status) => {
-    if (status === 4) return { label: 'RTK Fixed', color: '#22c55e' }; // Green
-    if (status === 5) return { label: 'Float', color: '#38bdf8' }; // Light blue
-    if (status === 1) return { label: '3D', color: '#ef4444' };    // Red
-    if (status === 0) return { label: 'No Fix', color: '#ef4444' };
-    return { label: 'Unknown', color: '#a3a3a3' };
+    return window.StationsMapUtils?.getRoverStatusMeta?.(status)
+        || { label: 'Unknown', color: '#a3a3a3' };
 };
 
 const createRoverIcon = (color) => {
