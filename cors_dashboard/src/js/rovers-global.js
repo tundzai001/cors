@@ -1648,7 +1648,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <span>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span>
                 </div>
                 <a href="${googlePointUrl(point)}" target="_blank" rel="noopener noreferrer" aria-label="Mở tọa độ điểm ${index + 1}${selectedSession ? ` phiên ${sessionIndex}` : ''} trên Google Maps">Bản đồ</a>
-            </div>`).join('') : `<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>${emptyPointsMessage}</span></div>`;
+            </div>`).join('') : '';
             if (!selectedPoints.length) {
                 mapElement.classList.add('is-empty');
                 mapElement.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>${emptyPointsMessage}</span></div>`;
