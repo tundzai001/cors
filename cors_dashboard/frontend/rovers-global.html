@@ -182,7 +182,7 @@
                     <section class="rover-activity-panel">
                         <div class="rover-activity-heading">
                             <div>
-                                <h2>Máy đo và điểm FIX theo ngày</h2>
+                                <h2>Máy đo và điểm vị trí theo ngày</h2>
                                 <p>Mỗi cặp tài khoản và receiver được tính là một máy. Cùng receiver ở hai tài khoản sẽ được tính riêng.</p>
                             </div>
                             <form id="rover-activity-date-form" class="rover-activity-date-form">
@@ -227,13 +227,13 @@
                                         <div class="rover-activity-track-heading">
                                             <div>
                                                 <strong id="rover-activity-track-title">Chọn một máy</strong>
-                                                <span id="rover-activity-track-meta">Các điểm RTK Fixed sẽ được nối theo thứ tự ghi nhận.</span>
+                                                <span id="rover-activity-track-meta">Các điểm vị trí hợp lệ sẽ được nối theo thứ tự ghi nhận.</span>
                                             </div>
                                         </div>
                                         <div id="rover-activity-sessions" class="rover-activity-sessions" role="group" aria-label="Lọc điểm theo phiên"></div>
                                         <div id="rover-activity-google-links" class="rover-activity-google-links" aria-label="Chỉ đường Google Maps theo phiên" hidden></div>
-                                        <div id="rover-activity-map" class="rover-activity-map" role="region" aria-label="Bản đồ tuyến điểm FIX theo receiver"></div>
-                                        <div id="rover-activity-points" class="rover-activity-points" aria-label="Danh sách điểm FIX"></div>
+                                        <div id="rover-activity-map" class="rover-activity-map" role="region" aria-label="Bản đồ tuyến điểm vị trí theo receiver"></div>
+                                        <div id="rover-activity-points" class="rover-activity-points" aria-label="Danh sách điểm vị trí"></div>
                                     </div>
                                 </div>
                             </section>
@@ -473,7 +473,7 @@
                                     </div>
                                     <div class="form-check form-switch mb-2 admin-only-field d-none">
                                         <input class="form-check-input" type="checkbox" id="edit-auto-save-fixed-points">
-                                        <label class="form-check-label small text-white fw-bold" for="edit-auto-save-fixed-points">Tự động lưu điểm RTK Fixed</label>
+                                        <label class="form-check-label small text-white fw-bold" for="edit-auto-save-fixed-points">Tự động lưu điểm vị trí hợp lệ</label>
                                     </div>
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="edit-rtcm-cycle-enabled">
@@ -712,8 +712,8 @@
     <script src="/assets/js/dist/api-routes.min.js?v=20260925-rover-auto-fixed-config-v2" charset="UTF-8"></script>
     <script src="/assets/js/dist/api-client.min.js?v=20260731-auth-recovery-v3" charset="UTF-8"></script>
     <script src="/assets/js/dist/ops-ui.min.js?v=20260529-admin-hard-reset-v1" charset="UTF-8"></script>
-    <script src="/assets/js/dist/i18n.min.js?v=20260927-language-v13" charset="UTF-8"></script>
+    <script src="/assets/js/dist/i18n.min.js?v=20260928-language-v14" charset="UTF-8"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20260926-language-v1" charset="UTF-8"></script>
-    <script src="/assets/js/dist/rovers-global.min.js?v=20260927-rover-account-picker-v1" charset="UTF-8"></script>
+    <script src="/assets/js/dist/rovers-global.min.js?v=20260928-rover-position-tracking-v1" charset="UTF-8"></script>
 </body>
 </html>

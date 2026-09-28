@@ -5660,9 +5660,8 @@ def _rover_history_session_key(server: str, username: str, mountpoint: str, clie
 
 def _rover_history_position(client: dict) -> tuple[float, float] | None:
     try:
-        # clienttable status is the GGA fix quality: only 4 is RTK fixed.
-        # Do not label float or standalone positions as the rover's last fix.
-        if int(client.get("status") or 0) != 4:
+        # GGA quality 0 means no valid position; retain other reported qualities.
+        if int(client.get("status") or 0) <= 0:
             return None
     except (TypeError, ValueError):
         return None
@@ -5800,7 +5799,7 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             position = _rover_history_position(client)
             if position is not None:
                 row.latitude, row.longitude = position
-                row.position_fix_quality = 4
+                row.position_fix_quality = latest_fix_quality
                 row.position_updated_at = observed_at
                 row.position_satellite_count = satellite_count
                 if auto_save_enabled_by_username.get(username.lower(), False):
@@ -5813,10 +5812,10 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                             await db.flush()
                         db.add(models.RoverFixedPoint(
                             session_id=row.id,
-                            label="Điểm tự động",
+                            label="Vị trí tự động",
                             latitude=position[0],
                             longitude=position[1],
-                            fix_quality=4,
+                            fix_quality=latest_fix_quality or 0,
                             satellite_count=satellite_count,
                             recorded_at=observed_at,
                             saved_at=observed_at,
@@ -8344,6 +8343,7 @@ async def get_rover_activity_track(
             models.RoverFixedPoint.latitude,
             models.RoverFixedPoint.longitude,
             models.RoverFixedPoint.recorded_at,
+            models.RoverFixedPoint.fix_quality,
             models.RoverFixedPoint.satellite_count,
             models.RoverFixedPoint.session_id,
         ).where(
@@ -8358,12 +8358,13 @@ async def get_rover_activity_track(
             "lat": latitude,
             "lon": longitude,
             "recorded_at": recorded_at,
+            "fix_quality": fix_quality,
             "satellites": satellite_count,
             "username": session_info[session_id]["username"],
             "mountpoint": session_info[session_id]["mountpoint"],
             "session_id": session_id,
         }
-        for point_id, latitude, longitude, recorded_at, satellite_count, session_id in point_result.all()
+        for point_id, latitude, longitude, recorded_at, fix_quality, satellite_count, session_id in point_result.all()
     ]
     return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "points": points}
 
@@ -8448,8 +8449,7 @@ async def get_rover_history(
     sessions = []
     for session in session_rows:
         has_complete_position = (
-            session.position_fix_quality in (None, 4)
-            and session.latitude is not None
+            session.latitude is not None
             and session.longitude is not None
             and (
                 date_start is None

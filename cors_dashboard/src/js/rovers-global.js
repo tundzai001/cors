@@ -51,6 +51,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     let roverActivityTrackRequest = 0;
     const roverHistorySessionMaps = new Map();
     let roverHistoryRequest = 0;
+    const roverFixQualityLabels = {
+        0: '3D', 1: '3D', 2: '3D', 3: '3D', 4: 'Fixed',
+        5: 'Float', 6: 'Ước tính', 7: 'Nhập thủ công', 8: 'Mô phỏng'
+    };
+    const roverFixQualityLabel = quality => {
+        if (quality == null || quality === '') return 'Chưa có dữ liệu';
+        const value = Number(quality);
+        return Number.isFinite(value) ? roverFixQualityLabels[value] || `Fix ${value}` : 'Chưa có dữ liệu';
+    };
 
     const hasRoverPageAccess = () => (
         String(currentUser?.role || '').toLowerCase() === 'admin'
@@ -970,7 +979,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             : '<i class="bi bi-eye-slash text-muted opacity-50" title="Vị trí đang ẨN (Live)"></i>';
         const autoSaveFixedPointsEnabled = r.type === 'db' && r.auto_save_fixed_points === true;
         const autoSaveFixedPointsIcon = r.type === 'db'
-            ? `<span role="img" aria-label="Tự lưu RTK Fixed đang ${autoSaveFixedPointsEnabled ? 'bật' : 'tắt'}" title="Tự lưu RTK Fixed đang ${autoSaveFixedPointsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi ${autoSaveFixedPointsEnabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'}" aria-hidden="true"></i></span>`
+            ? `<span role="img" aria-label="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'bật' : 'tắt'}" title="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi ${autoSaveFixedPointsEnabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'}" aria-hidden="true"></i></span>`
             : '';
 
         const mps = normalizeMountpointList(r.mountpoints);
@@ -1393,7 +1402,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `<button type="button" class="rover-activity-machine-button ${selected ? 'is-selected' : ''}" aria-pressed="${selected}" data-activity-machine-key="${escapeHtml(machineKey)}" data-activity-receiver="${escapeHtml(receiver)}" data-activity-username="${escapeHtml(username)}">
                 <strong>Receiver ${escapeHtml(receiver)}</strong>
                 <span>Tài khoản: ${escapeHtml(username)}</span>
-                <small>${Number(item.session_count) || 0} phiên · ${Number(item.point_count) || 0} điểm FIX</small>
+                <small>${Number(item.session_count) || 0} phiên · ${Number(item.point_count) || 0} điểm vị trí</small>
             </button>`;
         }).join('')}<div class="rover-activity-empty rover-activity-filter-empty" hidden>Không tìm thấy máy khớp bộ lọc.</div>`;
         container.querySelectorAll('[data-activity-machine-key]').forEach(button => {
@@ -1492,7 +1501,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const title = document.getElementById('rover-activity-track-title');
         const meta = document.getElementById('rover-activity-track-meta');
         if (title) title.textContent = roverActivityMachineLabel(machine);
-        if (meta && machine) meta.textContent = `${Number(machine.session_count) || 0} phiên · ${Number(machine.point_count) || 0} điểm RTK Fixed · nối theo thời gian (đầu xanh, cuối đỏ) · điểm gần nhau có thể chồng, bấm + để phóng to`;
+        if (meta && machine) meta.textContent = `${Number(machine.session_count) || 0} phiên · ${Number(machine.point_count) || 0} điểm vị trí · nối theo thời gian (đầu xanh, cuối đỏ) · điểm gần nhau có thể chồng, bấm + để phóng to`;
         clearRoverActivityTrack();
         await loadRoverActivityTrack(receiverId, username);
     }
@@ -1506,7 +1515,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const map = document.getElementById('rover-activity-map');
         if (map) {
             map.classList.add('is-empty');
-            map.innerHTML = '<div class="rover-activity-empty">Chọn máy để xem đường đi của các điểm FIX.</div>';
+            map.innerHTML = '<div class="rover-activity-empty">Chọn máy để xem đường đi của các điểm vị trí.</div>';
         }
         const sessions = document.getElementById('rover-activity-sessions');
         if (sessions) sessions.innerHTML = '';
@@ -1525,14 +1534,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const pointList = document.getElementById('rover-activity-points');
         if (map) {
             map.classList.remove('is-empty');
-            map.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang vẽ tuyến FIX…</span></div>';
+            map.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang vẽ tuyến vị trí…</span></div>';
         }
-        if (pointList) pointList.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải điểm FIX…</span></div>';
+        if (pointList) pointList.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải điểm vị trí…</span></div>';
         const query = new URLSearchParams({ date: roverActivitySelectedDate, receiver_id: receiverId, username });
         try {
             const response = await apiFetchRaw(`/api/rovers/activity/track?${query}`, { headers: API_HEADERS });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || `Không tải được tuyến FIX (${response.status}).`);
+            if (!response.ok) throw new Error(data.detail || `Không tải được tuyến vị trí (${response.status}).`);
             if (requestId !== roverActivityTrackRequest) return;
             const points = data.points || [];
             if (!points.length) {
@@ -1541,15 +1550,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const meta = document.getElementById('rover-activity-track-meta');
                 const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
                 if (title) title.textContent = roverActivityMachineLabel(selectedMachine);
-                if (meta) meta.textContent = 'Máy có phiên hoạt động nhưng chưa lưu điểm RTK Fixed trong ngày.';
-                if (pointList) pointList.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa có điểm FIX trong ngày.</span></div>';
+                if (meta) meta.textContent = 'Máy có phiên hoạt động nhưng chưa lưu tọa độ hợp lệ trong ngày.';
+                if (pointList) pointList.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa có điểm vị trí trong ngày.</span></div>';
                 return;
             }
             renderRoverActivityTrack(points);
         } catch (error) {
             if (requestId !== roverActivityTrackRequest) return;
-            if (pointList) pointList.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được điểm FIX.')}</span></div>`;
-            setRoverActivityStatus(error.message || 'Không tải được tuyến FIX.', true);
+            if (pointList) pointList.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được điểm vị trí.')}</span></div>`;
+            setRoverActivityStatus(error.message || 'Không tải được tuyến vị trí.', true);
         }
     }
 
@@ -1575,7 +1584,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sessions = Array.from(sessionGroups, ([id, sessionPoints]) => ({ id, points: sessionPoints }));
         const sessionColor = index => `hsl(${(index * 137.508 + 188) % 360} 78% 58%)`;
         const initialSessionKey = sessions[0]?.id || 'all';
-        sessionPicker.innerHTML = `<button type="button" class="rover-activity-session-button ${initialSessionKey === 'all' ? 'is-selected' : ''}" data-activity-session="all" aria-pressed="${initialSessionKey === 'all'}"><strong>Tất cả phiên</strong><small>${validPoints.length} điểm FIX · ${sessions.length} phiên</small></button>${sessions.map((session, index) => {
+        sessionPicker.innerHTML = `<button type="button" class="rover-activity-session-button ${initialSessionKey === 'all' ? 'is-selected' : ''}" data-activity-session="all" aria-pressed="${initialSessionKey === 'all'}"><strong>Tất cả phiên</strong><small>${validPoints.length} điểm vị trí · ${sessions.length} phiên</small></button>${sessions.map((session, index) => {
             const firstPoint = session.points[0];
             const lastPoint = session.points[session.points.length - 1];
             const selected = session.id === initialSessionKey;
@@ -1597,8 +1606,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
             if (title) title.textContent = `${roverActivityMachineLabel(selectedMachine)}${selectedSession ? ` · Phiên ${sessionIndex}` : ''}`;
             if (meta) meta.textContent = selectedSession
-                ? `${selectedPoints.length} điểm RTK Fixed · ${formatDateTime(selectedPoints[0].recorded_at)} – ${formatDateTime(selectedPoints[selectedPoints.length - 1].recorded_at)} · nối từ đầu xanh đến cuối đỏ`
-                : `${validPoints.length} điểm RTK Fixed trong ${sessions.length} phiên có điểm · mỗi phiên một màu`;
+                ? `${selectedPoints.length} điểm vị trí · ${formatDateTime(selectedPoints[0].recorded_at)} – ${formatDateTime(selectedPoints[selectedPoints.length - 1].recorded_at)} · nối từ đầu xanh đến cuối đỏ`
+                : `${validPoints.length} điểm vị trí trong ${sessions.length} phiên có điểm · mỗi phiên một màu`;
 
             if (roverActivityMap) roverActivityMap.remove();
             roverActivityMap = null;
@@ -1619,12 +1628,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="rover-activity-point-details">
                     <span><strong>${index + 1}.</strong> ${formatDateTime(point.recorded_at)} · ${escapeHtml(point.username || '')}${point.mountpoint ? ` · ${escapeHtml(point.mountpoint)}` : ''}</span>
                     <span class="rover-activity-point-coordinates">Tọa độ (vĩ độ, kinh độ): ${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}</span>
+                    <span>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span>
                 </div>
                 <a href="${googlePointUrl(point)}" target="_blank" rel="noopener noreferrer" aria-label="Mở tọa độ điểm ${index + 1}${selectedSession ? ` phiên ${sessionIndex}` : ''} trên Google Maps">Bản đồ</a>
-            </div>`).join('') : '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Phiên này không có điểm FIX hợp lệ.</span></div>';
+            </div>`).join('') : '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Phiên này không có tọa độ hợp lệ.</span></div>';
             if (!selectedPoints.length) {
                 mapElement.classList.add('is-empty');
-                mapElement.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Phiên này không có điểm FIX hợp lệ.</span></div>';
+                mapElement.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Phiên này không có tọa độ hợp lệ.</span></div>';
                 return;
             }
             mapElement.classList.remove('is-empty');
@@ -1661,7 +1671,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             fillColor: isStart ? '#34d399' : isEnd ? '#fb7185' : routeColor,
                             fillOpacity: 0.95,
                             weight: 1
-                        }).addTo(roverActivityMap).bindPopup(`<strong>${selectedSession ? `Điểm ${index + 1}` : `Phiên ${originalSessionIndex + 1} · điểm ${index + 1}`}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
+                        }).addTo(roverActivityMap).bindPopup(`<strong>${selectedSession ? `Điểm ${index + 1}` : `Phiên ${originalSessionIndex + 1} · điểm ${index + 1}`}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}<br>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}`);
                     });
                 });
                 if (mapCoordinates.length > 1) roverActivityMap.fitBounds(leaflet.latLngBounds(mapCoordinates), { padding: [22, 22], maxZoom: 19 });
@@ -1785,7 +1795,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     fillColor: index === 0 ? '#34d399' : index === validPoints.length - 1 ? '#fb7185' : '#0ea5e9',
                     fillOpacity: 0.95,
                     weight: 1
-                }).addTo(map).bindPopup(`<strong>Điểm ${originalIndex + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}`);
+                }).addTo(map).bindPopup(`<strong>Điểm ${originalIndex + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}<br>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}`);
             });
             if (line) map.fitBounds(line.getBounds(), { padding: [28, 28], maxZoom: 19 });
             else map.setView(coordinates[0], 17);
@@ -1914,15 +1924,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const longitude = hasPosition ? String(position.lon) : '';
                     const ended = Boolean(session.ended_at);
                     const points = Array.isArray(session.points) ? session.points : [];
-                    const fixLabels = { 0: 'Không có fix', 1: '3D', 2: 'DGPS', 3: 'PPS', 4: 'RTK Fixed', 5: 'Float', 6: 'Ước tính' };
                     const currentFixQuality = session.current_fix_quality == null ? NaN : Number(session.current_fix_quality);
                     const currentFixLabel = Number.isFinite(currentFixQuality)
-                        ? fixLabels[currentFixQuality] || `Fix ${currentFixQuality}`
+                        ? roverFixQualityLabel(currentFixQuality)
                         : 'Chưa có dữ liệu';
+                    const positionFixLabel = hasPosition ? roverFixQualityLabel(position.fix_quality) : '';
                     const positionHtml = hasPosition
                         ? `<div class="rover-history-position">
                                 <div class="rover-history-position-heading">
-                                    <span><i class="bi bi-crosshair2" aria-hidden="true"></i> Vị trí RTK Fixed cuối</span>
+                                    <span><i class="bi bi-crosshair2" aria-hidden="true"></i> Vị trí hợp lệ gần nhất · ${escapeHtml(positionFixLabel)}</span>
                                     <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${latitude}%2C${longitude}" target="_blank" rel="noopener noreferrer" aria-label="Mở vị trí ${latitude}, ${longitude} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Google Maps</span></a>
                                 </div>
                                 <div class="rover-history-coordinate-grid">
@@ -1935,21 +1945,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         <strong>${longitude}</strong>
                                     </div>
                                 </div>
-                                <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)}${position.satellites == null ? '' : ` · ${escapeHtml(position.satellites)} vệ tinh`}</div>
+                                <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)} · ${position.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(position.satellites)} vệ tinh`}</div>
                             </div>`
-                        : '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận tọa độ RTK Fixed cho phiên này.</span></div>';
+                        : '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận tọa độ hợp lệ cho phiên này.</span></div>';
                     const pointsHtml = points.length ? `<div class="rover-history-point-list">${points.map(point => {
                         const pointLatitude = String(point.lat);
                         const pointLongitude = String(point.lon);
                         const pointMapQuery = encodeURIComponent(`${pointLatitude},${pointLongitude}`);
                         const deletePointButton = isAdmin
-                            ? `<button class="rover-history-action-button rover-history-delete-point" type="button" data-point-id="${escapeHtml(point.id)}" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}" aria-label="Xóa điểm ${escapeHtml(point.label || 'FIX')}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa điểm</span></button>`
+                            ? `<button class="rover-history-action-button rover-history-delete-point" type="button" data-point-id="${escapeHtml(point.id)}" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}" aria-label="Xóa điểm ${escapeHtml(point.label || 'vị trí')}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa điểm</span></button>`
                             : '';
                         return `<article class="rover-history-point">
                             <div class="rover-history-point-heading">
-                                <div><strong>${escapeHtml(point.label || 'Điểm đo')}</strong><span class="rover-history-point-fix">RTK Fixed</span></div>
+                                <div><strong>${escapeHtml(point.label || 'Điểm đo')}</strong><span class="rover-history-point-fix">${escapeHtml(roverFixQualityLabel(point.fix_quality))}</span></div>
                                 <div class="rover-history-point-actions">
-                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'FIX')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
+                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'vị trí')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
                                     ${deletePointButton}
                                 </div>
                             </div>
@@ -1966,8 +1976,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         : '';
                     const sessionMapHtml = points.length
                         ? `<div class="rover-history-session-map" hidden>
-                                <div class="rover-history-session-map-canvas" role="region" aria-label="Bản đồ nối toàn bộ điểm FIX trong phiên ${escapeHtml(session.id)}"></div>
-                                <div class="rover-history-session-map-directions"><span>Đường xanh nối điểm FIX theo thứ tự đo. Điểm gần nhau có thể chồng; bấm + để phóng to.</span></div>
+                                <div class="rover-history-session-map-canvas" role="region" aria-label="Bản đồ nối toàn bộ điểm vị trí trong phiên ${escapeHtml(session.id)}"></div>
+                                <div class="rover-history-session-map-directions"><span>Đường xanh nối các điểm vị trí theo thứ tự đo. Điểm gần nhau có thể chồng; bấm + để phóng to.</span></div>
                                 ${googleMapsRoutesHtml ? `<div class="rover-history-session-map-directions"><span>Chỉ đường Google Maps:</span>${googleMapsRoutesHtml}</div>` : ''}
                             </div>`
                         : '';
@@ -1995,9 +2005,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <div><span>${ended ? 'Kết thúc' : 'Cập nhật cuối'}</span><strong>${formatDateTime(ended ? session.ended_at : session.last_seen_at)}</strong></div>
                         </div>
                         ${positionHtml}
-                        <section class="rover-history-points" aria-label="Các điểm đo trong phiên ${session.id}">
+                        <section class="rover-history-points" aria-label="Các điểm vị trí trong phiên ${session.id}">
                             <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><div class="rover-history-route-tools"><span>${points.length} điểm</span>${showSessionMapHtml}</div></div>
-                            ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu RTK Fixed đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu RTK Fixed đang tắt cho tài khoản này.'}</p>`}
+                            ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu điểm vị trí đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu điểm vị trí đang tắt cho tài khoản này.'}</p>`}
                             ${sessionMapHtml}
                             ${pointsHtml}
                         </section>
