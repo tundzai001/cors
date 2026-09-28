@@ -164,6 +164,9 @@
         ['Chưa có máy hoạt động.', 'No active devices.'],
         ['Không có máy trong ngày này.', 'No devices on this day.'],
         ['Chưa có điểm vị trí trong ngày.', 'No position points on this day.'],
+        ['Chưa có điểm vị trí nào được lưu trong ngày này.', 'No position points were saved on this day.'],
+        ['chưa có điểm vị trí được lưu.', 'has no saved position points.'],
+        ['chưa có tọa độ hợp lệ.', 'has no valid coordinates.'],
         ['Máy có phiên hoạt động nhưng chưa lưu tọa độ hợp lệ trong ngày.', 'This device had active sessions but no valid coordinates were saved today.'],
         ['Các điểm vị trí hợp lệ sẽ được nối theo thứ tự ghi nhận.', 'Valid position points are connected in recording order.'],
         ['Các điểm vị trí hợp lệ sẽ được nối theo thời gian.', 'Valid position points are connected in time order.'],
@@ -1349,6 +1352,7 @@
         };
         let result = String(value ?? '');
         if (direction === 'en') {
+            result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+điểm\s+vị trí(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} position point${Number(count) === 1 ? '' : 's'}`);
             result = result.replace(/^Từ ngày$/iu, 'From').replace(/^Đến ngày$/iu, 'To');
             result = result.replace(/(^|[^\p{L}\p{N}])còn\s+(\d+)\s+ngày(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} days remaining`);
             result = result.replace(/KHỞI ĐỘNG LẠI/g, 'RESTARTING');
@@ -1363,6 +1367,7 @@
             result = result.replace(/(^|[^\p{L}\p{N}])Ngày\s+(\d{4}-\d{2}-\d{2})\s+·\s+đang tải danh sách receiver…(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, date) => `${prefix}Date ${date} · Loading the receiver list…`);
             result = result.replace(/(^|[^\p{L}\p{N}])Chặn\s+(.+?)\s+\((\d+)\s+trạm hiện tại\)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, username, count) => `${prefix}Block ${username} (${count} current station${Number(count) === 1 ? '' : 's'})`);
         } else {
+            result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+position\s+points?(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} điểm vị trí`);
             result = result.replace(/^From$/iu, 'Từ ngày').replace(/^To$/iu, 'Đến ngày');
             result = result.replace(/^Device '(.+)' removed from list by (.+)$/iu, (_match, deviceName, actor) => {
                 return `Thiết bị '${protect(deviceName)}' đã bị xóa khỏi danh sách bởi ${protect(actor)}`;

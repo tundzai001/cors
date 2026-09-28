@@ -8318,24 +8318,37 @@ async def get_rover_activity_track(
         raise HTTPException(status_code=400, detail="Tài khoản và receiver không được để trống")
     visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
     if visible_usernames is not None and not visible_usernames:
-        return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "points": []}
+        return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "sessions": [], "points": []}
 
     start_at, end_at = _rover_history_day_bounds(activity_date)
     session = models.RoverSessionHistory
-    session_query = select(session.id, session.username, session.mountpoint).where(
+    session_query = select(
+        session.id,
+        session.username,
+        session.mountpoint,
+        session.started_at,
+        session.last_seen_at,
+        session.ended_at,
+    ).where(
         *_rover_history_overlap_filters(start_at, end_at),
         func.lower(func.trim(session.receiver_id)) == receiver_id.strip().casefold(),
         func.lower(func.trim(session.username)) == username.strip().casefold(),
     )
     if visible_usernames is not None:
         session_query = session_query.where(func.lower(func.trim(session.username)).in_(visible_usernames))
-    session_result = await auth_db.execute(session_query)
+    session_result = await auth_db.execute(session_query.order_by(func.coalesce(session.started_at, session.last_seen_at), session.id))
     session_info = {
-        session_id: {"username": username, "mountpoint": mountpoint}
-        for session_id, username, mountpoint in session_result.all()
+        session_id: {
+            "username": username,
+            "mountpoint": mountpoint,
+            "started_at": started_at,
+            "last_seen_at": last_seen_at,
+            "ended_at": ended_at,
+        }
+        for session_id, username, mountpoint, started_at, last_seen_at, ended_at in session_result.all()
     }
     if not session_info:
-        return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "points": []}
+        return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "sessions": [], "points": []}
 
     point_result = await auth_db.execute(
         select(
@@ -8366,7 +8379,11 @@ async def get_rover_activity_track(
         }
         for point_id, latitude, longitude, recorded_at, fix_quality, satellite_count, session_id in point_result.all()
     ]
-    return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "points": points}
+    sessions = [
+        {"id": session_id, **info}
+        for session_id, info in session_info.items()
+    ]
+    return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "sessions": sessions, "points": points}
 
 
 @app.get("/api/rovers/{username}/history")
