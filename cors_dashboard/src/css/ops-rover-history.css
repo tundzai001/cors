@@ -363,7 +363,7 @@
 .rover-activity-track-heading strong { color: #e5edf6; display: block; font-size: 0.83rem; overflow-wrap: anywhere; }
 .rover-activity-track-heading span { color: #8fa2b8; display: block; font-size: 0.71rem; margin-top: 3px; }
 .rover-activity-sessions { display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; padding: 1px 2px 5px; scrollbar-color: rgba(56, 189, 248, 0.38) rgba(15, 23, 42, 0.6); scrollbar-width: thin; }
-.rover-activity-session-button { background: rgba(2, 10, 22, 0.5); border: 1px solid rgba(148, 163, 184, 0.17); border-radius: 8px; color: #d5e2f0; cursor: pointer; display: grid; flex: 0 0 auto; gap: 2px; max-width: min(320px, 78vw); min-height: 48px; min-width: 132px; padding: 7px 9px; text-align: left; }
+.rover-activity-session-button { background: rgba(2, 10, 22, 0.5); border: 1px solid rgba(148, 163, 184, 0.17); border-radius: 8px; color: #d5e2f0; cursor: pointer; display: grid; flex: 0 0 230px; gap: 2px; max-width: min(230px, 78vw); min-height: 48px; min-width: 132px; padding: 7px 9px; text-align: left; }
 .rover-activity-session-button:hover { border-color: rgba(56, 189, 248, 0.45); }
 .rover-activity-session-button.is-selected { background: rgba(14, 165, 233, 0.17); border-color: rgba(56, 189, 248, 0.55); }
 .rover-activity-session-button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
