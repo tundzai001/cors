@@ -64,6 +64,25 @@ flowchart LR
   <img src="https://img.shields.io/badge/MQTT-660066?style=flat-square&amp;logo=eclipsemosquitto&amp;logoColor=white" alt="MQTT" />
 </p>
 
+## 🗂️ Cấu trúc repository
+
+```text
+.
+├── cors_dashboard/       # Website và API: backend, frontend, source, tests
+├── geodetic/             # Agent tại trạm, công cụ thiết bị và tests
+├── docs/
+│   ├── assets/           # Ảnh dùng trong tài liệu
+│   └── specs/            # Đặc tả và thiết kế hệ thống
+├── reports/
+│   ├── geodetic/         # Log vận hành đã lưu
+│   ├── pdf/              # Báo cáo tổng hợp
+│   └── security-scan/    # Kết quả rà soát bảo mật
+├── scripts/              # Build assets và self-check
+└── tools/diagnostics/    # Công cụ phân tích RTCM/MQTT độc lập
+```
+
+Tài liệu chính: [đặc tả agent](docs/specs/ESP_AGENT_REPLACEMENT_SPEC.md) · [báo cáo security scan](reports/security-scan/report.md).
+
 <p align="center">
   <a href="https://cors.aitogy.com/">🌐 Mở website</a> &nbsp;·&nbsp;
   <a href="https://cors.aitogy.com/network-status">📡 Xem trạng thái</a> &nbsp;·&nbsp;

@@ -1,8 +1,17 @@
-*.pyc
+# Operating system files
 .DS_Store
+
+# Python caches and virtual environments
+*.py[cod]
 __pycache__/
 venv/
 .venv/
+.pytest_cache/
+
+# Local test dependency snapshot and runtime logs
+.ublox-test-deps/
+*.log
+!reports/geodetic/*.log
 
 # Local runtime state and databases
 *.db
@@ -12,11 +21,13 @@ cors_dashboard/backend/zalo_chats.json
 cors_dashboard/backend/zalo_groups.json
 geodetic/geotek_config.json
 geodetic/geotek_db.json
-license*.key
 
 # Local secrets
 .env
 *.env
 !.env.example
 !*.env.example
-\python_zalo_bot-0.1.9
+license*.key
+
+# Locally extracted package
+python_zalo_bot-0.1.9/
