@@ -791,6 +791,7 @@ async def create_rover_account(
     rtcm_disconnect_duration_seconds: int = 10,
     expires_at: int = None,
     is_shared_with_managers: bool = False,
+    auto_save_sessions: bool = True,
     auto_save_fixed_points: bool = False,
 ) -> models.RoverAccount:
     db_rover = models.RoverAccount(
@@ -809,6 +810,7 @@ async def create_rover_account(
         rtcm_disconnect_duration_seconds=rtcm_disconnect_duration_seconds,
         expires_at=expires_at,
         is_shared_with_managers=is_shared_with_managers,
+        auto_save_sessions=auto_save_sessions,
         auto_save_fixed_points=auto_save_fixed_points,
     )
     db.add(db_rover)

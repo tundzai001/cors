@@ -981,6 +981,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const autoSaveFixedPointsIcon = r.type === 'db'
             ? `<span role="img" aria-label="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'bật' : 'tắt'}" title="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi ${autoSaveFixedPointsEnabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'}" aria-hidden="true"></i></span>`
             : '';
+        const autoSaveSessionsEnabled = r.type === 'db' && r.auto_save_sessions !== false;
+        const autoSaveSessionsIcon = r.type === 'db'
+            ? `<span role="img" aria-label="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'bật' : 'tắt'}" title="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi bi-clock-history ${autoSaveSessionsEnabled ? 'text-success' : 'text-muted opacity-50'}" aria-hidden="true"></i></span>`
+            : '';
 
         const mps = normalizeMountpointList(r.mountpoints);
         const mpsDisplay = mps.length > 0
@@ -1145,7 +1149,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <div class="rover-user-heading">
                             <span class="rover-user-name">${escapeHtml(r.username)}</span>
                         </div>
-                        <div class="rover-user-indicators">${dbBadge}${showPosIcon}${autoSaveFixedPointsIcon}${r.type === 'db' ? '' : '<span class="rover-user-meta">Caster only</span>'}</div>
+                        <div class="rover-user-indicators">${dbBadge}${showPosIcon}${autoSaveFixedPointsIcon}${autoSaveSessionsIcon}${r.type === 'db' ? '' : '<span class="rover-user-meta">Caster only</span>'}</div>
                     </div>
                 </div>
             </td>
@@ -2402,6 +2406,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     password: cu.password,
                     mountpoints: cu.mountpoints.join(';'),
                     show_position: cu.show_position,
+                    auto_save_sessions: true,
                     auto_save_fixed_points: false,
                     max_connections: (typeof cu.maxclient !== 'undefined' && cu.maxclient !== null) ? cu.maxclient : 1
                 };
@@ -2450,8 +2455,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             : (Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1);
         const showPosToggle = document.getElementById('edit-show-position');
         const isSharedToggle = document.getElementById('edit-is-shared');
+        const autoSaveSessionsToggle = document.getElementById('edit-auto-save-sessions');
         const autoSaveFixedPointsToggle = document.getElementById('edit-auto-save-fixed-points');
         if (isSharedToggle) isSharedToggle.checked = rover.is_shared_with_managers || false;
+        if (autoSaveSessionsToggle) autoSaveSessionsToggle.checked = rover.auto_save_sessions !== false;
         if (autoSaveFixedPointsToggle) autoSaveFixedPointsToggle.checked = rover.auto_save_fixed_points === true;
         if (showPosToggle) {
             const liveInfos = getCasterInfosForUsername(rover.username);
@@ -2594,6 +2601,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 is_shared_with_managers: document.getElementById('edit-is-shared')?.checked || false
             };
             if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                payload.auto_save_sessions = document.getElementById('edit-auto-save-sessions')?.checked !== false;
                 payload.auto_save_fixed_points = document.getElementById('edit-auto-save-fixed-points')?.checked !== false;
             }
             if (newPass) payload.password = newPass;

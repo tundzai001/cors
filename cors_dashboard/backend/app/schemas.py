@@ -273,6 +273,7 @@ class RoverAccountResponse(RoverAccountBase):
     rtcm_disconnect_duration_seconds: int = 10
     expires_at: Optional[int] = None
     is_shared_with_managers: bool = False
+    auto_save_sessions: bool = True
     auto_save_fixed_points: bool = False
     
     class Config: from_attributes = True
@@ -301,6 +302,7 @@ class RoverUpdate(BaseModel):
     rtcm_disconnect_interval_seconds: int | None = None
     rtcm_disconnect_duration_seconds: int | None = None
     is_shared_with_managers: bool | None = None
+    auto_save_sessions: bool | None = None
     auto_save_fixed_points: bool | None = None
     selected_serials: list[str] | None = None # For syncing unknown users
     target_casters: list[str] | None = None

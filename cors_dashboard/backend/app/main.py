@@ -5704,17 +5704,18 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             for client in clients
             if isinstance(client, dict) and str(client.get("username") or "").strip()
         }
-        auto_save_enabled_by_username = {}
+        rover_save_settings_by_username = {}
         if client_usernames:
             auto_save_result = await db.execute(
                 select(
                     func.lower(models.RoverAccount.username),
+                    models.RoverAccount.auto_save_sessions,
                     models.RoverAccount.auto_save_fixed_points,
                 ).where(func.lower(models.RoverAccount.username).in_(client_usernames))
             )
-            auto_save_enabled_by_username = {
-                username: bool(enabled)
-                for username, enabled in auto_save_result.all()
+            rover_save_settings_by_username = {
+                username: (bool(save_sessions), bool(save_points))
+                for username, save_sessions, save_points in auto_save_result.all()
             }
         latest_points_by_session = {}
         active_session_ids = [row.id for row in active_rows if row.id is not None]
@@ -5735,6 +5736,9 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                 continue
             username = str(client.get("username") or "").strip()
             if not username:
+                continue
+            save_sessions, save_fixed_points = rover_save_settings_by_username.get(username.lower(), (True, False))
+            if not save_sessions:
                 continue
             mountpoint = str(client.get("mountpoint") or "").strip()
             client_id = str(client.get("client_id") or "").strip()
@@ -5802,7 +5806,7 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                 row.position_fix_quality = latest_fix_quality
                 row.position_updated_at = observed_at
                 row.position_satellite_count = satellite_count
-                if auto_save_enabled_by_username.get(username.lower(), False):
+                if save_fixed_points:
                     last_point_at = latest_points_by_session.get(row.id)
                     if (
                         last_point_at is None
@@ -6180,6 +6184,8 @@ async def sync_rover_by_username(
     # 1. Kiểm tra Admin/Creator
     if not auth.can_edit_rovers(current_user):
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover.")
+    if update_req.auto_save_sessions is not None and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình lưu phiên Rover.")
     if update_req.auto_save_fixed_points is not None and current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình tự lưu điểm Fixed.")
 
@@ -6224,6 +6230,7 @@ async def sync_rover_by_username(
             show_position=update_req.show_position if update_req.show_position is not None else True,
             rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
             rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300),
+            auto_save_sessions=update_req.auto_save_sessions if update_req.auto_save_sessions is not None else True,
             auto_save_fixed_points=update_req.auto_save_fixed_points if update_req.auto_save_fixed_points is not None else False,
             is_shared_with_managers=getattr(update_req, 'is_shared_with_managers', False)
         )
@@ -6239,6 +6246,7 @@ async def sync_rover_by_username(
         if update_req.show_position is not None: update_data["show_position"] = update_req.show_position
         if update_req.rtcm_cycle_enabled is not None: update_data["rtcm_cycle_enabled"] = update_req.rtcm_cycle_enabled
         if update_req.rtcm_disconnect_interval_seconds is not None: update_data["rtcm_disconnect_interval_seconds"] = update_req.rtcm_disconnect_interval_seconds
+        if update_req.auto_save_sessions is not None: update_data["auto_save_sessions"] = update_req.auto_save_sessions
         if update_req.auto_save_fixed_points is not None: update_data["auto_save_fixed_points"] = update_req.auto_save_fixed_points
         
         if update_data:
@@ -8499,6 +8507,7 @@ async def get_rover_history(
         "in_db": bool(rover),
         "account": {"username": rover.username} if rover else None,
         "auto_save_fixed_points": bool(getattr(rover, "auto_save_fixed_points", False)) if rover else False,
+        "auto_save_sessions": bool(getattr(rover, "auto_save_sessions", True)) if rover else True,
         "fixed_point_auto_interval_seconds": ROVER_FIXED_POINT_INTERVAL_SECONDS,
         "caster_status": statuses,
         "sessions": sessions,

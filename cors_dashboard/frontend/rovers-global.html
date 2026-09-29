@@ -472,9 +472,14 @@
                                         <label class="form-check-label small text-white fw-bold" for="edit-show-position">Hiển thị vị trí trên bản đồ</label>
                                     </div>
                                     <div class="form-check form-switch mb-2 admin-only-field d-none">
+                                        <input class="form-check-input" type="checkbox" id="edit-auto-save-sessions">
+                                        <label class="form-check-label small text-white fw-bold" for="edit-auto-save-sessions">Tự động lưu phiên Rover</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-2 admin-only-field d-none">
                                         <input class="form-check-input" type="checkbox" id="edit-auto-save-fixed-points">
                                         <label class="form-check-label small text-white fw-bold" for="edit-auto-save-fixed-points">Tự động lưu điểm vị trí hợp lệ</label>
                                     </div>
+                                    <small class="form-text text-muted ms-1 d-block mb-2">Phiên lưu thông tin kết nối và vị trí gần nhất; điểm lưu tọa độ hợp lệ định kỳ. Lưu điểm cần bật lưu phiên.</small>
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="edit-rtcm-cycle-enabled">
                                         <label class="form-check-label small text-info fw-bold" for="edit-rtcm-cycle-enabled">RTCM Cycle Optimization</label>
@@ -712,8 +717,8 @@
     <script src="/assets/js/dist/api-routes.min.js?v=20260925-rover-auto-fixed-config-v2" charset="UTF-8"></script>
     <script src="/assets/js/dist/api-client.min.js?v=20260731-auth-recovery-v3" charset="UTF-8"></script>
     <script src="/assets/js/dist/ops-ui.min.js?v=20260529-admin-hard-reset-v1" charset="UTF-8"></script>
-    <script src="/assets/js/dist/i18n.min.js?v=20260928-language-v15" charset="UTF-8"></script>
+    <script src="/assets/js/dist/i18n.min.js?v=20260929-rover-session-toggle-v1" charset="UTF-8"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20260926-language-v1" charset="UTF-8"></script>
-    <script src="/assets/js/dist/rovers-global.min.js?v=20260928-rover-position-sessions-v2" charset="UTF-8"></script>
+    <script src="/assets/js/dist/rovers-global.min.js?v=20260929-rover-session-save-v2" charset="UTF-8"></script>
 </body>
 </html>

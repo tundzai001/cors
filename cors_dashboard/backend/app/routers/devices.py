@@ -564,6 +564,8 @@ async def update_rover(
     has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
     if not has_perm:
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
+    if update_req.auto_save_sessions is not None and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình lưu phiên Rover.")
     if update_req.auto_save_fixed_points is not None and current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình tự lưu điểm Fixed.")
 
@@ -740,6 +742,8 @@ async def update_rover(
         
     if update_req.is_shared_with_managers is not None:
         update_data["is_shared_with_managers"] = update_req.is_shared_with_managers
+    if update_req.auto_save_sessions is not None:
+        update_data["auto_save_sessions"] = update_req.auto_save_sessions
     if update_req.auto_save_fixed_points is not None:
         update_data["auto_save_fixed_points"] = update_req.auto_save_fixed_points
 
