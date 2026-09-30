@@ -1262,7 +1262,12 @@ function handleWebSocketMessage(message) {
         }
 
         if (data && data.timestamp) {
-            data.measured_latency = Math.max(0, (Date.now() / 1000) - data.timestamp);
+            const agentTimestamp = Number(data.agent_timestamp);
+            const serverReceivedAt = Number(data.server_received_at);
+            data.measured_latency = Number.isFinite(agentTimestamp) && agentTimestamp > 0 &&
+                Number.isFinite(serverReceivedAt) && serverReceivedAt > 0
+                ? Math.max(0, serverReceivedAt - agentTimestamp)
+                : Math.max(0, (Date.now() / 1000) - Number(data.timestamp));
         }
         enqueueStatusUpdate(data);
 
@@ -1385,15 +1390,7 @@ function handleWebSocketMessage(message) {
         const data = message.data || {};
         const satellites = Array.isArray(data?.satellites) ? data.satellites : [];
         
-        // Update latency continuously based on RTCM packets (which arrive ~1Hz)
-        if (data.timestamp) {
-            const rtcm_latency = Math.max(0, (Date.now() / 1000) - data.timestamp);
-            const deviceObj = globalState.devices.find(d => d.serial === serial);
-            if (deviceObj) {
-                deviceObj.measured_latency = rtcm_latency;
-                requestDetailsPanelUpdate('low');
-            }
-        }
+        // Keep Agent → Server latency from status_update; RTCM timestamps use the agent's clock.
         
         if (satellites.length) {
             satellites.forEach(sat => {
