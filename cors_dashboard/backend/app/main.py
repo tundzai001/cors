@@ -9039,6 +9039,14 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                     )
                     continue
                 compact_payload = status_decision.payload
+                # WebSocket usually arrives before the duplicate MQTT heartbeat.
+                # The reconciler accepts WebSocket and drops that MQTT duplicate,
+                # so feed the same sync cache and online-device index here.
+                mqtt_handler.cache_agent_sync_inputs(serial, payload)
+                reported_status = str(compact_payload.get("status") or "").strip().lower()
+                if reported_status:
+                    mqtt_handler.device_status_cache[serial] = reported_status
+
                 # Hot path: enqueue for async workers (broadcast + buffered DB write)
                 try:
                     pi_status_ingest_queue.put_nowait(compact_payload)

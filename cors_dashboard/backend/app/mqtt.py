@@ -62,6 +62,20 @@ DEVICE_METADATA_CACHE_TTL_SECONDS = max(
 RTCM_SATELLITE_CACHE_TTL_MS = 10_000
 
 
+def cache_agent_sync_inputs(serial: str, payload: dict) -> None:
+    """Keep the latest reported configs available to the periodic sync checker."""
+    if not serial or not isinstance(payload, dict):
+        return
+
+    if isinstance(payload.get("base_config"), dict):
+        device_sync_cache[f"{serial}_base_config"] = payload["base_config"]
+
+    if "service_config" in payload:
+        service_config = crud.normalize_service_config(payload.get("service_config"))
+        if isinstance(service_config, dict):
+            device_sync_cache[f"{serial}_service_config"] = service_config
+
+
 def _metadata_snapshot(device) -> dict:
     if not device:
         return {"exists": False, "cached_at": time.monotonic()}
@@ -709,8 +723,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             
             # --- 2.2. LƯU CONFIG VÀO CACHE ĐỂ BATCH CHECKER DÙNG ---
             # 🔥 QUAN TRỌNG: Lưu config vào cache để batch checker có thể so sánh
-            agent_base = data.get('base_config', {})
-            agent_service = crud.normalize_service_config(data.get('service_config'))
+            cache_agent_sync_inputs(serial, data)
             command_source = data.get('command_source')
             command_source_changed = False
             if isinstance(command_source, dict):
@@ -721,11 +734,6 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 command_source_changed = device_sync_cache.get(command_cache_key) != command_source
                 if command_source_changed:
                     device_sync_cache[command_cache_key] = command_source
-            
-            if agent_base:
-                device_sync_cache[f"{serial}_base_config"] = agent_base
-            if agent_service:
-                device_sync_cache[f"{serial}_service_config"] = agent_service
             
             # --- 2.3. ĐỌC SYNC STATUS TỪ CACHE (KHÔNG MỞ DB) ---
             # 🔥 THAY ĐỔI CHÍNH: Không check DB mỗi message nữa!
