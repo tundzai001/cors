@@ -799,7 +799,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const shouldShowLicenseTab =
         !licenseBypass && (
             hasAccessTokenGap ||
-            (isDeviceAwaitingLicense && !stationHasConfiguration)
+            isDeviceAwaitingLicense
         );
     const showLicenseTab = shouldShowLicenseTab || (licenseBypass && hasAuthTokenState && hasAccessTokenGap);
     const showConfigTabs = !isDeviceRebooting && (!isDeviceAwaitingLicense || licenseBypass || stationHasConfiguration);
