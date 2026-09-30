@@ -95,7 +95,7 @@ Ghi file cấu hình theo kiểu atomic: ghi `.tmp`, flush/fsync, backup file c�
 
 ```json
 {
-  "agent_version": "V2.2.3",
+  "agent_version": "V2.2.4",
   "backend": {
     "host": "aitogy.click",
     "ws_scheme": "ws",
@@ -558,7 +558,7 @@ Agent phải giữ các field sau, kể cả khi giá trị là `null`, `{}` ho�
   "serial": "LP_ABC123",
   "name": "BASE_HN_01",
   "status": "online",
-  "version": "V2.2.3",
+  "version": "V2.2.4",
   "timestamp": 1710000000.123,
   "agent_timestamp": 1710000000.123,
   "status_boot_id": "<random-per-process>",
@@ -591,7 +591,7 @@ Agent phải giữ các field sau, kể cả khi giá trị là `null`, `{}` ho�
 }
 ```
 
-`version` phải bằng `APP_VERSION` backend hiện tại (`V2.2.3`) nếu chưa có version negotiation. Backend đánh dấu `is_synced=false` khi agent version khác server.
+`version` phải bằng `APP_VERSION` backend hiện tại (`V2.2.4`) nếu chưa có version negotiation. Backend đánh dấu `is_synced=false` khi agent version khác server.
 
 Các status hợp lệ tối thiểu:
 
@@ -841,7 +841,7 @@ Chỉ nghiệm thu khi agent mới chạy được toàn bộ control/data path 
 
 Phần 1–19 là contract ở mức yêu cầu. Phần này là mapping trực tiếp từ source hiện tại để team có thể triển khai lại mà không phải đoán protocol.
 
-Source tham chiếu chính là geodetic/agent_universal.py, hiện đang có AGENT_VERSION = V2.2.3. Các đoạn code trong phần này được trích nguyên văn ở những điểm ảnh hưởng tới compatibility. Không bê nguyên toàn bộ file cũ: các phần decode RTCM phải bị loại bỏ theo mục 27.
+Source tham chiếu chính là geodetic/agent_universal.py, hiện đang có AGENT_VERSION = V2.2.4. Các đoạn code trong phần này được trích nguyên văn ở những điểm ảnh hưởng tới compatibility. Không bê nguyên toàn bộ file cũ: các phần decode RTCM phải bị loại bỏ theo mục 27.
 
 Khi tài liệu và code backend khác nhau, ưu tiên theo thứ tự:
 
@@ -1470,7 +1470,7 @@ Agent mới phải giữ các field sau:
   "serial": "LP_001122AABBCC",
   "name": "Station A",
   "status": "online",
-  "version": "V2.2.3",
+  "version": "V2.2.4",
   "agent_token_fingerprint": "8d969eef6ecad3c2",
   "timestamp": 1710000000.123,
   "agent_timestamp": 1710000000.123,
@@ -2370,7 +2370,7 @@ Agent phải ghi chính xác chuỗi 123456, không thêm quote vào file và kh
   "serial": "LP_001122AABBCC",
   "name": "Station A",
   "status": "online",
-  "version": "V2.2.3",
+  "version": "V2.2.4",
   "agent_token_fingerprint": "8d969eef6ecad3c2",
   "timestamp": 1710000000.123,
   "agent_timestamp": 1710000000.123,
