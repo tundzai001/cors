@@ -1155,6 +1155,11 @@ async function handleUnlockDevice(serial) {
 // ===============================================================================
 function connectWebSocket() {
     if (window.ApiClient?.isSessionInvalidated?.() || !window.ApiClient?.hasToken?.()) return;
+    if (ws && [WebSocket.OPEN, WebSocket.CONNECTING].includes(ws.readyState)) return;
+    if (wsReconnectTimerId) {
+        clearTimeout(wsReconnectTimerId);
+        wsReconnectTimerId = null;
+    }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     let host = window.location.host;
 
@@ -1170,15 +1175,19 @@ function connectWebSocket() {
         ws = new WebSocket(wsUrl);
     }
     if (!ws) return;
+    const socket = ws;
 
     ws.onopen = () => {
+        if (ws !== socket) return;
         updateConnectionStatus(true);
         wsReconnectAttempts = 0;
         lastStatusMetaBySerial.clear();
+        refreshDashboardSnapshot(socket);
         //console.log('✓ WebSocket connected');
     };
 
     ws.onmessage = (event) => {
+        if (ws !== socket) return;
         try {
             const message = JSON.parse(event.data);
             handleWebSocketMessage(message);
@@ -1188,11 +1197,14 @@ function connectWebSocket() {
     };
 
     ws.onerror = (error) => {
+        if (ws !== socket) return;
         console.error('WebSocket error:', error);
         updateConnectionStatus(false);
     };
 
     ws.onclose = (event) => {
+        if (ws !== socket) return;
+        ws = null;
         updateConnectionStatus(false);
 
         if (window.ApiClient?.isAuthWebSocketClose?.(event)) {
@@ -1201,16 +1213,56 @@ function connectWebSocket() {
         }
         if (window.ApiClient?.isSessionInvalidated?.() || !window.ApiClient?.hasToken?.()) return;
 
-        if (wsReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts), 30000);
-            wsReconnectAttempts++;
-            //console.log(`WebSocket disconnected. Reconnecting in ${delay / 1000}s...`);
-            wsReconnectTimerId = setTimeout(connectWebSocket, delay);
-        } else {
-            showError('Không thể kết nối đến server. Vui lòng tải lại trang.');
-        }
+        const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts), 30000);
+        wsReconnectAttempts = Math.min(wsReconnectAttempts + 1, MAX_RECONNECT_ATTEMPTS);
+        wsReconnectTimerId = setTimeout(connectWebSocket, delay);
     };
 }
+
+async function refreshDashboardSnapshot(socket) {
+    const revisions = new Map(lastStatusMetaBySerial);
+    try {
+        const response = await apiFetch('/api/devices', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Snapshot request failed');
+        const devices = await response.json();
+        if (ws !== socket || window.ApiClient?.isSessionInvalidated?.()) return;
+        // A heartbeat received during the request takes precedence over its snapshot.
+        enqueueStatusUpdate(devices.filter(device =>
+            lastStatusMetaBySerial.get(device.serial) === revisions.get(device.serial)));
+    } catch (error) {
+        if (ws === socket && !window.ApiClient?.isSessionInvalidated?.()) {
+            console.warn('Could not refresh station snapshot after reconnect:', error);
+        }
+    }
+}
+
+function resumeDashboardConnection() {
+    if (document.hidden || window.ApiClient?.isSessionInvalidated?.() || !window.ApiClient?.hasToken?.()) return;
+    if (wsReconnectTimerId) clearTimeout(wsReconnectTimerId);
+    wsReconnectTimerId = null;
+    const previous = ws;
+    ws = null;
+    if (previous) {
+        try { previous.close(1000, 'page resumed'); } catch (_) {}
+    }
+    wsReconnectAttempts = 0;
+    updateConnectionStatus(false);
+    connectWebSocket();
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) resumeDashboardConnection();
+});
+window.addEventListener('online', resumeDashboardConnection);
+window.addEventListener('pageshow', event => {
+    if (event.persisted) resumeDashboardConnection();
+});
+let lastDashboardWakeCheck = Date.now();
+setInterval(() => {
+    const now = Date.now();
+    if (now - lastDashboardWakeCheck > 30000) resumeDashboardConnection();
+    lastDashboardWakeCheck = now;
+}, 5000);
 
 window.addEventListener('cors:session-expired', () => {
     if (wsReconnectTimerId) {
