@@ -7,6 +7,7 @@ const STATUS_TEXT_MAP = {
     'offline': 'OFFLINE',
     'unprovisioned': 'CHƯA KÍCH HOẠT',
     'awaiting_license': 'CHỜ LICENSE',
+    'awaiting_agent': 'CHỜ AGENT',
     'configuring': 'ĐANG CẤU HÌNH',
     'rebooting': 'KHỞI ĐỘNG LẠI',
     'rebooting_for_reset': 'ĐANG KHÔI PHỤC',
@@ -24,6 +25,7 @@ const STATUS_CLASS_MAP = {
     'offline': 'bg-danger',
     'unprovisioned': 'bg-warning text-dark',
     'awaiting_license': 'bg-info text-dark',
+    'awaiting_agent': 'bg-info text-dark',
     'configuring': 'bg-primary',
     'rebooting': 'bg-warning text-dark',
     'rebooting_for_reset': 'bg-danger',
@@ -731,7 +733,11 @@ const DetailsPanel = memo(function DetailsPanel({
 }) {
     console.log("[DetailsPanel] RENDERING CYCLE! device:", device, "currentUser:", currentUser, "nmeaData:", nmeaData);
     const isAdmin = currentUser?.role === 'admin';
-    const lifecycleStatus = String(device?.status || 'offline').toLowerCase();
+    const tokenConfirmed = window.CorsDashboardShared?.isAccessTokenSynced?.(device) === true;
+    const reportedLifecycle = String(device?.status || 'offline').toLowerCase();
+    const lifecycleStatus = tokenConfirmed && reportedLifecycle === 'awaiting_license'
+        ? (window.CorsDashboardShared?.getMapEffectiveStatus?.(device) || 'awaiting_agent')
+        : reportedLifecycle;
     const isDeviceRebooting = ['rebooting', 'rebooting_for_reset'].includes(lifecycleStatus);
     const isDeviceAwaitingLicense = lifecycleStatus === 'awaiting_license';
     const isDeviceUnprovisioned = lifecycleStatus === 'unprovisioned';
@@ -768,7 +774,7 @@ const DetailsPanel = memo(function DetailsPanel({
         'token_deployment_pending'
     ].some(key => Object.prototype.hasOwnProperty.call(authStatus, key));
     const hasAccessTokenGap =
-        authStatus.token_deployment_pending === true
+        tokenConfirmed ? false : authStatus.token_deployment_pending === true
             ? true
             : staleOffline
             ? serverTokenPresent === false

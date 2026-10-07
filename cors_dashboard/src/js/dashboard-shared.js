@@ -184,10 +184,21 @@ const getOfflineInfo = (device, nowMs = Date.now()) => {
     return { sinceSeconds, sinceText, elapsedSeconds, durationText, unknown: false };
 };
 
+const isAccessTokenSynced = (device) => {
+    const auth = device?.system_info?.auth_status || {};
+    return auth.token_synced === true && auth.token_deployment_pending !== true &&
+        auth.needs_token_deploy !== true && auth.server_token_present !== false &&
+        auth.agent_token_present !== false;
+};
+
 const getMapEffectiveStatus = (device) => {
     const authStatus = device?.system_info?.auth_status || {};
     const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
     const rawStatus = String(device?.status || '').toLowerCase();
+    if (rawStatus === 'awaiting_license' && isAccessTokenSynced(device) &&
+        !['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)) {
+        return 'awaiting_agent';
+    }
     const statusForOps = rawStatus === 'awaiting_license' && ['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)
         ? agentReportedStatus
         : rawStatus;
@@ -219,5 +230,5 @@ const getMapEffectiveStatus = (device) => {
     }
     return statusForOps;
 };
-window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, getMapEffectiveStatus };
+window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, getMapEffectiveStatus, isAccessTokenSynced };
 })();

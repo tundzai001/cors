@@ -29,7 +29,7 @@ const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDepl
         ? authStatus.server_token_present
         : authStatus.token_required;
     const agentTokenPresent = authStatus.agent_token_present === true;
-    const tokenSynced = authStatus.token_synced === true;
+    const tokenSynced = window.CorsDashboardShared?.isAccessTokenSynced?.(device) === true;
     const authMessage = authStatus.token_deployment_pending === true
         ? 'Token đã tạo trên server; lệnh cấp token đã gửi. Đang chờ agent báo fingerprint khớp để xác nhận đồng bộ.'
         : serverTokenPresent === false

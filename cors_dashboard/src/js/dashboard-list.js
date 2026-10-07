@@ -7,6 +7,7 @@ const STATUS_TEXT_MAP = {
     'offline': 'OFFLINE',
     'unprovisioned': 'CHƯA KÍCH HOẠT',
     'awaiting_license': 'CHỜ LICENSE',
+    'awaiting_agent': 'CHỜ AGENT',
     'configuring': 'ĐANG CẤU HÌNH',
     'rebooting': 'KHỞI ĐỘNG LẠI',
     'rebooting_for_reset': 'ĐANG KHÔI PHỤC',
@@ -85,6 +86,7 @@ function getDeviceOpsFlags(device) {
 }
 
 function hasAccessTokenGap(device) {
+    if (window.CorsDashboardShared?.isAccessTokenSynced?.(device)) return false;
     const authStatus = device?.system_info?.auth_status || {};
     const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
         ? authStatus.server_token_present
@@ -115,6 +117,7 @@ const STATUS_CLASS_MAP = {
     'offline': 'bg-danger',
     'unprovisioned': 'bg-warning text-dark',
     'awaiting_license': 'bg-info text-dark',
+    'awaiting_agent': 'bg-info text-dark',
     'configuring': 'bg-primary',
     'rebooting': 'bg-warning text-dark',
     'rebooting_for_reset': 'bg-danger',

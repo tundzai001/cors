@@ -568,6 +568,7 @@
         ['Đã sao chép OTP group', 'Group OTP copied'],
         ['CHƯA KÍCH HOẠT', 'NOT ACTIVATED'],
         ['CHỜ LICENSE', 'LICENSE PENDING'],
+        ['CHỜ AGENT', 'AGENT PENDING'],
         ['ĐANG CẤU HÌNH', 'CONFIGURING'],
         ['ĐANG KHÔI PHỤC', 'RESTORING'],
         ['BỊ KHÓA', 'LOCKED'],

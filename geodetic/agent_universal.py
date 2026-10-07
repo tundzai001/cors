@@ -4653,7 +4653,7 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
         system_info = get_cached_system_info()
         if system_info:
             status_payload['system_info'] = system_info
-            logging.debug(f"System info collected: CPU={system_info.get('cpu', {}).get('usage_percent')}%, Temp={system_info.get('temperature', {}).get('celsius')}°C")
+            logging.debug(f"System info collected: CPU={system_info.get('cpu', {}).get('usage_percent')}%, Temp={system_info.get('temperature', {}).get('celsius')} C")
     except Exception as e:
         logging.error(f"Failed to collect system info: {e}")
 
@@ -4687,9 +4687,21 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
     if mqtt_client and mqtt_client.is_connected():
         try:
             topic = f"pi/devices/{MACHINE_SERIAL}/status"
-            mqtt_client.publish(topic, json_payload, qos=1, retain=True)
+            publish_info = mqtt_client.publish(topic, json_payload, qos=1, retain=True)
+            if publish_info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(f"MQTT status publish returned rc={publish_info.rc}")
+            await asyncio.to_thread(publish_info.wait_for_publish, timeout=3.0)
+            if not publish_info.is_published():
+                raise TimeoutError("MQTT status publish not acknowledged within 3s")
+            now_monotonic = time.monotonic()
+            if now_monotonic - getattr(agent, '_last_status_publish_log', float('-inf')) >= 60:
+                logging.info(
+                    "MQTT status acknowledged: topic=%s status=%s sequence=%s boot=%s broker=%s",
+                    topic, status_payload.get('status'), status_payload['status_sequence'],
+                    STATUS_BOOT_ID, transport_status.get('mqtt_broker'),
+                )
+                agent._last_status_publish_log = now_monotonic
         except Exception as e:
-            _set_transport_state("mqtt", False)
             logging.warning(f"MQTT publish failed: {e}")
 
 # ==============================================================================
@@ -5083,7 +5095,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                         await asyncio.sleep(2.0)  # Wait for chip to stabilize
                         gnss_reader.resume()
                     current_state = "ONLINE"
-                    logging.info("✓ Base config applied successfully")
+                    logging.info("Base config applied successfully")
 
                     await send_status(agent, mqtt_client)
         
@@ -5155,7 +5167,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             remove_lock_file()
             
             # Restart tiến trình (process) thay vì khởi động lại OS
-            logging.info("[REBOOT] Đang khởi động lại tiến trình Agent...")
+            logging.info("[REBOOT] Restarting Agent process...")
             sys.exit(0)
             
         elif command == "DELETE_DEVICE":
@@ -5180,7 +5192,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             await asyncio.sleep(2)
             remove_lock_file()
             
-            logging.info("[REBOOT_FOR_RESET] Đang khởi động lại tiến trình Agent...")
+            logging.info("[REBOOT_FOR_RESET] Restarting Agent process...")
             sys.exit(0)
         
         elif command == "CHECK_BASE_STATUS":
@@ -5364,6 +5376,12 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
             logging.warning(f"WebSocket error: {e}. Retrying in 10s...")
         except Exception as e:
             _telemetry_inc("reconnect", "websocket")
+            if type(e).__name__ == "SSLCertVerificationError":
+                logging.warning(
+                    "WebSocket certificate verification failed: host=%s code=%s reason=%s",
+                    globals().get('BACKEND_WS_HOST', BACKEND_HOST), getattr(e, 'verify_code', None),
+                    str(getattr(e, 'verify_message', 'unknown')).encode('ascii', 'backslashreplace').decode('ascii'),
+                )
             if mqtt_client and mqtt_client.is_connected():
                 logging.info(f"Secondary channel (WebSocket) failed. Main MQTT OK. Retry in 10s. Error: {e}")
             else:
