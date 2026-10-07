@@ -43,6 +43,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exception_handlers import http_exception_handler
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text, select, update, delete, func
 from starlette.middleware.base import BaseHTTPMiddleware
 from .monitoring import health_monitor, CircuitBreaker, global_rate_limiter
@@ -6050,6 +6051,7 @@ async def block_ip_manually(
 @app.post("/api/license/pi", response_model=schemas.LicenseResponse)
 async def generate_pi_license(
     request: schemas.LicenseRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_LICENSE))
 ):
     serial = request.serial
@@ -6057,14 +6059,28 @@ async def generate_pi_license(
         raise HTTPException(status_code=400, detail="Serial number required.")
     
     try:
-        base_code = license_manager.generate_pi_license_base(serial)
-        license_key = license_manager.get_license_code_from_string(base_code)
-        
-        if "Lỗi" in license_key:
-            raise ValueError("License generation failed.")
-
+        device = await crud.get_device_by_serial(db, serial)
+        license_key = license_manager.get_or_create_device_token(serial, device.device_token if device else None)
+        if device is None:
+            device = models.Device(
+                serial=serial,
+                name=serial,
+                status="unprovisioned",
+                is_provisioned=False,
+                device_token=license_key,
+            )
+            db.add(device)
+        else:
+            device.device_token = license_key
+        await db.commit()
+        await db.refresh(device)
+        await mqtt_handler.cache_device_metadata(device)
         return schemas.LicenseResponse(serial=serial, license_key=license_key)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Could not issue a unique device token") from None
     except Exception as e:
+        await db.rollback()
         logging.error(f"Failed to generate license for {serial}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate license key.")
 

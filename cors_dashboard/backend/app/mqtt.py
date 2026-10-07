@@ -12,7 +12,7 @@ from typing import Awaitable, Callable, Optional
 import paho.mqtt.client as mqtt
 from sqlalchemy import select
 
-from . import schemas
+from . import schemas, license_manager
 from .websocket import manager
 from .database import settings, device_session_scope
 from . import crud, nmea_parser, models
@@ -759,7 +759,12 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             if metadata.get("exists"):
                 agent_reported_status = raw_status
                 license_bypass = bool(metadata.get("license_bypass"))
-                expected_fp = _fingerprint_token(metadata.get("device_token"))
+                configured_token = str(metadata.get("device_token") or "").strip()
+                expected_fp = (
+                    _fingerprint_token(configured_token)
+                    if license_manager.is_compatible_device_token(configured_token, serial)
+                    else None
+                )
                 license_state = evaluate_license_sync(
                     expected_fp,
                     agent_token_fp,
@@ -1091,13 +1096,12 @@ def stop_mqtt_loop():
 
 
 def publish_message(topic: str, payload: str, qos: int = 1):
-    try:
-        if not mqtt_client.is_connected():
-            logging.warning("MQTT not connected, cannot publish")
-            return
-        mqtt_client.publish(topic, payload, qos=qos)
-    except Exception as e:
-        logging.error(f"Publish Error: {e}")
+    if not mqtt_client.is_connected():
+        raise ConnectionError("MQTT not connected, cannot publish")
+    info = mqtt_client.publish(topic, payload, qos=qos)
+    if info.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise ConnectionError(f"MQTT command publish returned rc={info.rc}")
+    return info
 
 
 def set_external_command_handler(handler: Callable[[str, bytes], Awaitable[None]]):

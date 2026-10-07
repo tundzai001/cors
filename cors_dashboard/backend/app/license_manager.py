@@ -1,5 +1,34 @@
 # license_manager.py
 import math
+import secrets
+import re
+
+DEVICE_TOKEN_PREFIX = "dt_"
+
+
+def generate_device_token() -> str:
+    """Generate an unpredictable per-device bearer token."""
+    return DEVICE_TOKEN_PREFIX + secrets.token_urlsafe(32)
+
+
+def is_device_token(token: str | None) -> bool:
+    value = str(token or "").strip()
+    return bool(re.fullmatch(r"dt_[A-Za-z0-9_-]{40,64}", value))
+
+
+def is_compatible_device_token(token: str | None, serial: str) -> bool:
+    value = str(token or "").strip()
+    if is_device_token(value):
+        return True
+    expected = get_license_code_from_string(generate_pi_license_base(serial))
+    return bool(value and value.isascii() and value.isdecimal() and value == expected)
+
+
+def get_or_create_device_token(serial: str, existing_token: str | None) -> str:
+    # Resending a valid legacy token must not strand agents that cannot read dt_.
+    if is_compatible_device_token(existing_token, serial):
+        return str(existing_token).strip()
+    return generate_device_token()
 
 def get_license_code_from_string(string_number: str) -> str:
     """Tạo mã license từ một chuỗi số, thuật toán xáo trộn."""

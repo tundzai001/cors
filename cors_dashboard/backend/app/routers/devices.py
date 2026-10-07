@@ -803,11 +803,8 @@ async def auto_deploy_device_token(
     device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-        
-    license_base = license_manager.generate_pi_license_base(serial)
-    license_key = license_manager.get_license_code_from_string(license_base)
-    if not license_key or "Lỗi" in license_key:
-        raise HTTPException(status_code=500, detail="Failed to generate device license")
+    previous_token = device.device_token
+    license_key = license_manager.get_or_create_device_token(serial, previous_token)
 
     device.device_token = license_key
     system_info = dict(device.system_info or {}) if isinstance(device.system_info, dict) else {}
@@ -833,7 +830,7 @@ async def auto_deploy_device_token(
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail="This device token is already used by another device. This usually happens if you have duplicate devices with the same serial number. Please remove the old device first."
+            detail="This device token collides with an existing token. Retry token deployment."
         )
 
     # WebSocket authentication and MQTT license reconciliation use this cache.
@@ -864,6 +861,7 @@ async def auto_deploy_device_token(
         auth_status["token_deployment_pending"] = False
         auth_status["needs_token_deploy"] = True
         auth_status["token_check_available"] = False
+        device.device_token = previous_token
         device.system_info = {**system_info, "auth_status": auth_status}
         await db.commit()
         await db.refresh(device)

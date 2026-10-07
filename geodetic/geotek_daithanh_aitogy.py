@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V2.2.4"
+RELAY_VERSION = "V2.2.5"
 
 import json
 import logging
@@ -12,6 +12,7 @@ import base64
 import select
 import os
 import re
+from collections import OrderedDict
 import ctypes
 import gc
 import hashlib
@@ -3309,7 +3310,9 @@ def setup_mqtt(worker_map):
     
     if MQTT_USER and MQTT_PASS:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
-    seen_status_commands = {}
+    seen_command_ids = OrderedDict()
+    command_lock = threading.Lock()
+    active_execution_serials = set()
     
     def on_connect(c, userdata, flags, rc, properties=None):
         if rc == 0:
@@ -3328,20 +3331,51 @@ def setup_mqtt(worker_map):
         except Exception:
             logging.warning(f"Control MQTT non-JSON message on {msg.topic}")
             return
+        if not isinstance(payload, dict):
+            return
 
         parts = msg.topic.split("/")
-        serial = parts[2] if len(parts) >= 4 else None
-        serial = str(serial or payload.get("serial") or "").strip()
-        is_status_topic = msg.topic.endswith("/status")
+        valid_topic = (
+            len(parts) == 4
+            and ((parts[0:2] == ["pi", "devices"] and parts[3] in {"command", "commands"})
+                 or (parts[0:2] == ["pi", "device"] and parts[3] == "command"))
+        )
+        if not valid_topic or bool(getattr(msg, "retain", False)):
+            return
+        serial = str(parts[2] or "").strip()
+        if not serial or (payload.get("serial") and str(payload.get("serial")).strip() != serial):
+            logging.warning("Rejected control message with invalid topic serial")
+            return
 
-        if is_status_topic:
-            if "command" not in payload:
+        command_id = str(payload.get("command_id") or "")
+        now = int(time.time())
+        try:
+            issued_at = int(payload.get("issued_at"))
+            expires_at = int(payload.get("expires_at"))
+        except (TypeError, ValueError):
+            issued_at = expires_at = 0
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id)
+            or issued_at > now + 60
+            or issued_at < now - 300
+            or expires_at < now
+            or expires_at > issued_at + 300
+        ):
+            logging.warning(
+                "Rejected control command freshness: id_valid=%s issued_at=%s expires_at=%s now=%s",
+                bool(re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id)), issued_at, expires_at, now,
+            )
+            return
+        with command_lock:
+            if command_id in seen_command_ids:
+                logging.warning("Rejected replayed MQTT command id")
                 return
-            signature = json.dumps(payload, sort_keys=True, default=str)
-            if seen_status_commands.get(serial) == signature:
-                return
-            seen_status_commands[serial] = signature
-            logging.warning(f"[{serial}] Command payload was received on status topic; processing fallback path")
+            seen_command_ids[command_id] = expires_at
+            while len(seen_command_ids) > 2048:
+                seen_command_ids.popitem(last=False)
+            for old_id, old_expiry in list(seen_command_ids.items()):
+                if old_expiry < now:
+                    seen_command_ids.pop(old_id, None)
 
         command = str(payload.get("command", "")).strip().upper()
         if command != "SET_RTCM_STREAM_ACTIVE" or serial in worker_map:
