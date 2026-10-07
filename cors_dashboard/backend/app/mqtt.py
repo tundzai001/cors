@@ -1004,8 +1004,14 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
         'is_provisioned', 'device_name', 'serial',
         'is_synced', 'sync_errors', 'warning',
         'bps', 'ntrip_connected', 'ntrip_status', 'gnss_stats',
-        'user_id'
+        'user_id',
+        # Runtime wake/sleep changes independently of the saved service config.
+        'stream_active', 'server1_stream_active', 'server2_stream_active'
     }
+
+    def is_secret_field(key: object) -> bool:
+        normalized = str(key or "").strip().lower().replace("-", "_")
+        return any(marker in normalized for marker in ("password", "passwd", "secret", "token")) or normalized.endswith(("_pass", "pass"))
 
     def normalize_val(v):
         if v is None: 
@@ -1025,7 +1031,7 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
             return s
 
     for key, db_val in config2.items():
-        if key in ignore_fields:
+        if key in ignore_fields or is_secret_field(key):
             continue
             
         agent_val = config1.get(key)
