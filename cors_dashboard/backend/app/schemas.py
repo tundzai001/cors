@@ -176,6 +176,11 @@ class ServiceConfig(BaseModel):
     mountpoint2: str | None = None
     password2: str | None = None
     
+    command_host: str | None = None
+    command_port: int | None = None
+    command_pass: str | None = None
+    command_mp: str | None = None
+
     # RTCM Client (giữ nguyên)
     rtcm_enabled: bool = False
     rtcmntripversion1: int = 1

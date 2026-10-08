@@ -51,17 +51,36 @@ class ServicePasswordPreservationTests(unittest.TestCase):
         self.assertEqual(updated["password2"], "backup-secret")
         self.assertTrue(updated["server1_stream_active"])
 
-    def test_endpoint_builds_full_deployment_with_stored_password(self):
+    def test_endpoint_saves_merged_config_but_sends_only_patch(self):
         tree = ast.parse((APP / "main.py").read_text())
         endpoint = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "configure_service_endpoint")
-        assignment = next(node for node in endpoint.body if isinstance(node, ast.Assign)
-                          and any(isinstance(t, ast.Name) and t.id == "service_config_payload" for t in node.targets))
-        context = {"serial": "LP_E051D80E3511", "old_service_cfg": {"password1": "caster-secret"},
-                   "payload": SimpleNamespace(model_dump=lambda: {"password1": "", "mountpoint1": "TV869"}),
-                   "schemas": SimpleNamespace(preserve_service_passwords=preserve),
-                   "_preserve_relay_config_metadata": lambda serial, old, incoming: incoming}
-        exec(compile(ast.Module(body=[assignment], type_ignores=[]), "main.py", "exec"), context)
-        self.assertEqual(context["service_config_payload"], {"password1": "caster-secret", "mountpoint1": "TV869"})
+        def assignment(name):
+            return next(node for node in endpoint.body if isinstance(node, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == name for t in node.targets))
+        incoming = assignment("incoming_config")
+        blank_filter = next(node for node in endpoint.body if isinstance(node, ast.For))
+        mode_assignments = [assignment(name) for name in (
+            "old_on_demand", "new_on_demand", "old_s1_on_demand", "old_s2_on_demand",
+            "new_s1_on_demand", "new_s2_on_demand", "station_mode_changed")]
+        stored = {"password1": "caster-secret", "username1": "source", "stream_on_demand": True,
+                  "server1_stream_on_demand": True, "server1_enabled": True}
+        for patch in ({"mountpoint1": "TV869", "password1": ""},
+                      {"mountpoint1": "TV869", "password1": "replacement"}):
+            context = {"serial": "LP_TEST", "old_service_cfg": stored,
+                       "payload": SimpleNamespace(model_dump=lambda **kw: dict(patch) if kw.get("exclude_unset") else self.fail("Defaults must not become edits")),
+                       "schemas": SimpleNamespace(SERVICE_PASSWORD_FIELDS=scope["SERVICE_PASSWORD_FIELDS"]),
+                       "_preserve_relay_config_metadata": lambda serial, old, updated: updated}
+            nodes = [incoming, blank_filter, *mode_assignments, assignment("service_config_payload"), assignment("pi_command")]
+            exec(compile(ast.Module(body=nodes, type_ignores=[]), "main.py", "exec"), context)
+            self.assertFalse(context["station_mode_changed"])
+            saved = context["service_config_payload"]
+            sent = context["pi_command"]["payload"]
+            self.assertEqual(saved["username1"], "source")
+            self.assertTrue(saved["server1_enabled"])
+            self.assertNotIn("username1", sent)
+            self.assertNotIn("server1_enabled", sent)
+            self.assertEqual(saved["password1"], patch["password1"] or "caster-secret")
+            self.assertEqual(sent, {key: value for key, value in patch.items() if value != ""})
 
 
 if __name__ == "__main__":

@@ -939,9 +939,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         command_pass: '',
         command_mp: ''
     });
+    const [visiblePasswords, setVisiblePasswords] = useState({});
+    const isAdmin = currentUser?.role === 'admin';
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isFormDirty, setIsFormDirty] = useState(false);
     const lastHydratedSerialRef = useRef(null);
+    const hydratedConfigRef = useRef({});
     const canManageStationMode =
         currentUser?.role === 'admin' ||
         currentUser?.permissions?.includes('manage:station_mode') ||
@@ -966,6 +969,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
     useEffect(() => {
         const isSerialChanged = lastHydratedSerialRef.current !== device.serial;
+        if (isSerialChanged) setVisiblePasswords({});
 
         // Skip realtime re-hydration while user is editing current device form.
         if (!isSerialChanged && isFormDirty) {
@@ -1013,11 +1017,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             const merged = {
                 ...defaultState,
                 ...device.service_config,
-                // Password fields accept replacements only; blank keeps the stored credential.
-                password1: '',
-                password2: '',
-                rtcmpassword1: '',
-                command_pass: ''
+                password1: isAdmin ? (device.service_config.password1 ?? (isSerialChanged ? '' : hydratedConfigRef.current.password1) ?? '') : '',
+                password2: isAdmin ? (device.service_config.password2 ?? (isSerialChanged ? '' : hydratedConfigRef.current.password2) ?? '') : '',
+                rtcmpassword1: isAdmin ? (device.service_config.rtcmpassword1 ?? (isSerialChanged ? '' : hydratedConfigRef.current.rtcmpassword1) ?? '') : '',
+                command_pass: isAdmin ? (device.service_config.command_pass ?? (isSerialChanged ? '' : hydratedConfigRef.current.command_pass) ?? '') : ''
             };
 
             // Backward compatibility: when per-server flags are missing, inherit from global mode.
@@ -1041,15 +1044,84 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 merged.server2_stream_active = true;
             }
 
+            hydratedConfigRef.current = merged;
             setFormState(merged);
             setIsFormDirty(false);
             lastHydratedSerialRef.current = device.serial;
         } else {
+            hydratedConfigRef.current = defaultState;
             setFormState(defaultState);
             setIsFormDirty(false);
             lastHydratedSerialRef.current = device.serial;
         }
-    }, [device.serial, device.service_config, isFormDirty]);
+    }, [device.serial, device.service_config, isFormDirty, isAdmin]);
+
+    const renderCasterStatus = (serverId) => {
+        const key = `server${serverId}`;
+        const saved = device.service_config || {};
+        const enabled = toBool(formState[`${key}_enabled`]);
+        const pending = ['serverhost', 'port', 'mountpoint', 'username'].some(prefix =>
+            String(formState[`${prefix}${serverId}`] ?? '') !== String(saved[`${prefix}${serverId}`] ?? '')
+        ) || enabled !== toBool(saved[`${key}_enabled`]);
+        const telemetry = window.CorsDashboardShared?.getServerTelemetry(device, serverId) || {};
+        const offline = !!window.CorsDashboardShared?.getOfflineInfo(device) || device.status === 'offline';
+        let label = 'Chờ trạng thái';
+        let icon = 'bi-hourglass-split';
+        let tone = 'secondary';
+        if (!enabled) {
+            label = 'Đã tắt'; icon = 'bi-power';
+        } else if (pending) {
+            label = 'Chưa áp dụng'; icon = 'bi-pencil-square'; tone = 'warning';
+        } else if (offline) {
+            label = 'Trạm mất kết nối'; icon = 'bi-cloud-slash'; tone = 'danger';
+        } else if (telemetry.connected) {
+            label = 'Đã kết nối Caster'; icon = 'bi-check-circle-fill'; tone = 'success';
+        } else if (telemetry.sleep === true ||
+            (telemetry.sleep == null &&
+             toBool(telemetry.onDemand, toBool(saved[`${key}_stream_on_demand`], toBool(saved.stream_on_demand))) &&
+             !toBool(telemetry.active, toBool(saved[`${key}_stream_active`], toBool(saved.stream_active))))) {
+            label = 'Ngủ · chờ rover'; icon = 'bi-moon-stars'; tone = 'info';
+        } else if (telemetry.hasConnection || telemetry.hasBps) {
+            label = 'Chưa kết nối Caster'; icon = 'bi-exclamation-circle'; tone = 'warning';
+        }
+        return (
+            <span className="d-inline-flex flex-wrap align-items-center gap-2 ms-2 small" role="status" aria-live="polite">
+                <span className={`badge text-bg-${enabled ? 'primary' : 'secondary'}`}>
+                    <i className={`bi ${enabled ? 'bi-toggle-on' : 'bi-toggle-off'} me-1`} aria-hidden="true"></i>
+                    {enabled ? 'Đã bật' : 'Đã tắt'}
+                </span>
+                <span className={`badge text-bg-${tone}`}>
+                    <i className={`bi ${icon} me-1`} aria-hidden="true"></i>{label}
+                    {tone === 'success' && telemetry.bps > 0 ? ` · ${telemetry.bps} bps` : ''}
+                </span>
+            </span>
+        );
+    };
+
+    const renderPasswordInput = (name, label) => (
+        <div className="input-group">
+            <input
+                type={visiblePasswords[name] ? 'text' : 'password'}
+                className="form-control"
+                name={name}
+                aria-label={label}
+                value={formState[name]}
+                onChange={handleChange}
+                autoComplete="new-password"
+                placeholder="••••••••"
+            />
+            <button
+                type="button"
+                className="btn btn-outline-secondary"
+                aria-label={`${visiblePasswords[name] ? 'Ẩn' : 'Hiện'} ${label}`}
+                aria-pressed={!!visiblePasswords[name]}
+                title={visiblePasswords[name] ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                onClick={() => setVisiblePasswords(prev => ({ ...prev, [name]: !prev[name] }))}
+            >
+                <i className={`bi ${visiblePasswords[name] ? 'bi-eye-slash' : 'bi-eye'}`} aria-hidden="true"></i>
+            </button>
+        </div>
+    );
 
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -1136,7 +1208,25 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 if (!payload[key]) delete payload[key];
             }
 
+            const streamSettingsChanged = ['server1_enabled', 'server2_enabled',
+                'server1_stream_on_demand', 'server2_stream_on_demand',
+                'server1_stream_active', 'server2_stream_active'].some(key =>
+                String(formState[key] ?? '') !== String(hydratedConfigRef.current[key] ?? '')
+            );
+            if (!streamSettingsChanged) {
+                delete payload.stream_on_demand;
+                delete payload.stream_active;
+            }
+
+            // Send only edited values; telemetry/password placeholders are not changes.
+            for (const key of Object.keys(payload)) {
+                if (String(payload[key] ?? '') === String(hydratedConfigRef.current[key] ?? '')) {
+                    delete payload[key];
+                }
+            }
+            if (!Object.keys(payload).length) return;
             await onConfigureService(device.serial, payload);
+            hydratedConfigRef.current = { ...hydratedConfigRef.current, ...payload };
             setIsFormDirty(false);
         } finally {
             setIsSubmitting(false);
@@ -1322,14 +1412,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         </div>
                                         <div className="col-md-6">
                                             <label className="form-label">Command Password</label>
-                                            <input
-                                                type="password"
-                                                className="form-control"
-                                                name="command_pass"
-                                                value={formState.command_pass}
-                                                onChange={handleChange}
-                                                placeholder="••••••••"
-                                            />
+                                            {renderPasswordInput('command_pass', 'mật khẩu Command')}
                                         </div>
                                         <div className="col-md-6">
                                             <label className="form-label">Command Mountpoint</label>
@@ -1358,8 +1441,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                             data-bs-toggle="collapse"
                             data-bs-target="#collapseOne"
                         >
-                            <i className="bi bi-box-arrow-up me-2 text-primary"></i>
-                            NTRIP Caster Server 1
+                            <span className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2 flex-grow-1">
+                                <span><i className="bi bi-box-arrow-up me-2 text-primary" aria-hidden="true"></i>NTRIP Caster Server 1</span>
+                                {renderCasterStatus(1)}
+                            </span>
                         </button>
                     </h2>
                     <div id="collapseOne" className={`accordion-collapse collapse ${isLteStation ? '' : 'show'}`} data-bs-parent="#service-config-accordion">
@@ -1441,7 +1526,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                 {/* Connection Details */}
                                 <div className="row g-3">
                                     <div className="col-md-8">
-                                        <label className="form-label">Host / IP</label>
+                                        <label className="form-label d-flex flex-wrap align-items-center">Host / IP {renderCasterStatus(1)}</label>
                                         <input
                                             type="text"
                                             className="form-control"
@@ -1481,14 +1566,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">Password</label>
-                                        <input
-                                            type="password"
-                                            className="form-control"
-                                            name="password1"
-                                            value={formState.password1}
-                                            onChange={handleChange}
-                                            placeholder="••••••••"
-                                        />
+                                        {renderPasswordInput('password1', 'mật khẩu Caster 1')}
                                     </div>
                                     <div className="col-12">
                                         <label className="form-label">Mountpoint</label>
@@ -1516,8 +1594,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                             data-bs-toggle="collapse"
                             data-bs-target="#collapseTwo"
                         >
-                            <i className="bi bi-box-arrow-up me-2 text-info"></i>
-                            NTRIP Caster Server 2
+                            <span className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2 flex-grow-1">
+                                <span><i className="bi bi-box-arrow-up me-2 text-info" aria-hidden="true"></i>NTRIP Caster Server 2</span>
+                                {renderCasterStatus(2)}
+                            </span>
                         </button>
                     </h2>
                     <div id="collapseTwo" className="accordion-collapse collapse" data-bs-parent="#service-config-accordion">
@@ -1591,7 +1671,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                 {/* Connection Details */}
                                 <div className="row g-3">
                                     <div className="col-md-8">
-                                        <label className="form-label">Host / IP</label>
+                                        <label className="form-label d-flex flex-wrap align-items-center">Host / IP {renderCasterStatus(2)}</label>
                                         <input
                                             type="text"
                                             className="form-control"
@@ -1631,14 +1711,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">Password</label>
-                                        <input
-                                            type="password"
-                                            className="form-control"
-                                            name="password2"
-                                            value={formState.password2}
-                                            onChange={handleChange}
-                                            placeholder="••••••••"
-                                        />
+                                        {renderPasswordInput('password2', 'mật khẩu Caster 2')}
                                     </div>
                                     <div className="col-12">
                                         <label className="form-label">Mountpoint</label>
@@ -1774,14 +1847,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                     </div>
                                     <div className="col-md-6">
                                         <label className="form-label">Password</label>
-                                        <input
-                                            type="password"
-                                            className="form-control"
-                                            name="rtcmpassword1"
-                                            value={formState.rtcmpassword1}
-                                            onChange={handleChange}
-                                            placeholder="••••••••"
-                                        />
+                                        {renderPasswordInput('rtcmpassword1', 'mật khẩu RTCM')}
                                     </div>
                                 </div>
                             </fieldset>

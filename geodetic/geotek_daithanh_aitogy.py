@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V2.2.5"
+RELAY_VERSION = "V2.2.6"
 
 import json
 import logging
@@ -315,7 +315,12 @@ MQTT_SOURCE_CONFIG_FIELDS = {
 def _mqtt_source_persistable_config(values):
     if not isinstance(values, dict):
         return {}
-    return {key: values[key] for key in MQTT_SOURCE_CONFIG_FIELDS if key in values and values[key] is not None}
+    return {
+        key: values[key] for key in MQTT_SOURCE_CONFIG_FIELDS
+        if key in values and values[key] is not None
+        and not (key in ("target_pass", "password1", "password2", "command_pass", "rtcmpassword1")
+                 and values[key] == "")
+    }
 
 
 def config_value(section, key, env_keys, default):
@@ -1831,6 +1836,8 @@ class RelayWorker(threading.Thread):
             for target_key, aliases in source_aliases.items():
                 for alias in aliases:
                     if alias in source_config and source_config[alias] is not None:
+                        if target_key == "source_pass" and source_config[alias] == "":
+                            continue
                         updates[target_key] = source_config[alias]
                         break
 
@@ -2792,12 +2799,7 @@ class MqttSourceWorker(threading.Thread):
             params = payload
         service_config = payload.get("service_config", {}) if isinstance(payload.get("service_config"), dict) else {}
         if service_config:
-            for key, value in service_config.items():
-                if value is not None:
-                    runtime[key] = value
-            runtime["server1_enabled"] = bool(service_config.get("server1_enabled", False))
-            runtime["stream_on_demand"] = bool(service_config.get("stream_on_demand", False))
-            runtime["server1_stream_active"] = service_config.get("server1_stream_active")
+            runtime.update(_mqtt_source_persistable_config(service_config))
 
         if method:
             runtime["setup_method"] = method

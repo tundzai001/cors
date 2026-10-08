@@ -6909,12 +6909,16 @@ async def configure_service_endpoint(
 
     # 2. Kiểm tra MANAGE_STATION_MODE (Nếu thay đổi mode sleep/always-on toàn cục hoặc theo server)
     old_service_cfg = _device_service_config(device_in_db)
+    incoming_config = payload.model_dump(exclude_unset=True)
+    for key in schemas.SERVICE_PASSWORD_FIELDS:
+        if incoming_config.get(key) in (None, ""):
+            incoming_config.pop(key, None)
     old_on_demand = old_service_cfg.get("stream_on_demand", False)
-    new_on_demand = payload.stream_on_demand
+    new_on_demand = incoming_config.get("stream_on_demand", old_on_demand)
     old_s1_on_demand = old_service_cfg.get("server1_stream_on_demand")
     old_s2_on_demand = old_service_cfg.get("server2_stream_on_demand")
-    new_s1_on_demand = payload.server1_stream_on_demand
-    new_s2_on_demand = payload.server2_stream_on_demand
+    new_s1_on_demand = incoming_config.get("server1_stream_on_demand", old_s1_on_demand)
+    new_s2_on_demand = incoming_config.get("server2_stream_on_demand", old_s2_on_demand)
 
     station_mode_changed = (
         old_on_demand != new_on_demand
@@ -6935,7 +6939,7 @@ async def configure_service_endpoint(
 
     # --- BƯỚC 1: LƯU CẤU HÌNH "CHUẨN" VÀO DATABASE ---
     service_config_payload = _preserve_relay_config_metadata(
-        serial, old_service_cfg, schemas.preserve_service_passwords(old_service_cfg, payload.model_dump())
+        serial, old_service_cfg, {**old_service_cfg, **incoming_config}
     )
     try:
         device_in_db.service_config = service_config_payload
@@ -6956,7 +6960,7 @@ async def configure_service_endpoint(
     # --- BƯỚC 2: GỬI LỆNH ĐẾN PI ---
     pi_command = {
         "command": "DEPLOY_SERVICE_CONFIG",
-        "payload": service_config_payload
+        "payload": incoming_config
     }
     try:
         response = await send_command_to_pi(serial, pi_command)

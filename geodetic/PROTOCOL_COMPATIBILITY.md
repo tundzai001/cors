@@ -13,7 +13,7 @@ setting.
 1. Deploy the backend command dispatcher and license compatibility changes
    together. Restart the backend so every command carries `command_id`,
    `issued_at` and `expires_at`.
-2. Replace and restart the universal and relay agents with V2.2.5. Existing
+2. Replace and restart the universal and relay agents with V2.2.6. Existing
    configuration, serial and license files stay in place.
 3. Confirm fresh MQTT status and, for universal agents, a successful WebSocket
    connection. A broker publish acknowledgement confirms MQTT delivery, not
@@ -25,7 +25,7 @@ the mixed-version command rejection. Do not remove this validation to work
 around an old backend. Rejection logs include timestamps to distinguish missing
 metadata from clock skew without printing command credentials.
 
-Universal V2.2.5 accepts modern `dt_` tokens and an existing legacy license only
+Universal V2.2.6 accepts modern `dt_` tokens and an existing legacy license only
 when it matches the original serial-bound algorithm. Backend WebSocket
 authentication still compares the supplied credential with the stored device
 credential. MQTT fingerprint reconciliation accepts both supported formats.
