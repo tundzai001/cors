@@ -120,6 +120,7 @@
         const [filterOpen, setFilterOpen] = useState(false);
         const [measureOn, setMeasureOn] = useState(false);
         const [findingNearest, setFindingNearest] = useState(false);
+        const [tileMode, setTileMode] = useState('hybrid');
         const [mapError, setMapError] = useState('');
         const role = String(currentUser?.role || '').toLowerCase();
         const canViewRovers = role === 'admin' || currentUser?.can_view_rovers === true || currentUser?.permissions?.includes('view:rovers');
@@ -205,6 +206,14 @@
             mapRef.current = map;
             setMapError('');
 
+            const tiles = {
+                hybrid: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 20, attribution: '&copy; Google' }),
+                satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, attribution: '&copy; Google' }),
+                streets: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20, attribution: '&copy; Google' })
+            };
+            tiles.hybrid.addTo(map);
+            map.__tiles = tiles;
+
             layerRef.current = L.layerGroup();
             coverageRef.current = L.layerGroup();
             coverageRef.current.addTo(map);
@@ -266,6 +275,13 @@
                 map.remove();
             };
         }, []);
+
+        useEffect(() => {
+            const map = mapRef.current;
+            if (!map?.__tiles) return;
+            Object.values(map.__tiles).forEach(layer => map.removeLayer(layer));
+            map.__tiles[tileMode].addTo(map);
+        }, [tileMode]);
 
         useEffect(() => {
             const map = mapRef.current;
@@ -468,9 +484,6 @@
         return (
             <div className="station-map-container">
                 <div ref={mapEl} className="station-map-canvas"></div>
-                <div className="station-map-private-basemap-note" role="note" style={{ position: 'absolute', right: 12, bottom: 12, zIndex: 500, maxWidth: 280, color: '#e2e8f0', background: 'rgba(15, 23, 42, .9)', padding: '6px 9px', borderRadius: 6, fontSize: 12 }}>
-                    Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí trạm.
-                </div>
 
                 {mapError && (
                     <div className="station-map-load-error" role="alert">
@@ -490,6 +503,7 @@
                             {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
                         </button>
                         <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
+                        <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
                         <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
                     </div>
                 </div>

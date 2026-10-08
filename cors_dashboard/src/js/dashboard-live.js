@@ -34,6 +34,9 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         // Khởi tạo Map
         if (!mapInstanceRef.current) {
             mapInstanceRef.current = leaflet.map(mapContainerRef.current).setView([lat, lon], 16);
+            leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20, attribution: '&copy; Google'
+            }).addTo(mapInstanceRef.current);
 
             markerRef.current = leaflet.marker([lat, lon]).addTo(mapInstanceRef.current)
                 .bindPopup(`<b>Vị trí Base</b><br>Lat: ${lat}<br>Lon: ${lon}`)
@@ -96,9 +99,6 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
             </div>
             <div style={{ position: 'relative' }}>
                 <div ref={mapContainerRef} style={{ width: '100%', height: '300px', borderRadius: '8px', border: '2px solid #444', background: '#222', zIndex: 0 }} />
-                <small style={{ position: 'absolute', left: 10, bottom: 10, zIndex: 500, color: '#e2e8f0', background: 'rgba(15, 23, 42, .85)', padding: '5px 8px', borderRadius: 6 }}>
-                    Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí trạm.
-                </small>
             </div>
             <div className="mt-2 small text-muted">Lat: {parseFloat(coords.lat).toFixed(8)} | Lon: {parseFloat(coords.lon).toFixed(8)}</div>
         </div>

@@ -662,6 +662,9 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
         if (!mapInstanceRef.current) {
             const map = leaflet.map(mapContainerRef.current).setView([21.0285, 105.8542], 6);
+            leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20, attribution: '&copy; Google'
+            }).addTo(map);
 
             roverClusterRef.current = window.CorsDashboardShared?.createMarkerClusterGroup?.({
                 chunkedLoading: true,
@@ -1342,9 +1345,6 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                         background: '#222'
                     }}
                 />
-                <small style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 500, color: '#e2e8f0', background: 'rgba(15, 23, 42, .85)', padding: '5px 8px', borderRadius: 6 }}>
-                    Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí trạm.
-                </small>
             </div>
         </div>
     );

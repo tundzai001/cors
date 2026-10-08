@@ -138,6 +138,22 @@ class SystemSetting(AuthBase):
     value = Column(JSON, nullable=False)
 
 
+class ApiKey(AuthBase):
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    key_hash = Column(String(64), unique=True, nullable=False, index=True)
+    created_at = Column(BigInteger, nullable=False)
+    expires_at = Column(BigInteger, nullable=False)
+    revoked_at = Column(BigInteger, nullable=True)
+    created_by = Column(Integer, nullable=False)
+    all_stations = Column(Boolean, nullable=False, default=False)
+    station_serials = Column(JSON, nullable=False, default=list)
+    data_fields = Column(JSON, nullable=False, default=list)
+    edit_config = Column(Boolean, nullable=False, default=False)
+
+
 class ZaloChatBinding(AuthBase):
     __tablename__ = "zalo_chat_bindings"
 

@@ -1,0 +1,169 @@
+document.addEventListener('DOMContentLoaded', async () => {
+    const status = document.getElementById('page-status');
+    const form = document.getElementById('key-form');
+    const stationList = document.getElementById('station-list');
+    const fieldList = document.getElementById('field-list');
+    const tbody = document.getElementById('keys-body');
+    const allStations = document.getElementById('all-stations');
+    const saveButton = document.getElementById('save-key');
+    const cancelButton = document.getElementById('cancel-edit');
+    const tokenBox = document.getElementById('new-token');
+    let keys = [];
+    let editingId = null;
+
+    const fields = {
+        name: 'Tên', status: 'Trạng thái', timestamp: 'Thời điểm cập nhật',
+        offline_since: 'Mất kết nối từ', lat: 'Vĩ độ', lon: 'Kinh độ', alt: 'Độ cao',
+        mountpoint: 'Mountpoint', streams: 'Luồng NTRIP', ntrip_status: 'Trạng thái NTRIP',
+        is_provisioned: 'Đã cấp cấu hình', ntrip_connected: 'Kết nối NTRIP',
+        bps: 'Lưu lượng', service_config: 'Cấu hình dịch vụ (nhạy cảm)'
+    };
+
+    function showStatus(message, kind = 'info') {
+        status.className = `alert alert-${kind}`;
+        status.textContent = message;
+        status.classList.remove('d-none');
+    }
+
+    async function request(url, options = {}) {
+        const response = await window.ApiClient.apiFetch(url, options, 0);
+        if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.detail || `HTTP ${response.status}`);
+        }
+        return response.status === 204 ? null : response.json();
+    }
+
+    function checkbox(container, name, label, checked = false) {
+        const wrap = document.createElement('label');
+        wrap.className = container === fieldList ? 'form-check col-sm-6' : 'form-check d-block';
+        const input = document.createElement('input');
+        input.className = 'form-check-input';
+        input.type = 'checkbox';
+        input.value = name;
+        input.defaultChecked = checked;
+        input.checked = checked;
+        const text = document.createElement('span');
+        text.className = 'form-check-label';
+        text.textContent = label;
+        wrap.append(input, text);
+        container.append(wrap);
+        return input;
+    }
+
+    function localDatetime(epoch) {
+        const date = new Date(epoch * 1000);
+        return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+
+    function renderKeys() {
+        tbody.replaceChildren();
+        if (!keys.length) {
+            const row = tbody.insertRow();
+            row.insertCell().colSpan = 5;
+            row.cells[0].textContent = 'Chưa có API key.';
+            return;
+        }
+        for (const key of keys) {
+            const row = tbody.insertRow();
+            row.insertCell().textContent = key.name;
+            row.insertCell().textContent = new Date(key.expires_at * 1000).toLocaleString('vi-VN');
+            row.insertCell().textContent = `${key.all_stations ? 'Tất cả trạm' : `${key.station_serials.length} trạm`} · ${key.data_fields.length} trường${key.edit_config ? ' · Được sửa' : ''}`;
+            const state = key.revoked_at ? 'Đã thu hồi' : key.expires_at <= Date.now() / 1000 ? 'Hết hạn' : 'Còn hiệu lực';
+            row.insertCell().textContent = state;
+            const actions = row.insertCell();
+            if (!key.revoked_at) {
+                const edit = document.createElement('button');
+                edit.className = 'btn btn-sm btn-outline-primary me-2';
+                edit.textContent = 'Sửa quyền';
+                edit.addEventListener('click', () => editKey(key));
+                const revoke = document.createElement('button');
+                revoke.className = 'btn btn-sm btn-outline-danger';
+                revoke.textContent = 'Thu hồi';
+                revoke.addEventListener('click', () => revokeKey(key));
+                actions.append(edit, revoke);
+            }
+        }
+    }
+
+    function editKey(key) {
+        editingId = key.id;
+        document.getElementById('form-title').textContent = `Sửa quyền: ${key.name}`;
+        document.getElementById('key-name').value = key.name;
+        document.getElementById('expires-at').value = localDatetime(key.expires_at);
+        allStations.checked = key.all_stations;
+        stationList.querySelectorAll('input').forEach(input => { input.checked = key.station_serials.includes(input.value); });
+        fieldList.querySelectorAll('input').forEach(input => { input.checked = key.data_fields.includes(input.value); });
+        document.getElementById('edit-config').checked = key.edit_config;
+        allStations.dispatchEvent(new Event('change'));
+        saveButton.textContent = 'Lưu quyền';
+        cancelButton.classList.remove('d-none');
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function resetForm() {
+        editingId = null;
+        form.reset();
+        document.getElementById('expires-at').value = localDatetime(Math.floor(Date.now() / 1000) + 30 * 86400);
+        document.getElementById('form-title').textContent = 'Tạo key';
+        saveButton.textContent = 'Tạo key';
+        cancelButton.classList.add('d-none');
+        allStations.dispatchEvent(new Event('change'));
+    }
+
+    async function revokeKey(key) {
+        if (!window.confirm(`Thu hồi key “${key.name}”? Tích hợp đang dùng key sẽ bị từ chối ngay.`)) return;
+        try {
+            await request(`/api/admin/api-keys/${key.id}`, { method: 'DELETE' });
+            keys = await request('/api/admin/api-keys');
+            renderKeys();
+            showStatus('Đã thu hồi key.', 'success');
+        } catch (error) { showStatus(error.message, 'danger'); }
+    }
+
+    try {
+        const user = await window.ApiClient.requireAuthenticatedPage();
+        if (!user) return;
+        if (user.role !== 'admin') { showStatus('Chỉ admin được quản trị API key.', 'danger'); form.classList.add('d-none'); return; }
+        const [devices, loadedKeys] = await Promise.all([request('/api/devices'), request('/api/admin/api-keys')]);
+        keys = loadedKeys;
+        for (const device of devices) checkbox(stationList, device.serial, `${device.name || device.serial} (${device.serial})`);
+        for (const [name, label] of Object.entries(fields)) checkbox(fieldList, name, label, ['name', 'status', 'lat', 'lon'].includes(name));
+        allStations.addEventListener('change', () => { stationList.querySelectorAll('input').forEach(input => { input.disabled = allStations.checked; }); });
+        cancelButton.addEventListener('click', resetForm);
+        document.getElementById('copy-token').addEventListener('click', async () => {
+            await navigator.clipboard.writeText(document.getElementById('token-value').value);
+            showStatus('Đã sao chép key.', 'success');
+        });
+        form.addEventListener('submit', async event => {
+            event.preventDefault();
+            const expiresAt = Math.floor(new Date(document.getElementById('expires-at').value).getTime() / 1000);
+            const body = {
+                name: document.getElementById('key-name').value.trim(), expires_at: expiresAt,
+                all_stations: allStations.checked,
+                station_serials: [...stationList.querySelectorAll('input:checked')].map(input => input.value),
+                data_fields: [...fieldList.querySelectorAll('input:checked')].map(input => input.value),
+                edit_config: document.getElementById('edit-config').checked
+            };
+            saveButton.disabled = true;
+            saveButton.textContent = 'Đang lưu…';
+            try {
+                const result = await request(editingId ? `/api/admin/api-keys/${editingId}` : '/api/admin/api-keys', {
+                    method: editingId ? 'PUT' : 'POST', body: JSON.stringify(body)
+                });
+                if (result.token) {
+                    document.getElementById('token-value').value = result.token;
+                    tokenBox.classList.remove('d-none');
+                }
+                keys = await request('/api/admin/api-keys');
+                renderKeys();
+                resetForm();
+                showStatus(result.token ? 'Đã tạo key. Hãy sao chép ngay.' : 'Đã cập nhật quyền key.', 'success');
+            } catch (error) { showStatus(error.message, 'danger'); }
+            finally { saveButton.disabled = false; saveButton.textContent = editingId ? 'Lưu quyền' : 'Tạo key'; }
+        });
+        resetForm();
+        renderKeys();
+        status.classList.add('d-none');
+    } catch (error) { showStatus(error.message, 'danger'); }
+});

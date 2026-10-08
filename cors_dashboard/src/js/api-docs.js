@@ -28,14 +28,12 @@ const ApiDocs = () => {
     const endpoints = [
         {
             method: 'GET',
-            path: '/api/public/stations',
-            desc: 'Danh sách trạm CORS public (không lộ thông tin nhạy cảm).',
-            params: [
-                { name: 'status', type: 'string', desc: 'online | offline | sleep' },
-                { name: 'province', type: 'string', desc: 'Lọc theo tỉnh/thành' }
-            ],
+            path: '/api/integrations/stations',
+            desc: 'Chỉ trả các trạm và trường dữ liệu được cấp cho API key.',
+            params: [],
             response: `[
   {
+    "serial": "ST001",
     "name": "HP.HaiAn",
     "status": "sleep",
     "lat": 20.838680,
@@ -44,39 +42,19 @@ const ApiDocs = () => {
 ]`
         },
         {
-            method: 'GET',
-            path: '/api/public/stats',
-            desc: 'Chỉ số realtime của toàn mạng CORS.',
-            params: [],
-            response: `{
-  "total_stations": 150,
-  "active_nodes": 142,
-  "avg_latency_ms": 45,
-  "uptime_24h": 99.98
-}`
-        },
-        {
-            method: 'GET',
-            path: '/api/public/network-health',
-            desc: 'Tổng hợp chất lượng theo vùng và theo giao thức truyền.',
-            params: [
-                { name: 'window', type: 'string', desc: '15m | 1h | 24h' }
-            ],
-            response: `{
-  "window": "1h",
-  "regions": [
-    {"name": "North", "latency_ms": 43, "packet_loss": 0.12},
-    {"name": "South", "latency_ms": 48, "packet_loss": 0.18}
-  ]
-}`
+            method: 'POST',
+            path: '/api/integrations/stations/{serial}/configure-service',
+            desc: 'Sửa cấu hình dịch vụ khi key có quyền và được cấp trạm.',
+            params: [{ name: 'serial', type: 'string', desc: 'Serial trạm được cấp quyền sửa' }],
+            response: `{ "status": "service_config_sent_and_saved" }`
         }
     ];
 
     const quickstart = [
-        'Đăng ký tài khoản và lấy API token theo môi trường (staging/production).',
-        'Gọi /api/public/stations để lấy danh sách trạm khả dụng theo khu vực.',
-        'Theo dõi /api/public/stats và /api/public/network-health để hiển thị trạng thái realtime.',
-        'Cache dữ liệu read-heavy theo chu kỳ 10-30 giây để giảm tải client.'
+        'Admin tạo key tại trang API Keys và chọn thời hạn, trạm, dữ liệu, quyền sửa.',
+        'Gửi Authorization: Bearer <key> từ backend tích hợp.',
+        'Gọi /api/integrations/stations để nhận dữ liệu theo quyền hiện tại của key.',
+        'Key hết hạn theo thời gian thực và có thể bị thu hồi bất cứ lúc nào.'
     ];
 
     return (
@@ -98,17 +76,13 @@ const ApiDocs = () => {
                         <code>https://cors.aitogy.com</code>
                         <h6 className="small text-uppercase text-muted mt-4 mb-2">Auth</h6>
                         <code>Authorization: Bearer &lt;token&gt;</code>
-                        <div className="d-grid gap-2 mt-4">
-                            <button className="btn btn-outline-primary btn-sm rounded-pill">Tải OpenAPI Spec</button>
-                            <button className="btn btn-outline-secondary btn-sm rounded-pill">Liên hệ hỗ trợ Dev</button>
-                        </div>
                     </aside>
                 </div>
 
                 <div className="col-lg-8">
                     <div className="api-endpoint mb-4 p-4">
                         <h5 className="mb-2">Versioning & Stability</h5>
-                        <p className="text-muted mb-0">Public API ưu tiên tương thích ngược. Thay đổi breaking sẽ được thông báo trước và có giai đoạn song song phiên bản.</p>
+                        <p className="text-muted mb-0">Quyền và thời hạn được kiểm tra ở backend trên mỗi request. Chỉnh quyền không cần đổi token.</p>
                     </div>
 
                     {endpoints.map((ep, idx) => (

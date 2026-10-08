@@ -3378,9 +3378,10 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
-from .routers import users, devices
+from .routers import users, devices, api_keys
 app.include_router(users.router)
 app.include_router(devices.router)
+app.include_router(api_keys.router)
 
 
 # === SEO & DYNAMIC ROUTING FOR GNSS PLATFORM ===
@@ -4658,8 +4659,7 @@ async def revoke_zalo_binding(
     return {"status": "deleted", "binding_id": binding_id, "chat_id": deleted_chat_id}
 
 
-@app.get("/api/public/map-stations")
-async def get_public_map_stations(
+async def _get_map_station_items(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
@@ -4807,6 +4807,19 @@ async def get_public_map_stations(
         return []
 
 
+@app.get("/api/public/map-stations")
+async def get_public_map_stations(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    items = await _get_map_station_items(response, db)
+    guest_fields = {
+        "serial", "name", "status", "timestamp", "offline_since", "lat", "lon", "alt",
+        "ntrip_connected", "bps", "is_provisioned",
+    }
+    return [{field: value for field, value in item.items() if field in guest_fields} for item in items]
+
+
 @app.get("/api/map/stations")
 async def get_authenticated_map_stations(
     response: Response,
@@ -4815,7 +4828,7 @@ async def get_authenticated_map_stations(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_CONFIG)),
 ):
     """Return map data and in-scope station config to authenticated users."""
-    public_items = await get_public_map_stations(response, db)
+    public_items = await _get_map_station_items(response, db)
     response.headers["Cache-Control"] = "private, no-store"
 
     visible_serials = None
@@ -4851,6 +4864,46 @@ async def get_authenticated_map_stations(
         item["system_info"] = schemas.redact_config_secrets(device.system_info)
         items.append(item)
     return items
+
+
+@app.get("/api/integrations/stations")
+async def get_integration_stations(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    key: models.ApiKey = Depends(api_keys.require_integration_key),
+):
+    """Apply current key policy on every request, including cached station data."""
+    items = await _get_map_station_items(response, db)
+    configs = {}
+    if "service_config" in (key.data_fields or []):
+        result = await db.execute(select(models.Device.serial, models.Device.service_config))
+        configs = {serial: config for serial, config in result.all()}
+    response.headers["Cache-Control"] = "private, no-store"
+    return api_keys.project_station_items(items, key, configs)
+
+
+@app.post("/api/integrations/stations/{serial}/configure-service")
+async def configure_integration_station(
+    serial: str,
+    payload: schemas.ServiceConfig,
+    db: AsyncSession = Depends(get_db),
+    key: models.ApiKey = Depends(api_keys.require_integration_key),
+):
+    api_keys.require_station_edit(key, serial)
+    api_user = models.User(id=key.created_by, username=f"api-key:{key.id}", role=auth.Role.ADMIN, is_active=True)
+    return await configure_service_endpoint(serial, payload, db, api_user)
+
+
+@app.post("/api/integrations/stations/{serial}/configure-chip")
+async def configure_integration_station_chip(
+    serial: str,
+    payload: schemas.Command,
+    db: AsyncSession = Depends(get_db),
+    key: models.ApiKey = Depends(api_keys.require_integration_key),
+):
+    api_keys.require_station_edit(key, serial)
+    api_user = models.User(id=key.created_by, username=f"api-key:{key.id}", role=auth.Role.ADMIN, is_active=True)
+    return await configure_chip_endpoint(serial, payload, db, api_user)
 
 
 @app.get("/api/public/network-summary")
@@ -9769,6 +9822,10 @@ async def serve_monitoring():
 async def serve_users():
     return FileResponse("../frontend/users.html")
 
+@app.get("/api-keys", include_in_schema=False)
+async def serve_api_keys():
+    return FileResponse("../frontend/api-keys.html")
+
 @app.get("/security", include_in_schema=False)
 async def serve_security():
     return FileResponse("../frontend/security.html")
@@ -9820,7 +9877,7 @@ async def serve_robots():
 
 @app.get("/{page_name}.html", include_in_schema=False)
 async def serve_public_html(page_name: str):
-    if page_name not in {"operations", "rovers-global", "security", "users", "zalo"}:
+    if page_name not in {"operations", "rovers-global", "security", "users", "zalo", "api-keys"}:
         raise HTTPException(status_code=404)
     return FileResponse(f"../frontend/{page_name}.html")
 

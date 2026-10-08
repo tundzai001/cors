@@ -60,16 +60,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const value = Number(quality);
         return Number.isFinite(value) ? roverFixQualityLabels[value] || `Fix ${value}` : 'Chưa có dữ liệu';
     };
-    const addPrivateMapNotice = (leaflet, map) => {
-        const notice = leaflet.control({ position: 'topright' });
-        notice.onAdd = () => {
-            const element = leaflet.DomUtil.create('div');
-            element.textContent = 'Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí.';
-            element.style.cssText = 'max-width:260px;padding:6px 9px;border-radius:6px;background:rgba(15,23,42,.9);color:#e2e8f0;font-size:12px;white-space:normal';
-            return element;
-        };
-        notice.addTo(map);
-    };
+    const addMapTiles = (leaflet, map) => leaflet.tileLayer(
+        'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+        { maxZoom: 20, attribution: '&copy; Google' }
+    ).addTo(map);
 
     const hasRoverPageAccess = () => (
         String(currentUser?.role || '').toLowerCase() === 'admin'
@@ -1680,7 +1674,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             try {
                 roverActivityMap = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
-                addPrivateMapNotice(leaflet, roverActivityMap);
+                addMapTiles(leaflet, roverActivityMap);
                 const visibleSessions = selectedSession ? [selectedSession] : sessions;
                 const mapCoordinates = [];
                 visibleSessions.forEach(session => {
@@ -1809,7 +1803,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const coordinates = validPoints.map(({ point }) => [Number(point.lat), Number(point.lon)]);
             const map = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
             roverHistorySessionMaps.set(String(sessionId), map);
-            addPrivateMapNotice(leaflet, map);
+            addMapTiles(leaflet, map);
             const line = coordinates.length > 1
                 ? leaflet.polyline(coordinates, { color: '#22d3ee', weight: 4, opacity: 0.9 }).addTo(map)
                 : null;
