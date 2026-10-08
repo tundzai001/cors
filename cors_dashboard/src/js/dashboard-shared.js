@@ -216,18 +216,13 @@ const getMapEffectiveStatus = (device) => {
     }
 
     const primarySid = getPreferredOutputServerId(device);
-    if (!primarySid) {
-        if (statusForOps === 'streaming') return 'streaming';
-        return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
-    }
+    // Output configuration does not determine whether the agent is reachable.
+    if (!primarySid) return statusForOps;
 
     const primary = getServerTelemetry(device, primarySid);
     if (primary.bps > 0) return 'online';
     if (primary.sleep === true || (primary.onDemand === true && primary.active === false)) return 'sleep';
     if (primary.connected) return 'online';
-    if (primary.hasBps || primary.hasConnection || statusForOps === 'online' || statusForOps === 'streaming' || statusForOps === 'sleep') {
-        return 'sleep';
-    }
     return statusForOps;
 };
 window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, getMapEffectiveStatus, isAccessTokenSynced };

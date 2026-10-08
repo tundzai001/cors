@@ -60,6 +60,7 @@ device_name_cache = {}       # Lưu tên trạm để ghép vào bản tin offli
 device_telemetry_cache = {}  # Snapshot live cho bot/API đọc tọa độ và vệ tinh hiện tại
 device_metadata_cache = {}
 device_metadata_locks = {}
+device_metadata_tasks = {}
 device_deletion_tombstones = set()
 device_deletion_tombstones_lock = threading.Lock()
 DEVICE_METADATA_CACHE_TTL_SECONDS = max(
@@ -139,6 +140,25 @@ async def get_device_metadata(serial: str, *, force_refresh: bool = False) -> di
     ):
         return cached
 
+    task = device_metadata_tasks.get(serial_key)
+    if task is None:
+        task = asyncio.create_task(_refresh_device_metadata(serial_key, force_refresh=force_refresh))
+        device_metadata_tasks[serial_key] = task
+        task.add_done_callback(lambda done: _metadata_lookup_done(serial_key, done))
+    # A short WebSocket handshake deadline must not cancel SQL/connection cleanup.
+    # Retries share this lookup until it completes and populates the cache.
+    return await asyncio.shield(task)
+
+
+def _metadata_lookup_done(serial_key: str, task: asyncio.Task) -> None:
+    if device_metadata_tasks.get(serial_key) is task:
+        device_metadata_tasks.pop(serial_key, None)
+    # Retrieve failures even if every waiting handshake has already timed out.
+    if not task.cancelled():
+        task.exception()
+
+
+async def _refresh_device_metadata(serial_key: str, *, force_refresh: bool = False) -> dict:
     lock = device_metadata_locks.setdefault(serial_key, asyncio.Lock())
     async with lock:
         cached = device_metadata_cache.get(serial_key)

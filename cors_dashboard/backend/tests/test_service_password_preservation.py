@@ -9,7 +9,7 @@ APP = Path(__file__).resolve().parents[1] / "app"
 tree = ast.parse((APP / "schemas.py").read_text())
 nodes = [node for node in tree.body if
          isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "SERVICE_PASSWORD_FIELDS" for t in node.targets)
-         or isinstance(node, ast.FunctionDef) and node.name == "preserve_service_passwords"]
+         or isinstance(node, ast.FunctionDef) and node.name in ("preserve_service_passwords", "service_config_deployment_payload")]
 scope = {}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "schemas.py", "exec"), scope)
 preserve = scope["preserve_service_passwords"]
@@ -39,7 +39,7 @@ class ServicePasswordPreservationTests(unittest.TestCase):
         block = source[source.index('    previous_service_config = _ensure_dict(existing_device.service_config)'):
                        source.index('    # Status\n', source.index('    previous_service_config = _ensure_dict(existing_device.service_config)'))]
         import textwrap
-        stored = {"password1": "caster-secret", "password2": "backup-secret", "mountpoint1": "TV869"}
+        stored = {"password1": "caster-secret", "password2": "backup-secret", "mountpoint1": "TV869", "serverhost1": "caster", "server1_enabled": True}
         context = {"existing_device": SimpleNamespace(service_config=stored),
                    "new_service_config": {"mountpoint1": "TV869", "server1_stream_active": True},
                    "_ensure_dict": lambda value: value, "schemas": SimpleNamespace(preserve_service_passwords=preserve),
@@ -50,6 +50,27 @@ class ServicePasswordPreservationTests(unittest.TestCase):
         self.assertEqual(updated["password1"], "caster-secret")
         self.assertEqual(updated["password2"], "backup-secret")
         self.assertTrue(updated["server1_stream_active"])
+        self.assertEqual(updated["serverhost1"], "caster")
+        self.assertTrue(updated["server1_enabled"])
+
+    def test_legacy_deployment_keeps_full_saved_config(self):
+        saved = {"password1": "new-secret", "username1": "source", "serverhost1": "caster",
+                 "port1": 2101, "mountpoint1": "BASE", "server1_enabled": True,
+                 "stream_on_demand": True, "server1_stream_active": False}
+        changes = {"password1": "new-secret"}
+        deploy = scope["service_config_deployment_payload"]
+        for version in ("V2.2.5", "V2.2.4", None, "unknown"):
+            self.assertEqual(deploy(version, saved, changes), saved)
+        for version in ("V2.2.6", "V2.2.7", "V3.0.0"):
+            self.assertEqual(deploy(version, saved, changes), changes)
+        # Actual damaged ATG.PHU report: only stream flags, no caster config.
+        damaged = {"stream_active": True, "server1_stream_on_demand": False,
+                   "server1_stream_active": True, "server2_stream_on_demand": False,
+                   "server2_stream_active": True}
+        self.assertEqual(deploy("V2.2.6", saved, changes, damaged), saved)
+        self.assertEqual(deploy("V2.2.6", saved, {}, damaged), saved)
+        healthy = {key: value for key, value in saved.items() if key not in scope["SERVICE_PASSWORD_FIELDS"]}
+        self.assertEqual(deploy("V2.2.6", saved, changes, healthy), changes)
 
     def test_endpoint_saves_merged_config_but_sends_only_patch(self):
         tree = ast.parse((APP / "main.py").read_text())
@@ -68,7 +89,10 @@ class ServicePasswordPreservationTests(unittest.TestCase):
                       {"mountpoint1": "TV869", "password1": "replacement"}):
             context = {"serial": "LP_TEST", "old_service_cfg": stored,
                        "payload": SimpleNamespace(model_dump=lambda **kw: dict(patch) if kw.get("exclude_unset") else self.fail("Defaults must not become edits")),
-                       "schemas": SimpleNamespace(SERVICE_PASSWORD_FIELDS=scope["SERVICE_PASSWORD_FIELDS"]),
+                       "schemas": SimpleNamespace(SERVICE_PASSWORD_FIELDS=scope["SERVICE_PASSWORD_FIELDS"],
+                                                   service_config_deployment_payload=scope["service_config_deployment_payload"]),
+                       "device_in_db": SimpleNamespace(version="V2.2.6"),
+                       "mqtt_handler": SimpleNamespace(device_sync_cache={}),
                        "_preserve_relay_config_metadata": lambda serial, old, updated: updated}
             nodes = [incoming, blank_filter, *mode_assignments, assignment("service_config_payload"), assignment("pi_command")]
             exec(compile(ast.Module(body=nodes, type_ignores=[]), "main.py", "exec"), context)

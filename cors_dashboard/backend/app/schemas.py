@@ -40,6 +40,25 @@ def preserve_service_passwords(current: dict, incoming: dict) -> dict:
     return merged
 
 
+def service_config_deployment_payload(agent_version, saved_config: dict, changes: dict, reported_config=None) -> dict:
+    """Legacy agents replace services; V2.2.6+ agents merge patches."""
+    try:
+        version = tuple(int(part) for part in str(agent_version or '').strip().lstrip('Vv').split('.'))
+    except ValueError:
+        version = ()
+    needs_restore = isinstance(reported_config, dict) and any(
+        saved_config.get(f"server{server}_enabled") and (
+            not reported_config.get(f"server{server}_enabled")
+            or any(saved_config.get(f"{field}{server}") and not reported_config.get(f"{field}{server}")
+                   for field in ("serverhost", "port", "mountpoint"))
+        )
+        for server in (1, 2)
+    )
+    if changes and len(version) == 3 and version >= (2, 2, 6) and not needs_restore:
+        return dict(changes)
+    return dict(saved_config)
+
+
 def strip_status_config_secrets(value: Any) -> Any:
     """Drop reusable secret fields from device telemetry before caching or broadcast."""
     if isinstance(value, dict):

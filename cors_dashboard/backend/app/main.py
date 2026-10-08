@@ -6960,7 +6960,10 @@ async def configure_service_endpoint(
     # --- BƯỚC 2: GỬI LỆNH ĐẾN PI ---
     pi_command = {
         "command": "DEPLOY_SERVICE_CONFIG",
-        "payload": incoming_config
+        "payload": schemas.service_config_deployment_payload(
+            device_in_db.version, service_config_payload, incoming_config,
+            mqtt_handler.device_sync_cache.get(f"{serial}_service_config"),
+        )
     }
     try:
         response = await send_command_to_pi(serial, pi_command)

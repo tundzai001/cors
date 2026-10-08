@@ -1224,7 +1224,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                     delete payload[key];
                 }
             }
-            if (!Object.keys(payload).length) return;
+            if (!Object.keys(payload).length && device.is_synced !== false) return;
             await onConfigureService(device.serial, payload);
             hydratedConfigRef.current = { ...hydratedConfigRef.current, ...payload };
             setIsFormDirty(false);

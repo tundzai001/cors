@@ -162,8 +162,10 @@ function enqueueStatusUpdate(payload) {
         const receivedAt = Number(item.server_received_at || item.timestamp || 0);
         const previous = lastStatusMetaBySerial.get(item.serial);
         if (previous && revision > 0) {
-            if (revision < previous.revision) return;
-            if (revision === previous.revision && receivedAt <= previous.receivedAt) return;
+            // Revisions can restart at 1 after a backend restart/worker change.
+            // A newer server receipt remains newer even with a lower revision.
+            if (receivedAt < previous.receivedAt) return;
+            if (receivedAt === previous.receivedAt && revision <= previous.revision) return;
         }
         if (previous && revision === 0 && receivedAt <= previous.receivedAt) {
             // Some administrative endpoints send a full DB snapshot after changing
@@ -728,8 +730,13 @@ function updateGlobalDevices(newDeviceData) {
             if ((!hasOwn(newDevice, 'base_config') || !hasData(newDevice.base_config)) && hasData(existingDevice.base_config)) {
                 newDevice.base_config = existingDevice.base_config;
             }
-            if ((!hasOwn(newDevice, 'service_config') || !hasData(newDevice.service_config)) && hasData(existingDevice.service_config)) {
+            const unsyncedAgentConfig = newDevice.status_revision > 0 && newDevice.is_synced === false;
+            if ((unsyncedAgentConfig || !hasOwn(newDevice, 'service_config') || !hasData(newDevice.service_config)) && hasData(existingDevice.service_config)) {
+                // Keep the backend's desired configuration available for repair.
+                // An out-of-sync agent may report only a truncated deployment.
                 newDevice.service_config = existingDevice.service_config;
+            } else if (hasData(existingDevice.service_config) && hasData(newDevice.service_config)) {
+                newDevice.service_config = { ...existingDevice.service_config, ...newDevice.service_config };
             }
 
             // Provisioned status
