@@ -52,6 +52,12 @@
         return container;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[char]);
+    }
+
     function showToast(type, message) {
         const normalizedType = ['success', 'danger', 'warning', 'info'].includes(type) ? type : 'info';
         const container = getToastContainer();
@@ -60,7 +66,7 @@
         toastEl.setAttribute('role', 'alert');
         toastEl.innerHTML = `
             <div class="d-flex align-items-center">
-                <div class="toast-body">${message}</div>
+                <div class="toast-body">${escapeHtml(message)}</div>
                 <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
             </div>
         `;
@@ -82,11 +88,11 @@
             backdrop.className = 'ops-confirm-backdrop';
             backdrop.innerHTML = `
                 <div class="ops-confirm" role="dialog" aria-modal="true">
-                    <div class="ops-confirm-head">${title}</div>
-                    <div class="ops-confirm-body">${message}</div>
+                    <div class="ops-confirm-head">${escapeHtml(title)}</div>
+                    <div class="ops-confirm-body">${escapeHtml(message)}</div>
                     <div class="ops-confirm-actions">
-                        <button type="button" class="btn btn-outline-secondary ops-confirm-cancel">${cancelText}</button>
-                        <button type="button" class="btn btn-${tone} ops-confirm-ok">${confirmText}</button>
+                        <button type="button" class="btn btn-outline-secondary ops-confirm-cancel">${escapeHtml(cancelText)}</button>
+                        <button type="button" class="btn btn-${tone} ops-confirm-ok">${escapeHtml(confirmText)}</button>
                     </div>
                 </div>
             `;

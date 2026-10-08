@@ -10,11 +10,14 @@ from collections import defaultdict, deque
 from typing import Optional, Dict, Set
 from fastapi import Request, HTTPException, status
 import asyncio
+import ipaddress
+import os
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
 from . import models, crud
+from .database import settings
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +90,6 @@ class AdvancedRateLimiter:
         🛡️ Multi-layer protection với attack mode detection
         Phiên bản: v5.0 (Tích hợp Data Recording cho Dashboard)
         """
-        # === 0. ADMIN BYPASS (Admin không bị tính vào stats block, nhưng có thể tính vào traffic) ===
-        if user_role == "admin":
-            return
-        
         # === LOAD SETTINGS ===
         settings = await crud.get_system_settings(db)
         if not settings.get('firewall_enabled', True):
@@ -427,10 +426,34 @@ class AdvancedRateLimiter:
     # ==========================================================================
     
     def _get_client_ip(self, request: Request) -> str:
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return request.headers.get("X-Real-IP", request.client.host if request.client else "unknown")
+        remote = request.client.host if request.client else "unknown"
+        try:
+            remote_ip = ipaddress.ip_address(remote)
+        except ValueError:
+            return remote
+
+        trusted = []
+        trusted_proxy_ips = os.getenv("TRUSTED_PROXY_IPS", settings.TRUSTED_PROXY_IPS)
+        for item in trusted_proxy_ips.split(","):
+            try:
+                trusted.append(ipaddress.ip_network(item.strip(), strict=False))
+            except ValueError:
+                continue
+        if not any(remote_ip in network for network in trusted):
+            return remote
+
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        chain = []
+        for raw_ip in forwarded.split(","):
+            try:
+                chain.append(ipaddress.ip_address(raw_ip.strip()))
+            except ValueError:
+                continue
+        for candidate in reversed([*chain, remote_ip]):
+            if any(candidate in network for network in trusted):
+                continue
+            return str(candidate)
+        return remote
     
     def _cleanup_old_attempts(self, ip: str, now: float):
         cutoff = now - self.WINDOW_SECONDS

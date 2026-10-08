@@ -8,30 +8,35 @@ from dotenv import dotenv_values
 logger = logging.getLogger(__name__)
 ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
 _ENV_VALUES = dotenv_values(ENV_FILE_PATH)
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_RESPONSE_SECONDS = 15.0
 
 def _get_env_preferring_dotenv(key: str, default: str) -> str:
+    value = os.getenv(key)
+    if value is not None and value.strip():
+        return value
     val = _ENV_VALUES.get(key)
     if val is not None and str(val).strip() != "":
         return str(val)
-    return str(os.getenv(key, default))
+    return default
 
 # Cấu hình Debug cho ClientTable
 CLIENTTABLE_DEBUG = False
 
 class CasterClient:
-    def __init__(self, host: str, port: int, admin_user: str = "admin", admin_password: str = "12345"):
+    def __init__(self, host: str, port: int, admin_user: str | None = None, admin_password: str | None = None):
         self.host = host
         self.port = port
-        env_master_user = _get_env_preferring_dotenv("CASTER_MASTER_USER", "").strip()
-        env_master_password = _get_env_preferring_dotenv("CASTER_MASTER_PASSWORD", "").strip()
-
-        # Prefer explicit arguments first; if missing, use optional master credentials from env.
-        self.admin_user = str(admin_user or env_master_user or "admin").strip()
-        self.admin_password = str(admin_password or env_master_password or "12345").strip()
+        env_master_user = _get_env_preferring_dotenv("CASTER_MASTER_USER", "") or _get_env_preferring_dotenv("CASTER_ADMIN_USER", "")
+        env_master_password = _get_env_preferring_dotenv("CASTER_MASTER_PASSWORD", "") or _get_env_preferring_dotenv("CASTER_PASSWORD", "")
+        self.admin_user = str(admin_user or env_master_user).strip()
+        self.admin_password = str(admin_password or env_master_password).strip()
 
     async def _send_command(self, command: str) -> str:
         reader, writer = None, None
         chunks = []
+        total_bytes = 0
+        deadline = asyncio.get_running_loop().time() + MAX_RESPONSE_SECONDS
         try:
             if CLIENTTABLE_DEBUG:
                 logger.info(f"--- THỰC HIỆN KẾT NỐI ĐẾN {self.host}:{self.port} ---")
@@ -52,25 +57,34 @@ class CasterClient:
             
             # Tăng timeout an toàn lên 5.0s để chờ Caster xử lý xong vòng lặp UI (tối đa 2.0s)
             timeout = 5.0
+            marker_tail = b""
             
             while True:
                 try:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
                     chunk = await asyncio.wait_for(reader.read(4096), timeout=timeout)
                     if not chunk:
                         break
                     chunks.append(chunk)
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_RESPONSE_BYTES:
+                        logger.warning("Caster response exceeded the %s-byte limit", MAX_RESPONSE_BYTES)
+                        return ""
                     
                     # Với các lệnh điều khiển ngắn, chỉ đọc gói dữ liệu đầu tiên rồi thoát ngay để tránh block kết nối
                     if not is_table_query:
                         break
                     
                     # Thoát sớm chỉ khi gặp marker kết thúc thật sự của response.
-                    partial_resp = chunk.decode('utf-8', errors='ignore').upper()
-                    if "ENDCLIENTTABLE" in partial_resp or "ENDUSERTABLE" in partial_resp or "ENDSOURCETABLE" in partial_resp:
+                    marker_window = (marker_tail + chunk).upper()
+                    if any(marker in marker_window for marker in (b"ENDCLIENTTABLE", b"ENDUSERTABLE", b"ENDSOURCETABLE")):
                         break
+                    marker_tail = marker_window[-32:]
                     
                     # Các lần đọc tiếp theo của bảng dữ liệu có thể dùng timeout ngắn hơn (1.0s)
-                    timeout = 1.0
+                    timeout = min(1.0, remaining)
                 except asyncio.TimeoutError:
                     # Chấp nhận timeout như là dấu hiệu kết thúc luồng dữ liệu
                     break
@@ -78,8 +92,8 @@ class CasterClient:
             return b"".join(chunks).decode('utf-8', errors='ignore')
 
         except Exception as e:
-            logger.error(f"Lỗi gọi Caster ({self.host}:{self.port}): {str(e)}")
-            if chunks:
+            logger.error("Lỗi gọi Caster (%s:%s): %s", self.host, self.port, type(e).__name__)
+            if chunks and total_bytes <= MAX_RESPONSE_BYTES:
                 return b"".join(chunks).decode('utf-8', errors='ignore')
             return ""
         finally:
@@ -208,13 +222,12 @@ class CasterClient:
             return default
 
     async def get_users(self) -> List[dict]:
-        cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/password1/9999\r\n\r\n"
+        if not self.admin_user or not self.admin_password:
+            logger.error("Caster usertable credentials are not configured")
+            return []
+        cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/{self.admin_password}/9999\r\n\r\n"
         try:
             response = await self._send_command(cmd)
-            # Fallback 'id'
-            if "Error" in response and self.admin_user != "id":
-                cmd = f"GET /usertable HTTP/1.0/id/mp1/password1/9999\r\n\r\n"
-                response = await self._send_command(cmd)
 
             users = []
             for line in response.split('\n'):
@@ -280,6 +293,9 @@ class CasterClient:
     ) -> Optional[List[dict]]:
         user = admin_user or self.admin_user
         pw = password or self.admin_password
+        if not user or not pw:
+            logger.error("Caster clienttable credentials are not configured")
+            return None
         
         # THỬ 3 PHƯƠNG ÁN LỆNH KHÁC NHAU
         cmds = [
@@ -364,7 +380,7 @@ class CasterClient:
         self,
         identifier: str,
         mountpoint: str,
-        password: str = "12345",
+        password: str | None = None,
         counter: int = 0,
         index: int | None = None,
         latitude: float | None = None,
@@ -378,7 +394,9 @@ class CasterClient:
     ) -> bool:
         safe_identifier = str(identifier or "").strip()
         safe_mountpoint = str(mountpoint or "").strip()
-        safe_password = str(password or "12345").strip()
+        safe_password = str(password or "").strip()
+        if not safe_password:
+            raise ValueError("A non-empty source password is required")
         safe_counter = int(counter or 0)
         safe_index = int(index) if index is not None else -1
         safe_latitude = float(latitude) if latitude is not None else 21.0717

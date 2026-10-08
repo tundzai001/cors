@@ -60,6 +60,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         const value = Number(quality);
         return Number.isFinite(value) ? roverFixQualityLabels[value] || `Fix ${value}` : 'Chưa có dữ liệu';
     };
+    const addPrivateMapNotice = (leaflet, map) => {
+        const notice = leaflet.control({ position: 'topright' });
+        notice.onAdd = () => {
+            const element = leaflet.DomUtil.create('div');
+            element.textContent = 'Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí.';
+            element.style.cssText = 'max-width:260px;padding:6px 9px;border-radius:6px;background:rgba(15,23,42,.9);color:#e2e8f0;font-size:12px;white-space:normal';
+            return element;
+        };
+        notice.addTo(map);
+    };
 
     const hasRoverPageAccess = () => (
         String(currentUser?.role || '').toLowerCase() === 'admin'
@@ -936,6 +946,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function createRoverRowElement(r) {
         const tr = document.createElement('tr');
+        const escapedUsername = escapeHtml(r.username);
+        const escapedUsernameKey = escapeHtml(normalizeUsername(r.username));
         tr.dataset.usernameKey = normalizeUsername(r.username);
         if (r.type === 'unknown') tr.style.backgroundColor = 'rgba(239, 68, 68, 0.03)';
 
@@ -1053,15 +1065,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const durText = formatDuration(durSeconds);
                 const startedAtText = formatDateTime(conn.started_at);
                 const clientIdText = conn.client_id ? String(conn.client_id) : 'N/A';
-                const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${conn.server.split('.')[0]}]</span>` : '';
+                const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${escapeHtml(String(conn.server || '').split('.')[0])}]</span>` : '';
                 currentRenderedConnectionKeys.add(getConnectionClockKey(conn));
                 return `<div class="rover-connection-row">
-                            <span class="rover-connection-mp">${conn.mountpoint}</span>
+                            <span class="rover-connection-mp">${escapeHtml(conn.mountpoint)}</span>
                             ${serverLabel}
                             <span class="rover-connection-time">
                                 <i class="bi bi-clock me-1"></i>
-                                <span class="live-clock" data-started-at="${stableStartedAt}" title="Bắt đầu: ${startedAtText} | Client: ${clientIdText}">${durText}</span>
-                                <span class="rover-connection-start">(${startedAtText})</span>
+                                <span class="live-clock" data-started-at="${Number.isFinite(stableStartedAt) ? stableStartedAt : 0}" title="Bắt đầu: ${escapeHtml(startedAtText)} | Client: ${escapeHtml(clientIdText)}">${escapeHtml(durText)}</span>
+                                <span class="rover-connection-start">(${escapeHtml(startedAtText)})</span>
                             </span>
                         </div>`;
             }).join('');
@@ -1072,14 +1084,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (isBlocked) {
                 actionHtml += `
                     <button class="rover-action-btn caster-unblock-btn" 
-                        data-username="${r.username}" title="Mở khóa">
+                        data-username="${escapedUsername}" title="Mở khóa">
                         <i class="bi bi-unlock-fill"></i>
                     </button>`;
             } else {
                 actionHtml += `
                     <button class="rover-action-btn danger caster-block-btn" 
-                        data-username="${r.username}" 
-                        data-mountpoints="${mps.join(',')}"
+                        data-username="${escapedUsername}"
+                        data-mountpoints="${escapeHtml(mps.join(','))}"
                         title="Chặn truy cập">
                         <i class="bi bi-shield-lock-fill"></i>
                     </button>`;
@@ -1090,26 +1102,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (r.type === 'db') {
                 if (hasRoverEditAccess()) actionHtml += `
                     <button class="rover-action-btn edit-btn" 
-                        data-id="${r.id}" data-username="${r.username}" title="Sửa">
+                        data-id="${Number(r.id) || 0}" data-username="${escapedUsername}" title="Sửa">
                         <i class="bi bi-pencil-square"></i>
                     </button>
                 `;
                 if (currentUser.role !== 'viewer') actionHtml += `
                     <button class="rover-action-btn danger delete-btn" 
-                        data-id="${r.id}" data-user="${r.username}" title="Xóa">
+                        data-id="${Number(r.id) || 0}" data-user="${escapedUsername}" title="Xóa">
                         <i class="bi bi-trash3-fill"></i>
                     </button>
                 `;
             } else if (r.type === 'unknown') {
                 if (hasRoverEditAccess()) actionHtml += `
                     <button class="rover-action-btn edit-btn" 
-                        data-id="0" data-username="${r.username}" title="Chỉnh sửa và Đồng bộ về Web">
+                        data-id="0" data-username="${escapedUsername}" title="Chỉnh sửa và Đồng bộ về Web">
                         <i class="bi bi-pencil-square"></i>
                     </button>
                 `;
                 if (currentUser.role !== 'viewer') actionHtml += `
                     <button class="rover-action-btn danger caster-delete-btn" 
-                        data-username="${r.username}" title="Xóa tài khoản khỏi Caster">
+                        data-username="${escapedUsername}" title="Xóa tài khoản khỏi Caster">
                         <i class="bi bi-trash3"></i>
                     </button>
                 `;
@@ -1130,7 +1142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             : '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">OK</span>';
         actionHtml = `
             <button class="rover-action-btn rover-history-btn"
-                data-username="${r.username}" title="Rover history">
+                data-username="${escapedUsername}" title="Rover history">
                 <i class="bi bi-clock-history"></i>
             </button>
             ${actionHtml}
@@ -1138,7 +1150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         tr.innerHTML = `
             <td class="text-center">
-                <input type="checkbox" class="form-check-input rover-row-check" data-username-key="${roverKey}" aria-label="Chọn rover ${escapeHtml(r.username)}" ${checkedAttr}>
+                <input type="checkbox" class="form-check-input rover-row-check" data-username-key="${escapedUsernameKey}" aria-label="Chọn rover ${escapedUsername}" ${checkedAttr}>
             </td>
             <td>
                 <div class="rover-user-cell">
@@ -1153,7 +1165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </div>
             </td>
-            <td data-label="Password"><code class="rover-password-chip">${r.password || '******'}</code></td>
+            <td data-label="Password"><code class="rover-password-chip">${escapeHtml(r.password || '******')}</code></td>
             <td data-label="Mountpoints">
                 <div class="rover-mount-cell">
                     <div class="rover-mountpoint-list" title="${mpsTitle}" aria-label="Mountpoints được cấp">${mpsDisplay}</div>
@@ -1668,10 +1680,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             try {
                 roverActivityMap = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
-                leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-                    maxZoom: 20,
-                    attribution: 'Google Maps'
-                }).addTo(roverActivityMap);
+                addPrivateMapNotice(leaflet, roverActivityMap);
                 const visibleSessions = selectedSession ? [selectedSession] : sessions;
                 const mapCoordinates = [];
                 visibleSessions.forEach(session => {
@@ -1800,10 +1809,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const coordinates = validPoints.map(({ point }) => [Number(point.lat), Number(point.lon)]);
             const map = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
             roverHistorySessionMaps.set(String(sessionId), map);
-            leaflet.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-                maxZoom: 20,
-                attribution: 'Google Maps'
-            }).addTo(map);
+            addPrivateMapNotice(leaflet, map);
             const line = coordinates.length > 1
                 ? leaflet.polyline(coordinates, { color: '#22d3ee', weight: 4, opacity: 0.9 }).addTo(map)
                 : null;
@@ -3136,14 +3142,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <tbody>
                             ${data.map(bl => `
                                 <tr>
-                                    <td><span class="text-white fw-bold">${bl.username}</span></td>
-                                    <td><span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-2 py-1">${bl.mountpoint || 'TẤT CẢ'}</span></td>
+                                    <td><span class="text-white fw-bold">${escapeHtml(bl.username)}</span></td>
+                                    <td><span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-2 py-1">${escapeHtml(bl.mountpoint || 'TẤT CẢ')}</span></td>
                                     <td><span class="text-muted small">${new Date(bl.blocked_at * 1000).toLocaleString('vi-VN')}</span></td>
-                                    <td><span class="text-secondary small">${bl.blocked_by || 'System'}</span></td>
-                                    <td><span class="text-muted small">${bl.reason || '--'}</span></td>
+                                    <td><span class="text-secondary small">${escapeHtml(bl.blocked_by || 'System')}</span></td>
+                                    <td><span class="text-muted small">${escapeHtml(bl.reason || '--')}</span></td>
                                     <td class="text-end">
                                         <button class="btn btn-sm btn-outline-success unblock-direct-btn py-1 px-3 rounded-pill" 
-                                            data-username="${bl.username}" data-mountpoint="${bl.mountpoint || ''}">
+                                            data-username="${escapeHtml(bl.username)}" data-mountpoint="${escapeHtml(bl.mountpoint || '')}">
                                             <i class="bi bi-unlock-fill me-1"></i> Mở khóa
                                         </button>
                                     </td>
@@ -3229,8 +3235,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <i class="bi bi-grid-fill me-1"></i> Tất cả <span class="badge bg-white bg-opacity-25 ms-1">${sources.length}</span>
                         </button>
                         ${domains.map(d => `
-                            <button class="nav-link" data-domain="${d}">
-                                <i class="bi bi-hdd-network me-1"></i> ${d} <span class="badge bg-white bg-opacity-25 ms-1">${(data.by_domain[d] || []).length}</span>
+                            <button class="nav-link" data-domain="${escapeHtml(d)}">
+                                <i class="bi bi-hdd-network me-1"></i> ${escapeHtml(d)} <span class="badge bg-white bg-opacity-25 ms-1">${(data.by_domain[d] || []).length}</span>
                             </button>
                         `).join('')}
                     </div>
@@ -3251,19 +3257,29 @@ document.addEventListener('DOMContentLoaded', async () => {
                             </tr>
                         </thead>
                         <tbody id="mountpoints-table-body">
-                            ${sources.map((src, idx) => `
-                                <tr data-domain="${src.domain || src.host || ''}">
+                            ${sources.map((src, idx) => {
+                                const domain = escapeHtml(src.domain || src.host || '');
+                                const mountpoint = escapeHtml(src.mountpoint || '--');
+                                const rawMountpoint = escapeHtml(src.mountpoint || '');
+                                const identifier = escapeHtml(src.identifier || '--');
+                                const host = escapeHtml(src.host || '');
+                                const latitude = Number(src.latitude);
+                                const longitude = Number(src.longitude);
+                                const hasPosition = Number.isFinite(latitude) && Number.isFinite(longitude) && Boolean(latitude || longitude);
+                                const dataCount = Number(src.datacount || 0);
+                                return `
+                                <tr data-domain="${domain}">
                                     <td class="text-center"><span class="text-muted small">${idx + 1}</span></td>
                                     <td>
                                         <div class="d-flex align-items-center gap-2">
-                                            <span class="name text-info font-monospace fw-bold">${src.mountpoint || '--'}</span>
-                                            <button type="button" class="btn btn-xs btn-link text-secondary p-0 copy-mp" data-mp="${src.mountpoint}" title="Copy">
+                                            <span class="name text-info font-monospace fw-bold">${mountpoint}</span>
+                                            <button type="button" class="btn btn-xs btn-link text-secondary p-0 copy-mp" data-mp="${rawMountpoint}" title="Copy">
                                                 <i class="bi bi-clipboard"></i>
                                             </button>
                                         </div>
                                     </td>
-                                    <td><span class="text-white small">${src.identifier || '--'}</span></td>
-                                    <td><span class="badge bg-dark border border-secondary text-secondary fw-normal px-2 py-1">${src.domain || src.host || '--'}</span></td>
+                                    <td><span class="text-white small">${identifier}</span></td>
+                                    <td><span class="badge bg-dark border border-secondary text-secondary fw-normal px-2 py-1">${domain || '--'}</span></td>
                                     <td>
                                         <div class="d-flex gap-2">
                                             <span class="badge-status ${(src.auth_required === 'B' || src.auth_required === true || String(src.auth_required).toLowerCase() === 'true') ? 'blocked' : 'ok'}" style="font-size:10px">
@@ -3276,8 +3292,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     </td>
                                     <td>
                                         <div class="d-flex flex-column">
-                                            <span class="small ${src.latitude && src.longitude ? 'text-white' : 'text-muted'}">
-                                                ${src.latitude && src.longitude ? `${src.latitude.toFixed(4)}, ${src.longitude.toFixed(4)}` : '--'}
+                                            <span class="small ${hasPosition ? 'text-white' : 'text-muted'}">
+                                                ${hasPosition ? `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` : '--'}
                                             </span>
                                             <span class="badge-status ${src.show_position ? 'ok' : 'blocked'} mt-1" style="width:fit-content; font-size:9px;">
                                                 SHOW POS: ${src.show_position ? 'ON' : 'OFF'}
@@ -3286,16 +3302,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     </td>
                                     <td>
                                         <div class="small">
-                                            <span class="text-secondary">Data:</span> <span class="text-success fw-bold">${Number(src.datacount || 0)}</span>
+                                            <span class="text-secondary">Data:</span> <span class="text-success fw-bold">${Number.isFinite(dataCount) ? dataCount : 0}</span>
                                         </div>
                                     </td>
                                     <td class="text-end">
-                                        <button type="button" class="action-btn text-danger delete-mp" data-host="${src.host || ''}" data-identifier="${src.identifier || ''}" data-mountpoint="${src.mountpoint || ''}" title="Delete">
+                                        <button type="button" class="action-btn text-danger delete-mp" data-host="${host}" data-identifier="${escapeHtml(src.identifier || '')}" data-mountpoint="${rawMountpoint}" title="Delete">
                                             <i class="bi bi-trash3"></i>
                                         </button>
                                     </td>
                                 </tr>
-                            `).join('')}
+                            `;
+                            }).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -3318,7 +3335,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // --- Modal Host Population ---
             const modalHostSelect = document.getElementById('create-mp-host');
             if (modalHostSelect) {
-                modalHostSelect.innerHTML = hostOptions.map(h => `<option value="${h}">${h}</option>`).join('');
+                modalHostSelect.innerHTML = hostOptions.map(h => `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`).join('');
             }
 
             // --- LISTENERS ---
@@ -3440,7 +3457,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         } catch (e) {
             console.error("[Mountpoints]", e);
-            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải dữ liệu: ${e.message}</div>`;
+            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải dữ liệu: ${escapeHtml(e.message)}</div>`;
         }
     }
 
@@ -3456,7 +3473,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         el.role = 'alert';
         el.innerHTML = `
             <div class="d-flex">
-                <div class="toast-body fw-medium">${msg}</div>
+                <div class="toast-body fw-medium">${escapeHtml(msg)}</div>
                 <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
             </div>
         `;

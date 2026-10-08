@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
 import time
+from collections import OrderedDict
 from typing import Any, NamedTuple
 
 
 CRC24Q_POLY = 0x1864CFB
 MAX_BUFFER_BYTES = 65536
+MAX_SERIAL_STATES = 2048
+MAX_PACKETS_PER_DECODE = 256
+MAX_SATELLITES_PER_DECODE = 512
+MAX_CACHED_SATELLITES_PER_SERIAL = 256
 
 # Ephemeris Constants
 MU_GPS   = 3.9860050E14     # gravitational constant
@@ -101,6 +107,40 @@ class RTCMSignalDecoder:
         self._base_positions: dict[str, tuple[float, float, float]] = {}
         self._ephemeris_data: dict[str, dict[str, dict[str, Any]]] = {}
         self._azel_cache: dict[str, dict[str, tuple[float, float, float]]] = {}
+        self._serial_lru: OrderedDict[str, None] = OrderedDict()
+        self._lock = threading.RLock()
+
+    def _touch_serial(self, serial: str) -> str | None:
+        serial_key = str(serial or "").strip()
+        if not serial_key or len(serial_key) > 128 or any(ord(char) < 32 for char in serial_key):
+            return None
+        self._serial_lru[serial_key] = None
+        self._serial_lru.move_to_end(serial_key)
+        while len(self._serial_lru) > MAX_SERIAL_STATES:
+            oldest, _ = self._serial_lru.popitem(last=False)
+            self._buffers.pop(oldest, None)
+            self._base_positions.pop(oldest, None)
+            self._ephemeris_data.pop(oldest, None)
+            self._azel_cache.pop(oldest, None)
+        return serial_key
+
+    def _prune_satellite_caches(self, serial: str) -> None:
+        for cache in (self._ephemeris_data, self._azel_cache):
+            per_serial = cache.get(serial)
+            if per_serial and len(per_serial) > MAX_CACHED_SATELLITES_PER_SERIAL:
+                for key in list(per_serial)[:-MAX_CACHED_SATELLITES_PER_SERIAL]:
+                    per_serial.pop(key, None)
+
+    @staticmethod
+    def _valid_kepler_ephemeris(sqrt_a: float, eccentricity: float, toe: float) -> bool:
+        return (
+            math.isfinite(sqrt_a)
+            and math.isfinite(eccentricity)
+            and math.isfinite(toe)
+            and 4000.0 <= sqrt_a <= 7000.0
+            and 0.0 <= eccentricity < 0.2
+            and 0.0 <= toe <= 604800.0
+        )
 
 
     @staticmethod
@@ -302,6 +342,9 @@ class RTCMSignalDecoder:
         y = reader.read_int(38) / 10000.0
         reader.skip(2)  # q_ind
         z = reader.read_int(38) / 10000.0
+        radius = math.sqrt(x * x + y * y + z * z)
+        if not 5_000_000 <= radius <= 8_000_000:
+            return
         self._base_positions[serial] = (x, y, z)
 
     def _decode_1019(self, payload: bytes, serial: str) -> None:
@@ -333,6 +376,8 @@ class RTCMSignalDecoder:
         crc = reader.read_int(16) * (2**-5)
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
+        if not 1 <= prn <= 32 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+            return
         
         sat_id = f"RTCM:us:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
@@ -373,6 +418,19 @@ class RTCMSignalDecoder:
         tb_time = tb * 900.0 - 10800.0
         if tb_time < 0: tb_time += 86400.0
         
+        radius = math.sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z)
+        speed = math.sqrt(vel_x * vel_x + vel_y * vel_y + vel_z * vel_z)
+        if (
+            not 1 <= prn <= 24
+            or not -7 <= freq <= 6
+            or not 0 <= tk_h <= 23
+            or not 0 <= tk_m <= 59
+            or tk_s not in (0.0, 30.0)
+            or not 0 <= tb <= 95
+            or not 20_000_000 <= radius <= 35_000_000
+            or speed > 10_000
+        ):
+            return
         sat_id = f"RTCM:ru:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         self._ephemeris_data[serial][sat_id] = {
@@ -411,6 +469,8 @@ class RTCMSignalDecoder:
         crc = reader.read_int(18) * (2**-6)
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
+        if not 1 <= prn <= 63 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+            return
         
         sat_id = f"RTCM:cn:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
@@ -448,6 +508,8 @@ class RTCMSignalDecoder:
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
         idot = reader.read_int(14) * (2**-43) * math.pi
+        if not 193 <= prn <= 202 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+            return
         
         sat_id = f"RTCM:jp:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
@@ -483,6 +545,8 @@ class RTCMSignalDecoder:
         crc = reader.read_int(16) * (2**-5)
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
+        if not 1 <= prn <= 36 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+            return
         
         sat_id = f"RTCM:eu:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
@@ -499,9 +563,16 @@ class RTCMSignalDecoder:
         return await asyncio.to_thread(self.decode_sync, serial, payload)
 
     def decode_json(self, serial: str, data: dict) -> dict[str, Any] | None:
+        with self._lock:
+            return self._decode_json_unlocked(serial, data)
+
+    def _decode_json_unlocked(self, serial: str, data: dict) -> dict[str, Any] | None:
+        serial = self._touch_serial(serial)
+        if serial is None or not isinstance(data, dict):
+            return None
         nav_system = data.get("navSystem")
         sats_in = data.get("satellites", [])
-        if not nav_system or not sats_in:
+        if not nav_system or not isinstance(sats_in, (list, tuple)) or not sats_in:
             return None
         
         system_map = {"GPS": "G", "GLONASS": "R", "Galileo": "E", "BeiDou": "C"}
@@ -517,10 +588,15 @@ class RTCMSignalDecoder:
         if serial not in self._azel_cache:
             self._azel_cache[serial] = {}
             
-        for sat in sats_in:
-            prn = sat.get("prn")
-            snr = sat.get("snr", 0)
-            if not prn or snr < 0:
+        for sat in sats_in[:64]:
+            if not isinstance(sat, dict):
+                continue
+            try:
+                prn = int(sat.get("prn"))
+                snr = float(sat.get("snr", 0))
+            except (TypeError, ValueError):
+                continue
+            if not 1 <= prn <= 64 or not math.isfinite(snr) or not 0 <= snr <= 99:
                 continue
                 
             sat_str_id = f"RTCM:{sys_code}:{prn}"
@@ -553,6 +629,7 @@ class RTCMSignalDecoder:
                 "lastSeen": now_ms,
             })
             
+        self._prune_satellite_caches(serial)
         return {
             "navSystem": nav_system,
             "msmLevel": "JSON",
@@ -560,12 +637,24 @@ class RTCMSignalDecoder:
         }
 
     def decode_sync(self, serial: str, payload: bytes) -> dict[str, Any] | None:
+        with self._lock:
+            return self._decode_sync_unlocked(serial, payload)
+
+    def _decode_sync_unlocked(self, serial: str, payload: bytes) -> dict[str, Any] | None:
+        serial = self._touch_serial(serial)
+        if serial is None:
+            return None
+        payload = bytes(payload or b"")
+        if len(payload) > MAX_BUFFER_BYTES:
+            payload = payload[-MAX_BUFFER_BYTES:]
         buffer = self._buffers.get(serial, b"") + payload
+        if len(buffer) > MAX_BUFFER_BYTES * 2:
+            buffer = buffer[-MAX_BUFFER_BYTES * 2:]
         packets: list[dict[str, Any]] = []
         satellites_by_id: dict[str, dict[str, Any]] = {}
         errors = 0
 
-        while len(buffer) >= 3:
+        while len(buffer) >= 3 and len(packets) < MAX_PACKETS_PER_DECODE and len(satellites_by_id) < MAX_SATELLITES_PER_DECODE:
             start = buffer.find(b"\xD3")
             if start < 0:
                 buffer = b""
@@ -624,9 +713,12 @@ class RTCMSignalDecoder:
                     }
                 )
                 for sat in decoded["satellites"]:
+                    if len(satellites_by_id) >= MAX_SATELLITES_PER_DECODE:
+                        break
                     satellites_by_id[sat["id"]] = sat
             else:
                 packets.append({"messageType": message_type, "satelliteCount": 0})
+            self._prune_satellite_caches(serial)
 
         if len(buffer) > MAX_BUFFER_BYTES:
             buffer = buffer[-MAX_BUFFER_BYTES:]

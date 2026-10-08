@@ -2,7 +2,7 @@
 # == backend/app/models.py ==
 # ==============================================================================
 
-from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index, Text, ForeignKey, UniqueConstraint, Float, SmallInteger
+from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index, Text, ForeignKey, UniqueConstraint, Float, SmallInteger, func
 from sqlalchemy.dialects.postgresql import JSONB
 from .database import Base, AuthBase 
 
@@ -285,4 +285,5 @@ class RTCMStreamSession(Base):
         Index('ix_rtcm_serial_expires', 'serial', 'expires_at'),
         Index('ix_rtcm_serial_mountpoint_expires', 'serial', 'mountpoint', 'expires_at'),
         Index('ix_rtcm_client_serial', 'client_id', 'serial'),
+        Index('uq_rtcm_serial_mountpoint_client', 'serial', func.lower(mountpoint), 'client_id', unique=True),
     )

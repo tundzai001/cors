@@ -1231,6 +1231,21 @@ def get_license_fingerprint() -> str | None:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
     except Exception:
         return None
+
+
+def _status_safe_config(value):
+    """Remove reusable credentials from retained/live status telemetry."""
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in value.items():
+            normalized = str(key).strip().lower().replace("-", "_")
+            if any(marker in normalized for marker in ("password", "passwd", "secret", "token")) or normalized.endswith(("_pass", "pass")):
+                continue
+            safe[key] = _status_safe_config(item)
+        return safe
+    if isinstance(value, list):
+        return [_status_safe_config(item) for item in value]
+    return value
     
 def parse_gga_data(gga_sentence: str) -> tuple:
     """
@@ -3332,12 +3347,23 @@ class NTRIPClientWorker(threading.Thread):
                 
                 client_socket.sendall(headers.encode('ascii'))
                 
-                response_header = b""
+                response_header = bytearray()
+                header_deadline = time.monotonic() + 15.0
                 while b"\r\n\r\n" not in response_header:
-                    response_header += client_socket.recv(1)
+                    if len(response_header) >= 16 * 1024:
+                        raise ConnectionError("Caster response headers exceed the 16 KiB limit")
+                    remaining = header_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Caster response headers timed out")
+                    client_socket.settimeout(min(remaining, 2.0))
+                    byte = client_socket.recv(1)
+                    if not byte:
+                        raise ConnectionError("Caster closed connection before response headers completed")
+                    response_header.extend(byte)
                 
                 if not (b"ICY 200 OK" in response_header or b"HTTP/1.1 200 OK" in response_header):
-                    raise ConnectionError(f"Caster rejected: {response_header.decode(errors='ignore')}")
+                    status_line = bytes(response_header).split(b"\r\n", 1)[0].decode(errors="ignore")[:200]
+                    raise ConnectionError(f"Caster rejected request: {status_line}")
 
                 self.log("INFO", "[RTCM Client] Authenticated. Receiving correction data.")
                 
@@ -4338,7 +4364,7 @@ class AgentManager:
             "detected_chip_baud": self.detected_chip.get("baud"),
             "is_provisioned": self.config.get('is_provisioned', False),
             "base_config": self.get_base_config(),
-            "service_config": self.get_service_config(),
+            "service_config": _status_safe_config(self.get_service_config()),
             "auto_base_progress": globals().get("AUTO_BASE_PROGRESS", {}),
             "is_locked": is_remote_locked(),
             "is_synced": True
@@ -5433,7 +5459,7 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
             logging.warning("WebSocket connection timeout. Retrying in 10s...")
         except websockets.exceptions.WebSocketException as e:
             _telemetry_inc("reconnect", "websocket")
-            logging.warning(f"WebSocket error: {e}. Retrying in 10s...")
+            logging.warning("WebSocket error (%s). Retrying in 10s...", type(e).__name__)
         except Exception as e:
             _telemetry_inc("reconnect", "websocket")
             if type(e).__name__ == "SSLCertVerificationError":
@@ -5443,9 +5469,9 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
                     str(getattr(e, 'verify_message', 'unknown')).encode('ascii', 'backslashreplace').decode('ascii'),
                 )
             if mqtt_client and mqtt_client.is_connected():
-                logging.info(f"Secondary channel (WebSocket) failed. Main MQTT OK. Retry in 10s. Error: {e}")
+                logging.info("Secondary WebSocket failed (%s). Main MQTT OK; retrying in 10s.", type(e).__name__)
             else:
-                logging.warning(f"WARNING: Both MQTT and WebSocket failed. Retry in 10s. Error: {e}")
+                logging.warning("Both MQTT and WebSocket failed (%s); retrying in 10s.", type(e).__name__)
         finally:
             active_websocket_connection = None
             _set_transport_state("websocket", False)

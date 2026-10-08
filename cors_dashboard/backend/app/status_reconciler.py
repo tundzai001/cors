@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -56,9 +57,10 @@ class StatusDecision:
 
 
 class StatusReconciler:
-    def __init__(self, *, retained_online_max_age: float = 30.0) -> None:
+    def __init__(self, *, retained_online_max_age: float = 30.0, max_states: int = 10000) -> None:
         self.retained_online_max_age = retained_online_max_age
-        self._states: dict[str, StatusState] = {}
+        self.max_states = max(100, int(max_states))
+        self._states: OrderedDict[str, StatusState] = OrderedDict()
         self._retired_boot_ids: dict[str, set[str]] = {}
         self._accepted_count = 0
         self._rejected_counts: dict[str, int] = {}
@@ -79,7 +81,7 @@ class StatusReconciler:
         if not isinstance(payload, dict):
             return self._reject("invalid_payload")
         serial = str(payload.get("serial") or "").strip()
-        if not serial:
+        if not serial or len(serial) > 128 or any(ord(char) < 33 or ord(char) > 126 for char in serial):
             return self._reject("missing_serial")
 
         now = float(received_at if received_at is not None else time.time())
@@ -92,6 +94,8 @@ class StatusReconciler:
         event = str(payload.get("status_event") or "").strip().lower()
         if not status:
             return self._reject("missing_status")
+        if agent_timestamp is not None and agent_timestamp > now + 120:
+            return self._reject("future_agent_timestamp")
 
         async with self._lock:
             previous = self._states.get(serial)
@@ -169,6 +173,10 @@ class StatusReconciler:
                 status=status,
                 revision=revision,
             )
+            self._states.move_to_end(serial)
+            while len(self._states) > self.max_states:
+                evicted_serial, _ = self._states.popitem(last=False)
+                self._retired_boot_ids.pop(evicted_serial, None)
             self._accepted_count += 1
             return StatusDecision(True, normalized, "accepted", revision)
 

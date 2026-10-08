@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import asyncio
+import time
 from typing import Any, List, Optional
 
 import redis.asyncio as redis
@@ -15,6 +17,9 @@ class RedisClient:
         self.pool = None
         self._redis = None
         self.enabled = str(os.getenv("REDIS_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}
+        self._fallback_bans: set[str] = set()
+        self._fallback_limits: dict[str, tuple[int, float]] = {}
+        self._fallback_lock = asyncio.Lock()
 
     async def connect(self):
         if not self.enabled:
@@ -22,7 +27,7 @@ class RedisClient:
             return
 
         try:
-            redis_url = getattr(settings, "REDIS_URL", "redis://localhost:6379/0")
+            redis_url = os.getenv("REDIS_URL") or getattr(settings, "REDIS_URL", None) or "redis://localhost:6379/0"
             self.pool = redis.ConnectionPool.from_url(redis_url, decode_responses=True)
             self._redis = redis.Redis(connection_pool=self.pool)
             await self._redis.ping()
@@ -55,27 +60,38 @@ class RedisClient:
 
     async def is_ip_banned(self, ip: str) -> bool:
         if not self._redis:
-            return False
+            return ip in self._fallback_bans
         return bool(await self._redis.sismember("banned_ips", ip))
 
     async def ban_ip(self, ip: str):
         if not self._redis:
+            self._fallback_bans.add(ip)
             return
         await self._redis.sadd("banned_ips", ip)
 
     async def unban_ip(self, ip: str):
         if not self._redis:
+            self._fallback_bans.discard(ip)
             return
         await self._redis.srem("banned_ips", ip)
 
     async def get_banned_ips(self) -> List[str]:
         if not self._redis:
-            return []
+            return sorted(self._fallback_bans)
         return list(await self._redis.smembers("banned_ips"))
 
     async def check_rate_limit(self, key: str, limit: int, window: int = 60) -> bool:
         if not self._redis:
-            return True
+            now = time.monotonic()
+            async with self._fallback_lock:
+                count, expires_at = self._fallback_limits.get(key, (0, 0.0))
+                if expires_at <= now:
+                    count, expires_at = 0, now + window
+                if count >= limit:
+                    self._fallback_limits[key] = (count, expires_at)
+                    return False
+                self._fallback_limits[key] = (count + 1, expires_at)
+                return True
 
         current = await self._redis.get(key)
         if current and int(current) >= limit:

@@ -9,6 +9,12 @@ function getLeaflet() {
     return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
 }
 
+function escapeHtmlReact(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+}
+
 // === PREMIUM UI COMPONENTS ===
 const MetricLineChart = memo(function MetricLineChart({ label, data = [], color, unit = "" }) {
     const max = Math.max(...data, 1);
@@ -534,8 +540,6 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     const [selectedMountpoints, setSelectedMountpoints] = useState([]);
     const [roverSearch, setRoverSearch] = useState('');
     const [mapViewportVersion, setMapViewportVersion] = useState(0);
-    const [mapType, setMapType] = useState('m'); // 'y' = Hybrid, 'm' = Roadmap
-    const tileLayerRef = useRef(null);
     const [deadbandMeters, setDeadbandMeters] = useState(1.5);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const roverProcessFrameRef = useRef(null);
@@ -659,11 +663,6 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         if (!mapInstanceRef.current) {
             const map = leaflet.map(mapContainerRef.current).setView([21.0285, 105.8542], 6);
 
-            tileLayerRef.current = leaflet.tileLayer(`https://{s}.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`, {
-                maxZoom: 20,
-                subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
-            }).addTo(map);
-
             roverClusterRef.current = window.CorsDashboardShared?.createMarkerClusterGroup?.({
                 chunkedLoading: true,
                 chunkInterval: 40,
@@ -717,13 +716,6 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             roverMarkersRef.current = {};
         };
     }, []);
-
-    // Cập nhật lớp bản đồ khi mapType thay đổi (Giao thông <-> Vệ tinh)
-    useEffect(() => {
-        if (tileLayerRef.current) {
-            tileLayerRef.current.setUrl(`https://mt1.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`);
-        }
-    }, [mapType]);
 
     useEffect(() => {
         const leaflet = getLeaflet();
@@ -864,10 +856,10 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 const statusMeta = getRoverStatusMeta(rover.status);
                 const popupContent = `
                     <div style="color: #333; min-width: 180px;">
-                        <strong>Rover: ${rover.username || 'N/A'}</strong><br>
-                        <span class="badge text-bg-dark">RX: ${rover.receiver_id || 'N/A'}</span>
-                        <span class="badge text-bg-primary ms-1">${rover.mountpoint || 'N/A'}</span><br>
-                        Status: <b>${statusMeta.label}</b> | nSV: <b>${rover.nsv ?? 'N/A'}</b>
+                        <strong>Rover: ${escapeHtmlReact(rover.username || 'N/A')}</strong><br>
+                        <span class="badge text-bg-dark">RX: ${escapeHtmlReact(rover.receiver_id || 'N/A')}</span>
+                        <span class="badge text-bg-primary ms-1">${escapeHtmlReact(rover.mountpoint || 'N/A')}</span><br>
+                        Status: <b>${escapeHtmlReact(statusMeta.label)}</b> | nSV: <b>${escapeHtmlReact(rover.nsv ?? 'N/A')}</b>
                     </div>
                 `;
 
@@ -1020,7 +1012,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         }
 
         // Thông báo kết quả
-        const textPrefix = locationName === "Vị trí của bạn" ? "Trạm gần nhất" : `Gần ${locationName.split(',')[0]} nhất`;
+        const safeLocationName = String(locationName || 'Vị trí của bạn');
+        const textPrefix = safeLocationName === "Vị trí của bạn" ? "Trạm gần nhất" : `Gần ${safeLocationName.split(',')[0]} nhất`;
         let msg = [];
         if (nearestConnected) msg.push(`🟢 CONNECTED: ${nearestConnected.device.name || nearestConnected.device.serial} (${(nearestConnected.dist / 1000).toFixed(2)} km)`);
         if (nearestOffline) msg.push(`🔴 OFFLINE: ${nearestOffline.device.name || nearestOffline.device.serial} (${(nearestOffline.dist / 1000).toFixed(2)} km)`);
@@ -1043,7 +1036,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 : `<div style="background-color: #ffc107; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`;
             const userIcon = leaflet.divIcon({ className: 'custom-div-icon', html: iconHtml, iconSize: [16, 16], iconAnchor: [8, 8] });
             userMarkerRef.current = leaflet.marker([lat, lon], { icon: userIcon }).addTo(map)
-                .bindPopup(`<b>${locationName.split('(')[0]}</b>`).openPopup();
+                .bindPopup(`<b>${escapeHtmlReact(safeLocationName.split('(')[0])}</b>`).openPopup();
 
             // Hàm vẽ 1 đường nối
             const drawLine = (target, color, label) => {
@@ -1065,7 +1058,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
                 line.bindTooltip(
                     `<div style="font-size: 13px; font-weight: bold; color: ${color}; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; white-space: nowrap;">
-                        ${label} ${stationName}: ${distKm} km
+                        ${label} ${escapeHtmlReact(stationName)}: ${distKm} km
                     </div>`,
                     { permanent: true, direction: 'center', className: 'bg-transparent border-0 shadow-none' }
                 ).openTooltip();
@@ -1281,20 +1274,6 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                                     </label>
                                 </div>
 
-                                <div className="form-check form-switch m-0 d-flex align-items-center" style={{ gap: '0.5rem' }}>
-                                    <input
-                                        className="form-check-input m-0 mt-1"
-                                        type="checkbox"
-                                        role="switch"
-                                        id="toggle-map-satellite"
-                                        checked={mapType === 'y'}
-                                        onChange={(e) => setMapType(e.target.checked ? 'y' : 'm')}
-                                    />
-                                    <label className="form-check-label text-light small fw-bold m-0" htmlFor="toggle-map-satellite">
-                                        Vệ tinh (Google)
-                                    </label>
-                                </div>
-
                                 <div className="dropdown" data-bs-auto-close="outside">
                                     <button
                                         className="btn btn-sm btn-outline-light dropdown-toggle"
@@ -1352,16 +1331,21 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 )}
             </div>
 
-            <div
-                ref={mapContainerRef}
-                style={{
-                    width: '100%',
-                    height: 'calc(100vh - 150px)',
-                    borderRadius: '8px',
-                    border: '2px solid #444',
-                    background: '#222'
-                }}
-            />
+            <div style={{ position: 'relative' }}>
+                <div
+                    ref={mapContainerRef}
+                    style={{
+                        width: '100%',
+                        height: 'calc(100vh - 150px)',
+                        borderRadius: '8px',
+                        border: '2px solid #444',
+                        background: '#222'
+                    }}
+                />
+                <small style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 500, color: '#e2e8f0', background: 'rgba(15, 23, 42, .85)', padding: '5px 8px', borderRadius: 6 }}>
+                    Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí trạm.
+                </small>
+            </div>
         </div>
     );
 });

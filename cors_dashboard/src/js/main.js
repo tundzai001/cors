@@ -15,6 +15,12 @@ let globalState = {
 window.globalState = globalState;
 const MAIN_PUBLIC_ROUTES = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
 
+function escapeHtmlMain(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+}
+
 function isMainPublicRoute(pathname = window.location.pathname) {
     return MAIN_PUBLIC_ROUTES.some(route => route === '/' ? pathname === '/' : pathname.startsWith(route));
 }
@@ -1560,7 +1566,7 @@ function showToast(message, type) {
 
     toastEl.innerHTML = `
         <div class="d-flex">
-            <div class="toast-body">${message}</div>
+        <div class="toast-body">${escapeHtmlMain(message)}</div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
         </div>
     `;
@@ -1642,7 +1648,7 @@ async function loadInitialDevices() {
     try {
         const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
         const isPublicVisitor = !token;
-        const apiUrl = isPublicVisitor ? '/api/public/map-stations' : '/api/devices';
+        const apiUrl = isPublicVisitor ? '/api/public/map-stations' : '/api/map/stations';
 
         const response = await apiFetch(apiUrl);
         if (!response.ok) throw new Error('Failed to load devices');
@@ -1679,6 +1685,12 @@ async function loadInitialDevices() {
                     }
                 },
                 system_info: d.system_info || {}
+            }));
+        } else {
+            devicesFromApi = (Array.isArray(devicesFromApi) ? devicesFromApi : []).map((d) => ({
+                ...d,
+                base_config: { coords: { lat: d.lat, lon: d.lon, alt: d.alt } },
+                system_info: d.system_info || {},
             }));
         }
 
@@ -2043,7 +2055,7 @@ window.openPublicMap = async function() {
             });
 
             const popup = `<div style="color:#333;min-width:180px;font-family:sans-serif;">
-                <strong style="font-size:1.1em;display:block;margin-bottom:5px;">${st.name || st.serial || 'Station'}</strong>
+                <strong style="font-size:1.1em;display:block;margin-bottom:5px;">${escapeHtmlMain(st.name || st.serial || 'Station')}</strong>
                 <div class="mb-2"><span class="badge ${badgeClass}">${label}</span>${isVirtual ? '<span class="badge bg-info text-dark ms-1">VIRTUAL</span>' : ''}</div>
                 <div class="small text-muted">Lat: ${stLat.toFixed(6)} | Lon: ${stLon.toFixed(6)}</div>
             </div>`;

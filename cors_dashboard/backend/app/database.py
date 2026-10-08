@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     MQTT_PASSWORD: str | None = None
     CASTER_HOST: str | None = None
     CASTER_PORT: int | None = None
+    REDIS_URL: str | None = None
+    NTRIP_CONTROL_TOKEN: str = ""
+    TRUSTED_PROXY_IPS: str = ""
     
     ENABLE_PREFERRED_HOST: bool = False
     PREFERRED_HOST_MARKER: str = ""

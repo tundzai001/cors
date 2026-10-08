@@ -15,6 +15,12 @@
         }
     ];
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[char]);
+    }
+
     function toast(type, message) {
         if (window.CorsUI?.showToast) {
             window.CorsUI.showToast(type, message);
@@ -210,7 +216,7 @@
             fillColor: '#0ea5e9',
             fillOpacity: 1,
             weight: 3
-        }).addTo(map).bindPopup(label).openPopup();
+        }).addTo(map).bindPopup(escapeHtml(label)).openPopup();
 
         const drawLine = (target, color, prefix) => {
             if (!target) return;
@@ -221,7 +227,7 @@
                 dashArray: '10, 10'
             }).addTo(map);
             const km = (target.dist / 1000).toFixed(2);
-            line.bindTooltip(`${prefix} ${target.device.name || target.device.serial}: ${km} km`, {
+            line.bindTooltip(`${prefix} ${escapeHtml(target.device.name || target.device.serial)}: ${km} km`, {
                 permanent: true,
                 direction: 'center',
                 className: 'station-map-distance-label'

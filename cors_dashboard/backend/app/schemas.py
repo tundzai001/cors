@@ -3,6 +3,28 @@ from pydantic import BaseModel, Field, validator
 from typing import Any, List, Optional
 
 
+def redact_config_secrets(value: Any) -> Any:
+    """Copy a config tree while removing credential-like values."""
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            normalized = str(key).strip().lower().replace("-", "_").replace(" ", "_")
+            compact = normalized.replace("_", "")
+            sensitive = (
+                compact in {"password", "passwd", "pass", "user", "username", "auth", "authorization", "clientid", "apikey"}
+                or any(part in compact for part in ("password", "passwd", "secret", "token", "apikey"))
+                or (compact.endswith("pass") and not compact.endswith("bypass"))
+                or compact.endswith(("username", "user"))
+            )
+            redacted[key] = None if sensitive else redact_config_secrets(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_config_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return [redact_config_secrets(item) for item in value]
+    return value
+
+
 SERVICE_PASSWORD_FIELDS = ("password1", "password2", "rtcmpassword1", "command_pass")
 
 
@@ -16,6 +38,28 @@ def preserve_service_passwords(current: dict, incoming: dict) -> dict:
             else:
                 merged.pop(key, None)
     return merged
+
+
+def strip_status_config_secrets(value: Any) -> Any:
+    """Drop reusable secret fields from device telemetry before caching or broadcast."""
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in value.items():
+            normalized = str(key).strip().lower().replace("-", "_").replace(" ", "_")
+            compact = normalized.replace("_", "")
+            secret = (
+                any(part in compact for part in ("password", "passwd", "secret", "token", "apikey"))
+                or compact == "pass"
+                or (compact.endswith("pass") and not compact.endswith("bypass"))
+            )
+            if not secret:
+                safe[key] = strip_status_config_secrets(item)
+        return safe
+    if isinstance(value, list):
+        return [strip_status_config_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return [strip_status_config_secrets(item) for item in value]
+    return value
 
 
 class ZaloBindingAdminUpdate(BaseModel):
@@ -155,7 +199,7 @@ class CasterSourceCreateRequest(BaseModel):
     host: Optional[str] = None
     identifier: str
     mountpoint: str
-    password: str = "12345"
+    password: str = Field(..., min_length=1, max_length=256)
     counter: int = 0
     index: Optional[int] = None
     latitude: Optional[float] = None

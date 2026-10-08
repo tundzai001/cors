@@ -2,6 +2,12 @@
 // security.js - v5.0 - FIXED THREAT LEVEL CALCULATION
 // ============================================================
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     const currentUser = await window.ApiClient.requireAuthenticatedPage();
     if (!currentUser) {
@@ -262,8 +268,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>
-                    <code>${item.fingerprint.substring(0, 8)}...</code>
-                    <div class="ops-card-meta text-truncate" style="max-width: 150px;">${item.user_agent}</div>
+                    <code>${escapeHtml(String(item.fingerprint || '').substring(0, 8))}...</code>
+                    <div class="ops-card-meta text-truncate" style="max-width: 150px;">${escapeHtml(item.user_agent)}</div>
                 </td>
                 <td class="text-center fw-bold">${item.ip_count}</td>
                 <td class="text-end"><span class="badge ${badgeClass}">${item.risk_level}</span></td>
@@ -371,10 +377,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         blacklistedIps.forEach(block => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td><code>${block.ip}</code></td>
-                <td>${block.reason || 'N/A'}</td>
+                <td><code>${escapeHtml(block.ip)}</code></td>
+                <td>${escapeHtml(block.reason || 'N/A')}</td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-primary unblock-btn" data-ip="${block.ip}">
+                    <button class="btn btn-sm btn-outline-primary unblock-btn" data-ip="${escapeHtml(block.ip)}">
                         <i class="bi bi-unlock-fill me-1"></i>Unblock
                     </button>
                 </td>
@@ -393,11 +399,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             const minutes = Math.ceil(block.remaining_seconds / 60);
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td><code>${block.ip}</code></td>
+                <td><code>${escapeHtml(block.ip)}</code></td>
                 <td class="ops-text-warn">${minutes} min</td>
-                <td>${block.reason || 'N/A'}</td>
+                <td>${escapeHtml(block.reason || 'N/A')}</td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-primary unblock-btn" data-ip="${block.ip}">
+                    <button class="btn btn-sm btn-outline-primary unblock-btn" data-ip="${escapeHtml(block.ip)}">
                         <i class="bi bi-unlock-fill me-1"></i>Unblock
                     </button>
                 </td>
@@ -418,13 +424,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             div.className = `alert alert-${alertLevel} d-flex justify-content-between align-items-center mb-2`;
             div.innerHTML = `
                 <div>
-                    <code>${item.ip}</code>
-                    <span class="badge bg-${alertLevel} ms-2">Score: ${item.score}</span>
+                    <code>${escapeHtml(item.ip)}</code>
+                    <span class="badge bg-${alertLevel} ms-2">Score: ${Number(item.score) || 0}</span>
                 </div>
-                <button class="btn btn-sm btn-danger" onclick="handleBlockSuspiciousIP('${item.ip}')">
+                <button class="btn btn-sm btn-danger" type="button">
                     <i class="bi bi-lock-fill me-1"></i>Block
                 </button>
             `;
+            div.querySelector('button')?.addEventListener('click', () => handleBlockSuspiciousIP(String(item.ip || '')));
             suspiciousIpsContainer.appendChild(div);
         });
     }

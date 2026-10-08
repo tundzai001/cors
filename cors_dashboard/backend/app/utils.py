@@ -18,7 +18,18 @@ class NMEAParser:
 
     def parse(self, sentence: str) -> dict | None:
         """Parse NMEA sentence và trả về dict nếu có data hoàn chỉnh"""
-        if not sentence or not sentence.startswith('$'):
+        sentence = str(sentence or "").strip()
+        if not sentence.startswith('$') or '*' not in sentence:
+            return None
+
+        body, checksum = sentence[1:].rsplit('*', 1)
+        checksum = checksum[:2]
+        if len(checksum) != 2 or not all(char in "0123456789abcdefABCDEF" for char in checksum):
+            return None
+        calculated = 0
+        for char in body:
+            calculated ^= ord(char)
+        if calculated != int(checksum, 16):
             return None
         
         try:
@@ -125,6 +136,8 @@ class NMEAParser:
 
             num_messages = int(parts[1])
             msg_num = int(parts[2])
+            if num_messages < 1 or num_messages > 9 or msg_num < 1 or msg_num > num_messages:
+                return None
             
             # Khởi tạo buffer cho constellation này
             if msg_num == 1:
@@ -139,6 +152,8 @@ class NMEAParser:
                 
                 try:
                     prn = int(sats_raw[i])
+                    if prn < 1 or prn > 999:
+                        continue
                     
                     # FILTER: Unicore receivers offset PRNs for different constellations in GPGSV
                     if talker_id == 'GP':
@@ -153,12 +168,14 @@ class NMEAParser:
                     elif talker_id == 'GL' and prn > 64:
                         prn -= 64
                     
-                    if prn > 200:
+                    if prn < 1 or prn > 200:
                         continue
                         
                     elevation = int(sats_raw[i+1]) if sats_raw[i+1] else 0
                     azimuth = int(sats_raw[i+2]) if sats_raw[i+2] else 0
                     snr = int(sats_raw[i+3].split('*')[0]) if sats_raw[i+3] else 0
+                    if not 0 <= elevation <= 90 or not 0 <= azimuth <= 359 or not 0 <= snr <= 99:
+                        continue
                     
                     # Lưu vào buffer kèm theo SYSTEM
                     if talker_id in self.gsv_buffer:
@@ -186,6 +203,8 @@ class NMEAParser:
                     
                     for sat in all_sats:
                         self.satellites[sat.get('id') or sat['prn']] = sat
+                    if len(self.satellites) > 64:
+                        self.satellites = dict(list(self.satellites.items())[-64:])
                         
                         if self.last_gsa:
                             sat['isTracking'] = sat['prn'] in self.last_gsa['active_sats']
@@ -210,6 +229,8 @@ class NMEAParser:
             if all_sats:
                 for sat in all_sats:
                     self.satellites[sat.get('id') or sat['prn']] = sat
+                if len(self.satellites) > 64:
+                    self.satellites = dict(list(self.satellites.items())[-64:])
                 
                 self.gsv_buffer.clear()
                 

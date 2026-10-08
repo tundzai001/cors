@@ -3,8 +3,10 @@
 # ==============================================================================
 
 import logging
+import html as html_escape
 import uuid
 import hashlib
+import hmac
 import json
 import asyncio
 import math
@@ -32,7 +34,7 @@ from dotenv import dotenv_values, set_key
 
 from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect, Depends, 
-    HTTPException, Request, Query, status, Body
+    HTTPException, Request, Query, status, Body, Header
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse, FileResponse, StreamingResponse, JSONResponse, HTMLResponse, RedirectResponse
@@ -43,8 +45,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exception_handlers import http_exception_handler
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import text, select, update, delete, func
+from sqlalchemy import text, select, update, delete, func, and_, or_
 from starlette.middleware.base import BaseHTTPMiddleware
 from .monitoring import health_monitor, CircuitBreaker, global_rate_limiter
 from .redis_client import redis_client
@@ -62,6 +63,7 @@ from . import mqtt as mqtt_handler
 from .mqtt import mqtt_client
 from .command_dispatcher import send_command_to_pi as dispatch_command_to_pi
 from . import license_manager
+from .caster_helpers import validate_caster_hosts
 from . import nmea_parser
 from . import models, auth, crud
 from .security import rate_limiter
@@ -98,6 +100,10 @@ class QuietEndpointAccessFilter(logging.Filter):
         try:
             args = record.args
             path = str(args[2]).split("?", 1)[0] if isinstance(args, tuple) and len(args) >= 3 else ""
+            if path.startswith("/ws/pi/") and isinstance(args, tuple) and len(args) >= 3:
+                safe_args = list(args)
+                safe_args[2] = path
+                record.args = tuple(safe_args)
             status_code = int(args[4]) if isinstance(args, tuple) and len(args) >= 5 else 0
             return path not in QUIET_REQUEST_LOG_PATHS or status_code >= 400
         except (TypeError, ValueError, IndexError):
@@ -283,10 +289,11 @@ ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
 def _read_caster_config_from_env() -> tuple[list[str], dict]:
     """Reads caster config from .env and supports multiple CSV hosts."""
     env_values = dotenv_values(ENV_FILE_PATH)
-    raw_host = str(env_values.get("CASTER_HOST", "")).strip()
-    raw_port = env_values.get("CASTER_PORT")
-    raw_user = env_values.get("CASTER_ADMIN_USER")
-    raw_pass = env_values.get("CASTER_PASSWORD")
+    get_value = lambda key: os.getenv(key) or env_values.get(key)
+    raw_host = str(get_value("CASTER_HOST") or "").strip()
+    raw_port = get_value("CASTER_PORT")
+    raw_user = get_value("CASTER_ADMIN_USER") or get_value("CASTER_MASTER_USER")
+    raw_pass = get_value("CASTER_PASSWORD") or get_value("CASTER_MASTER_PASSWORD")
 
     # Split multiple hosts if comma-separated
     hosts = [h.strip() for h in raw_host.split(',') if h.strip()]
@@ -372,8 +379,11 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
     if not payload.get("serial"):
         buffer_metrics["status_payload_invalid_count"] += 1
         return None
+    safe_payload = dict(payload)
+    if isinstance(safe_payload.get("service_config"), (dict, list)):
+        safe_payload["service_config"] = schemas.strip_status_config_secrets(safe_payload["service_config"])
     if not STATUS_PAYLOAD_COMPACT_ENABLED:
-        return payload
+        return safe_payload
 
     allowed_keys = (
         "serial",
@@ -409,7 +419,7 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "queue_metrics",
         "serial_health",
     )
-    compact = {key: payload[key] for key in allowed_keys if key in payload}
+    compact = {key: safe_payload[key] for key in allowed_keys if key in safe_payload}
 
     if not STATUS_ALLOW_HEAVY_FIELDS:
         compact.pop("base_config", None)
@@ -922,6 +932,56 @@ async def _count_active_mountpoint_sessions(
     return int(result.scalar() or 0)
 
 
+async def _upsert_rtcm_session(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    serial: str,
+    mountpoint: str,
+    client_id: str,
+    expires_at: int,
+    now: int,
+    caster_host: Optional[str] = None,
+) -> str:
+    """Refresh one lease per station/client/mountpoint and collapse legacy duplicates."""
+    match = and_(
+        models.RTCMStreamSession.serial == serial,
+        func.lower(models.RTCMStreamSession.mountpoint) == _normalize_mountpoint(mountpoint),
+        models.RTCMStreamSession.client_id == client_id,
+    )
+    result = await db.execute(
+        select(models.RTCMStreamSession)
+        .where(match)
+        .order_by(models.RTCMStreamSession.last_heartbeat_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        session_id = existing.session_id
+        existing.expires_at = expires_at
+        existing.last_heartbeat_at = now
+        if caster_host:
+            existing.caster_host = caster_host
+        await db.execute(
+            delete(models.RTCMStreamSession).where(
+                match,
+                models.RTCMStreamSession.session_id != session_id,
+            )
+        )
+    else:
+        db.add(models.RTCMStreamSession(
+            session_id=session_id,
+            serial=serial,
+            mountpoint=str(mountpoint),
+            client_id=client_id,
+            expires_at=expires_at,
+            caster_host=caster_host,
+            created_at=now,
+            last_heartbeat_at=now,
+        ))
+    return session_id
+
+
 async def _fetch_active_station_client_ids(db: AsyncSession, serial: str, now_ts: Optional[int] = None) -> List[str]:
     now_ts = now_ts or int(time.time())
     result = await db.execute(
@@ -1040,17 +1100,15 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
                         f"cannot switch to '{requested_norm}' until all active sessions expire"
                     )
 
-            db.add(
-                models.RTCMStreamSession(
-                    session_id=session_id,
-                    serial=serial,
-                    mountpoint=str(selected_mountpoint),
-                    client_id=client_id,
-                    expires_at=expires_at,
-                    caster_host=caster_host or requested_address,
-                    created_at=now,
-                    last_heartbeat_at=now,
-                )
+            session_id = await _upsert_rtcm_session(
+                db,
+                session_id=session_id,
+                serial=serial,
+                mountpoint=str(selected_mountpoint),
+                client_id=client_id,
+                expires_at=expires_at,
+                now=now,
+                caster_host=caster_host or requested_address,
             )
             await db.commit()
 
@@ -1731,8 +1789,11 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
-        
+
         response.headers['X-Request-ID'] = request_id
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
         if not quiet_success_path or response.status_code >= 400:
             logger.info(f"<-- {request.method} {request.url.path} - Completed in {process_time:.2f}ms, Status: {response.status_code}")
         
@@ -3392,16 +3453,20 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
                     "url": "https://cors.aitogy.com"
                 }
             }
-            json_ld_script = f'<script type="application/ld+json">{json.dumps(json_ld)}</script>'
+            json_ld_json = json.dumps(json_ld, ensure_ascii=False)
+            json_ld_json = json_ld_json.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+            json_ld_script = f'<script type="application/ld+json">{json_ld_json}</script>'
 
             # 4. SERVER-SIDE INJECTION
             # Inject standard meta
-            html_content = html_content.replace("<title>Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{title}</title>")
-            html_content = html_content.replace('name="description" content="Aitogy CORS Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (CORS) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{desc}"')
+            safe_title = html_escape.escape(title, quote=True)
+            safe_desc = html_escape.escape(desc, quote=True)
+            html_content = html_content.replace("<title>Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{safe_title}</title>")
+            html_content = html_content.replace('name="description" content="Aitogy CORS Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (CORS) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{safe_desc}"')
             
             # Inject OG Tags
-            html_content = html_content.replace('property="og:title" content="Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao"', f'property="og:title" content="{title}"')
-            html_content = html_content.replace('property="og:description" content="Quản lý và vận hành mạng lưới trạm CORS Aitogy. Giải pháp định vị chính xác cao hàng đầu."', f'property="og:description" content="{desc}"')
+            html_content = html_content.replace('property="og:title" content="Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao"', f'property="og:title" content="{safe_title}"')
+            html_content = html_content.replace('property="og:description" content="Quản lý và vận hành mạng lưới trạm CORS Aitogy. Giải pháp định vị chính xác cao hàng đầu."', f'property="og:description" content="{safe_desc}"')
             
             # Inject JSON-LD before head closing
             html_content = html_content.replace("</head>", f"{json_ld_script}\n</head>")
@@ -3534,6 +3599,17 @@ app.add_middleware(RequestIDMiddleware)
 app.add_middleware(FrontendCacheMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=800, compresslevel=5)
 
+
+def _require_ntrip_control_token(
+    token: Optional[str] = Header(None, alias="X-NTRIP-Control-Token"),
+) -> None:
+    expected = str(settings.NTRIP_CONTROL_TOKEN or os.getenv("NTRIP_CONTROL_TOKEN", "")).strip()
+    if len(expected) < 32:
+        raise HTTPException(status_code=503, detail="NTRIP control authentication is not configured")
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Invalid NTRIP control token")
+
+
 # === NTRIP WAKE STATION HTTP ENDPOINT ===
 @app.get("/api/ntrip/wake-listen", response_class=PlainTextResponse)
 @app.get("/api/ntrip/wake-station", response_class=PlainTextResponse)
@@ -3546,7 +3622,8 @@ async def ntrip_wake_listen_get(
     caster_address: Optional[str] = Query(None),
     host: Optional[str] = Query(None),
     ip: Optional[str] = Query(None),
-    ttl_seconds: int = 90
+    ttl_seconds: int = 90,
+    _: None = Depends(_require_ntrip_control_token),
 ):
     """
     Endpoint cho NTRIP gửi lệnh bật trạm qua HTTP GET.
@@ -3558,7 +3635,10 @@ async def ntrip_wake_listen_get(
     return await _do_ntrip_wake(mountpoint, id_to_use, ttl_seconds, requested_address=addr_to_use)
 
 @app.post("/api/ntrip/wake-station", response_class=PlainTextResponse)
-async def ntrip_wake_station(payload: dict = Body(...)):
+async def ntrip_wake_station(
+    payload: dict = Body(...),
+    _: None = Depends(_require_ntrip_control_token),
+):
     """
     Endpoint cho NTRIP gửi lệnh bật trạm qua HTTP POST.
     Yêu cầu JSON: {"mountpoint": "...", "client_instance_id": "...", "ttl_seconds": 90}
@@ -3899,6 +3979,7 @@ async def _check_rover_blocked(username: str, mountpoint: Optional[str] = None) 
                     
     except Exception as e:
         logger.warning(f"[NTRIP AUTH] Error checking blocklist for '{username}': {e}")
+        return "Blocklist unavailable; request denied"
     return None
 
 async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_address: Optional[str] = None):
@@ -4081,13 +4162,17 @@ async def ntrip_stop_listen_get(
     address: Optional[str] = Query(None),
     host: Optional[str] = Query(None),
     ip: Optional[str] = Query(None),
+    _: None = Depends(_require_ntrip_control_token),
 ):
     id_to_use = client_instance_id or receiver_id or identifier or "http-get"
     addr_to_use = caster_address or address or host or ip
     return await _do_ntrip_stop(mountpoint, id_to_use, force=force, requested_address=addr_to_use)
 
 @app.post("/api/ntrip/stop-station", response_class=PlainTextResponse)
-async def ntrip_stop_station(payload: dict = Body(...)):
+async def ntrip_stop_station(
+    payload: dict = Body(...),
+    _: None = Depends(_require_ntrip_control_token),
+):
     mountpoint = payload.get("mountpoint")
     client_instance_id = (
         payload.get("client_instance_id") or 
@@ -4127,10 +4212,12 @@ async def get_caster_client(db: AsyncSession) -> CasterClient:
     hosts, env_cfg = _read_caster_config_from_env()
     
     # Ưu tiên .env -> settings -> default
-    host = str(env_cfg["host"] or settings.CASTER_HOST or 'aitogy.com.vn')
+    host = str(env_cfg["host"] or settings.CASTER_HOST or '').strip()
     port = int(env_cfg["port"] or settings.CASTER_PORT or 2101)
-    user = str(env_cfg["user"] or "admin")
-    password = str(env_cfg["pass"] or "12345")
+    user = str(env_cfg["user"] or "").strip()
+    password = str(env_cfg["pass"] or "").strip()
+    if not host or not user or not password:
+        raise HTTPException(status_code=503, detail="Caster connection credentials are not configured")
     
     if RTCM_KEEPALIVE_DEBUG:
         logger.warning(f"[RTCM DEBUG] Using caster host={host} port={port} user={user}")
@@ -4141,7 +4228,8 @@ async def get_caster_client(db: AsyncSession) -> CasterClient:
 @app.websocket("/ws/track-visitors")
 async def track_visitors_endpoint(websocket: WebSocket):
     client_ip = websocket.client.host
-    await visitor_manager.connect(websocket, client_ip)
+    if not await visitor_manager.connect(websocket, client_ip):
+        return
     
     await ui_manager.broadcast({
         "type": "visitor_update",
@@ -4585,6 +4673,10 @@ async def get_public_map_stations(
         public_map_cache is not None
         and now_monotonic - public_map_cache_updated_monotonic < PUBLIC_MAP_CACHE_TTL_SECONDS
     ):
+        public_map_cache = [
+            {key: value for key, value in item.items() if key != "service_config"}
+            for item in public_map_cache
+        ]
         response.headers["X-Data-Cache"] = "HIT"
         return public_map_cache
 
@@ -4689,8 +4781,7 @@ async def get_public_map_stations(
                         "alt": float(alt) if alt is not None else 0.0,
                         "mountpoint": _extract_public_mountpoint(dev),
                         "streams": _extract_public_streams(dev),
-                        "service_config": dev.service_config,
-                        "ntrip_status": dev.ntrip_status,
+                        "ntrip_status": schemas.redact_config_secrets(dev.ntrip_status),
                         "is_provisioned": dev.is_provisioned,
                         "ntrip_connected": getattr(dev, "ntrip_connected", False),
                         "bps": _device_total_bps(dev)
@@ -4714,6 +4805,52 @@ async def get_public_map_stations(
     except Exception as e:
         logging.error(f"â Œ Error fetching public map data: {e}")
         return []
+
+
+@app.get("/api/map/stations")
+async def get_authenticated_map_stations(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_CONFIG)),
+):
+    """Return map data and in-scope station config to authenticated users."""
+    public_items = await get_public_map_stations(response, db)
+    response.headers["Cache-Control"] = "private, no-store"
+
+    visible_serials = None
+    if current_user.role == auth.Role.COORDINATOR:
+        visible_serials = await crud.get_coordinator_visible_base_serials(db, current_user)
+    elif current_user.role == auth.Role.VIEWER:
+        visible_serials = await crud.get_viewer_visible_base_serials(auth_db, db, current_user)
+    elif current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xem cấu hình trạm.")
+
+    result = await db.execute(select(models.Device))
+    devices = {
+        str(device.serial).strip().upper(): device
+        for device in result.scalars().all()
+        if device.serial
+    }
+    items = []
+    for public_item in public_items:
+        serial = str(public_item.get("serial") or "").strip().upper()
+        if not serial or (visible_serials is not None and serial not in visible_serials):
+            continue
+        device = devices.get(serial)
+        if not device:
+            continue
+        item = dict(public_item)
+        config = device.service_config if isinstance(device.service_config, dict) else {}
+        can_reveal_config = (
+            current_user.role == auth.Role.ADMIN
+            or (current_user.role == auth.Role.COORDINATOR and device.user_id == current_user.id)
+        )
+        item["service_config"] = config if can_reveal_config else schemas.redact_config_secrets(config)
+        item["detected_chip_type"] = device.detected_chip_type
+        item["system_info"] = schemas.redact_config_secrets(device.system_info)
+        items.append(item)
+    return items
 
 
 @app.get("/api/public/network-summary")
@@ -4899,7 +5036,7 @@ async def get_caster_users(
 
         enriched_items.append(schemas.CasterRoverItem(
             username=username,
-            password=str(cu.get("password", "")),
+            password=str(cu.get("password", "")) if current_user.role == auth.Role.ADMIN else "",
             mountpoints=cu.get("mountpoints", []),
             datacount=cu.get("datacount", 0),
             status=cu.get("status", 0),
@@ -4999,6 +5136,10 @@ async def create_admin_caster_source(
     target_host = (req.host or (hosts[0] if hosts else None) or env_cfg.get("host") or settings.CASTER_HOST or "").strip()
     if not target_host:
         raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
+    try:
+        target_host = validate_caster_hosts([target_host])[0]
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
 
     port = env_cfg.get("port") or int(settings.CASTER_PORT or 2101)
     caster = CasterClient(target_host, port)
@@ -5037,6 +5178,10 @@ async def delete_admin_caster_source(
     target_host = (req.host or (hosts[0] if hosts else None) or env_cfg.get("host") or settings.CASTER_HOST or "").strip()
     if not target_host:
         raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
+    try:
+        target_host = validate_caster_hosts([target_host])[0]
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
 
     port = env_cfg.get("port") or int(settings.CASTER_PORT or 2101)
     caster = CasterClient(target_host, port)
@@ -5082,6 +5227,8 @@ async def block_caster_user(
     
     # Permission check if rover exists in DB
     rover = await crud.get_rover_by_username(auth_db, username)
+    if not rover and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Rover")
     if rover:
         has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, auth_db)
         if not has_perm:
@@ -5175,6 +5322,8 @@ async def unblock_caster_user(
     
     # Permission check if rover exists in DB
     rover = await crud.get_rover_by_username(auth_db, username)
+    if not rover and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Rover")
     if rover:
         has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, auth_db)
         if not has_perm:
@@ -5283,8 +5432,7 @@ async def ntrip_auth_check(
 
     except Exception as e:
         logger.error(f"[NTRIP AUTH] Error checking auth for user='{username}': {e}")
-        # Fail-open: nếu lỗi DB thì vẫn cho phép (tránh lock toàn bộ hệ thống)
-        return PlainTextResponse("OK", status_code=200)
+        return PlainTextResponse("UNAVAILABLE", status_code=503)
 
 
 async def _rtcm_visible_serials(auth_db: AsyncSession, devices_db: AsyncSession, user: models.User) -> set[str] | None:
@@ -5346,16 +5494,14 @@ async def activate_rtcm_station(
                     ),
                 )
 
-        db.add(
-            models.RTCMStreamSession(
-                session_id=session_id,
-                serial=serial,
-                mountpoint=str(selected_mountpoint),
-                client_id=client_id,
-                expires_at=expires_at,
-                created_at=now,
-                last_heartbeat_at=now,
-            )
+        session_id = await _upsert_rtcm_session(
+            db,
+            session_id=session_id,
+            serial=serial,
+            mountpoint=str(selected_mountpoint),
+            client_id=client_id,
+            expires_at=expires_at,
+            now=now,
         )
         await db.commit()
 
@@ -5953,6 +6099,8 @@ async def get_system_settings(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     """Lấy trạng thái hiện tại của các cÃ i đặt bảo mật."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xem cài đặt toàn hệ thống")
     settings_data = await crud.get_system_settings(db)
 
     return settings_data
@@ -5964,7 +6112,8 @@ async def update_system_settings(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
     """Cập nhật cÃ i đặt bảo mật."""
-
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được thay đổi cài đặt toàn hệ thống")
 
     await crud.update_system_settings(db, settings_data)
     logger.info(f"Admin '{current_user.username}' updated system settings: {settings_data}")
@@ -5978,6 +6127,8 @@ async def get_security_stats(
     """
     Enhanced security stats với error handling
     """
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xem thống kê bảo mật")
     try:
         # 1. Security stats
         security_stats = await rate_limiter.get_stats(db)
@@ -6000,7 +6151,7 @@ async def get_security_stats(
             status_code=status.HTTP_200_OK,  # Still return 200 with error info
             content={
                 "status": "error",
-                "error": str(e),
+                "error": "Failed to load security statistics",
                 "timestamp": time.time(),
                 "rate_limiter": {
                     "error": "Failed to load security stats",
@@ -6018,6 +6169,8 @@ async def unblock_ip(
     db: AsyncSession = Depends(get_auth_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được quản lý danh sách chặn IP")
     """Admin unblock một IP (thao tác trên database)."""
     ip = request_data.get("ip_address")
     if not ip:
@@ -6037,6 +6190,8 @@ async def block_ip_manually(
     db: AsyncSession = Depends(get_auth_db), 
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được quản lý danh sách chặn IP")
     """Admin block thủ công một IP (lưu vÃ o database)."""
     ip = request_data.get("ip_address")
     if not ip:
@@ -6180,6 +6335,8 @@ async def get_all_rovers_global(
         
         # Nối tên các trạm lại: "Trạm A, Trạm B"
         rover_dict['base_name'] = ", ".join(station_names)
+        if current_user.role != auth.Role.ADMIN:
+            rover_dict["password"] = ""
          
         enriched_rovers.append(rover_dict)
     
@@ -6207,6 +6364,21 @@ async def sync_rover_by_username(
 
     # 2. Tìm trong DB
     rover = await crud.get_rover_by_username(db, username)
+    configured_hosts, config = _read_caster_config_from_env()
+    requested_hosts = [str(h).strip() for h in (update_req.target_casters or []) if str(h).strip()]
+    if not requested_hosts:
+        requested_hosts = (
+            [h.strip() for h in (rover.target_casters or "").split(";") if h.strip()]
+            if rover and rover.target_casters
+            else [h.strip() for h in configured_hosts if h.strip()]
+        )
+    if not requested_hosts:
+        fallback_host = str(config.get("host") or settings.CASTER_HOST or "").strip()
+        requested_hosts = [fallback_host] if fallback_host else []
+    try:
+        target_hosts = validate_caster_hosts(requested_hosts)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     if current_user.role == auth.Role.VIEWER and not rover and not update_req.selected_serials:
         raise HTTPException(status_code=403, detail="Viewer phải chọn ít nhất một trạm trong Rover Access.")
     if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
@@ -6232,13 +6404,15 @@ async def sync_rover_by_username(
     if not rover:
         if not update_req.selected_serials and not update_req.mountpoints:
             raise HTTPException(status_code=400, detail="Vui lòng chọn trạm hoặc nhập Allowed Mountpoints để đồng bộ tài khoản này vào hệ thống.")
+        if not update_req.password:
+            raise HTTPException(status_code=400, detail="Password is required to import a caster account")
         
         # Tạo mới trong DB
         combined_serials = ",".join(update_req.selected_serials) if update_req.selected_serials else ""
         rover = await crud.create_rover_account(
             db,
             username=username,
-            password=update_req.password or "123456", # Mặc định nếu không cung cấp
+            password=update_req.password,
             base_serial=combined_serials,
             mountpoints=update_req.mountpoints,
             creator_id=current_user.id,
@@ -6274,28 +6448,7 @@ async def sync_rover_by_username(
 
     # 5. ĐỒNG BỘ SANG CASTER (Đồng bộ trên toàn bộ Caster được cấu hình)
     try:
-        hosts, config = _read_caster_config_from_env()
         port = int(config.get("port") or settings.CASTER_PORT or 2101)
-        
-        target_hosts = []
-        if update_req.target_casters:
-            target_hosts = [str(h).strip() for h in update_req.target_casters if str(h).strip()]
-        
-        if not target_hosts:
-            if rover.target_casters:
-                target_hosts = [h.strip() for h in rover.target_casters.split(";") if h.strip()]
-            else:
-                target_hosts = [str(h).strip() for h in hosts if h.strip()]
-
-        if not target_hosts:
-            default_host = str(config.get("host") or settings.CASTER_HOST or "").strip()
-            if default_host:
-                target_hosts = [default_host]
-
-        # Deduplicate
-        seen_hosts = set()
-        target_hosts = [h for h in target_hosts if h and not (h in seen_hosts or seen_hosts.add(h))]
-
         for host in target_hosts:
             try:
                 from app.caster_client import CasterClient
@@ -6455,6 +6608,7 @@ async def create_multi_base_rover(
 
         if not target_hosts:
             raise ValueError("No target caster configured.")
+        target_hosts = validate_caster_hosts(target_hosts)
 
         # Create user on each target caster
         results_log = []
@@ -7263,18 +7417,31 @@ async def export_devices_to_csv(
 # === ACTIVITY LOGGING ENDPOINTS ===
 @app.get("/api/activity/feed", response_model=List[schemas.ActivityLogResponse])
 async def get_activity_feed(
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    return await crud.get_activity_logs(db, limit=limit)
+    serials = None if current_user.role == auth.Role.ADMIN else await _rtcm_visible_serials(auth_db, db, current_user)
+    return await crud.get_activity_logs(
+        db,
+        limit=limit,
+        user_id=None if current_user.role == auth.Role.ADMIN else current_user.id,
+        device_serials=serials,
+    )
 
 @app.get("/api/activity/heatmap", response_model=schemas.HeatmapData)
 async def get_heatmap_data(
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    data = await crud.get_activity_heatmap(db)
+    serials = None if current_user.role == auth.Role.ADMIN else await _rtcm_visible_serials(auth_db, db, current_user)
+    data = await crud.get_activity_heatmap(
+        db,
+        user_id=None if current_user.role == auth.Role.ADMIN else current_user.id,
+        device_serials=serials,
+    )
     return {"data": data}
 
 # === OPERATIONS CENTER / V1 ADDITIVE OPS APIS ===
@@ -7468,8 +7635,17 @@ async def _ops_events_query(
     q: str | None = None,
     timestamp_from: int | None = None,
     timestamp_to: int | None = None,
+    allowed_serials: set[str] | None = None,
+    actor_user_id: int | None = None,
 ) -> list[dict]:
     stmt = select(models.ActivityLog)
+    if allowed_serials is not None:
+        scope = []
+        if allowed_serials:
+            scope.append(func.upper(models.ActivityLog.device_serial).in_(allowed_serials))
+        if actor_user_id is not None:
+            scope.append(and_(models.ActivityLog.user_id == actor_user_id, models.ActivityLog.device_serial.is_(None)))
+        stmt = stmt.where(or_(*scope)) if scope else stmt.where(False)
     if severity:
         stmt = stmt.where(models.ActivityLog.type == severity)
     if device_serial:
@@ -7516,20 +7692,29 @@ async def get_ops_summary(
     rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
     alerts = await _build_ops_alerts(auth_db, devices_db, current_user, devices=devices, rovers=rovers)
     active_alerts = [a for a in alerts if a.get("state") != "resolved"]
-    events = await _ops_events_query(devices_db, limit=8)
+    allowed_serials = None if current_user.role == auth.Role.ADMIN else {
+        str(device.serial).strip().upper() for device in devices if device.serial
+    }
+    events = await _ops_events_query(
+        devices_db,
+        limit=8,
+        allowed_serials=allowed_serials,
+        actor_user_id=None if current_user.role == auth.Role.ADMIN else current_user.id,
+    )
     caster_hosts = []
-    async with global_caster_cache_lock:
-        for cache_data in (await _get_all_caster_cache()).values():
-            last_update = int(cache_data.get("last_update") or 0)
-            caster_hosts.append({
-                "host": cache_data.get("host", "unknown"),
-                "port": cache_data.get("port"),
-                "users": len(cache_data.get("users", []) or []),
-                "clients": len(cache_data.get("clients", []) or []),
-                "error": cache_data.get("error"),
-                "last_update": last_update,
-                "stale": bool(last_update and now_ts - last_update > 180),
-            })
+    if current_user.role == auth.Role.ADMIN:
+        async with global_caster_cache_lock:
+            for cache_data in (await _get_all_caster_cache()).values():
+                last_update = int(cache_data.get("last_update") or 0)
+                caster_hosts.append({
+                    "host": cache_data.get("host", "unknown"),
+                    "port": cache_data.get("port"),
+                    "users": len(cache_data.get("users", []) or []),
+                    "clients": len(cache_data.get("clients", []) or []),
+                    "error": cache_data.get("error"),
+                    "last_update": last_update,
+                    "stale": bool(last_update and now_ts - last_update > 180),
+                })
 
     online_devices = [d for d in devices if str(d.status or "").lower() != "offline"]
     expiring_rovers = [
@@ -7614,21 +7799,22 @@ async def _build_ops_alerts(
                 "created_at": item.blocked_at,
             })
 
-    async with global_caster_cache_lock:
-        for cache_data in (await _get_all_caster_cache()).values():
-            last_update = int(cache_data.get("last_update") or 0)
-            has_error = bool(cache_data.get("error"))
-            stale = last_update and now_ts - last_update > 180
-            if has_error or stale:
-                alerts.append({
-                    "id": f"caster-{cache_data.get('host', 'unknown')}",
-                    "severity": "critical" if has_error else "warning",
-                    "type": "caster_error" if has_error else "caster_stale",
-                    "title": "Caster needs attention",
-                    "message": cache_data.get("error") or f"Caster cache stale for {(now_ts - last_update) // 60} minutes",
-                    "caster_host": cache_data.get("host", "unknown"),
-                    "created_at": last_update or now_ts,
-                })
+    if current_user.role == auth.Role.ADMIN:
+        async with global_caster_cache_lock:
+            for cache_data in (await _get_all_caster_cache()).values():
+                last_update = int(cache_data.get("last_update") or 0)
+                has_error = bool(cache_data.get("error"))
+                stale = last_update and now_ts - last_update > 180
+                if has_error or stale:
+                    alerts.append({
+                        "id": f"caster-{cache_data.get('host', 'unknown')}",
+                        "severity": "critical" if has_error else "warning",
+                        "type": "caster_error" if has_error else "caster_stale",
+                        "title": "Caster needs attention",
+                        "message": cache_data.get("error") or f"Caster cache stale for {(now_ts - last_update) // 60} minutes",
+                        "caster_host": cache_data.get("host", "unknown"),
+                        "created_at": last_update or now_ts,
+                    })
 
     states = await _ops_alert_states(auth_db)
     alerts = _apply_ops_alert_states(alerts, states)
@@ -7736,9 +7922,22 @@ async def get_ops_events(
     device_serial: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
 ):
-    return {"items": await _ops_events_query(db, limit=limit, severity=severity, device_serial=device_serial, q=q)}
+    visible_devices = await _ops_visible_devices(db, auth_db, current_user)
+    allowed_serials = None if current_user.role == auth.Role.ADMIN else {
+        str(device.serial).strip().upper() for device in visible_devices if device.serial
+    }
+    return {"items": await _ops_events_query(
+        db,
+        limit=limit,
+        severity=severity,
+        device_serial=device_serial,
+        q=q,
+        allowed_serials=allowed_serials,
+        actor_user_id=None if current_user.role == auth.Role.ADMIN else current_user.id,
+    )}
 
 
 @app.get("/api/rovers/validate")
@@ -7828,12 +8027,20 @@ async def export_rovers_csv(
     stream = io.StringIO()
     writer = csv.writer(stream)
     writer.writerow(["username", "base_serial", "mountpoints", "target_casters", "active", "max_connections", "expires_at", "created_at"])
+
+    def safe(value):
+        if value is None:
+            return ""
+        if isinstance(value, str) and re.match(r"^\s*[=+\-@]", value):
+            return "'" + value
+        return value
+
     for rover in rovers:
         writer.writerow([
-            rover.username,
-            rover.base_serial or "",
-            rover.mountpoints or "",
-            rover.target_casters or "",
+            safe(rover.username),
+            safe(rover.base_serial),
+            safe(rover.mountpoints),
+            safe(rover.target_casters),
             "yes" if rover.is_active else "no",
             rover.max_connections,
             rover.expires_at or "",
@@ -8431,6 +8638,12 @@ async def get_rover_history(
         q=username,
         timestamp_from=date_start,
         timestamp_to=date_end,
+        allowed_serials=None if current_user.role == auth.Role.ADMIN else {
+            str(device.serial).strip().upper()
+            for device in await _ops_visible_devices(devices_db, auth_db, current_user)
+            if device.serial
+        },
+        actor_user_id=None if current_user.role == auth.Role.ADMIN else current_user.id,
     )
     statuses = await _ops_cached_rover_status({username.strip().lower()})
     session_query = select(models.RoverSessionHistory).where(
@@ -8725,7 +8938,16 @@ async def get_device_config_templates(
     templates = settings_data.get("device_config_templates", [])
     if not isinstance(templates, list):
         templates = []
-    return {"items": templates}
+    if current_user.role == auth.Role.ADMIN:
+        visible_templates = templates
+    elif current_user.role == auth.Role.COORDINATOR:
+        visible_templates = [
+            item for item in templates
+            if isinstance(item, dict) and item.get("created_by") == current_user.username
+        ]
+    else:
+        visible_templates = []
+    return {"items": visible_templates}
 
 
 @app.post("/api/device-config-templates")
@@ -8769,6 +8991,8 @@ async def apply_device_config_template(
     settings_data = await crud.get_system_settings(auth_db)
     templates = settings_data.get("device_config_templates", [])
     template = next((t for t in templates if str(t.get("id")) == request.template_id), None) if isinstance(templates, list) else None
+    if template and current_user.role != auth.Role.ADMIN and template.get("created_by") != current_user.username:
+        template = None
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
@@ -8875,6 +9099,14 @@ async def ui_websocket_endpoint(websocket: WebSocket):
                     if not mountpoint:
                         await websocket.send_json({"status": "error", "error": "mountpoint is required"})
                         continue
+
+                    if context.get("role") != auth.Role.ADMIN:
+                        async with device_session_scope() as scope_db:
+                            target_serial = await _resolve_station_serial_by_mountpoint(scope_db, str(mountpoint))
+                        allowed_serials = context.get("allowed_serials") or set()
+                        if not target_serial or str(target_serial).strip().upper() not in allowed_serials:
+                            await websocket.send_json({"status": "error", "error": "station is outside your scope"})
+                            continue
                         
                     if action == "start_rtcm":
                         resp = await _do_ntrip_wake(mountpoint, client_id, ttl_seconds)
@@ -8886,6 +9118,9 @@ async def ui_websocket_endpoint(websocket: WebSocket):
                         })
                     elif action == "stop_rtcm":
                         force = bool(msg.get("force", False))
+                        if force and context.get("role") != auth.Role.ADMIN:
+                            await websocket.send_json({"status": "error", "error": "force stop requires admin"})
+                            continue
                         address = msg.get("caster_address") or msg.get("address") or msg.get("host") or msg.get("ip") or msg.get("caster_host")
                         resp = await _do_ntrip_stop(mountpoint, client_id, force=force, requested_address=address)
                         await websocket.send_json({
@@ -8961,8 +9196,6 @@ async def flush_device_buffer(db: AsyncSession):
 
 @app.websocket("/ws/pi/{serial}")
 async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = Query(None)):
-    import os
-    enforce_auth = os.getenv("ENFORCE_AGENT_AUTH", "true").lower() != "false"
     # Never leave an unaccepted socket queued behind a saturated DB pool.  The
     # short-lived metadata cache removes the per-reconnect SELECT in steady state.
     try:
@@ -8992,12 +9225,17 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
         license_bypass,
     )
 
-    if enforce_auth and expected_token and provided_token != expected_token and not license_bypass:
+    if not metadata.get("exists"):
+        logger.warning("Pi '%s' connection rejected: unknown device serial.", serial)
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    if not license_bypass and (
+        not license_manager.is_compatible_device_token(expected_token, serial)
+        or not hmac.compare_digest(provided_token, expected_token)
+    ):
         logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-    if expected_token and provided_token != expected_token and not license_bypass:
-        logger.warning("Pi '%s' connection allowed with invalid/missing token because ENFORCE_AGENT_AUTH=false.", serial)
     if license_bypass and expected_token and provided_token != expected_token:
         logger.warning("Pi '%s' connection allowed with invalid/missing token because per-device license bypass is enabled.", serial)
 
@@ -9019,6 +9257,8 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                     await pi_manager.send_personal_message(serial, control_ack)
                 payload = dict(payload)
                 payload["serial"] = serial
+                if isinstance(payload.get("service_config"), (dict, list)):
+                    payload["service_config"] = schemas.strip_status_config_secrets(payload["service_config"])
                 sync_errors = list(mqtt_handler.device_sync_cache.get(f"{serial}_errors", []) or [])
                 cached_sync = mqtt_handler.device_sync_cache.get(serial, db_sync_state)
                 payload["is_synced"] = bool(cached_sync)
@@ -9080,7 +9320,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                         pass
             
             elif message_type == "nmea_update" and payload:
-                parsed_data = nmea_parser.parse(payload)
+                parsed_data = mqtt_handler.parse_nmea_sentence(serial, payload)
                 if parsed_data:
                     live = latest_device_telemetry_cache.setdefault(str(serial), {})
                     nmea_live = live.setdefault("nmea_data", {})
@@ -9473,7 +9713,7 @@ async def simple_health_check():
 # === ADMIN SERVER LOGS VIEWER ===
 @app.get("/api/admin/server-logs")
 async def get_server_logs(
-    lines: int = 100, 
+    lines: int = Query(100, ge=1, le=1000),
     level: str = None,
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
@@ -9482,6 +9722,8 @@ async def get_server_logs(
     Đọc N dòng cuối cùng từ file app.log để hiển thị lên UI.
     Chỉ Admin mới có quyền xem.
     """
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xem log máy chủ")
     log_file = 'app.log'
     if not os.path.exists(log_file):
         return {"logs": ["Log file not found."]}

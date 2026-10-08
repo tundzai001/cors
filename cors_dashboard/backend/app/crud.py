@@ -192,6 +192,14 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     normalize_service_config(device.get('service_config'))
                 )
                 normalized_system_info = _normalize_optional_json(device.get('system_info'))
+                if isinstance(normalized_system_info, dict):
+                    normalized_system_info = dict(normalized_system_info)
+                    for managed_key in (
+                        'auth_license_bypass',
+                        'auth_license_bypass_by',
+                        'auth_license_bypass_at',
+                    ):
+                        normalized_system_info.pop(managed_key, None)
 
                 device_record = {
                     'serial': serial,
@@ -446,6 +454,14 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     new_base_config = normalize_base_config(device_data.get("base_config", {}))
     new_service_config = normalize_service_config(device_data.get("service_config"))
     new_system_info = _ensure_dict(device_data.get("system_info"))
+    new_system_info = {
+        key: value for key, value in new_system_info.items()
+        if key not in {
+            "auth_license_bypass",
+            "auth_license_bypass_by",
+            "auth_license_bypass_at",
+        }
+    }
     command_source = _ensure_dict(device_data.get("command_source"))
     if command_source:
         new_system_info["command_source"] = command_source
@@ -946,7 +962,12 @@ async def _viewer_rover_scope(auth_db: AsyncSession, devices_db: AsyncSession, u
 def _rover_matches_station_scope(rover: models.RoverAccount, serials: set[str], mountpoints: set[str]) -> bool:
     rover_serials = {value.strip().upper() for value in (rover.base_serial or "").split(",") if value.strip()}
     rover_mountpoints = {value.strip().lower() for value in (rover.mountpoints or "").split(";") if value.strip()}
-    return bool(rover_serials & serials or rover_mountpoints & mountpoints)
+    if not rover_serials and not rover_mountpoints:
+        return False
+    return (
+        (not rover_serials or rover_serials.issubset(serials))
+        and (not rover_mountpoints or rover_mountpoints.issubset(mountpoints))
+    )
 
 
 async def rover_mountpoints_within_scope(devices_db: AsyncSession, user: models.User, serials: list[str], mountpoints: str) -> bool:
@@ -990,6 +1011,31 @@ async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current
         
     return managed_mps, managed_serials
 
+
+async def _get_coordinator_manageable_mountpoints_and_serials(
+    devices_db: AsyncSession,
+    current_user: models.User,
+) -> tuple[set[str], set[str]]:
+    result = await devices_db.execute(
+        select(models.Device).where(models.Device.user_id == current_user.id)
+    )
+    devices = result.scalars().all()
+    serials = {str(device.serial).strip().upper() for device in devices if device.serial}
+    mountpoints = set()
+    for device in devices:
+        config = normalize_service_config(device.service_config)
+        for index in (1, 2):
+            mountpoint = config.get(f"mountpoint{index}")
+            if config.get(f"server{index}_enabled") and mountpoint:
+                mountpoints.add(str(mountpoint).strip().lower())
+    if current_user.extra_mountpoints:
+        mountpoints.update(
+            part.strip().lower()
+            for part in re.split(r"[;,\s\n]+", current_user.extra_mountpoints)
+            if part.strip()
+        )
+    return mountpoints, serials
+
 async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSession, current_user: models.User) -> list[models.RoverAccount]:
     all_rovers_res = await auth_db.execute(
         select(models.RoverAccount).order_by(models.RoverAccount.created_at.desc())
@@ -1024,13 +1070,7 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
         if not r.is_shared_with_managers:
             continue
             
-        r_serials = [s.strip().upper() for s in (r.base_serial or "").split(',') if s.strip()]
-        if any(s in managed_serials for s in r_serials):
-            visible_rovers.append(r)
-            continue
-            
-        r_mps = [m.strip().lower() for m in (r.mountpoints or "").split(";") if m.strip()]
-        if set(r_mps).intersection(managed_mps):
+        if _rover_matches_station_scope(r, managed_serials, managed_mps):
             visible_rovers.append(r)
             continue
             
@@ -1066,17 +1106,10 @@ async def check_rover_management_permission(rover: models.RoverAccount, current_
     if not rover.is_shared_with_managers:
         return False
         
-    managed_mps, managed_serials = await _get_manager_mountpoints_and_serials(devices_db, current_user)
-    
-    r_serials = [s.strip().upper() for s in (rover.base_serial or "").split(',') if s.strip()]
-    if any(s in managed_serials for s in r_serials):
-        return True
-        
-    r_mps = [m.strip().lower() for m in (rover.mountpoints or "").split(";") if m.strip()]
-    if set(r_mps).intersection(managed_mps):
-        return True
-        
-    return False
+    managed_mps, managed_serials = await _get_coordinator_manageable_mountpoints_and_serials(
+        devices_db, current_user
+    )
+    return _rover_matches_station_scope(rover, managed_serials, managed_mps)
 
 # ==============================================================================
 # CLEANUP GHOST DEVICES: Xóa các device không hợp lệ (optional)
@@ -1132,23 +1165,42 @@ async def create_activity_log(db: AsyncSession, log: schemas.ActivityLogCreate):
     return db_log
 
 # 2. LẤY FEED (Mới nhất trước)
-async def get_activity_logs(db: AsyncSession, limit: int = 15):
+async def get_activity_logs(
+    db: AsyncSession,
+    limit: int = 15,
+    user_id: int | None = None,
+    device_serials: set[str] | None = None,
+):
+    stmt = select(models.ActivityLog)
+    if user_id is not None:
+        scope = []
+        if device_serials:
+            scope.append(func.upper(models.ActivityLog.device_serial).in_(device_serials))
+        scope.append(and_(models.ActivityLog.user_id == user_id, models.ActivityLog.device_serial.is_(None)))
+        stmt = stmt.where(or_(*scope))
     result = await db.execute(
-        select(models.ActivityLog)
-        .order_by(models.ActivityLog.timestamp.desc())
-        .limit(limit)
+        stmt.order_by(models.ActivityLog.timestamp.desc())
+        .limit(max(1, min(int(limit or 15), 100)))
     )
     return result.scalars().all()
 
 # 3. TÍNH TOÁN HEATMAP (Logic quan trọng)
-async def get_activity_heatmap(db: AsyncSession):
+async def get_activity_heatmap(
+    db: AsyncSession,
+    user_id: int | None = None,
+    device_serials: set[str] | None = None,
+):
     now = int(time.time())
     seven_days_ago = now - (7 * 24 * 3600)
     
-    result = await db.execute(
-        select(models.ActivityLog.timestamp)
-        .where(models.ActivityLog.timestamp >= seven_days_ago)
-    )
+    stmt = select(models.ActivityLog.timestamp).where(models.ActivityLog.timestamp >= seven_days_ago)
+    if user_id is not None:
+        scope = []
+        if device_serials:
+            scope.append(func.upper(models.ActivityLog.device_serial).in_(device_serials))
+        scope.append(and_(models.ActivityLog.user_id == user_id, models.ActivityLog.device_serial.is_(None)))
+        stmt = stmt.where(or_(*scope))
+    result = await db.execute(stmt)
     timestamps = result.scalars().all()
     
     grid = [[0] * 24 for _ in range(7)]

@@ -12,8 +12,6 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const markerRef = useRef(null);
-    const [mapType, setMapType] = useState('m'); // 'y' = Hybrid, 'm' = Roadmap
-    const tileLayerRef = useRef(null);
 
     useEffect(() => {
         // Kiểm tra tọa độ đầu vào
@@ -37,11 +35,6 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         if (!mapInstanceRef.current) {
             mapInstanceRef.current = leaflet.map(mapContainerRef.current).setView([lat, lon], 16);
 
-            tileLayerRef.current = leaflet.tileLayer(`https://mt1.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`, {
-                maxZoom: 20,
-                attribution: 'Google Maps'
-            }).addTo(mapInstanceRef.current);
-
             markerRef.current = leaflet.marker([lat, lon]).addTo(mapInstanceRef.current)
                 .bindPopup(`<b>Vị trí Base</b><br>Lat: ${lat}<br>Lon: ${lon}`)
                 .openPopup();
@@ -50,18 +43,13 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
             if (markerRef.current) markerRef.current.setLatLng([lat, lon]);
         }
 
-        // Cập nhật lớp bản đồ nếu thay đổi
-        if (tileLayerRef.current) {
-            tileLayerRef.current.setUrl(`https://mt1.google.com/vt/lyrs=${mapType}&x={x}&y={y}&z={z}`);
-        }
-
         setTimeout(() => {
             if (mapInstanceRef.current) {
                 mapInstanceRef.current.invalidateSize();
             }
         }, 300);
 
-    }, [coords?.lat, coords?.lon, mapType]);
+    }, [coords?.lat, coords?.lon]);
 
     // Handle Resize
     useEffect(() => {
@@ -101,28 +89,17 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
             <div className="d-flex justify-content-between align-items-center mb-2">
                 <div className="d-flex align-items-center">
                     <h6 className="mb-0 me-3">Vị trí trạm Base (Lưu cứng)</h6>
-                    <div className="btn-group btn-group-sm" role="group">
-                        <button
-                            type="button"
-                            className={`btn ${mapType === 'm' ? 'btn-primary' : 'btn-outline-primary'}`}
-                            onClick={() => setMapType('m')}
-                        >
-                            Bản đồ
-                        </button>
-                        <button
-                            type="button"
-                            className={`btn ${mapType === 'y' ? 'btn-primary' : 'btn-outline-primary'}`}
-                            onClick={() => setMapType('y')}
-                        >
-                            Vệ tinh
-                        </button>
-                    </div>
                 </div>
-                <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lon}`} target="_blank" className="btn btn-sm btn-outline-primary">
+                <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lon}`} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-outline-primary">
                     <i className="bi bi-box-arrow-up-right me-1"></i>Google Maps
                 </a>
             </div>
-            <div ref={mapContainerRef} style={{ width: '100%', height: '300px', borderRadius: '8px', border: '2px solid #444', zIndex: 0 }} />
+            <div style={{ position: 'relative' }}>
+                <div ref={mapContainerRef} style={{ width: '100%', height: '300px', borderRadius: '8px', border: '2px solid #444', background: '#222', zIndex: 0 }} />
+                <small style={{ position: 'absolute', left: 10, bottom: 10, zIndex: 500, color: '#e2e8f0', background: 'rgba(15, 23, 42, .85)', padding: '5px 8px', borderRadius: 6 }}>
+                    Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí trạm.
+                </small>
+            </div>
             <div className="mt-2 small text-muted">Lat: {parseFloat(coords.lat).toFixed(8)} | Lon: {parseFloat(coords.lon).toFixed(8)}</div>
         </div>
     );

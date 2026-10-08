@@ -16,7 +16,7 @@ DEVICE_SCHEMA_STATEMENTS = (
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS version VARCHAR",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_synced BOOLEAN NOT NULL DEFAULT TRUE",
     "DROP INDEX IF EXISTS ix_devices_device_token",
-    "CREATE INDEX IF NOT EXISTS ix_devices_device_token ON devices (device_token)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_secure_device_token ON devices (device_token) WHERE left(device_token, 3) = 'dt_'",
 )
 
 

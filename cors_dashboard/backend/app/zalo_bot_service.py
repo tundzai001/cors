@@ -326,7 +326,11 @@ class ZaloBotService:
             r"\1<redacted>",
             text,
         )
-        return re.sub(r"(?i)(password[A-Za-z0-9_]*=)\S+", r"\1<redacted>", text)
+        return re.sub(
+            r"(?i)((?:[A-Za-z0-9_]*password[A-Za-z0-9_]*|passwd|secret[A-Za-z0-9_]*|token[A-Za-z0-9_]*|pass|mk|s2_mk)\s*(?:=|\s)\s*)(\"[^\"]*\"|'[^']*'|\S+)",
+            r"\1<redacted>",
+            text,
+        )
 
     @staticmethod
     def _safe_debug_value(value: Any, depth: int = 0) -> Any:
@@ -476,7 +480,11 @@ class ZaloBotService:
                     trace_id or "background", chat_id,
                 )
                 return None
-            logger.info("[ZALO TRACE %s] outbound sending chat_id=%s text=%r", trace_id or "background", chat_id, text)
+            logger.info(
+                "[ZALO TRACE %s] outbound sending chat_id=%s text=%r",
+                trace_id or "background", chat_id,
+                self._redact_command_secret(str(text or "")),
+            )
             attempts = max(1, min(int(getattr(settings, "ZALO_SEND_RETRY_ATTEMPTS", 3) or 3), 5))
             base_delay = max(0.1, min(float(getattr(settings, "ZALO_SEND_RETRY_BASE_DELAY_SECONDS", 0.4) or 0.4), 5.0))
             try:
@@ -837,8 +845,9 @@ class ZaloBotService:
             }
         except Exception as exc:
             event["status"] = "error"
-            event["error"] = f"{type(exc).__name__}: {exc}"
-            logger.error("[ZALO TRACE %s] processing failed: %s", trace_id, exc, exc_info=True)
+            safe_error = self._redact_command_secret(f"{type(exc).__name__}: {exc}")
+            event["error"] = safe_error
+            logger.error("[ZALO TRACE %s] processing failed: %s", trace_id, safe_error)
             raise
         finally:
             if revoked_outbound_token is not None:
@@ -1476,8 +1485,11 @@ class ZaloBotService:
     def _redact_payload_message(payload: Any) -> Any:
         safe_payload = copy.deepcopy(payload)
         root = safe_payload.get("result", safe_payload) if isinstance(safe_payload, dict) else None
-        if isinstance(root, dict) and isinstance(root.get("message"), dict):
-            root["message"]["text"] = "<redacted>"
+        if isinstance(root, dict):
+            for message_key in ("message", "edited_message"):
+                message = root.get(message_key)
+                if isinstance(message, dict) and isinstance(message.get("text"), str):
+                    message["text"] = "<redacted>"
         return safe_payload
 
     def _clean_conversation_answer(self, update: Update, text: str) -> str:
@@ -1630,8 +1642,8 @@ class ZaloBotService:
             if handler:
                 ctx = _SyntheticContext(words[1:])
                 logger.info(
-                    "Smart dispatch: detected bare command '%s' args=%s",
-                    first_word, words[1:],
+                    "Smart dispatch: detected bare command '%s' input=%s",
+                    first_word, self._redact_command_secret(text),
                 )
                 await handler(update, ctx)
                 return True
@@ -1643,8 +1655,8 @@ class ZaloBotService:
             handler = getattr(self, _COMMAND_DISPATCH.get(command, ""), None)
             if handler:
                 logger.info(
-                    "Smart dispatch: NLP detected '%s' -> /%s args=%s",
-                    text, command, args,
+                    "Smart dispatch: NLP detected input=%s -> /%s",
+                    self._redact_command_secret(text), command,
                 )
                 await handler(update, _SyntheticContext(args))
                 return True

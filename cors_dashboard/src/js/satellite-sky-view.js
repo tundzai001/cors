@@ -352,9 +352,9 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                         itemDiv.className = 'sat-bar-item';
                         itemDiv.id = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
                         itemDiv.innerHTML = `
-                            <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
+                            <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${Number(sat.snr)}</div>
                             <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
-                            <div class="sat-bar-prn">${getNormalizedPrn(sat)}</div>
+                            <div class="sat-bar-prn">${Number.isFinite(Number(getNormalizedPrn(sat))) ? Number(getNormalizedPrn(sat)) : ''}</div>
                         `;
                         barsWrapper.appendChild(itemDiv);
                     });

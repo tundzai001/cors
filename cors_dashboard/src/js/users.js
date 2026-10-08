@@ -115,20 +115,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         usersTableBody.innerHTML = users.map(user => `
             <tr>
-                <td class="ops-table-id">${user.id}</td>
+                <td class="ops-table-id">${escapeHtml(user.id)}</td>
                 <td>
                     <div class="ops-user-cell">
-                        <span class="ops-user-avatar">${String(user.username || '?').slice(0, 1).toUpperCase()}</span>
-                        <strong>${user.username}</strong>
+                        <span class="ops-user-avatar">${escapeHtml(String(user.username || '?').slice(0, 1).toUpperCase())}</span>
+                        <strong>${escapeHtml(user.username)}</strong>
                     </div>
                 </td>
-                <td class="ops-muted-cell">${user.full_name || '--'}</td>
-                <td><span class="${roleBadge(user.role)}">${user.role}</span></td>
+                <td class="ops-muted-cell">${escapeHtml(user.full_name || '--')}</td>
+                <td><span class="${roleBadge(user.role)}">${escapeHtml(user.role)}</span></td>
                 <td><span class="ops-status-pill ${user.is_active ? 'is-active' : 'is-inactive'}"><span></span>${user.is_active ? 'Active' : 'Inactive'}</span></td>
                 <td class="text-end ops-row-actions">
                     ${(Number(user.id) === Number(currentUser.id) || user.username === currentUser.username) ? '' : `
-                    <button class="ops-table-action edit-btn" data-user-id="${user.id}" title="Edit"><i class="bi bi-pencil-square"></i></button>
-                    <button class="ops-table-action danger delete-btn" data-user-id="${user.id}" data-username="${user.username}" title="Delete"><i class="bi bi-trash3"></i></button>
+                    <button class="ops-table-action edit-btn" data-user-id="${escapeHtml(user.id)}" title="Edit"><i class="bi bi-pencil-square"></i></button>
+                    <button class="ops-table-action danger delete-btn" data-user-id="${escapeHtml(user.id)}" data-username="${escapeHtml(user.username)}" title="Delete"><i class="bi bi-trash3"></i></button>
                     `}
                 </td>
             </tr>

@@ -8,18 +8,21 @@ import os
 import time
 import hashlib
 import threading
+from collections import OrderedDict
 from typing import Awaitable, Callable, Optional
 import paho.mqtt.client as mqtt
 from sqlalchemy import select
 
-from . import schemas, license_manager
+from . import schemas
 from .websocket import manager
 from .database import settings, device_session_scope
-from . import crud, nmea_parser, models
+from . import crud, models
+from .utils import NMEAParser
 from .rtcm_signal_decoder import rtcm_signal_decoder
 from .status_reconciler import status_reconciler
 from .control_plane_ack import build_control_plane_ack
 from .license_sync import evaluate_license_sync
+from . import license_manager
 
 # Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
 mqtt_db_write_lock = asyncio.Lock()
@@ -39,7 +42,11 @@ def _version_matches(agent_version: str | None) -> bool:
 
 main_loop = None
 client_id = f"backend-listen-{settings.MQTT_HOST}-{os.getpid()}"
-mqtt_client = mqtt.Client(client_id)
+# Paho 2.x requires an explicit version for the existing legacy callbacks.
+if hasattr(mqtt, "CallbackAPIVersion"):
+    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id)
+else:
+    mqtt_client = mqtt.Client(client_id=client_id)
 
 if hasattr(settings, 'MQTT_USERNAME') and settings.MQTT_USERNAME:
     mqtt_client.username_pw_set(settings.MQTT_USERNAME, settings.MQTT_PASSWORD)
@@ -60,6 +67,22 @@ DEVICE_METADATA_CACHE_TTL_SECONDS = max(
     float(os.getenv("DEVICE_METADATA_CACHE_TTL_SECONDS", "60")),
 )
 RTCM_SATELLITE_CACHE_TTL_MS = 10_000
+NMEA_PARSER_CACHE_MAXSIZE = 2048
+nmea_parser_cache: OrderedDict[str, NMEAParser] = OrderedDict()
+
+
+def parse_nmea_sentence(serial: str, sentence: str) -> dict | None:
+    key = str(serial or "").strip().upper()
+    if not key or len(key) > 128:
+        return None
+    parser = nmea_parser_cache.get(key)
+    if parser is None:
+        parser = NMEAParser()
+        nmea_parser_cache[key] = parser
+    nmea_parser_cache.move_to_end(key)
+    while len(nmea_parser_cache) > NMEA_PARSER_CACHE_MAXSIZE:
+        nmea_parser_cache.popitem(last=False)
+    return parser.parse(sentence)
 
 
 def cache_agent_sync_inputs(serial: str, payload: dict) -> None:
@@ -245,6 +268,11 @@ DB_WRITE_INTERVAL = 120.0    # Ghi DB định kỳ 2 phút/lần nếu không c�
 IS_SHUTTING_DOWN = False 
 external_command_handler: Optional[Callable[[str, bytes], Awaitable[None]]] = None
 status_broadcast_handler: Optional[Callable[[dict], Awaitable[None]]] = None
+EXTERNAL_COMMAND_MAX_PENDING = max(16, int(os.getenv("MQTT_EXTERNAL_COMMAND_MAX_PENDING", "512")))
+EXTERNAL_COMMAND_CONCURRENCY = max(1, int(os.getenv("MQTT_EXTERNAL_COMMAND_CONCURRENCY", "4")))
+EXTERNAL_COMMAND_MAX_BYTES = 64 * 1024
+external_command_pending = {}
+external_command_drain_scheduled = False
 MQTT_INGRESS_MAX_PENDING = max(100, int(os.getenv("MQTT_INGRESS_MAX_PENDING", "2000")))
 MQTT_INGRESS_CONCURRENCY = max(1, int(os.getenv("MQTT_INGRESS_CONCURRENCY", "8")))
 MQTT_INGRESS_CONTROL_TYPES = frozenset({
@@ -371,6 +399,63 @@ def _enqueue_mqtt_ingress(topic: str, payload: bytes, is_retained: bool) -> None
                 mqtt_ingress_drain_scheduled = False
 
 
+def _enqueue_external_command(topic: str, payload: bytes) -> None:
+    """Keep external NTRIP command work bounded before scheduling on asyncio."""
+    global external_command_drain_scheduled
+    raw_payload = bytes(payload or b"")
+    if len(raw_payload) > EXTERNAL_COMMAND_MAX_BYTES:
+        logging.warning("Dropped oversized external MQTT command")
+        return
+    key = (str(topic), hashlib.sha256(raw_payload).digest())
+    should_schedule = False
+    with mqtt_ingress_lock:
+        if key in external_command_pending:
+            return
+        if len(external_command_pending) >= EXTERNAL_COMMAND_MAX_PENDING:
+            logging.warning("Dropped external MQTT command because the bounded queue is full")
+            return
+        external_command_pending[key] = (str(topic), raw_payload)
+        if not external_command_drain_scheduled:
+            external_command_drain_scheduled = True
+            should_schedule = True
+    if should_schedule:
+        try:
+            if not main_loop or not main_loop.is_running():
+                raise RuntimeError("asyncio loop is not running")
+            main_loop.call_soon_threadsafe(_start_external_command_drain)
+        except RuntimeError:
+            with mqtt_ingress_lock:
+                external_command_drain_scheduled = False
+
+
+def _start_external_command_drain() -> None:
+    asyncio.create_task(_drain_external_commands())
+
+
+async def _drain_external_commands() -> None:
+    global external_command_drain_scheduled
+    while not IS_SHUTTING_DOWN:
+        with mqtt_ingress_lock:
+            batch = []
+            while external_command_pending and len(batch) < EXTERNAL_COMMAND_CONCURRENCY:
+                _, envelope = external_command_pending.popitem()
+                batch.append(envelope)
+            if not batch:
+                external_command_drain_scheduled = False
+                return
+        if external_command_handler:
+            results = await asyncio.gather(
+                *(external_command_handler(topic, payload) for topic, payload in batch),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    logging.error("External MQTT command worker failed: %s", result)
+        await asyncio.sleep(0)
+    with mqtt_ingress_lock:
+        external_command_drain_scheduled = False
+
+
 async def _drain_mqtt_ingress() -> None:
     global mqtt_ingress_drain_scheduled
     while not IS_SHUTTING_DOWN:
@@ -450,13 +535,7 @@ def on_message(client, userdata, msg):
 
     if msg.topic.startswith("ntrip/rtcm/"):
         if external_command_handler and main_loop and main_loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    external_command_handler(msg.topic, msg.payload),
-                    main_loop,
-                )
-            except RuntimeError:
-                pass
+            _enqueue_external_command(msg.topic, msg.payload)
         else:
             logging.warning("Received NTRIP MQTT command but no external command handler is registered")
         return
@@ -575,7 +654,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
         
     try:
         topic_parts = topic.split('/')
-        if len(topic_parts) < 4:
+        if len(topic_parts) != 4 or topic_parts[:2] != ["pi", "devices"]:
             return
         
         message_type = topic_parts[-1]
@@ -614,7 +693,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             if payload.startswith(b'$'):
                 try:
                     line = payload.decode('ascii', errors='ignore')
-                    parsed_data = nmea_parser.parse(line)
+                    parsed_data = parse_nmea_sentence(serial, line)
                     if parsed_data:
                         live = device_telemetry_cache.setdefault(serial, {})
                         nmea_live = live.setdefault("nmea_data", {})
@@ -666,6 +745,14 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             if not isinstance(data, dict):
                 logging.warning(f"⚠️ Received non-dict payload on topic {topic}: {type(data)}")
                 return
+
+            payload_serial = str(data.get("serial") or "").strip()
+            if payload_serial and payload_serial.upper() != serial.upper():
+                logging.warning("Rejected MQTT status serial mismatch: topic=%s payload=%s", serial, payload_serial)
+                return
+            data["serial"] = serial
+            if isinstance(data.get("service_config"), (dict, list)):
+                data["service_config"] = schemas.strip_status_config_secrets(data["service_config"])
 
             if 'rtk_fix_status' not in data:
                 # Fallback: Dựa vào status cũ (nếu agent chưa update)

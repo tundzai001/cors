@@ -8,7 +8,7 @@ from ..database import get_auth_db, get_db
 from .. import crud, models, schemas, auth, license_manager, command_builder
 from .. import mqtt as mqtt_handler
 from ..command_dispatcher import send_command_to_pi
-from ..caster_helpers import _read_caster_config_from_env, get_caster_client, global_caster_cache_lock
+from ..caster_helpers import _read_caster_config_from_env, get_caster_client, global_caster_cache_lock, validate_caster_hosts
 from ..caster_client import CasterClient
 from ..database import settings
 from ..websocket import manager as ui_manager
@@ -64,6 +64,30 @@ def _with_runtime_sync_flags(devices: list[models.Device]) -> list[models.Device
     return devices
 
 
+def _device_response_list(devices: list[models.Device], current_user: models.User) -> list:
+    devices = _with_runtime_sync_flags(devices)
+    if current_user.role not in (auth.Role.VIEWER, auth.Role.COORDINATOR):
+        return devices
+    items = []
+    for device in devices:
+        if current_user.role == auth.Role.COORDINATOR and device.user_id == current_user.id:
+            items.append(device)
+            continue
+        item = schemas.Device.from_orm(device).model_dump()
+        for key in ("base_config", "service_config", "system_info"):
+            item[key] = schemas.redact_config_secrets(item.get(key))
+        items.append(item)
+    return items
+
+
+def _rover_response_list(rovers: list[models.RoverAccount], current_user: models.User) -> list:
+    items = [schemas.RoverAccountResponse.from_orm(rover).model_dump() for rover in rovers]
+    if current_user.role != auth.Role.ADMIN:
+        for item in items:
+            item["password"] = ""
+    return items
+
+
 # === DEVICE ENDPOINTS ===
 @router.get("/api/devices", response_model=list[schemas.Device])
 async def get_initial_devices(
@@ -100,7 +124,7 @@ async def get_initial_devices(
         result = await db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(visible_serials)).order_by(models.Device.name))
         devices = result.scalars().all()
         logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → {len(devices)} devices by user_id={target_user_id}")
-        return _with_runtime_sync_flags(devices)
+        return _device_response_list(devices, current_user)
     elif target_role == auth.Role.VIEWER:
         from sqlalchemy import select as _select
         from sqlalchemy import func as _func
@@ -115,11 +139,11 @@ async def get_initial_devices(
         result = await db.execute(_select(_models.Device).where(_func.upper(_models.Device.serial).in_(viewer_serials)).order_by(_models.Device.name))
         devices = result.scalars().all()
         logger.info(f"[DEVICES] Viewer '{current_user.username}' → returning {len(devices)} devices")
-        return _with_runtime_sync_flags(devices)
+        return _device_response_list(devices, current_user)
     
     # Fallback: Admin sees all
     logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → returning ALL devices")
-    return _with_runtime_sync_flags(await crud.get_all_devices(db))
+    return _device_response_list(await crud.get_all_devices(db), current_user)
 
 @router.post("/api/devices/{serial}/command")
 async def send_generic_command(
@@ -405,20 +429,21 @@ async def get_rovers_for_base(
             raise HTTPException(status_code=403, detail="Bạn chưa được cấp quyền xem trang Rover.")
         device = await crud.get_device_by_serial(devices_db, serial)
         if device and (device.user_id == current_user.id or str(serial).strip().upper() in crud.get_coordinator_view_base_serials(current_user)):
-            return await crud.get_rovers_by_base_serial(db, base_serial=serial)
+            rovers = await crud.get_rovers_by_base_serial(db, base_serial=serial)
+            visible = await crud.get_visible_rovers_for_user(db, devices_db, current_user)
+            visible_ids = {rover.id for rover in visible}
+            return _rover_response_list([rover for rover in rovers if rover.id in visible_ids], current_user)
 
     if current_user.role == auth.Role.VIEWER:
         if not auth.can_view_rover_page(current_user):
             raise HTTPException(status_code=403, detail="Bạn không có quyền xem trang Rover.")
         if str(serial).strip().upper() not in await crud.get_viewer_visible_base_serials(db, devices_db, current_user):
             raise HTTPException(status_code=403, detail="Bạn không có quyền xem Rover của trạm này.")
-        allowed_rovers = crud.get_allowed_rover_usernames(current_user)
         rovers = await crud.get_rovers_by_base_serial(db, base_serial=serial)
-        return [
-            rover for rover in rovers
-            if rover.created_by_user_id == current_user.id
-            or str(rover.username or "").strip().lower() in allowed_rovers
-        ]
+        visible = await crud.get_visible_rovers_for_user(db, devices_db, current_user)
+        visible_ids = {rover.id for rover in visible}
+        visible_rovers = [rover for rover in rovers if rover.id in visible_ids]
+        return _rover_response_list(visible_rovers, current_user)
     
     # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
     raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm nÃ y.")
@@ -644,9 +669,19 @@ async def update_rover(
         # Keep order and deduplicate
         seen_hosts = set()
         updated_target_hosts = [h for h in updated_target_hosts if h and not (h in seen_hosts or seen_hosts.add(h))]
+        try:
+            updated_target_hosts = validate_caster_hosts(updated_target_hosts)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         
         new_hosts_set = set(updated_target_hosts)
-        removed_hosts = old_hosts_set - new_hosts_set
+        removed_hosts = set()
+        for old_host in old_hosts_set - new_hosts_set:
+            try:
+                removed_hosts.update(validate_caster_hosts([old_host]))
+            except ValueError:
+                # Do not let stale or imported DB values select an arbitrary network target.
+                continue
         
         port = int(settings.CASTER_PORT or 2101)
         results_log = []

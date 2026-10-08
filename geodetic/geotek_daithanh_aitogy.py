@@ -263,6 +263,21 @@ def get_license_fingerprint(serial=None):
         return None
 
 
+def _status_safe_config(value):
+    """Remove reusable credentials from retained/live status telemetry."""
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in value.items():
+            normalized = str(key).strip().lower().replace("-", "_")
+            if any(marker in normalized for marker in ("password", "passwd", "secret", "token")) or normalized.endswith(("_pass", "pass")):
+                continue
+            safe[key] = _status_safe_config(item)
+        return safe
+    if isinstance(value, list):
+        return [_status_safe_config(item) for item in value]
+    return value
+
+
 def save_license(serial, token):
     """Atomically replace one device token without terminating the relay."""
     value = str(token or "").strip()
@@ -1450,6 +1465,10 @@ def rewrite_command_port(command_bytes, nmea_port=None, rtcm_port=None, nmea_gga
     if not target_port:
         return command_bytes
 
+    if not re.fullmatch(r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)", target_port, flags=re.IGNORECASE):
+        logging.warning("Ignored invalid receiver port configuration")
+        return command_bytes
+
     original_port = parts[1]
     if original_port.lower() == target_port.lower():
         return command_bytes
@@ -1519,6 +1538,8 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
     alt = _as_float(_first_value(coords.get("alt"), params.get("alt"), runtime_cfg.get("alt"), 0.0), 0.0)
 
     rtcm_port = str(_first_value(runtime_cfg.get("rtcm_port"), runtime_cfg.get("sensor_port"), "com2")).strip() or "com2"
+    if not re.fullmatch(r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)", rtcm_port, flags=re.IGNORECASE):
+        raise ValueError("Invalid Unicore RTCM port")
     commands = [
         b"FRESET\r\n",
         b"$DELAY_5000$",
@@ -1712,6 +1733,7 @@ class RelayWorker(threading.Thread):
             "detected_chip_type": "RELAY",
             "is_provisioned": has_license(self.serial)
         }
+        status["service_config"] = _status_safe_config(status.get("service_config"))
         
         try:
             if self.mqtt_client and self.mqtt_client.is_connected():
@@ -2522,6 +2544,7 @@ class MqttSourceWorker(threading.Thread):
             "is_provisioned": has_license(self.serial),
             "config_status": getattr(self, "config_status", None)
         }
+        status["service_config"] = _status_safe_config(status.get("service_config"))
         try:
             if self.mqtt_status_client and self.mqtt_status_client.is_connected():
                 self.mqtt_status_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
@@ -3320,7 +3343,6 @@ def setup_mqtt(worker_map):
             c.subscribe("pi/devices/+/command", qos=1)
             c.subscribe("pi/devices/+/commands", qos=1)
             c.subscribe("pi/device/+/command", qos=1)
-            c.subscribe("pi/devices/+/status", qos=0)
             logging.info(f"MQTT control broker {MQTT_BROKER}:{MQTT_PORT}; waiting for dashboard commands")
         else:
             logging.error(f"MQTT failed: {rc}")
@@ -3393,11 +3415,23 @@ def setup_mqtt(worker_map):
             cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
             commands_b64 = cmd_payload.get("commands_b64")
             if commands_b64 and hasattr(worker, "execute_commands"):
+                with command_lock:
+                    if serial in active_execution_serials:
+                        logging.warning("Rejected concurrent receiver command execution for %s", serial)
+                        return
+                    active_execution_serials.add(serial)
                 logging.info(f"[{serial}] Executing remote commands from Dashboard in background thread")
                 import threading
+
+                def execute_once():
+                    try:
+                        worker.execute_commands(commands_b64, payload.get("original_config"))
+                    finally:
+                        with command_lock:
+                            active_execution_serials.discard(serial)
+
                 threading.Thread(
-                    target=worker.execute_commands,
-                    args=(commands_b64, payload.get("original_config")),
+                    target=execute_once,
                     daemon=True
                 ).start()
             return

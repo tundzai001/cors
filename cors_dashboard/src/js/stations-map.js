@@ -6,6 +6,12 @@
     const DEFAULT_CENTER = [16.2, 106.3];
     const DEFAULT_ZOOM = 6;
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[char]);
+    }
+
     function toNumber(value) {
         const n = Number(value);
         return Number.isFinite(n) ? n : null;
@@ -76,18 +82,18 @@
             <div class="station-map-popup">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
-                        <div class="station-map-popup-title">${device.name || device.serial || 'Station'}</div>
-                        <div class="text-muted small">${device.serial || '--'}</div>
+                        <div class="station-map-popup-title">${escapeHtml(device.name || device.serial || 'Station')}</div>
+                        <div class="text-muted small">${escapeHtml(device.serial || '--')}</div>
                     </div>
                     <span class="badge" style="background:${meta.color}; color:#fff;">${meta.label}</span>
                 </div>
                 <div class="station-map-popup-grid">
                     <span class="station-map-popup-label">Lat/Lon</span><span class="station-map-popup-value">${coords ? `${coords.lat.toFixed(6)}, ${coords.lon.toFixed(6)}` : '--'}</span>
-                    <span class="station-map-popup-label">Host</span><span class="station-map-popup-value">${traffic.host || '--'}</span>
-                    <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${traffic.mountpoint || '--'}</span>
+                    <span class="station-map-popup-label">Host</span><span class="station-map-popup-value">${escapeHtml(traffic.host || '--')}</span>
+                    <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${escapeHtml(traffic.mountpoint || '--')}</span>
                     <span class="station-map-popup-label">Traffic out</span><span class="station-map-popup-value">${window.CorsUI.formatSpeed(traffic.bps)}</span>
                 </div>
-                <button type="button" class="btn btn-sm btn-primary w-100 station-map-detail-btn" data-serial="${device.serial || ''}">Open detail</button>
+                <button type="button" class="btn btn-sm btn-primary w-100 station-map-detail-btn" data-serial="${escapeHtml(device.serial || '')}">Open detail</button>
             </div>
         `;
     }
@@ -114,7 +120,6 @@
         const [filterOpen, setFilterOpen] = useState(false);
         const [measureOn, setMeasureOn] = useState(false);
         const [findingNearest, setFindingNearest] = useState(false);
-        const [tileMode, setTileMode] = useState('hybrid');
         const [mapError, setMapError] = useState('');
         const role = String(currentUser?.role || '').toLowerCase();
         const canViewRovers = role === 'admin' || currentUser?.can_view_rovers === true || currentUser?.permissions?.includes('view:rovers');
@@ -200,24 +205,6 @@
             mapRef.current = map;
             setMapError('');
 
-            const googleAttribution = '&copy; Google';
-            const tiles = {
-                hybrid: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
-                    maxZoom: 20,
-                    attribution: googleAttribution
-                }),
-                satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
-                    maxZoom: 20,
-                    attribution: googleAttribution
-                }),
-                streets: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-                    maxZoom: 20,
-                    attribution: googleAttribution
-                })
-            };
-            tiles.hybrid.addTo(map);
-            map.__tiles = tiles;
-
             layerRef.current = L.layerGroup();
             coverageRef.current = L.layerGroup();
             coverageRef.current.addTo(map);
@@ -279,14 +266,6 @@
                 map.remove();
             };
         }, []);
-
-        useEffect(() => {
-            const map = mapRef.current;
-            const L = window.CorsDashboardShared?.getLeaflet?.();
-            if (!map || !L || !map.__tiles) return;
-            Object.values(map.__tiles).forEach(layer => map.removeLayer(layer));
-            map.__tiles[tileMode].addTo(map);
-        }, [tileMode]);
 
         useEffect(() => {
             const map = mapRef.current;
@@ -366,12 +345,12 @@
                     : { label: rover.status || 'Unknown', color: '#38bdf8' };
                 const html = `
                     <div class="station-map-popup">
-                        <div class="station-map-popup-title">Rover: ${rover.username || 'N/A'}</div>
+                        <div class="station-map-popup-title">Rover: ${escapeHtml(rover.username || 'N/A')}</div>
                         <div class="station-map-popup-grid">
-                            <span class="station-map-popup-label">Receiver</span><span class="station-map-popup-value">${rover.receiver_id || '--'}</span>
-                            <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${rover.mountpoint || '--'}</span>
-                            <span class="station-map-popup-label">Status</span><span class="station-map-popup-value">${statusMeta.label}</span>
-                            <span class="station-map-popup-label">nSV</span><span class="station-map-popup-value">${rover.nsv ?? '--'}</span>
+                            <span class="station-map-popup-label">Receiver</span><span class="station-map-popup-value">${escapeHtml(rover.receiver_id || '--')}</span>
+                            <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${escapeHtml(rover.mountpoint || '--')}</span>
+                            <span class="station-map-popup-label">Status</span><span class="station-map-popup-value">${escapeHtml(statusMeta.label)}</span>
+                            <span class="station-map-popup-label">nSV</span><span class="station-map-popup-value">${escapeHtml(rover.nsv ?? '--')}</span>
                         </div>
                     </div>
                 `;
@@ -489,6 +468,9 @@
         return (
             <div className="station-map-container">
                 <div ref={mapEl} className="station-map-canvas"></div>
+                <div className="station-map-private-basemap-note" role="note" style={{ position: 'absolute', right: 12, bottom: 12, zIndex: 500, maxWidth: 280, color: '#e2e8f0', background: 'rgba(15, 23, 42, .9)', padding: '6px 9px', borderRadius: 6, fontSize: 12 }}>
+                    Nền bản đồ bên ngoài đã tắt để giữ riêng tư vị trí trạm.
+                </div>
 
                 {mapError && (
                     <div className="station-map-load-error" role="alert">
@@ -508,7 +490,6 @@
                             {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
                         </button>
                         <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
-                        <button className="station-map-action" title="Layers" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
                         <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
                     </div>
                 </div>

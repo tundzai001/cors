@@ -6,6 +6,8 @@ import logging
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from .schemas import redact_config_secrets
+
 
 class ConnectionManager:
     def __init__(self) -> None:
@@ -65,7 +67,17 @@ class ConnectionManager:
                     return
                 if not self._can_receive(connection, message):
                     return
-                await asyncio.wait_for(connection.send_json(message), timeout=2.0)
+                outbound = message
+                context = self.connection_contexts.get(connection, {})
+                if context.get("role") == "viewer" and message.get("type") == "status_update":
+                    data = message.get("data")
+                    if isinstance(data, dict):
+                        safe_data = dict(data)
+                        for key in ("base_config", "service_config", "system_info"):
+                            if key in safe_data:
+                                safe_data[key] = redact_config_secrets(safe_data[key])
+                        outbound = {**message, "data": safe_data}
+                await asyncio.wait_for(connection.send_json(outbound), timeout=2.0)
         except (WebSocketDisconnect, RuntimeError, OSError):
             self.disconnect(connection)
         except Exception as exc:
@@ -88,14 +100,22 @@ manager = ConnectionManager()
 
 
 class VisitorManager:
-    def __init__(self) -> None:
+    def __init__(self, *, max_connections: int = 2000, max_per_ip: int = 20) -> None:
         self.active_ips = set()
         self.active_sockets = []
+        self.max_connections = max_connections
+        self.max_per_ip = max_per_ip
 
-    async def connect(self, websocket: WebSocket, client_ip: str) -> None:
+    async def connect(self, websocket: WebSocket, client_ip: str) -> bool:
+        if len(self.active_sockets) >= self.max_connections or sum(
+            1 for socket in self.active_sockets if socket.client and socket.client.host == client_ip
+        ) >= self.max_per_ip:
+            await websocket.close(code=1013, reason="Visitor connection limit reached")
+            return False
         await websocket.accept()
         self.active_sockets.append(websocket)
         self.active_ips.add(client_ip)
+        return True
 
     def disconnect(self, websocket: WebSocket, client_ip: str) -> None:
         if websocket in self.active_sockets:

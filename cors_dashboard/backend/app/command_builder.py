@@ -1,4 +1,5 @@
 import logging
+import math
 
 UBLOX_SAVE_CONFIG = b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab'
 
@@ -237,8 +238,23 @@ def _append_unicore_output_commands(commands: list[bytes], port: str, gnss_optio
         commands.append(b'$DELAY_200$')
 
 
+def _bounded_finite_number(value, name: str, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be numeric") from None
+    if not math.isfinite(number) or number < minimum or number > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return number
+
+
 def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: float, gnss_options: dict | None = None) -> list[bytes]:
     commands = []
+    duration_value = _bounded_finite_number(duration, "Survey duration", 1, 604800)
+    if not duration_value.is_integer():
+        raise ValueError("Survey duration must be an integer number of seconds")
+    duration = int(duration_value)
+    accuracy = _bounded_finite_number(accuracy, "Survey accuracy", 0.001, 10000)
     
     if sensor_type == 'Ublox':
         # Tạo message với cấu trúc chính xác
@@ -292,6 +308,10 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
 
 def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: float, accuracy: float, gnss_options: dict | None = None) -> list[bytes]:
     commands = []
+    lat = _bounded_finite_number(lat, "Latitude", -90, 90)
+    lon = _bounded_finite_number(lon, "Longitude", -180, 180)
+    alt = _bounded_finite_number(alt, "Altitude", -12000, 100000)
+    accuracy = _bounded_finite_number(accuracy, "Fixed position accuracy", 0.001, 10000)
     
     if sensor_type == 'Ublox':
         message = bytearray(b'\xb5\x62\x06\x71\x28\x00' + b'\x00' * 42)
@@ -302,10 +322,10 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         message[9] = 1
         
         # Ép kiểu float cho tọa độ (đề phòng trường hợp đầu vào là string để giữ precision)
-        f_lat = float(lat)
-        f_lon = float(lon)
-        f_alt = float(alt)
-        f_acc = float(accuracy)
+        f_lat = lat
+        f_lon = lon
+        f_alt = alt
+        f_acc = accuracy
 
         multiplier = 10000000  # LLA multiplier
         
