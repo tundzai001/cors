@@ -6728,7 +6728,7 @@ async def configure_service_endpoint(
 
     # --- BƯỚC 1: LƯU CẤU HÌNH "CHUẨN" VÀO DATABASE ---
     service_config_payload = _preserve_relay_config_metadata(
-        serial, old_service_cfg, payload.model_dump()
+        serial, old_service_cfg, schemas.preserve_service_passwords(old_service_cfg, payload.model_dump())
     )
     try:
         device_in_db.service_config = service_config_payload

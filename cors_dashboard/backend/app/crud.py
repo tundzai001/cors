@@ -566,6 +566,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     # ✅ KIỂM TRA SERVICE CONFIG
     # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
     previous_service_config = _ensure_dict(existing_device.service_config)
+    if new_service_config:
+        new_service_config = schemas.preserve_service_passwords(previous_service_config, new_service_config)
     previous_relay_source = previous_service_config.get("relay_source")
     is_relay_device = str(serial or "").strip().upper().startswith("RELAY_")
     if (

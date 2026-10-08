@@ -3,6 +3,21 @@ from pydantic import BaseModel, Field, validator
 from typing import Any, List, Optional
 
 
+SERVICE_PASSWORD_FIELDS = ("password1", "password2", "rtcmpassword1", "command_pass")
+
+
+def preserve_service_passwords(current: dict, incoming: dict) -> dict:
+    """A missing or blank password means keep the stored credential."""
+    merged = dict(incoming)
+    for key in SERVICE_PASSWORD_FIELDS:
+        if merged.get(key) in (None, ""):
+            if current.get(key) not in (None, ""):
+                merged[key] = current[key]
+            else:
+                merged.pop(key, None)
+    return merged
+
+
 class ZaloBindingAdminUpdate(BaseModel):
     display_name: Optional[str] = None
     binding_type: Optional[str] = None

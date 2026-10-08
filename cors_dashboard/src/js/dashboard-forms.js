@@ -1012,7 +1012,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         if (device.service_config) {
             const merged = {
                 ...defaultState,
-                ...device.service_config
+                ...device.service_config,
+                // Password fields accept replacements only; blank keeps the stored credential.
+                password1: '',
+                password2: '',
+                rtcmpassword1: '',
+                command_pass: ''
             };
 
             // Backward compatibility: when per-server flags are missing, inherit from global mode.
@@ -1127,6 +1132,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 });
             }
 
+            for (const key of ['password1', 'password2', 'rtcmpassword1', 'command_pass']) {
+                if (!payload[key]) delete payload[key];
+            }
+
             await onConfigureService(device.serial, payload);
             setIsFormDirty(false);
         } finally {
@@ -1139,6 +1148,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             <div className="alert alert-info small">
                 <i className="bi bi-info-circle-fill me-2"></i>
                 Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.
+                {' '}Để trống mật khẩu để giữ mật khẩu đã lưu; chỉ nhập khi muốn thay đổi.
             </div>
             {isLteStation && (
                 <div className="alert alert-primary small">
