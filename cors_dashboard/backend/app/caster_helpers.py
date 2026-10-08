@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import ipaddress
+import socket
+import time
 import os
 import re
 from pathlib import Path
@@ -46,6 +49,37 @@ def configured_caster_hosts() -> list[str]:
     if hosts:
         return hosts
     return [host.strip() for host in str(settings.CASTER_HOST or "").split(",") if host.strip()]
+
+
+_caster_peer_cache = {}
+
+
+async def is_configured_caster_peer(peer: str) -> bool:
+    """Legacy control is restricted to the configured caster's actual peer IP."""
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    hosts = tuple(configured_caster_hosts())
+    cached = _caster_peer_cache.get(hosts)
+    if not cached or time.monotonic() - cached[0] > 60:
+        addresses = set()
+        for host in hosts:
+            try:
+                addresses.add(ipaddress.ip_address(host))
+            except ValueError:
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM),
+                        timeout=3,
+                    )
+                    addresses.update(ipaddress.ip_address(item[4][0]) for item in results)
+                except (OSError, asyncio.TimeoutError, ValueError):
+                    continue
+        cached = (time.monotonic(), addresses)
+        _caster_peer_cache.clear()
+        _caster_peer_cache[hosts] = cached
+    return peer_ip in cached[1]
 
 
 def validate_caster_hosts(hosts: list[str] | tuple[str, ...]) -> list[str]:

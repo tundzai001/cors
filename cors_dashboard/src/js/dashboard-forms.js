@@ -971,7 +971,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         const isSerialChanged = lastHydratedSerialRef.current !== device.serial;
         if (isSerialChanged) setVisiblePasswords({});
 
-        // Skip realtime re-hydration while user is editing current device form.
+        // Hydrate only when the source config changes. Clearing dirty after save
+        // must not reload the pre-save props and flip the mode back.
         if (!isSerialChanged && isFormDirty) {
             return;
         }
@@ -1023,25 +1024,13 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 command_pass: isAdmin ? (device.service_config.command_pass ?? (isSerialChanged ? '' : hydratedConfigRef.current.command_pass) ?? '') : ''
             };
 
-            // Backward compatibility: when per-server flags are missing, inherit from global mode.
-            if (merged.server1_stream_on_demand === null || merged.server1_stream_on_demand === undefined) {
-                merged.server1_stream_on_demand = !!merged.stream_on_demand;
-            }
-            if (merged.server2_stream_on_demand === null || merged.server2_stream_on_demand === undefined) {
-                merged.server2_stream_on_demand = !!merged.stream_on_demand;
-            }
-            if (merged.server1_stream_active === null || merged.server1_stream_active === undefined) {
-                merged.server1_stream_active = !!merged.stream_active;
-            }
-            if (merged.server2_stream_active === null || merged.server2_stream_active === undefined) {
-                merged.server2_stream_active = !!merged.stream_active;
-            }
-
-            if (!merged.server1_stream_on_demand) {
-                merged.server1_stream_active = true;
-            }
-            if (!merged.server2_stream_on_demand) {
-                merged.server2_stream_active = true;
+            // Read legacy fallbacks from the received config, before defaults.
+            for (const server of [1, 2]) {
+                const key = `server${server}`;
+                merged[`${key}_enabled`] = toBool(device.service_config[`${key}_enabled`], false);
+                merged[`${key}_stream_on_demand`] = toBool(device.service_config[`${key}_stream_on_demand`], toBool(device.service_config.stream_on_demand, true));
+                merged[`${key}_stream_active`] = toBool(device.service_config[`${key}_stream_active`], toBool(device.service_config.stream_active, false));
+                if (!merged[`${key}_stream_on_demand`]) merged[`${key}_stream_active`] = true;
             }
 
             hydratedConfigRef.current = merged;
@@ -1054,7 +1043,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             setIsFormDirty(false);
             lastHydratedSerialRef.current = device.serial;
         }
-    }, [device.serial, device.service_config, isFormDirty, isAdmin]);
+    }, [device.serial, device.service_config, isAdmin]);
 
     const renderCasterStatus = (serverId) => {
         const key = `server${serverId}`;
@@ -1076,14 +1065,13 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             label = 'Trạm mất kết nối'; icon = 'bi-cloud-slash'; tone = 'danger';
         } else if (telemetry.connected) {
             label = 'Đã kết nối Caster'; icon = 'bi-check-circle-fill'; tone = 'success';
-        } else if (telemetry.sleep === true ||
-            (telemetry.sleep == null &&
-             toBool(telemetry.onDemand, toBool(saved[`${key}_stream_on_demand`], toBool(saved.stream_on_demand))) &&
-             !toBool(telemetry.active, toBool(saved[`${key}_stream_active`], toBool(saved.stream_active))))) {
-            label = 'Ngủ · chờ rover'; icon = 'bi-moon-stars'; tone = 'info';
         } else if (telemetry.hasConnection || telemetry.hasBps) {
             label = 'Chưa kết nối Caster'; icon = 'bi-exclamation-circle'; tone = 'warning';
         }
+        const sleeping = telemetry.sleep ?? (
+            toBool(telemetry.onDemand, toBool(saved[`${key}_stream_on_demand`], toBool(saved.stream_on_demand))) &&
+            !toBool(telemetry.active, toBool(saved[`${key}_stream_active`], toBool(saved.stream_active)))
+        );
         return (
             <span className="d-inline-flex flex-wrap align-items-center gap-2 ms-2 small" role="status" aria-live="polite">
                 <span className={`badge text-bg-${enabled ? 'primary' : 'secondary'}`}>
@@ -1092,8 +1080,13 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 </span>
                 <span className={`badge text-bg-${tone}`}>
                     <i className={`bi ${icon} me-1`} aria-hidden="true"></i>{label}
-                    {tone === 'success' && telemetry.bps > 0 ? ` · ${telemetry.bps} bps` : ''}
                 </span>
+                {enabled && !pending && !offline && (
+                    <span className={`badge text-bg-${sleeping ? 'info' : telemetry.bps > 0 ? 'success' : 'secondary'}`}>
+                        <i className={`bi ${sleeping ? 'bi-moon-stars' : 'bi-broadcast'} me-1`} aria-hidden="true"></i>
+                        {sleeping ? 'Ngủ · chờ rover' : telemetry.bps > 0 ? `Đang gửi RTCM · ${telemetry.bps} B/s` : 'Chưa gửi RTCM'}
+                    </span>
+                )}
             </span>
         );
     };

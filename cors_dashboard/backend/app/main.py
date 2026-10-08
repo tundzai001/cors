@@ -63,7 +63,7 @@ from . import mqtt as mqtt_handler
 from .mqtt import mqtt_client
 from .command_dispatcher import send_command_to_pi as dispatch_command_to_pi
 from . import license_manager
-from .caster_helpers import validate_caster_hosts
+from .caster_helpers import validate_caster_hosts, is_configured_caster_peer
 from . import nmea_parser
 from . import models, auth, crud
 from .security import rate_limiter
@@ -3601,12 +3601,16 @@ app.add_middleware(FrontendCacheMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=800, compresslevel=5)
 
 
-def _require_ntrip_control_token(
+async def _require_ntrip_control_token(
+    request: Request,
     token: Optional[str] = Header(None, alias="X-NTRIP-Control-Token"),
 ) -> None:
     expected = str(settings.NTRIP_CONTROL_TOKEN or os.getenv("NTRIP_CONTROL_TOKEN", "")).strip()
     if len(expected) < 32:
-        raise HTTPException(status_code=503, detail="NTRIP control authentication is not configured")
+        # Keep configured legacy casters working without exposing control publicly.
+        if request.client and await is_configured_caster_peer(request.client.host):
+            return
+        raise HTTPException(status_code=503, detail="NTRIP control authentication is not configured for this caller")
     if not token or not hmac.compare_digest(token, expected):
         raise HTTPException(status_code=401, detail="Invalid NTRIP control token")
 
@@ -6974,7 +6978,8 @@ async def configure_service_endpoint(
             user_id=current_user.id,
             serial=serial
         )
-        return {"status": "service_config_sent_and_saved", "channel": response.get('channel', 'unknown')}
+        return {"status": "service_config_sent_and_saved", "channel": response.get('channel', 'unknown'),
+                "service_config": service_config_payload}
     except HTTPException as e:
         raise HTTPException(status_code=503, detail=f"Config saved to DB, but failed to send command to Pi: {e.detail}")
 

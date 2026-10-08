@@ -1124,18 +1124,21 @@ async function handleConfigureService(serial, payload) {
             method: 'POST',
             body: JSON.stringify(payload)
         });
-
-        if (!response.ok) {
-            const error = await response.json();
-            if (response.status === 503) {
-                showSuccess('Đã lưu cấu hình vào DB! Lệnh sẽ được gửi khi thiết bị online.');
-                return;
-            }
-            throw new Error(error.detail || 'Lỗi không xác định');
+        const result = await response.json();
+        if (!response.ok && response.status !== 503) {
+            throw new Error(result.detail || 'Lỗi không xác định');
         }
-
-        showSuccess('Đã lưu và gửi cấu hình dịch vụ! Thiết bị sẽ áp dụng sau giây lát.');
-
+        // The endpoint saves before sending. Keep its saved intent in the form,
+        // including when delivery fails, so old telemetry cannot undo the edit.
+        const current = globalState.devices.find(device => device.serial === serial);
+        const savedConfig = result.service_config || { ...(current?.service_config || {}), ...payload };
+        updateGlobalDevices({ serial, service_config: savedConfig, is_synced: false });
+        if (response.status === 503) {
+            showError('Đã lưu cấu hình nhưng chưa gửi được tới trạm. Bấm áp dụng lại.');
+        } else {
+            showSuccess('Đã lưu và gửi cấu hình dịch vụ! Thiết bị sẽ áp dụng sau giây lát.');
+        }
+        return { service_config: savedConfig, delivered: response.ok };
     } catch (e) {
         showError(`Lỗi cấu hình dịch vụ: ${e.message}`);
         throw e;

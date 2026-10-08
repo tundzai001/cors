@@ -1648,7 +1648,7 @@ class RelayWorker(threading.Thread):
         return backoff + jitter
 
     def _keep_target_connected(self):
-        return bool(self.cfg.get("keep_target_connected", False))
+        return True
 
     def _stream_on_demand(self):
         return bool(self.cfg.get("stream_on_demand", True))
@@ -1664,7 +1664,7 @@ class RelayWorker(threading.Thread):
             pass # Vẫn cập nhật DB cục bộ dù mất MQTT
         
         source_has_data = bool(self.station_enabled and self.source_connected and self.current_source_bps > 0)
-        output_connected = bool(self.station_enabled and self.desired_active and self.is_connected)
+        output_connected = bool(self.station_enabled and self.is_connected)
         output_bps = self.current_bps if self.station_enabled and self.desired_active else 0
         if not source_has_data:
             status_value = "offline"
@@ -2416,14 +2416,17 @@ class MqttSourceWorker(threading.Thread):
 
     def _server_target_enabled(self, server_id):
         cfg = self._server_target_config(server_id)
-        stream_allowed = (not cfg["on_demand"]) or cfg["active"]
-        return cfg["enabled"] and stream_allowed and bool(cfg["host"] and cfg["port"] and cfg["password"] and cfg["mountpoint"])
+        return cfg["enabled"] and bool(cfg["host"] and cfg["port"] and cfg["password"] and cfg["mountpoint"])
+
+    def _server_target_can_push(self, server_id):
+        cfg = self._server_target_config(server_id)
+        return self._server_target_enabled(server_id) and ((not cfg["on_demand"]) or cfg["active"])
 
     def _has_active_client(self):
         return bool(self._target_socks)
 
     def _derive_status(self, mqtt_data_active):
-        if not self._has_active_client():
+        if not any(self._server_target_can_push(server_id) for server_id in (1, 2)):
             return "sleep"
         if not mqtt_data_active or self.current_mqtt_bps <= 0:
             return "offline"
@@ -2571,6 +2574,7 @@ class MqttSourceWorker(threading.Thread):
 
         self.log("INFO", f"Connecting TARGET NTRIP {server_key} for RTCM output: {target_host}:{target_port}/{target_mp} (v{target_version}.0)")
         sock = socket.create_connection((target_host, target_port), timeout=10)
+        enable_tcp_keepalive(sock)
         
         # Handshake chính xác như đã test để có thể gửi lệnh vào luồng RTCM của chip
         # TARGET only forwards MQTT RTCM to enabled NTRIP servers.
@@ -2712,16 +2716,16 @@ class MqttSourceWorker(threading.Thread):
             if target_mp and server_mp and server_mp != target_mp:
                 continue
             if server_cfg.get("enabled") and server_cfg.get("mountpoint"):
+                if not active and not server_cfg.get("on_demand"):
+                    continue
                 matched_servers.append(server_id)
 
         if not matched_servers and active:
             matched_servers = [1]
 
-        runtime["stream_on_demand"] = True
         for server_id in matched_servers:
             if active:
                 runtime[f"server{server_id}_enabled"] = True
-            runtime[f"server{server_id}_stream_on_demand"] = True
             runtime[f"server{server_id}_stream_active"] = active
 
         runtime["stream_active"] = any(
@@ -2739,14 +2743,12 @@ class MqttSourceWorker(threading.Thread):
 
         if not active:
             with self.socket_lock:
-                for sock in list(self._target_socks.values()):
-                    try: sock.shutdown(socket.SHUT_RDWR)
-                    except Exception: pass
-                    try: sock.close()
-                    except Exception: pass
-                self._target_socks.clear()
-                self._target_sock = None
-            self.is_connected = False
+                for server_id in matched_servers:
+                    key = f"server{server_id}"
+                    self.current_bps_by_server[key] = 0
+                    self.bytes_sent_by_server[key] = 0
+                self.current_bps = self.current_bps_by_server.get("server1", 0)
+            self.log("INFO", "RTCM paused; keeping authenticated caster connections")
         else:
             self.log("INFO", f"Wake received; enabling NTRIP target for mountpoint={mountpoint or self.cfg.get('target_mp')}")
         self.publish_status()
@@ -3050,6 +3052,8 @@ class MqttSourceWorker(threading.Thread):
 
                     with self.socket_lock:
                         for server_key, sock in list(self._target_socks.items()):
+                            if not self._server_target_can_push(int(server_key[-1])):
+                                continue
                             try:
                                 for frame in rtcm_frames:
                                     sock.sendall(frame)
@@ -3150,6 +3154,15 @@ class MqttSourceWorker(threading.Thread):
                                     try: sock.close()
                                     except Exception: pass
                                 continue
+                            if server_key in self._target_socks:
+                                sock = self._target_socks[server_key]
+                                try:
+                                    readable, _, _ = select.select([sock], [], [], 0)
+                                    if readable and not sock.recv(4096):
+                                        raise ConnectionError("Caster closed the connection")
+                                except (OSError, ConnectionError):
+                                    sock.close()
+                                    self._target_socks.pop(server_key, None)
                             if server_key not in self._target_socks:
                                 try:
                                     self._target_socks[server_key] = self._connect_target(server_id)

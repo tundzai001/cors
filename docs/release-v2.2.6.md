@@ -6,7 +6,15 @@
 - Missing fields keep their previous values. Empty or null passwords also keep the existing password. A nonempty password replaces it.
 - Pi and LTE agents retain unrelated configuration when applying a patch.
 - Admins can reveal saved passwords with the eye button; other roles retain replacement-only inputs.
-- Caster 1/2 headers and host fields show enabled/disabled, confirmed connection and data rate, sleep waiting for a rover, offline, or unapplied changes. Connection status comes from agent telemetry.
+- Caster 1/2 headers and host fields show connection and RTCM transmission separately. A sleeping station can show both “Đã kết nối Caster” and “Ngủ · chờ rover”. Connection status comes from agent telemetry.
+- Saving service settings keeps the saved mode in the form instead of reloading pre-save props. Failed delivery shows a retry message while preserving the saved settings.
+- Sleep/wake gates RTCM without restarting caster workers or closing authenticated sockets. Enabled outputs connect even while sleeping; TCP keepalive and peer-close detection handle idle connections. Caster-side idle timeouts can still cause a reconnect. NTRIP v2 no longer sends a terminating zero HTTP chunk as a keepalive.
+
+## Caster wake/stop control
+
+When `NTRIP_CONTROL_TOKEN` is configured (at least 32 characters), caster requests must send the matching `X-NTRIP-Control-Token`. Without this token, legacy control is accepted only from peer IPs resolved from backend `CASTER_HOST`; request payloads cannot choose trusted peers. Other callers receive 503 until authentication is configured.
+
+For a legacy caster, confirm `CASTER_HOST` contains its actual callback host/IP. In the supplied server log the callback peer is `103.159.51.73`; it must match the configured caster. This compatibility applies only to caster wake/stop and does not change external station API key authorization.
 
 A fresh online heartbeat stays online even with all caster outputs disabled. Caster availability is displayed separately. Out-of-sync telemetry cannot erase the saved settings in the dashboard, and partial status updates preserve saved config fields in the database.
 
@@ -29,4 +37,4 @@ A fresh online heartbeat stays online even with all caster outputs disabled. Cas
 
 ## Verification
 
-Regression checks cover backend patch/save separation, stored password preservation, Pi and LTE partial deployment, and explicit password replacement. Browser checks cover admin visibility controls, patch-only submission, redacted realtime updates, non-admin masking, connection/sleep/offline indicators, and mobile layout. Live caster authentication and rover wake-up require deployment and have not been verified locally.
+Regression checks cover backend patch/save separation, stored password preservation, Pi and LTE partial deployment, explicit password replacement, keeping the caster socket through sleep/wake, and trusted-peer/token control authorization. Form checks cover mode persistence after save; the local rendered preview confirms connection and sleep badges appear together. Live caster authentication and rover wake-up require deployment and have not been verified locally.
