@@ -24,6 +24,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const logoutBtn = document.getElementById('logout-btn');
     let securityDataInterval = null;
     const POLLING_INTERVAL_MS = 1000;
+    let loadingSecurityData = false;
+    let cachedSecuritySettings = null;
+    let settingsUpdatedAt = 0;
 
     async function apiFetch(url, options = {}) {
         try {
@@ -58,7 +61,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const attackAlert = document.getElementById('attack-mode-alert');
     const currentRpsEl = document.getElementById('current-rps');
 
-    async function loadSecurityData(isManualReload = false) { 
+    async function loadSecurityData(isManualReload = false) {
+        if (loadingSecurityData) return;
+        loadingSecurityData = true;
         if (isManualReload) {
             refreshBtn.disabled = true;
             refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> LOADING...';
@@ -67,38 +72,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             const [statsData, settingsData] = await Promise.all([
                 apiFetch('/api/admin/security/stats'),
-                apiFetch('/api/admin/settings')
+                !cachedSecuritySettings || isManualReload || Date.now() - settingsUpdatedAt > 30000
+                    ? apiFetch('/api/admin/settings').then(value => { cachedSecuritySettings = value; settingsUpdatedAt = Date.now(); return value; })
+                    : Promise.resolve(cachedSecuritySettings)
             ]);
             
             // === 🆕 KIỂM TRA NẾU API TRẢ VỀ LỖI (status: "error") ===
-            if (statsData.status === 'error') {
-                console.warn('⚠️ Security stats degraded:', statsData.error);
-                showWarning(`Security monitoring degraded: ${statsData.error}`);
-                
-                // Vẫn hiển thị dữ liệu partial nếu có
-                if (statsData.rate_limiter) {
-                    updateDashboardMetrics(statsData.rate_limiter, settingsData);
-                    renderBlacklistTable(statsData.rate_limiter.blacklisted_ips || []);
-                    renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips || []);
-                    renderSuspiciousIPs(statsData.rate_limiter.suspicious_ips || []);
-                    renderTrafficChart(statsData.rate_limiter.traffic_history || Array(60).fill(0));
-                    renderVpnIntelligence(statsData.rate_limiter.vpn_suspects || []);
-                    handleAttackMode(statsData.rate_limiter.attack_mode || false);
-                }
-                
-                // Vẫn hiển thị system health nếu có
-                if (statsData.system_health) {
-                    renderSystemHealth(statsData.system_health);
-                }
-                
-                updateSwitchesState(settingsData);
-                return; // Dừng ở đây, không throw error
+            if (statsData.status === 'error' || statsData.rate_limiter?.error) {
+                throw new Error(statsData.error || 'Security monitoring unavailable');
             }
-            
+            window.securityErrorCount = 0;
+            document.getElementById('offline-overlay')?.remove();
+            document.querySelectorAll('.ops-card').forEach(card => { card.style.opacity = ''; card.style.filter = ''; });
+            document.getElementById('security-updated').textContent = `Cập nhật ${new Date(statsData.timestamp * 1000).toLocaleTimeString('vi-VN')}`;
             // === LOGIC CŨ (Khi không có lỗi) ===
             updateDashboardMetrics(statsData.rate_limiter, settingsData);
             renderBlacklistTable(statsData.rate_limiter.blacklisted_ips);
-            renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips);
+            renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips || []);
+            renderBlockHistory(statsData.rate_limiter.recent_blocks || []);
             renderSuspiciousIPs(statsData.rate_limiter.suspicious_ips);
             updateSwitchesState(settingsData);
             renderTrafficChart(statsData.rate_limiter.traffic_history);
@@ -132,6 +123,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             // === 🆕 HIỂN thị UI "OFFLINE STATE" ===
             showOfflineState();
+            document.getElementById('security-updated').textContent = 'Mất cập nhật · đang giữ dữ liệu lần cuối';
             
             // === 🆕 DỪNG POLLING NẾU LỖI LIÊN TỤC ===
             // (Tránh spam request khi server down)
@@ -145,6 +137,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             
         } finally {
+            loadingSecurityData = false;
             if (isManualReload) {
                 refreshBtn.disabled = false;
                 refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-2"></i>Refresh';
@@ -396,11 +389,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         tempBlocks.forEach(block => {
-            const minutes = Math.ceil(block.remaining_seconds / 60);
+            const seconds = Math.max(0, Math.ceil(block.remaining_seconds));
+            const remaining = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><code>${escapeHtml(block.ip)}</code></td>
-                <td class="ops-text-warn">${minutes} min</td>
+                <td class="ops-text-warn">${remaining}</td>
                 <td>${escapeHtml(block.reason || 'N/A')}</td>
                 <td class="text-end">
                     <button class="btn btn-sm btn-outline-primary unblock-btn" data-ip="${escapeHtml(block.ip)}">
@@ -412,6 +406,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     
+    function renderBlockHistory(events) {
+        const container = document.getElementById('block-history-body');
+        if (!events.length) {
+            container.innerHTML = '<tr><td colspan="5"><div class="ops-empty-state">Chưa ghi nhận lượt chặn gần đây</div></td></tr>';
+            return;
+        }
+        container.innerHTML = events.map(event => {
+            const sources = {http_rate_limit:'Giới hạn HTTP', security_gate:'Security Gate', login:'Đăng nhập / quản trị'};
+            return `<tr><td>${escapeHtml(new Date(event.last_seen * 1000).toLocaleTimeString('vi-VN'))}</td><td><code>${escapeHtml(event.ip)}</code></td><td>${escapeHtml(sources[event.source] || event.source)}</td><td>${escapeHtml(event.reason)}</td><td class="text-end">${escapeHtml(event.count)}</td></tr>`;
+        }).join('');
+    }
+
     function renderSuspiciousIPs(suspiciousIPs) {
         suspiciousIpsContainer.innerHTML = '';
         if (suspiciousIPs.length === 0) {

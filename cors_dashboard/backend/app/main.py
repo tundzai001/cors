@@ -1721,19 +1721,21 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         method = request.method.upper()
         path = request.url.path.lower()
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = rate_limiter._get_client_ip(request)
         now = time.time()
 
         # 1. Kiểm tra xem IP có đang bị BAN không (Via Redis)
         is_banned = await redis_client.is_ip_banned(client_ip)
         if is_banned:
+            rate_limiter.record_block_event(client_ip, "Security Gate: banned IP", "security_gate", permanent=True)
             return JSONResponse(
                 status_code=403,
-                content={"detail": "Your IP has been temporarily banned due to multiple security violations."}
+                content={"detail": "Your IP has been blocked due to multiple security violations."}
             )
 
         # Helper để ghi nhận vi phạm và thực hiện BAN nếu cần
         async def record_violation():
+            rate_limiter.record_block_event(client_ip, f"Security Gate: rejected {method} {path[:160]}", "security_gate")
             if client_ip == "unknown": return
             score = security_rep_scores.get(client_ip, 0) + 1
             security_rep_scores[client_ip] = score
@@ -6189,6 +6191,9 @@ async def get_security_stats(
     try:
         # 1. Security stats
         security_stats = await rate_limiter.get_stats(db)
+        security_stats = rate_limiter.merge_runtime_stats(security_stats, await redis_client.get_banned_ips())
+        if security_stats.get("error"):
+            raise RuntimeError("Security database statistics unavailable")
         
         # 2. System health
         system_health = health_monitor.get_health_status()
@@ -6233,7 +6238,13 @@ async def unblock_ip(
     if not ip:
         raise HTTPException(status_code=400, detail="ip_address is required")
     
-    success = await rate_limiter.unblock_ip(db, ip) 
+    was_banned = await redis_client.is_ip_banned(ip)
+    was_rate_limited = ip in rate_limiter.runtime_blocks
+    success = await rate_limiter.unblock_ip(db, ip)
+    await redis_client.unban_ip(ip)
+    await redis_client.clear_rate_limit(f"rate_limit:{ip}")
+    security_rep_scores.pop(ip, None)
+    success = success or was_banned or was_rate_limited
     
     if success:
         logger.info(f"Admin '{current_user.username}' unblocked IP: {ip}")
@@ -9907,10 +9918,14 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         
         # Rate limiting
-        client_ip = request.client.host
+        client_ip = rate_limiter._get_client_ip(request)
+        rate_limiter.record_http_request(client_ip, start_time)
         if not await redis_client.check_rate_limit(f"rate_limit:{client_ip}", 1000, 60):
             health_monitor.record_error('rate_limit', f'IP: {client_ip}')
+            retry_after = await redis_client.rate_limit_retry_after(f"rate_limit:{client_ip}")
+            rate_limiter.record_block_event(client_ip, 'HTTP rate limit: 1000 requests / 60s', 'http_rate_limit', blocked_until=time.time() + retry_after)
             return JSONResponse(
+                headers={"Retry-After": str(retry_after)},
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={"detail": "Too many requests"}
             )

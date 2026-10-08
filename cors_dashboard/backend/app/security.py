@@ -41,6 +41,10 @@ class AdvancedRateLimiter:
         
         # === 🆕 ADDED FOR METRICS ===
         self._stats_cache = {}
+        self.http_counts = {}
+        self.http_ip_last_seen = {}
+        self.recent_blocks = deque(maxlen=200)
+        self.runtime_blocks = {}
         self.traffic_history = deque(maxlen=60) 
         self.last_tick = int(time.time())
         self.global_request_rate = deque(maxlen=1000) 
@@ -77,6 +81,57 @@ class AdvancedRateLimiter:
         self.lock = asyncio.Lock()
         
         logger.info(f"✓ ULTIMATE Anti-DDoS Protection initialized")
+
+    def record_http_request(self, ip: str, now: float = None):
+        now = time.time() if now is None else now
+        tick = int(now)
+        if tick not in self.http_counts:
+            self.http_counts = {second: count for second, count in self.http_counts.items() if second >= tick - 60}
+            self.http_ip_last_seen = {peer: seen for peer, seen in self.http_ip_last_seen.items() if seen > now - 300}
+        self.http_counts[tick] = self.http_counts.get(tick, 0) + 1
+        if ip not in self.http_ip_last_seen and len(self.http_ip_last_seen) >= 10000:
+            self.http_ip_last_seen.pop(next(iter(self.http_ip_last_seen)))
+        self.http_ip_last_seen[ip] = now
+
+    def record_block_event(self, ip: str, reason: str, source: str, blocked_until=None, permanent=False):
+        now = time.time()
+        # Coalesce repeated denials without hiding short-lived blocks after expiry.
+        previous = next((item for item in self.recent_blocks if item['ip'] == ip and item['source'] == source and item['reason'] == reason), None)
+        if previous and now - previous['last_seen'] < 60:
+            previous['last_seen'] = now
+            previous['count'] += 1
+            previous['blocked_until'] = blocked_until
+        else:
+            self.recent_blocks.append({'ip': ip, 'reason': reason, 'source': source,
+                                      'first_seen': now, 'last_seen': now, 'count': 1,
+                                      'blocked_until': blocked_until, 'permanent': permanent})
+        if source == 'http_rate_limit' and blocked_until:
+            self.runtime_blocks[ip] = {'ip': ip, 'reason': reason, 'source': source, 'blocked_until': blocked_until}
+
+    def merge_runtime_stats(self, stats: dict, banned_ips: list) -> dict:
+        now = time.time()
+        tick = int(now)
+        result = dict(stats)
+        # Completed seconds avoid showing a partially counted current second.
+        result['traffic_history'] = [self.http_counts.get(second, 0) for second in range(tick - 60, tick)]
+        result['global_request_rate'] = sum(result['traffic_history'][-5:])
+        result['total_ips_tracked'] = sum(seen > now - 300 for seen in self.http_ip_last_seen.values())
+        permanent = {item['ip']: dict(item) for item in stats.get('blacklisted_ips', [])}
+        for ip in banned_ips:
+            permanent.setdefault(ip, {'ip': ip, 'reason': 'Security Gate: repeated violations', 'source': 'security_gate'})
+        temporary = {item['ip']: dict(item) for item in stats.get('temporary_blocked_ips', []) if item.get('blocked_until', 0) > now}
+        self.runtime_blocks = {ip: item for ip, item in self.runtime_blocks.items() if item['blocked_until'] > now}
+        for ip, item in self.runtime_blocks.items():
+            if ip not in temporary or temporary[ip]['blocked_until'] < item['blocked_until']:
+                temporary[ip] = dict(item)
+        for ip in permanent:
+            temporary.pop(ip, None)
+        for item in temporary.values():
+            item['remaining_seconds'] = max(0, int(item['blocked_until'] - now))
+        result.update(blacklisted_ips=list(permanent.values()), permanent_blacklist_count=len(permanent),
+                      temporary_blocked_ips=list(temporary.values()), blocked_ips_count=len(temporary),
+                      recent_blocks=sorted((dict(item) for item in self.recent_blocks if item['last_seen'] > now - 3600), key=lambda item: item['last_seen'], reverse=True))
+        return result
 
     # ==========================================================================
     # === MAIN ENTRY POINT WITH ATTACK MODE                                  ===
@@ -398,6 +453,8 @@ class AdvancedRateLimiter:
         )
         db.add(new_block)
         await db.commit()
+        self._stats_cache.clear()
+        self.record_block_event(ip, new_block.reason, 'login', blocked_until=new_block.blocked_until)
 
     async def block_ip(self, db: AsyncSession, ip: str, reason: str = "Manual"):
         await db.execute(delete(models.IpSecurityLog).where(models.IpSecurityLog.ip_address == ip))
@@ -411,6 +468,8 @@ class AdvancedRateLimiter:
         )
         db.add(new_block)
         await db.commit()
+        self._stats_cache.clear()
+        self.record_block_event(ip, reason, 'login', permanent=True)
 
     async def unblock_ip(self, db: AsyncSession, ip: str) -> bool:
         result = await db.execute(
@@ -419,6 +478,8 @@ class AdvancedRateLimiter:
         await db.commit()
         self._clear_tracking(ip)
         self.block_escalation[ip] = 0
+        self.runtime_blocks.pop(ip, None)
+        self._stats_cache.clear()
         return result.rowcount > 0
 
     # ==========================================================================
@@ -565,7 +626,7 @@ class AdvancedRateLimiter:
                         "reason": getattr(b, "reason", "N/A"),
                         "blocked_at": b.created_at
                     }
-                    for b in permanent_blocks[:50]  # Limit to 50
+                    for b in permanent_blocks  # Limit to 50
                 ],
                 "temporary_blocked_ips": [
                     {
@@ -574,7 +635,7 @@ class AdvancedRateLimiter:
                         "remaining_seconds": max(0, int(b.blocked_until - now)),
                         "reason": getattr(b, "reason", "N/A")
                     }
-                    for b in temporary_blocks[:50]  # Limit to 50
+                    for b in temporary_blocks  # Limit to 50
                 ],
                 "total_ips_tracked": len(self.ip_attempts),
                 "suspicious_ips": suspicious_ips,

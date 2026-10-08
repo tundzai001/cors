@@ -103,6 +103,17 @@ class RedisClient:
         await pipe.execute()
         return True
 
+    async def rate_limit_retry_after(self, key: str) -> int:
+        if not self._redis:
+            return max(1, int(self._fallback_limits.get(key, (0, time.monotonic()))[1] - time.monotonic()) + 1)
+        return max(1, int(await self._redis.ttl(key)))
+
+    async def clear_rate_limit(self, key: str):
+        if not self._redis:
+            self._fallback_limits.pop(key, None)
+            return
+        await self._redis.delete(key)
+
     async def set_caster_cache(self, key: str, data: dict):
         if not self._redis:
             return

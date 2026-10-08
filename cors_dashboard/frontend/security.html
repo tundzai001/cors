@@ -203,13 +203,17 @@
                             </svg>
                             <div class="stat-circle-content">
                                 <div class="stat-circle-value ops-text-info" id="total-ips-tracked">0</div>
-                                <div class="stat-circle-label">Monitored</div>
+                                <div class="stat-circle-label">IP · 5 phút</div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
+            <section class="ops-card ops-security-card mb-4" aria-labelledby="block-history-title">
+                <div class="ops-section-head"><div><h2 id="block-history-title" class="ops-section-title mb-1">Lượt chặn gần đây</h2><p class="ops-card-meta mb-0">Tối đa 200 sự kiện trong giờ qua của phiên hiện tại. Vẫn hiển thị sau khi hết thời gian chặn.</p></div><span id="security-updated" class="ops-card-meta">Đang cập nhật…</span></div>
+                <div class="table-responsive"><table class="table ops-table"><thead><tr><th>Lần cuối</th><th>IP</th><th>Nguồn chặn</th><th>Lý do</th><th class="text-end">Số lượt</th></tr></thead><tbody id="block-history-body"><tr><td colspan="5">Đang tải…</td></tr></tbody></table></div>
+            </section>
             <div class="row g-4">
                 <div class="col-xl-12">
                     <div class="ops-card ops-security-card">
@@ -285,12 +289,12 @@
                 <div class="col-xl-8">
                     <div class="ops-card ops-security-card h-100">
                         <div class="ops-section-head">
-                            <div class="ops-section-title"><i class="bi bi-activity me-2"></i>Network Traffic Analysis</div>
+                            <div class="ops-section-title"><i class="bi bi-activity me-2"></i>Lưu lượng HTTP thực tế</div>
                         </div>
                         <div class="p-3 position-relative">
-                            <canvas id="trafficChart" class="ops-traffic-canvas"></canvas>
+                            <p class="ops-card-meta">HTTP request/giây, gồm cả lượt bị chặn và lượt tải dashboard. Không bao gồm gói MQTT/RTCM.</p><canvas id="trafficChart" class="ops-traffic-canvas"></canvas>
                             <div class="ops-live-rate">
-                                <small class="text-muted d-block">Current rate</small>
+                                <small class="text-muted d-block">Giây vừa hoàn tất</small>
                                 <span id="current-rps" class="fs-4 fw-bold">0</span> <span>req/s</span>
                             </div>
                         </div>
@@ -338,6 +342,6 @@
     <script src="/assets/js/dist/ops-ui.min.js?v=20260529-admin-hard-reset-v1"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20260927-language-v13"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20261008-api-keys-v1"></script>
-    <script src="/assets/js/dist/security.min.js?v=20260529-admin-hard-reset-v1"></script>
+    <script src="/assets/js/dist/security.min.js?v=20261009-observability"></script>
 </body>
 </html>
