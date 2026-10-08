@@ -14,6 +14,44 @@
         'float': 'Float'
     };
     const translations = [
+        ["TÍCH HỢP & TRUY CẬP", "INTEGRATIONS & ACCESS"],
+        ["Quản lý kết nối, dữ liệu và quyền truy cập trạm từ một nơi.", "Manage connections, data and station access in one place."],
+        ["Tạo API key", "Create API key"],
+        ["Tổng số key", "Total keys"],
+        ["Hết hạn / Thu hồi", "Expired / Revoked"],
+        ["Key đã cấp", "Issued keys"],
+        ["Mỗi key là một phạm vi truy cập riêng.", "Each key has its own access scope."],
+        ["Tìm tên tích hợp…", "Search integrations…"],
+        ["Tìm API key", "Search API keys"],
+        ["Tích hợp", "Integration"],
+        ["Phạm vi truy cập", "Access scope"],
+        ["Chỉ đọc dữ liệu", "Read-only access"],
+        ["Đọc dữ liệu & sửa cấu hình", "Read and configure"],
+        ["Sửa quyền", "Edit permissions"],
+        ["Thu hồi", "Revoke"],
+        ["Đã thu hồi", "Revoked"],
+        ["Thay đổi quyền có hiệu lực ngay và giữ nguyên key.", "Permission changes take effect immediately without changing the key."],
+        ["Key hết hạn theo thời gian thực, kể cả khi máy chủ tạm dừng.", "Keys expire on schedule, including while the server is offline."],
+        ["Cấp đúng dữ liệu cho từng tích hợp.", "Choose the data each integration can access."],
+        ["Thông tin tích hợp", "Integration details"],
+        ["Tên tích hợp", "Integration name"],
+        ["Hết hạn lúc", "Expires at"],
+        ["Phạm vi trạm", "Station access"],
+        ["Bao gồm các trạm được thêm sau này", "Includes stations added in the future"],
+        ["Tìm tên hoặc serial trạm…", "Search station name or serial…"],
+        ["Dữ liệu & quyền", "Data & permissions"],
+        ["Chỉ những trường được chọn mới được trả về.", "Only selected fields are returned."],
+        ["Nhận diện & vị trí", "Identity & location"],
+        ["Hoạt động & NTRIP", "Activity & NTRIP"],
+        ["Cho phép sửa cấu hình", "Allow configuration changes"],
+        ["Tích hợp có thể thay đổi dịch vụ của các trạm được cấp quyền.", "The integration can change services on authorized stations."],
+        ["Không tìm thấy key", "No matching keys"],
+        ["Thử tên khác hoặc đổi bộ lọc trạng thái.", "Try another name or status filter."],
+        ["Kết nối đầu tiên bắt đầu từ đây", "Your first connection starts here"],
+        ["Tạo API key để cấp dữ liệu trạm cho ứng dụng của bạn.", "Create an API key to share station data with your application."],
+        ["API key đã sẵn sàng", "Your API key is ready"],
+        ["Sao chép và lưu ở nơi an toàn. Key chỉ hiển thị một lần.", "Copy and store it securely. This key is shown only once."],
+
         ['Ngoại tuyến từ', 'Offline since'],
         ['Thời lượng', 'Duration'],
         ['Trạm đang offline', 'Station is offline'],
@@ -1371,6 +1409,8 @@
             result = result.replace(/(^|[^\p{L}\p{N}])Ngày\s+(\d{4}-\d{2}-\d{2})\s+·\s+đang tải danh sách receiver…(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, date) => `${prefix}Date ${date} · Loading the receiver list…`);
             result = result.replace(/(^|[^\p{L}\p{N}])Chặn\s+(.+?)\s+\((\d+)\s+trạm hiện tại\)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, username, count) => `${prefix}Block ${username} (${count} current station${Number(count) === 1 ? '' : 's'})`);
         } else {
+            // Vietnamese revoke text must not match the English weekday Thu.
+            result = result.replace(/Thu hồi/giu, value => protect(value));
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+position\s+points?(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} điểm vị trí`);
             result = result.replace(/^From$/iu, 'Từ ngày').replace(/^To$/iu, 'Đến ngày');
             result = result.replace(/^Device '(.+)' removed from list by (.+)$/iu, (_match, deviceName, actor) => {

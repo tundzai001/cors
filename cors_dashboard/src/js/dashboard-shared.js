@@ -131,6 +131,11 @@ const getServerTelemetry = (device, serverId) => {
     const parsedBps = Number(rawBps);
     const bps = Number.isFinite(parsedBps) ? Math.max(0, parsedBps) : 0;
     const stream = device?.ntrip_stream_state?.[key] || server;
+    const config = device?.service_config || {};
+    const onDemand = parseBoolCompat(stream.on_demand,
+        parseBoolCompat(config[`${key}_stream_on_demand`], parseBoolCompat(config.stream_on_demand, false)));
+    const active = parseBoolCompat(stream.active,
+        parseBoolCompat(config[`${key}_stream_active`], parseBoolCompat(config.stream_active, !onDemand)));
     let reportedConnected = null;
     if (typeof rawServer === 'boolean') reportedConnected = rawServer;
     else if (typeof server.connected === 'boolean') reportedConnected = server.connected;
@@ -140,9 +145,9 @@ const getServerTelemetry = (device, serverId) => {
         hasBps: statsHasBps || statusHasBps,
         connected: reportedConnected === true || bps > 0,
         hasConnection: reportedConnected !== null,
-        sleep: typeof stream.sleep === 'boolean' ? stream.sleep : null,
-        onDemand: typeof stream.on_demand === 'boolean' ? stream.on_demand : null,
-        active: typeof stream.active === 'boolean' ? stream.active : null
+        sleep: typeof stream.sleep === 'boolean' ? stream.sleep : onDemand && !active,
+        onDemand,
+        active
     };
 };
 

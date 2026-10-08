@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const saveButton = document.getElementById('save-key');
     const cancelButton = document.getElementById('cancel-edit');
     const tokenBox = document.getElementById('new-token');
+    const dialog = document.getElementById('key-dialog');
+    const formError = document.getElementById('form-error');
     let keys = [];
     let editingId = null;
 
@@ -29,14 +31,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const response = await window.ApiClient.apiFetch(url, options, 0);
         if (!response.ok) {
             const body = await response.json().catch(() => ({}));
-            throw new Error(body.detail || `HTTP ${response.status}`);
+            throw new Error(Array.isArray(body.detail) ? body.detail.map(item => item.msg).join('; ') : body.detail || `HTTP ${response.status}`);
         }
         return response.status === 204 ? null : response.json();
     }
 
-    function checkbox(container, name, label, checked = false) {
+    function checkbox(container, name, label, checked = false, detail = '') {
         const wrap = document.createElement('label');
-        wrap.className = container === fieldList ? 'form-check col-sm-6' : 'form-check d-block';
+        wrap.className = 'ak-choice';
         const input = document.createElement('input');
         input.className = 'form-check-input';
         input.type = 'checkbox';
@@ -46,6 +48,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const text = document.createElement('span');
         text.className = 'form-check-label';
         text.textContent = label;
+        if (detail) { text.setAttribute('data-no-translate', ''); const sub = document.createElement('small'); sub.textContent = detail; text.append(sub); }
         wrap.append(input, text);
         container.append(wrap);
         return input;
@@ -56,34 +59,66 @@ document.addEventListener('DOMContentLoaded', async () => {
         return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
 
+    const keyState = key => key.revoked_at ? 'revoked' : key.expires_at <= Date.now() / 1000 ? 'expired' : 'active';
     function renderKeys() {
         tbody.replaceChildren();
-        if (!keys.length) {
-            const row = tbody.insertRow();
-            row.insertCell().colSpan = 5;
-            row.cells[0].textContent = 'Chưa có API key.';
+        const active = keys.filter(key => keyState(key) === 'active').length;
+        document.getElementById('count-total').textContent = keys.length;
+        document.getElementById('count-active').textContent = active;
+        document.getElementById('count-inactive').textContent = keys.length - active;
+        const query = document.getElementById('key-search').value.trim().toLocaleLowerCase('vi');
+        const filter = document.getElementById('key-filter').value;
+        const visible = keys.filter(key => key.name.toLocaleLowerCase('vi').includes(query) && (filter === 'all' || keyState(key) === filter));
+        if (!visible.length) {
+            const cell = tbody.insertRow().insertCell();
+            cell.colSpan = 5;
+            cell.className = 'ak-empty';
+            cell.innerHTML = keys.length ? '<i class="bi bi-search" aria-hidden="true"></i><strong>Không tìm thấy key</strong><p>Thử tên khác hoặc đổi bộ lọc trạng thái.</p>' : '<i class="bi bi-key" aria-hidden="true"></i><strong>Kết nối đầu tiên bắt đầu từ đây</strong><p>Tạo API key để cấp dữ liệu trạm cho ứng dụng của bạn.</p>';
             return;
         }
-        for (const key of keys) {
+        for (const key of visible) {
             const row = tbody.insertRow();
-            row.insertCell().textContent = key.name;
-            row.insertCell().textContent = new Date(key.expires_at * 1000).toLocaleString('vi-VN');
-            row.insertCell().textContent = `${key.all_stations ? 'Tất cả trạm' : `${key.station_serials.length} trạm`} · ${key.data_fields.length} trường${key.edit_config ? ' · Được sửa' : ''}`;
-            const state = key.revoked_at ? 'Đã thu hồi' : key.expires_at <= Date.now() / 1000 ? 'Hết hạn' : 'Còn hiệu lực';
-            row.insertCell().textContent = state;
-            const actions = row.insertCell();
+            const name = document.createElement('span'); name.className = 'ak-key-name'; name.setAttribute('data-no-translate', ''); name.textContent = key.name;
+            const subtitle = document.createElement('span'); subtitle.className = 'ak-subtext'; subtitle.textContent = key.edit_config ? 'Đọc dữ liệu & sửa cấu hình' : 'Chỉ đọc dữ liệu';
+            row.insertCell().append(name, subtitle);
+            const date = row.insertCell();
+            date.textContent = new Date(key.expires_at * 1000).toLocaleDateString('vi-VN');
+            const time = document.createElement('span'); time.className = 'ak-subtext'; time.textContent = new Date(key.expires_at * 1000).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}); date.append(time);
+            const scope = row.insertCell(); scope.textContent = key.all_stations ? 'Tất cả trạm' : `${key.station_serials.length} trạm`;
+            const count = document.createElement('span'); count.className = 'ak-subtext'; count.textContent = `${key.data_fields.length} trường dữ liệu`; scope.append(count);
+            const state = keyState(key);
+            const badge = document.createElement('span'); badge.className = `ak-state ${state}`;
+            const icon = document.createElement('i'); icon.className = `bi bi-${state === 'active' ? 'check-circle' : state === 'expired' ? 'clock' : 'slash-circle'}`; icon.setAttribute('aria-hidden', 'true');
+            badge.append(icon, document.createTextNode(state === 'active' ? 'Đang hoạt động' : state === 'expired' ? 'Hết hạn' : 'Đã thu hồi'));
+            row.insertCell().append(badge);
+            const actions = document.createElement('div'); actions.className = 'ak-actions'; row.insertCell().append(actions);
             if (!key.revoked_at) {
-                const edit = document.createElement('button');
-                edit.className = 'btn btn-sm btn-outline-primary me-2';
-                edit.textContent = 'Sửa quyền';
-                edit.addEventListener('click', () => editKey(key));
-                const revoke = document.createElement('button');
-                revoke.className = 'btn btn-sm btn-outline-danger';
-                revoke.textContent = 'Thu hồi';
-                revoke.addEventListener('click', () => revokeKey(key));
+                const edit = document.createElement('button'); edit.className = 'btn btn-outline-secondary'; edit.textContent = 'Sửa quyền'; edit.setAttribute('aria-label', `Sửa quyền ${key.name}`); edit.addEventListener('click', () => editKey(key));
+                const revoke = document.createElement('button'); revoke.className = 'btn btn-outline-danger'; revoke.textContent = 'Thu hồi'; revoke.setAttribute('aria-label', `Thu hồi ${key.name}`); revoke.addEventListener('click', () => revokeKey(key));
                 actions.append(edit, revoke);
             }
+            [...row.cells].forEach((cell, index) => { cell.dataset.label = ['Tích hợp', 'Thời hạn', 'Phạm vi', 'Trạng thái', 'Thao tác'][index]; });
         }
+    }
+
+    function updateSummary() {
+        const count = stationList.querySelectorAll('input:checked').length;
+        const selectedFields = fieldList.querySelectorAll('input:checked').length;
+        const stations = allStations.checked ? 'Tất cả trạm' : `${count} trạm`;
+        document.getElementById('station-count').textContent = allStations.checked ? 'Tất cả trạm' : `${count} trạm được chọn`;
+        document.getElementById('permission-summary').textContent = `${stations} · ${selectedFields} trường dữ liệu · ${document.getElementById('edit-config').checked ? 'Được sửa cấu hình' : 'Chỉ đọc'}`;
+    }
+    function filterStations() {
+        const query = document.getElementById('station-search').value.trim().toLocaleLowerCase('vi');
+        let count = 0;
+        stationList.querySelectorAll('label').forEach(label => { label.hidden = !label.textContent.toLocaleLowerCase('vi').includes(query); if (!label.hidden) count++; });
+        document.getElementById('station-empty').classList.toggle('d-none', count > 0);
+    }
+    function openEditor() {
+        formError.classList.add('d-none');
+        document.getElementById('station-search').value = '';
+        filterStations(); updateSummary(); dialog.showModal();
+        document.getElementById('key-name').focus();
     }
 
     function editKey(key) {
@@ -97,8 +132,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('edit-config').checked = key.edit_config;
         allStations.dispatchEvent(new Event('change'));
         saveButton.textContent = 'Lưu quyền';
-        cancelButton.classList.remove('d-none');
-        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        openEditor();
     }
 
     function resetForm() {
@@ -107,7 +141,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('expires-at').value = localDatetime(Math.floor(Date.now() / 1000) + 30 * 86400);
         document.getElementById('form-title').textContent = 'Tạo key';
         saveButton.textContent = 'Tạo key';
-        cancelButton.classList.add('d-none');
+        updateSummary();
         allStations.dispatchEvent(new Event('change'));
     }
 
@@ -115,7 +149,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!window.confirm(`Thu hồi key “${key.name}”? Tích hợp đang dùng key sẽ bị từ chối ngay.`)) return;
         try {
             await request(`/api/admin/api-keys/${key.id}`, { method: 'DELETE' });
-            keys = await request('/api/admin/api-keys');
+            keys = keys.map(item => item.id === key.id ? { ...item, revoked_at: Date.now() / 1000 } : item);
             renderKeys();
             showStatus('Đã thu hồi key.', 'success');
         } catch (error) { showStatus(error.message, 'danger'); }
@@ -127,13 +161,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (user.role !== 'admin') { showStatus('Chỉ admin được quản trị API key.', 'danger'); form.classList.add('d-none'); return; }
         const [devices, loadedKeys] = await Promise.all([request('/api/devices'), request('/api/admin/api-keys')]);
         keys = loadedKeys;
-        for (const device of devices) checkbox(stationList, device.serial, `${device.name || device.serial} (${device.serial})`);
-        for (const [name, label] of Object.entries(fields)) checkbox(fieldList, name, label, ['name', 'status', 'lat', 'lon'].includes(name));
-        allStations.addEventListener('change', () => { stationList.querySelectorAll('input').forEach(input => { input.disabled = allStations.checked; }); });
-        cancelButton.addEventListener('click', resetForm);
+        for (const device of devices) checkbox(stationList, device.serial, device.name || device.serial, false, device.serial);
+        const groups = [ ['Nhận diện & vị trí', ['name','status','lat','lon','alt']], ['Hoạt động & NTRIP', ['timestamp','offline_since','mountpoint','streams','ntrip_status','ntrip_connected','bps','is_provisioned']], ['Cấu hình dịch vụ', ['service_config']] ];
+        for (const [title, names] of groups) {
+            const heading = document.createElement('h4'); heading.className = 'ak-field-group'; heading.textContent = title;
+            const options = document.createElement('div'); options.className = 'ak-field-options';
+            fieldList.append(heading, options);
+            for (const name of names) checkbox(options, name, fields[name], ['name','status','lat','lon'].includes(name));
+        }
+        allStations.addEventListener('change', () => { stationList.querySelectorAll('input').forEach(input => { input.disabled = allStations.checked; }); updateSummary(); });
+        document.getElementById('create-key').disabled = false;
+        document.getElementById('create-key').addEventListener('click', () => { resetForm(); openEditor(); });
+        cancelButton.addEventListener('click', () => dialog.close());
+        dialog.addEventListener('cancel', event => { if (saveButton.disabled) event.preventDefault(); });
+        document.getElementById('close-dialog').addEventListener('click', () => dialog.close());
+        document.getElementById('key-search').addEventListener('input', renderKeys);
+        document.getElementById('key-filter').addEventListener('change', renderKeys);
+        document.getElementById('station-search').addEventListener('input', filterStations);
+        form.addEventListener('change', updateSummary);
         document.getElementById('copy-token').addEventListener('click', async () => {
-            await navigator.clipboard.writeText(document.getElementById('token-value').value);
-            showStatus('Đã sao chép key.', 'success');
+            try { await navigator.clipboard.writeText(document.getElementById('token-value').value); showStatus('Đã sao chép key.', 'success'); }
+            catch { showStatus('Không sao chép tự động được. Hãy chọn và sao chép key bên dưới.', 'warning'); document.getElementById('token-value').select(); }
         });
         form.addEventListener('submit', async event => {
             event.preventDefault();
@@ -145,7 +193,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 data_fields: [...fieldList.querySelectorAll('input:checked')].map(input => input.value),
                 edit_config: document.getElementById('edit-config').checked
             };
+            formError.classList.add('d-none');
+            if (!body.name || !Number.isFinite(expiresAt) || expiresAt <= Date.now() / 1000 || (!body.all_stations && !body.station_serials.length) || !body.data_fields.length) {
+                formError.textContent = 'Nhập tên, chọn thời hạn trong tương lai, ít nhất một trạm và một trường dữ liệu.';
+                formError.classList.remove('d-none'); formError.focus(); return;
+            }
             saveButton.disabled = true;
+            cancelButton.disabled = true;
+            document.getElementById('close-dialog').disabled = true;
             saveButton.textContent = 'Đang lưu…';
             try {
                 const result = await request(editingId ? `/api/admin/api-keys/${editingId}` : '/api/admin/api-keys', {
@@ -155,12 +210,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     document.getElementById('token-value').value = result.token;
                     tokenBox.classList.remove('d-none');
                 }
-                keys = await request('/api/admin/api-keys');
+                const { token, ...metadata } = result;
+                keys = editingId ? keys.map(key => key.id === editingId ? metadata : key) : [metadata, ...keys];
                 renderKeys();
+                dialog.close();
                 resetForm();
                 showStatus(result.token ? 'Đã tạo key. Hãy sao chép ngay.' : 'Đã cập nhật quyền key.', 'success');
-            } catch (error) { showStatus(error.message, 'danger'); }
-            finally { saveButton.disabled = false; saveButton.textContent = editingId ? 'Lưu quyền' : 'Tạo key'; }
+            } catch (error) { formError.textContent = error.message; formError.classList.remove('d-none'); formError.focus(); }
+            finally { cancelButton.disabled = false; document.getElementById('close-dialog').disabled = false; saveButton.disabled = false; saveButton.textContent = editingId ? 'Lưu quyền' : 'Tạo key'; }
         });
         resetForm();
         renderKeys();

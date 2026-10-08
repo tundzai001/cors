@@ -186,7 +186,6 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
         const ntripStatus = device.ntrip_status || {};
         const ntripStats = device.ntrip_stats || {};
         const mqttStats = device.mqtt_stats || {};
-        const streamState = device.ntrip_stream_state || {};
         const rawStatus = isDeviceStaleOffline(device, offlineNow || Date.now()) ? 'offline' : String(device?.status || 'offline').toLowerCase();
         const sourceOffline = rawStatus === 'offline';
         const tokenGap = hasAccessTokenGap(device);
@@ -229,16 +228,10 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             || Object.prototype.hasOwnProperty.call(ntripStats, 'rtcm_in_bps')
             || Object.prototype.hasOwnProperty.call(mqttStats, 'source_bps');
 
-        const s1State = streamState.server1 || {};
-        const s1OnDemand = toBool(s1State.on_demand, toBool(config.server1_stream_on_demand, toBool(config.stream_on_demand, false)));
-        const s1Active = toBool(s1State.active, toBool(config.server1_stream_active, !s1OnDemand));
-        const s1SleepMode = s1Enabled && s1OnDemand && !s1Active;
+        const s1SleepMode = s1Enabled && s1.sleep === true;
         const s1UseRtcmSleepUi = s1.bps <= 0 && s1SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
 
-        const s2State = streamState.server2 || {};
-        const s2OnDemand = toBool(s2State.on_demand, toBool(config.server2_stream_on_demand, toBool(config.stream_on_demand, false)));
-        const s2Active = toBool(s2State.active, toBool(config.server2_stream_active, !s2OnDemand));
-        const s2SleepMode = s2Enabled && s2OnDemand && !s2Active;
+        const s2SleepMode = s2Enabled && s2.sleep === true;
         const s2UseRtcmSleepUi = s2.bps <= 0 && s2SleepMode && hasRtcmInputMetric && rtcmInputBps > 0;
 
         const statusDevice = { ...device, status: rawStatus };

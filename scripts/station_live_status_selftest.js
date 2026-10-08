@@ -16,6 +16,15 @@ assert.equal(status({ ...live, service_config: { server1_enabled: true, serverho
   mountpoint1: 'BASE' }, ntrip_status: { server1: { connected: false, bps: 0 } } }), 'online',
   'Disconnected output does not mean the agent is sleeping/offline');
 
+const sleepingRelay = { ...live, detected_chip_type: 'RELAY',
+  service_config: {server1_enabled:true, serverhost1:'aitogy.com.vn', port1:2101, mountpoint1:'BASE', server1_stream_on_demand:true, server1_stream_active:false},
+  ntrip_status: {server1:{connected:true,bps:0}} };
+assert.equal(status(sleepingRelay), 'sleep', 'Authenticated caster in standby must keep the station blue');
+assert.equal(window.CorsDashboardShared.getServerTelemetry(sleepingRelay,1).sleep, true);
+assert.equal(status({...sleepingRelay,ntrip_stream_state:{server1:{on_demand:true,active:true,sleep:false}}}), 'online', 'Runtime wake overrides saved sleep configuration');
+assert.equal(status({...sleepingRelay,status:'offline'}), 'offline');
+assert.equal(status({...sleepingRelay,ntrip_stats:{server1_bps:500}}), 'online', 'Actual outgoing RTCM is active');
+
 
 const source = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/main.js'), 'utf8');
 const context = vm.createContext({ Map, Set, Date, window, console, setTimeout: () => 1,
@@ -60,3 +69,10 @@ const badges = allNodes(tree).filter(node => node.type === 'span' && node.props.
 assert(badges.some(node => node.children.includes('ONLINE')), 'Actual station header must show ONLINE');
 assert(!badges.some(node => node.children.includes('OFFLINE')), 'Actual station header must not show OFFLINE');
 console.log('PASS: rendered station header is ONLINE for the reported damaged-config scenario');
+
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/dashboard-list.min.js'), 'utf8'), renderContext);
+const relayTree = window.DeviceListItem({device:{...sleepingRelay,timestamp:Date.now()/1000},currentUser:{role:'admin'}});
+const relayNodes = allNodes(relayTree);
+assert(relayNodes.some(node => node.props.className === 'status-bar sleep'), 'Sleeping relay card rail must be blue');
+assert(relayNodes.some(node => node.props.className === 'server-status-item sleep'), 'Sleeping relay output tile must use the same blue state');
+console.log('PASS: actual relay card renders matching sleep classes for rail and S1');
