@@ -841,7 +841,19 @@ async def auto_deploy_device_token(
     )
     device = result.scalars().first()
     if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+        # MQTT discovery can show a new Pi before it has a DB row. Explicit
+        # admin token issuance registers it, as /api/license/pi already does.
+        serial = str(serial).strip()
+        if not crud.is_valid_serial(serial):
+            raise HTTPException(status_code=400, detail="Invalid device serial")
+        discovered = mqtt_handler.device_telemetry_cache.get(serial) or {}
+        device = models.Device(
+            serial=serial,
+            name=discovered.get("name") or serial,
+            status="awaiting_license",
+            is_provisioned=False,
+        )
+        db.add(device)
     # Keep token compatibility checks and MQTT routing tied to the DB's
     # canonical serial, even when the URL differs only by letter casing.
     serial = device.serial
