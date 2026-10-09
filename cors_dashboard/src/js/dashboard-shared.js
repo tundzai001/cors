@@ -233,5 +233,15 @@ const getMapEffectiveStatus = (device) => {
     if (primary.connected) return 'online';
     return statusForOps;
 };
-window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, isDeviceStaleOffline, getMapEffectiveStatus, isAccessTokenSynced };
+const getLockedServers = device => {
+    const policy = device?.server_config_lock || {};
+    if (Array.isArray(policy.locked_servers)) return [...policy.locked_servers].sort();
+    return [1, 2].filter(sid => policy[`server${sid}_enabled`] === false);
+};
+const isDeviceLockApplied = device => {
+    const desired = getLockedServers(device);
+    const reported = device?.system_info?.device_lock?.locked_servers;
+    return !device?.system_info?.device_lock?.all && Array.isArray(reported) && JSON.stringify([...reported].sort()) === JSON.stringify(desired);
+};
+window.CorsDashboardShared = { getLockedServers, isDeviceLockApplied, getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, isDeviceStaleOffline, getMapEffectiveStatus, isAccessTokenSynced };
 })();

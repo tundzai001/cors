@@ -4,6 +4,7 @@
 import json
 import logging
 import asyncio
+from .station_host_lock import locked_server_ids, supports_server_device_lock
 import os
 import time
 import hashlib
@@ -113,6 +114,7 @@ def _metadata_snapshot(device) -> dict:
         "offline_since": getattr(device, "offline_since", None),
         "device_token": str(getattr(device, "device_token", "") or "").strip(),
         "is_synced": bool(getattr(device, "is_synced", False)),
+        "device_lock": system_info.get("device_lock") if isinstance(system_info, dict) else None,
         "license_bypass": bool(
             isinstance(system_info, dict)
             and system_info.get("auth_license_bypass")
@@ -639,20 +641,39 @@ async def batch_sync_checker():
                     base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
                     srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service", is_relay=is_relay_like)
                     
-                    if device.server_config_lock and (not srv_ok or device.is_locked or device.status == "locked"):
-                        # Retry saved host policy after reconnect; never send LOCK_DEVICE.
-                        from .command_dispatcher import send_command_to_pi
-                        try:
-                            if device.is_locked or device.status == "locked":
-                                await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
+                    if device.server_config_lock:
+                        desired = locked_server_ids(device.server_config_lock)
+                        report = (device.system_info or {}).get("device_lock") or {}
+                        applied = report.get("locked_servers")
+                        if supports_server_device_lock(device):
+                            if applied == desired and not report.get("all"):
                                 device.is_locked = False
-                            await send_command_to_pi(serial, {"command": "DEPLOY_SERVICE_CONFIG", "payload": db_service})
-                        except Exception as exc:
-                            logging.warning("Host policy for %s awaits delivery (%s)", serial, type(exc).__name__)
+                            if applied != desired or device.is_locked or report.get("all"):
+                                from .command_dispatcher import send_command_to_pi
+                                try:
+                                    await send_command_to_pi(serial, {"command": "LOCK_DEVICE", "payload": {"locked_servers": desired}})
+                                except Exception as exc:
+                                    logging.warning("Device lock for %s awaits delivery (%s)", serial, type(exc).__name__)
+                            elif not desired:
+                                device.server_config_lock = None
+                        elif not desired:
+                            from .command_dispatcher import send_command_to_pi
+                            try:
+                                await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
+                                device.server_config_lock = None
+                                device.is_locked = False
+                            except Exception as exc:
+                                logging.warning("Unlock for %s awaits delivery (%s)", serial, type(exc).__name__)
+                        else:
+                            logging.warning("Device lock for %s requires an agent update", serial)
 
                     version_ok = _version_matches(device.version)
                     version_errs = [] if version_ok else [f"[Version] Agent={device.version or '??'} vs Server={settings.APP_VERSION}"]
-                    is_synced = base_ok and srv_ok and version_ok
+                    report = (device.system_info or {}).get("device_lock") or {}
+                    lock_ok = not device.server_config_lock or (report.get("locked_servers") == locked_server_ids(device.server_config_lock) and not report.get("all"))
+                    if not lock_ok:
+                        version_errs.append("Khoá server chưa được agent xác nhận")
+                    is_synced = base_ok and srv_ok and version_ok and lock_ok
                     
                     # Cập nhật cache
                     old_sync = device_sync_cache.get(serial)
@@ -1019,9 +1040,11 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             )
             
             should_write_db = False
+            reported_device_lock = (data.get('system_info') or {}).get('device_lock')
+            device_lock_changed = reported_device_lock != metadata.get('device_lock')
             
             # Điều kiện 1: Trạng thái Online/Offline thay đổi
-            if command_source_changed:
+            if command_source_changed or device_lock_changed:
                 should_write_db = True
             elif token_pending_state_changed:
                 should_write_db = True
@@ -1080,6 +1103,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                             latest_known_status = device_status_cache.get(serial, "unknown")
                             still_needs_write = bool(
                                 command_source_changed
+                                or device_lock_changed
                                 or token_pending_state_changed
                                 or (new_status and new_status != latest_known_status)
                                 or (now - latest_write_time) > DB_WRITE_INTERVAL

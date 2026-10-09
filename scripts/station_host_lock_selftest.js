@@ -44,9 +44,11 @@ function nodes(node) {
 function input(tree, name) { return nodes(tree).find(node => node.type === 'input' && node.props.name === name); }
 (async () => {
   props.currentUser = { role: 'coordinator' };
-  props.device.service_config = { ...props.device.service_config, server2_enabled: false,
+  props.device.service_config = { ...props.device.service_config, server2_enabled: true,
     serverhost2: 'blocked.test', port2: 2102, mountpoint2: 'BLOCKED' };
   props.device.server_config_lock = Object.fromEntries(['serverhost1','port1','server1_enabled','serverhost2','port2','server2_enabled'].map(key => [key, props.device.service_config[key]]));
+  props.device.server_config_lock.locked_servers = [2];
+  props.device.system_info = {device_lock:{scoped:true,locked_servers:[2]}};
   let tree = render();
   for (const name of ['server1_enabled','server2_enabled','serverhost1','serverhost2','port1','port2']) {
     assert.equal(input(tree, name).props.disabled, true, `${name} locked for nonadmin`);

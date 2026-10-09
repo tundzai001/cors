@@ -585,7 +585,7 @@ const StationOperationsPanel = memo(function StationOperationsPanel({ device, ca
         await loadOps();
     };
 
-    const locked = Object.keys(device?.server_config_lock || {}).length > 0 || device?.is_locked || device?.status === 'locked';
+    const locked = window.CorsDashboardShared.getLockedServers(device).length > 0 || device?.is_locked || device?.status === 'locked';
 
     if (isLoading) {
         return <div className="text-center text-muted py-4"><div className="spinner-border spinner-border-sm me-2"></div>Loading station operations...</div>;
@@ -626,7 +626,6 @@ const StationOperationsPanel = memo(function StationOperationsPanel({ device, ca
                     <button className={`btn btn-sm ${locked ? 'btn-outline-success' : 'btn-outline-warning'}`} disabled={!canRunDeviceActions} onClick={() => onLock(device.serial)}>
                         <i className={`bi ${locked ? 'bi-unlock-fill' : 'bi-lock-fill'} me-1`}></i>{locked ? 'Sửa khoá host' : 'Khoá host / server'}
                     </button>
-                    {locked && <button className="btn btn-sm btn-outline-success" disabled={!canRunDeviceActions} onClick={() => onUnlock(device.serial)}>Mở khoá host</button>}
                     <button className="btn btn-sm btn-outline-danger" disabled={!canRunDeviceActions} onClick={() => onReset(device.serial)}>
                         <i className="bi bi-power me-1"></i>Khởi động lại
                     </button>
@@ -1016,7 +1015,9 @@ const DetailsPanel = memo(function DetailsPanel({
     const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_view_rovers && currentUser?.can_create_rovers));
     const showStationOperationsTab = !isDeviceRebooting && (isAdmin || canEditService);
 
-    const isDeviceLocked = Object.keys(device.server_config_lock || {}).length > 0 || device.is_locked || device.status === 'locked';
+    const lockedServers = window.CorsDashboardShared.getLockedServers(device);
+    const lockApplied = window.CorsDashboardShared.isDeviceLockApplied(device);
+    const isDeviceLocked = window.CorsDashboardShared.getLockedServers(device).length > 0 || device.is_locked || device.status === 'locked';
 
     return (
         <div className="card dashboard-detail-card bg-dark-tertiary h-100 d-flex flex-column" style={{ position: 'relative', overflowX: 'hidden' }}>
@@ -1134,7 +1135,7 @@ const DetailsPanel = memo(function DetailsPanel({
                         {/* Badge LOCKED (luôn hiển thị nếu bị khóa) */}
                         {isDeviceLocked && (
                             <span className="badge bg-danger ms-2">
-                                <i className="bi bi-lock-fill me-1"></i>LOCKED
+                                <i className="bi bi-lock-fill me-1"></i>{lockedServers.length ? `Khoá ${lockedServers.map(sid => `S${sid}`).join(", ")}${lockApplied ? "" : " · Chờ áp dụng"}` : "Khoá toàn trạm"}
                             </span>
                         )}
                     </div>
@@ -1306,7 +1307,6 @@ const DetailsPanel = memo(function DetailsPanel({
                                     <button onClick={() => onLock(device.serial)} className="btn btn-warning w-100 text-dark fw-bold">
                                         <i className="bi bi-shield-lock me-2"></i>{isDeviceLocked ? 'Sửa khoá host / server' : 'Khoá host / server'}
                                     </button>
-                                    {isDeviceLocked && <button onClick={() => onUnlock(device.serial)} className="btn btn-outline-success w-100 mt-2">Mở khoá host</button>}
                                 </div>
                             </div>
                         </div>

@@ -3382,7 +3382,7 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
-from .station_host_lock import check_host_lock, host_lock_snapshot, refresh_host_lock
+from .station_host_lock import check_host_lock, host_lock_snapshot, refresh_host_lock, locked_server_ids, supports_server_device_lock
 from .routers import users, devices, api_keys
 app.include_router(users.router)
 app.include_router(devices.router)
@@ -7254,36 +7254,41 @@ async def lock_device(
     if not device:
         raise HTTPException(404, "Device not found")
     config = dict(_device_service_config(device))
-    # Older bulk/Zalo callers freeze current server choices; the UI sends an
-    # explicit selection, including [] when the admin wants both hosts blocked.
-    allowed = policy.allowed_servers if policy is not None else [sid for sid in (1, 2) if config.get(f"server{sid}_enabled")]
-    for sid in (1, 2):
-        if sid in allowed and (not config.get(f"serverhost{sid}") or not config.get(f"port{sid}")):
-            raise HTTPException(422, f"Cấu hình host/cổng Server {sid} trước khi cho phép gửi")
-        config[f"server{sid}_enabled"] = sid in allowed
-        if sid not in allowed:
-            config[f"server{sid}_stream_active"] = False
-    device.server_config_lock = host_lock_snapshot(config)
-    device.service_config = config
+    locked = sorted(policy.locked_servers) if policy is not None else [1, 2]
+    scoped = supports_server_device_lock(device)
+    if locked and not scoped:
+        raise HTTPException(409, "Cập nhật agent_universal.py trên trạm để hỗ trợ device_lock từng server, rồi thử lại.")
+    # A lock is independent of service enable switches. An empty policy remains
+    # pending until telemetry confirms unlock, so an offline unlock is retried.
+    device.server_config_lock = {**host_lock_snapshot(config), "locked_servers": locked} if locked else {"locked_servers": []}
     device.is_synced = False
-    was_locked = bool(device.is_locked or device.status == "locked")
     await db.commit()
     mqtt_handler.invalidate_device_cache(serial)
+    # Serialize delivery with edits/retries and reread the newest policy. A
+    # concurrent admin request must not be overwritten by this older command.
+    device = await crud.get_device_for_update(db, serial)
+    if not device:
+        raise HTTPException(404, "Device not found")
+    locked = locked_server_ids(device.server_config_lock)
+    scoped = supports_server_device_lock(device)
+    config = dict(_device_service_config(device))
     delivered = True
+    command = {"command": "LOCK_DEVICE", "payload": {"locked_servers": locked}} if scoped else {"command": "UNLOCK_DEVICE", "payload": {}}
     try:
-        if was_locked:
-            await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
-            device.is_locked = False
-            await db.commit()
-        await send_command_to_pi(serial, {"command": "DEPLOY_SERVICE_CONFIG", "payload": config})
+        if locked and not scoped:
+            raise HTTPException(503, "Agent chưa hỗ trợ device_lock từng server")
+        await send_command_to_pi(serial, command)
+        device.is_locked = False
+        await db.commit()
     except HTTPException as exc:
         if exc.status_code != 503:
             raise
         delivered = False
+        await db.commit()
     await db.refresh(device)
     await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
-    await crud.log_system_event(db=db, type="warning", message=f"Admin {current_user.username} locked hosts for {serial}; allowed servers: {allowed}", user_id=current_user.id, serial=serial)
-    return {"status": "host_policy_saved", "delivered": delivered,
+    await crud.log_system_event(db=db, type="warning", message=f"Admin {current_user.username} set device_lock for {serial}; locked servers: {locked}", user_id=current_user.id, serial=serial)
+    return {"status": "device_lock_saved", "delivered": delivered,
             "server_config_lock": device.server_config_lock, "service_config": config}
 
 
@@ -7293,22 +7298,8 @@ async def unlock_device(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
 ):
-    if current_user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Chỉ admin được mở khóa host")
-    device = await crud.get_device_for_update(db, serial)
-    if not device:
-        raise HTTPException(404, "Device not found")
-    was_locked = bool(device.is_locked or device.status == "locked")
-    device.server_config_lock = None
-    await db.commit()
-    if was_locked:
-        await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
-        device.is_locked = False
-        await db.commit()
-    await db.refresh(device)
-    await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
-    await crud.log_system_event(db=db, type="info", message=f"Admin {current_user.username} unlocked hosts for {serial}", user_id=current_user.id, serial=serial)
-    return {"status": "host_policy_removed", "server_config_lock": None}
+    return await lock_device(serial, db, current_user, schemas.StationHostLockRequest(locked_servers=[]))
+
 
 @app.get("/api/devices/export/csv")
 async def export_devices_to_csv(

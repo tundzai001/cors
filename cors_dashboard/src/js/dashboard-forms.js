@@ -942,8 +942,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
     const [visiblePasswords, setVisiblePasswords] = useState({});
     const isAdmin = currentUser?.role === 'admin';
     const hostPolicy = device.server_config_lock || {};
-    const hostsLocked = Object.keys(hostPolicy).length > 0;
-    const blockedServer = sid => hostsLocked && hostPolicy[`server${sid}_enabled`] === false;
+    const lockedServers = window.CorsDashboardShared.getLockedServers(device);
+    const hostsLocked = lockedServers.length > 0;
+    const lockApplied = window.CorsDashboardShared.isDeviceLockApplied(device);
+    const blockedServer = sid => lockedServers.includes(sid);
     const lockedInput = name => !isAdmin && hostsLocked && Object.prototype.hasOwnProperty.call(hostPolicy, name);
 
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1038,7 +1040,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 if (!merged[`${key}_stream_on_demand`]) merged[`${key}_stream_active`] = true;
             }
 
-            Object.assign(merged, hostPolicy);
+            Object.assign(merged, Object.fromEntries(Object.entries(hostPolicy).filter(([key]) => key !== "locked_servers")));
             hydratedConfigRef.current = merged;
             setFormState(merged);
             setIsFormDirty(false);
@@ -1063,8 +1065,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         let label = 'Chờ trạng thái';
         let icon = 'bi-hourglass-split';
         let tone = 'secondary';
-        if (!enabled) {
-            label = blockedServer(serverId) ? 'Admin chặn' : 'Đã tắt'; icon = blockedServer(serverId) ? 'bi-lock-fill' : 'bi-power'; tone = blockedServer(serverId) ? 'warning' : 'secondary';
+        if (blockedServer(serverId)) {
+            label = lockApplied ? 'Đã khoá · ngừng gửi' : 'Khoá · chờ áp dụng'; icon = 'bi-lock-fill'; tone = 'danger';
+        } else if (!enabled) {
+            label = 'Đã tắt'; icon = 'bi-power'; tone = 'secondary';
         } else if (pending) {
             label = 'Chưa áp dụng'; icon = 'bi-pencil-square'; tone = 'warning';
         } else if (offline) {
@@ -1087,7 +1091,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 <span className={`badge text-bg-${tone}`}>
                     <i className={`bi ${icon} me-1`} aria-hidden="true"></i>{label}
                 </span>
-                {enabled && !pending && !offline && (
+                {enabled && !blockedServer(serverId) && !pending && !offline && (
                     <span className={`badge text-bg-${sleeping ? 'info' : telemetry.bps > 0 ? 'success' : 'secondary'}`}>
                         <i className={`bi ${sleeping ? 'bi-moon-stars' : 'bi-broadcast'} me-1`} aria-hidden="true"></i>
                         {sleeping ? 'Ngủ · chờ rover' : telemetry.bps > 0 ? `Đang gửi RTCM · ${telemetry.bps} B/s` : 'Chưa gửi RTCM'}
@@ -1253,8 +1257,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 {' '}Để trống mật khẩu để giữ mật khẩu đã lưu; chỉ nhập khi muốn thay đổi.
             </div>
             {hostsLocked && <div className="alert alert-warning small" role="status">
-                <i className="bi bi-shield-lock me-2" aria-hidden="true"></i>Admin đã khoá host và trạng thái server.
-                {[1, 2].map(sid => <span key={sid} className="d-block mt-1">Server {sid}: {blockedServer(sid) ? 'Bị chặn · không gửi dữ liệu' : 'Được phép gửi · người dùng không được tắt'}</span>)}
+                <i className="bi bi-shield-lock me-2" aria-hidden="true"></i>Admin quản lý khoá server.
+                {[1, 2].map(sid => <span key={sid} className="d-block mt-1">Server {sid}: {blockedServer(sid) ? (lockApplied ? 'Đã khoá · không gửi dữ liệu' : 'Khoá · chờ trạm xác nhận') : 'Được phép gửi · người dùng không được tắt'}</span>)}
             </div>}
             {isLteStation && (
                 <div className="alert alert-primary small">
@@ -1294,7 +1298,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                         )}
                     </div>
                 </div>
-                <fieldset disabled={disabled || (!isAdmin && blockedServer(1))}>
+                <fieldset disabled={disabled}>
                     <div className="row g-3">
                         <div className="col-md-6">
                             <label htmlFor="ncomport" className="form-label">Định danh Trạm (ID)</label>

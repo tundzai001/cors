@@ -169,13 +169,16 @@ class DeviceRenameSerial(BaseModel):
     new_serial: str
 
 class StationHostLockRequest(BaseModel):
-    allowed_servers: list[int] = Field(default_factory=list)
+    locked_servers: list[int]
 
-    @validator("allowed_servers")
+    @validator("locked_servers")
     def validate_servers(cls, value):
         if any(sid not in (1, 2) for sid in value) or len(value) != len(set(value)):
             raise ValueError("Chỉ chọn Server 1 và Server 2, không trùng lặp")
         return value
+
+    class Config:
+        extra = "forbid"
 
 
 class ServiceConfig(BaseModel):

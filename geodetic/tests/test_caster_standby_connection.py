@@ -42,7 +42,7 @@ class CasterStandbyTests(unittest.TestCase):
         scope = dict(threading=threading, Queue=Queue, Empty=Empty, time=time, base64=base64,
                      socket=SimpleNamespace(create_connection=connect, SOL_SOCKET=1, SO_KEEPALIVE=9),
                      select=SimpleNamespace(select=lambda *args: ([], [], [])), subscriber_lock=Lock(),
-                     rtcm_subscribers=[], control_plane_fail_open_event=Event(), is_remote_locked=lambda: False,
+                     rtcm_subscribers=[], control_plane_fail_open_event=Event(), is_remote_locked=lambda sid=None: False,
                      is_valid_rtcm3_packet=lambda data: data.startswith(b'\xd3'),
                      _telemetry_inc=Mock(), logging=SimpleNamespace(debug=Mock(), info=Mock()))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'agent.py', 'exec'), scope)

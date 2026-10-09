@@ -8,9 +8,24 @@ def host_lock_snapshot(config: dict) -> dict:
             for key in (f'serverhost{sid}', f'port{sid}', f'server{sid}_enabled')}
 
 
+def locked_server_ids(policy: dict | None) -> list[int]:
+    if not policy:
+        return []
+    if 'locked_servers' in policy:
+        return sorted(policy['locked_servers'])
+    # Read policies saved by the previous host-disable implementation.
+    return [sid for sid in (1, 2) if policy.get(f'server{sid}_enabled') is False]
+
+
+def supports_server_device_lock(device) -> bool:
+    info = device.system_info if isinstance(device.system_info, dict) else {}
+    report = info.get('device_lock')
+    return isinstance(report, dict) and report.get('scoped') is True
+
+
 def check_host_lock(device, changes: dict, *, is_admin: bool = False) -> None:
     policy = getattr(device, 'server_config_lock', None) or {}
-    if not policy or is_admin:
+    if not locked_server_ids(policy) or is_admin:
         return
     current = device.service_config if isinstance(device.service_config, dict) else {}
     for raw_key, value in changes.items():
@@ -24,7 +39,7 @@ def check_host_lock(device, changes: dict, *, is_admin: bool = False) -> None:
             raise HTTPException(403, 'Host và trạng thái server do admin khóa. Bạn không được thay đổi.')
         for sid in (1, 2):
             # A blocked slot cannot be reconfigured, including credentials/mountpoint.
-            if not policy.get(f'server{sid}_enabled') and (
+            if sid in locked_server_ids(policy) and (
                 key in {f'ntrip_version{sid}', f'username{sid}', f'mountpoint{sid}', f'password{sid}'}
                 or key.startswith(f'server{sid}_')
             ) and value != current.get(key):
@@ -33,4 +48,5 @@ def check_host_lock(device, changes: dict, *, is_admin: bool = False) -> None:
 
 def refresh_host_lock(device, config: dict) -> None:
     if getattr(device, 'server_config_lock', None):
-        device.server_config_lock = host_lock_snapshot(config)
+        locked = locked_server_ids(device.server_config_lock)
+        device.server_config_lock = {**host_lock_snapshot(config), 'locked_servers': locked} if locked else {'locked_servers': []}

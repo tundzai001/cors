@@ -1,14 +1,18 @@
-# Khoá host/server của trạm
+# device_lock theo server
 
-Admin mở **Khoá host / server** và chọn server được phép gửi. Ví dụ giữ Server 1, bỏ Server 2: cấu hình `server1_enabled=true`, `server2_enabled=false`; Server 2 ngừng gửi, Server 1 vẫn được phép gửi theo chế độ Always-on/On-demand hiện tại. Không gửi `LOCK_DEVICE`, không dừng GNSS hoặc khoá toàn bộ thiết bị. Agent hiện có đã tôn trọng cờ enabled, kể cả chế độ fail-open; không cần nâng agent để áp dụng chính sách này.
+Admin mở **Khoá host / server**. Nút gạt **Khoá Server 2** bật nghĩa là khoá Server 2; tắt nghĩa là bỏ khoá Server 2. Không đổi `server1_enabled`/`server2_enabled`, host/cổng, chế độ ngủ hoặc cấu hình dịch vụ. Tag ghi rõ server bị khoá, và chỉ báo đã áp dụng khi telemetry agent xác nhận; trước đó hiển thị chờ áp dụng.
 
-Sau khi khoá, người dùng và API key không được đổi host/cổng hoặc bật/tắt cả hai server, không được đổi chế độ gửi qua configure-service. Server bị chặn cũng không được sửa mountpoint, tài khoản, mật khẩu hoặc NTRIP version. Server còn được phép vẫn sửa được mountpoint/tài khoản; cấu hình GNSS và chức năng khác giữ nguyên quyền. Admin được sửa cấu hình và cập nhật chính sách. Áp template cũng phải tuân thủ khoá.
+Backend gửi `LOCK_DEVICE` với payload `{"locked_servers":[2]}`. `[1]` khoá S1; `[1,2]` khoá cả hai; `[]` mở cả hai. Agent lưu JSON trong `remote.lock`, chặn gửi RTCM của server được chọn kể cả fail-open; GNSS và server còn lại tiếp tục chạy. Lệnh khoá không restart dịch vụ. Lock tồn tại qua restart, thay đổi cấu hình dịch vụ không xoá lock. File khoá toàn trạm cũ vẫn được đọc và thực thi; lệnh scoped mới thay thế file đó.
 
-- `POST /api/devices/{serial}/lock`, JWT admin, body `{"allowed_servers":[1]}`. `[1,2]` cho phép cả hai, `[]` chặn cả hai. Host/cổng server được phép phải được cấu hình trước. Phản hồi có `delivered`, `server_config_lock`, `service_config`.
-- `POST /api/devices/{serial}/unlock`, JWT admin: bỏ giới hạn sửa; giữ nguyên cấu hình bật/tắt, không tự bật server từng bị chặn.
-- Các lời gọi bulk/Zalo cũ không có lựa chọn server giữ và khoá trạng thái bật/tắt hiện tại. Muốn chặn một host, chọn rõ trong giao diện mới.
+Phải cập nhật `geodetic/agent_universal.py` trên trạm trước. Agent mới báo `system_info.device_lock.scoped=true` và danh sách khoá đang áp dụng. Backend từ chối khoá từng server trên agent chưa hỗ trợ để tránh agent cũ hiểu `LOCK_DEVICE` thành khoá toàn trạm. Các agent LTE/relay khác chưa báo capability này cũng không nhận scoped lock.
 
-`server_config_lock` là JSONB nullable, lưu snapshot host/cổng/cờ enabled do admin chọn, không chứa mật khẩu. Heartbeat không sửa cột này hoặc ghi đè cấu hình dịch vụ khi có chính sách. Ghi cấu hình và retry dùng khoá hàng DB để tránh một request cũ bật lại host vừa bị chặn. Trạm offline lưu chính sách; vòng kiểm tra đồng bộ gửi lại cấu hình khi có kết nối. Gửi lệnh thành công là đã chuyển lệnh qua MQTT/WebSocket; trạng thái đồng bộ/telemetry xác nhận agent áp dụng. Trạm từng bị khoá toàn bộ sẽ được gửi UNLOCK trước khi triển khai chính sách host mới, kể cả qua vòng retry khi kết nối lại.
+- `POST /api/devices/{serial}/lock`, JWT admin, body `{"locked_servers":[2]}`. Trả về `delivered`, `server_config_lock`, `service_config`. Payload cũ `allowed_servers` bị từ chối.
+- `POST /api/devices/{serial}/unlock` giữ cho callers cũ: tương đương chọn `locked_servers=[]`. Giao diện không có nút mở khoá riêng; dùng nút gạt trong hộp thoại.
+- Bulk/Zalo lock không truyền lựa chọn khoá cả hai server.
+
+Khi có server bị khoá, người dùng và API key không được sửa host/cổng/cờ enabled hoặc chế độ stream. Server bị khoá cũng không được sửa mountpoint/tài khoản/mật khẩu/NTRIP version. Server còn lại vẫn sửa được tài khoản/mountpoint. Template tuân thủ cùng kiểm tra. Telemetry không thay chính sách admin hoặc ghi đè cấu hình dịch vụ đang bảo vệ.
+
+`server_config_lock` lưu snapshot host/cổng/cờ enabled và `locked_servers`. Chính sách chưa gửi được giữ trong DB và retry khi kết nối lại. Mở khoá offline cũng được retry đến khi agent xác nhận. Các lần sửa/retry dùng khoá hàng DB. Cấu hình cũ từng bị tắt bằng `server_enabled=false` giữ nguyên, admin có thể bật lại trong Dịch vụ; mở device_lock không tự bật cấu hình vốn đã tắt.
 
 ## Migration và rollback
 
@@ -26,6 +30,6 @@ ALTER TABLE devices ADD COLUMN IF NOT EXISTS server_config_lock JSONB;
 
 Sau khi chạy SQL thủ công vẫn có thể chạy lệnh Alembic trên để ghi nhận revision: `IF NOT EXISTS` giữ nguyên cột đã có.
 
-Rollback code giữ cột và cấu hình server đang tắt; code cũ không thực thi giới hạn sửa và nút khoá cũ lại khoá toàn thiết bị. Không coi rollback code là bảo toàn bảo vệ host. Downgrade schema chỉ bỏ snapshot chính sách, không bật lại server hay xoá cấu hình dịch vụ. Chỉ downgrade khi đã chủ động bỏ chính sách; giữ cột khi rollback là lựa chọn bảo toàn dữ liệu.
+Rollback về agent cũ khi còn scoped lock sẽ khiến file JSON được hiểu là khoá toàn trạm. Mở khoá và xác nhận trên agent trước khi rollback agent. Giữ cột JSONB khi rollback code để bảo toàn dữ liệu chính sách.
 
-Kiểm tra: `tests.test_station_host_lock`, `scripts/station_host_lock_selftest.js`. Test HTTP/DB dùng mock và AST các handler thật; test agent chạy hàm quyết định phát thật, không cần thiết bị vật lý. Chưa xác minh trạm production.
+Kiểm tra: `tests.test_station_host_lock`, `geodetic/tests/test_scoped_device_lock.py`, `scripts/station_host_lock_selftest.js`, kiểm tra trình duyệt desktop/mobile. Các test DB/HTTP dùng mock; chưa xác minh trên thiết bị production.

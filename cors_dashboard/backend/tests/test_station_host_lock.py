@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import Depends, FastAPI, HTTPException
 from app import auth, crud, models, schemas, mqtt
 from app.routers import api_keys
-from app.station_host_lock import check_host_lock, host_lock_snapshot, refresh_host_lock
+from app.station_host_lock import check_host_lock, host_lock_snapshot, refresh_host_lock, locked_server_ids, supports_server_device_lock
 from app.schema_compat import DEVICE_SCHEMA_STATEMENTS
 
 
@@ -34,7 +34,8 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
                        'server1_stream_active': True, 'server2_stream_active': True,
                        'server1_stream_on_demand': False, 'server2_stream_on_demand': False}
         self.device = models.Device(serial='TEST', name='Test', user_id=2, status='online', version='2.2.6',
-                                    service_config=dict(self.config), base_config={}, is_synced=True, is_locked=False)
+                                    service_config=dict(self.config), base_config={}, is_synced=True, is_locked=False,
+                                    system_info={"device_lock": {"scoped": True, "locked_servers": []}})
         self.admin = SimpleNamespace(id=1, username='admin', role='admin')
         self.user = SimpleNamespace(id=2, username='user', role='coordinator')
         self.db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock(), refresh=AsyncMock())
@@ -49,6 +50,7 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
                        Depends=Depends, HTTPException=HTTPException, Optional=Optional, auth=auth, models=models,
                        schemas=schemas, crud=self.crud, api_keys=api_keys, logging=logging,
                        check_host_lock=check_host_lock, host_lock_snapshot=host_lock_snapshot, refresh_host_lock=refresh_host_lock,
+                       locked_server_ids=locked_server_ids, supports_server_device_lock=supports_server_device_lock,
                        send_command_to_pi=self.command, _device_service_config=lambda d: d.service_config or {},
                        _preserve_relay_config_metadata=lambda serial, old, new: new,
                        mqtt_handler=SimpleNamespace(invalidate_device_cache=Mock(), device_sync_cache={}),
@@ -56,25 +58,26 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), self.ns)
 
     async def lock_s2(self):
-        return await self.ns['lock_device']('TEST', self.db, self.admin, schemas.StationHostLockRequest(allowed_servers=[1]))
+        return await self.ns['lock_device']('TEST', self.db, self.admin, schemas.StationHostLockRequest(locked_servers=[2]))
 
     async def test_block_host_two_preserves_host_one_without_whole_device_lock(self):
         result = await self.lock_s2()
         self.assertTrue(result['delivered'])
         self.assertTrue(self.device.service_config['server1_enabled'])
         self.assertTrue(self.device.service_config['server1_stream_active'])
-        self.assertFalse(self.device.service_config['server2_enabled'])
-        self.assertFalse(self.device.service_config['server2_stream_active'])
+        self.assertTrue(self.device.service_config['server2_enabled'])
+        self.assertEqual(locked_server_ids(self.device.server_config_lock), [2])
+        self.assertTrue(self.device.service_config['server2_stream_active'])
         self.assertFalse(self.device.is_locked)
         commands = [call.args[1] for call in self.command.await_args_list]
-        self.assertEqual([item['command'] for item in commands], ['DEPLOY_SERVICE_CONFIG'])
-        self.assertEqual(commands[0]['payload']['serverhost1'], 'host-one.test')
+        self.assertEqual([item['command'] for item in commands], ['LOCK_DEVICE'])
+        self.assertEqual(commands[0]['payload'], {'locked_servers': [2]})
 
     async def test_user_and_integration_cannot_bypass_host_policy(self):
         await self.lock_s2()
-        for changes in ({'server2_enabled': True}, {'serverhost2': 'other.test'}, {'port2': 9999},
+        for changes in ({'server2_enabled': False}, {'serverhost2': 'other.test'}, {'port2': 9999},
                         {'mountpoint2': 'OTHER'}, {'server1_enabled': False}, {'serverhost1': 'other.test'},
-                        {'server1_stream_active': False}, {'server2_stream_active': True}):
+                        {'server1_stream_active': False}, {'server2_stream_active': False}):
             with self.subTest(changes=changes), self.assertRaises(HTTPException) as error:
                 await self.ns['configure_service_endpoint']('TEST', schemas.ServiceConfig(**changes), self.db, self.user)
             self.assertEqual(error.exception.status_code, 403)
@@ -88,32 +91,35 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
         # Unblocked server credentials/mountpoint and GNSS/general settings remain editable.
         await self.ns['configure_service_endpoint']('TEST', schemas.ServiceConfig(mountpoint1='RENAMED'), self.db, self.user)
         self.assertEqual(self.device.service_config['mountpoint1'], 'RENAMED')
-        self.assertFalse(self.device.service_config['server2_enabled'])
+        self.assertTrue(self.device.service_config['server2_enabled'])
+        self.assertEqual(locked_server_ids(self.device.server_config_lock), [2])
 
     async def test_template_cannot_bypass_lock(self):
         await self.lock_s2()
         self.crud.get_system_settings.return_value = {'device_config_templates': [{
-            'id': 'bad', 'created_by': 'user', 'service_config': {'server2_enabled': True}, 'base_config': {'lat': 1}}]}
+            'id': 'bad', 'created_by': 'user', 'service_config': {'server2_enabled': False}, 'base_config': {'lat': 1}}]}
         request = schemas.DeviceApplyTemplateRequest(template_id='bad', serials=['TEST'], apply_service_config=True, apply_base_config=True)
         result = await self.ns['apply_device_config_template'](request, self.db, self.db, self.user)
         self.assertEqual(result['results'][0]['status'], 'skipped')
         self.assertEqual(self.device.base_config, {})
-        self.assertFalse(self.device.service_config['server2_enabled'])
+        self.assertTrue(self.device.service_config['server2_enabled'])
+        self.assertEqual(locked_server_ids(self.device.server_config_lock), [2])
 
     async def test_admin_can_change_policy_and_unlock_does_not_enable_blocked_host(self):
         await self.lock_s2()
         await self.ns['configure_service_endpoint']('TEST', schemas.ServiceConfig(serverhost1='new.test'), self.db, self.admin)
         self.assertEqual(self.device.server_config_lock['serverhost1'], 'new.test')
         await self.ns['unlock_device']('TEST', self.db, self.admin)
-        self.assertIsNone(self.device.server_config_lock)
-        self.assertFalse(self.device.service_config['server2_enabled'])
+        self.assertEqual(self.device.server_config_lock, {'locked_servers': []})
+        self.assertTrue(self.device.service_config['server2_enabled'])
         check_host_lock(self.device, {'server2_enabled': True})
 
     async def test_offline_policy_persists_and_nonadmin_cannot_lock(self):
         self.command.side_effect = HTTPException(503, 'offline')
         result = await self.lock_s2()
         self.assertFalse(result['delivered'])
-        self.assertFalse(self.device.server_config_lock['server2_enabled'])
+        self.assertTrue(self.device.server_config_lock['server2_enabled'])
+        self.assertEqual(self.device.server_config_lock['locked_servers'], [2])
         self.db.commit.assert_awaited()
         for function in ('lock_device', 'unlock_device'):
             with self.assertRaises(HTTPException) as error:
@@ -122,22 +128,25 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reconnect_retries_policy_and_releases_old_whole_device_lock(self):
         await self.lock_s2()
-        self.device.is_locked = True
-        self.device.status = 'locked'
-        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [self.device]))), commit=AsyncMock())
-        @asynccontextmanager
-        async def session_scope():
-            yield db
-        sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
-        command = AsyncMock()
-        with patch.object(mqtt.asyncio, 'sleep', sleep), patch.object(mqtt, 'IS_SHUTTING_DOWN', False), \
-             patch.object(mqtt, 'device_status_cache', {'TEST': 'locked'}), patch.object(mqtt, 'device_session_scope', session_scope), \
-             patch.object(mqtt, '_compare_configs', side_effect=[(True, []), (False, ['changed'])]), \
-             patch.object(mqtt, '_version_matches', return_value=True), patch.object(crud, 'get_device_for_update', AsyncMock(return_value=self.device)), patch('app.command_dispatcher.send_command_to_pi', command):
-            with self.assertRaises(asyncio.CancelledError):
-                await mqtt.batch_sync_checker()
-        self.assertEqual([call.args[1]['command'] for call in command.await_args_list], ['UNLOCK_DEVICE', 'DEPLOY_SERVICE_CONFIG'])
-        self.assertFalse(command.await_args_list[-1].args[1]['payload']['server2_enabled'])
+        for desired, reported, whole in (([2], [], True), ([1, 2], [1, 2], False)):
+            self.device.server_config_lock = {**host_lock_snapshot(self.config), 'locked_servers': desired}
+            self.device.is_locked = whole
+            self.device.status = 'locked'
+            self.device.system_info = {'device_lock': {'scoped': True, 'locked_servers': reported, 'all': True}}
+            db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [self.device]))), commit=AsyncMock())
+            @asynccontextmanager
+            async def session_scope():
+                yield db
+            sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+            command = AsyncMock()
+            with patch.object(mqtt.asyncio, 'sleep', sleep), patch.object(mqtt, 'IS_SHUTTING_DOWN', False), \
+                 patch.object(mqtt, 'device_status_cache', {'TEST': 'locked'}), patch.object(mqtt, 'device_session_scope', session_scope), \
+                 patch.object(mqtt, '_compare_configs', side_effect=[(True, []), (False, ['changed'])]), \
+                 patch.object(mqtt, '_version_matches', return_value=True), patch.object(crud, 'get_device_for_update', AsyncMock(return_value=self.device)), patch('app.command_dispatcher.send_command_to_pi', command):
+                with self.assertRaises(asyncio.CancelledError):
+                    await mqtt.batch_sync_checker()
+            self.assertEqual([call.args[1]['command'] for call in command.await_args_list], ['LOCK_DEVICE'])
+            self.assertEqual(command.await_args_list[-1].args[1]['payload'], {'locked_servers': desired})
 
     async def test_telemetry_upsert_cannot_replace_policy_or_locked_config(self):
         db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock())
@@ -155,7 +164,7 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
         names = {'_to_bool', 'resolve_effective_stream_switch', '_get_server_stream_switches'}
         definitions = [node for node in ast.parse(source.read_text()).body if isinstance(node, ast.FunctionDef) and node.name in names]
         event = threading.Event()
-        namespace = {'control_plane_fail_open_event': event}
+        namespace = {'control_plane_fail_open_event': event, 'is_remote_locked': lambda sid=None: False}
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), namespace)
         config = {**self.config, 'server2_enabled': False}
         for fail_open in (False, True):
@@ -164,13 +173,42 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(namespace['_get_server_stream_switches'](config, 1, apply_fail_open=True)['can_push'])
             self.assertFalse(namespace['_get_server_stream_switches'](config, 2, apply_fail_open=True)['can_push'])
 
+    async def test_old_agent_cannot_receive_scoped_lock(self):
+        self.device.system_info = {}
+        with self.assertRaises(HTTPException) as error:
+            await self.lock_s2()
+        self.assertEqual(error.exception.status_code, 409)
+        self.command.assert_not_awaited()
+        self.db.commit.assert_not_awaited()
+
+    async def test_delivery_rereads_latest_admin_policy(self):
+        calls = 0
+        async def current_row(db, serial):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                self.device.server_config_lock = {**host_lock_snapshot(self.config), 'locked_servers': [1]}
+            return self.device
+        self.crud.get_device_for_update.side_effect = current_row
+        result = await self.lock_s2()
+        self.assertEqual(result['server_config_lock']['locked_servers'], [1])
+        self.assertEqual(self.command.await_args_list[-1].args[1]['payload'], {'locked_servers': [1]})
+
+    async def test_empty_selection_sends_unlock_without_changing_config(self):
+        await self.lock_s2()
+        before = dict(self.device.service_config)
+        await self.ns['lock_device']('TEST', self.db, self.admin, schemas.StationHostLockRequest(locked_servers=[]))
+        self.assertEqual(self.device.service_config, before)
+        self.assertEqual(self.command.await_args_list[-1].args[1], {'command': 'LOCK_DEVICE', 'payload': {'locked_servers': []}})
+        self.assertEqual(self.device.server_config_lock, {'locked_servers': []})
+
     async def test_writes_lock_current_policy_row(self):
         db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: self.device))))
         self.assertIs(await crud.get_device_for_update(db, 'TEST'), self.device)
         self.assertIn('FOR UPDATE', str(db.execute.call_args.args[0]))
         for ids in ([3], [1, 1]):
             with self.assertRaises(ValueError):
-                schemas.StationHostLockRequest(allowed_servers=ids)
+                schemas.StationHostLockRequest(locked_servers=ids)
 
 
 if __name__ == '__main__':
