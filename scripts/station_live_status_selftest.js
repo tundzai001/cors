@@ -76,3 +76,32 @@ const relayNodes = allNodes(relayTree);
 assert(relayNodes.some(node => node.props.className === 'status-bar sleep'), 'Sleeping relay card rail must be blue');
 assert(relayNodes.some(node => node.props.className === 'server-status-item sleep'), 'Sleeping relay output tile must use the same blue state');
 console.log('PASS: actual relay card renders matching sleep classes for rail and S1');
+
+// Offline takes precedence over saved sleep/output telemetry on every surface.
+const staleSleep = { ...sleepingRelay, status: 'sleep', timestamp: Date.now() / 1000 - 240 };
+assert.equal(status(staleSleep), 'offline');
+assert.equal(status({ ...staleSleep, timestamp: staleSleep.timestamp * 1000 }), 'offline');
+assert.equal(status({ ...live, status: 'offline', detected_chip_type: 'VIRTUAL' }), 'offline');
+const staleHeader = allNodes(window.DetailsPanel({ device: staleSleep, currentUser: { role: 'admin' }, nmeaData: {} }));
+assert(staleHeader.some(node => node.children.includes('OFFLINE')));
+assert(!staleHeader.some(node => node.props.className === 'badge bg-info' && node.children.includes('CHẾ ĐỘ NGỦ')));
+
+renderContext.Image = class Image {};
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/dashboard-live.min.js'), 'utf8'), renderContext);
+function diagnostics(device) {
+  const nodes = allNodes(window.DashboardPanel({ device, nmeaData: {} }));
+  const section = nodes.find(node => node.children.some(child => child?.children?.includes('Antenna Quality Diagnostics')));
+  assert(section, 'Diagnostics section must render');
+  return allNodes(section).flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+}
+for (const rawStatus of ['online', 'sleep', 'offline']) {
+  const assessment = diagnostics({ ...sleepingRelay, status: rawStatus, timestamp: Date.now()/1000,
+    antenna_status: { state: 'FAULT', message: 'Agent detected antenna cable fault' } });
+  assert(assessment.includes('Agent detected antenna cable fault'), rawStatus + ' must retain agent assessment');
+  assert(!assessment.includes('tạm dừng'));
+  assert.equal(assessment.includes('dữ liệu đánh giá lần cuối'), rawStatus === 'offline');
+}
+assert(diagnostics({ ...staleSleep, system_info: { antenna_status: { state: 'OK' } } }).includes('Ăng-ten hoạt động bình thường.'));
+assert(diagnostics({ ...live, timestamp: Date.now()/1000 }).includes('Chưa có dữ liệu GNSS/RTCM để đánh giá.'));
+assert(!diagnostics({ ...live, timestamp: Date.now()/1000, antenna_status: { state: 'OK' } }).includes('0 Sats'));
+console.log('PASS: stale sleep and virtual offline, agent assessment in all states, persisted assessment and missing-data fallback');

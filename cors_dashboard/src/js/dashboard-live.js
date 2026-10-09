@@ -196,18 +196,17 @@ function getVisibleSatellites(satellites, maxAgeMs) {
 // === ENHANCED DASHBOARD COMPONENT (REPLACED)
 // ===============================================================================
 
-function isDeviceStaleOffline(device) {
-    const rawStatus = String(device?.status || '').toLowerCase();
-    if (rawStatus === 'offline') return true;
-    const timestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
-    return Boolean(timestamp && (Date.now() / 1000) - timestamp > 180);
+function isDeviceStaleOffline(device, nowMs = Date.now()) {
+    return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
 }
 
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
-    const liveDataAvailable = !isDeviceStaleOffline(device);
-    const deviceStatus = String(device?.status || '').toLowerCase();
-    const isSleeping = deviceStatus === 'sleep' || deviceStatus === 'sleeping';
-    const canAssessSignal = liveDataAvailable && !isSleeping;
+    const [offlineClockNow, setOfflineClockNow] = useState(Date.now());
+    useEffect(() => {
+        const interval = setInterval(() => setOfflineClockNow(Date.now()), 30000);
+        return () => clearInterval(interval);
+    }, [device?.serial]);
+    const liveDataAvailable = !isDeviceStaleOffline(device, offlineClockNow);
     const rtk_status = liveDataAvailable ? (device.rtk_fix_status || 'NO_FIX') : 'NO_FIX';
 
     let fixInfo = liveDataAvailable
@@ -915,7 +914,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             const hasCoords = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => k === "1005" || k === "1006");
                             
                             const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
-                            const isAntennaFault = antennaStatus && antennaStatus.state === "FAULT";
+                            const hasAgentAssessment = ['OK', 'FAULT'].includes(antennaStatus?.state);
+                            const isAntennaFault = antennaStatus?.state === "FAULT";
+                            const hasDecodedData = Object.keys(device.rtcm_stats || {}).length > 0;
+                            const hasSignalData = Boolean(safeNmeaData.gga) || Object.keys(safeNmeaData.satellites || {}).length > 0;
                             
                             const rtcmInputBps = liveDataAvailable ? Number(
                                 device.rtcm_input_bps ||
@@ -932,41 +934,42 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                             return (
                                 <ul className="mb-0 text-light small ps-3" style={{ listStyleType: "circle" }}>
-                                    {!canAssessSignal ? (
-                                        <li className="text-info mb-1">
-                                            {isSleeping
-                                                ? 'Trạm đang ở chế độ ngủ; tạm dừng đánh giá GNSS/RTCM.'
-                                                : 'Chưa có dữ liệu GNSS/RTCM trực tiếp để đánh giá.'}
-                                        </li>
-                                    ) : <>
-                                    {isAntennaFault && (
-                                        <li className="text-danger mb-1 fw-bold">
-                                            <i className="bi bi-exclamation-octagon-fill me-1"></i>
-                                            Cảnh báo Ăng-ten: {antennaStatus.message}
+                                    {!liveDataAvailable && (hasAgentAssessment || hasDecodedData) && (
+                                        <li className="text-warning mb-1">Trạm offline · Hiển thị dữ liệu đánh giá lần cuối.</li>
+                                    )}
+                                    {hasAgentAssessment && (
+                                        <li className={`${isAntennaFault ? 'text-danger' : 'text-success'} mb-1`}>
+                                            {isAntennaFault ? 'Cảnh báo Ăng-ten: ' : 'Đánh giá từ agent: '}
+                                            {antennaStatus.message || (isAntennaFault ? 'Phát hiện lỗi ăng-ten.' : 'Ăng-ten hoạt động bình thường.')}
                                         </li>
                                     )}
-                                    
+                                    {!hasAgentAssessment && !hasDecodedData && !hasSignalData && (
+                                        <li className="text-info mb-1">Chưa có dữ liệu GNSS/RTCM để đánh giá.</li>
+                                    )}
+                                    {hasDecodedData && <>
                                     {hasCoords ? (
                                         <li className="text-success mb-1">Tọa độ Base (1005/1006) đã sẵn sàng.</li>
                                     ) : (
                                         <li className="text-danger mb-1">Chưa có gói tọa độ 1005/1006. Rover không thể FIX RTK!</li>
                                     )}
 
-                                    {device.status !== "offline" && !hasMsm && (
+                                    {liveDataAvailable && !hasMsm && (
                                         <li className="text-danger mb-1 fw-semibold">
                                             <i className="bi bi-exclamation-triangle-fill me-1"></i>
                                             Lỗi Giải mã RTCM: Không nhận được bất kỳ trị đo vệ tinh nào (gói MSM). Rover không thể FIX RTK!
                                         </li>
                                     )}
 
-                                    {device.status !== "offline" && rtcmInputBps > 0 && rtcmInputBps < 100 && !isAntennaFault && (
+                                    {liveDataAvailable && !hasAgentAssessment && rtcmInputBps > 0 && rtcmInputBps < 100 && !isAntennaFault && (
                                         <li className="text-danger mb-1 fw-semibold">
                                             <i className="bi bi-exclamation-triangle-fill me-1"></i>
                                             Cảnh báo dòng dữ liệu: Tốc độ nhận RTCM từ máy thu cực thấp ({rtcmInputBps} B/s). Ăng-ten có thể đã hỏng hoặc lỏng cáp.
                                         </li>
                                     )}
                                     
-                                    {sats === 0 && device.status !== "offline" && !isAntennaFault && (
+                                    </>}
+                                    {liveDataAvailable && hasSignalData && <>
+                                    {sats === 0 && !hasAgentAssessment && (
                                         <li className="text-danger mb-1 fw-semibold">
                                             <i className="bi bi-exclamation-triangle-fill me-1"></i>
                                             Lỗi Tín hiệu: Không nhận được vệ tinh nào (0 Sats). Kiểm tra kết nối ăng-ten.

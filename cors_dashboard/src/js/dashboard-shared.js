@@ -196,7 +196,10 @@ const isAccessTokenSynced = (device) => {
         auth.agent_token_present !== false;
 };
 
+const isDeviceStaleOffline = (device, nowMs = Date.now()) => Boolean(getOfflineInfo(device, nowMs));
+
 const getMapEffectiveStatus = (device) => {
+    if (isDeviceStaleOffline(device)) return 'offline';
     const authStatus = device?.system_info?.auth_status || {};
     const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
     const rawStatus = String(device?.status || '').toLowerCase();
@@ -230,5 +233,5 @@ const getMapEffectiveStatus = (device) => {
     if (primary.connected) return 'online';
     return statusForOps;
 };
-window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, getMapEffectiveStatus, isAccessTokenSynced };
+window.CorsDashboardShared = { getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, isDeviceStaleOffline, getMapEffectiveStatus, isAccessTokenSynced };
 })();

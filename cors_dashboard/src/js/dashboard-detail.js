@@ -40,12 +40,7 @@ const STATUS_CLASS_MAP = {
 };
 
 function isDeviceStaleOffline(device, nowMs = Date.now()) {
-    const rawStatus = String(device?.status || '').toLowerCase();
-    if (rawStatus === 'offline') return true;
-    const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
-    const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
-    if (!timestamp) return false;
-    return (nowMs / 1000) - timestamp > 180;
+    return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
 }
 const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
     const [rovers, setRovers] = useState([]);
