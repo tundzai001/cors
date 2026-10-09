@@ -124,6 +124,7 @@ class Device(DeviceBase):
     ntrip_connected: bool | None = False
     ntrip_status: dict | None = Field(default_factory=dict)
     is_locked: bool | None = False
+    server_config_lock: dict | None = Field(default_factory=dict)
 
     is_synced: bool | None = True
     sync_errors: list[str] | None = Field(default_factory=list)
@@ -166,6 +167,16 @@ class CasterMountpointLookupRequest(BaseModel):
 
 class DeviceRenameSerial(BaseModel):
     new_serial: str
+
+class StationHostLockRequest(BaseModel):
+    allowed_servers: list[int] = Field(default_factory=list)
+
+    @validator("allowed_servers")
+    def validate_servers(cls, value):
+        if any(sid not in (1, 2) for sid in value) or len(value) != len(set(value)):
+            raise ValueError("Chỉ chọn Server 1 và Server 2, không trùng lặp")
+        return value
+
 
 class ServiceConfig(BaseModel):
     ncomport: str | None = Field(None, description="Định danh trạm hoặc ID cổng COM")

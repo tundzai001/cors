@@ -23,6 +23,7 @@ class Device(Base):
     ntrip_connected = Column(Boolean, default=False)
     ntrip_status = Column(JSONB, nullable=True)
     is_locked = Column(Boolean, default=False)
+    server_config_lock = Column(JSONB, nullable=True)
     is_provisioned = Column(Boolean, default=False)
     system_info = Column(JSONB, nullable=True)
     rtk_fix_status = Column(String, default="NO_FIX")  

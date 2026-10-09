@@ -3041,11 +3041,11 @@ async def lifespan(app: FastAPI):
 
                             if action == "station_lock":
                                 result = await lock_device(device.serial, devices_db, execution_user)
-                                return {"message": f"✅ Đã gửi lệnh KHÓA tới trạm {device.name or device.serial} thành công (Đang chờ trạm đồng bộ)."}
+                                return {"message": f"✅ Đã khóa cấu hình host của trạm {device.name or device.serial} thành công (Đang chờ trạm đồng bộ)."}
 
                             if action == "station_unlock":
                                 result = await unlock_device(device.serial, devices_db, execution_user)
-                                return {"message": f"✅ Đã gửi lệnh MỞ KHÓA tới trạm {device.name or device.serial} thành công (Đang chờ trạm đồng bộ)."}
+                                return {"message": f"✅ Đã mở khóa cấu hình host của trạm {device.name or device.serial} thành công (Đang chờ trạm đồng bộ)."}
 
                             if action == "station_reset":
                                 result = await reset_pi_device(device.serial, devices_db, execution_user)
@@ -3382,6 +3382,7 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Shutdown sequence complete")
 
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
+from .station_host_lock import check_host_lock, host_lock_snapshot, refresh_host_lock
 from .routers import users, devices, api_keys
 app.include_router(users.router)
 app.include_router(devices.router)
@@ -4898,6 +4899,14 @@ async def configure_integration_station(
     key: models.ApiKey = Depends(api_keys.require_integration_key),
 ):
     api_keys.require_station_edit(key, serial)
+    device = await crud.get_device_for_update(db, serial)
+    if not device:
+        raise HTTPException(404, "Device not found")
+    changes = payload.model_dump(exclude_unset=True)
+    for field in schemas.SERVICE_PASSWORD_FIELDS:
+        if changes.get(field) in (None, ""):
+            changes.pop(field, None)
+    check_host_lock(device, changes)
     api_user = models.User(id=key.created_by, username=f"api-key:{key.id}", role=auth.Role.ADMIN, is_active=True)
     return await configure_service_endpoint(serial, payload, db, api_user)
 
@@ -6916,7 +6925,7 @@ async def configure_service_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user) # Thay require_permission để check thủ công
 ):
-    device_in_db = await crud.get_device_by_serial(db, serial)
+    device_in_db = await crud.get_device_for_update(db, serial)
     if not device_in_db:
         raise HTTPException(status_code=404, detail="Device not found in database")
 
@@ -6930,6 +6939,7 @@ async def configure_service_endpoint(
     for key in schemas.SERVICE_PASSWORD_FIELDS:
         if incoming_config.get(key) in (None, ""):
             incoming_config.pop(key, None)
+    check_host_lock(device_in_db, incoming_config, is_admin=current_user.role == auth.Role.ADMIN)
     old_on_demand = old_service_cfg.get("stream_on_demand", False)
     new_on_demand = incoming_config.get("stream_on_demand", old_on_demand)
     old_s1_on_demand = old_service_cfg.get("server1_stream_on_demand")
@@ -6959,6 +6969,7 @@ async def configure_service_endpoint(
         serial, old_service_cfg, {**old_service_cfg, **incoming_config}
     )
     try:
+        refresh_host_lock(device_in_db, service_config_payload)
         device_in_db.service_config = service_config_payload
         await db.commit()
         await db.refresh(device_in_db)
@@ -6992,7 +7003,7 @@ async def configure_service_endpoint(
             serial=serial
         )
         return {"status": "service_config_sent_and_saved", "channel": response.get('channel', 'unknown'),
-                "service_config": service_config_payload}
+                "service_config": service_config_payload, "server_config_lock": device_in_db.server_config_lock}
     except HTTPException as e:
         raise HTTPException(status_code=503, detail=f"Config saved to DB, but failed to send command to Pi: {e.detail}")
 
@@ -7234,50 +7245,70 @@ async def delete_device_from_list(
 async def lock_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+    policy: Optional[schemas.StationHostLockRequest] = None,
+):
     if current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Chỉ admin được khóa trạm")
-    device = await crud.get_device_by_serial(db, serial)
+        raise HTTPException(403, "Chỉ admin được khóa host")
+    device = await crud.get_device_for_update(db, serial)
+    if not device:
+        raise HTTPException(404, "Device not found")
+    config = dict(_device_service_config(device))
+    # Older bulk/Zalo callers freeze current server choices; the UI sends an
+    # explicit selection, including [] when the admin wants both hosts blocked.
+    allowed = policy.allowed_servers if policy is not None else [sid for sid in (1, 2) if config.get(f"server{sid}_enabled")]
+    for sid in (1, 2):
+        if sid in allowed and (not config.get(f"serverhost{sid}") or not config.get(f"port{sid}")):
+            raise HTTPException(422, f"Cấu hình host/cổng Server {sid} trước khi cho phép gửi")
+        config[f"server{sid}_enabled"] = sid in allowed
+        if sid not in allowed:
+            config[f"server{sid}_stream_active"] = False
+    device.server_config_lock = host_lock_snapshot(config)
+    device.service_config = config
+    device.is_synced = False
+    was_locked = bool(device.is_locked or device.status == "locked")
+    await db.commit()
+    mqtt_handler.invalidate_device_cache(serial)
+    delivered = True
     try:
-        response = await send_command_to_pi(serial, {"command": "LOCK_DEVICE", "payload": {}})
-        await crud.log_system_event(
-            db=db,
-            type="warning",
-            message=f"Device '{device.name}' LOCKED by Admin {current_user.username}",
-            user_id=current_user.id,
-            serial=serial
-        )
-        return {"status": "lock_command_sent", "channel": response.get('channel', 'unknown')}
-    except HTTPException as http_exc:
-        # Neu send_command_to_pi raise 503, hay tra ve loi do
-        raise http_exc
-    except Exception as e:
-        logging.error(f"Error in lock_device endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        if was_locked:
+            await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
+            device.is_locked = False
+            await db.commit()
+        await send_command_to_pi(serial, {"command": "DEPLOY_SERVICE_CONFIG", "payload": config})
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            raise
+        delivered = False
+    await db.refresh(device)
+    await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+    await crud.log_system_event(db=db, type="warning", message=f"Admin {current_user.username} locked hosts for {serial}; allowed servers: {allowed}", user_id=current_user.id, serial=serial)
+    return {"status": "host_policy_saved", "delivered": delivered,
+            "server_config_lock": device.server_config_lock, "service_config": config}
+
 
 @app.post("/api/devices/{serial}/unlock")
 async def unlock_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
     if current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Chỉ admin được mở khóa trạm")
-    device = await crud.get_device_by_serial(db, serial)
-    try:
-        response = await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
-        await crud.log_system_event(
-            db=db,
-            type="success",
-            message=f"Device '{device.name}' UNLOCKED by Admin {current_user.username}",
-            user_id=current_user.id,
-            serial=serial
-        )
-        return {"status": "unlock_command_sent", "channel": response.get('channel', 'unknown')}
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        logging.error(f"Error in unlock_device endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        raise HTTPException(403, "Chỉ admin được mở khóa host")
+    device = await crud.get_device_for_update(db, serial)
+    if not device:
+        raise HTTPException(404, "Device not found")
+    was_locked = bool(device.is_locked or device.status == "locked")
+    device.server_config_lock = None
+    await db.commit()
+    if was_locked:
+        await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
+        device.is_locked = False
+        await db.commit()
+    await db.refresh(device)
+    await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+    await crud.log_system_event(db=db, type="info", message=f"Admin {current_user.username} unlocked hosts for {serial}", user_id=current_user.id, serial=serial)
+    return {"status": "host_policy_removed", "server_config_lock": None}
 
 @app.get("/api/devices/export/csv")
 async def export_devices_to_csv(
@@ -8980,13 +9011,11 @@ async def bulk_device_action(
             continue
         try:
             if action == "lock":
-                response = await send_command_to_pi(serial, {"command": "LOCK_DEVICE", "payload": {}})
-                device.is_locked = True
-                status_text = "locked"
+                response = await lock_device(serial, devices_db, current_user)
+                status_text = "hosts_locked"
             elif action == "unlock":
-                response = await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
-                device.is_locked = False
-                status_text = "unlocked"
+                response = await unlock_device(serial, devices_db, current_user)
+                status_text = "hosts_unlocked"
             else:
                 response = await send_command_to_pi(serial, {"command": "REBOOT_DEVICE", "payload": {}})
                 device.status = "rebooting"
@@ -9085,12 +9114,20 @@ async def apply_device_config_template(
         if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
             results.append({"serial": serial, "status": "skipped", "detail": "view only station"})
             continue
+        device = await crud.get_device_for_update(devices_db, serial)
+        if request.apply_service_config:
+            try:
+                check_host_lock(device, template.get("service_config") or {}, is_admin=current_user.role == auth.Role.ADMIN)
+            except HTTPException as exc:
+                results.append({"serial": serial, "status": "skipped", "detail": exc.detail})
+                continue
         if request.apply_base_config and isinstance(template.get("base_config"), dict) and template.get("base_config"):
             device.base_config = template["base_config"]
         if request.apply_service_config and isinstance(template.get("service_config"), dict) and template.get("service_config"):
             device.service_config = _preserve_relay_config_metadata(
-                serial, _device_service_config(device), template["service_config"]
+                serial, _device_service_config(device), {**_device_service_config(device), **template["service_config"]}
             )
+        refresh_host_lock(device, device.service_config or {})
         device.is_synced = False
         results.append({"serial": serial, "status": "applied"})
     await devices_db.commit()

@@ -1782,3 +1782,5 @@ body.dashboard-fixed-layout > main.container-fluid {
         box-shadow: none !important;
     }
 }
+
+.station-host-lock-dialog{width:min(560px,calc(100% - 24px));max-height:calc(100dvh - 32px);padding:0;overflow:auto}.station-host-lock-dialog::backdrop{background:rgba(0,0,0,.7);backdrop-filter:blur(4px)}.station-host-lock-dialog label{cursor:pointer}.station-host-lock-dialog input:disabled{cursor:not-allowed}.station-host-lock-dialog .btn{min-height:44px}

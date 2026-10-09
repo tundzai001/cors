@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 DEVICE_SCHEMA_STATEMENTS = (
+    "ALTER TABLE devices ADD COLUMN IF NOT EXISTS server_config_lock JSONB",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_token VARCHAR",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_provisioned BOOLEAN DEFAULT FALSE",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS system_info JSONB",

@@ -294,6 +294,7 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                         else_=models.Device.base_config
                     ),
                     'service_config': case(
+                        (and_(models.Device.server_config_lock.is_not(None), models.Device.server_config_lock != {}), models.Device.service_config),
                         (models.Device.is_synced == False, models.Device.service_config),
                         (and_(models.Device.service_config != None, stmt.excluded.service_config != None), 
                          case(
@@ -358,6 +359,11 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
             return 0
             
     return 0
+
+async def get_device_for_update(db: AsyncSession, serial: str):
+    result = await db.execute(select(models.Device).where(models.Device.serial == serial)
+                              .with_for_update().execution_options(populate_existing=True))
+    return result.scalars().first()
 
 async def get_device_by_serial(db: AsyncSession, serial: str):
     result = await db.execute(select(models.Device).filter(models.Device.serial == serial))
@@ -449,7 +455,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         )
         return None  # Từ chối xử lý serial không hợp lệ
 
-    existing_device = await get_device_by_serial(db, serial)
+    existing_device = await get_device_for_update(db, serial)
 
     new_base_config = normalize_base_config(device_data.get("base_config", {}))
     new_service_config = normalize_service_config(device_data.get("service_config"))
@@ -607,7 +613,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         if updated_service_config != previous_service_config:
             update_values["service_config"] = updated_service_config
             should_update = True
-    elif not is_out_of_sync and new_service_config and previous_service_config != new_service_config:
+    elif not is_out_of_sync and not existing_device.server_config_lock and new_service_config and previous_service_config != new_service_config:
         update_values["service_config"] = new_service_config
         should_update = True
     

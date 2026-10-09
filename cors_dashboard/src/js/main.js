@@ -1132,7 +1132,10 @@ async function handleConfigureService(serial, payload) {
         // including when delivery fails, so old telemetry cannot undo the edit.
         const current = globalState.devices.find(device => device.serial === serial);
         const savedConfig = result.service_config || { ...(current?.service_config || {}), ...payload };
-        updateGlobalDevices({ serial, service_config: savedConfig, is_synced: false });
+        const currentPolicy = current?.server_config_lock;
+        const serverLock = result.server_config_lock || (currentPolicy && Object.keys(currentPolicy).length
+            ? Object.fromEntries(Object.keys(currentPolicy).map(key => [key, savedConfig[key]])) : currentPolicy);
+        updateGlobalDevices({ serial, service_config: savedConfig, server_config_lock: serverLock, is_synced: false });
         if (response.status === 503) {
             showError('Đã lưu cấu hình nhưng chưa gửi được tới trạm. Bấm áp dụng lại.');
         } else {
@@ -1147,23 +1150,63 @@ async function handleConfigureService(serial, payload) {
 
 
 async function handleLockDevice(serial) {
-    try {
-        await apiFetch(`/api/devices/${serial}/lock`, { method: 'POST' });
-        showSuccess('Đã gửi lệnh khóa thiết bị.');
-    } catch (e) {
-        showError(`Lỗi khóa thiết bị: ${e.message}`);
-        throw e;
+    const device = globalState.devices.find(item => item.serial === serial);
+    if (!device) return;
+    const config = device.service_config || {};
+    const modal = document.createElement('dialog');
+    modal.className = 'station-host-lock-dialog bg-dark text-light border border-secondary rounded-3';
+    modal.setAttribute('aria-labelledby', 'host-lock-title');
+    modal.innerHTML = `<form><div class="p-4"><h2 id="host-lock-title" class="h5">Khoá host / server</h2>
+        <p class="text-secondary small">Chọn server được phép gửi dữ liệu. Server bỏ chọn sẽ ngừng gửi và người dùng không được sửa hoặc bật lại. Người dùng cũng không được tắt server được giữ lại.</p>
+        <div class="host-lock-servers"></div><p class="small text-secondary mt-3 mb-0">Muốn đổi host/cổng, sửa trong Dịch vụ trước khi lưu khoá.</p>
+        <p class="host-lock-error text-danger mt-3 mb-0" role="alert"></p></div>
+        <div class="d-flex justify-content-end gap-2 p-3 border-top border-secondary"><button type="button" class="btn btn-outline-secondary host-lock-cancel">Hủy</button><button type="submit" class="btn btn-warning">Lưu khoá host</button></div></form>`;
+    const rows = modal.querySelector('.host-lock-servers');
+    for (const sid of [1, 2]) {
+        const label = document.createElement('label'); label.className = 'd-flex gap-3 align-items-center border border-secondary rounded p-3 mt-2';
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'form-check-input flex-shrink-0'; checkbox.value = sid;
+        checkbox.checked = config[`server${sid}_enabled`] === true;
+        checkbox.disabled = !config[`serverhost${sid}`] || !config[`port${sid}`];
+        const text = document.createElement('span');
+        const title = document.createElement('strong'); title.className = 'd-block'; title.textContent = `Server ${sid} · Cho phép gửi`;
+        const host = document.createElement('small'); host.className = 'text-secondary'; host.textContent = config[`serverhost${sid}`] ? `${config[`serverhost${sid}`]}:${config[`port${sid}`] || '—'}` : 'Chưa cấu hình host/cổng';
+        text.append(title, host); label.append(checkbox, text); rows.append(label);
     }
+    document.body.append(modal);
+    modal.showModal();
+    let busy = false;
+    return new Promise(resolve => {
+        modal.addEventListener('close', () => { modal.remove(); resolve(); });
+        modal.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+        const cancel = modal.querySelector('.host-lock-cancel');
+        cancel.addEventListener('click', () => modal.close());
+        modal.querySelector('form').addEventListener('submit', async event => {
+            event.preventDefault();
+            if (busy) return;
+            busy = true;
+            const submit = modal.querySelector('[type="submit"]'); submit.disabled = true; cancel.disabled = true; submit.textContent = 'Đang lưu…';
+            try {
+                const allowed_servers = [...rows.querySelectorAll('input:checked')].map(input => Number(input.value));
+                const response = await apiFetch(`/api/devices/${encodeURIComponent(serial)}/lock`, { method: 'POST', body: JSON.stringify({allowed_servers}) });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || 'Không lưu được khoá host.');
+                updateGlobalDevices({serial, server_config_lock: result.server_config_lock, service_config: result.service_config, is_synced: false});
+                modal.close();
+                showSuccess(result.delivered ? 'Đã lưu và gửi khoá host tới trạm.' : 'Đã lưu khoá host. Đang chờ trạm kết nối để áp dụng.');
+            } catch (error) { modal.querySelector('.host-lock-error').textContent = error.message; }
+            finally { busy = false; submit.disabled = false; cancel.disabled = false; submit.textContent = 'Lưu khoá host'; }
+        });
+    });
 }
 
 async function handleUnlockDevice(serial) {
     try {
-        await apiFetch(`/api/devices/${serial}/unlock`, { method: 'POST' });
-        showSuccess('Đã gửi lệnh mở khóa thiết bị.');
-    } catch (e) {
-        showError(`Lỗi mở khóa: ${e.message}`);
-        throw e;
-    }
+        const response = await apiFetch(`/api/devices/${encodeURIComponent(serial)}/unlock`, { method: 'POST' });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || 'Không mở được khoá host.');
+        updateGlobalDevices({serial, server_config_lock: null});
+        showSuccess('Đã mở khoá cấu hình host. Server bị tắt vẫn giữ trạng thái tắt.');
+    } catch (e) { showError(`Lỗi mở khóa: ${e.message}`); throw e; }
 }
 
 // ===============================================================================

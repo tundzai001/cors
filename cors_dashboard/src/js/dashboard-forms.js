@@ -941,14 +941,19 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
     });
     const [visiblePasswords, setVisiblePasswords] = useState({});
     const isAdmin = currentUser?.role === 'admin';
+    const hostPolicy = device.server_config_lock || {};
+    const hostsLocked = Object.keys(hostPolicy).length > 0;
+    const blockedServer = sid => hostsLocked && hostPolicy[`server${sid}_enabled`] === false;
+    const lockedInput = name => !isAdmin && hostsLocked && Object.prototype.hasOwnProperty.call(hostPolicy, name);
+
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isFormDirty, setIsFormDirty] = useState(false);
     const lastHydratedSerialRef = useRef(null);
     const hydratedConfigRef = useRef({});
-    const canManageStationMode =
+    const canManageStationMode = !hostsLocked && (
         currentUser?.role === 'admin' ||
         currentUser?.permissions?.includes('manage:station_mode') ||
-        currentUser?.permissions?.includes('MANAGE_STATION_MODE');
+        currentUser?.permissions?.includes('MANAGE_STATION_MODE')) || isAdmin;
     const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
 
     const toBool = (value, defaultValue = false) => {
@@ -1033,6 +1038,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 if (!merged[`${key}_stream_on_demand`]) merged[`${key}_stream_active`] = true;
             }
 
+            Object.assign(merged, hostPolicy);
             hydratedConfigRef.current = merged;
             setFormState(merged);
             setIsFormDirty(false);
@@ -1043,7 +1049,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             setIsFormDirty(false);
             lastHydratedSerialRef.current = device.serial;
         }
-    }, [device.serial, device.service_config, isAdmin]);
+    }, [device.serial, device.service_config, device.server_config_lock, isAdmin]);
 
     const renderCasterStatus = (serverId) => {
         const key = `server${serverId}`;
@@ -1058,7 +1064,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         let icon = 'bi-hourglass-split';
         let tone = 'secondary';
         if (!enabled) {
-            label = 'Đã tắt'; icon = 'bi-power';
+            label = blockedServer(serverId) ? 'Admin chặn' : 'Đã tắt'; icon = blockedServer(serverId) ? 'bi-lock-fill' : 'bi-power'; tone = blockedServer(serverId) ? 'warning' : 'secondary';
         } else if (pending) {
             label = 'Chưa áp dụng'; icon = 'bi-pencil-square'; tone = 'warning';
         } else if (offline) {
@@ -1118,6 +1124,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
+        if (lockedInput(name)) return;
         const inputValue = type === 'checkbox' ? checked : value;
         setIsFormDirty(true);
 
@@ -1201,6 +1208,18 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 if (!payload[key]) delete payload[key];
             }
 
+            if (hostsLocked && !isAdmin) {
+                for (const key of Object.keys(hostPolicy)) delete payload[key];
+                for (const sid of [1, 2]) {
+                    delete payload[`server${sid}_stream_on_demand`];
+                    delete payload[`server${sid}_stream_active`];
+                    if (blockedServer(sid)) {
+                        for (const prefix of ['ntrip_version', 'username', 'mountpoint', 'password']) delete payload[`${prefix}${sid}`];
+                    }
+                }
+                delete payload.stream_on_demand; delete payload.stream_active;
+            }
+
             const streamSettingsChanged = ['server1_enabled', 'server2_enabled',
                 'server1_stream_on_demand', 'server2_stream_on_demand',
                 'server1_stream_active', 'server2_stream_active'].some(key =>
@@ -1233,6 +1252,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.
                 {' '}Để trống mật khẩu để giữ mật khẩu đã lưu; chỉ nhập khi muốn thay đổi.
             </div>
+            {hostsLocked && <div className="alert alert-warning small" role="status">
+                <i className="bi bi-shield-lock me-2" aria-hidden="true"></i>Admin đã khoá host và trạng thái server.
+                {[1, 2].map(sid => <span key={sid} className="d-block mt-1">Server {sid}: {blockedServer(sid) ? 'Bị chặn · không gửi dữ liệu' : 'Được phép gửi · người dùng không được tắt'}</span>)}
+            </div>}
             {isLteStation && (
                 <div className="alert alert-primary small">
                     <div className="fw-bold mb-1">
@@ -1271,7 +1294,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                         )}
                     </div>
                 </div>
-                <fieldset disabled={disabled}>
+                <fieldset disabled={disabled || (!isAdmin && blockedServer(1))}>
                     <div className="row g-3">
                         <div className="col-md-6">
                             <label htmlFor="ncomport" className="form-label">Định danh Trạm (ID)</label>
@@ -1442,7 +1465,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                     </h2>
                     <div id="collapseOne" className={`accordion-collapse collapse ${isLteStation ? '' : 'show'}`} data-bs-parent="#service-config-accordion">
                         <div className="accordion-body">
-                            <fieldset disabled={disabled}>
+                            <fieldset disabled={disabled || (!isAdmin && blockedServer(1))}>
                                 {isLteStation && (
                                     <div className="alert alert-info small mb-3">
                                         <i className="bi bi-box-arrow-up-right me-2"></i>
@@ -1459,6 +1482,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         role="switch"
                                         id="server1_enabled"
                                         name="server1_enabled"
+                                        disabled={lockedInput('server1_enabled')}
                                         checked={formState.server1_enabled}
                                         onChange={handleChange}
                                     />
@@ -1524,6 +1548,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             type="text"
                                             className="form-control"
                                             name="serverhost1"
+                                        disabled={lockedInput('serverhost1')}
                                             value={formState.serverhost1}
                                             onChange={handleChange}
                                             placeholder="Ví dụ: rtk2go.com"
@@ -1535,6 +1560,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             type="number"
                                             className="form-control"
                                             name="port1"
+                                        disabled={lockedInput('port1')}
                                             value={formState.port1}
                                             onChange={handleChange}
                                             placeholder="2101"
@@ -1595,7 +1621,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                     </h2>
                     <div id="collapseTwo" className="accordion-collapse collapse" data-bs-parent="#service-config-accordion">
                         <div className="accordion-body">
-                            <fieldset disabled={disabled}>
+                            <fieldset disabled={disabled || (!isAdmin && blockedServer(2))}>
                                 {/* Enable Switch */}
                                 <div className="form-check form-switch form-switch-lg mb-3">
                                     <input
@@ -1604,6 +1630,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         role="switch"
                                         id="server2_enabled"
                                         name="server2_enabled"
+                                        disabled={lockedInput('server2_enabled')}
                                         checked={formState.server2_enabled}
                                         onChange={handleChange}
                                     />
@@ -1669,6 +1696,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             type="text"
                                             className="form-control"
                                             name="serverhost2"
+                                        disabled={lockedInput('serverhost2')}
                                             value={formState.serverhost2}
                                             onChange={handleChange}
                                             placeholder="Ví dụ: backup.caster.com"
@@ -1680,6 +1708,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             type="number"
                                             className="form-control"
                                             name="port2"
+                                        disabled={lockedInput('port2')}
                                             value={formState.port2}
                                             onChange={handleChange}
                                             placeholder="2101"

@@ -592,7 +592,7 @@ async def batch_sync_checker():
             # Lấy danh sách devices online từ cache (không cần DB)
             online_serials = [
                 serial for serial, status in device_status_cache.items()
-                if status in ['online', 'sleep', 'streaming', 'starting', 'configuring']
+                if status in ['online', 'sleep', 'streaming', 'starting', 'configuring', 'locked']
             ]
             
             if not online_serials:
@@ -611,7 +611,7 @@ async def batch_sync_checker():
                 checked_count = 0
                 
                 # Check sync cho từng device (KHÔNG mở thêm DB connection)
-                for device in devices:
+                for device in sorted(devices, key=lambda item: item.serial):
                     serial = device.serial
                     if device.name:
                         device_name_cache[serial] = device.name
@@ -622,6 +622,13 @@ async def batch_sync_checker():
                         device_sync_cache.get(f"{serial}_service_config")
                     )
                     
+                    # Serialize policy retries with admin edits so an older retry
+                    # cannot re-enable a host the admin just blocked.
+                    policy_row_locked = bool(device.server_config_lock)
+                    if policy_row_locked:
+                        device = await crud.get_device_for_update(session, serial)
+                        if not device:
+                            continue
                     # DB config (chuẩn)
                     db_base = device.base_config or {}
                     db_service = crud.normalize_service_config(device.service_config)
@@ -632,6 +639,17 @@ async def batch_sync_checker():
                     base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
                     srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service", is_relay=is_relay_like)
                     
+                    if device.server_config_lock and (not srv_ok or device.is_locked or device.status == "locked"):
+                        # Retry saved host policy after reconnect; never send LOCK_DEVICE.
+                        from .command_dispatcher import send_command_to_pi
+                        try:
+                            if device.is_locked or device.status == "locked":
+                                await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
+                                device.is_locked = False
+                            await send_command_to_pi(serial, {"command": "DEPLOY_SERVICE_CONFIG", "payload": db_service})
+                        except Exception as exc:
+                            logging.warning("Host policy for %s awaits delivery (%s)", serial, type(exc).__name__)
+
                     version_ok = _version_matches(device.version)
                     version_errs = [] if version_ok else [f"[Version] Agent={device.version or '??'} vs Server={settings.APP_VERSION}"]
                     is_synced = base_ok and srv_ok and version_ok
@@ -652,10 +670,11 @@ async def batch_sync_checker():
                         else:
                             logging.warning("Device %s OUT OF SYNC: %s", serial, base_errs + srv_errs + version_errs)
                     
-                    if device.is_synced != is_synced:
+                    sync_changed = device.is_synced != is_synced
+                    if sync_changed:
                         device.is_synced = is_synced
+                    if sync_changed or policy_row_locked:
                         await session.commit()
-                    
                     checked_count += 1
             
             LAST_GLOBAL_SYNC_CHECK = time.time()
