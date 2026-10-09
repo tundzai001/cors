@@ -25,4 +25,4 @@ Public map (`/api/public/map-stations`) vẫn phục vụ bản đồ khách the
 
 Rollback code: giữ bảng `api_keys` và policy trong DB, trả ứng dụng về phiên bản cũ. Chỉ chạy Alembic downgrade khi đã chắc không còn tích hợp dùng key; downgrade sẽ xóa toàn bộ key.
 
-Trang tự mở hướng dẫn sau khi tạo key; mỗi hàng có cột Hướng dẫn để mở lại. Hướng dẫn gồm URL theo origin hiện tại, method, header Bearer, cURL và JSON minh họa chỉ chứa serial cùng các trường được cấp. Ví dụ không chứa token thật hoặc dữ liệu trạm thật.
+Tạo key xong hiển thị thông báo tự tắt sau 5 giây. Key mới nằm trong mục Hiển thị key của hàng tương ứng tại Key đã cấp, có nút sao chép; chỉ giữ trong bộ nhớ đến khi tải lại trang. Mỗi hàng có cột Hướng dẫn. Hướng dẫn gồm URL theo origin hiện tại, method, header Bearer, cURL và JSON minh họa chỉ chứa serial cùng các trường được cấp. Ví dụ không chứa token thật hoặc dữ liệu trạm thật.

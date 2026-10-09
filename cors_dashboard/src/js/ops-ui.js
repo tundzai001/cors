@@ -58,7 +58,7 @@
         })[char]);
     }
 
-    function showToast(type, message) {
+    function showToast(type, message, delay = 4500) {
         const normalizedType = ['success', 'danger', 'warning', 'info'].includes(type) ? type : 'info';
         const container = getToastContainer();
         const toastEl = document.createElement('div');
@@ -71,7 +71,7 @@
             </div>
         `;
         container.appendChild(toastEl);
-        const toast = new bootstrap.Toast(toastEl, { delay: 4500 });
+        const toast = new bootstrap.Toast(toastEl, { delay });
         toast.show();
         toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
     }

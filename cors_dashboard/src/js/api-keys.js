@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const allStations = document.getElementById('all-stations');
     const saveButton = document.getElementById('save-key');
     const cancelButton = document.getElementById('cancel-edit');
-    const tokenBox = document.getElementById('new-token');
+    const newTokens = new Map();
     const dialog = document.getElementById('key-dialog');
     const formError = document.getElementById('form-error');
     let keys = [];
@@ -16,7 +16,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const neverExpires = document.getElementById('never-expires');
     const expiryInput = document.getElementById('expires-at');
     const guideDialog = document.getElementById('guide-dialog');
-    let createdKey = null;
     const fields = {
         name: ['Tên trạm', 'Tên hiển thị của trạm.'],
         status: ['Trạng thái trạm', 'Trạm đang online, offline hoặc đang khởi động.'],
@@ -47,9 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         expiryInput.required = !neverExpires.checked;
     }
 
-    function showGuide(key, token = null) {
-        document.getElementById('guide-token-box').hidden = !token;
-        document.getElementById('guide-token').value = token || '';
+    function showGuide(key) {
         document.getElementById('guide-title').textContent = `Hướng dẫn: ${key.name}`;
         document.getElementById('guide-scope').textContent = `${key.all_stations ? 'Tất cả trạm' : key.station_serials.length + ' trạm'} · ${key.data_fields.length} trường dữ liệu · ${key.edit_config ? 'Được sửa cấu hình' : 'Chỉ đọc'}`;
         document.getElementById('guide-state').textContent = keyState(key) === 'active' ? 'Dùng key đã lưu khi tạo. Trang này không thể hiển thị lại key cũ.' : 'Key này đã hết hạn hoặc bị thu hồi; yêu cầu sẽ bị từ chối.';
@@ -74,6 +71,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function showStatus(message, kind = 'info') {
+        if (kind === 'success') {
+            status.classList.add('d-none');
+            window.CorsUI.showToast(kind, message, 5000);
+            return;
+        }
         status.className = `alert alert-${kind}`;
         status.textContent = message;
         status.classList.remove('d-none');
@@ -132,7 +134,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             const row = tbody.insertRow();
             const name = document.createElement('span'); name.className = 'ak-key-name'; name.setAttribute('data-no-translate', ''); name.textContent = key.name;
             const subtitle = document.createElement('span'); subtitle.className = 'ak-subtext'; subtitle.textContent = key.edit_config ? 'Đọc dữ liệu & sửa cấu hình' : 'Chỉ đọc dữ liệu';
-            row.insertCell().append(name, subtitle);
+            const identity = row.insertCell(); identity.append(name, subtitle);
+            if (newTokens.has(key.id) && !key.revoked_at) {
+                const reveal = document.createElement('details'); reveal.className = 'ak-row-token';
+                const toggle = document.createElement('summary'); toggle.textContent = 'Hiển thị key';
+                const group = document.createElement('div'); group.className = 'input-group';
+                const input = document.createElement('input'); input.className = 'form-control font-monospace'; input.readOnly = true; input.value = newTokens.get(key.id); input.setAttribute('aria-label', `API key ${key.name}`); input.setAttribute('data-no-translate', '');
+                const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn btn-outline-secondary'; copy.textContent = 'Sao chép';
+                copy.addEventListener('click', async () => {
+                    try { await navigator.clipboard.writeText(input.value); showStatus('Đã sao chép key.', 'success'); }
+                    catch { input.select(); showStatus('Hãy sao chép key đang được chọn.', 'warning'); }
+                });
+                const note = document.createElement('small'); note.className = 'ak-subtext'; note.textContent = 'Lưu key trước khi tải lại trang.';
+                group.append(input, copy); reveal.append(toggle, group, note); identity.append(reveal);
+            }
             const date = row.insertCell();
             date.textContent = key.expires_at === 0 ? 'Vĩnh viễn' : new Date(key.expires_at * 1000).toLocaleDateString('vi-VN');
             if (key.expires_at !== 0) {
@@ -209,6 +224,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await request(`/api/admin/api-keys/${key.id}`, { method: 'DELETE' });
             keys = keys.map(item => item.id === key.id ? { ...item, revoked_at: Date.now() / 1000 } : item);
+            newTokens.delete(key.id);
             renderKeys();
             showStatus('Đã thu hồi key.', 'success');
         } catch (error) { showStatus(error.message, 'danger'); }
@@ -234,14 +250,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             for (const name of names) checkbox(options, name, fields[name][0], ['name','status','lat','lon'].includes(name), fields[name][1]);
         }
         neverExpires.addEventListener('change', syncExpiry);
-        document.getElementById('copy-guide-token').addEventListener('click', async () => {
-            const input = document.getElementById('guide-token');
-            try { await navigator.clipboard.writeText(input.value); document.getElementById('guide-copy-status').textContent = 'Đã sao chép key.'; }
-            catch { input.select(); document.getElementById('guide-copy-status').textContent = 'Hãy sao chép key đang được chọn.'; }
-        });
-        guideDialog.addEventListener('close', () => { document.getElementById('guide-token').value = ''; });
         document.getElementById('close-guide').addEventListener('click', () => guideDialog.close());
-        document.getElementById('new-token-guide').addEventListener('click', () => showGuide(keys.find(key => key.id === createdKey.id) || createdKey));
         document.getElementById('copy-request').addEventListener('click', async () => {
             const feedback = document.getElementById('guide-copy-status');
             try { await navigator.clipboard.writeText(document.getElementById('guide-request').textContent); feedback.textContent = 'Đã sao chép.'; }
@@ -257,10 +266,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('key-filter').addEventListener('change', renderKeys);
         document.getElementById('station-search').addEventListener('input', filterStations);
         form.addEventListener('change', updateSummary);
-        document.getElementById('copy-token').addEventListener('click', async () => {
-            try { await navigator.clipboard.writeText(document.getElementById('token-value').value); showStatus('Đã sao chép key.', 'success'); }
-            catch { showStatus('Không sao chép tự động được. Hãy chọn và sao chép key bên dưới.', 'warning'); document.getElementById('token-value').select(); }
-        });
         form.addEventListener('submit', async event => {
             event.preventDefault();
             const expiresAt = neverExpires.checked ? 0 : Math.floor(new Date(expiryInput.value).getTime() / 1000);
@@ -284,17 +289,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const result = await request(editingId ? `/api/admin/api-keys/${editingId}` : '/api/admin/api-keys', {
                     method: editingId ? 'PUT' : 'POST', body: JSON.stringify(body)
                 });
-                if (result.token) {
-                    document.getElementById('token-value').value = result.token;
-                    tokenBox.classList.remove('d-none');
-                }
                 const { token, ...metadata } = result;
+                if (token) newTokens.set(metadata.id, token);
                 keys = editingId ? keys.map(key => key.id === editingId ? metadata : key) : [metadata, ...keys];
                 renderKeys();
                 dialog.close();
-                if (result.token) { createdKey = metadata; showGuide(metadata, result.token); }
                 resetForm();
-                showStatus(result.token ? 'Đã tạo key. Hãy sao chép ngay.' : 'Đã cập nhật quyền key.', 'success');
+                showStatus(result.token ? 'Đã tạo key. Xem và sao chép trong Key đã cấp.' : 'Đã cập nhật quyền key.', 'success');
             } catch (error) { formError.textContent = error.message; formError.classList.remove('d-none'); formError.focus(); }
             finally { cancelButton.disabled = false; document.getElementById('close-dialog').disabled = false; saveButton.disabled = false; saveButton.textContent = editingId ? 'Lưu quyền' : 'Tạo key'; }
         });

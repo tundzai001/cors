@@ -7,7 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css">
-    <link rel="stylesheet" href="/assets/css/dist/api-keys.min.css?v=20261009-1">
+    <link rel="stylesheet" href="/assets/css/dist/api-keys.min.css?v=20261009-2">
 </head>
 <body class="ops-admin-page">
     <nav class="navbar navbar-expand-lg sticky-top ops-admin-nav">
@@ -28,9 +28,6 @@
             <button id="create-key" class="btn btn-primary" disabled><i class="bi bi-plus-lg" aria-hidden="true"></i> Tạo API key</button>
         </header>
         <div id="page-status" class="alert alert-info" role="status">Đang tải dữ liệu…</div>
-        <div id="new-token" class="ak-token d-none" role="status">
-            <i class="bi bi-check-circle" aria-hidden="true"></i><div><strong>API key đã sẵn sàng</strong><p>Sao chép và lưu ở nơi an toàn. Key chỉ hiển thị một lần.</p><div class="input-group"><input id="token-value" class="form-control font-monospace" readonly aria-label="API key vừa tạo"><button id="copy-token" class="btn btn-outline-success" type="button">Sao chép</button></div><button id="new-token-guide" type="button" class="btn btn-outline-success mt-3">Hướng dẫn sử dụng &amp; JSON trả về</button></div>
-        </div>
         <section class="ak-metrics" aria-label="Tổng quan API key">
             <div><span>Tổng số key</span><strong id="count-total">—</strong><i class="bi bi-key" aria-hidden="true"></i></div>
             <div><span>Đang hoạt động</span><strong id="count-active">—</strong><i class="bi bi-check-circle" aria-hidden="true"></i></div>
@@ -68,7 +65,6 @@
     <dialog id="guide-dialog" class="ak-dialog ak-guide" aria-labelledby="guide-title">
         <div class="ak-dialog-header"><div><div class="ak-eyebrow">KẾT NỐI API</div><h2 id="guide-title">Hướng dẫn sử dụng</h2><p id="guide-scope"></p></div><button id="close-guide" class="ak-icon-button" type="button" aria-label="Đóng hướng dẫn"><i class="bi bi-x-lg" aria-hidden="true"></i></button></div>
         <div class="ak-guide-body">
-            <div id="guide-token-box" hidden><strong>Key vừa tạo · chỉ hiển thị lần này</strong><div class="input-group my-3"><input id="guide-token" class="form-control font-monospace" readonly aria-label="Sao chép API key vừa tạo"><button id="copy-guide-token" type="button" class="btn btn-outline-success">Sao chép key</button></div></div>
             <p id="guide-state" class="ak-muted"></p>
             <h3>1. Gửi yêu cầu đọc dữ liệu</h3>
             <p>Gọi từ server của ứng dụng. Thay YOUR_API_KEY bằng key đã sao chép.</p>
@@ -85,9 +81,9 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/assets/js/dist/api-routes.min.js"></script>
     <script src="/assets/js/dist/api-client.min.js"></script>
-    <script src="/assets/js/dist/ops-ui.min.js"></script>
+    <script src="/assets/js/dist/ops-ui.min.js?v=20261009-2"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261008-api-keys"></script>
     <script src="/assets/js/dist/nav-manager.min.js"></script>
-    <script src="/assets/js/dist/api-keys.min.js?v=20261009-1"></script>
+    <script src="/assets/js/dist/api-keys.min.js?v=20261009-2"></script>
 </body>
 </html>
