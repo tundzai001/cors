@@ -7,7 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css">
-    <link rel="stylesheet" href="/assets/css/dist/api-keys.min.css?v=20261008-2">
+    <link rel="stylesheet" href="/assets/css/dist/api-keys.min.css?v=20261009-1">
 </head>
 <body class="ops-admin-page">
     <nav class="navbar navbar-expand-lg sticky-top ops-admin-nav">
@@ -29,7 +29,7 @@
         </header>
         <div id="page-status" class="alert alert-info" role="status">Đang tải dữ liệu…</div>
         <div id="new-token" class="ak-token d-none" role="status">
-            <i class="bi bi-check-circle" aria-hidden="true"></i><div><strong>API key đã sẵn sàng</strong><p>Sao chép và lưu ở nơi an toàn. Key chỉ hiển thị một lần.</p><div class="input-group"><input id="token-value" class="form-control font-monospace" readonly aria-label="API key vừa tạo"><button id="copy-token" class="btn btn-outline-success" type="button">Sao chép</button></div></div>
+            <i class="bi bi-check-circle" aria-hidden="true"></i><div><strong>API key đã sẵn sàng</strong><p>Sao chép và lưu ở nơi an toàn. Key chỉ hiển thị một lần.</p><div class="input-group"><input id="token-value" class="form-control font-monospace" readonly aria-label="API key vừa tạo"><button id="copy-token" class="btn btn-outline-success" type="button">Sao chép</button></div><button id="new-token-guide" type="button" class="btn btn-outline-success mt-3">Hướng dẫn sử dụng &amp; JSON trả về</button></div>
         </div>
         <section class="ak-metrics" aria-label="Tổng quan API key">
             <div><span>Tổng số key</span><strong id="count-total">—</strong><i class="bi bi-key" aria-hidden="true"></i></div>
@@ -38,10 +38,10 @@
         </section>
         <section class="ak-panel" aria-labelledby="list-title">
             <div class="ak-toolbar"><div><h2 id="list-title">Key đã cấp</h2><p>Mỗi key là một phạm vi truy cập riêng.</p></div><div class="ak-filters"><label class="ak-search"><i class="bi bi-search" aria-hidden="true"></i><input id="key-search" type="search" placeholder="Tìm tên tích hợp…" aria-label="Tìm API key"></label><select id="key-filter" class="form-select" aria-label="Lọc trạng thái"><option value="all">Tất cả trạng thái</option><option value="active">Đang hoạt động</option><option value="expired">Hết hạn</option><option value="revoked">Đã thu hồi</option></select></div></div>
-            <div class="table-responsive"><table class="table ak-table align-middle"><thead><tr><th>Tích hợp</th><th>Thời hạn</th><th>Phạm vi truy cập</th><th>Trạng thái</th><th class="text-end">Thao tác</th></tr></thead><tbody id="keys-body"><tr><td colspan="5" class="ak-empty">Đang tải danh sách key…</td></tr></tbody></table></div>
+            <div class="table-responsive"><table class="table ak-table align-middle"><thead><tr><th>Tích hợp</th><th>Thời hạn</th><th>Phạm vi truy cập</th><th>Trạng thái</th><th class="text-end">Thao tác</th><th>Hướng dẫn</th></tr></thead><tbody id="keys-body"><tr><td colspan="6" class="ak-empty">Đang tải danh sách key…</td></tr></tbody></table></div>
             <footer class="ak-table-footer"><i class="bi bi-shield-check" aria-hidden="true"></i> Thay đổi quyền có hiệu lực ngay và giữ nguyên key.</footer>
         </section>
-        <aside class="ak-note"><i class="bi bi-info-circle" aria-hidden="true"></i><span>Key hết hạn theo thời gian thực, kể cả khi máy chủ tạm dừng.</span></aside>
+        <aside class="ak-note"><i class="bi bi-info-circle" aria-hidden="true"></i><span>Key có thời hạn hết hạn theo thời gian thực. Key vĩnh viễn dùng được đến khi bị thu hồi.</span></aside>
     </main>
     <dialog id="key-dialog" class="ak-dialog" aria-labelledby="form-title">
         <div class="ak-dialog-header"><div><div class="ak-eyebrow">QUYỀN TRUY CẬP</div><h2 id="form-title">Tạo API key</h2><p>Cấp đúng dữ liệu cho từng tích hợp.</p></div><button id="close-dialog" class="ak-icon-button" type="button" aria-label="Đóng cấu hình"><i class="bi bi-x-lg" aria-hidden="true"></i></button></div>
@@ -50,14 +50,14 @@
             <div class="ak-editor-grid">
                 <section class="ak-editor-main">
                     <div class="ak-section-title"><span>01</span><h3>Thông tin tích hợp</h3></div>
-                    <div class="ak-input-grid"><div><label for="key-name" class="form-label">Tên tích hợp</label><input id="key-name" class="form-control" maxlength="100" placeholder="Ví dụ: Bản đồ giám sát" required></div><div><label for="expires-at" class="form-label">Hết hạn lúc</label><input id="expires-at" type="datetime-local" class="form-control" required></div></div>
+                    <div class="ak-input-grid"><div><label for="key-name" class="form-label">Tên tích hợp</label><input id="key-name" class="form-control" maxlength="100" placeholder="Ví dụ: Bản đồ giám sát" required></div><div><label class="ak-all ak-expiry"><input id="never-expires" type="checkbox" class="form-check-input"><span>Vĩnh viễn<small>Không hết hạn; có thể thu hồi bất cứ lúc nào.</small></span></label><label for="expires-at" class="form-label mt-3">Hết hạn lúc (giờ trên máy bạn)</label><input id="expires-at" type="datetime-local" class="form-control" required></div></div>
                     <div class="ak-section-title"><span>02</span><h3>Phạm vi trạm</h3><small id="station-count">0 trạm được chọn</small></div>
                     <label class="ak-all"><input id="all-stations" type="checkbox" class="form-check-input"><span>Tất cả trạm<small>Bao gồm các trạm được thêm sau này</small></span></label>
                     <label class="ak-search ak-station-search"><i class="bi bi-search" aria-hidden="true"></i><input id="station-search" type="search" placeholder="Tìm tên hoặc serial trạm…" aria-label="Tìm trạm"></label>
                     <div id="station-list" class="ak-stations" role="group" aria-label="Chọn trạm"></div><p id="station-empty" class="d-none ak-no-results">Không tìm thấy trạm phù hợp.</p>
                 </section>
                 <section class="ak-editor-permissions">
-                    <div class="ak-section-title"><span>03</span><h3>Dữ liệu &amp; quyền</h3></div><p class="ak-muted">Chỉ những trường được chọn mới được trả về.</p>
+                    <div class="ak-section-title"><span>03</span><h3>Dữ liệu &amp; quyền</h3></div><p class="ak-muted">Chọn dữ liệu ứng dụng cần đọc. Mã trạm (serial) luôn được trả về. Các trường bên dưới có giải thích cụ thể.</p>
                     <div id="field-list" class="ak-fields"></div>
                     <label class="ak-write"><input id="edit-config" type="checkbox" class="form-check-input"><span>Cho phép sửa cấu hình<small>Tích hợp có thể thay đổi dịch vụ của các trạm được cấp quyền.</small></span></label>
                 </section>
@@ -65,12 +65,29 @@
             <footer class="ak-dialog-footer"><span id="permission-summary" aria-live="polite">Chọn phạm vi truy cập cho key</span><div><button id="cancel-edit" type="button" class="btn btn-outline-secondary">Hủy</button><button id="save-key" type="submit" class="btn btn-primary">Tạo key</button></div></footer>
         </form>
     </dialog>
+    <dialog id="guide-dialog" class="ak-dialog ak-guide" aria-labelledby="guide-title">
+        <div class="ak-dialog-header"><div><div class="ak-eyebrow">KẾT NỐI API</div><h2 id="guide-title">Hướng dẫn sử dụng</h2><p id="guide-scope"></p></div><button id="close-guide" class="ak-icon-button" type="button" aria-label="Đóng hướng dẫn"><i class="bi bi-x-lg" aria-hidden="true"></i></button></div>
+        <div class="ak-guide-body">
+            <div id="guide-token-box" hidden><strong>Key vừa tạo · chỉ hiển thị lần này</strong><div class="input-group my-3"><input id="guide-token" class="form-control font-monospace" readonly aria-label="Sao chép API key vừa tạo"><button id="copy-guide-token" type="button" class="btn btn-outline-success">Sao chép key</button></div></div>
+            <p id="guide-state" class="ak-muted"></p>
+            <h3>1. Gửi yêu cầu đọc dữ liệu</h3>
+            <p>Gọi từ server của ứng dụng. Thay YOUR_API_KEY bằng key đã sao chép.</p>
+            <pre id="guide-request" data-no-translate></pre>
+            <button id="copy-request" type="button" class="btn btn-outline-secondary">Sao chép mẫu cURL</button><span id="guide-copy-status" class="ak-muted ms-2" role="status"></span>
+            <h3>2. JSON trả về</h3>
+            <p>Đây là dữ liệu minh họa theo quyền của key, không phải dữ liệu trạm thật. API trả một mảng trạm; trường chưa có dữ liệu có thể là null hoặc không xuất hiện. Không có trạm trong phạm vi thì trả [].</p>
+            <pre id="guide-json" data-no-translate></pre>
+            <dl id="guide-fields" class="ak-guide-fields"></dl>
+            <div id="guide-edit" hidden><h3>3. Gửi yêu cầu sửa cấu hình</h3><p>Key này được sửa cấu hình. Thay SERIAL_TRAM bằng serial của trạm được cấp quyền. JSON dưới đây đổi mountpoint của Caster 1.</p><pre id="guide-edit-request" data-no-translate></pre><p>Đổi cấu hình chip: POST đến <code id="guide-chip-url" data-no-translate></code>, dùng cùng header Bearer và Content-Type: application/json. Body gồm command (lệnh chip hỗ trợ) và payload (tham số lệnh).</p></div>
+            <p class="ak-muted">401: key sai, hết hạn hoặc bị thu hồi. 403: không có quyền sửa trạm. Lưu key trên server của ứng dụng, không đưa vào mã trình duyệt.</p>
+        </div>
+    </dialog>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/assets/js/dist/api-routes.min.js"></script>
     <script src="/assets/js/dist/api-client.min.js"></script>
     <script src="/assets/js/dist/ops-ui.min.js"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261008-api-keys"></script>
     <script src="/assets/js/dist/nav-manager.min.js"></script>
-    <script src="/assets/js/dist/api-keys.min.js?v=20261008-2"></script>
+    <script src="/assets/js/dist/api-keys.min.js?v=20261009-1"></script>
 </body>
 </html>

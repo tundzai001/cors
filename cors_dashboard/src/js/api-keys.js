@@ -13,13 +13,65 @@ document.addEventListener('DOMContentLoaded', async () => {
     let keys = [];
     let editingId = null;
 
+    const neverExpires = document.getElementById('never-expires');
+    const expiryInput = document.getElementById('expires-at');
+    const guideDialog = document.getElementById('guide-dialog');
+    let createdKey = null;
     const fields = {
-        name: 'Tên', status: 'Trạng thái', timestamp: 'Thời điểm cập nhật',
-        offline_since: 'Mất kết nối từ', lat: 'Vĩ độ', lon: 'Kinh độ', alt: 'Độ cao',
-        mountpoint: 'Mountpoint', streams: 'Luồng NTRIP', ntrip_status: 'Trạng thái NTRIP',
-        is_provisioned: 'Đã cấp cấu hình', ntrip_connected: 'Kết nối NTRIP',
-        bps: 'Lưu lượng', service_config: 'Cấu hình dịch vụ (nhạy cảm)'
+        name: ['Tên trạm', 'Tên hiển thị của trạm.'],
+        status: ['Trạng thái trạm', 'Trạm đang online, offline hoặc đang khởi động.'],
+        lat: ['Vĩ độ', 'Tọa độ Bắc / Nam, đơn vị độ.'],
+        lon: ['Kinh độ', 'Tọa độ Đông / Tây, đơn vị độ.'],
+        alt: ['Độ cao', 'Độ cao trạm, đơn vị mét.'],
+        timestamp: ['Lần cập nhật gần nhất', 'Thời điểm trạm gửi dữ liệu, Unix timestamp (giây UTC).'],
+        offline_since: ['Thời điểm mất kết nối', 'Unix timestamp (giây UTC); null nếu chưa ghi nhận mất kết nối.'],
+        mountpoint: ['Tên điểm phát dữ liệu', 'Mountpoint dùng để nhận dữ liệu hiệu chỉnh GNSS.'],
+        streams: ['Danh sách điểm phát', 'Host, port, mountpoint và trạng thái bật của từng luồng NTRIP.'],
+        ntrip_status: ['Chi tiết từng kết nối NTRIP', 'Trạng thái và tốc độ truyền của từng Caster.'],
+        ntrip_connected: ['Đang kết nối Caster', 'true / false: trạm có kết nối gửi dữ liệu NTRIP hay không.'],
+        bps: ['Tốc độ truyền dữ liệu', 'Tổng tốc độ truyền hiện tại của trạm.'],
+        is_provisioned: ['Đã được cấp cấu hình', 'true / false: trạm đã được cấp cấu hình dịch vụ.'],
+        service_config: ['Đọc cấu hình dịch vụ', 'Host, tài khoản và mật khẩu dịch vụ; chỉ chọn nếu tích hợp cần.']
     };
+    const sample = {
+        name: 'Trạm minh họa', status: 'online', lat: 21.0285, lon: 105.8542, alt: 12.5,
+        timestamp: 1791516600, offline_since: null, mountpoint: 'BASE_DEMO',
+        streams: [{stream_id: 's1', host: 'caster.example.com', port: 2101, mountpoint: 'BASE_DEMO', enabled: true}],
+        ntrip_status: {server1: {connected: true, bps: 1250}}, ntrip_connected: true,
+        bps: 1250, is_provisioned: true,
+        service_config: {server1_enabled: true, serverhost1: 'caster.example.com', port1: 2101, mountpoint1: 'BASE_DEMO', username1: 'demo', password1: 'MAT_KHAU_MINH_HOA'}
+    };
+
+    function syncExpiry() {
+        expiryInput.disabled = neverExpires.checked;
+        expiryInput.required = !neverExpires.checked;
+    }
+
+    function showGuide(key, token = null) {
+        document.getElementById('guide-token-box').hidden = !token;
+        document.getElementById('guide-token').value = token || '';
+        document.getElementById('guide-title').textContent = `Hướng dẫn: ${key.name}`;
+        document.getElementById('guide-scope').textContent = `${key.all_stations ? 'Tất cả trạm' : key.station_serials.length + ' trạm'} · ${key.data_fields.length} trường dữ liệu · ${key.edit_config ? 'Được sửa cấu hình' : 'Chỉ đọc'}`;
+        document.getElementById('guide-state').textContent = keyState(key) === 'active' ? 'Dùng key đã lưu khi tạo. Trang này không thể hiển thị lại key cũ.' : 'Key này đã hết hạn hoặc bị thu hồi; yêu cầu sẽ bị từ chối.';
+        const url = `${window.location.origin}/api/integrations/stations`;
+        document.getElementById('guide-request').textContent = `curl --request GET '${url}' \\\n  --header 'Authorization: Bearer YOUR_API_KEY'`;
+        const example = {serial: key.all_stations ? 'SERIAL_TRAM' : key.station_serials[0]};
+        const descriptions = document.getElementById('guide-fields');
+        descriptions.replaceChildren();
+        for (const name of ['serial', ...key.data_fields]) {
+            if (name !== 'serial') example[name] = sample[name];
+            const term = document.createElement('dt'); term.textContent = name; term.setAttribute('data-no-translate', '');
+            const description = document.createElement('dd'); description.textContent = name === 'serial' ? 'Mã định danh trạm, luôn có trong JSON.' : `${fields[name][0]}: ${fields[name][1]}`;
+            descriptions.append(term, description);
+        }
+        document.getElementById('guide-json').textContent = JSON.stringify([example], null, 2);
+        document.getElementById('guide-edit').hidden = !key.edit_config;
+        document.getElementById('guide-edit-request').textContent = `curl --request POST '${url}/SERIAL_TRAM/configure-service' \\\n  --header 'Authorization: Bearer YOUR_API_KEY' \\\n  --header 'Content-Type: application/json' \\\n  --data '{"mountpoint1":"BASE_DEMO"}'`;
+        document.getElementById('guide-chip-url').textContent = `${url}/SERIAL_TRAM/configure-chip`;
+        document.getElementById('guide-copy-status').textContent = '';
+        guideDialog.showModal();
+        guideDialog.querySelector('.ak-guide-body').scrollTop = 0;
+    }
 
     function showStatus(message, kind = 'info') {
         status.className = `alert alert-${kind}`;
@@ -59,7 +111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
 
-    const keyState = key => key.revoked_at ? 'revoked' : key.expires_at <= Date.now() / 1000 ? 'expired' : 'active';
+    const keyState = key => key.revoked_at ? 'revoked' : key.expires_at !== 0 && key.expires_at <= Date.now() / 1000 ? 'expired' : 'active';
     function renderKeys() {
         tbody.replaceChildren();
         const active = keys.filter(key => keyState(key) === 'active').length;
@@ -71,7 +123,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const visible = keys.filter(key => key.name.toLocaleLowerCase('vi').includes(query) && (filter === 'all' || keyState(key) === filter));
         if (!visible.length) {
             const cell = tbody.insertRow().insertCell();
-            cell.colSpan = 5;
+            cell.colSpan = 6;
             cell.className = 'ak-empty';
             cell.innerHTML = keys.length ? '<i class="bi bi-search" aria-hidden="true"></i><strong>Không tìm thấy key</strong><p>Thử tên khác hoặc đổi bộ lọc trạng thái.</p>' : '<i class="bi bi-key" aria-hidden="true"></i><strong>Kết nối đầu tiên bắt đầu từ đây</strong><p>Tạo API key để cấp dữ liệu trạm cho ứng dụng của bạn.</p>';
             return;
@@ -82,8 +134,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const subtitle = document.createElement('span'); subtitle.className = 'ak-subtext'; subtitle.textContent = key.edit_config ? 'Đọc dữ liệu & sửa cấu hình' : 'Chỉ đọc dữ liệu';
             row.insertCell().append(name, subtitle);
             const date = row.insertCell();
-            date.textContent = new Date(key.expires_at * 1000).toLocaleDateString('vi-VN');
-            const time = document.createElement('span'); time.className = 'ak-subtext'; time.textContent = new Date(key.expires_at * 1000).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}); date.append(time);
+            date.textContent = key.expires_at === 0 ? 'Vĩnh viễn' : new Date(key.expires_at * 1000).toLocaleDateString('vi-VN');
+            if (key.expires_at !== 0) {
+                const time = document.createElement('span'); time.className = 'ak-subtext'; time.textContent = new Date(key.expires_at * 1000).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}); date.append(time);
+            }
             const scope = row.insertCell(); scope.textContent = key.all_stations ? 'Tất cả trạm' : `${key.station_serials.length} trạm`;
             const count = document.createElement('span'); count.className = 'ak-subtext'; count.textContent = `${key.data_fields.length} trường dữ liệu`; scope.append(count);
             const state = keyState(key);
@@ -97,7 +151,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const revoke = document.createElement('button'); revoke.className = 'btn btn-outline-danger'; revoke.textContent = 'Thu hồi'; revoke.setAttribute('aria-label', `Thu hồi ${key.name}`); revoke.addEventListener('click', () => revokeKey(key));
                 actions.append(edit, revoke);
             }
-            [...row.cells].forEach((cell, index) => { cell.dataset.label = ['Tích hợp', 'Thời hạn', 'Phạm vi', 'Trạng thái', 'Thao tác'][index]; });
+            const guide = document.createElement('button'); guide.className = 'btn btn-outline-secondary ak-guide-button'; guide.textContent = 'Hướng dẫn'; guide.setAttribute('aria-label', `Hướng dẫn sử dụng ${key.name}`); guide.addEventListener('click', () => showGuide(key)); row.insertCell().append(guide);
+            [...row.cells].forEach((cell, index) => { cell.dataset.label = ['Tích hợp', 'Thời hạn', 'Phạm vi', 'Trạng thái', 'Thao tác', 'Hướng dẫn'][index]; });
         }
     }
 
@@ -118,6 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         formError.classList.add('d-none');
         document.getElementById('station-search').value = '';
         filterStations(); updateSummary(); dialog.showModal();
+        form.scrollTop = 0;
         document.getElementById('key-name').focus();
     }
 
@@ -125,7 +181,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         editingId = key.id;
         document.getElementById('form-title').textContent = `Sửa quyền: ${key.name}`;
         document.getElementById('key-name').value = key.name;
-        document.getElementById('expires-at').value = localDatetime(key.expires_at);
+        neverExpires.checked = key.expires_at === 0;
+        expiryInput.value = localDatetime(key.expires_at || Math.floor(Date.now() / 1000) + 30 * 86400);
+        syncExpiry();
         allStations.checked = key.all_stations;
         stationList.querySelectorAll('input').forEach(input => { input.checked = key.station_serials.includes(input.value); });
         fieldList.querySelectorAll('input').forEach(input => { input.checked = key.data_fields.includes(input.value); });
@@ -138,6 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function resetForm() {
         editingId = null;
         form.reset();
+        syncExpiry();
         document.getElementById('expires-at').value = localDatetime(Math.floor(Date.now() / 1000) + 30 * 86400);
         document.getElementById('form-title').textContent = 'Tạo key';
         saveButton.textContent = 'Tạo key';
@@ -162,13 +221,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         const [devices, loadedKeys] = await Promise.all([request('/api/devices'), request('/api/admin/api-keys')]);
         keys = loadedKeys;
         for (const device of devices) checkbox(stationList, device.serial, device.name || device.serial, false, device.serial);
-        const groups = [ ['Nhận diện & vị trí', ['name','status','lat','lon','alt']], ['Hoạt động & NTRIP', ['timestamp','offline_since','mountpoint','streams','ntrip_status','ntrip_connected','bps','is_provisioned']], ['Cấu hình dịch vụ', ['service_config']] ];
+        const groups = [ ['Dữ liệu cơ bản', ['name','status','lat','lon','alt']], ['Theo dõi hoạt động', ['timestamp','offline_since','ntrip_connected','bps']], ['Dữ liệu nâng cao', ['mountpoint','streams','ntrip_status','is_provisioned','service_config']] ];
         for (const [title, names] of groups) {
-            const heading = document.createElement('h4'); heading.className = 'ak-field-group'; heading.textContent = title;
-            const options = document.createElement('div'); options.className = 'ak-field-options';
-            fieldList.append(heading, options);
-            for (const name of names) checkbox(options, name, fields[name], ['name','status','lat','lon'].includes(name));
+            let container = fieldList;
+            if (title === 'Dữ liệu nâng cao') {
+                container = document.createElement('details'); container.className = 'ak-advanced';
+                const summary = document.createElement('summary'); summary.textContent = 'Dữ liệu nâng cao · NTRIP & cấu hình'; container.append(summary); fieldList.append(container);
+            } else {
+                const heading = document.createElement('h4'); heading.className = 'ak-field-group'; heading.textContent = title; container.append(heading);
+            }
+            const options = document.createElement('div'); options.className = 'ak-field-options'; container.append(options);
+            for (const name of names) checkbox(options, name, fields[name][0], ['name','status','lat','lon'].includes(name), fields[name][1]);
         }
+        neverExpires.addEventListener('change', syncExpiry);
+        document.getElementById('copy-guide-token').addEventListener('click', async () => {
+            const input = document.getElementById('guide-token');
+            try { await navigator.clipboard.writeText(input.value); document.getElementById('guide-copy-status').textContent = 'Đã sao chép key.'; }
+            catch { input.select(); document.getElementById('guide-copy-status').textContent = 'Hãy sao chép key đang được chọn.'; }
+        });
+        guideDialog.addEventListener('close', () => { document.getElementById('guide-token').value = ''; });
+        document.getElementById('close-guide').addEventListener('click', () => guideDialog.close());
+        document.getElementById('new-token-guide').addEventListener('click', () => showGuide(keys.find(key => key.id === createdKey.id) || createdKey));
+        document.getElementById('copy-request').addEventListener('click', async () => {
+            const feedback = document.getElementById('guide-copy-status');
+            try { await navigator.clipboard.writeText(document.getElementById('guide-request').textContent); feedback.textContent = 'Đã sao chép.'; }
+            catch { feedback.textContent = 'Hãy chọn và sao chép mẫu bên trên.'; }
+        });
         allStations.addEventListener('change', () => { stationList.querySelectorAll('input').forEach(input => { input.disabled = allStations.checked; }); updateSummary(); });
         document.getElementById('create-key').disabled = false;
         document.getElementById('create-key').addEventListener('click', () => { resetForm(); openEditor(); });
@@ -185,7 +263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         form.addEventListener('submit', async event => {
             event.preventDefault();
-            const expiresAt = Math.floor(new Date(document.getElementById('expires-at').value).getTime() / 1000);
+            const expiresAt = neverExpires.checked ? 0 : Math.floor(new Date(expiryInput.value).getTime() / 1000);
             const body = {
                 name: document.getElementById('key-name').value.trim(), expires_at: expiresAt,
                 all_stations: allStations.checked,
@@ -194,8 +272,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 edit_config: document.getElementById('edit-config').checked
             };
             formError.classList.add('d-none');
-            if (!body.name || !Number.isFinite(expiresAt) || expiresAt <= Date.now() / 1000 || (!body.all_stations && !body.station_serials.length) || !body.data_fields.length) {
-                formError.textContent = 'Nhập tên, chọn thời hạn trong tương lai, ít nhất một trạm và một trường dữ liệu.';
+            if (!body.name || !Number.isFinite(expiresAt) || (expiresAt !== 0 && expiresAt <= Date.now() / 1000) || (!body.all_stations && !body.station_serials.length) || !body.data_fields.length) {
+                formError.textContent = 'Nhập tên, chọn Vĩnh viễn hoặc thời hạn trong tương lai, ít nhất một trạm và một trường dữ liệu.';
                 formError.classList.remove('d-none'); formError.focus(); return;
             }
             saveButton.disabled = true;
@@ -214,6 +292,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 keys = editingId ? keys.map(key => key.id === editingId ? metadata : key) : [metadata, ...keys];
                 renderKeys();
                 dialog.close();
+                if (result.token) { createdKey = metadata; showGuide(metadata, result.token); }
                 resetForm();
                 showStatus(result.token ? 'Đã tạo key. Hãy sao chép ngay.' : 'Đã cập nhật quyền key.', 'success');
             } catch (error) { formError.textContent = error.message; formError.classList.remove('d-none'); formError.focus(); }

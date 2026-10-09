@@ -6,7 +6,7 @@ import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import auth, models
@@ -24,7 +24,7 @@ STATION_FIELDS = frozenset({
 
 class ApiKeyPolicy(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    expires_at: int
+    expires_at: int = Field(ge=0, description="Unix timestamp UTC; 0 means no expiry")
     all_stations: bool = False
     station_serials: list[str] = Field(default_factory=list)
     data_fields: list[str] = Field(default_factory=list)
@@ -33,7 +33,7 @@ class ApiKeyPolicy(BaseModel):
 
 async def _validate_policy(body: ApiKeyPolicy, db: AsyncSession) -> dict:
     now = int(time.time())
-    if body.expires_at <= now:
+    if body.expires_at != 0 and body.expires_at <= now:
         raise HTTPException(422, "Expiry must be in the future")
     fields = sorted(set(body.data_fields))
     if not fields or not set(fields) <= STATION_FIELDS:
@@ -175,7 +175,7 @@ async def require_integration_key(
     result = await db.execute(select(models.ApiKey).where(
         models.ApiKey.key_hash == digest,
         models.ApiKey.revoked_at.is_(None),
-        models.ApiKey.expires_at > int(time.time()),
+        or_(models.ApiKey.expires_at == 0, models.ApiKey.expires_at > int(time.time())),
     ))
     key = result.scalar_one_or_none()
     if key is None:
