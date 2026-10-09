@@ -100,7 +100,7 @@ class IntegrationApiKeyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalize_station_snapshot({"status": "offline", "timestamp": now, "offline_since": now - 500}, now=now)["offline_since"], now - 500)
 
     async def test_map_cache_hit_and_miss_both_return_effective_offline(self):
-        source = Path(__file__).parents[1] / "app" / "main.py"
+        source = Path(__file__).parents[1] / "app" / "map_routes.py"
         function = next(node for node in ast.parse(source.read_text()).body if isinstance(node, ast.AsyncFunctionDef) and node.name == "_get_map_station_items")
         namespace = {
             "Any": Any, "Optional": Optional, "Response": Response, "AsyncSession": object, "Depends": lambda _: None, "get_db": None,

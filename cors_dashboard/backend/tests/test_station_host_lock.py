@@ -44,9 +44,11 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
                                     log_system_event=AsyncMock(), get_system_settings=AsyncMock())
         source = Path(__file__).parents[1] / 'app' / 'main.py'
         names = {'lock_device', 'unlock_device', 'configure_service_endpoint', 'configure_integration_station', 'apply_device_config_template'}
-        definitions = [node for node in ast.parse(source.read_text()).body if isinstance(node, ast.AsyncFunctionDef) and node.name in names]
+        definitions = [node for filename in ('main.py', 'device_command_routes.py')
+                       for node in ast.parse((source.parent / filename).read_text()).body
+                       if isinstance(node, ast.AsyncFunctionDef) and node.name in names]
         self.assertEqual(len(definitions), len(names))
-        self.ns = dict(app=FastAPI(), AsyncSession=object, get_db=lambda: None, get_auth_db=lambda: None,
+        self.ns = dict(app=FastAPI(), router=FastAPI(), tools_router=FastAPI(), AsyncSession=object, get_db=lambda: None, get_auth_db=lambda: None,
                        Depends=Depends, HTTPException=HTTPException, Optional=Optional, auth=auth, models=models,
                        schemas=schemas, crud=self.crud, api_keys=api_keys, logging=logging,
                        check_host_lock=check_host_lock, host_lock_snapshot=host_lock_snapshot, refresh_host_lock=refresh_host_lock,

@@ -40,7 +40,7 @@ class ServicePasswordPreservationTests(unittest.TestCase):
                        source.index('    # Status\n', source.index('    previous_service_config = _ensure_dict(existing_device.service_config)'))]
         import textwrap
         stored = {"password1": "caster-secret", "password2": "backup-secret", "mountpoint1": "TV869", "serverhost1": "caster", "server1_enabled": True}
-        context = {"existing_device": SimpleNamespace(service_config=stored),
+        context = {"existing_device": SimpleNamespace(service_config=stored, server_config_lock=None),
                    "new_service_config": {"mountpoint1": "TV869", "server1_stream_active": True},
                    "_ensure_dict": lambda value: value, "schemas": SimpleNamespace(preserve_service_passwords=preserve),
                    "serial": "LP_E051D80E3511", "is_out_of_sync": False,
@@ -73,7 +73,7 @@ class ServicePasswordPreservationTests(unittest.TestCase):
         self.assertEqual(deploy("V2.2.6", saved, changes, healthy), changes)
 
     def test_endpoint_saves_merged_config_but_sends_only_patch(self):
-        tree = ast.parse((APP / "main.py").read_text())
+        tree = ast.parse((APP / "device_command_routes.py").read_text())
         endpoint = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "configure_service_endpoint")
         def assignment(name):
             return next(node for node in endpoint.body if isinstance(node, ast.Assign)

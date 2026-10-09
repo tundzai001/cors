@@ -26,15 +26,16 @@ class ApiKeysAdminAccessTests(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides[get_auth_db] = lambda: self.db
         self.app.dependency_overrides[get_db] = lambda: self.db
         # Use production route definitions without starting MQTT or databases.
-        source = Path(__file__).parents[1] / 'app' / 'main.py'
+        source = Path(__file__).parents[1] / 'app' / 'frontend_routes.py'
         tree = ast.parse(source.read_text())
         definitions = [node for node in tree.body
                        if isinstance(node, ast.AsyncFunctionDef)
                        and node.name in {'serve_api_keys', 'serve_public_html'}]
         self.assertEqual(len(definitions), 2)
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'),
-             {'app': self.app, 'FileResponse': FileResponse, 'HTTPException': HTTPException})
-        middleware = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+             {'router': self.app, 'FileResponse': FileResponse, 'HTTPException': HTTPException})
+        middleware_tree = ast.parse((source.parent / 'main.py').read_text())
+        middleware = next(node for node in middleware_tree.body if isinstance(node, ast.ClassDef)
                           and node.name == 'FrontendCacheMiddleware')
         namespace = {'BaseHTTPMiddleware': BaseHTTPMiddleware, 'Request': object}
         exec(compile(ast.Module(body=[middleware], type_ignores=[]), str(source), 'exec'), namespace)
