@@ -84,3 +84,23 @@ class TokenOnboardingTests(unittest.IsolatedAsyncioTestCase):
         self.db.add.assert_not_called()
         self.db.commit.assert_not_awaited()
         self.dispatch.assert_not_awaited()
+
+
+class LicenseFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_token_conflicts_and_database_failures_rollback_cleanly(self):
+        from app import main, schemas
+        device = models.Device(serial='10000000e44764d2', device_token='existing')
+        for error, expected_status in (
+            (IntegrityError('insert', {}, Exception('duplicate')), 409),
+            (RuntimeError('database unavailable'), 500),
+        ):
+            with self.subTest(status=expected_status):
+                db = SimpleNamespace(commit=AsyncMock(side_effect=error), rollback=AsyncMock())
+                with patch.object(main.crud, 'get_device_by_serial', AsyncMock(return_value=device)):
+                    with self.assertRaises(HTTPException) as raised:
+                        await main.generate_pi_license(
+                            schemas.LicenseRequest(serial=device.serial), db, SimpleNamespace(id=1, role='admin'))
+                self.assertEqual(raised.exception.status_code, expected_status)
+                db.rollback.assert_awaited_once()
+
+
