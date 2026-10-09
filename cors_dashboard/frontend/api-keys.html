@@ -6,8 +6,8 @@
     <title>API Keys - CORS Control Center</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css?v=20261009-key-reveal-v1">
-    <link rel="stylesheet" href="/assets/css/dist/api-keys.min.css?v=20261009-key-reveal-v1">
+    <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css?v=20261009-admin-only">
+    <link rel="stylesheet" href="/assets/css/dist/api-keys.min.css?v=20261009-admin-only">
 </head>
 <body class="ops-admin-page">
     <nav class="navbar navbar-expand-lg sticky-top ops-admin-nav">
@@ -22,7 +22,7 @@
         </div>
     </nav>
 
-    <main class="ak-page">
+    <main class="ak-page" hidden>
         <header class="ak-heading">
             <div><div class="ak-eyebrow">TÍCH HỢP &amp; TRUY CẬP</div><h1>API Keys</h1><p>Quản lý kết nối, dữ liệu và quyền truy cập trạm từ một nơi.</p></div>
             <button id="create-key" class="btn btn-primary" disabled><i class="bi bi-plus-lg" aria-hidden="true"></i> Tạo API key</button>
@@ -81,9 +81,9 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/assets/js/dist/api-routes.min.js"></script>
     <script src="/assets/js/dist/api-client.min.js"></script>
-    <script src="/assets/js/dist/ops-ui.min.js?v=20261009-key-reveal-v1"></script>
+    <script src="/assets/js/dist/ops-ui.min.js?v=20261009-admin-only"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261008-api-keys"></script>
     <script src="/assets/js/dist/nav-manager.min.js"></script>
-    <script src="/assets/js/dist/api-keys.min.js?v=20261009-key-reveal-v1"></script>
+    <script src="/assets/js/dist/api-keys.min.js?v=20261009-admin-only"></script>
 </body>
 </html>

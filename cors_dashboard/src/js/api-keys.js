@@ -10,6 +10,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     const newTokens = new Map();
     const dialog = document.getElementById('key-dialog');
     const formError = document.getElementById('form-error');
+    let sessionClosed = false;
+    function clearSensitivePage() {
+        sessionClosed = true;
+        newTokens.clear();
+        keys = [];
+        tbody.replaceChildren();
+        form.reset();
+        dialog.close();
+        guideDialog.close();
+        document.querySelector('main').hidden = true;
+    }
+    window.addEventListener('cors:session-expired', clearSensitivePage);
+    window.addEventListener('pagehide', clearSensitivePage);
+    window.addEventListener('pageshow', event => { if (event.persisted) window.location.reload(); });
     let keys = [];
     let editingId = null;
 
@@ -77,11 +91,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function request(url, options = {}) {
         const response = await window.ApiClient.apiFetch(url, options, 0);
+        if (response.status === 403) {
+            clearSensitivePage();
+            window.location.replace('/api-keys');
+            throw new Error('Không có quyền truy cập API Keys.');
+        }
         if (!response.ok) {
             const body = await response.json().catch(() => ({}));
             throw new Error(Array.isArray(body.detail) ? body.detail.map(item => item.msg).join('; ') : body.detail || `HTTP ${response.status}`);
         }
-        return response.status === 204 ? null : response.json();
+        const result = response.status === 204 ? null : await response.json();
+        if (sessionClosed) throw new Error('Phiên truy cập đã kết thúc.');
+        return result;
     }
 
     function checkbox(container, name, label, checked = false, detail = '') {
@@ -257,8 +278,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
         const user = await window.ApiClient.requireAuthenticatedPage();
-        if (!user) return;
-        if (user.role !== 'admin') { showStatus('Chỉ admin được quản trị API key.', 'danger'); form.classList.add('d-none'); return; }
+        if (!user || user.role !== 'admin' || sessionClosed) { clearSensitivePage(); window.location.replace('/'); return; }
+        document.querySelector('main').hidden = false;
         const [devices, loadedKeys] = await Promise.all([request('/api/devices'), request('/api/admin/api-keys')]);
         keys = loadedKeys;
         for (const device of devices) checkbox(stationList, device.serial, device.name || device.serial, false, device.serial);

@@ -1808,8 +1808,10 @@ class FrontendCacheMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         content_type = response.headers.get("content-type", "").lower()
 
-        if "text/html" in content_type:
-            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        if path.startswith("/api/admin/api-keys"):
+            response.headers["Cache-Control"] = "no-store"
+        elif "text/html" in content_type:
+            response.headers.setdefault("Cache-Control", "no-cache, must-revalidate")
         elif path.startswith(("/css/", "/js/", "/img/")):
             response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
         return response
@@ -9846,8 +9848,14 @@ async def serve_users():
     return FileResponse("../frontend/users.html")
 
 @app.get("/api-keys", include_in_schema=False)
+@app.get("/api-keys.html", include_in_schema=False)
 async def serve_api_keys():
-    return FileResponse("../frontend/api-keys.html")
+    # Navigation cannot send the JWT stored by ApiClient. Only the gate is public;
+    # the page itself is fetched through the authenticated admin endpoint.
+    return FileResponse("../frontend/api-keys-gate.html", headers={
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "frame-ancestors 'none'",
+    })
 
 @app.get("/security", include_in_schema=False)
 async def serve_security():
@@ -9900,7 +9908,7 @@ async def serve_robots():
 
 @app.get("/{page_name}.html", include_in_schema=False)
 async def serve_public_html(page_name: str):
-    if page_name not in {"operations", "rovers-global", "security", "users", "zalo", "api-keys"}:
+    if page_name not in {"operations", "rovers-global", "security", "users", "zalo"}:
         raise HTTPException(status_code=404)
     return FileResponse(f"../frontend/{page_name}.html")
 

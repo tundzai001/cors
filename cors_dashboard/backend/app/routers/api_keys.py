@@ -4,10 +4,12 @@ import base64
 import hashlib
 import secrets
 import time
+from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,6 +101,17 @@ def project_station_items(items: list[dict], key: models.ApiKey, configs: dict) 
 def require_station_edit(key: models.ApiKey, serial: str) -> None:
     if not key.edit_config or (not key.all_stations and serial not in (key.station_serials or [])):
         raise HTTPException(403, "API key cannot edit this station")
+
+
+@router.get("/api/admin/api-keys/page", include_in_schema=False)
+async def api_keys_page(user: models.User = Depends(auth.get_current_user)):
+    if user.role != auth.Role.ADMIN:
+        raise HTTPException(403, "Admin access required")
+    return FileResponse(
+        Path(__file__).resolve().parents[3] / "frontend" / "api-keys.html",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                 "Content-Security-Policy": "frame-ancestors 'none'"},
+    )
 
 
 @router.get("/api/admin/api-keys")
