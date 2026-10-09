@@ -1,5 +1,5 @@
 #agent_universal.py
-AGENT_VERSION = "V2.2.6"
+AGENT_VERSION = "V2.2.7"
 
 import asyncio
 import copy
