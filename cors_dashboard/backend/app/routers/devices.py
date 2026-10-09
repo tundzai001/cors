@@ -835,9 +835,16 @@ async def auto_deploy_device_token(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_LICENSE))
 ):
-    device = await crud.get_device_by_serial(db, serial)
+    normalized_serial = str(serial).strip().upper()
+    result = await db.execute(
+        select(models.Device).where(func.upper(models.Device.serial) == normalized_serial)
+    )
+    device = result.scalars().first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    # Keep token compatibility checks and MQTT routing tied to the DB's
+    # canonical serial, even when the URL differs only by letter casing.
+    serial = device.serial
     previous_token = device.device_token
     license_key = license_manager.get_or_create_device_token(serial, previous_token)
 
