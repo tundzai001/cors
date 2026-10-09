@@ -1256,7 +1256,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 Cấu hình các dịch vụ đầu ra (NTRIP Caster, RTCM, ...). Các thay đổi sẽ được áp dụng sau khi dịch vụ trên Pi được khởi động lại.
                 {' '}Để trống mật khẩu để giữ mật khẩu đã lưu; chỉ nhập khi muốn thay đổi.
             </div>
-            {hostsLocked && <div className="alert alert-warning small" role="status">
+            {hostsLocked && isAdmin && <div className="alert alert-warning small" role="status">
                 <i className="bi bi-shield-lock me-2" aria-hidden="true"></i>Admin quản lý khoá server.
                 {[1, 2].map(sid => <span key={sid} className="d-block mt-1">Server {sid}: {blockedServer(sid) ? (lockApplied ? 'Đã khoá · không gửi dữ liệu' : 'Khoá · chờ trạm xác nhận') : 'Được phép gửi · người dùng không được tắt'}</span>)}
             </div>}
