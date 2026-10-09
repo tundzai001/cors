@@ -71,14 +71,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function showStatus(message, kind = 'info') {
-        if (kind === 'success') {
-            status.classList.add('d-none');
-            window.CorsUI.showToast(kind, message, 5000);
-            return;
-        }
-        status.className = `alert alert-${kind}`;
-        status.textContent = message;
-        status.classList.remove('d-none');
+        status.classList.add('d-none');
+        window.CorsUI.showToast(kind, message);
     }
 
     async function request(url, options = {}) {
@@ -253,8 +247,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('close-guide').addEventListener('click', () => guideDialog.close());
         document.getElementById('copy-request').addEventListener('click', async () => {
             const feedback = document.getElementById('guide-copy-status');
-            try { await navigator.clipboard.writeText(document.getElementById('guide-request').textContent); feedback.textContent = 'Đã sao chép.'; }
-            catch { feedback.textContent = 'Hãy chọn và sao chép mẫu bên trên.'; }
+            try { await navigator.clipboard.writeText(document.getElementById('guide-request').textContent); feedback.textContent = ''; window.CorsUI.showToast('success', 'Đã sao chép mẫu cURL.'); }
+            catch { feedback.textContent = ''; window.CorsUI.showToast('warning', 'Hãy chọn và sao chép mẫu bên trên.'); }
         });
         allStations.addEventListener('change', () => { stationList.querySelectorAll('input').forEach(input => { input.disabled = allStations.checked; }); updateSummary(); });
         document.getElementById('create-key').disabled = false;
@@ -296,7 +290,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 dialog.close();
                 resetForm();
                 showStatus(result.token ? 'Đã tạo key. Xem và sao chép trong Key đã cấp.' : 'Đã cập nhật quyền key.', 'success');
-            } catch (error) { formError.textContent = error.message; formError.classList.remove('d-none'); formError.focus(); }
+            } catch (error) { showStatus(error.message, 'danger'); }
             finally { cancelButton.disabled = false; document.getElementById('close-dialog').disabled = false; saveButton.disabled = false; saveButton.textContent = editingId ? 'Lưu quyền' : 'Tạo key'; }
         });
         resetForm();

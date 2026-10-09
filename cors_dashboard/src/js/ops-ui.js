@@ -45,10 +45,12 @@
         if (!container) {
             container = document.createElement('div');
             container.id = 'toast-container';
-            container.className = 'toast-container position-fixed top-0 end-0 p-3';
-            container.style.zIndex = '1100';
-            document.body.appendChild(container);
         }
+        const parent = document.querySelector('dialog[open]') || document.body;
+        if (container.parentElement !== parent) parent.appendChild(container);
+        if (parent.tagName === 'DIALOG') parent.addEventListener('close', () => document.body.appendChild(container), { once: true });
+        container.className = 'toast-container ops-toast-container position-fixed top-0 end-0 p-3';
+        container.style.zIndex = '1100';
         return container;
     }
 
@@ -58,7 +60,7 @@
         })[char]);
     }
 
-    function showToast(type, message, delay = 4500) {
+    function showToast(type, message) {
         const normalizedType = ['success', 'danger', 'warning', 'info'].includes(type) ? type : 'info';
         const container = getToastContainer();
         const toastEl = document.createElement('div');
@@ -67,11 +69,11 @@
         toastEl.innerHTML = `
             <div class="d-flex align-items-center">
                 <div class="toast-body">${escapeHtml(message)}</div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Đóng thông báo"></button>
             </div>
         `;
         container.appendChild(toastEl);
-        const toast = new bootstrap.Toast(toastEl, { delay });
+        const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
         toast.show();
         toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
     }

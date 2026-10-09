@@ -1565,35 +1565,7 @@ function removeDeviceLocal(serial) {
 }
 
 function showToast(message, type) {
-    if (window.CorsUI?.showToast) {
-        window.CorsUI.showToast(type, message);
-        return;
-    }
-    const toastContainer = document.getElementById('toast-container') || createToastContainer();
-    const toastEl = document.createElement('div');
-    toastEl.className = `toast align-items-center bg-${type} text-white border-0`;
-    toastEl.setAttribute('role', 'alert');
-
-    toastEl.innerHTML = `
-        <div class="d-flex">
-        <div class="toast-body">${escapeHtmlMain(message)}</div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-        </div>
-    `;
-
-    toastContainer.appendChild(toastEl);
-    const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
-    toast.show();
-    toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
-}
-
-function createToastContainer() {
-    const container = document.createElement('div');
-    container.id = 'toast-container';
-    container.className = 'toast-container position-fixed top-0 end-0 p-3';
-    container.style.zIndex = 1100;
-    document.body.appendChild(container);
-    return container;
+    window.CorsUI.showToast(type, message);
 }
 
 window.logActivity = function (type, message, icon) {
@@ -1604,11 +1576,7 @@ window.logActivity = function (type, message, icon) {
 };
 
 function showSuccess(message) {
-    if (window.showEnhancedToast) {
-        window.showEnhancedToast(message, 'success');
-    } else {
-        showToast(message, 'success');
-    }
+    showToast(message, 'success');
     window.logActivity('success', message, '✅');
 }
 
@@ -1617,11 +1585,7 @@ function showError(message) {
         ? 'Lỗi kết nối mạng. Vui lòng kiểm tra internet.'
         : message;
 
-    if (window.showEnhancedToast) {
-        window.showEnhancedToast(userMessage, 'danger');
-    } else {
-        showToast(userMessage, 'danger');
-    }
+    showToast(userMessage, 'danger');
     window.logActivity('error', userMessage, '❌');
 }
 

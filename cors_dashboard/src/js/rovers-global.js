@@ -2845,8 +2845,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (createForm) {
         createForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const msgEl = document.getElementById('create-error-msg');
-            if (msgEl) msgEl.classList.add('d-none');
             
             const checkedBoxes = document.querySelectorAll('.station-check:checked');
             const selectedSerials = Array.from(checkedBoxes).map(cb => cb.value);
@@ -2855,18 +2853,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
 
             if (selectedSerials.length === 0 && !isAdmin && !mpOverride.trim()) {
-                if (msgEl) {
-                    msgEl.textContent = "Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.";
-                    msgEl.classList.remove('d-none');
-                }
+                showToast('Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.', 'warning');
                 return;
             }
 
             if (!mpOverride.trim()) {
-                if (msgEl) {
-                    msgEl.textContent = "Mountpoint không được để trống.";
-                    msgEl.classList.remove('d-none');
-                }
+                showToast('Mountpoint không được để trống.', 'warning');
                 return;
             }
 
@@ -2910,10 +2902,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await refreshDataInPlace();
 
             } catch (err) {
-                if (msgEl) {
-                    msgEl.textContent = err.message;
-                    msgEl.classList.remove('d-none');
-                }
+                showToast(err.message, 'danger');
             } finally {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = false;
@@ -3456,25 +3445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function showToast(msg, type = 'primary') {
-        if (window.CorsUI?.showToast) {
-            const normalized = type === 'primary' ? 'info' : type;
-            window.CorsUI.showToast(normalized, msg);
-            return;
-        }
-        const container = document.getElementById('toast-container');
-        const el = document.createElement('div');
-        el.className = `toast align-items-center text-bg-${type} border-0 shadow-lg mb-2`;
-        el.role = 'alert';
-        el.innerHTML = `
-            <div class="d-flex">
-                <div class="toast-body fw-medium">${escapeHtml(msg)}</div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-            </div>
-        `;
-        container.appendChild(el);
-        const t = new bootstrap.Toast(el, { delay: 4000 });
-        t.show();
-        el.addEventListener('hidden.bs.toast', () => el.remove());
+        window.CorsUI.showToast(type === 'primary' ? 'info' : type, msg);
     }
 
     // === Premium UI Interaction ===

@@ -115,7 +115,7 @@
     <link rel="stylesheet" href="/assets/css/dist/cinematic-cards.min.css?v=20260521-v4">
     <link rel="stylesheet" href="/assets/css/dist/cinematic-upgrade.min.css?v=20260825-capability-v2">
     <link rel="stylesheet" href="/assets/css/dist/dashboard.min.css?v=20260728-mobile-fluid-v1">
-    <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css?v=20260927-nav-unified-v1">
+    <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css?v=20261009-notifications-v1">
     <link rel="stylesheet" href="/assets/css/dist/responsive-layout.min.css?v=20260730-toggle-fix-v1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
 
@@ -266,80 +266,16 @@
             }, 2500);
         });
     </script>
-    <!-- Global Error Catcher & Reporter for Realtime Debugging -->
     <script>
-        window.addEventListener('error', function (event) {
-            // Avoid duplicating identical error messages
-            const existing = document.querySelectorAll('.global-error-reporter');
-            for (let el of existing) {
-                if (el.textContent.includes(event.message)) return;
-            }
-
-            const errDiv = document.createElement('div');
-            errDiv.className = 'global-error-reporter alert alert-danger animate__animated animate__fadeInDown';
-            errDiv.style.position = 'fixed';
-            errDiv.style.top = '10px';
-            errDiv.style.left = '50%';
-            errDiv.style.transform = 'translateX(-50%)';
-            errDiv.style.zIndex = '99999';
-            errDiv.style.width = '90%';
-            errDiv.style.maxWidth = '800px';
-            errDiv.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
-            errDiv.style.border = '2px solid #dc3545';
-            errDiv.innerHTML = `
-                <div class="d-flex align-items-start gap-3">
-                    <i class="bi bi-bug-fill fs-3 text-warning"></i>
-                    <div class="flex-grow-1 pe-4">
-                        <h6 class="alert-heading fw-bold mb-1">CẢNH BÁO: Lỗi hệ thống phát hiện (Uncaught Exception)</h6>
-                        <p class="small mb-2">Đã xảy ra lỗi thực thi script trên trình duyệt của bạn. Hãy gửi ảnh chụp hoặc thông tin chi tiết bên dưới cho đội ngũ hỗ trợ:</p>
-                        <pre class="global-error-reporter__body" style="white-space: pre-wrap; background: rgba(0,0,0,0.85); padding: 12px; border-radius: 6px; color: #ffc107; font-family: monospace; font-size: 0.85rem; max-height: 250px; overflow-y: auto; margin-bottom: 0;"></pre>
-                    </div>
-                    <button type="button" class="btn-close" style="position:absolute;top:12px;right:12px" onclick="this.closest('.global-error-reporter').remove()" aria-label="Đóng thông báo"></button>
-                </div>
-            `;
-            const body = errDiv.querySelector('.global-error-reporter__body');
-            if (body) {
-                body.textContent = `${event.message}\nat ${event.filename || 'unknown'}:${event.lineno || 0}:${event.colno || 0}\n\n${event.error ? event.error.stack : ''}`;
-            }
-            document.body.appendChild(errDiv);
-            if (window.hideAppPreloader) window.hideAppPreloader();
-        });
-
-        window.addEventListener('unhandledrejection', function (event) {
-            const existing = document.querySelectorAll('.global-error-reporter');
-            const reasonStr = event.reason ? (event.reason.message || String(event.reason)) : 'No reason';
-            for (let el of existing) {
-                if (el.textContent.includes(reasonStr)) return;
-            }
-
-            const errDiv = document.createElement('div');
-            errDiv.className = 'global-error-reporter alert alert-warning animate__animated animate__fadeInDown';
-            errDiv.style.position = 'fixed';
-            errDiv.style.top = '10px';
-            errDiv.style.left = '50%';
-            errDiv.style.transform = 'translateX(-50%)';
-            errDiv.style.zIndex = '99999';
-            errDiv.style.width = '90%';
-            errDiv.style.maxWidth = '800px';
-            errDiv.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
-            errDiv.style.border = '2px solid #ffc107';
-            errDiv.innerHTML = `
-                <div class="d-flex align-items-start gap-3">
-                    <i class="bi bi-exclamation-triangle-fill fs-3 text-dark"></i>
-                    <div class="flex-grow-1 text-dark pe-4">
-                        <h6 class="alert-heading fw-bold mb-1">CẢNH BÁO: Unhandled Rejection (Async Promise)</h6>
-                        <pre class="global-error-reporter__body" style="white-space: pre-wrap; background: rgba(0,0,0,0.85); padding: 12px; border-radius: 6px; color: #ffc107; font-family: monospace; font-size: 0.85rem; max-height: 250px; overflow-y: auto; margin-bottom: 0;"></pre>
-                    </div>
-                    <button type="button" class="btn-close" style="position:absolute;top:12px;right:12px" onclick="this.closest('.global-error-reporter').remove()" aria-label="Đóng thông báo"></button>
-                </div>
-            `;
-            const body = errDiv.querySelector('.global-error-reporter__body');
-            if (body) {
-                body.textContent = event.reason ? (event.reason.stack || event.reason.message || String(event.reason)) : 'No reason provided';
-            }
-            document.body.appendChild(errDiv);
-            if (window.hideAppPreloader) window.hideAppPreloader();
-        });
+        function reportPageError(error) {
+            console.error(error);
+            const notify = () => window.CorsUI.showToast('danger', 'Lỗi giao diện. Vui lòng tải lại trang.');
+            if (window.CorsUI) notify();
+            else document.addEventListener('DOMContentLoaded', notify, { once: true });
+            window.hideAppPreloader?.();
+        }
+        window.addEventListener('error', event => reportPageError(event.error || event.message));
+        window.addEventListener('unhandledrejection', event => reportPageError(event.reason));
     </script>
     <!-- Navbar -->
     <nav class="navbar navbar-expand-lg border-bottom border-secondary-subtle sticky-top d-none ops-admin-nav">
@@ -488,7 +424,7 @@
     <!-- JSX entrypoints are precompiled into /js/dist by scripts/build_frontend_js.ps1. -->
     <script src="/assets/js/dist/api-routes.min.js?v=20260926-configured-relay-power-v1"></script>
     <script src="/assets/js/dist/api-client.min.js?v=20260731-auth-recovery-v3"></script>
-    <script src="/assets/js/dist/ops-ui.min.js?v=20260727-source-v1"></script>
+    <script src="/assets/js/dist/ops-ui.min.js?v=20261009-notifications-v1"></script>
     <script src="/assets/js/dist/dashboard-shared.min.js?v=20261009-antenna-status-v1"></script>
     <script src="/assets/js/dist/stations-map-utils.min.js?v=20260928-rover-fix-quality-v1"></script>
 
@@ -507,7 +443,7 @@
 
     <script src="/assets/js/dist/i18n.min.js?v=20261009-receiver-translation-v2"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20261008-api-keys-v1"></script>
-    <script src="/assets/js/dist/main.min.js?v=20261008-service-intent-v226"></script>
+    <script src="/assets/js/dist/main.min.js?v=20261009-notifications-v1"></script>
 </body>
 
 </html>

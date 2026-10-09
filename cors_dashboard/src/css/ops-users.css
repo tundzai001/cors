@@ -196,7 +196,9 @@
 }
 
 .ops-toast {
-    animation: opsToastIn 160ms ease-out;
+    animation: opsToastIn 200ms ease-out;
+    max-width: calc(100vw - 32px);
+    overflow-wrap: anywhere;
     background: rgba(13, 20, 32, 0.98);
     border: 1px solid var(--ops-border-soft);
     border-radius: var(--ops-radius);
@@ -252,6 +254,13 @@
 }
 
 @keyframes opsToastIn {
-    from { opacity: 0; transform: translateY(-8px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateX(100%); }
+    to { opacity: 1; transform: translateX(0); }
 }
+
+.ops-toast-container { overflow-x: clip; }
+@media (prefers-reduced-motion: reduce) {
+    .ops-toast { animation: none; transition: none; }
+}
+
+.ops-toast .btn-close { width: 44px; height: 44px; padding: 0; flex-shrink: 0; background-size: 14px; }
