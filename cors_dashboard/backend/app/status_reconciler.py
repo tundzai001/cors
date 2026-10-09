@@ -28,6 +28,22 @@ def _as_timestamp(value: Any) -> Optional[float]:
     return timestamp
 
 
+def normalize_station_snapshot(item: dict, *, now: Optional[float] = None) -> dict:
+    """Match dashboard offline detection without mutating the map cache."""
+    now = time.time() if now is None else now
+    timestamp = _as_timestamp(item.get("timestamp"))
+    stale = timestamp is not None and now - timestamp > 180
+    if str(item.get("status") or "").lower() != "offline" and not stale:
+        return dict(item)
+    snapshot = {
+        **item, "status": "offline", "bps": 0,
+        "ntrip_connected": False, "ntrip_status": {},
+    }
+    if stale and str(item.get("status") or "").lower() != "offline":
+        snapshot["offline_since"] = int(timestamp + 180)
+    return snapshot
+
+
 def _as_sequence(value: Any) -> Optional[int]:
     try:
         sequence = int(value)

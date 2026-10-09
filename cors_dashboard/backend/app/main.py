@@ -70,7 +70,7 @@ from .security import rate_limiter
 from .monitoring import health_monitor
 from .caster_client import CasterClient
 from .schema_compat import ensure_auth_zalo_runtime_columns, ensure_device_runtime_columns
-from .status_reconciler import status_reconciler
+from .status_reconciler import normalize_station_snapshot, status_reconciler
 from .control_plane_ack import build_control_plane_ack
 from .nonblocking_logging import configure_nonblocking_logging
 from .export_workbook import make_workbook
@@ -4684,7 +4684,7 @@ async def _get_map_station_items(
             for item in public_map_cache
         ]
         response.headers["X-Data-Cache"] = "HIT"
-        return public_map_cache
+        return [normalize_station_snapshot(item) for item in public_map_cache]
 
     try:
         # Lấy tất cả thiết bị
@@ -4806,7 +4806,7 @@ async def _get_map_station_items(
             f"✓ Public map API: found {len(devices)} devices, returning {len(public_data)} with valid coords, "
             f"skipped {skipped_devices} without usable coords"
         )
-        return public_data
+        return [normalize_station_snapshot(item) for item in public_data]
         
     except Exception as e:
         logging.error(f"â Œ Error fetching public map data: {e}")
