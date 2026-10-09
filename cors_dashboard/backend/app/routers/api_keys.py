@@ -32,6 +32,13 @@ def _token_cipher() -> Fernet:
     return Fernet(base64.urlsafe_b64encode(digest))
 
 
+reveal_rate_limiter = auth.SimpleRateLimiter(max_requests=10, window_seconds=60)
+
+
+class RevealApiKey(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
 class SavedApiKey(BaseModel):
     token: str = Field(min_length=10, max_length=100, pattern=r"^cors_[A-Za-z0-9_-]+$")
 
@@ -150,18 +157,23 @@ async def create_api_key(
     await db.commit()
     await db.refresh(key)
     response.headers["Cache-Control"] = "no-store"
-    return {**_key_metadata(key), "token": token}
+    return _key_metadata(key)
 
 
-@router.get("/api/admin/api-keys/{key_id}/token")
+@router.post("/api/admin/api-keys/{key_id}/token")
 async def reveal_api_key(
     key_id: int,
+    body: RevealApiKey,
     response: Response,
     db: AsyncSession = Depends(get_auth_db),
     user: models.User = Depends(auth.get_current_user),
 ):
     if user.role != auth.Role.ADMIN:
         raise HTTPException(403, "Admin access required")
+    if await reveal_rate_limiter.is_rate_limited(str(user.id)):
+        raise HTTPException(429, "Thử quá nhiều lần. Vui lòng đợi một phút.")
+    if not await auth.verify_password(body.password, user.hashed_password):
+        raise HTTPException(400, "Mật khẩu quản trị viên không đúng.")
     key = await db.get(models.ApiKey, key_id)
     if key is None or key.revoked_at is not None:
         raise HTTPException(404, "API key not found")
@@ -172,7 +184,7 @@ async def reveal_api_key(
     except InvalidToken:
         raise HTTPException(503, "Không thể đọc key đã lưu. Liên hệ quản trị hệ thống.")
     response.headers["Cache-Control"] = "no-store"
-    return {"token": token}
+    return {"token": token, "expires_in": 30}
 
 
 @router.put("/api/admin/api-keys/{key_id}/token")

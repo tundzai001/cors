@@ -6,7 +6,7 @@ Trang quản trị: `/api-keys.html` (chỉ admin). Admin tạo key, chọn Vĩn
 
 ## API
 
-- `POST /api/admin/api-keys`: tạo key. JSON gồm `name`, `expires_at`, `all_stations`, `station_serials`, `data_fields`, `edit_config`.
+- `POST /api/admin/api-keys`: tạo key, chỉ trả metadata; không trả token. JSON gồm `name`, `expires_at`, `all_stations`, `station_serials`, `data_fields`, `edit_config`.
 - `GET /api/admin/api-keys`: xem policy và trạng thái, không trả token.
 - `PUT /api/admin/api-keys/{id}`: sửa policy hoặc gia hạn; token cũ vẫn dùng được nếu chưa thu hồi.
 - `DELETE /api/admin/api-keys/{id}`: thu hồi.
@@ -25,13 +25,13 @@ Public map (`/api/public/map-stations`) vẫn phục vụ bản đồ khách the
 
 Rollback code: giữ bảng `api_keys` và policy trong DB, trả ứng dụng về phiên bản cũ. Chỉ chạy Alembic downgrade khi đã chắc không còn tích hợp dùng key; downgrade sẽ xóa toàn bộ key.
 
-Tạo key xong hiển thị thông báo tự tắt sau 5 giây. Key mới nằm trong mục Hiển thị key của hàng tương ứng tại Key đã cấp, có nút sao chép; key mới được lưu mã hóa và xem lại được sau khi tải trang. Với key cũ chỉ còn hash, admin dán key đã lưu vào mục Hiển thị key để lưu mã hóa; server xác minh hash, không đổi token hoặc quyền. Mỗi hàng có cột Hướng dẫn. Hướng dẫn gồm URL theo origin hiện tại, method, header Bearer, cURL và JSON minh họa chỉ chứa serial cùng các trường được cấp. Ví dụ không chứa token thật hoặc dữ liệu trạm thật.
+Tạo key xong hiển thị thông báo tự tắt sau 5 giây. Key mới nằm trong mục Hiển thị key của hàng tương ứng tại Key đã cấp. Mỗi lần xem phải nhập mật khẩu tài khoản admin đang đăng nhập; xác nhận đúng mới tải token, hiện nút sao chép và đếm ngược 30 giây. Hết thời gian, đóng mục, đổi bộ lọc hoặc chuyển tab sẽ xóa token khỏi giao diện; xem tiếp phải nhập lại mật khẩu. Key mới được lưu mã hóa và xem lại được sau khi tải trang. Với key cũ chỉ còn hash, admin dán key đã lưu vào mục Hiển thị key để lưu mã hóa; server xác minh hash, không đổi token hoặc quyền. Mỗi hàng có cột Hướng dẫn. Hướng dẫn gồm URL theo origin hiện tại, method, header Bearer, cURL và JSON minh họa chỉ chứa serial cùng các trường được cấp. Ví dụ không chứa token thật hoặc dữ liệu trạm thật.
 
 Trạng thái API trạm dùng cùng ngưỡng offline với giao diện: mất heartbeat quá 180 giây trả `status: "offline"`, `bps: 0`, `ntrip_connected: false`. Kiểm tra này áp dụng trên cả cache HIT/MISS, trước khi lọc trường theo quyền key. Trạm đang gửi heartbeat vẫn giữ trạng thái hiện tại, kể cả `awaiting_license`.
 
 ## Lưu và xem lại key
 
-- `GET /api/admin/api-keys/{id}/token`: admin xem lại token mã hóa; key thu hồi trả 404, key cũ chưa có bản mã hóa trả 409.
+- `POST /api/admin/api-keys/{id}/token`: JSON `{"password":"<mật khẩu admin hiện tại>"}`. Kiểm tra admin đang hoạt động từ DB và xác minh mật khẩu mỗi request; trả `{"token":"cors_...","expires_in":30}` với `Cache-Control: no-store`. GET không được hỗ trợ. Sai mật khẩu trả 400; giới hạn 10 lượt xác nhận/phút/tài khoản trên mỗi tiến trình trả 429. Key thu hồi trả 404, key cũ chưa có bản mã hóa trả 409. Mật khẩu không được lưu trong trình duyệt, không truyền qua URL. Không có vé xem key tái sử dụng; 30 giây là thời gian hiển thị, không phải hạn dùng của key tích hợp.
 - `PUT /api/admin/api-keys/{id}/token`: JSON `{"token":"cors_..."}`. Chỉ lưu nếu token khớp SHA-256 đang có; không đổi key đang dùng.
 - Migration `20261009_api_key_reveal` bổ sung cột nullable. Kiểm tra schema khi khởi động cũng thêm cột bằng `IF NOT EXISTS`, hỗ trợ rollout trước Alembic. Chạy `alembic -c alembic_auth.ini upgrade head` để đồng bộ revision.
 - Fernet dùng khóa suy ra từ `SECRET_KEY` với namespace `api-key`; giữ nguyên SECRET_KEY để đọc các token đã lưu. Không lưu token thô hay log token.

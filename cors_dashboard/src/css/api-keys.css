@@ -18,3 +18,5 @@
 @media(max-width:700px){.ak-table .ak-row-token{grid-column:2;max-width:100%}}
 
 .ak-heading>div{min-width:0}.ak-heading>#create-key{flex-shrink:0}
+
+.ak-reveal{width:min(560px,calc(100% - 24px))}.ak-reveal .ak-dialog-header{padding:24px}.ak-reveal .ak-dialog-header h2{font-size:22px}.ak-reveal .ak-dialog-footer{padding:20px 24px;flex-wrap:wrap;gap:12px}.ak-reveal .ak-dialog-footer>span{overflow-wrap:anywhere}

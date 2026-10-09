@@ -7,13 +7,61 @@ document.addEventListener('DOMContentLoaded', async () => {
     const allStations = document.getElementById('all-stations');
     const saveButton = document.getElementById('save-key');
     const cancelButton = document.getElementById('cancel-edit');
-    const newTokens = new Map();
+    const revealedLocks = new Set();
+    const revealDialog = document.getElementById('reveal-dialog');
+    const revealPassword = document.getElementById('reveal-password');
+    const revealError = document.getElementById('reveal-error');
+    const confirmReveal = document.getElementById('confirm-reveal');
+    let pendingReveal = null;
+    function cancelReveal() {
+        const pending = pendingReveal;
+        pendingReveal = null;
+        revealPassword.value = '';
+        revealPassword.type = 'password';
+        revealDialog.close();
+        if (pending) pending.reveal.open = false;
+    }
+    function lockRevealedKeys() {
+        for (const lock of [...revealedLocks]) lock();
+    }
+    document.getElementById('cancel-reveal').addEventListener('click', cancelReveal);
+    revealDialog.addEventListener('cancel', event => { event.preventDefault(); cancelReveal(); });
+    const passwordToggle = document.getElementById('toggle-reveal-password');
+    passwordToggle.addEventListener('click', () => {
+        const visible = revealPassword.type === 'password';
+        revealPassword.type = visible ? 'text' : 'password';
+        passwordToggle.textContent = visible ? 'Ẩn mật khẩu' : 'Hiện mật khẩu';
+        passwordToggle.setAttribute('aria-pressed', String(visible));
+    });
+    document.getElementById('reveal-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const pending = pendingReveal;
+        if (!pending || confirmReveal.disabled) return;
+        const body = JSON.stringify({ password: revealPassword.value });
+        revealPassword.value = '';
+        confirmReveal.disabled = true;
+        confirmReveal.textContent = 'Đang xác nhận…';
+        revealError.textContent = '';
+        try {
+            const result = await request(`/api/admin/api-keys/${pending.key.id}/token`, { method: 'POST', body });
+            if (pendingReveal !== pending || !pending.reveal.isConnected || sessionClosed) return;
+            pendingReveal = null;
+            revealDialog.close();
+            pending.displayToken(result.token);
+        } catch (error) {
+            if (pendingReveal === pending) { revealError.textContent = error.message; revealPassword.focus(); }
+        } finally { confirmReveal.disabled = false; confirmReveal.textContent = 'Xem trong 30 giây'; }
+    });
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { lockRevealedKeys(); cancelReveal(); }
+    });
     const dialog = document.getElementById('key-dialog');
     const formError = document.getElementById('form-error');
     let sessionClosed = false;
     function clearSensitivePage() {
         sessionClosed = true;
-        newTokens.clear();
+        lockRevealedKeys();
+        cancelReveal();
         keys = [];
         tbody.replaceChildren();
         form.reset();
@@ -130,6 +178,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const keyState = key => key.revoked_at ? 'revoked' : key.expires_at !== 0 && key.expires_at <= Date.now() / 1000 ? 'expired' : 'active';
     function renderKeys() {
+        lockRevealedKeys();
+        cancelReveal();
         tbody.replaceChildren();
         const active = keys.filter(key => keyState(key) === 'active').length;
         document.getElementById('count-total').textContent = keys.length;
@@ -158,24 +208,41 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn btn-outline-secondary'; copy.textContent = 'Sao chép'; copy.disabled = true;
                 const save = document.createElement('button'); save.type = 'button'; save.className = 'btn btn-outline-secondary'; save.textContent = 'Lưu key';
                 const note = document.createElement('small'); note.className = 'ak-subtext';
-                let saved = key.has_saved_token || newTokens.has(key.id);
-                let loading = false;
-                const displayToken = token => {
-                    newTokens.set(key.id, token); input.value = token; input.type = 'text'; input.readOnly = true;
-                    copy.disabled = false; save.hidden = true; note.textContent = 'Có thể xem lại sau khi tải trang.';
+                let saved = key.has_saved_token;
+                let deadline = 0, timer, countdown;
+                const lock = () => {
+                    clearTimeout(timer); clearInterval(countdown); revealedLocks.delete(lock);
+                    deadline = 0; input.value = ''; copy.disabled = true;
+                    note.textContent = 'Nhập lại mật khẩu admin để xem key trong 30 giây.';
+                    reveal.open = false;
                 };
-                if (newTokens.has(key.id)) displayToken(newTokens.get(key.id));
-                else {
-                    input.readOnly = saved; input.type = saved ? 'text' : 'password'; save.hidden = saved;
-                    input.placeholder = saved ? 'Mở để tải key…' : 'Dán key đã lưu';
-                    note.textContent = saved ? 'Key chỉ tải khi bạn mở mục này.' : 'Key cũ chỉ còn mã băm. Dán key đã lưu để bật xem lại; key đang dùng giữ nguyên.';
-                }
-                reveal.addEventListener('toggle', async () => {
-                    if (!reveal.open || !saved || newTokens.has(key.id) || loading) return;
-                    loading = true; note.textContent = 'Đang tải key…';
-                    try { const result = await request(`/api/admin/api-keys/${key.id}/token`); displayToken(result.token); }
-                    catch (error) { note.textContent = 'Không tải được key. Đóng rồi mở lại để thử.'; showStatus(error.message, 'danger'); }
-                    finally { loading = false; }
+                const displayToken = token => {
+                    lockRevealedKeys();
+                    input.value = token; input.type = 'text'; input.readOnly = true;
+                    copy.disabled = false; save.hidden = true;
+                    deadline = Date.now() + 30000;
+                    revealedLocks.add(lock);
+                    const updateCountdown = () => {
+                        const seconds = Math.ceil((deadline - Date.now()) / 1000);
+                        if (seconds <= 0) lock();
+                        else note.textContent = `Key tự ẩn sau ${seconds} giây.`;
+                    };
+                    updateCountdown();
+                    timer = setTimeout(lock, 30000);
+                    countdown = setInterval(updateCountdown, 1000);
+                };
+                input.readOnly = saved; input.type = saved ? 'text' : 'password'; save.hidden = saved;
+                input.placeholder = saved ? 'Nhập mật khẩu admin để xem key' : 'Dán key đã lưu';
+                note.textContent = saved ? 'Key chỉ hiển thị trong 30 giây sau khi xác nhận mật khẩu.' : 'Key cũ chỉ còn mã băm. Dán key đã lưu để bật xem lại; key đang dùng giữ nguyên.';
+                reveal.addEventListener('toggle', () => {
+                    if (!reveal.open) { if (deadline) lock(); return; }
+                    if (!saved || deadline) return;
+                    pendingReveal = {key, reveal, displayToken};
+                    revealPassword.value = ''; revealPassword.type = 'password';
+                    passwordToggle.textContent = 'Hiện mật khẩu'; passwordToggle.setAttribute('aria-pressed', 'false');
+                    revealError.textContent = '';
+                    document.getElementById('reveal-key-name').textContent = key.name;
+                    revealDialog.showModal(); revealPassword.focus();
                 });
                 save.addEventListener('click', async () => {
                     const token = input.value.trim();
@@ -183,12 +250,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     save.disabled = true; input.readOnly = true; save.textContent = 'Đang lưu…';
                     try {
                         const metadata = await request(`/api/admin/api-keys/${key.id}/token`, { method: 'PUT', body: JSON.stringify({token}) });
-                        keys = keys.map(item => item.id === key.id ? metadata : item); saved = true; displayToken(token);
+                        keys = keys.map(item => item.id === key.id ? metadata : item); input.value = ''; renderKeys();
                         showStatus('Đã lưu key để xem lại. Key đang dùng giữ nguyên.', 'success');
                     } catch (error) { input.readOnly = false; showStatus(error.message, 'danger'); }
                     finally { save.disabled = false; save.textContent = 'Lưu key'; }
                 });
                 copy.addEventListener('click', async () => {
+                    if (!deadline || Date.now() >= deadline || sessionClosed) { lock(); return; }
                     try { await navigator.clipboard.writeText(input.value); showStatus('Đã sao chép key.', 'success'); }
                     catch { input.select(); showStatus('Hãy sao chép key đang được chọn.', 'warning'); }
                 });
@@ -270,7 +338,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await request(`/api/admin/api-keys/${key.id}`, { method: 'DELETE' });
             keys = keys.map(item => item.id === key.id ? { ...item, revoked_at: Date.now() / 1000 } : item);
-            newTokens.delete(key.id);
             renderKeys();
             showStatus('Đã thu hồi key.', 'success');
         } catch (error) { showStatus(error.message, 'danger'); }
@@ -335,13 +402,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const result = await request(editingId ? `/api/admin/api-keys/${editingId}` : '/api/admin/api-keys', {
                     method: editingId ? 'PUT' : 'POST', body: JSON.stringify(body)
                 });
-                const { token, ...metadata } = result;
-                if (token) newTokens.set(metadata.id, token);
+                const metadata = result;
+                const created = !editingId;
                 keys = editingId ? keys.map(key => key.id === editingId ? metadata : key) : [metadata, ...keys];
                 renderKeys();
                 dialog.close();
                 resetForm();
-                showStatus(result.token ? 'Đã tạo key. Xem và sao chép trong Key đã cấp.' : 'Đã cập nhật quyền key.', 'success');
+                showStatus(created ? 'Đã tạo key. Nhập mật khẩu admin để xem trong Key đã cấp.' : 'Đã cập nhật quyền key.', 'success');
             } catch (error) { showStatus(error.message, 'danger'); }
             finally { cancelButton.disabled = false; document.getElementById('close-dialog').disabled = false; saveButton.disabled = false; saveButton.textContent = editingId ? 'Lưu quyền' : 'Tạo key'; }
         });

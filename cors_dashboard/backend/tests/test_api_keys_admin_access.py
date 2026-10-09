@@ -13,11 +13,13 @@ from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app import auth, models
 from app.database import get_auth_db, get_db
-from app.routers.api_keys import router, _token_cipher
+from app.routers.api_keys import router, _token_cipher, reveal_rate_limiter
 
 
 class ApiKeysAdminAccessTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        reveal_rate_limiter.requests.clear()
+        self.password_hash = await auth.get_password_hash('TestAdminPassword!123')
         self.app = FastAPI()
         self.app.include_router(router)
         self.db = SimpleNamespace(execute=AsyncMock(), get=AsyncMock(), commit=AsyncMock())
@@ -48,8 +50,8 @@ class ApiKeysAdminAccessTests(unittest.IsolatedAsyncioTestCase):
             ('GET', '/api/admin/api-keys/page', None),
             ('GET', '/api/admin/api-keys', None),
             ('POST', '/api/admin/api-keys', body),
-            ('GET', '/api/admin/api-keys/1/token', None),
-            ('PUT', '/api/admin/api-keys/1/token', {'token': 'cors_test_example'}),
+            ('POST', '/api/admin/api-keys/1/token', {'password': 'TestAdminPassword!123'}),
+            ('PUT', '/api/admin/api-keys/1/token', {'token': 'cors_test_example', 'expires_in': 30}),
             ('PUT', '/api/admin/api-keys/1', body),
             ('DELETE', '/api/admin/api-keys/1', None),
         ]
@@ -87,7 +89,7 @@ class ApiKeysAdminAccessTests(unittest.IsolatedAsyncioTestCase):
         await self.assert_denied(token, {401})
 
     async def test_admin_can_load_page_list_and_reveal(self):
-        self.lookup.return_value = SimpleNamespace(id=1, role='admin', is_active=True)
+        self.lookup.return_value = SimpleNamespace(id=1, role='admin', is_active=True, hashed_password=self.password_hash)
         headers = {'Authorization': 'Bearer ' + auth.create_access_token({'sub': 'test'})}
         response = await self.client.get('/api/admin/api-keys/page', headers=headers)
         self.assertEqual(response.status_code, 200)
@@ -98,9 +100,28 @@ class ApiKeysAdminAccessTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/api/admin/api-keys', headers=headers)
         self.assertEqual(response.json(), [])
         self.db.get.return_value = models.ApiKey(revoked_at=None, token_encrypted=_token_cipher().encrypt(b'cors_test_example').decode())
-        response = await self.client.get('/api/admin/api-keys/1/token', headers=headers)
-        self.assertEqual(response.json(), {'token': 'cors_test_example'})
+        response = await self.client.post('/api/admin/api-keys/1/token', headers=headers, json={'password': 'TestAdminPassword!123'})
+        self.assertEqual(response.json(), {'token': 'cors_test_example', 'expires_in': 30})
         self.assertEqual(response.headers['cache-control'], 'no-store')
+
+    async def test_password_required_each_time_and_attempts_limited(self):
+        self.lookup.return_value = SimpleNamespace(id=1, role='admin', is_active=True, hashed_password=self.password_hash)
+        headers = {'Authorization': 'Bearer ' + auth.create_access_token({'sub': 'test'})}
+        path = '/api/admin/api-keys/1/token'
+        self.assertEqual((await self.client.get(path, headers=headers)).status_code, 405)
+        for body in ({}, {'password': ''}):
+            self.assertEqual((await self.client.post(path, headers=headers, json=body)).status_code, 422)
+        for _ in range(10):
+            response = await self.client.post(path, headers=headers, json={'password': 'wrong-password'})
+            self.assertEqual(response.status_code, 400)
+            self.assertNotIn('token', response.json())
+        response = await self.client.post(path, headers=headers, json={'password': 'TestAdminPassword!123'})
+        self.assertEqual(response.status_code, 429)
+        self.db.get.assert_not_awaited()
+        reveal_rate_limiter.requests.clear()
+        self.db.get.return_value = models.ApiKey(revoked_at=None, token_encrypted=_token_cipher().encrypt(b'cors_test_example').decode())
+        self.assertEqual((await self.client.post(path, headers=headers, json={'password': 'TestAdminPassword!123'})).status_code, 200)
+        self.assertEqual((await self.client.post(path, headers=headers, json={'password': 'wrong-password'})).status_code, 400)
 
     async def test_public_aliases_only_return_gate(self):
         for path in ('/api-keys', '/api-keys.html'):
