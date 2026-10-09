@@ -1056,10 +1056,13 @@ async function handleDeployLicense(serial, licenseKey) {
 
 async function handleProvisionDevice(serial, newName) {
     try {
-        await apiFetch(`/api/devices/${serial}/command`, {
+        const response = await apiFetch(`/api/devices/${serial}/command`, {
             method: 'POST',
             body: JSON.stringify({ command: 'PROVISION_DEVICE', payload: { name: newName } })
         });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || 'Không lưu được tên trạm.');
+        updateGlobalDevices({serial, name: result.name || newName});
         showSuccess('Đã gửi lệnh kích hoạt! Giao diện sẽ tự cập nhật.');
     } catch (e) {
         showError(`Lỗi kích hoạt: ${e.message}`);

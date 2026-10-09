@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from ..database import get_auth_db, get_db
 from .. import crud, models, schemas, auth
+from .. import mqtt as mqtt_handler
 from ..command_dispatcher import send_command_to_pi
 from ..websocket import manager as ui_manager
 import logging
@@ -108,14 +109,16 @@ async def rename_device(
         raise HTTPException(status_code=400, detail="Tên không được để trống")
 
     # 2. Cập nhật Database
-    device.name = request.name
+    device.name = request.name.strip()
     await db.commit()
+    await mqtt_handler.cache_device_metadata(device)
+    await ui_manager.broadcast({"type": "status_update", "data": {"serial": serial, "name": device.name}})
     
     # 3. Gửi lệnh xuống Agent
     try:
         await send_command_to_pi(serial, {
             "command": "PROVISION_DEVICE", 
-            "payload": {"name": request.name}
+            "payload": {"name": device.name}
         })
     except Exception as e:
         logging.warning(f"Rename DB ok but failed to send to Agent: {e}")

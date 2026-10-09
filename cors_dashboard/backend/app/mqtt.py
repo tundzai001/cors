@@ -191,6 +191,8 @@ async def cache_device_metadata(device) -> None:
     lock = device_metadata_locks.setdefault(serial_key, asyncio.Lock())
     async with lock:
         device_metadata_cache[serial_key] = _metadata_snapshot(device)
+        if getattr(device, "name", None):
+            device_name_cache[serial_key] = device.name
         with device_deletion_tombstones_lock:
             device_deletion_tombstones.discard(serial_key)
 
@@ -984,7 +986,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             # --- CẬP NHẬT DATA ĐỂ GỬI UI ---
             data['is_synced'] = is_synced
             data['sync_errors'] = sync_errors
-            cached_name = device_name_cache.get(serial)
+            cached_name = metadata.get("name") or device_name_cache.get(serial)
             if cached_name:
                 data['name'] = cached_name
 

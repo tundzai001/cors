@@ -9386,6 +9386,9 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                     payload["is_synced"] = False
                     sync_errors.append("Server token has not been issued to this agent")
                 payload["sync_errors"] = sync_errors
+                saved_name = mqtt_handler.device_name_cache.get(serial)
+                if saved_name:
+                    payload["name"] = saved_name
                 compact_payload = _compact_status_payload(payload)
                 if not compact_payload:
                     continue

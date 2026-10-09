@@ -162,6 +162,14 @@ async def send_generic_command(
         raise HTTPException(status_code=404, detail="Device not found")
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
+    if command.command == "PROVISION_DEVICE":
+        # Provisioning must persist the chosen name before sending it to Pi.
+        # Reuse rename so offline broadcasts and explicit renames agree.
+        name = command.payload.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise HTTPException(status_code=400, detail="Tên không được để trống")
+        from .users import rename_device
+        return await rename_device(serial, schemas.DeviceRename(name=name.strip()), db, current_user)
     await crud.log_system_event(
         db=db,
         type="info",
