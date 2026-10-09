@@ -2364,6 +2364,7 @@ class MqttSourceWorker(threading.Thread):
         self.command_response_timeout = float(self.cfg.get("command_response_timeout", 8))
         self.command_max_retries = int(self.cfg.get("command_max_retries", 20))
         self.command_batch_active = False
+        self.last_antenna_status = None
         self.latest_gga = None
         self.latest_gsa = None
         self.satellites = {}
@@ -2426,9 +2427,11 @@ class MqttSourceWorker(threading.Thread):
         return bool(self._target_socks)
 
     def _derive_status(self, mqtt_data_active):
+        if not mqtt_data_active:
+            return "offline"
         if not any(self._server_target_can_push(server_id) for server_id in (1, 2)):
             return "sleep"
-        if not mqtt_data_active or self.current_mqtt_bps <= 0:
+        if self.current_mqtt_bps <= 0:
             return "offline"
         return "online"
 
@@ -2436,16 +2439,18 @@ class MqttSourceWorker(threading.Thread):
         now = time.time()
         mqtt_data_age = None if self.last_mqtt_data_ts <= 0 else int(now - self.last_mqtt_data_ts)
         mqtt_data_active = mqtt_data_age is not None and mqtt_data_age <= self.data_timeout
-        target_enabled = self._target_enabled()
         server1_connected = "server1" in self._target_socks
         server2_connected = "server2" in self._target_socks
         server1_bps = self.current_bps_by_server.get("server1", 0)
         server2_bps = self.current_bps_by_server.get("server2", 0)
+        if not mqtt_data_active:
+            self.latest_gga = None
+            self.latest_gsa = None
         latest_gga = self.latest_gga if isinstance(self.latest_gga, dict) else None
         latest_gsa = self.latest_gsa if isinstance(self.latest_gsa, dict) else None
         satellites = {
             key: sat for key, sat in self.satellites.items()
-            if now - float(sat.get("last_seen", 0)) <= 30
+            if mqtt_data_active and now - float(sat.get("last_seen", 0)) <= 30
         }
         self.satellites = satellites
         configured_coords = {
@@ -2504,7 +2509,22 @@ class MqttSourceWorker(threading.Thread):
             "rtcmusername1": self.cfg.get("rtcmusername1") or "",
             "rtcmpassword1": self.cfg.get("rtcmpassword1") or "",
         }
-        status_value = "sleep" if not target_enabled else self._derive_status(mqtt_data_active)
+        status_value = self._derive_status(mqtt_data_active)
+        rtcm_input_bps = self.current_mqtt_bps if mqtt_data_active else 0
+        satellite_count = len([sat for sat in satellites.values() if sat.get("snr", 0) > 0]) or (latest_gga.get("satellites", 0) if latest_gga else 0)
+        if mqtt_data_active:
+            antenna_state, antenna_message = None, None
+            if 0 < rtcm_input_bps < 100:
+                antenna_state = "FAULT"
+                antenna_message = f"Tốc độ nhận RTCM từ máy thu cực thấp ({rtcm_input_bps} B/s). Kiểm tra ăng-ten và đường truyền nguồn."
+            elif satellite_count > 0:
+                antenna_state = "OK"
+                antenna_message = f"Máy thu đang nhận được {satellite_count} vệ tinh."
+            elif latest_gga is not None:
+                antenna_state = "FAULT"
+                antenna_message = "Không bắt được vệ tinh nào (0 Sats). Kiểm tra ăng-ten và nguồn cấp."
+            if antenna_state:
+                self.last_antenna_status = {"state": antenna_state, "message": antenna_message, "timestamp": now}
         status = {
             "serial": self.serial,
             "rtcm_stats": globals().get("rtcm_signal_decoder").get_stats(self.serial) if globals().get("rtcm_signal_decoder") else {},
@@ -2518,7 +2538,7 @@ class MqttSourceWorker(threading.Thread):
             "ntrip_stats": {
                 "server1_bps": server1_bps,
                 "server2_bps": server2_bps,
-                "rtcm_input_bps": self.current_mqtt_bps,
+                "rtcm_input_bps": rtcm_input_bps,
             },
             "ntrip_status": {
                 "server1": {"connected": server1_connected, "bps": server1_bps},
@@ -2533,7 +2553,7 @@ class MqttSourceWorker(threading.Thread):
             "source_topic": self.cfg['topic'],
             "mqtt_data_active": mqtt_data_active,
             "mqtt_data_age_seconds": mqtt_data_age,
-            "mqtt_stats": {"source_bps": self.current_mqtt_bps},
+            "mqtt_stats": {"source_bps": rtcm_input_bps},
             "nmea_data": {
                 "gga": latest_gga,
                 "gsa": latest_gsa,
@@ -2542,7 +2562,7 @@ class MqttSourceWorker(threading.Thread):
                 "live_coords": live_coords,
             },
             "gnss_stats": {
-                "satellites": len([sat for sat in satellites.values() if sat.get("snr", 0) > 0]) or (latest_gga.get("satellites") if latest_gga else 0),
+                "satellites": satellite_count,
                 "hdop": (latest_gsa or latest_gga or {}).get("hdop"),
                 "pdop": latest_gsa.get("pdop") if latest_gsa else None,
             },
@@ -2554,6 +2574,8 @@ class MqttSourceWorker(threading.Thread):
             "is_provisioned": has_license(self.serial),
             "config_status": getattr(self, "config_status", None)
         }
+        if self.last_antenna_status:
+            status["antenna_status"] = self.last_antenna_status
         status["service_config"] = _status_safe_config(status.get("service_config"))
         try:
             if self.mqtt_status_client and self.mqtt_status_client.is_connected():

@@ -1347,6 +1347,8 @@
         for (const [vietnamese, english] of translations) {
             const from = language === 'en' ? vietnamese : english;
             const to = language === 'en' ? english : vietnamese;
+            // "Thu" is also the Vietnamese word for signal reception.
+            if (language === 'vi' && from === 'Thu') continue;
             if (from.length < minLength || from.length >= maxLength) continue;
             if (!replacements.has(from.toLowerCase())) replacements.set(from.toLowerCase(), to);
         }
@@ -1397,6 +1399,7 @@
             return `\uE000${index}\uE001`;
         };
         let result = String(value ?? '');
+        if (direction === 'vi' && result.trim() === 'Thu') return result.replace('Thu', 'Thứ 5');
         if (direction === 'en') {
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+điểm\s+vị trí(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} position point${Number(count) === 1 ? '' : 's'}`);
             result = result.replace(/^Từ ngày$/iu, 'From').replace(/^Đến ngày$/iu, 'To');
