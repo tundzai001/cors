@@ -143,6 +143,7 @@ class ApiKey(AuthBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
+    token_encrypted = Column(Text, nullable=True)
     key_hash = Column(String(64), unique=True, nullable=False, index=True)
     created_at = Column(BigInteger, nullable=False)
     expires_at = Column(BigInteger, nullable=False)

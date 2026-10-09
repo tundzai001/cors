@@ -1,8 +1,11 @@
 """Admin-managed tokens for server-to-server station reads."""
 
+import base64
 import hashlib
 import secrets
 import time
+
+from cryptography.fernet import Fernet, InvalidToken
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -10,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import auth, models
-from ..database import get_auth_db, get_db
+from ..database import get_auth_db, get_db, settings
 
 router = APIRouter(tags=["API keys"])
 
@@ -20,6 +23,15 @@ STATION_FIELDS = frozenset({
     "mountpoint", "streams", "ntrip_status", "is_provisioned",
     "ntrip_connected", "bps", "service_config",
 })
+
+
+def _token_cipher() -> Fernet:
+    digest = hashlib.sha256(f"api-key:{settings.SECRET_KEY}".encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+class SavedApiKey(BaseModel):
+    token: str = Field(min_length=10, max_length=100, pattern=r"^cors_[A-Za-z0-9_-]+$")
 
 
 class ApiKeyPolicy(BaseModel):
@@ -65,6 +77,7 @@ def _key_metadata(key: models.ApiKey) -> dict:
         "station_serials": key.station_serials,
         "data_fields": key.data_fields,
         "edit_config": key.edit_config,
+        "has_saved_token": bool(key.token_encrypted),
     }
 
 
@@ -116,6 +129,7 @@ async def create_api_key(
     key = models.ApiKey(
         **policy,
         key_hash=hashlib.sha256(token.encode()).hexdigest(),
+        token_encrypted=_token_cipher().encrypt(token.encode()).decode(),
         created_at=int(time.time()),
         created_by=user.id,
     )
@@ -124,6 +138,49 @@ async def create_api_key(
     await db.refresh(key)
     response.headers["Cache-Control"] = "no-store"
     return {**_key_metadata(key), "token": token}
+
+
+@router.get("/api/admin/api-keys/{key_id}/token")
+async def reveal_api_key(
+    key_id: int,
+    response: Response,
+    db: AsyncSession = Depends(get_auth_db),
+    user: models.User = Depends(auth.get_current_user),
+):
+    if user.role != auth.Role.ADMIN:
+        raise HTTPException(403, "Admin access required")
+    key = await db.get(models.ApiKey, key_id)
+    if key is None or key.revoked_at is not None:
+        raise HTTPException(404, "API key not found")
+    if not key.token_encrypted:
+        raise HTTPException(409, "Key cũ chỉ còn mã băm. Dán key đã lưu để bật xem lại.")
+    try:
+        token = _token_cipher().decrypt(key.token_encrypted.encode()).decode()
+    except InvalidToken:
+        raise HTTPException(503, "Không thể đọc key đã lưu. Liên hệ quản trị hệ thống.")
+    response.headers["Cache-Control"] = "no-store"
+    return {"token": token}
+
+
+@router.put("/api/admin/api-keys/{key_id}/token")
+async def save_existing_api_key(
+    key_id: int,
+    body: SavedApiKey,
+    response: Response,
+    db: AsyncSession = Depends(get_auth_db),
+    user: models.User = Depends(auth.get_current_user),
+):
+    if user.role != auth.Role.ADMIN:
+        raise HTTPException(403, "Admin access required")
+    key = await db.get(models.ApiKey, key_id)
+    if key is None or key.revoked_at is not None:
+        raise HTTPException(404, "API key not found")
+    if not secrets.compare_digest(hashlib.sha256(body.token.encode()).hexdigest(), key.key_hash):
+        raise HTTPException(422, "Key không khớp với tích hợp này.")
+    key.token_encrypted = _token_cipher().encrypt(body.token.encode()).decode()
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    return _key_metadata(key)
 
 
 @router.put("/api/admin/api-keys/{key_id}")

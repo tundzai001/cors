@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function showGuide(key) {
         document.getElementById('guide-title').textContent = `Hướng dẫn: ${key.name}`;
         document.getElementById('guide-scope').textContent = `${key.all_stations ? 'Tất cả trạm' : key.station_serials.length + ' trạm'} · ${key.data_fields.length} trường dữ liệu · ${key.edit_config ? 'Được sửa cấu hình' : 'Chỉ đọc'}`;
-        document.getElementById('guide-state').textContent = keyState(key) === 'active' ? 'Dùng key đã lưu khi tạo. Trang này không thể hiển thị lại key cũ.' : 'Key này đã hết hạn hoặc bị thu hồi; yêu cầu sẽ bị từ chối.';
+        document.getElementById('guide-state').textContent = keyState(key) === 'active' ? 'Mở “Hiển thị key” trong danh sách Key đã cấp để xem và sao chép.' : 'Key này đã hết hạn hoặc bị thu hồi; yêu cầu sẽ bị từ chối.';
         const url = `${window.location.origin}/api/integrations/stations`;
         document.getElementById('guide-request').textContent = `curl --request GET '${url}' \\\n  --header 'Authorization: Bearer YOUR_API_KEY'`;
         const example = {serial: key.all_stations ? 'SERIAL_TRAM' : key.station_serials[0]};
@@ -129,18 +129,49 @@ document.addEventListener('DOMContentLoaded', async () => {
             const name = document.createElement('span'); name.className = 'ak-key-name'; name.setAttribute('data-no-translate', ''); name.textContent = key.name;
             const subtitle = document.createElement('span'); subtitle.className = 'ak-subtext'; subtitle.textContent = key.edit_config ? 'Đọc dữ liệu & sửa cấu hình' : 'Chỉ đọc dữ liệu';
             const identity = row.insertCell(); identity.append(name, subtitle);
-            if (newTokens.has(key.id) && !key.revoked_at) {
+            if (!key.revoked_at) {
                 const reveal = document.createElement('details'); reveal.className = 'ak-row-token';
                 const toggle = document.createElement('summary'); toggle.textContent = 'Hiển thị key';
                 const group = document.createElement('div'); group.className = 'input-group';
-                const input = document.createElement('input'); input.className = 'form-control font-monospace'; input.readOnly = true; input.value = newTokens.get(key.id); input.setAttribute('aria-label', `API key ${key.name}`); input.setAttribute('data-no-translate', '');
-                const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn btn-outline-secondary'; copy.textContent = 'Sao chép';
+                const input = document.createElement('input'); input.className = 'form-control font-monospace'; input.setAttribute('aria-label', `API key ${key.name}`); input.setAttribute('data-no-translate', ''); input.autocomplete = 'off'; input.spellcheck = false;
+                const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn btn-outline-secondary'; copy.textContent = 'Sao chép'; copy.disabled = true;
+                const save = document.createElement('button'); save.type = 'button'; save.className = 'btn btn-outline-secondary'; save.textContent = 'Lưu key';
+                const note = document.createElement('small'); note.className = 'ak-subtext';
+                let saved = key.has_saved_token || newTokens.has(key.id);
+                let loading = false;
+                const displayToken = token => {
+                    newTokens.set(key.id, token); input.value = token; input.type = 'text'; input.readOnly = true;
+                    copy.disabled = false; save.hidden = true; note.textContent = 'Có thể xem lại sau khi tải trang.';
+                };
+                if (newTokens.has(key.id)) displayToken(newTokens.get(key.id));
+                else {
+                    input.readOnly = saved; input.type = saved ? 'text' : 'password'; save.hidden = saved;
+                    input.placeholder = saved ? 'Mở để tải key…' : 'Dán key đã lưu';
+                    note.textContent = saved ? 'Key chỉ tải khi bạn mở mục này.' : 'Key cũ chỉ còn mã băm. Dán key đã lưu để bật xem lại; key đang dùng giữ nguyên.';
+                }
+                reveal.addEventListener('toggle', async () => {
+                    if (!reveal.open || !saved || newTokens.has(key.id) || loading) return;
+                    loading = true; note.textContent = 'Đang tải key…';
+                    try { const result = await request(`/api/admin/api-keys/${key.id}/token`); displayToken(result.token); }
+                    catch (error) { note.textContent = 'Không tải được key. Đóng rồi mở lại để thử.'; showStatus(error.message, 'danger'); }
+                    finally { loading = false; }
+                });
+                save.addEventListener('click', async () => {
+                    const token = input.value.trim();
+                    if (!token) { input.focus(); showStatus('Dán key đã lưu của tích hợp này.', 'warning'); return; }
+                    save.disabled = true; input.readOnly = true; save.textContent = 'Đang lưu…';
+                    try {
+                        const metadata = await request(`/api/admin/api-keys/${key.id}/token`, { method: 'PUT', body: JSON.stringify({token}) });
+                        keys = keys.map(item => item.id === key.id ? metadata : item); saved = true; displayToken(token);
+                        showStatus('Đã lưu key để xem lại. Key đang dùng giữ nguyên.', 'success');
+                    } catch (error) { input.readOnly = false; showStatus(error.message, 'danger'); }
+                    finally { save.disabled = false; save.textContent = 'Lưu key'; }
+                });
                 copy.addEventListener('click', async () => {
                     try { await navigator.clipboard.writeText(input.value); showStatus('Đã sao chép key.', 'success'); }
                     catch { input.select(); showStatus('Hãy sao chép key đang được chọn.', 'warning'); }
                 });
-                const note = document.createElement('small'); note.className = 'ak-subtext'; note.textContent = 'Lưu key trước khi tải lại trang.';
-                group.append(input, copy); reveal.append(toggle, group, note); identity.append(reveal);
+                group.append(input, copy, save); reveal.append(toggle, group, note); identity.append(reveal);
             }
             const date = row.insertCell();
             date.textContent = key.expires_at === 0 ? 'Vĩnh viễn' : new Date(key.expires_at * 1000).toLocaleDateString('vi-VN');

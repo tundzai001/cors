@@ -7,13 +7,13 @@ import unittest
 from typing import Any, Optional
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from fastapi import HTTPException, Response
 from app import models
 from app.status_reconciler import normalize_station_snapshot
 
-from app.routers.api_keys import ApiKeyPolicy, _validate_policy, project_station_items, require_integration_key, require_station_edit
+from app.routers.api_keys import ApiKeyPolicy, _validate_policy, project_station_items, require_integration_key, require_station_edit, SavedApiKey, _key_metadata, create_api_key, reveal_api_key, save_existing_api_key
 
 
 class IntegrationApiKeyTests(unittest.IsolatedAsyncioTestCase):
@@ -120,6 +120,52 @@ class IntegrationApiKeyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result[0]["status"], "offline")
                 self.assertEqual(result[0]["offline_since"], old_timestamp + 180)
                 self.assertEqual(namespace["public_map_cache"][0]["status"], "awaiting_license")
+
+    async def test_saved_key_is_encrypted_and_reveal_is_admin_only(self):
+        db = SimpleNamespace(add=Mock(), commit=AsyncMock(), refresh=AsyncMock())
+        admin = SimpleNamespace(role="admin", id=1)
+        policy = ApiKeyPolicy(name="Saved", expires_at=0, all_stations=True, data_fields=["name"])
+        created = await create_api_key(policy, Response(), db, SimpleNamespace(), admin)
+        key = db.add.call_args.args[0]
+        self.assertNotIn(created["token"], key.token_encrypted)
+        self.assertEqual(key.key_hash, hashlib.sha256(created["token"].encode()).hexdigest())
+        self.assertTrue(created["has_saved_token"])
+        self.assertNotIn("token", _key_metadata(key))
+        self.assertNotIn("token_encrypted", _key_metadata(key))
+        db.get = AsyncMock(return_value=key)
+        response = Response()
+        self.assertEqual(await reveal_api_key(1, response, db, admin), {"token": created["token"]})
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        for call in (
+            reveal_api_key(1, Response(), db, SimpleNamespace(role="viewer")),
+            save_existing_api_key(1, SavedApiKey(token=created["token"]), Response(), db, SimpleNamespace(role="viewer")),
+        ):
+            with self.assertRaises(HTTPException) as error:
+                await call
+            self.assertEqual(error.exception.status_code, 403)
+        key.revoked_at = 1
+        with self.assertRaises(HTTPException) as error:
+            await reveal_api_key(1, Response(), db, admin)
+        self.assertEqual(error.exception.status_code, 404)
+
+    async def test_legacy_key_import_preserves_existing_token_and_policy(self):
+        token = "cors_legacy_token"
+        key = models.ApiKey(id=1, name="Legacy", key_hash=hashlib.sha256(token.encode()).hexdigest(), token_encrypted=None, created_at=1, created_by=1, expires_at=0, all_stations=True, station_serials=[], data_fields=["name"], edit_config=False)
+        db = SimpleNamespace(get=AsyncMock(return_value=key), commit=AsyncMock())
+        admin = SimpleNamespace(role="admin")
+        before = _key_metadata(key)
+        with self.assertRaises(HTTPException) as error:
+            await reveal_api_key(1, Response(), db, admin)
+        self.assertEqual(error.exception.status_code, 409)
+        with self.assertRaises(HTTPException) as error:
+            await save_existing_api_key(1, SavedApiKey(token="cors_wrong_token"), Response(), db, admin)
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertIsNone(key.token_encrypted)
+        db.commit.assert_not_awaited()
+        result = await save_existing_api_key(1, SavedApiKey(token=token), Response(), db, admin)
+        self.assertEqual({**before, "has_saved_token": True}, result)
+        self.assertEqual(key.key_hash, hashlib.sha256(token.encode()).hexdigest())
+        self.assertEqual(await reveal_api_key(1, Response(), db, admin), {"token": token})
 
     def test_edit_permission_is_station_scoped(self):
         key = SimpleNamespace(edit_config=True, all_stations=False, station_serials=["A"])
