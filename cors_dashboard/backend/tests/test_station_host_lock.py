@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import logging
+import runpy
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,17 @@ from fastapi import Depends, FastAPI, HTTPException
 from app import auth, crud, models, schemas, mqtt
 from app.routers import api_keys
 from app.station_host_lock import check_host_lock, host_lock_snapshot, refresh_host_lock
+from app.schema_compat import DEVICE_SCHEMA_STATEMENTS
+
+
+class StationHostLockMigrationTests(unittest.TestCase):
+    def test_host_policy_column_is_added_only_by_migration(self):
+        self.assertFalse(any('server_config_lock' in sql for sql in DEVICE_SCHEMA_STATEMENTS))
+        migration_path = Path(__file__).parents[1] / 'alembic_devices' / 'versions' / '20261009_station_host_lock.py'
+        migration = runpy.run_path(str(migration_path))
+        with patch('alembic.op.execute') as execute:
+            migration['upgrade']()
+        execute.assert_called_once_with('ALTER TABLE devices ADD COLUMN IF NOT EXISTS server_config_lock JSONB')
 
 
 class StationHostLockTests(unittest.IsolatedAsyncioTestCase):

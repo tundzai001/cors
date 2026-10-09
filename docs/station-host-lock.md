@@ -12,7 +12,19 @@ Sau khi khoá, người dùng và API key không được đổi host/cổng ho�
 
 ## Migration và rollback
 
-Revision `20261009_station_host_lock`, sau `20261001_unique_rtcm_client_leases`, chỉ thêm cột nullable; không sửa dữ liệu cũ hay cờ `is_locked`. Startup compatibility cũng thêm cột bằng `IF NOT EXISTS`, nên deploy backend trước Alembic vẫn tương thích. Chạy từ `cors_dashboard/backend`: `alembic -c alembic_devices.ini upgrade head` để ghi nhận revision.
+Revision `20261009_station_host_lock`, sau `20261001_unique_rtcm_client_leases`, chỉ thêm cột nullable; không sửa dữ liệu cũ hay cờ `is_locked`. Backend không tự thêm cột `server_config_lock` khi khởi động. Chạy migration trước khi khởi động backend mới, từ `cors_dashboard/backend`:
+
+```sh
+alembic -c alembic_devices.ini upgrade head
+```
+
+Migration này chạy trên DB CORS/devices theo `DATABASE_URL`, không phải DB Auth (`AUTH_DATABASE_URL`). Nếu thêm cột thủ công trong Query Tool của pgAdmin, chọn DB CORS có bảng `devices` rồi chạy:
+
+```sql
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS server_config_lock JSONB;
+```
+
+Sau khi chạy SQL thủ công vẫn có thể chạy lệnh Alembic trên để ghi nhận revision: `IF NOT EXISTS` giữ nguyên cột đã có.
 
 Rollback code giữ cột và cấu hình server đang tắt; code cũ không thực thi giới hạn sửa và nút khoá cũ lại khoá toàn thiết bị. Không coi rollback code là bảo toàn bảo vệ host. Downgrade schema chỉ bỏ snapshot chính sách, không bật lại server hay xoá cấu hình dịch vụ. Chỉ downgrade khi đã chủ động bỏ chính sách; giữ cột khi rollback là lựa chọn bảo toàn dữ liệu.
 
