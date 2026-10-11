@@ -1,6 +1,7 @@
 """Caster source, account and blocklist APIs."""
 
 import logging
+import math
 from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,14 @@ from .caster_helpers import validate_caster_hosts
 
 logger = logging.getLogger("app.main")
 router = APIRouter()
+
+
+def _finite_coordinate(value):
+    try:
+        coordinate = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return coordinate if math.isfinite(coordinate) else None
 
 
 @router.get("/api/caster/clienttable")
@@ -44,6 +53,14 @@ async def get_caster_clienttable(
                 c_copy = dict(c)
                 c_copy["server"] = host
                 c_copy["show_position"] = user_visibility_map.get(u_lower, True)
+                # One non-finite coordinate makes Starlette reject the entire JSON response.
+                # Keep the client row, but let the map skip that unusable position.
+                c_copy["latitude"] = _finite_coordinate(c_copy.get("latitude", c_copy.get("lat")))
+                c_copy["longitude"] = _finite_coordinate(c_copy.get("longitude", c_copy.get("lon")))
+                if "lat" in c_copy:
+                    c_copy["lat"] = _finite_coordinate(c_copy["lat"])
+                if "lon" in c_copy:
+                    c_copy["lon"] = _finite_coordinate(c_copy["lon"])
                 all_clients.append(c_copy)
 
     # Keep all clients; frontend will decide visibility by valid coordinates.

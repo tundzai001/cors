@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import os
 from pathlib import Path
 from typing import List, Optional
@@ -221,6 +222,14 @@ class CasterClient:
         except Exception:
             return default
 
+    @staticmethod
+    def _parse_coordinate(value):
+        try:
+            coordinate = float(value)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        return coordinate if math.isfinite(coordinate) else None
+
     async def get_users(self) -> List[dict]:
         if not self.admin_user or not self.admin_password:
             logger.error("Caster usertable credentials are not configured")
@@ -337,8 +346,8 @@ class CasterClient:
                     "username": parts[1].strip(),
                     "receiver_id": parts[2].strip(),
                     "mountpoint": parts[3].strip(),
-                    "latitude": float(parts[4]) if parts[4] else None,
-                    "longitude": float(parts[5]) if parts[5] else None,
+                    "latitude": self._parse_coordinate(parts[4]) if parts[4] else None,
+                    "longitude": self._parse_coordinate(parts[5]) if parts[5] else None,
                     "status": int(parts[6]) if parts[6].isdigit() else 1,
                     "nsv": int(parts[7]) if parts[7].isdigit() else 0,
                     "uptime": int(parts[8]) if len(parts) > 8 and parts[8].isdigit() else None,
