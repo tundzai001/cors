@@ -215,6 +215,7 @@ async def get_rover_activity_track(
         session.id,
         session.username,
         session.mountpoint,
+        session.base_name,
         session.started_at,
         session.last_seen_at,
         session.ended_at,
@@ -230,11 +231,12 @@ async def get_rover_activity_track(
         session_id: {
             "username": username,
             "mountpoint": mountpoint,
+            "base_name": base_name,
             "started_at": started_at,
             "last_seen_at": last_seen_at,
             "ended_at": ended_at,
         }
-        for session_id, username, mountpoint, started_at, last_seen_at, ended_at in session_result.all()
+        for session_id, username, mountpoint, base_name, started_at, last_seen_at, ended_at in session_result.all()
     }
     if not session_info:
         return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "sessions": [], "points": []}
@@ -372,6 +374,7 @@ async def get_rover_history(
             "id": session.id,
             "server": session.server,
             "mountpoint": session.mountpoint,
+            "base_name": session.base_name,
             "client_id": session.client_id,
             "receiver_id": session.receiver_id,
             "started_at": session.started_at,

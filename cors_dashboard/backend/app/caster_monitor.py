@@ -9,7 +9,7 @@ import os
 import math
 
 from . import crud, models
-from .database import auth_session_scope, settings
+from .database import auth_session_scope, device_session_scope, settings
 from .runtime_config import _read_caster_config_from_env, ROVER_FIXED_POINT_INTERVAL_SECONDS
 from .ntrip_control import RTCM_KEEPALIVE_DEBUG
 from .caster_cache import _get_caster_cache, _set_caster_cache, global_caster_cache_lock
@@ -179,18 +179,52 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             if isinstance(client, dict) and str(client.get("username") or "").strip()
         }
         rover_save_settings_by_username = {}
+        base_names_by_serial_mountpoint: dict[tuple[str, str], str] = {}
         if client_usernames:
             auto_save_result = await db.execute(
                 select(
                     func.lower(models.RoverAccount.username),
                     models.RoverAccount.auto_save_sessions,
                     models.RoverAccount.auto_save_fixed_points,
+                    models.RoverAccount.base_serial,
                 ).where(func.lower(models.RoverAccount.username).in_(client_usernames))
             )
             rover_save_settings_by_username = {
-                username: (bool(save_sessions), bool(save_points))
-                for username, save_sessions, save_points in auto_save_result.all()
+                username: (bool(save_sessions), bool(save_points), base_serial)
+                for username, save_sessions, save_points, base_serial in auto_save_result.all()
             }
+            base_serials = {
+                serial.strip().upper()
+                for save_sessions, _, raw_serials in rover_save_settings_by_username.values()
+                if save_sessions
+                for serial in str(raw_serials or "").replace(";", ",").split(",")
+                if serial.strip()
+            }
+            lookup_all_stations = any(
+                save_sessions and not str(raw_serials or "").strip()
+                for save_sessions, _, raw_serials in rover_save_settings_by_username.values()
+            ) or bool(client_usernames - rover_save_settings_by_username.keys())
+            base_names_by_mountpoint: dict[str, set[str]] = {}
+            if base_serials or lookup_all_stations:
+                try:
+                    async with device_session_scope() as devices_db:
+                        base_query = select(models.Device)
+                        if base_serials and not lookup_all_stations:
+                            base_query = base_query.where(func.upper(models.Device.serial).in_(base_serials))
+                        base_result = await devices_db.execute(base_query)
+                        for station in base_result.scalars().all():
+                            serial = str(station.serial or "").strip().upper()
+                            base_name = str(station.name or station.serial or "").strip()
+                            if not serial or not base_name:
+                                continue
+                            service_config = crud.normalize_service_config(station.service_config)
+                            for index in (1, 2):
+                                mountpoint = str(service_config.get(f"mountpoint{index}") or "").strip().casefold()
+                                if mountpoint:
+                                    base_names_by_serial_mountpoint[(serial, mountpoint)] = base_name
+                                    base_names_by_mountpoint.setdefault(mountpoint, set()).add(base_name)
+                except Exception as base_lookup_error:
+                    logger.warning("[CASTER HISTORY] Could not resolve Base names for %s: %s", host, base_lookup_error)
         latest_points_by_session = {}
         active_session_ids = [row.id for row in active_rows if row.id is not None]
         if active_session_ids:
@@ -211,10 +245,24 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             username = str(client.get("username") or "").strip()
             if not username:
                 continue
-            save_sessions, save_fixed_points = rover_save_settings_by_username.get(username.lower(), (True, False))
+            save_sessions, save_fixed_points, raw_base_serials = rover_save_settings_by_username.get(username.lower(), (True, False, None))
             if not save_sessions:
                 continue
             mountpoint = str(client.get("mountpoint") or "").strip()
+            account_base_serials = [
+                serial.strip().upper()
+                for serial in str(raw_base_serials or "").replace(";", ",").split(",")
+                if serial.strip()
+            ]
+            matching_base_names = {
+                base_names_by_serial_mountpoint[(serial, mountpoint.casefold())]
+                for serial in account_base_serials
+                if (serial, mountpoint.casefold()) in base_names_by_serial_mountpoint
+            }
+            base_name = next(iter(matching_base_names)) if len(matching_base_names) == 1 else None
+            if base_name is None and not account_base_serials:
+                matching_base_names = base_names_by_mountpoint.get(mountpoint.casefold(), set())
+                base_name = next(iter(matching_base_names)) if len(matching_base_names) == 1 else None
             client_id = str(client.get("client_id") or "").strip()
             receiver_id = str(client.get("receiver_id") or "").strip()
             session_key = _rover_history_session_key(host, username, mountpoint, client_id, receiver_id)
@@ -252,6 +300,7 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
                     username=username,
                     server=host,
                     mountpoint=mountpoint,
+                    base_name=base_name,
                     client_id=client_id,
                     receiver_id=receiver_id,
                     started_at=observed_at - uptime_seconds if uptime_seconds else observed_at,
@@ -264,6 +313,8 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             else:
                 row.username = username
                 row.mountpoint = mountpoint
+                if base_name and not row.base_name:
+                    row.base_name = base_name
                 row.client_id = client_id
                 row.receiver_id = receiver_id
                 row.last_seen_at = observed_at

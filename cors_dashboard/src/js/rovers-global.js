@@ -2010,8 +2010,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
                         <div class="rover-history-session-heading">
                             <div class="min-w-0">
-                                <span class="rover-history-label">Mountpoint</span>
-                                <h6>${escapeHtml(session.mountpoint || 'Không rõ mountpoint')}</h6>
+                                <span class="rover-history-label">Trạm Base</span>
+                                <h6>${escapeHtml(session.base_name || 'Không rõ')}</h6>
+                                <div class="small text-muted mt-1">Mountpoint · ${escapeHtml(session.mountpoint || 'Không rõ')}</div>
                             </div>
                             <span class="rover-history-status ${ended ? 'is-ended' : 'is-active'}"><i aria-hidden="true"></i>${ended ? 'Đã kết thúc' : 'Đang hoạt động'}</span>
                         </div>

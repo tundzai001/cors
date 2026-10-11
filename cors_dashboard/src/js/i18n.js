@@ -791,6 +791,7 @@
         ['Mật khẩu mới (Để trống nếu không đổi)', 'New password (leave blank to keep current)'],
         ['Thời hạn (Gia hạn mới)', 'Duration (new expiry)'],
         ['--- Giữ nguyên ---', '--- Keep current ---'],
+        ['Trạm Base', 'Base station'],
         ['Tự động lưu phiên Rover', 'Automatically save Rover sessions'],
         ['Tự động lưu điểm vị trí hợp lệ', 'Automatically save valid position points'],
         ['Phiên lưu thông tin kết nối và vị trí gần nhất; điểm lưu tọa độ hợp lệ định kỳ. Lưu điểm cần bật lưu phiên.', 'Sessions retain connection details and the latest position; points record valid coordinates periodically. Saving points requires session saving.'],

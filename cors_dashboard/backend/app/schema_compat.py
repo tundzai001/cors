@@ -41,6 +41,7 @@ AUTH_ZALO_SCHEMA_STATEMENTS = (
         username VARCHAR NOT NULL,
         server VARCHAR NOT NULL,
         mountpoint VARCHAR NOT NULL DEFAULT '',
+        base_name VARCHAR NULL,
         client_id VARCHAR NOT NULL DEFAULT '',
         receiver_id VARCHAR NOT NULL DEFAULT '',
         started_at BIGINT NULL,
@@ -53,6 +54,7 @@ AUTH_ZALO_SCHEMA_STATEMENTS = (
         position_updated_at BIGINT NULL
     )""",
     "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS position_fix_quality SMALLINT",
+    "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS base_name VARCHAR",
     "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS position_satellite_count INTEGER",
     "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS latest_fix_quality SMALLINT",
     "ALTER TABLE rover_session_history ADD COLUMN IF NOT EXISTS satellite_count INTEGER",

@@ -65,6 +65,7 @@ class RoverSessionHistory(AuthBase):
     username = Column(String, nullable=False, index=True)
     server = Column(String, nullable=False, index=True)
     mountpoint = Column(String, nullable=False, default="")
+    base_name = Column(String, nullable=True)
     client_id = Column(String, nullable=False, default="")
     receiver_id = Column(String, nullable=False, default="")
     started_at = Column(BigInteger, nullable=True)
