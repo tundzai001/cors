@@ -114,14 +114,16 @@ async def rename_device(
     await mqtt_handler.cache_device_metadata(device)
     await ui_manager.broadcast({"type": "status_update", "data": {"serial": serial, "name": device.name}})
     
-    # 3. Gửi lệnh xuống Agent
-    try:
-        await send_command_to_pi(serial, {
-            "command": "PROVISION_DEVICE", 
-            "payload": {"name": device.name}
-        })
-    except Exception as e:
-        logging.warning(f"Rename DB ok but failed to send to Agent: {e}")
+    # An offline agent cannot receive this non-retained command. Publishing it
+    # makes relay listeners without this serial report a false awaiting_config.
+    if str(device.status or "").lower() != "offline":
+        try:
+            await send_command_to_pi(serial, {
+                "command": "PROVISION_DEVICE",
+                "payload": {"name": device.name}
+            })
+        except Exception as e:
+            logging.warning(f"Rename DB ok but failed to send to Agent: {e}")
 
     await crud.log_system_event(
         db=db,

@@ -40,9 +40,10 @@ class StationNamePreservationTests(unittest.IsolatedAsyncioTestCase):
         generic.assert_not_awaited()
 
     async def test_rename_is_preserved_when_agent_is_offline(self):
+        self.device.status = 'offline'
         with patch.object(crud, 'get_device_by_serial', AsyncMock(return_value=self.device)), \
              patch.object(crud, 'log_system_event', AsyncMock()), \
-             patch.object(users, 'send_command_to_pi', AsyncMock(side_effect=HTTPException(503, 'offline'))), \
+             patch.object(users, 'send_command_to_pi', AsyncMock()) as dispatch, \
              patch.object(users.ui_manager, 'broadcast', AsyncMock()) as broadcast, \
              patch.object(mqtt, 'device_metadata_cache', {}), \
              patch.object(mqtt, 'device_name_cache', {}), \
@@ -50,6 +51,7 @@ class StationNamePreservationTests(unittest.IsolatedAsyncioTestCase):
             result = await users.rename_device(self.serial, schemas.DeviceRename(name='DN.MinhQuan'), self.db, self.admin)
             self.assertEqual(mqtt.device_name_cache[self.serial], 'DN.MinhQuan')
             self.assertEqual(mqtt.device_metadata_cache[self.serial]['name'], 'DN.MinhQuan')
+        dispatch.assert_not_awaited()
         self.assertEqual(result['name'], 'DN.MinhQuan')
         self.assertEqual(broadcast.await_args.args[0]['data']['name'], 'DN.MinhQuan')
 
