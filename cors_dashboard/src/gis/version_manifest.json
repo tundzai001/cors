@@ -1,0 +1,43 @@
+{
+  "name": "vietnamese-provinces-database-snapshot",
+  "upstream_repository": "https://github.com/thanglequoc/vietnamese-provinces-database",
+  "upstream_release": "v5.2.0",
+  "applicable_decrees": [
+    "388/NQ-UBTVQH16",
+    "Decrees up to September 2026"
+  ],
+  "synced_at": "2026-10-14T15:26:00+07:00",
+  "coordinate_precision": "100% raw untouched geometry (un-rounded, full geodetic precision)",
+  "statistics": {
+    "provinces": 34,
+    "wards_communes": 3321,
+    "geojson_features": 34
+  },
+  "files": {
+    "vietnam_provinces.geojson": {
+      "description": "Full-precision GeoJSON boundaries of Vietnam provinces and centrally-governed cities",
+      "sha256": "f5b47e29247bb27ee618f945f5ff15e878ce3087a8ddf813c63016aad6931abd",
+      "size_bytes": 2307994
+    },
+    "vietnam_units.json": {
+      "description": "Hierarchical JSON of all provinces, administrative codes, postal prefixes, and 3,321 wards",
+      "sha256": "179e9a8e6213ed31f3ff0d663a268e020d9f9cc38b4574b893d5b734e24d3145",
+      "size_bytes": 617984
+    },
+    "postgres_CreateTables_vn_units.sql": {
+      "description": "DDL script for administrative regions, units, provinces, and wards tables",
+      "sha256": "9c9496fcef128ab2000a0314fe901608a11634d9743a97470e315942d5388d3d",
+      "size_bytes": 2355
+    },
+    "postgres_ImportData_vn_units.sql": {
+      "description": "Full SQL INSERT statements for provinces and wards into PostgreSQL",
+      "sha256": "46b59e96ca105edf090005fb4e8cc6373cfb3d66e657e8d5d763f0cf5f8fbda4",
+      "size_bytes": 351232
+    },
+    "postgresql_CreateGISTables.sql": {
+      "description": "PostGIS geometry tables DDL for spatial spatial querying and geometry columns",
+      "sha256": "db69896fd3328de10114e6fc4a771f33fb2cb5724138216c3711c5723c3cc1cb",
+      "size_bytes": 1285
+    }
+  }
+}
