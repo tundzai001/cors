@@ -2,10 +2,11 @@
 
 import logging
 from typing import Any, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi.responses import Response
+import httpx
 import os
 import time
 
@@ -185,6 +186,104 @@ async def get_public_map_stations(
         "ntrip_connected", "bps", "is_provisioned",
     }
     return [{field: value for field, value in item.items() if field in guest_fields} for item in items]
+
+
+_GEOCODE_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_GEOCODE_CACHE_TTL = 3600.0  # 1 hour
+_GEOCODE_CACHE_MAX_SIZE = 1000
+
+
+async def _fetch_geocode(query: str) -> list[dict[str, Any]]:
+    cleaned = str(query or "").strip()
+    if not cleaned:
+        return []
+
+    cache_key = cleaned.lower()
+    now = time.monotonic()
+    cached = _GEOCODE_CACHE.get(cache_key)
+    if cached and (now - cached[0] < _GEOCODE_CACHE_TTL):
+        return cached[1]
+
+    results: list[dict[str, Any]] = []
+
+    # 1. Try Open-Meteo Geocoding API (fast, high availability, no key required)
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": cleaned, "count": 5, "language": "vi", "format": "json"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data.get("results", []):
+                    lat = float(item.get("latitude", 0))
+                    lon = float(item.get("longitude", 0))
+                    country_code = str(item.get("country_code", "")).upper()
+                    # Filter for Vietnam bounding box or VN country code
+                    if country_code == "VN" or (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
+                        parts = [item.get("name"), item.get("admin2"), item.get("admin1"), "Việt Nam"]
+                        display_name = ", ".join(p for p in parts if p)
+                        results.append({
+                            "lat": lat,
+                            "lon": lon,
+                            "display_name": display_name,
+                            "name": item.get("name", cleaned),
+                            "source": "open-meteo",
+                        })
+    except Exception as exc:
+        logger.debug("Open-Meteo geocode lookup failed for '%s': %s", cleaned, exc)
+
+    # 2. Secondary fallback: Nominatim with custom User-Agent
+    if not results:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                query_vn = cleaned if ("viet nam" in cleaned.lower() or "vn" in cleaned.lower()) else f"{cleaned}, Viet Nam"
+                resp = await client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={
+                        "format": "jsonv2",
+                        "limit": "5",
+                        "countrycodes": "vn",
+                        "viewbox": "102,24,110,8",
+                        "bounded": "1",
+                        "addressdetails": "1",
+                        "namedetails": "1",
+                        "dedupe": "1",
+                        "accept-language": "vi,en",
+                        "q": query_vn,
+                    },
+                    headers={"User-Agent": "Aitogy-CORS-System/1.0 (contact@aitogy.com)"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        for item in data:
+                            lat = float(item.get("lat", 0))
+                            lon = float(item.get("lon", 0))
+                            if 8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0:
+                                results.append({
+                                    "lat": lat,
+                                    "lon": lon,
+                                    "display_name": item.get("display_name", cleaned),
+                                    "name": item.get("name") or cleaned,
+                                    "source": "nominatim",
+                                })
+        except Exception as exc:
+            logger.debug("Nominatim geocode lookup failed for '%s': %s", cleaned, exc)
+
+    if len(_GEOCODE_CACHE) >= _GEOCODE_CACHE_MAX_SIZE:
+        _GEOCODE_CACHE.clear()
+    _GEOCODE_CACHE[cache_key] = (now, results)
+
+    return results
+
+
+@get_public_map_stations_router.get("/api/public/geocode")
+async def public_geocode(
+    q: str = Query(..., min_length=1, max_length=200, description="Tên địa điểm tìm kiếm"),
+):
+    """Proxy geocoding lookup for Vietnam station map search."""
+    return await _fetch_geocode(q)
 
 
 get_authenticated_map_stations_router = APIRouter()

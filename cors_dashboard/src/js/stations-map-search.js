@@ -7,12 +7,86 @@
         'o', 'tai', 'gan', 'khu', 'vuc', 'gi', 'day', 'nay', 'kia', 'cho'
     ]);
     const LOCAL_FALLBACKS = [
-        {
-            match: ['sin quyen', 'sinquyen'],
-            lat: 22.585,
-            lon: 103.82,
-            label: 'Mỏ đồng Sin Quyền, Bát Xát, Lào Cai, Việt Nam (ước lượng)'
-        }
+        // Đặc thù / mỏ
+        { match: ['sin quyen', 'sinquyen'], lat: 22.585, lon: 103.82, label: 'Mỏ đồng Sin Quyền, Bát Xát, Lào Cai, Việt Nam (ước lượng)' },
+
+        // Miền Trung & Quảng Nam - Đà Nẵng
+        { match: ['tam ky', 'tamky'], lat: 15.564, lon: 108.481, label: 'Thành phố Tam Kỳ, Quảng Nam, Việt Nam' },
+        { match: ['hoi an', 'hoian'], lat: 15.880, lon: 108.338, label: 'Thành phố Hội An, Quảng Nam, Việt Nam' },
+        { match: ['quang nam', 'quangnam'], lat: 15.564, lon: 108.481, label: 'Tỉnh Quảng Nam, Việt Nam' },
+        { match: ['da nang', 'danang'], lat: 16.054, lon: 108.202, label: 'Thành phố Đà Nẵng, Việt Nam' },
+        { match: ['hue', 'thua thien'], lat: 16.464, lon: 107.591, label: 'Thành phố Huế, Thừa Thiên Huế, Việt Nam' },
+        { match: ['quang tri', 'dong ha'], lat: 16.816, lon: 107.100, label: 'Thành phố Đông Hà, Quảng Trị, Việt Nam' },
+        { match: ['quang binh', 'dong hoi'], lat: 17.476, lon: 106.601, label: 'Thành phố Đồng Hới, Quảng Bình, Việt Nam' },
+        { match: ['ha tinh'], lat: 18.343, lon: 105.906, label: 'Thành phố Hà Tĩnh, Việt Nam' },
+        { match: ['vinh', 'nghe an'], lat: 18.673, lon: 105.681, label: 'Thành phố Vinh, Nghệ An, Việt Nam' },
+        { match: ['thanh hoa'], lat: 19.808, lon: 105.776, label: 'Thành phố Thanh Hóa, Việt Nam' },
+        { match: ['quang ngai'], lat: 15.121, lon: 108.792, label: 'Thành phố Quảng Ngãi, Việt Nam' },
+        { match: ['quy nhon', 'binh dinh'], lat: 13.782, lon: 109.220, label: 'Thành phố Quy Nhơn, Bình Định, Việt Nam' },
+        { match: ['tuy hoa', 'phu yen'], lat: 13.088, lon: 109.308, label: 'Thành phố Tuy Hòa, Phú Yên, Việt Nam' },
+        { match: ['nha trang', 'khanh hoa'], lat: 12.239, lon: 109.197, label: 'Thành phố Nha Trang, Khánh Hòa, Việt Nam' },
+        { match: ['cam ranh'], lat: 11.921, lon: 109.159, label: 'Thành phố Cam Ranh, Khánh Hòa, Việt Nam' },
+        { match: ['phan rang', 'ninh thuan'], lat: 11.565, lon: 108.988, label: 'Phan Rang - Tháp Chàm, Ninh Thuận, Việt Nam' },
+        { match: ['phan thiet', 'binh thuan'], lat: 10.929, lon: 108.102, label: 'Thành phố Phan Thiết, Bình Thuận, Việt Nam' },
+
+        // Tây Nguyên
+        { match: ['buon ma thuot', 'buon mathuot', 'dak lak', 'daklak'], lat: 12.668, lon: 108.038, label: 'Thành phố Buôn Ma Thuột, Đắk Lắk, Việt Nam' },
+        { match: ['da lat', 'dalat', 'lam dong'], lat: 11.940, lon: 108.458, label: 'Thành phố Đà Lạt, Lâm Đồng, Việt Nam' },
+        { match: ['bao loc'], lat: 11.548, lon: 107.808, label: 'Thành phố Bảo Lộc, Lâm Đồng, Việt Nam' },
+        { match: ['pleiku', 'gia lai'], lat: 13.983, lon: 108.000, label: 'Thành phố Pleiku, Gia Lai, Việt Nam' },
+        { match: ['kon tum', 'kontum'], lat: 14.354, lon: 108.000, label: 'Thành phố Kon Tum, Việt Nam' },
+        { match: ['gia nghia', 'dak nong', 'daknong'], lat: 12.003, lon: 107.689, label: 'Thành phố Gia Nghĩa, Đắk Nông, Việt Nam' },
+
+        // Miền Bắc & Thủ đô
+        { match: ['ha noi', 'hanoi', 'thu do'], lat: 21.0285, lon: 105.8542, label: 'Thủ đô Hà Nội, Việt Nam' },
+        { match: ['hai phong', 'haiphong'], lat: 20.845, lon: 106.688, label: 'Thành phố Hải Phòng, Việt Nam' },
+        { match: ['ha long', 'halong', 'quang ninh'], lat: 20.951, lon: 107.073, label: 'Thành phố Hạ Long, Quảng Ninh, Việt Nam' },
+        { match: ['mong cai'], lat: 21.524, lon: 107.967, label: 'Thành phố Móng Cái, Quảng Ninh, Việt Nam' },
+        { match: ['bac ninh'], lat: 21.186, lon: 106.076, label: 'Thành phố Bắc Ninh, Việt Nam' },
+        { match: ['bac giang'], lat: 21.273, lon: 106.195, label: 'Thành phố Bắc Giang, Việt Nam' },
+        { match: ['hai duong'], lat: 20.937, lon: 106.315, label: 'Thành phố Hải Dương, Việt Nam' },
+        { match: ['hung yen'], lat: 20.646, lon: 106.051, label: 'Thành phố Hưng Yên, Việt Nam' },
+        { match: ['thai binh'], lat: 20.446, lon: 106.337, label: 'Thành phố Thái Bình, Việt Nam' },
+        { match: ['nam dinh'], lat: 20.434, lon: 106.177, label: 'Thành phố Nam Định, Việt Nam' },
+        { match: ['ninh binh'], lat: 20.251, lon: 105.975, label: 'Thành phố Ninh Bình, Việt Nam' },
+        { match: ['phu ly', 'ha nam'], lat: 20.541, lon: 105.914, label: 'Thành phố Phủ Lý, Hà Nam, Việt Nam' },
+        { match: ['vinh phuc', 'vinh yen'], lat: 21.309, lon: 105.605, label: 'Thành phố Vĩnh Yên, Vĩnh Phúc, Việt Nam' },
+        { match: ['viet tri', 'phu tho'], lat: 21.323, lon: 105.402, label: 'Thành phố Việt Trì, Phú Thọ, Việt Nam' },
+        { match: ['thai nguyen'], lat: 21.594, lon: 105.848, label: 'Thành phố Thái Nguyên, Việt Nam' },
+        { match: ['tuyen quang'], lat: 21.824, lon: 105.218, label: 'Thành phố Tuyên Quang, Việt Nam' },
+        { match: ['lang son'], lat: 21.854, lon: 106.762, label: 'Thành phố Lạng Sơn, Việt Nam' },
+        { match: ['cao bang'], lat: 22.666, lon: 106.264, label: 'Thành phố Cao Bằng, Việt Nam' },
+        { match: ['bac kan', 'bac can'], lat: 22.147, lon: 105.835, label: 'Thành phố Bắc Kạn, Việt Nam' },
+        { match: ['ha giang'], lat: 22.823, lon: 104.984, label: 'Thành phố Hà Giang, Việt Nam' },
+        { match: ['lao cai', 'laocai'], lat: 22.486, lon: 103.971, label: 'Thành phố Lào Cai, Việt Nam' },
+        { match: ['sa pa', 'sapa'], lat: 22.336, lon: 103.844, label: 'Thị xã Sa Pa, Lào Cai, Việt Nam' },
+        { match: ['yen bai'], lat: 21.717, lon: 104.897, label: 'Thành phố Yên Bái, Việt Nam' },
+        { match: ['son la'], lat: 21.328, lon: 103.915, label: 'Thành phố Sơn La, Việt Nam' },
+        { match: ['dien bien', 'dien bien phu'], lat: 21.385, lon: 103.017, label: 'Thành phố Điện Biên Phủ, Việt Nam' },
+        { match: ['lai chau'], lat: 22.396, lon: 103.468, label: 'Thành phố Lai Châu, Việt Nam' },
+        { match: ['hoa binh'], lat: 20.817, lon: 105.338, label: 'Thành phố Hòa Bình, Việt Nam' },
+
+        // Miền Nam & TP Hồ Chí Minh & Tây Nam Bộ
+        { match: ['ho chi minh', 'hcm', 'sai gon', 'saigon', 'tp hcm'], lat: 10.823, lon: 106.630, label: 'Thành phố Hồ Chí Minh, Việt Nam' },
+        { match: ['can tho', 'cantho'], lat: 10.045, lon: 105.747, label: 'Thành phố Cần Thơ, Việt Nam' },
+        { match: ['bien hoa', 'dong nai'], lat: 10.957, lon: 106.843, label: 'Thành phố Biên Hòa, Đồng Nai, Việt Nam' },
+        { match: ['thu dau mot', 'binh duong'], lat: 10.981, lon: 106.652, label: 'Thành phố Thủ Dầu Một, Bình Dương, Việt Nam' },
+        { match: ['vung tau', 'ba ria'], lat: 10.346, lon: 107.084, label: 'Thành phố Vũng Tàu, Bà Rịa - Vũng Tàu, Việt Nam' },
+        { match: ['dong xoai', 'binh phuoc'], lat: 11.533, lon: 106.883, label: 'Thành phố Đồng Xoài, Bình Phước, Việt Nam' },
+        { match: ['tay ninh'], lat: 11.310, lon: 106.098, label: 'Thành phố Tây Ninh, Việt Nam' },
+        { match: ['tan an', 'long an'], lat: 10.536, lon: 106.413, label: 'Thành phố Tân An, Long An, Việt Nam' },
+        { match: ['my tho', 'tien giang'], lat: 10.354, lon: 106.365, label: 'Thành phố Mỹ Tho, Tiền Giang, Việt Nam' },
+        { match: ['ben tre'], lat: 10.242, lon: 106.376, label: 'Thành phố Bến Tre, Việt Nam' },
+        { match: ['tra vinh'], lat: 9.935, lon: 106.346, label: 'Thành phố Trà Vinh, Việt Nam' },
+        { match: ['vinh long'], lat: 10.254, lon: 105.972, label: 'Thành phố Vĩnh Long, Việt Nam' },
+        { match: ['cao lanh', 'dong thap', 'sa dec'], lat: 10.460, lon: 105.633, label: 'Thành phố Cao Lãnh, Đồng Tháp, Việt Nam' },
+        { match: ['long xuyen', 'an giang', 'chau doc'], lat: 10.383, lon: 105.417, label: 'Thành phố Long Xuyên, An Giang, Việt Nam' },
+        { match: ['rach gia', 'kien giang'], lat: 10.013, lon: 105.081, label: 'Thành phố Rạch Giá, Kiên Giang, Việt Nam' },
+        { match: ['phu quoc', 'phuquoc'], lat: 10.229, lon: 103.957, label: 'Thành phố Phú Quốc, Kiên Giang, Việt Nam' },
+        { match: ['vi thanh', 'hau giang'], lat: 9.784, lon: 105.470, label: 'Thành phố Vị Thanh, Hậu Giang, Việt Nam' },
+        { match: ['soc trang'], lat: 9.603, lon: 105.980, label: 'Thành phố Sóc Trăng, Việt Nam' },
+        { match: ['bac lieu'], lat: 9.294, lon: 105.728, label: 'Thành phố Bạc Liêu, Việt Nam' },
+        { match: ['ca mau'], lat: 9.177, lon: 105.152, label: 'Thành phố Cà Mau, Việt Nam' }
     ];
 
     function escapeHtml(value) {
@@ -90,10 +164,17 @@
 
     function getLocalFallback(query) {
         const normalized = normalizeSearchText(query);
-        const item = LOCAL_FALLBACKS.find(candidate =>
-            candidate.match.some(pattern => normalized.includes(pattern))
-        );
-        return item ? buildResult(item.lat, item.lon, item.label, 'local') : null;
+        let bestItem = null;
+        let longestMatchLen = 0;
+        for (const candidate of LOCAL_FALLBACKS) {
+            for (const pattern of candidate.match) {
+                if (normalized.includes(pattern) && pattern.length > longestMatchLen) {
+                    bestItem = candidate;
+                    longestMatchLen = pattern.length;
+                }
+            }
+        }
+        return bestItem ? buildResult(bestItem.lat, bestItem.lon, bestItem.label, 'local') : null;
     }
 
     function meaningfulTokens(value) {
@@ -118,47 +199,83 @@
         return matches >= minimumMatches;
     }
 
-    async function queryNominatim(query) {
-        const params = new URLSearchParams({
-            format: 'jsonv2',
-            limit: '5',
-            countrycodes: 'vn',
-            viewbox: VIETNAM_VIEWBOX,
-            bounded: '1',
-            addressdetails: '1',
-            namedetails: '1',
-            dedupe: '1',
-            'accept-language': 'vi,en',
-            q: appendVietnam(query)
-        });
-        const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`);
-        if (!response.ok) throw new Error(`Geocoding service error (${response.status})`);
-        const data = await response.json();
-        if (!Array.isArray(data)) return null;
-        for (const item of data) {
-            if (!isRelevantNominatimResult(query, item)) continue;
-            const result = buildResult(Number(item.lat), Number(item.lon), item.display_name || query, 'osm');
-            if (result) return result;
+    async function queryBackendProxy(query) {
+        try {
+            const params = new URLSearchParams({ q: String(query || '').trim() });
+            const response = await fetch(`/api/public/geocode?${params.toString()}`, {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (!Array.isArray(data) || !data.length) return null;
+            for (const item of data) {
+                const lat = Number(item.lat);
+                const lon = Number(item.lon);
+                const result = buildResult(lat, lon, item.display_name || item.name || query, item.source || 'proxy');
+                if (result) return result;
+            }
+            return null;
+        } catch (err) {
+            console.warn('[StationsMapSearch] Backend geocode proxy unavailable:', err);
+            return null;
         }
-        return null;
+    }
+
+    async function queryNominatim(query) {
+        try {
+            const params = new URLSearchParams({
+                format: 'jsonv2',
+                limit: '5',
+                countrycodes: 'vn',
+                viewbox: VIETNAM_VIEWBOX,
+                bounded: '1',
+                addressdetails: '1',
+                namedetails: '1',
+                dedupe: '1',
+                'accept-language': 'vi,en',
+                q: appendVietnam(query)
+            });
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`);
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (!Array.isArray(data)) return null;
+            for (const item of data) {
+                if (!isRelevantNominatimResult(query, item)) continue;
+                const result = buildResult(Number(item.lat), Number(item.lon), item.display_name || query, 'osm');
+                if (result) return result;
+            }
+            return null;
+        } catch (err) {
+            console.warn('[StationsMapSearch] Direct Nominatim fetch failed:', err);
+            return null;
+        }
     }
 
     async function geocodeVietnam(query) {
         const q = String(query || '').trim();
-        if (!q) throw new Error('Missing location query');
+        if (!q) throw new Error('Vui lòng nhập tên địa điểm hoặc tọa độ.');
 
+        // 1. Tọa độ trực tiếp
         const coord = parseCoordinateText(q);
         if (coord) return coord;
 
+        // 2. Query backend geocoding proxy (/api/public/geocode)
+        for (const variant of buildQueryVariants(q)) {
+            const proxyRes = await queryBackendProxy(variant);
+            if (proxyRes) return proxyRes;
+        }
+
+        // 3. Direct Nominatim fallback (đã bọc try/catch an toàn)
         for (const variant of buildQueryVariants(q)) {
             const osm = await queryNominatim(variant);
             if (osm) return osm;
         }
 
+        // 4. Local fallback cho các tỉnh/thành/địa danh Việt Nam
         const fallback = getLocalFallback(q);
         if (fallback) return fallback;
 
-        throw new Error('Khong tim thay toa do. Thu dan link Google Maps hoac nhap lat,lon.');
+        throw new Error('Không tìm thấy tọa độ cho địa điểm này. Bạn có thể dán link Google Maps hoặc nhập tọa độ lat,lon.');
     }
 
     function openGoogleMapsSearch(query) {
