@@ -345,3 +345,64 @@ class RTCMStreamSession(Base):
         Index('ix_rtcm_client_serial', 'client_id', 'serial'),
         Index('uq_rtcm_serial_mountpoint_client', 'serial', func.lower(mountpoint), 'client_id', unique=True),
     )
+
+
+class AdministrativeRegion(Base):
+    __tablename__ = "administrative_regions"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    name_en = Column(String(255), nullable=False)
+    code_name = Column(String(255), nullable=True)
+    code_name_en = Column(String(255), nullable=True)
+
+
+class AdministrativeUnit(Base):
+    __tablename__ = "administrative_units"
+
+    id = Column(Integer, primary_key=True)
+    full_name = Column(String(255), nullable=True)
+    full_name_en = Column(String(255), nullable=True)
+    short_name = Column(String(255), nullable=True)
+    short_name_en = Column(String(255), nullable=True)
+    code_name = Column(String(255), nullable=True)
+    code_name_en = Column(String(255), nullable=True)
+
+
+class Province(Base):
+    __tablename__ = "provinces"
+
+    code = Column(String(20), primary_key=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    name_en = Column(String(255), nullable=True)
+    full_name = Column(String(255), nullable=False)
+    full_name_en = Column(String(255), nullable=True)
+    code_name = Column(String(255), nullable=True)
+    postal_code_prefix = Column(String(255), nullable=True)
+    administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
+
+
+class Ward(Base):
+    __tablename__ = "wards"
+
+    code = Column(String(20), primary_key=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    name_en = Column(String(255), nullable=True)
+    full_name = Column(String(255), nullable=True)
+    full_name_en = Column(String(255), nullable=True)
+    code_name = Column(String(255), nullable=True)
+    postal_code = Column(String(20), nullable=True, index=True)
+    province_code = Column(String(20), ForeignKey("provinces.code"), nullable=True, index=True)
+    administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
+
+    __table_args__ = (
+        Index('ix_wards_province_name', 'province_code', 'name'),
+    )
+
+
+class VNProvincesMetadata(Base):
+    __tablename__ = "vn_provinces_metadata"
+
+    dataset_version = Column(String(50), primary_key=True)
+    latest_decree = Column(String(100), nullable=True)
+    generated_at = Column(String(50), nullable=True)

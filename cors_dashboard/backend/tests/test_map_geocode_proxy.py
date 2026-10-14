@@ -134,4 +134,20 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fc.get("type"), "FeatureCollection")
         self.assertEqual(len(fc.get("features", [])), 34)
 
+    async def test_search_administrative_units_empty_query(self):
+        from app.province_db_service import search_administrative_units
+        mock_db = AsyncMock()
+        results = await search_administrative_units(mock_db, "")
+        self.assertEqual(results, [])
+
+    async def test_seed_provinces_already_seeded(self):
+        from app.province_db_service import seed_vietnam_provinces
+        mock_db = AsyncMock()
+        mock_scalar = Mock()
+        mock_scalar.scalar.return_value = 34
+        mock_db.execute.return_value = mock_scalar
+        res = await seed_vietnam_provinces(mock_db)
+        self.assertTrue(res.get("already_seeded"))
+        self.assertEqual(res.get("provinces"), 34)
+
 

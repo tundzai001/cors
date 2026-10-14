@@ -394,9 +394,74 @@ async def get_vietnam_provinces_geojson():
 
 
 @get_public_map_stations_router.get("/api/public/vietnam-provinces")
-async def get_vietnam_provinces():
-    """Return list of Vietnam provinces with administrative codes and metadata."""
+async def get_vietnam_provinces(db: AsyncSession = Depends(get_db)):
+    """Return list of Vietnam provinces from database with fallback to bundled summary."""
+    try:
+        res = await db.execute(select(models.Province).order_by(models.Province.name))
+        db_provinces = res.scalars().all()
+        if db_provinces:
+            return [
+                {
+                    "code": p.code,
+                    "name": p.name,
+                    "fullName": p.full_name,
+                    "nameEn": p.name_en,
+                    "codeName": p.code_name,
+                    "postalCodePrefix": p.postal_code_prefix,
+                }
+                for p in db_provinces
+            ]
+    except Exception as exc:
+        logger.debug("Database query for provinces failed, using bundled fallback: %s", exc)
     return _get_provinces_summary()
+
+
+@get_public_map_stations_router.get("/api/public/vietnam-wards")
+async def get_vietnam_wards(
+    province_code: str = Query(..., min_length=1, max_length=20, description="Mã tỉnh/thành"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return list of wards for a specific province from database."""
+    try:
+        res = await db.execute(
+            select(models.Ward)
+            .where(models.Ward.province_code == province_code)
+            .order_by(models.Ward.name)
+        )
+        wards = res.scalars().all()
+        return [
+            {
+                "code": w.code,
+                "name": w.name,
+                "fullName": w.full_name,
+                "postalCode": w.postal_code,
+                "provinceCode": w.province_code,
+            }
+            for w in wards
+        ]
+    except Exception as exc:
+        logger.debug("Database query for wards failed: %s", exc)
+        return []
+
+
+@get_public_map_stations_router.get("/api/public/search-administrative-units")
+async def search_admin_units(
+    q: str = Query(..., min_length=1, max_length=100, description="Tên xã, phường, thị trấn hoặc tỉnh thành"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search provinces and wards in database by name or postal code."""
+    from .province_db_service import search_administrative_units
+    return await search_administrative_units(db, q)
+
+
+@get_public_map_stations_router.post("/api/admin/seed-vietnam-units")
+async def seed_vietnam_units_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
+    """Seed Vietnam administrative provinces and wards into database."""
+    from .province_db_service import seed_vietnam_provinces
+    return await seed_vietnam_provinces(db)
 
 
 get_authenticated_map_stations_router = APIRouter()
