@@ -439,7 +439,9 @@ async def create_multi_base_rover(
         rtcm_disconnect_interval_seconds=getattr(request, 'rtcm_disconnect_interval_seconds', 300),
         rtcm_disconnect_duration_seconds=getattr(request, 'rtcm_disconnect_duration_seconds', 10),
         expires_at=int(time.time()) + duration_seconds,
-        is_shared_with_managers=getattr(request, 'is_shared_with_managers', False)
+        is_shared_with_managers=getattr(request, 'is_shared_with_managers', False),
+        auto_save_sessions=getattr(request, 'auto_save_sessions', True) if is_admin else True,
+        auto_save_fixed_points=getattr(request, 'auto_save_fixed_points', False) if is_admin else False
     )
 
     return new_rover

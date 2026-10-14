@@ -333,6 +333,15 @@
                                             <i class="bi bi-geo-alt-fill me-1 text-primary"></i> Hiển thị vị trí trên bản đồ
                                         </label>
                                     </div>
+                                    <div class="form-check form-switch custom-switch mb-2 admin-only-field d-none">
+                                        <input class="form-check-input" type="checkbox" id="new-auto-save-sessions" checked>
+                                        <label class="form-check-label small text-white fw-bold" for="new-auto-save-sessions">Tự động lưu phiên Rover</label>
+                                    </div>
+                                    <div class="form-check form-switch custom-switch mb-2 admin-only-field d-none">
+                                        <input class="form-check-input" type="checkbox" id="new-auto-save-fixed-points">
+                                        <label class="form-check-label small text-white fw-bold" for="new-auto-save-fixed-points">Tự động lưu điểm vị trí hợp lệ</label>
+                                    </div>
+                                    <small class="form-text text-muted ms-1 d-block mb-2 admin-only-field d-none">Phiên lưu thông tin kết nối và vị trí gần nhất; điểm lưu tọa độ hợp lệ định kỳ. Lưu điểm cần bật lưu phiên.</small>
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="new-rtcm-cycle-enabled">
                                         <label class="form-check-label small text-info fw-bold" for="new-rtcm-cycle-enabled">RTCM Cycle Optimization</label>

@@ -1145,6 +1145,302 @@ async def block_ip_manually(
 
     return {"status": "blocked", "ip": ip}
 
+
+# ==============================================================================
+# === SESSION & DEVICE ACCESS CONTROL (Quản lý phiên đăng nhập & Chặn máy)   ===
+# ==============================================================================
+
+@app.get("/api/admin/security/sessions")
+async def get_admin_sessions(
+    request: Request,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
+):
+    """Lấy danh sách các phiên đăng nhập đang hoạt động và các máy tính bị chặn."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xem danh sách phiên đăng nhập")
+
+    auth_header = request.headers.get("Authorization", "")
+    current_sid = None
+    if auth_header.startswith("Bearer "):
+        try:
+            token_payload = auth.decode_token(auth_header.split(" ", 1)[1])
+            current_sid = token_payload.get("sid")
+        except Exception:
+            pass
+
+    now = int(time.time())
+    # Lấy các phiên chưa bị hủy và chưa hết hạn
+    stmt = (
+        select(models.UserSession)
+        .filter(
+            models.UserSession.is_revoked == False,
+            models.UserSession.expires_at > now
+        )
+        .order_by(models.UserSession.last_active_at.desc())
+    )
+    result = await auth_db.execute(stmt)
+    sessions = result.scalars().all()
+
+    # Lấy danh sách máy tính bị chặn
+    blocked_stmt = select(models.BlockedDevice).order_by(models.BlockedDevice.blocked_at.desc())
+    blocked_result = await auth_db.execute(blocked_stmt)
+    blocked_devices = blocked_result.scalars().all()
+
+    # Map tên đầy đủ của user
+    user_ids = {s.user_id for s in sessions}
+    full_name_map = {}
+    if user_ids:
+        users_result = await auth_db.execute(select(models.User).filter(models.User.id.in_(user_ids)))
+        for u in users_result.scalars().all():
+            full_name_map[u.id] = u.full_name or u.username
+
+    session_list = []
+    for s in sessions:
+        session_list.append({
+            "session_id": s.session_id,
+            "username": s.username,
+            "full_name": full_name_map.get(s.user_id, s.username),
+            "role": s.role,
+            "ip_address": s.ip_address,
+            "local_ip": s.local_ip,
+            "device_id": s.device_id,
+            "device_name": s.device_name or "Thiết bị",
+            "user_agent": s.user_agent,
+            "created_at": s.created_at,
+            "last_active_at": s.last_active_at,
+            "expires_at": s.expires_at,
+            "is_current": (s.session_id == current_sid if current_sid else False)
+        })
+
+    blocked_list = []
+    for b in blocked_devices:
+        blocked_list.append({
+            "device_id": b.device_id,
+            "device_name": b.device_name or "Thiết bị",
+            "local_ip": b.local_ip,
+            "last_ip": b.last_ip,
+            "username": b.username,
+            "blocked_at": b.blocked_at,
+            "blocked_by": b.blocked_by,
+            "reason": b.reason or "Chặn bởi quản trị viên"
+        })
+
+    return {
+        "status": "ok",
+        "active_sessions": session_list,
+        "blocked_devices": blocked_list,
+        "total_active": len(session_list),
+        "total_blocked_devices": len(blocked_list)
+    }
+
+
+@app.post("/api/admin/security/sessions/revoke")
+async def revoke_session(
+    request_data: dict,  # {"session_id": "sess_..."}
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
+):
+    """Hủy một phiên đăng nhập cụ thể (ngắt kết nối máy đó)."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được hủy phiên đăng nhập")
+
+    session_id = request_data.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    stmt = select(models.UserSession).filter(models.UserSession.session_id == session_id)
+    result = await auth_db.execute(stmt)
+    target_session = result.scalar_one_or_none()
+    if not target_session:
+        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn")
+
+    target_session.is_revoked = True
+    target_session.revoked_at = int(time.time())
+    target_session.revoked_by = current_user.username
+    await auth_db.commit()
+
+    # Cập nhật cache tức thì
+    auth.revoke_session_in_memory(session_id)
+
+    # Ghi log sự kiện
+    await crud.log_system_event(
+        db=devices_db,
+        type="warning",
+        message=f"Admin '{current_user.username}' đã ngắt phiên đăng nhập của '{target_session.username}' (IP mạng: {target_session.ip_address}, IP máy: {target_session.local_ip or 'N/A'}, Thiết bị: {target_session.device_name})",
+        user_id=current_user.id,
+        ip=target_session.ip_address
+    )
+
+    logger.warning(f"Admin '{current_user.username}' revoked session {session_id} of '{target_session.username}'")
+    return {"status": "ok", "message": f"Đã ngắt phiên đăng nhập của '{target_session.username}'", "session_id": session_id}
+
+
+@app.post("/api/admin/security/sessions/block-device")
+async def block_device_endpoint(
+    request_data: dict,  # {"device_id": "dev_...", "reason": "..."}
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
+):
+    """Chặn riêng 1 máy tính (không chặn toàn mạng, các máy khác cùng mạng vẫn dùng bình thường)."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được chặn thiết bị")
+
+    device_id = request_data.get("device_id")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+
+    reason = request_data.get("reason", "Chặn máy bởi quản trị viên")
+
+    # Lấy thông tin từ phiên gần nhất của thiết bị
+    sess_stmt = (
+        select(models.UserSession)
+        .filter(models.UserSession.device_id == device_id)
+        .order_by(models.UserSession.last_active_at.desc())
+    )
+    sess_res = await auth_db.execute(sess_stmt)
+    latest_sess = sess_res.scalars().first()
+
+    device_name = latest_sess.device_name if latest_sess else None
+    local_ip = latest_sess.local_ip if latest_sess else None
+    last_ip = latest_sess.ip_address if latest_sess else None
+    username = latest_sess.username if latest_sess else None
+
+    # Kiểm tra xem máy đã có trong danh sách chặn chưa
+    check_stmt = select(models.BlockedDevice).filter(models.BlockedDevice.device_id == device_id)
+    check_res = await auth_db.execute(check_stmt)
+    blocked_entry = check_res.scalar_one_or_none()
+
+    if not blocked_entry:
+        blocked_entry = models.BlockedDevice(
+            device_id=device_id,
+            device_name=device_name,
+            local_ip=local_ip,
+            last_ip=last_ip,
+            username=username,
+            blocked_at=int(time.time()),
+            blocked_by=current_user.username,
+            reason=reason
+        )
+        auth_db.add(blocked_entry)
+
+    # Hủy TẤT CẢ các phiên đang mở của máy này
+    all_sess_stmt = select(models.UserSession).filter(
+        models.UserSession.device_id == device_id,
+        models.UserSession.is_revoked == False
+    )
+    all_sess_res = await auth_db.execute(all_sess_stmt)
+    for s in all_sess_res.scalars().all():
+        s.is_revoked = True
+        s.revoked_at = int(time.time())
+        s.revoked_by = current_user.username
+        auth.revoke_session_in_memory(s.session_id)
+
+    await auth_db.commit()
+
+    # Cập nhật cache tức thì
+    auth.block_device_in_memory(device_id)
+
+    # Ghi log
+    await crud.log_system_event(
+        db=devices_db,
+        type="danger",
+        message=f"Admin '{current_user.username}' đã chặn riêng máy tính (Device ID: {device_id}, IP máy: {local_ip or 'N/A'}, IP mạng: {last_ip or 'N/A'}, User: {username or 'N/A'}). Mạng IP chung không bị ảnh hưởng.",
+        user_id=current_user.id,
+        ip=last_ip or "0.0.0.0"
+    )
+
+    logger.warning(f"Admin '{current_user.username}' blocked machine {device_id} (machine IP: {local_ip}, remote IP: {last_ip})")
+    return {
+        "status": "ok",
+        "message": f"Đã chặn riêng máy tính này (IP máy: {local_ip or 'N/A'}, Thiết bị: {device_name or 'N/A'}). Các máy tính khác trong cùng mạng hoàn toàn không bị ảnh hưởng.",
+        "device_id": device_id
+    }
+
+
+@app.post("/api/admin/security/sessions/unblock-device")
+async def unblock_device_endpoint(
+    request_data: dict,  # {"device_id": "dev_..."}
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
+):
+    """Bỏ chặn cho một máy tính."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được bỏ chặn thiết bị")
+
+    device_id = request_data.get("device_id")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+
+    stmt = select(models.BlockedDevice).filter(models.BlockedDevice.device_id == device_id)
+    res = await auth_db.execute(stmt)
+    entry = res.scalar_one_or_none()
+    if entry:
+        await auth_db.delete(entry)
+        await auth_db.commit()
+
+    auth.unblock_device_in_memory(device_id)
+
+    await crud.log_system_event(
+        db=devices_db,
+        type="info",
+        message=f"Admin '{current_user.username}' đã bỏ chặn máy tính (Device ID: {device_id})",
+        user_id=current_user.id
+    )
+
+    logger.info(f"Admin '{current_user.username}' unblocked device {device_id}")
+    return {"status": "ok", "message": f"Đã bỏ chặn máy tính {device_id}", "device_id": device_id}
+
+
+@app.post("/api/admin/security/sessions/revoke-all-others")
+async def revoke_all_other_sessions(
+    request: Request,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
+):
+    """Đăng xuất tất cả các phiên đăng nhập khác, chỉ giữ lại phiên hiện tại."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được hủy tất cả phiên")
+
+    auth_header = request.headers.get("Authorization", "")
+    current_sid = None
+    if auth_header.startswith("Bearer "):
+        try:
+            token_payload = auth.decode_token(auth_header.split(" ", 1)[1])
+            current_sid = token_payload.get("sid")
+        except Exception:
+            pass
+
+    stmt = select(models.UserSession).filter(
+        models.UserSession.is_revoked == False,
+        models.UserSession.session_id != current_sid if current_sid else True
+    )
+    res = await auth_db.execute(stmt)
+    revoked_count = 0
+    now = int(time.time())
+    for s in res.scalars().all():
+        s.is_revoked = True
+        s.revoked_at = now
+        s.revoked_by = current_user.username
+        auth.revoke_session_in_memory(s.session_id)
+        revoked_count += 1
+
+    await auth_db.commit()
+
+    await crud.log_system_event(
+        db=devices_db,
+        type="warning",
+        message=f"Admin '{current_user.username}' đã ngắt {revoked_count} phiên đăng nhập khác",
+        user_id=current_user.id
+    )
+
+    return {"status": "ok", "message": f"Đã ngắt {revoked_count} phiên đăng nhập khác", "revoked_count": revoked_count}
+
+
 # === LICENSE ===
 @app.post("/api/license/pi", response_model=schemas.LicenseResponse)
 async def generate_pi_license(

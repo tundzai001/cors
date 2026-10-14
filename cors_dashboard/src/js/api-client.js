@@ -162,6 +162,123 @@
         return ws;
     }
 
+    let cachedLocalIP = null;
+    let localIPPromise = null;
+
+    function getDeviceId() {
+        try {
+            let did = localStorage.getItem('cors_device_id');
+            if (!did) {
+                if (window.crypto && window.crypto.getRandomValues) {
+                    const arr = new Uint8Array(12);
+                    window.crypto.getRandomValues(arr);
+                    did = 'dev_' + Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+                } else {
+                    did = 'dev_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+                }
+                localStorage.setItem('cors_device_id', did);
+            }
+            return did;
+        } catch (_) {
+            return 'dev_unknown';
+        }
+    }
+
+    function getDeviceName() {
+        try {
+            const ua = navigator.userAgent || '';
+            const uaLower = ua.toLowerCase();
+            let os = 'Máy tính';
+            if (uaLower.includes('windows nt 10.0') || uaLower.includes('windows nt 11.0')) os = 'Windows 10/11';
+            else if (uaLower.includes('windows')) os = 'Windows';
+            else if (uaLower.includes('macintosh') || uaLower.includes('mac os x')) os = 'macOS';
+            else if (uaLower.includes('iphone')) os = 'iPhone';
+            else if (uaLower.includes('ipad')) os = 'iPad';
+            else if (uaLower.includes('android')) os = 'Android';
+            else if (uaLower.includes('linux')) os = 'Linux';
+
+            let browser = 'Trình duyệt';
+            if (ua.includes('Edg/')) browser = 'Edge';
+            else if (ua.includes('Chrome/') && !ua.includes('Edg/')) browser = 'Chrome';
+            else if (ua.includes('Firefox/')) browser = 'Firefox';
+            else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Safari';
+            else if (ua.includes('OPR/') || ua.includes('Opera/')) browser = 'Opera';
+
+            return `${os} · ${browser}`;
+        } catch (_) {
+            return 'Thiết bị Web';
+        }
+    }
+
+    function detectLocalIP(timeoutMs = 1200) {
+        if (cachedLocalIP) return Promise.resolve(cachedLocalIP);
+        if (localIPPromise) return localIPPromise;
+
+        localIPPromise = new Promise((resolve) => {
+            let finished = false;
+            const finish = (ip) => {
+                if (!finished) {
+                    finished = true;
+                    if (ip) cachedLocalIP = ip;
+                    resolve(ip || null);
+                }
+            };
+
+            const timer = setTimeout(() => finish(null), timeoutMs);
+
+            try {
+                const RTCPC = window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection;
+                if (!RTCPC) {
+                    clearTimeout(timer);
+                    return finish(null);
+                }
+                const pc = new RTCPC({ iceServers: [] });
+                pc.createDataChannel('cors_probe');
+                pc.createOffer()
+                    .then(offer => pc.setLocalDescription(offer))
+                    .catch(() => finish(null));
+
+                pc.onicecandidate = (event) => {
+                    if (!event || !event.candidate || !event.candidate.candidate) return;
+                    const candidate = event.candidate.candidate;
+                    const match = candidate.match(/([0-9]{1,3}(?:\.[0-9]{1,3}){3})/);
+                    if (match) {
+                        const ip = match[1];
+                        if (ip !== '0.0.0.0' && !ip.startsWith('127.')) {
+                            clearTimeout(timer);
+                            try { pc.close(); } catch (_) {}
+                            finish(ip);
+                        }
+                    }
+                };
+            } catch (_) {
+                finish(null);
+            }
+        });
+
+        return localIPPromise;
+    }
+
+    // Trigger local IP probe in background
+    setTimeout(() => { try { detectLocalIP(1500); } catch (_) {} }, 100);
+
+    async function getClientMeta() {
+        let localIp = cachedLocalIP;
+        if (!localIp) {
+            try {
+                localIp = await Promise.race([
+                    detectLocalIP(500),
+                    new Promise(res => setTimeout(() => res(null), 500))
+                ]);
+            } catch (_) {}
+        }
+        return {
+            device_id: getDeviceId(),
+            device_name: getDeviceName(),
+            local_ip: localIp || null
+        };
+    }
+
     window.ApiClient = {
         getToken,
         hasToken,
@@ -173,7 +290,11 @@
         requireAuthenticatedPage,
         authHeaders,
         apiFetch,
-        createAuthenticatedWebSocket
+        createAuthenticatedWebSocket,
+        getDeviceId,
+        getDeviceName,
+        detectLocalIP,
+        getClientMeta
     };
 
     window.apiFetch = apiFetch;

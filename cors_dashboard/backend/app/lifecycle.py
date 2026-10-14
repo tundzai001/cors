@@ -105,6 +105,16 @@ async def lifespan(app: FastAPI):
             logger.error(f"Failed to create default admin: {e}")
 
         # ===================================================================
+        # BƯỚC 2.1: SYNC AUTH SESSION & BLOCKED DEVICE CACHE
+        # ===================================================================
+        try:
+            async with auth_session_scope() as db_session:
+                await auth.sync_auth_session_cache(db_session)
+                logger.info("✓ Auth session and blocked devices cache initialized")
+        except Exception as e:
+            logger.warning(f"Auth session cache init note: {e}")
+
+        # ===================================================================
         # BƯỚC 2.5: CLEANUP GHOST DEVICES (optional)
         # ===================================================================
         try:

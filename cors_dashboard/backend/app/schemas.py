@@ -354,6 +354,8 @@ class RoverAccountCreate(RoverAccountBase):
     rtcm_disconnect_interval_seconds: int = 300  # Default 5 minutes (300 seconds)
     rtcm_disconnect_duration_seconds: int = 10
     is_shared_with_managers: bool = False
+    auto_save_sessions: bool = True
+    auto_save_fixed_points: bool = False
 
 class RoverAccountResponse(RoverAccountBase):
     id: int
@@ -388,6 +390,8 @@ class RoverMultiCreate(BaseModel):
     rtcm_disconnect_interval_seconds: int = 300
     rtcm_disconnect_duration_seconds: int = 10
     is_shared_with_managers: bool = False
+    auto_save_sessions: bool = True
+    auto_save_fixed_points: bool = False
     
 class RoverUpdate(BaseModel):
     password: str | None = None
@@ -415,6 +419,56 @@ class LoginRequest(BaseModel):
     username: str
     password: str
     remember_me: bool = False
+    device_id: Optional[str] = None
+    local_ip: Optional[str] = None
+    device_name: Optional[str] = None
+
+
+class UserSessionResponse(BaseModel):
+    session_id: str
+    username: str
+    full_name: Optional[str] = None
+    role: str
+    ip_address: str
+    local_ip: Optional[str] = None
+    device_id: str
+    device_name: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: int
+    last_active_at: int
+    expires_at: int
+    is_current: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class BlockedDeviceResponse(BaseModel):
+    device_id: str
+    device_name: Optional[str] = None
+    local_ip: Optional[str] = None
+    last_ip: Optional[str] = None
+    username: Optional[str] = None
+    blocked_at: int
+    blocked_by: str
+    reason: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RevokeSessionRequest(BaseModel):
+    session_id: str
+
+
+class BlockDeviceRequest(BaseModel):
+    device_id: str
+    reason: Optional[str] = None
+
+
+class UnblockDeviceRequest(BaseModel):
+    device_id: str
+
 
 class CasterConfig(BaseModel):
     host: str

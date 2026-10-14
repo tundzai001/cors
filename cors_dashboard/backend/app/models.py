@@ -140,6 +140,45 @@ class SystemSetting(AuthBase):
     value = Column(JSON, nullable=False)
 
 
+class UserSession(AuthBase):
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(64), unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    username = Column(String, index=True, nullable=False)
+    role = Column(String, nullable=False)
+    ip_address = Column(String, nullable=False)
+    local_ip = Column(String, nullable=True)
+    device_id = Column(String(64), index=True, nullable=False)
+    device_name = Column(String, nullable=True)
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(BigInteger, nullable=False)
+    last_active_at = Column(BigInteger, nullable=False, index=True)
+    expires_at = Column(BigInteger, nullable=False)
+    is_revoked = Column(Boolean, default=False, nullable=False, index=True)
+    revoked_at = Column(BigInteger, nullable=True)
+    revoked_by = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_user_sessions_active_lookup", "is_revoked", "expires_at", "last_active_at"),
+    )
+
+
+class BlockedDevice(AuthBase):
+    __tablename__ = "blocked_devices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String(64), unique=True, index=True, nullable=False)
+    device_name = Column(String, nullable=True)
+    local_ip = Column(String, nullable=True)
+    last_ip = Column(String, nullable=True)
+    username = Column(String, nullable=True)
+    blocked_at = Column(BigInteger, nullable=False)
+    blocked_by = Column(String, nullable=False)
+    reason = Column(String, nullable=True)
+
+
 class ApiKey(AuthBase):
     __tablename__ = "api_keys"
 

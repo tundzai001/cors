@@ -152,6 +152,45 @@ async def get_password_hash(password: str) -> str:
     if not is_valid: raise ValueError(error_msg)
     return await run_in_threadpool(pwd_context.hash, password)
 
+REVOKED_SESSIONS: set[str] = set()
+BLOCKED_DEVICES: set[str] = set()
+SESSION_LAST_ACTIVE_CACHE: dict[str, float] = {}
+
+def revoke_session_in_memory(session_id: str):
+    REVOKED_SESSIONS.add(session_id)
+
+def block_device_in_memory(device_id: str):
+    BLOCKED_DEVICES.add(device_id)
+
+def unblock_device_in_memory(device_id: str):
+    BLOCKED_DEVICES.discard(device_id)
+
+def is_session_revoked(session_id: str) -> bool:
+    return session_id in REVOKED_SESSIONS
+
+def is_device_blocked(device_id: str) -> bool:
+    return device_id in BLOCKED_DEVICES
+
+async def sync_auth_session_cache(db: AsyncSession):
+    """Load blocked devices and recent revoked sessions into memory on startup or sync."""
+    try:
+        from sqlalchemy import select
+        b_res = await db.execute(select(models.BlockedDevice.device_id))
+        for did in b_res.scalars().all():
+            BLOCKED_DEVICES.add(did)
+
+        cutoff = int(datetime.utcnow().timestamp()) - 86400 * 7
+        s_res = await db.execute(
+            select(models.UserSession.session_id).filter(
+                models.UserSession.is_revoked == True,
+                models.UserSession.last_active_at > cutoff
+            )
+        )
+        for sid in s_res.scalars().all():
+            REVOKED_SESSIONS.add(sid)
+    except Exception as e:
+        logger.debug(f"Auth session cache sync note: {e}")
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
@@ -170,10 +209,41 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     payload = decode_token(token)
     username: str = payload.get("sub")
     if not username: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ")
+
+    sid = payload.get("sid")
+    did = payload.get("did")
+    if sid and is_session_revoked(sid):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Phiên đăng nhập đã bị hủy bởi quản trị viên",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    if did and is_device_blocked(did):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Thiết bị này đã bị chặn truy cập bởi quản trị viên"
+        )
+
     user = await crud.get_user_by_username(db, username=username)
     if not user: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User không tồn tại")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is disabled")
+
+    if sid:
+        now = datetime.utcnow().timestamp()
+        if now - SESSION_LAST_ACTIVE_CACHE.get(sid, 0) > 60:
+            SESSION_LAST_ACTIVE_CACHE[sid] = now
+            try:
+                from sqlalchemy import update
+                await db.execute(
+                    update(models.UserSession)
+                    .where(models.UserSession.session_id == sid)
+                    .values(last_active_at=int(now))
+                )
+                await db.commit()
+            except Exception as e:
+                logger.debug(f"Could not update session activity: {e}")
+
     return user
 
 def require_permission(permission: str):

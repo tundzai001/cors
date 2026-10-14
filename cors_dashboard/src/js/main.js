@@ -1080,10 +1080,14 @@ async function handleConfigureChip(serial, payload) {
             const err = await response.json();
             throw new Error(err.detail || 'Cau hinh chip that bai');
         }
+        const existingDev = (window.devices || []).find(d => d.serial === serial);
+        const existingBase = existingDev?.base_config || {};
         updateGlobalDevices({
             serial,
             base_config: {
+                ...existingBase,
                 ...(payload?.params || {}),
+                gnss_options: payload?.params?.gnss_options || existingBase.gnss_options,
                 sensor_type: payload?.sensor_type,
                 mode: payload?.mode
             }

@@ -1928,10 +1928,21 @@ const LoginPanel = ({ isOpen, onClose }) => {
         setLoading(true);
         setError('');
         try {
+            const clientMeta = window.ApiClient && typeof window.ApiClient.getClientMeta === 'function'
+                ? await window.ApiClient.getClientMeta()
+                : { device_id: null, device_name: null, local_ip: null };
+
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: username.trim(), password, remember_me: remember })
+                body: JSON.stringify({
+                    username: username.trim(),
+                    password,
+                    remember_me: remember,
+                    device_id: clientMeta.device_id,
+                    device_name: clientMeta.device_name,
+                    local_ip: clientMeta.local_ip
+                })
             });
             const data = await res.json();
             if (!res.ok) {

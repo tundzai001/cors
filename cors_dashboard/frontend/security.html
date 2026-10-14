@@ -210,6 +210,76 @@
                 </div>
             </div>
 
+            <section class="ops-card ops-security-card mb-4" aria-labelledby="active-sessions-title">
+                <div class="ops-section-head">
+                    <div>
+                        <h2 id="active-sessions-title" class="ops-section-title mb-1">
+                            <i class="bi bi-people-fill me-2 text-primary"></i>Điều khiển phiên đăng nhập (Active Sessions)
+                        </h2>
+                        <p class="ops-card-meta mb-0">
+                            Hiển thị ai đang đăng nhập cùng <strong>IP mạng</strong> và <strong>IP chính xác của máy</strong>. Có thể ngắt phiên hoặc chặn riêng 1 máy mà không chặn cả mạng.
+                        </p>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-primary" id="active-sessions-badge">0 phiên đang mở</span>
+                        <button class="btn btn-sm btn-outline-danger" id="revoke-all-others-btn" type="button">
+                            <i class="bi bi-box-arrow-right me-1"></i>Ngắt tất cả máy khác
+                        </button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table ops-table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Người dùng</th>
+                                <th>IP mạng (Public)</th>
+                                <th>IP máy chính xác (Local)</th>
+                                <th>Thiết bị &amp; Trình duyệt</th>
+                                <th>Đăng nhập lúc</th>
+                                <th>Hoạt động cuối</th>
+                                <th class="text-end">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="active-sessions-table-body">
+                            <tr><td colspan="7"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Đang tải danh sách phiên...</span></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="ops-card ops-security-card mb-4" aria-labelledby="blocked-devices-title">
+                <div class="ops-section-head">
+                    <div>
+                        <h2 id="blocked-devices-title" class="ops-section-title mb-1">
+                            <i class="bi bi-pc-display-horizontal me-2 text-danger"></i>Danh sách máy tính bị chặn (Blocked Devices)
+                        </h2>
+                        <p class="ops-card-meta mb-0">
+                            Chặn riêng máy tính theo Device ID / IP máy. Các máy tính khác trong cùng mạng LAN/NAT vẫn sử dụng bình thường.
+                        </p>
+                    </div>
+                    <span class="badge bg-secondary" id="blocked-devices-badge">0 máy</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table ops-table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Mã máy (Device ID)</th>
+                                <th>Tên thiết bị</th>
+                                <th>IP máy nội bộ</th>
+                                <th>IP mạng lần cuối</th>
+                                <th>Tài khoản gần nhất</th>
+                                <th>Thời gian chặn</th>
+                                <th>Lý do</th>
+                                <th class="text-end">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blocked-devices-table-body">
+                            <tr><td colspan="8"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có máy tính nào bị chặn</span></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <section class="ops-card ops-security-card mb-4" aria-labelledby="block-history-title">
                 <div class="ops-section-head"><div><h2 id="block-history-title" class="ops-section-title mb-1">Lượt chặn gần đây</h2><p class="ops-card-meta mb-0">Tối đa 200 sự kiện trong giờ qua của phiên hiện tại. Vẫn hiển thị sau khi hết thời gian chặn.</p></div><span id="security-updated" class="ops-card-meta">Đang cập nhật…</span></div>
                 <div class="table-responsive"><table class="table ops-table"><thead><tr><th>Lần cuối</th><th>IP</th><th>Nguồn chặn</th><th>Lý do</th><th class="text-end">Số lượt</th></tr></thead><tbody id="block-history-body"><tr><td colspan="5">Đang tải…</td></tr></tbody></table></div>

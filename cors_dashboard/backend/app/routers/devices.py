@@ -16,6 +16,7 @@ import base64
 import logging
 import os
 import re
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +293,13 @@ async def configure_chip_endpoint(
     method = params.get("base_setup_method") if isinstance(params, dict) else None
     gnss_options = params.get("gnss_options") if isinstance(params, dict) else None
 
+    # Mặc định kế thừa cấu hình RTCM/GNSS đã được admin thiết lập trên trạm nếu params không truyền
+    existing_base_config = device_in_db.base_config if isinstance(device_in_db.base_config, dict) else {}
+    if gnss_options is None and isinstance(existing_base_config, dict):
+        gnss_options = existing_base_config.get("gnss_options")
+    if gnss_options and isinstance(params, dict) and "gnss_options" not in params:
+        params["gnss_options"] = gnss_options
+
     if not sensor_type or not mode:
         raise HTTPException(status_code=400, detail="Missing required fields: sensor_type or mode")
 
@@ -307,6 +315,10 @@ async def configure_chip_endpoint(
         if isinstance(params, dict) and params:
             normalized_params = crud.normalize_base_config(params)
             if normalized_params:
+                if "gnss_options" not in normalized_params and "gnss_options" in existing_base_config:
+                    normalized_params["gnss_options"] = existing_base_config["gnss_options"]
+                elif gnss_options and "gnss_options" not in normalized_params:
+                    normalized_params["gnss_options"] = gnss_options
                 device_in_db.base_config = normalized_params
             else:
                 current_base_config = device_in_db.base_config if isinstance(device_in_db.base_config, dict) else {}
@@ -314,6 +326,10 @@ async def configure_chip_endpoint(
                 for key, value in params.items():
                     if key != "coords":
                         merged_base_config[key] = value
+                if "gnss_options" not in merged_base_config and "gnss_options" in existing_base_config:
+                    merged_base_config["gnss_options"] = existing_base_config["gnss_options"]
+                elif gnss_options and "gnss_options" not in merged_base_config:
+                    merged_base_config["gnss_options"] = gnss_options
                 if merged_base_config:
                     device_in_db.base_config = merged_base_config
         device_in_db.is_synced = False
@@ -575,7 +591,9 @@ async def create_rover_for_base(
         rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
         rtcm_disconnect_interval_seconds=rover_data.rtcm_disconnect_interval_seconds,
         rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds,
-        is_shared_with_managers=rover_data.is_shared_with_managers
+        is_shared_with_managers=rover_data.is_shared_with_managers,
+        auto_save_sessions=getattr(rover_data, 'auto_save_sessions', True),
+        auto_save_fixed_points=getattr(rover_data, 'auto_save_fixed_points', False),
     )
     
     return new_rover
@@ -950,7 +968,6 @@ async def set_device_license_bypass(
     system_info = dict(device.system_info or {})
     system_info["auth_license_bypass"] = enabled
     system_info["auth_license_bypass_by"] = current_user.username
-    import time
     system_info["auth_license_bypass_at"] = int(time.time())
     device.system_info = system_info
 

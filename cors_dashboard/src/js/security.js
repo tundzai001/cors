@@ -1,4 +1,4 @@
-﻿﻿// ============================================================
+// ============================================================
 // security.js - v5.0 - FIXED THREAT LEVEL CALCULATION
 // ============================================================
 
@@ -70,11 +70,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         try {
-            const [statsData, settingsData] = await Promise.all([
+            const [statsData, settingsData, sessionsData] = await Promise.all([
                 apiFetch('/api/admin/security/stats'),
                 !cachedSecuritySettings || isManualReload || Date.now() - settingsUpdatedAt > 30000
                     ? apiFetch('/api/admin/settings').then(value => { cachedSecuritySettings = value; settingsUpdatedAt = Date.now(); return value; })
-                    : Promise.resolve(cachedSecuritySettings)
+                    : Promise.resolve(cachedSecuritySettings),
+                apiFetch('/api/admin/security/sessions').catch(err => {
+                    console.warn('Could not load sessions:', err);
+                    return { active_sessions: [], blocked_devices: [] };
+                })
             ]);
             
             // === 🆕 KIỂM TRA NẾU API TRẢ VỀ LỖI (status: "error") ===
@@ -95,6 +99,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderTrafficChart(statsData.rate_limiter.traffic_history);
             renderVpnIntelligence(statsData.rate_limiter.vpn_suspects);
             handleAttackMode(statsData.rate_limiter.attack_mode);
+
+            if (sessionsData) {
+                renderActiveSessions(sessionsData.active_sessions || []);
+                renderBlockedDevices(sessionsData.blocked_devices || []);
+            }
 
             if (statsData.system_health) {
                 renderSystemHealth(statsData.system_health);
@@ -418,6 +427,125 @@ document.addEventListener('DOMContentLoaded', async () => {
         }).join('');
     }
 
+    function formatRelativeTime(timestamp) {
+        if (!timestamp) return '—';
+        const diff = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
+        if (diff < 15) return '<span class="text-success fw-bold"><i class="bi bi-circle-fill me-1" style="font-size:0.5rem;"></i>Vừa xong</span>';
+        if (diff < 60) return `<span class="text-success">${diff}s trước</span>`;
+        if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`;
+        return `${Math.floor(diff / 86400)} ngày trước`;
+    }
+
+    function renderActiveSessions(sessions) {
+        const tbody = document.getElementById('active-sessions-table-body');
+        const badge = document.getElementById('active-sessions-badge');
+        if (badge) badge.textContent = `${sessions.length} phiên đang mở`;
+        if (!tbody) return;
+
+        if (!sessions.length) {
+            tbody.innerHTML = '<tr><td colspan="7"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có phiên đăng nhập nào đang hoạt động</span></div></td></tr>';
+            return;
+        }
+
+        const roleBadges = {
+            admin: 'bg-danger',
+            coordinator: 'bg-primary',
+            viewer: 'bg-secondary'
+        };
+
+        tbody.innerHTML = sessions.map(s => {
+            const roleBadge = roleBadges[s.role] || 'bg-secondary';
+            const currentBadge = s.is_current 
+                ? '<span class="badge bg-success ms-1"><i class="bi bi-person-check-fill me-1"></i>Phiên này (Bạn)</span>' 
+                : '';
+
+            const localIpDisplay = s.local_ip
+                ? `<div class="d-flex align-items-center">
+                    <span class="badge bg-dark-subtle border border-primary-subtle text-primary fw-medium">
+                        <i class="bi bi-pc-display me-1"></i>${escapeHtml(s.local_ip)}
+                    </span>
+                   </div>`
+                : `<span class="text-muted small"><i class="bi bi-hdd-network me-1"></i>Chung IP mạng</span>`;
+
+            const deviceName = escapeHtml(s.device_name || 'Không xác định');
+            const deviceIdShort = escapeHtml((s.device_id || '').slice(0, 10));
+
+            const actionButtons = s.is_current
+                ? `<span class="badge bg-dark-subtle text-muted border px-2 py-1"><i class="bi bi-shield-check me-1"></i>Đang sử dụng</span>`
+                : `<div class="btn-group btn-group-sm">
+                    <button class="btn btn-sm btn-outline-warning revoke-session-btn" 
+                            data-session-id="${escapeHtml(s.session_id)}" 
+                            data-username="${escapeHtml(s.username)}"
+                            data-local-ip="${escapeHtml(s.local_ip || '')}"
+                            data-device="${escapeHtml(s.device_name || '')}"
+                            title="Đăng xuất riêng máy này">
+                        <i class="bi bi-box-arrow-right me-1"></i>Đăng xuất
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger block-device-btn" 
+                            data-device-id="${escapeHtml(s.device_id)}" 
+                            data-username="${escapeHtml(s.username)}"
+                            data-device-name="${escapeHtml(s.device_name || '')}"
+                            data-local-ip="${escapeHtml(s.local_ip || '')}"
+                            data-ip="${escapeHtml(s.ip_address)}"
+                            title="Chặn riêng máy tính này, không ảnh hưởng toàn mạng">
+                        <i class="bi bi-ban me-1"></i>Chặn máy
+                    </button>
+                   </div>`;
+
+            return `<tr>
+                <td>
+                    <div class="fw-bold">${escapeHtml(s.full_name || s.username)} ${currentBadge}</div>
+                    <div class="small text-muted font-monospace">${escapeHtml(s.username)} <span class="badge ${roleBadge} ms-1" style="font-size:0.65rem;">${escapeHtml((s.role || '').toUpperCase())}</span></div>
+                </td>
+                <td>
+                    <code class="px-2 py-1 bg-dark-subtle rounded border border-secondary-subtle">${escapeHtml(s.ip_address)}</code>
+                </td>
+                <td>
+                    ${localIpDisplay}
+                    <div class="small text-muted font-monospace" style="font-size: 0.72rem;">ID: ${deviceIdShort}…</div>
+                </td>
+                <td>
+                    <div class="text-truncate" style="max-width: 220px;" title="${escapeHtml(s.user_agent || '')}">
+                        <i class="bi bi-laptop me-1 text-info"></i>${deviceName}
+                    </div>
+                </td>
+                <td><small class="text-muted">${escapeHtml(new Date(s.created_at * 1000).toLocaleString('vi-VN'))}</small></td>
+                <td><small>${formatRelativeTime(s.last_active_at)}</small></td>
+                <td class="text-end">${actionButtons}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    function renderBlockedDevices(devices) {
+        const tbody = document.getElementById('blocked-devices-table-body');
+        const badge = document.getElementById('blocked-devices-badge');
+        if (badge) badge.textContent = `${devices.length} máy`;
+        if (!tbody) return;
+
+        if (!devices.length) {
+            tbody.innerHTML = '<tr><td colspan="8"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có máy tính nào bị chặn</span></div></td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = devices.map(d => {
+            return `<tr>
+                <td><code class="font-monospace">${escapeHtml(d.device_id)}</code></td>
+                <td><i class="bi bi-pc me-1 text-danger"></i>${escapeHtml(d.device_name || 'Thiết bị')}</td>
+                <td>${d.local_ip ? `<span class="badge bg-dark-subtle border border-danger-subtle text-danger"><i class="bi bi-pc-display me-1"></i>${escapeHtml(d.local_ip)}</span>` : '<span class="text-muted">—</span>'}</td>
+                <td><code>${escapeHtml(d.last_ip || 'N/A')}</code></td>
+                <td><strong>${escapeHtml(d.username || '—')}</strong></td>
+                <td><small class="text-muted">${escapeHtml(new Date(d.blocked_at * 1000).toLocaleString('vi-VN'))}</small></td>
+                <td><span class="badge bg-danger-subtle text-danger border border-danger-subtle">${escapeHtml(d.reason || 'Chặn bởi admin')}</span></td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-success unblock-device-btn" data-device-id="${escapeHtml(d.device_id)}">
+                        <i class="bi bi-unlock-fill me-1"></i>Bỏ chặn máy
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
     function renderSuspiciousIPs(suspiciousIPs) {
         suspiciousIpsContainer.innerHTML = '';
         if (suspiciousIPs.length === 0) {
@@ -537,6 +665,94 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (error) {}
     }
 
+    async function handleRevokeSession(sessionId, username, localIp, deviceName) {
+        const targetDesc = localIp ? ` (IP máy: ${localIp}, Thiết bị: ${deviceName})` : '';
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Đăng xuất phiên làm việc',
+            message: `Bạn có chắc muốn đăng xuất phiên của tài khoản "${username}"${targetDesc}? Máy này sẽ bị ngắt kết nối ngay lập tức.`,
+            confirmText: 'Đăng xuất',
+            tone: 'warning'
+        });
+        if (!ok) return;
+
+        try {
+            await apiFetch('/api/admin/security/sessions/revoke', {
+                method: 'POST',
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            showSuccess(`Đã ngắt phiên làm việc của "${username}"`);
+            loadSecurityData();
+        } catch (error) {
+            showError(`Không thể ngắt phiên: ${error.message}`);
+        }
+    }
+
+    async function handleBlockDevice(deviceId, username, deviceName, localIp, publicIp) {
+        const ipInfo = localIp ? `IP máy: ${localIp}` : `ID máy: ${deviceId.slice(0, 10)}…`;
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Chặn riêng máy tính này',
+            message: `Bạn có chắc muốn CHẶN riêng máy tính này (${ipInfo}, Thiết bị: ${deviceName || 'Không rõ'})?\n\nLưu ý: Chỉ riêng máy này bị chặn đăng nhập lại. Các máy tính khác trong cùng mạng (${publicIp}) hoàn toàn không bị ảnh hưởng.`,
+            confirmText: 'Chặn máy này',
+            tone: 'danger'
+        });
+        if (!ok) return;
+
+        try {
+            await apiFetch('/api/admin/security/sessions/block-device', {
+                method: 'POST',
+                body: JSON.stringify({
+                    device_id: deviceId,
+                    reason: `Chặn riêng máy (${localIp || deviceId.slice(0, 8)}) bởi admin`
+                })
+            });
+            showSuccess(`Đã chặn riêng máy tính này. Các máy khác trong mạng ${publicIp} vẫn dùng bình thường.`);
+            loadSecurityData();
+        } catch (error) {
+            showError(`Không thể chặn máy: ${error.message}`);
+        }
+    }
+
+    async function handleUnblockDevice(deviceId) {
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Bỏ chặn máy tính',
+            message: `Bỏ chặn cho máy tính "${deviceId}"? Máy này sẽ có thể đăng nhập lại.`,
+            confirmText: 'Bỏ chặn'
+        });
+        if (!ok) return;
+
+        try {
+            await apiFetch('/api/admin/security/sessions/unblock-device', {
+                method: 'POST',
+                body: JSON.stringify({ device_id: deviceId })
+            });
+            showSuccess('Đã bỏ chặn máy tính');
+            loadSecurityData();
+        } catch (error) {
+            showError(`Không thể bỏ chặn: ${error.message}`);
+        }
+    }
+
+    async function handleRevokeAllOthers() {
+        const ok = await window.CorsUI.confirmAction({
+            title: 'Đăng xuất tất cả các máy khác',
+            message: 'Bạn có chắc chắn muốn đăng xuất tất cả các phiên làm việc khác trên mọi thiết bị? Chỉ phiên làm việc trên máy tính hiện tại của bạn được giữ lại.',
+            confirmText: 'Đăng xuất tất cả máy khác',
+            tone: 'danger'
+        });
+        if (!ok) return;
+
+        try {
+            const res = await apiFetch('/api/admin/security/sessions/revoke-all-others', {
+                method: 'POST',
+                body: JSON.stringify({})
+            });
+            showSuccess(res?.message || 'Đã đăng xuất tất cả các máy khác');
+            loadSecurityData();
+        } catch (error) {
+            showError(`Lỗi: ${error.message}`);
+        }
+    }
+
     async function loadCurrentUser() {
         try {
             const user = await apiFetch('/api/auth/me');
@@ -552,8 +768,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.addEventListener('click', (e) => {
         if (e.target.closest('.unblock-btn')) {
             handleUnblockIp(e.target.closest('.unblock-btn').dataset.ip);
+            return;
+        }
+
+        const revokeBtn = e.target.closest('.revoke-session-btn');
+        if (revokeBtn) {
+            const sid = revokeBtn.dataset.sessionId;
+            const user = revokeBtn.dataset.username;
+            const localIp = revokeBtn.dataset.localIp;
+            const device = revokeBtn.dataset.device;
+            handleRevokeSession(sid, user, localIp, device);
+            return;
+        }
+
+        const blockDevBtn = e.target.closest('.block-device-btn');
+        if (blockDevBtn) {
+            const did = blockDevBtn.dataset.deviceId;
+            const user = blockDevBtn.dataset.username;
+            const name = blockDevBtn.dataset.deviceName;
+            const localIp = blockDevBtn.dataset.localIp;
+            const ip = blockDevBtn.dataset.ip;
+            handleBlockDevice(did, user, name, localIp, ip);
+            return;
+        }
+
+        const unblockDevBtn = e.target.closest('.unblock-device-btn');
+        if (unblockDevBtn) {
+            const did = unblockDevBtn.dataset.deviceId;
+            handleUnblockDevice(did);
+            return;
         }
     });
+
+    const revokeOthersBtn = document.getElementById('revoke-all-others-btn');
+    if (revokeOthersBtn) {
+        revokeOthersBtn.addEventListener('click', handleRevokeAllOthers);
+    }
+
     blockIpForm.addEventListener('submit', handleBlockIp);
 
     function showToast(message, type) {

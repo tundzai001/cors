@@ -252,6 +252,7 @@
         ['Hệ thống', 'System'],
         ['Đã kết nối', 'Connected'],
         ['Quản trị viên', 'Administrator'],
+        ['Cài đặt bởi Admin', 'Configured by Admin'],
         ['Điều phối viên', 'Coordinator'],
         ['Người xem', 'Viewer'],
         ['Đăng xuất', 'Logout'],

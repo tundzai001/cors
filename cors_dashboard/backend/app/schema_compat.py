@@ -76,6 +76,43 @@ AUTH_ZALO_SCHEMA_STATEMENTS = (
         created_by VARCHAR NOT NULL
     )""",
     "CREATE INDEX IF NOT EXISTS ix_rover_fixed_points_session_recorded ON rover_fixed_points (session_id, recorded_at)",
+    """CREATE TABLE IF NOT EXISTS user_sessions (
+        id SERIAL PRIMARY KEY,
+        session_id VARCHAR(64) UNIQUE NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        username VARCHAR NOT NULL,
+        role VARCHAR NOT NULL,
+        ip_address VARCHAR NOT NULL,
+        local_ip VARCHAR NULL,
+        device_id VARCHAR(64) NOT NULL,
+        device_name VARCHAR NULL,
+        user_agent TEXT NULL,
+        created_at BIGINT NOT NULL,
+        last_active_at BIGINT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        is_revoked BOOLEAN NOT NULL DEFAULT FALSE,
+        revoked_at BIGINT NULL,
+        revoked_by VARCHAR NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_session_id ON user_sessions(session_id)",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_user_id ON user_sessions(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_username ON user_sessions(username)",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_device_id ON user_sessions(device_id)",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_is_revoked ON user_sessions(is_revoked)",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_last_active ON user_sessions(last_active_at)",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_active_lookup ON user_sessions(is_revoked, expires_at, last_active_at)",
+    """CREATE TABLE IF NOT EXISTS blocked_devices (
+        id SERIAL PRIMARY KEY,
+        device_id VARCHAR(64) UNIQUE NOT NULL,
+        device_name VARCHAR NULL,
+        local_ip VARCHAR NULL,
+        last_ip VARCHAR NULL,
+        username VARCHAR NULL,
+        blocked_at BIGINT NOT NULL,
+        blocked_by VARCHAR NOT NULL,
+        reason VARCHAR NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_blocked_devices_device_id ON blocked_devices(device_id)",
 )
 
 

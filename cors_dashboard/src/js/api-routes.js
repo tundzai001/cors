@@ -88,6 +88,11 @@
             securityStats: '/api/admin/security/stats',
             blockIp: '/api/admin/security/block-ip',
             unblockIp: '/api/admin/security/unblock-ip',
+            sessions: '/api/admin/security/sessions',
+            revokeSession: '/api/admin/security/sessions/revoke',
+            blockDevice: '/api/admin/security/sessions/block-device',
+            unblockDevice: '/api/admin/security/sessions/unblock-device',
+            revokeAllOtherSessions: '/api/admin/security/sessions/revoke-all-others',
             casterConfig: '/api/admin/caster-config',
             casterSources: '/api/admin/caster-sources',
             zaloSystem: '/api/admin/zalo/system'

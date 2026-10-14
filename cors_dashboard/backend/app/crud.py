@@ -581,6 +581,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         if old_coords and not new_coords:
             pass
         else:
+            if "gnss_options" not in new_base_config and old_config.get("gnss_options"):
+                new_base_config["gnss_options"] = old_config["gnss_options"]
             update_values["base_config"] = new_base_config
             update_values["is_synced"] = False
             should_update = True

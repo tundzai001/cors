@@ -2880,6 +2880,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 is_shared_with_managers: document.getElementById('new-is-shared')?.checked || false
             };
 
+            if (isAdmin) {
+                payload.auto_save_sessions = document.getElementById('new-auto-save-sessions')?.checked !== false;
+                payload.auto_save_fixed_points = document.getElementById('new-auto-save-fixed-points')?.checked === true;
+            }
+
             try {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 submitBtn.disabled = true;
@@ -2899,6 +2904,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast(`Tạo Rover "${payload.username}" thành công!`, 'success');
                 bootstrap.Modal.getInstance(document.getElementById('createRoverModal')).hide();
                 createForm.reset();
+                const newAutoSaveSessions = document.getElementById('new-auto-save-sessions');
+                if (newAutoSaveSessions) newAutoSaveSessions.checked = true;
+                const newAutoSaveFixedPoints = document.getElementById('new-auto-save-fixed-points');
+                if (newAutoSaveFixedPoints) newAutoSaveFixedPoints.checked = false;
                 document.querySelectorAll('.station-check').forEach(cb => cb.checked = false);
                 await refreshDataInPlace();
 
@@ -2942,6 +2951,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     }
+
+    // Toggle dependency between auto_save_sessions and auto_save_fixed_points
+    function bindAutoSaveDependency(sessionToggleId, fixedPointsToggleId) {
+        const sessionToggle = document.getElementById(sessionToggleId);
+        const fixedPointsToggle = document.getElementById(fixedPointsToggleId);
+        if (!sessionToggle || !fixedPointsToggle) return;
+
+        sessionToggle.addEventListener('change', () => {
+            if (!sessionToggle.checked) {
+                fixedPointsToggle.checked = false;
+            }
+        });
+        fixedPointsToggle.addEventListener('change', () => {
+            if (fixedPointsToggle.checked) {
+                sessionToggle.checked = true;
+            }
+        });
+    }
+    bindAutoSaveDependency('new-auto-save-sessions', 'new-auto-save-fixed-points');
+    bindAutoSaveDependency('edit-auto-save-sessions', 'edit-auto-save-fixed-points');
 
     // Rover Dashboard events
     const searchBox = document.getElementById('search-box');

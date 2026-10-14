@@ -146,3 +146,13 @@
 .ops-admin-page .loading-bar {
     display: none !important;
 }
+
+/* Active Sessions & Device Control */
+.ops-security-card .table td {
+    vertical-align: middle;
+}
+
+.ops-security-card .btn-group-sm > .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.775rem;
+}

@@ -457,20 +457,42 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     return;
                 }
             }
-            if (isAdmin && !isLteStation) {
-                params.gnss_options = {
-                    output_mode: outputMode,
-                    msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel),
-                    constellations: {
-                        gps: true,
-                        glo: true,
-                        gal: true,
-                        bds: true,
-                        qzss: true,
-                        sbas: true
-                    },
-                    ports: ['USB']
-                };
+            if (!isLteStation) {
+                const existingGnss = (device.base_config && typeof device.base_config.gnss_options === 'object')
+                    ? device.base_config.gnss_options
+                    : null;
+
+                if (isAdmin) {
+                    params.gnss_options = {
+                        output_mode: outputMode,
+                        msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel),
+                        constellations: constellations || {
+                            gps: true,
+                            glo: true,
+                            gal: true,
+                            bds: true,
+                            qzss: true,
+                            sbas: true
+                        },
+                        ports: ['USB']
+                    };
+                } else if (existingGnss) {
+                    params.gnss_options = { ...existingGnss };
+                } else {
+                    params.gnss_options = {
+                        output_mode: outputMode || 'diagnostics_rtcm',
+                        msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel || 4),
+                        constellations: constellations || {
+                            gps: true,
+                            glo: true,
+                            gal: true,
+                            bds: true,
+                            qzss: true,
+                            sbas: true
+                        },
+                        ports: ['USB']
+                    };
+                }
             }
 
             const payload = {
@@ -789,13 +811,13 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     </div>
                 )}
 
-                {isAdmin && (
+                {(isAdmin || !isLteStation) && (
                     <div className="gnss-output-policy mt-4">
                         <div className="gnss-output-policy__header">
                             <div className="gnss-output-policy__title">
                                 <i className="bi bi-broadcast-pin me-2"></i>GNSS Output Policy
                             </div>
-                            <span className="gnss-output-policy__admin">{isLteStation ? 'LTE bỏ qua' : 'Admin'}</span>
+                            <span className="gnss-output-policy__admin">{isLteStation ? 'LTE bỏ qua' : (isAdmin ? 'Admin' : 'Cài đặt bởi Admin')}</span>
                         </div>
                         {isLteStation && (
                             <div className="alert alert-info small mb-3">
@@ -816,7 +838,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         setOutputMode(nextMode);
                                         if (nextMode !== 'rtcm_only' && msmLevel === 'both') setMsmLevel('4');
                                     }}
-                                    disabled={isLteStation}
+                                    disabled={isLteStation || !isAdmin}
                                 >
                                     <option value="diagnostics_rtcm">NMEA + RTCM</option>
                                     <option value="rtcm_only">RTCM only</option>
@@ -828,7 +850,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     className="form-select form-select-sm gnss-output-policy__select"
                                     value={msmLevel}
                                     onChange={(e) => setMsmLevel(e.target.value)}
-                                    disabled={isLteStation}
+                                    disabled={isLteStation || !isAdmin}
                                 >
                                     <option value="4">MSM4</option>
                                     <option value="7">MSM7</option>
