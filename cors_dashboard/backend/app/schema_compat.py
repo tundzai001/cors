@@ -120,6 +120,8 @@ async def ensure_device_runtime_columns(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         for statement in DEVICE_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
+        from .models import Base
+        await conn.run_sync(Base.metadata.create_all)
     logger.info("Device schema compatibility check completed")
 
 

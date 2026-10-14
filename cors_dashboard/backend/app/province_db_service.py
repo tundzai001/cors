@@ -163,3 +163,39 @@ async def search_administrative_units(db: AsyncSession, query: str, limit: int =
         })
 
     return results
+
+
+if __name__ == "__main__":
+    import asyncio
+    import sys
+    from pathlib import Path
+    from dotenv import load_dotenv
+
+    # Ensure backend directory is in python path
+    backend_dir = Path(__file__).resolve().parent.parent
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+
+    load_dotenv(backend_dir / ".env", override=False)
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    from app.database import engine, device_session_scope
+    from app.models import Base
+
+    async def _cli_main():
+        print("1. Creating administrative tables if not exist...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("2. Seeding Vietnam provinces and wards...")
+        async with device_session_scope() as session:
+            res = await seed_vietnam_provinces(session)
+            if res.get("already_seeded"):
+                print(f"✓ Already seeded: {res.get('provinces')} provinces present in database.")
+            elif "error" in res:
+                print(f"✗ Failed: {res.get('error')}")
+            else:
+                print(f"✓ Successfully seeded {res.get('provinces')} provinces and {res.get('wards')} wards!")
+
+    asyncio.run(_cli_main())
