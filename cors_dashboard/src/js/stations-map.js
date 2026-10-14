@@ -36,6 +36,45 @@
         return null;
     }
 
+    function pointInRing(pt, ring) {
+        let inside = false;
+        const x = pt[0], y = pt[1];
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const xi = ring[i][0], yi = ring[i][1];
+            const xj = ring[j][0], yj = ring[j][1];
+            const intersect = ((yi > y) !== (yj > y))
+                && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    function pointInGeometry(pt, geom) {
+        if (!geom || !geom.coordinates) return false;
+        if (geom.type === 'Polygon') {
+            const coords = geom.coordinates;
+            if (!coords[0] || !pointInRing(pt, coords[0])) return false;
+            for (let i = 1; i < coords.length; i++) {
+                if (pointInRing(pt, coords[i])) return false;
+            }
+            return true;
+        }
+        if (geom.type === 'MultiPolygon') {
+            for (let p = 0; p < geom.coordinates.length; p++) {
+                const coords = geom.coordinates[p];
+                if (coords[0] && pointInRing(pt, coords[0])) {
+                    let inHole = false;
+                    for (let i = 1; i < coords.length; i++) {
+                        if (pointInRing(pt, coords[i])) { inHole = true; break; }
+                    }
+                    if (!inHole) return true;
+                }
+            }
+            return false;
+        }
+        return false;
+    }
+
     function getCoords(device) {
         const cfg = device?.base_config || {};
         const cfgCoords = cfg.coords || {};
@@ -394,11 +433,11 @@
 
             // World inverted mask: hides everything outside Vietnam sovereignty borders
             const worldRing = [
-                [-180.0, -90.0],
-                [180.0, -90.0],
-                [180.0, 90.0],
-                [-180.0, 90.0],
-                [-180.0, -90.0]
+                [-180.0, -85.05112878],
+                [180.0, -85.05112878],
+                [180.0, 85.05112878],
+                [-180.0, 85.05112878],
+                [-180.0, -85.05112878]
             ];
             const holes = [];
             geojsonData.features.forEach(feat => {
@@ -424,6 +463,8 @@
             };
 
             const maskLayer = L.geoJSON(maskGeoJson, {
+                renderer: L.svg ? L.svg({ padding: 0.5 }) : undefined,
+                noClip: true,
                 style: {
                     fillColor: '#070b14',
                     fillOpacity: 1.0,
@@ -434,6 +475,7 @@
                 }
             });
             maskLayer.addTo(map);
+            if (maskLayer.bringToBack) maskLayer.bringToBack();
             vietnamMaskLayerRef.current = maskLayer;
         }, [showVietnamMask, provincesLoaded]);
 
@@ -489,7 +531,8 @@
                             map.fitBounds(bounds, { padding: [40, 40], maxZoom: 11 });
 
                             const inProvince = stations.filter(s =>
-                                bounds.contains(L.latLng(s.coords.lat, s.coords.lon))
+                                bounds.contains(L.latLng(s.coords.lat, s.coords.lon)) &&
+                                pointInGeometry([s.coords.lon, s.coords.lat], feature.geometry)
                             );
                             const onlineCount = inProvince.filter(s =>
                                 ['online', 'streaming', 'sleep'].includes(s.status)

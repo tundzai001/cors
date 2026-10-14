@@ -133,7 +133,7 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         fc = response.json()
         self.assertEqual(fc.get("type"), "FeatureCollection")
-        self.assertEqual(len(fc.get("features", [])), 34)
+        self.assertEqual(len(fc.get("features", [])), 65)
 
     async def test_search_administrative_units_empty_query(self):
         from app.province_db_service import search_administrative_units
