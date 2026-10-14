@@ -25,7 +25,7 @@ async def main():
     print("1. Kiểm tra và khởi tạo cấu trúc bảng hành chính (provinces, districts, wards)...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("2. Nạp dữ liệu 63 tỉnh/thành, 696 quận/huyện, 10.035 xã/phường vào database...")
+    print("2. Nạp dữ liệu địa giới hành chính (34 tỉnh/thành, 3.321 xã/phường) vào database...")
     async with device_session_scope() as session:
         result = await seed_vietnam_provinces(session, force=force)
         if result.get("already_seeded"):

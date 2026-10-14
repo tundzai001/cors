@@ -15,8 +15,8 @@ Thư mục này lưu trữ bản snapshot dữ liệu GIS và đơn vị hành c
 
 | Tệp tin | Kích thước | SHA-256 Checksum | Mô tả |
 | :--- | :--- | :--- | :--- |
-| `vietnam_provinces.geojson` | ~3.9 MB | `2cf24734b71b6779209e2284a516bf99d0689665e29e5b03b5253c6cdeaea87d` | Toạ độ ranh giới 63 tỉnh/thành phố và Quần đảo Hoàng Sa, Quần đảo Trường Sa |
-| `vietnam_units.json` | ~2.5 MB | `ca73d43d2d40ee2572937c7d396d1d17ac6c9a76c1ae3ff94620ce8dacd701ca` | Cấu trúc phân cấp 63 tỉnh/thành, 696 quận/huyện/thị xã và 10.035 xã/phường/thị trấn kèm toạ độ và mã bưu chính |
+| `vietnam_provinces.geojson` | ~2.25 MB | `f5b47e29247bb27ee618f945f5ff15e878ce3087a8ddf813c63016aad6931abd` | Toạ độ ranh giới 34 tỉnh/thành phố trực thuộc Trung ương |
+| `vietnam_units.json` | ~604 KB | `179e9a8e6213ed31f3ff0d663a268e020d9f9cc38b4574b893d5b734e24d3145` | Cấu trúc phân cấp 34 tỉnh/thành và 3.321 xã/phường/thị trấn kèm mã bưu chính |
 | `postgres_CreateTables_vn_units.sql` | 2.3 KB | `9c9496fcef128ab2000a0314fe901608a11634d9743a97470e315942d5388d3d` | DDL tạo bảng PostgreSQL (regions, units, provinces, wards) |
 | `postgres_ImportData_vn_units.sql` | 343 KB | `46b59e96ca105edf090005fb4e8cc6373cfb3d66e657e8d5d763f0cf5f8fbda4` | Script INSERT toàn bộ đơn vị hành chính vào PostgreSQL |
 | `postgresql_CreateGISTables.sql` | 1.3 KB | `db69896fd3328de10114e6fc4a771f33fb2cb5724138216c3711c5723c3cc1cb` | DDL tích hợp không gian địa lý PostGIS |

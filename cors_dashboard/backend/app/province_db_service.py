@@ -202,7 +202,7 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
         # Check existing count
         res = await db.execute(select(func.count(models.Province.code)))
         prov_count = res.scalar() or 0
-        if prov_count >= 63 and not force:
+        if prov_count >= 34 and not force:
             res_d = await db.execute(select(func.count(models.District.code)))
             res_w = await db.execute(select(func.count(models.Ward.code)))
             return {
@@ -284,6 +284,29 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
                 longitude=p_lon,
             ))
 
+            # Direct wards (34-province model)
+            for w in (p.get("Wards") or p.get("Ward") or []):
+                w_code = str(w.get("Code", "")).strip()
+                if not w_code:
+                    continue
+                w_name = w.get("Name", "")
+                w_lat, w_lon = lookup_coords(w_name, w.get("CodeName"))
+                if w_lat is None:
+                    w_lat, w_lon = p_lat, p_lon
+                ward_objs.append(models.Ward(
+                    code=w_code,
+                    name=w_name,
+                    name_en=w.get("NameEn"),
+                    full_name=w.get("FullName", ""),
+                    full_name_en=w.get("FullNameEn"),
+                    code_name=w.get("CodeName"),
+                    province_code=p_code,
+                    latitude=w_lat,
+                    longitude=w_lon,
+                    postal_code=w.get("PostalCode", ""),
+                ))
+
+            # Nested districts and wards (if 3-tier model)
             for d in (p.get("District") or []):
                 d_code = str(d.get("Code", "")).strip()
                 if not d_code:
@@ -489,52 +512,30 @@ async def search_administrative_units(db: Optional[AsyncSession], query: str, li
                 p_norm = remove_accents(p_name)
                 p_lat, p_lon = lookup_coords(p_name, p.get("CodeName"))
 
-                # District matches
-                for d in (p.get("District") or []):
-                    d_name = d.get("Name", "")
-                    d_full = d.get("FullName", "")
-                    d_norm = remove_accents(d_name)
-                    d_lat, d_lon = lookup_coords(d_name, d.get("CodeName"))
-                    if d_lat is None:
-                        d_lat, d_lon = p_lat, p_lon
-
-                    if norm_query in d_norm or norm_query in remove_accents(d_full):
+                # Direct ward matches (34-province model)
+                for w in (p.get("Wards") or p.get("Ward") or []):
+                    w_name = w.get("Name", "")
+                    w_full = w.get("FullName", "")
+                    w_norm = remove_accents(w_name)
+                    if norm_query in w_norm or norm_query in remove_accents(w_full):
+                        w_lat, w_lon = lookup_coords(w_name, w.get("CodeName"))
+                        if w_lat is None:
+                            w_lat, w_lon = p_lat, p_lon
                         results.append({
-                            "type": "district",
-                            "code": d.get("Code"),
-                            "name": d_name,
-                            "full_name": d_full,
+                            "type": "ward",
+                            "code": w.get("Code"),
+                            "name": w_name,
+                            "full_name": w_full,
                             "province_name": p_full,
-                            "display_name": f"{d_full}, {p_full}",
-                            "lat": d_lat,
-                            "lon": d_lon,
+                            "display_name": f"{w_full}, {p_full}",
+                            "lat": w_lat,
+                            "lon": w_lon,
                             "source": "Cơ sở dữ liệu hành chính Việt Nam"
                         })
                         if len(results) >= limit:
                             break
-
-                    # Ward matches
-                    for w in (d.get("Ward") or []):
-                        w_name = w.get("Name", "")
-                        w_full = w.get("FullName", "")
-                        w_norm = remove_accents(w_name)
-                        if norm_query in w_norm or norm_query in remove_accents(w_full):
-                            results.append({
-                                "type": "ward",
-                                "code": w.get("Code"),
-                                "name": w_name,
-                                "full_name": w_full,
-                                "district_name": d_full,
-                                "province_name": p_full,
-                                "display_name": f"{w_full}, {d_full}, {p_full}",
-                                "lat": d_lat,
-                                "lon": d_lon,
-                                "source": "Cơ sở dữ liệu hành chính Việt Nam"
-                            })
-                            if len(results) >= limit:
-                                break
-                    if len(results) >= limit:
-                        break
+                if len(results) >= limit:
+                    break
 
                 # Province match
                 if norm_query in p_norm or norm_query in remove_accents(p_full):

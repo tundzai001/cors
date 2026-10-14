@@ -9,21 +9,20 @@
   "synced_at": "2026-10-14T15:26:00+07:00",
   "coordinate_precision": "100% raw untouched geometry (un-rounded, full geodetic precision)",
   "statistics": {
-    "provinces": 63,
-    "districts": 696,
-    "wards_communes": 10035,
-    "geojson_features": 65
+    "provinces": 34,
+    "wards_communes": 3321,
+    "geojson_features": 34
   },
   "files": {
     "vietnam_provinces.geojson": {
-      "description": "Full-precision GeoJSON boundaries of all 63 Vietnam provinces, centrally-governed cities, and Hoang Sa & Truong Sa archipelagos",
-      "sha256": "2cf24734b71b6779209e2284a516bf99d0689665e29e5b03b5253c6cdeaea87d",
-      "size_bytes": 3916379
+      "description": "Full-precision GeoJSON boundaries of Vietnam provinces and centrally-governed cities",
+      "sha256": "f5b47e29247bb27ee618f945f5ff15e878ce3087a8ddf813c63016aad6931abd",
+      "size_bytes": 2307994
     },
     "vietnam_units.json": {
-      "description": "Hierarchical JSON of all 63 provinces, 696 districts, and 10,035 wards with administrative codes and coordinates",
-      "sha256": "ca73d43d2d40ee2572937c7d396d1d17ac6c9a76c1ae3ff94620ce8dacd701ca",
-      "size_bytes": 2599086
+      "description": "Hierarchical JSON of all provinces, administrative codes, postal prefixes, and 3,321 wards",
+      "sha256": "179e9a8e6213ed31f3ff0d663a268e020d9f9cc38b4574b893d5b734e24d3145",
+      "size_bytes": 617984
     },
     "postgres_CreateTables_vn_units.sql": {
       "description": "DDL script for administrative regions, units, provinces, and wards tables",
