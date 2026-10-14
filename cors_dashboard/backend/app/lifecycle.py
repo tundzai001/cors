@@ -249,19 +249,6 @@ async def lifespan(app: FastAPI):
         # Start global caster monitor (synchronizes multiple caster servers into local cache)
         tasks.append(asyncio.create_task(caster_monitor_task()))
 
-        # Auto-seed Vietnam administrative units (provinces, wards) if not yet populated
-        async def seed_vietnam_units_background_task():
-            try:
-                from .province_db_service import seed_vietnam_provinces
-                async with device_session_scope() as db_session:
-                    res = await seed_vietnam_provinces(db_session)
-                    if not res.get("already_seeded") and res.get("provinces"):
-                        logger.info("✓ Auto-seeded Vietnam administrative units (%s provinces, %s wards)", res.get("provinces"), res.get("wards"))
-            except Exception as e:
-                logger.warning("Auto-seed Vietnam units notice: %s", e)
-
-        tasks.append(asyncio.create_task(seed_vietnam_units_background_task()))
-
         logger.info("=" * 60)
         logger.info("🎉 Application startup complete!")
         logger.info("=" * 60)

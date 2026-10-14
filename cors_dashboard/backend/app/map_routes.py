@@ -342,6 +342,7 @@ async def public_geocode(
 
 
 _PROVINCES_GEOJSON_PATH = os.path.join(os.path.dirname(__file__), "data", "vietnam_provinces.geojson")
+_SRC_GIS_GEOJSON_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src", "gis", "vietnam_provinces.geojson"))
 _PROVINCES_GEOJSON_BYTES: Optional[bytes] = None
 _PROVINCES_SUMMARY: Optional[list[dict[str, Any]]] = None
 
@@ -349,8 +350,9 @@ _PROVINCES_SUMMARY: Optional[list[dict[str, Any]]] = None
 def _get_provinces_geojson_bytes() -> bytes:
     global _PROVINCES_GEOJSON_BYTES
     if _PROVINCES_GEOJSON_BYTES is None:
-        if os.path.exists(_PROVINCES_GEOJSON_PATH):
-            with open(_PROVINCES_GEOJSON_PATH, "rb") as f:
+        target_path = _PROVINCES_GEOJSON_PATH if os.path.exists(_PROVINCES_GEOJSON_PATH) else _SRC_GIS_GEOJSON_PATH
+        if os.path.exists(target_path):
+            with open(target_path, "rb") as f:
                 _PROVINCES_GEOJSON_BYTES = f.read()
         else:
             _PROVINCES_GEOJSON_BYTES = b'{"type":"FeatureCollection","features":[]}'

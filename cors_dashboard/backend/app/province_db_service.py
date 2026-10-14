@@ -10,7 +10,10 @@ from . import models
 logger = logging.getLogger("app.main")
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+SRC_GIS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src", "gis"))
 UNITS_JSON_PATH = os.path.join(DATA_DIR, "vietnam_units.json")
+if not os.path.exists(UNITS_JSON_PATH) and os.path.exists(os.path.join(SRC_GIS_DIR, "vietnam_units.json")):
+    UNITS_JSON_PATH = os.path.join(SRC_GIS_DIR, "vietnam_units.json")
 
 
 async def seed_vietnam_provinces(db: AsyncSession) -> dict[str, Any]:
