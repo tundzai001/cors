@@ -108,9 +108,14 @@
         const roverHashRef = useRef('');
         const measureRef = useRef({ enabled: false, points: [], layers: [] });
         const nearestRef = useRef({ marker: null, layers: [] });
+        const provincesLayerRef = useRef(null);
+        const provincesDataRef = useRef(null);
         const [coverage, setCoverage] = useState(true);
         const [showStations, setShowStations] = useState(true);
         const [showRovers, setShowRovers] = useState(true);
+        const [showProvinces, setShowProvinces] = useState(true);
+        const [provincesList, setProvincesList] = useState([]);
+        const [selectedProvince, setSelectedProvince] = useState('');
         const [roverClients, setRoverClients] = useState([]);
         const [statusFilters, setStatusFilters] = useState({ online: true, sleep: true, offline: true, locked: true });
         const [search, setSearch] = useState('');
@@ -279,6 +284,116 @@
                 map.remove();
             };
         }, []);
+
+        useEffect(() => {
+            let active = true;
+            Promise.all([
+                fetch('/api/public/vietnam-provinces-geojson').then(r => r.ok ? r.json() : null),
+                fetch('/api/public/vietnam-provinces').then(r => r.ok ? r.json() : [])
+            ]).then(([geojson, summary]) => {
+                if (!active) return;
+                if (Array.isArray(summary)) setProvincesList(summary);
+                if (geojson && geojson.type === 'FeatureCollection') {
+                    provincesDataRef.current = geojson;
+                }
+            }).catch(err => {
+                console.warn('[StationsMap] Could not load province dataset:', err);
+            });
+            return () => { active = false; };
+        }, []);
+
+        useEffect(() => {
+            const map = mapRef.current;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
+            const geojsonData = provincesDataRef.current;
+            if (!map || !L) return;
+
+            if (!showProvinces) {
+                if (provincesLayerRef.current && map.hasLayer(provincesLayerRef.current)) {
+                    map.removeLayer(provincesLayerRef.current);
+                }
+                return;
+            }
+
+            if (!geojsonData) return;
+
+            if (provincesLayerRef.current && map.hasLayer(provincesLayerRef.current)) {
+                map.removeLayer(provincesLayerRef.current);
+            }
+
+            const defaultStyle = {
+                color: '#0284c7',
+                weight: 1.5,
+                dashArray: '3 4',
+                opacity: 0.65,
+                fillColor: '#38bdf8',
+                fillOpacity: 0.04
+            };
+
+            const layer = L.geoJSON(geojsonData, {
+                style: () => defaultStyle,
+                onEachFeature: (feature, featLayer) => {
+                    const p = feature.properties || {};
+                    featLayer.on({
+                        mouseover: (e) => {
+                            const target = e.target;
+                            target.setStyle({
+                                weight: 2.5,
+                                color: '#0369a1',
+                                dashArray: '',
+                                fillColor: '#0ea5e9',
+                                fillOpacity: 0.16
+                            });
+                        },
+                        mouseout: (e) => {
+                            layer.resetStyle(e.target);
+                        },
+                        click: (e) => {
+                            L.DomEvent.stopPropagation(e);
+                            const bounds = featLayer.getBounds();
+                            map.fitBounds(bounds, { padding: [40, 40], maxZoom: 11 });
+
+                            const inProvince = stations.filter(s =>
+                                bounds.contains(L.latLng(s.coords.lat, s.coords.lon))
+                            );
+                            const onlineCount = inProvince.filter(s =>
+                                ['online', 'streaming', 'sleep'].includes(s.status)
+                            ).length;
+
+                            const areaStr = p.areaKm2 ? `${Number(p.areaKm2).toLocaleString('vi-VN')} km²` : '--';
+                            const postalStr = p.postalCodePrefix || '--';
+
+                            const popupContent = `
+                                <div class="station-map-popup">
+                                    <div class="station-map-popup-title">${escapeHtml(p.fullName || p.name || 'Tỉnh/Thành')}</div>
+                                    <div class="text-muted small">${escapeHtml(p.nameEn || '')}</div>
+                                    <div class="station-map-popup-grid">
+                                        <span class="station-map-popup-label">Mã hành chính</span><span class="station-map-popup-value">${escapeHtml(p.code || '--')}</span>
+                                        <span class="station-map-popup-label">Mã bưu chính</span><span class="station-map-popup-value">${escapeHtml(postalStr)}</span>
+                                        <span class="station-map-popup-label">Diện tích</span><span class="station-map-popup-value">${escapeHtml(areaStr)}</span>
+                                        <span class="station-map-popup-label">Trạm CORS</span><span class="station-map-popup-value text-success font-monospace">${onlineCount} online / ${inProvince.length} tổng</span>
+                                    </div>
+                                </div>
+                            `;
+                            L.popup()
+                                .setLatLng(e.latlng)
+                                .setContent(popupContent)
+                                .openOn(map);
+                        }
+                    });
+                }
+            });
+
+            layer.addTo(map);
+            if (layer.bringToBack) layer.bringToBack();
+            provincesLayerRef.current = layer;
+
+            return () => {
+                if (map && layer && map.hasLayer(layer)) {
+                    map.removeLayer(layer);
+                }
+            };
+        }, [showProvinces, stations, provincesList]);
 
         useEffect(() => {
             const map = mapRef.current;
@@ -527,6 +642,10 @@
                             <input className="form-check-input" type="checkbox" checked={coverage} onChange={(e) => setCoverage(e.target.checked)} id="coverage-toggle" />
                             <label className="form-check-label" htmlFor="coverage-toggle">Coverage 20km</label>
                         </div>
+                        <div className="form-check form-switch mb-2">
+                            <input className="form-check-input" type="checkbox" checked={showProvinces} onChange={(e) => setShowProvinces(e.target.checked)} id="provinces-toggle" />
+                            <label className="form-check-label" htmlFor="provinces-toggle">Ranh giới Tỉnh/Thành</label>
+                        </div>
                         {['online', 'sleep', 'offline', 'locked'].map(key => (
                             <div className="form-check" key={key}>
                                 <input className="form-check-input" type="checkbox" checked={statusFilters[key]} onChange={(e) => setStatusFilters({ ...statusFilters, [key]: e.target.checked })} id={`filter-${key}`} />
@@ -539,11 +658,39 @@
                 {searchOpen && (
                     <div className="station-map-search-panel">
                         <input className="form-control form-control-sm mb-2" placeholder="Find station / serial / mountpoint" value={search} onChange={(e) => setSearch(e.target.value)} />
-                        <form className="d-flex gap-2" onSubmit={searchLocation}>
+                        <form className="d-flex gap-2 mb-2" onSubmit={searchLocation}>
                             <input className="form-control form-control-sm" placeholder="Search location" value={locationSearch} onChange={(e) => setLocationSearch(e.target.value)} />
                             <button className="btn btn-sm btn-primary" disabled={isSearchingLoc} type="submit">{isSearchingLoc ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-arrow-return-left"></i>}</button>
                         </form>
-                        <button className="btn btn-sm btn-outline-info w-100 mt-2" onClick={openLocationInGoogleMaps} disabled={!locationSearch.trim()}>
+                        {provincesList.length > 0 && (
+                            <div className="mb-2">
+                                <select
+                                    className="form-select form-select-sm"
+                                    value={selectedProvince}
+                                    onChange={(e) => {
+                                        const code = e.target.value;
+                                        setSelectedProvince(code);
+                                        if (!code || !provincesLayerRef.current) return;
+                                        const layer = provincesLayerRef.current.getLayers().find(
+                                            l => String(l.feature?.properties?.code) === String(code)
+                                        );
+                                        if (layer && mapRef.current) {
+                                            const bounds = layer.getBounds();
+                                            mapRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 11 });
+                                            layer.fire('click', { latlng: bounds.getCenter() });
+                                        }
+                                    }}
+                                >
+                                    <option value="">-- Nhảy đến Tỉnh/Thành ({provincesList.length}) --</option>
+                                    {provincesList.map(p => (
+                                        <option key={p.code} value={p.code}>
+                                            {p.fullName || p.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                        <button className="btn btn-sm btn-outline-info w-100 mt-1" onClick={openLocationInGoogleMaps} disabled={!locationSearch.trim()}>
                             Mo tren Google Maps
                         </button>
                         <button className="btn btn-sm btn-outline-primary w-100 mt-2" onClick={findNearestFromBrowser} disabled={findingNearest}>

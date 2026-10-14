@@ -116,3 +116,22 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(data), 1)
             self.assertEqual(data[0]["name"], "Đà Nẵng")
 
+    def test_get_vietnam_provinces_summary_endpoint(self):
+        response = self.client.get("/api/public/vietnam-provinces")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 34)
+        names = {p["name"] for p in data}
+        self.assertIn("Hà Nội", names)
+        self.assertIn("Đà Nẵng", names)
+        self.assertIn("Hồ Chí Minh", names)
+
+    def test_get_vietnam_provinces_geojson_endpoint(self):
+        response = self.client.get("/api/public/vietnam-provinces-geojson")
+        self.assertEqual(response.status_code, 200)
+        fc = response.json()
+        self.assertEqual(fc.get("type"), "FeatureCollection")
+        self.assertEqual(len(fc.get("features", [])), 34)
+
+

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi.responses import Response
 import httpx
+import json
 import os
 import time
 
@@ -338,6 +339,64 @@ async def public_geocode(
 ):
     """Proxy geocoding lookup for Vietnam station map search."""
     return await _fetch_geocode(q)
+
+
+_PROVINCES_GEOJSON_PATH = os.path.join(os.path.dirname(__file__), "data", "vietnam_provinces.geojson")
+_PROVINCES_GEOJSON_BYTES: Optional[bytes] = None
+_PROVINCES_SUMMARY: Optional[list[dict[str, Any]]] = None
+
+
+def _get_provinces_geojson_bytes() -> bytes:
+    global _PROVINCES_GEOJSON_BYTES
+    if _PROVINCES_GEOJSON_BYTES is None:
+        if os.path.exists(_PROVINCES_GEOJSON_PATH):
+            with open(_PROVINCES_GEOJSON_PATH, "rb") as f:
+                _PROVINCES_GEOJSON_BYTES = f.read()
+        else:
+            _PROVINCES_GEOJSON_BYTES = b'{"type":"FeatureCollection","features":[]}'
+    return _PROVINCES_GEOJSON_BYTES
+
+
+def _get_provinces_summary() -> list[dict[str, Any]]:
+    global _PROVINCES_SUMMARY
+    if _PROVINCES_SUMMARY is None:
+        try:
+            raw = _get_provinces_geojson_bytes()
+            fc = json.loads(raw.decode("utf-8"))
+            items = []
+            for feat in fc.get("features", []):
+                p = feat.get("properties", {})
+                items.append({
+                    "code": p.get("code"),
+                    "name": p.get("name"),
+                    "fullName": p.get("fullName"),
+                    "nameEn": p.get("nameEn"),
+                    "codeName": p.get("codeName"),
+                    "postalCodePrefix": p.get("postalCodePrefix"),
+                    "areaKm2": p.get("areaKm2"),
+                })
+            _PROVINCES_SUMMARY = sorted(items, key=lambda x: str(x.get("name", "")))
+        except Exception as e:
+            logger.error("Error parsing vietnam provinces geojson: %s", e)
+            _PROVINCES_SUMMARY = []
+    return _PROVINCES_SUMMARY
+
+
+@get_public_map_stations_router.get("/api/public/vietnam-provinces-geojson")
+async def get_vietnam_provinces_geojson():
+    """Return Vietnam province boundaries GeoJSON for Leaflet overlay."""
+    content = _get_provinces_geojson_bytes()
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
+    )
+
+
+@get_public_map_stations_router.get("/api/public/vietnam-provinces")
+async def get_vietnam_provinces():
+    """Return list of Vietnam provinces with administrative codes and metadata."""
+    return _get_provinces_summary()
 
 
 get_authenticated_map_stations_router = APIRouter()
