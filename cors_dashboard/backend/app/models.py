@@ -379,7 +379,28 @@ class Province(Base):
     full_name_en = Column(String(255), nullable=True)
     code_name = Column(String(255), nullable=True)
     postal_code_prefix = Column(String(255), nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
+
+
+class District(Base):
+    __tablename__ = "districts"
+
+    code = Column(String(20), primary_key=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    name_en = Column(String(255), nullable=True)
+    full_name = Column(String(255), nullable=False)
+    full_name_en = Column(String(255), nullable=True)
+    code_name = Column(String(255), nullable=True)
+    province_code = Column(String(20), ForeignKey("provinces.code"), nullable=True, index=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
+
+    __table_args__ = (
+        Index('ix_districts_province_name', 'province_code', 'name'),
+    )
 
 
 class Ward(Base):
@@ -392,11 +413,15 @@ class Ward(Base):
     full_name_en = Column(String(255), nullable=True)
     code_name = Column(String(255), nullable=True)
     postal_code = Column(String(20), nullable=True, index=True)
+    district_code = Column(String(20), ForeignKey("districts.code"), nullable=True, index=True)
     province_code = Column(String(20), ForeignKey("provinces.code"), nullable=True, index=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
 
     __table_args__ = (
         Index('ix_wards_province_name', 'province_code', 'name'),
+        Index('ix_wards_district_name', 'district_code', 'name'),
     )
 
 

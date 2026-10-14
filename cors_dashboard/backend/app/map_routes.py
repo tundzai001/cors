@@ -363,23 +363,25 @@ def _get_provinces_summary() -> list[dict[str, Any]]:
     global _PROVINCES_SUMMARY
     if _PROVINCES_SUMMARY is None:
         try:
-            raw = _get_provinces_geojson_bytes()
-            fc = json.loads(raw.decode("utf-8"))
-            items = []
-            for feat in fc.get("features", []):
-                p = feat.get("properties", {})
-                items.append({
-                    "code": p.get("code"),
-                    "name": p.get("name"),
-                    "fullName": p.get("fullName"),
-                    "nameEn": p.get("nameEn"),
-                    "codeName": p.get("codeName"),
-                    "postalCodePrefix": p.get("postalCodePrefix"),
-                    "areaKm2": p.get("areaKm2"),
-                })
-            _PROVINCES_SUMMARY = sorted(items, key=lambda x: str(x.get("name", "")))
+            from .province_db_service import UNITS_JSON_PATH
+            if os.path.exists(UNITS_JSON_PATH):
+                with open(UNITS_JSON_PATH, "r", encoding="utf-8") as f:
+                    units = json.load(f)
+                items = [
+                    {
+                        "code": p.get("Code"),
+                        "name": p.get("Name"),
+                        "fullName": p.get("FullName"),
+                        "nameEn": p.get("NameEn"),
+                        "codeName": p.get("CodeName"),
+                        "districtsCount": len(p.get("District") or []),
+                    }
+                    for p in units
+                ]
+                _PROVINCES_SUMMARY = sorted(items, key=lambda x: str(x.get("name", "")))
         except Exception as e:
-            logger.error("Error parsing vietnam provinces geojson: %s", e)
+            logger.debug("Error generating provinces summary: %s", e)
+        if not _PROVINCES_SUMMARY:
             _PROVINCES_SUMMARY = []
     return _PROVINCES_SUMMARY
 
@@ -410,6 +412,8 @@ async def get_vietnam_provinces(db: AsyncSession = Depends(get_db)):
                     "nameEn": p.name_en,
                     "codeName": p.code_name,
                     "postalCodePrefix": p.postal_code_prefix,
+                    "lat": p.latitude,
+                    "lon": p.longitude,
                 }
                 for p in db_provinces
             ]
@@ -418,26 +422,59 @@ async def get_vietnam_provinces(db: AsyncSession = Depends(get_db)):
     return _get_provinces_summary()
 
 
-@get_public_map_stations_router.get("/api/public/vietnam-wards")
-async def get_vietnam_wards(
+@get_public_map_stations_router.get("/api/public/vietnam-districts")
+async def get_vietnam_districts(
     province_code: str = Query(..., min_length=1, max_length=20, description="Mã tỉnh/thành"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return list of wards for a specific province from database."""
+    """Return list of districts for a specific province from database."""
     try:
         res = await db.execute(
-            select(models.Ward)
-            .where(models.Ward.province_code == province_code)
-            .order_by(models.Ward.name)
+            select(models.District)
+            .where(models.District.province_code == province_code)
+            .order_by(models.District.name)
         )
+        districts = res.scalars().all()
+        return [
+            {
+                "code": d.code,
+                "name": d.name,
+                "fullName": d.full_name,
+                "provinceCode": d.province_code,
+                "lat": d.latitude,
+                "lon": d.longitude,
+            }
+            for d in districts
+        ]
+    except Exception as exc:
+        logger.debug("Database query for districts failed: %s", exc)
+        return []
+
+
+@get_public_map_stations_router.get("/api/public/vietnam-wards")
+async def get_vietnam_wards(
+    province_code: Optional[str] = Query(None, min_length=1, max_length=20, description="Mã tỉnh/thành"),
+    district_code: Optional[str] = Query(None, min_length=1, max_length=20, description="Mã quận/huyện"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return list of wards for a specific district or province from database."""
+    try:
+        stmt = select(models.Ward)
+        if district_code:
+            stmt = stmt.where(models.Ward.district_code == district_code)
+        elif province_code:
+            stmt = stmt.where(models.Ward.province_code == province_code)
+        res = await db.execute(stmt.order_by(models.Ward.name))
         wards = res.scalars().all()
         return [
             {
                 "code": w.code,
                 "name": w.name,
                 "fullName": w.full_name,
-                "postalCode": w.postal_code,
+                "districtCode": w.district_code,
                 "provinceCode": w.province_code,
+                "lat": w.latitude,
+                "lon": w.longitude,
             }
             for w in wards
         ]
@@ -448,10 +485,10 @@ async def get_vietnam_wards(
 
 @get_public_map_stations_router.get("/api/public/search-administrative-units")
 async def search_admin_units(
-    q: str = Query(..., min_length=1, max_length=100, description="Tên xã, phường, thị trấn hoặc tỉnh thành"),
+    q: str = Query(..., min_length=1, max_length=100, description="Tên xã, phường, quận, huyện hoặc tỉnh thành"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Search provinces and wards in database by name or postal code."""
+    """Search provinces, districts, and wards in database by name with exact coordinates."""
     from .province_db_service import search_administrative_units
     return await search_administrative_units(db, q)
 

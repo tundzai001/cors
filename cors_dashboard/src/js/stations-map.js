@@ -110,10 +110,14 @@
         const nearestRef = useRef({ marker: null, layers: [] });
         const provincesLayerRef = useRef(null);
         const provincesDataRef = useRef(null);
+        const vietnamMaskLayerRef = useRef(null);
+        const sovereigntyMarkersRef = useRef([]);
         const [coverage, setCoverage] = useState(true);
         const [showStations, setShowStations] = useState(true);
         const [showRovers, setShowRovers] = useState(true);
         const [showProvinces, setShowProvinces] = useState(true);
+        const [showVietnamMask, setShowVietnamMask] = useState(true);
+        const [provincesLoaded, setProvincesLoaded] = useState(0);
         const [provincesList, setProvincesList] = useState([]);
         const [selectedProvince, setSelectedProvince] = useState('');
         const [roverClients, setRoverClients] = useState([]);
@@ -211,7 +215,18 @@
                 return;
             }
 
-            const map = L.map(mapEl.current, { zoomControl: true, preferCanvas: true }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+            const southWest = L.latLng(5.0, 100.5);
+            const northEast = L.latLng(24.5, 120.0);
+            const vietnamBounds = L.latLngBounds(southWest, northEast);
+
+            const map = L.map(mapEl.current, {
+                zoomControl: true,
+                preferCanvas: true,
+                maxBounds: vietnamBounds,
+                maxBoundsViscosity: 0.9,
+                minZoom: 5,
+                maxZoom: 20
+            }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
             mapRef.current = map;
             setMapError('');
 
@@ -295,12 +310,115 @@
                 if (Array.isArray(summary)) setProvincesList(summary);
                 if (geojson && geojson.type === 'FeatureCollection') {
                     provincesDataRef.current = geojson;
+                    setProvincesLoaded(c => c + 1);
                 }
             }).catch(err => {
                 console.warn('[StationsMap] Could not load province dataset:', err);
             });
             return () => { active = false; };
         }, []);
+
+        useEffect(() => {
+            const map = mapRef.current;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
+            const geojsonData = provincesDataRef.current;
+            if (!map || !L) return;
+
+            // Clear previous mask and sovereignty markers
+            if (vietnamMaskLayerRef.current && map.hasLayer(vietnamMaskLayerRef.current)) {
+                map.removeLayer(vietnamMaskLayerRef.current);
+                vietnamMaskLayerRef.current = null;
+            }
+            (sovereigntyMarkersRef.current || []).forEach(m => {
+                if (map.hasLayer(m)) map.removeLayer(m);
+            });
+            sovereigntyMarkersRef.current = [];
+
+            if (!showVietnamMask) return;
+
+            // Sovereign island markers for Hoang Sa & Truong Sa
+            const hsMarker = L.marker([16.530, 112.020], {
+                icon: L.divIcon({
+                    className: 'station-map-sovereignty-badge',
+                    html: `
+                        <div class="sovereignty-tag">
+                            <span class="flag">🇻🇳</span>
+                            <span class="title">Quần đảo Hoàng Sa</span>
+                            <span class="sub">TP. Đà Nẵng, Việt Nam</span>
+                        </div>
+                    `,
+                    iconSize: [160, 44],
+                    iconAnchor: [80, 22]
+                }),
+                interactive: true
+            }).bindPopup('<b>🇻🇳 Quần đảo Hoàng Sa</b><br>Huyện đảo Hoàng Sa, TP. Đà Nẵng, Việt Nam');
+
+            const tsMarker = L.marker([9.880, 114.250], {
+                icon: L.divIcon({
+                    className: 'station-map-sovereignty-badge',
+                    html: `
+                        <div class="sovereignty-tag">
+                            <span class="flag">🇻🇳</span>
+                            <span class="title">Quần đảo Trường Sa</span>
+                            <span class="sub">Tỉnh Khánh Hòa, Việt Nam</span>
+                        </div>
+                    `,
+                    iconSize: [160, 44],
+                    iconAnchor: [80, 22]
+                }),
+                interactive: true
+            }).bindPopup('<b>🇻🇳 Quần đảo Trường Sa</b><br>Huyện đảo Trường Sa, Tỉnh Khánh Hòa, Việt Nam');
+
+            hsMarker.addTo(map);
+            tsMarker.addTo(map);
+            sovereigntyMarkersRef.current = [hsMarker, tsMarker];
+
+            if (!geojsonData?.features?.length) return;
+
+            // World inverted mask: hides everything outside Vietnam sovereignty borders
+            const worldRing = [
+                [-180.0, -90.0],
+                [180.0, -90.0],
+                [180.0, 90.0],
+                [-180.0, 90.0],
+                [-180.0, -90.0]
+            ];
+            const holes = [];
+            geojsonData.features.forEach(feat => {
+                const geom = feat.geometry || {};
+                if (geom.type === 'Polygon' && Array.isArray(geom.coordinates) && geom.coordinates[0]) {
+                    holes.push(geom.coordinates[0]);
+                } else if (geom.type === 'MultiPolygon' && Array.isArray(geom.coordinates)) {
+                    geom.coordinates.forEach(poly => {
+                        if (poly?.[0]) holes.push(poly[0]);
+                    });
+                }
+            });
+
+            if (!holes.length) return;
+
+            const maskGeoJson = {
+                type: 'Feature',
+                properties: { name: 'Vietnam Territory Cutout' },
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [worldRing, ...holes]
+                }
+            };
+
+            const maskLayer = L.geoJSON(maskGeoJson, {
+                style: {
+                    fillColor: '#070b14',
+                    fillOpacity: 0.94,
+                    stroke: true,
+                    color: '#0284c7',
+                    weight: 1.5,
+                    interactive: false
+                }
+            });
+            maskLayer.addTo(map);
+            vietnamMaskLayerRef.current = maskLayer;
+        }, [showVietnamMask, provincesLoaded]);
 
         useEffect(() => {
             const map = mapRef.current;
@@ -639,8 +757,8 @@
                             <label className="form-check-label" htmlFor="rover-toggle">Rovers</label>
                         </div>
                         <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={coverage} onChange={(e) => setCoverage(e.target.checked)} id="coverage-toggle" />
-                            <label className="form-check-label" htmlFor="coverage-toggle">Coverage 20km</label>
+                            <input className="form-check-input" type="checkbox" checked={showVietnamMask} onChange={(e) => setShowVietnamMask(e.target.checked)} id="mask-toggle" />
+                            <label className="form-check-label" htmlFor="mask-toggle">Chỉ xem lãnh thổ VN (Ẩn ngoài lãnh thổ)</label>
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showProvinces} onChange={(e) => setShowProvinces(e.target.checked)} id="provinces-toggle" />

@@ -199,6 +199,29 @@
         return matches >= minimumMatches;
     }
 
+    async function queryDatabaseAdministrativeUnits(query) {
+        try {
+            const params = new URLSearchParams({ q: String(query || '').trim() });
+            const response = await fetch(`/api/public/search-administrative-units?${params.toString()}`, {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (!Array.isArray(data) || !data.length) return null;
+            for (const item of data) {
+                const lat = Number(item.lat);
+                const lon = Number(item.lon);
+                if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                    return buildResult(lat, lon, item.display_name || item.full_name || item.name, 'Cơ sở dữ liệu hành chính Việt Nam');
+                }
+            }
+            return null;
+        } catch (err) {
+            console.warn('[StationsMapSearch] Administrative units query unavailable:', err);
+            return null;
+        }
+    }
+
     async function queryBackendProxy(query) {
         try {
             const params = new URLSearchParams({ q: String(query || '').trim() });
@@ -221,36 +244,6 @@
         }
     }
 
-    async function queryNominatim(query) {
-        try {
-            const params = new URLSearchParams({
-                format: 'jsonv2',
-                limit: '5',
-                countrycodes: 'vn',
-                viewbox: VIETNAM_VIEWBOX,
-                bounded: '1',
-                addressdetails: '1',
-                namedetails: '1',
-                dedupe: '1',
-                'accept-language': 'vi,en',
-                q: appendVietnam(query)
-            });
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`);
-            if (!response.ok) return null;
-            const data = await response.json();
-            if (!Array.isArray(data)) return null;
-            for (const item of data) {
-                if (!isRelevantNominatimResult(query, item)) continue;
-                const result = buildResult(Number(item.lat), Number(item.lon), item.display_name || query, 'osm');
-                if (result) return result;
-            }
-            return null;
-        } catch (err) {
-            console.warn('[StationsMapSearch] Direct Nominatim fetch failed:', err);
-            return null;
-        }
-    }
-
     async function geocodeVietnam(query) {
         const q = String(query || '').trim();
         if (!q) throw new Error('Vui lòng nhập tên địa điểm hoặc tọa độ.');
@@ -259,23 +252,21 @@
         const coord = parseCoordinateText(q);
         if (coord) return coord;
 
-        // 2. Query backend geocoding proxy (/api/public/geocode)
+        // 2. Tra cứu Cơ sở dữ liệu hành chính Việt Nam (Tỉnh/Thành, Quận/Huyện, Xã/Phường)
+        const dbResult = await queryDatabaseAdministrativeUnits(q);
+        if (dbResult) return dbResult;
+
+        // 3. Local fallback cho các địa danh/tỉnh thành và quần đảo chủ quyền Việt Nam
+        const fallback = getLocalFallback(q);
+        if (fallback) return fallback;
+
+        // 4. Query backend proxy (dự phòng)
         for (const variant of buildQueryVariants(q)) {
             const proxyRes = await queryBackendProxy(variant);
             if (proxyRes) return proxyRes;
         }
 
-        // 3. Direct Nominatim fallback (đã bọc try/catch an toàn)
-        for (const variant of buildQueryVariants(q)) {
-            const osm = await queryNominatim(variant);
-            if (osm) return osm;
-        }
-
-        // 4. Local fallback cho các tỉnh/thành/địa danh Việt Nam
-        const fallback = getLocalFallback(q);
-        if (fallback) return fallback;
-
-        throw new Error('Không tìm thấy tọa độ cho địa điểm này. Bạn có thể dán link Google Maps hoặc nhập tọa độ lat,lon.');
+        throw new Error('Không tìm thấy tọa độ cho địa điểm này trong CSDL hành chính Việt Nam. Bạn có thể nhập tọa độ lat,lon.');
     }
 
     function openGoogleMapsSearch(query) {

@@ -121,11 +121,12 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIsInstance(data, list)
-        self.assertEqual(len(data), 34)
+        self.assertEqual(len(data), 63)
         names = {p["name"] for p in data}
         self.assertIn("Hà Nội", names)
         self.assertIn("Đà Nẵng", names)
         self.assertIn("Hồ Chí Minh", names)
+        self.assertIn("Quảng Nam", names)
 
     def test_get_vietnam_provinces_geojson_endpoint(self):
         response = self.client.get("/api/public/vietnam-provinces-geojson")
@@ -144,10 +145,10 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
         from app.province_db_service import seed_vietnam_provinces
         mock_db = AsyncMock()
         mock_scalar = Mock()
-        mock_scalar.scalar.return_value = 34
+        mock_scalar.scalar.return_value = 63
         mock_db.execute.return_value = mock_scalar
         res = await seed_vietnam_provinces(mock_db)
         self.assertTrue(res.get("already_seeded"))
-        self.assertEqual(res.get("provinces"), 34)
+        self.assertEqual(res.get("provinces"), 63)
 
 
