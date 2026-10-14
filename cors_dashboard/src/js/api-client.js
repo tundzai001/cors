@@ -99,10 +99,20 @@
         }
     }
 
+    let cachedLocalIP = null;
+    let localIPPromise = null;
+
     function authHeaders(extraHeaders = {}) {
         const headers = { 'Content-Type': 'application/json', ...extraHeaders };
         const token = getToken();
         if (token) headers.Authorization = `Bearer ${token}`;
+        try {
+            const devId = getDeviceId();
+            if (devId) headers['X-Device-Id'] = devId;
+            if (cachedLocalIP) headers['X-Local-IP'] = cachedLocalIP;
+            const devName = getDeviceName();
+            if (devName) headers['X-Device-Name'] = encodeURIComponent(devName);
+        } catch (_) {}
         return headers;
     }
 
@@ -161,9 +171,6 @@
 
         return ws;
     }
-
-    let cachedLocalIP = null;
-    let localIPPromise = null;
 
     function getDeviceId() {
         try {

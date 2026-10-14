@@ -77,7 +77,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     : Promise.resolve(cachedSecuritySettings),
                 apiFetch('/api/admin/security/sessions').catch(err => {
                     console.warn('Could not load sessions:', err);
-                    return { active_sessions: [], blocked_devices: [] };
+                    return { active_sessions: [], blocked_devices: [], error: err.message };
                 })
             ]);
             
@@ -101,8 +101,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             handleAttackMode(statsData.rate_limiter.attack_mode);
 
             if (sessionsData) {
-                renderActiveSessions(sessionsData.active_sessions || []);
-                renderBlockedDevices(sessionsData.blocked_devices || []);
+                renderActiveSessions(sessionsData.active_sessions || [], sessionsData.error);
+                renderBlockedDevices(sessionsData.blocked_devices || [], sessionsData.error);
             }
 
             if (statsData.system_health) {
@@ -437,11 +437,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return `${Math.floor(diff / 86400)} ngày trước`;
     }
 
-    function renderActiveSessions(sessions) {
+    function renderActiveSessions(sessions, error = null) {
         const tbody = document.getElementById('active-sessions-table-body');
         const badge = document.getElementById('active-sessions-badge');
         if (badge) badge.textContent = `${sessions.length} phiên đang mở`;
         if (!tbody) return;
+
+        if (error && !sessions.length) {
+            tbody.innerHTML = `<tr><td colspan="7"><div class="ops-empty-state text-warning"><i class="bi bi-exclamation-triangle me-2"></i><span>Không thể tải danh sách phiên (${escapeHtml(error)})</span></div></td></tr>`;
+            return;
+        }
 
         if (!sessions.length) {
             tbody.innerHTML = '<tr><td colspan="7"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có phiên đăng nhập nào đang hoạt động</span></div></td></tr>';
@@ -517,11 +522,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         }).join('');
     }
 
-    function renderBlockedDevices(devices) {
+    function renderBlockedDevices(devices, error = null) {
         const tbody = document.getElementById('blocked-devices-table-body');
         const badge = document.getElementById('blocked-devices-badge');
         if (badge) badge.textContent = `${devices.length} máy`;
         if (!tbody) return;
+
+        if (error && !devices.length) {
+            tbody.innerHTML = `<tr><td colspan="8"><div class="ops-empty-state text-warning"><i class="bi bi-exclamation-triangle me-2"></i><span>Không thể tải danh sách máy bị chặn (${escapeHtml(error)})</span></div></td></tr>`;
+            return;
+        }
 
         if (!devices.length) {
             tbody.innerHTML = '<tr><td colspan="8"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có máy tính nào bị chặn</span></div></td></tr>';
