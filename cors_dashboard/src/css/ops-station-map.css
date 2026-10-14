@@ -280,3 +280,13 @@
     color: #94a3b8;
     line-height: 1.1;
 }
+
+.sovereignty-tag.maritime-tag {
+    background: rgba(8, 20, 36, 0.94);
+    border-color: rgba(14, 165, 233, 0.85);
+}
+
+.sovereignty-tag.maritime-tag:hover {
+    border-color: #0ea5e9;
+    box-shadow: 0 6px 22px rgba(14, 165, 233, 0.45);
+}

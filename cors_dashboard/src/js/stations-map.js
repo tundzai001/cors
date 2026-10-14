@@ -18,7 +18,7 @@
     }
 
     function isVietnamCoord(lat, lon) {
-        return lat >= 8 && lat <= 24 && lon >= 102 && lon <= 110;
+        return lat >= 6 && lat <= 24 && lon >= 102 && lon <= 118;
     }
 
     function normalizeCoords(latRaw, lonRaw) {
@@ -223,7 +223,7 @@
                 zoomControl: true,
                 preferCanvas: true,
                 maxBounds: vietnamBounds,
-                maxBoundsViscosity: 0.9,
+                maxBoundsViscosity: 1.0,
                 minZoom: 5,
                 maxZoom: 20
             }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
@@ -369,9 +369,26 @@
                 interactive: true
             }).bindPopup('<b>🇻🇳 Quần đảo Trường Sa</b><br>Huyện đảo Trường Sa, Tỉnh Khánh Hòa, Việt Nam');
 
+            const bdMarker = L.marker([13.200, 112.000], {
+                icon: L.divIcon({
+                    className: 'station-map-sovereignty-badge',
+                    html: `
+                        <div class="sovereignty-tag maritime-tag">
+                            <span class="flag">🇻🇳</span>
+                            <span class="title">Biển Đông</span>
+                            <span class="sub">Vùng biển chủ quyền Việt Nam</span>
+                        </div>
+                    `,
+                    iconSize: [160, 44],
+                    iconAnchor: [80, 22]
+                }),
+                interactive: true
+            }).bindPopup('<b>🇻🇳 Biển Đông</b><br>Vùng biển và thềm lục địa thuộc chủ quyền, quyền chủ quyền và quyền tài phán của Việt Nam');
+
             hsMarker.addTo(map);
             tsMarker.addTo(map);
-            sovereigntyMarkersRef.current = [hsMarker, tsMarker];
+            bdMarker.addTo(map);
+            sovereigntyMarkersRef.current = [hsMarker, tsMarker, bdMarker];
 
             if (!geojsonData?.features?.length) return;
 
@@ -409,10 +426,10 @@
             const maskLayer = L.geoJSON(maskGeoJson, {
                 style: {
                     fillColor: '#070b14',
-                    fillOpacity: 0.94,
+                    fillOpacity: 1.0,
                     stroke: true,
                     color: '#0284c7',
-                    weight: 1.5,
+                    weight: 1.8,
                     interactive: false
                 }
             });
