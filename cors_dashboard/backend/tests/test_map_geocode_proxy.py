@@ -15,7 +15,30 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
         self.app.include_router(get_public_map_stations_router)
         self.client = TestClient(self.app)
 
-    async def test_fetch_geocode_success_with_open_meteo(self):
+    async def test_fetch_geocode_success_with_arcgis(self):
+        fake_arcgis = {
+            "candidates": [
+                {
+                    "address": "Tam Kỳ, Quảng Nam",
+                    "score": 100.0,
+                    "location": {"x": 108.4740, "y": 15.5736},
+                    "attributes": {"PlaceName": "Tam Kỳ"}
+                }
+            ]
+        }
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json = Mock(return_value=fake_arcgis)
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            results = await _fetch_geocode("Tam Kỳ")
+            self.assertEqual(len(results), 1)
+            self.assertAlmostEqual(results[0]["lat"], 15.5736, places=3)
+            self.assertAlmostEqual(results[0]["lon"], 108.4740, places=3)
+            self.assertIn("Tam Kỳ", results[0]["display_name"])
+            self.assertEqual(results[0]["source"], "arcgis")
+
+    async def test_fetch_geocode_fallback_with_open_meteo(self):
         fake_response = {
             "results": [
                 {
@@ -45,23 +68,23 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
         mock_resp = Mock()
         mock_resp.status_code = 200
         mock_resp.json = Mock(return_value={
-            "results": [
+            "candidates": [
                 {
-                    "name": "Hà Nội",
-                    "latitude": 21.0285,
-                    "longitude": 105.8542,
-                    "country_code": "VN",
+                    "address": "Hà Nội",
+                    "score": 100.0,
+                    "location": {"x": 105.8542, "y": 21.0285},
                 }
             ]
         })
 
         with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp) as mock_get:
             res1 = await _fetch_geocode("Hà Nội")
-            self.assertEqual(len(res1), 1)
-            # Second call should hit memory cache without re-requesting
+            self.assertGreaterEqual(len(res1), 1)
+            initial_calls = mock_get.call_count
+            # Second call should hit memory cache without any additional HTTP requests
             res2 = await _fetch_geocode("Hà Nội")
-            self.assertEqual(len(res2), 1)
-            mock_get.assert_called_once()
+            self.assertEqual(len(res2), len(res1))
+            self.assertEqual(mock_get.call_count, initial_calls)
 
     async def test_fetch_geocode_handles_network_failure_gracefully(self):
         # When external service connection is refused or errors
