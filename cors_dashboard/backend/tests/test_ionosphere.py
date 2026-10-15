@@ -2,6 +2,7 @@
 
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
+from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -16,7 +17,9 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
         self.app.include_router(ionosphere_router)
         self.client = TestClient(self.app)
 
-    def _sample_glotec_geojson(self, time_tag="2026-10-15T08:35:00Z"):
+    def _sample_glotec_geojson(self, time_tag=None):
+        if time_tag is None:
+            time_tag = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # Create minimal 2x2 grid sample for fast testing
         return {
             "type": "FeatureCollection",
@@ -52,7 +55,7 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("status", compact)
         self.assertFalse(compact["is_stale"])
-        self.assertEqual(compact["time_tag"], "2026-10-15T08:35:00Z")
+        self.assertEqual(compact["time_tag"], sample["time_tag"])
         self.assertIn("UTC+7", compact["observation_time_vn"])
         self.assertAlmostEqual(compact["stats"]["min_tec"], 10.2, places=1)
         self.assertAlmostEqual(compact["stats"]["max_tec"], 30.1, places=1)
@@ -70,8 +73,8 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(compact["status"], "STALE")
 
     async def test_get_latest_with_mock_client(self):
-        catalog_mock = [{"url": "/products/glotec/sample.geojson", "time_tag": "2026-10-15T08:35:00Z"}]
         sample_geo = self._sample_glotec_geojson()
+        catalog_mock = [{"url": "/products/glotec/sample.geojson", "time_tag": sample_geo["time_tag"]}]
 
         resp_cat = Mock(status_code=200, json=Mock(return_value=catalog_mock), raise_for_status=Mock())
         resp_geo = Mock(status_code=200, json=Mock(return_value=sample_geo), raise_for_status=Mock())
@@ -83,7 +86,7 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("httpx.AsyncClient.get", side_effect=mock_get):
             data = await self.service.get_latest(format_type="compact", force_refresh=True)
-            self.assertEqual(data["time_tag"], "2026-10-15T08:35:00Z")
+            self.assertEqual(data["time_tag"], sample_geo["time_tag"])
             self.assertEqual(data["stats"]["min_tec"], 10.2)
 
             geo = await self.service.get_latest(format_type="geojson")
@@ -98,7 +101,7 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
                 res = self.client.get("/api/ionosphere/latest")
                 self.assertEqual(res.status_code, 200)
                 json_data = res.json()
-                self.assertEqual(json_data["time_tag"], "2026-10-15T08:35:00Z")
+                self.assertEqual(json_data["time_tag"], compact["time_tag"])
                 self.assertIn("Cache-Control", res.headers)
                 self.assertIn("public", res.headers["Cache-Control"])
 

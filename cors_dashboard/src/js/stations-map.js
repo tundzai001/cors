@@ -179,7 +179,6 @@
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
-        const [globeSpeed, setGlobeSpeed] = useState(1);
         const [globeOrbits, setGlobeOrbits] = useState(true);
         const [globeBeams, setGlobeBeams] = useState(true);
         const [globeTexture, setGlobeTexture] = useState('dark');
@@ -520,7 +519,6 @@
                 window.Globe3DView.setFilter('glonass', satelliteFilters.glonass);
                 window.Globe3DView.setFilter('showOrbits', globeOrbits);
                 window.Globe3DView.setFilter('showBeams', globeBeams);
-                window.Globe3DView.setSimSpeed(globeSpeed);
                 window.Globe3DView.setEarthTexture(globeTexture);
             }
         }, [isGlobeMode]);
@@ -1006,20 +1004,24 @@
                         >
                             <i className={`bi ${isGlobeMode ? 'bi-map' : 'bi-globe-asia-australia'}`}></i>
                         </button>
-                        <button className={`station-map-action ${filterOpen ? 'active' : ''}`} title="Filter" onClick={() => setFilterOpen(!filterOpen)}><i className="bi bi-funnel"></i></button>
-                        <button className="station-map-action" title="Locate" onClick={locate}><i className="bi bi-geo-alt-fill"></i></button>
-                        <button className="station-map-action" title="Tìm trạm gần nhất" onClick={findNearestFromBrowser} disabled={findingNearest}>
-                            {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
-                        </button>
-                        <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
-                        <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
-                        <button className={`station-map-action ${showIonosphere ? 'active' : ''}`} type="button" title="Tầng điện ly (NOAA GloTEC TEC)" aria-label="Tầng điện ly" onClick={() => setShowIonosphere(!showIonosphere)}><i className="bi bi-broadcast-pin"></i></button>
-                        <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS quỹ đạo thực (GPS/GAL/BDS/GLO)" aria-label="Vệ tinh GNSS" onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar"></i></button>
-                        <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
+                        {!isGlobeMode && (
+                            <React.Fragment>
+                                <button className={`station-map-action ${filterOpen ? 'active' : ''}`} title="Filter" onClick={() => setFilterOpen(!filterOpen)}><i className="bi bi-funnel"></i></button>
+                                <button className="station-map-action" title="Locate" onClick={locate}><i className="bi bi-geo-alt-fill"></i></button>
+                                <button className="station-map-action" title="Tìm trạm gần nhất" onClick={findNearestFromBrowser} disabled={findingNearest}>
+                                    {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
+                                </button>
+                                <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
+                                <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
+                                <button className={`station-map-action ${showIonosphere ? 'active' : ''}`} type="button" title="Tầng điện ly (NOAA GloTEC TEC)" aria-label="Tầng điện ly" onClick={() => setShowIonosphere(!showIonosphere)}><i className="bi bi-broadcast-pin"></i></button>
+                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS quỹ đạo thực (GPS/GAL/BDS/GLO)" aria-label="Vệ tinh GNSS" onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar"></i></button>
+                                <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
+                            </React.Fragment>
+                        )}
                     </div>
                 </div>
 
-                {filterOpen && (
+                {filterOpen && !isGlobeMode && (
                     <div className="station-map-filter-panel">
                         <div className="fw-bold mb-2">Filters</div>
                         <div className="form-check form-switch mb-2">
@@ -1067,7 +1069,7 @@
                     </div>
                 )}
 
-                {searchOpen && (
+                {searchOpen && !isGlobeMode && (
                     <div className="station-map-search-panel">
                         <input className="form-control form-control-sm mb-2" placeholder="Find station / serial / mountpoint" value={search} onChange={(e) => setSearch(e.target.value)} />
                         <form className="d-flex gap-2 mb-2" onSubmit={searchLocation}>
@@ -1112,16 +1114,18 @@
                     </div>
                 )}
 
-                <div className="station-map-legend">
-                    <div className="fw-bold mb-1">Legend</div>
-                    <div className="station-map-legend-row"><span className="station-map-dot online"></span>Online</div>
-                    <div className="station-map-legend-row"><span className="station-map-dot sleep"></span>Sleep</div>
-                    <div className="station-map-legend-row"><span className="station-map-dot offline"></span>Offline</div>
-                    <div className="station-map-legend-row"><span className="station-map-dot locked"></span>Locked</div>
-                    <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
-                </div>
+                {!isGlobeMode && (
+                    <div className="station-map-legend">
+                        <div className="fw-bold mb-1">Legend</div>
+                        <div className="station-map-legend-row"><span className="station-map-dot online"></span>Online</div>
+                        <div className="station-map-legend-row"><span className="station-map-dot sleep"></span>Sleep</div>
+                        <div className="station-map-legend-row"><span className="station-map-dot offline"></span>Offline</div>
+                        <div className="station-map-legend-row"><span className="station-map-dot locked"></span>Locked</div>
+                        <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
+                    </div>
+                )}
 
-                {showIonosphere && (
+                {showIonosphere && !isGlobeMode && (
                     <div className="station-map-ionosphere-hud">
                         <div className="iono-hud-header">
                             <div className="d-flex align-items-center gap-2">
@@ -1224,7 +1228,7 @@
                     </div>
                 )}
 
-                {showSatellites && (
+                {showSatellites && !isGlobeMode && (
                     <div className="station-map-satellite-hud">
                         <div className="sat-hud-header">
                             <div className="d-flex align-items-center gap-1">
@@ -1360,21 +1364,6 @@
                             <i className="bi bi-broadcast"></i> Tia trạm & IPP
                         </button>
                         <div className="globe-dock-separator"></div>
-                        {[1, 5, 30].map(spd => (
-                            <button
-                                key={spd}
-                                type="button"
-                                className={`globe-dock-btn ${globeSpeed === spd ? 'active' : ''}`}
-                                onClick={() => {
-                                    setGlobeSpeed(spd);
-                                    window.Globe3DView?.setSimSpeed(spd);
-                                }}
-                                title={`Tốc độ mô phỏng ${spd}x`}
-                            >
-                                {spd}x
-                            </button>
-                        ))}
-                        <div className="globe-dock-separator"></div>
                         <button
                             type="button"
                             className="globe-dock-btn"
@@ -1383,18 +1372,18 @@
                                 setGlobeTexture(next);
                                 window.Globe3DView?.setEarthTexture(next);
                             }}
-                            title="Đổi giao diện địa cầu"
+                            title="Đổi giao diện địa cầu (Dark / Night / Blue Marble)"
                         >
                             <i className="bi bi-palette"></i> {globeTexture === 'dark' ? 'Cyber Dark' : globeTexture === 'night' ? 'City Lights' : 'Blue Marble'}
                         </button>
                         <div className="globe-dock-separator"></div>
                         <button
                             type="button"
-                            className="globe-dock-btn"
+                            className="globe-dock-btn text-warning"
                             onClick={() => setIsGlobeMode(false)}
                             title="Chuyển về bản đồ 2D phẳng"
                         >
-                            <i className="bi bi-map"></i> 2D Map
+                            <i className="bi bi-map"></i> Bản đồ 2D
                         </button>
                     </div>
                 )}
