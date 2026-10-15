@@ -32,10 +32,7 @@
                 galileo: true,
                 beidou: true,
                 glonass: true,
-                onlyVisible: false,
-                minElevation: 12.0, // Default 12° CORS elevation mask cutoff (~29 sats)
                 showIpp: true,      // Show/hide 350km IPP diamond markers
-                matchRtcm: true,    // Match live RTCM stream from CORS edge when available
             };
 
             this.selectedStation = null; // { lat, lon, alt, name, serial, status }
@@ -241,7 +238,6 @@
             const activeRayKeys = new Set();
             let visibleCount = 0;
             const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
-            const minEl = Number.isFinite(this.filters.minElevation) ? this.filters.minElevation : 12.0;
 
             this.activeSatellites.forEach((satObj, key) => {
                 const cfg = CONSTELLATION_META[satObj.constellationKey];
@@ -265,7 +261,8 @@
 
                     // Visibility & Look angles
                     let look = null;
-                    let isVisible = false;
+                    let isAboveHorizon = false;
+                    let isTrackedByRtcm = false;
                     let azDeg = null;
                     let elDeg = null;
                     let liveRtcmSat = null;
@@ -278,20 +275,17 @@
                         if (hasLiveRtcm) {
                             liveRtcmSat = this.getLiveRtcmSatellite(satObj);
                         }
-                        if (hasLiveRtcm && this.filters.matchRtcm !== false) {
-                            isVisible = Boolean(liveRtcmSat); // Match exact live RTCM tracked satellite
-                        } else {
-                            isVisible = elDeg >= minEl; // CORS Elevation cut-off mask
-                        }
+                        isAboveHorizon = elDeg >= 0;
+                        isTrackedByRtcm = Boolean(liveRtcmSat);
                     }
 
-                    if (isVisible) {
+                    if (isTrackedByRtcm) {
                         visibleCount++;
                         constCounts[satObj.constellationKey] = (constCounts[satObj.constellationKey] || 0) + 1;
                     }
 
-                    // Visibility filter: hide if onlyVisible is checked and satellite is not visible
-                    const shouldDisplay = isConstEnabled && (!this.filters.onlyVisible || isVisible || !this.selectedStation);
+                    // Keep orbital positions visible globally; RTCM only controls tracking state and rays.
+                    const shouldDisplay = isConstEnabled;
 
                     if (!shouldDisplay) {
                         if (satObj.marker && this.layerGroup.hasLayer(satObj.marker)) {
@@ -303,8 +297,8 @@
                     // Update or create marker
                     if (!satObj.marker) {
                         const marker = L.marker([lat, lon], {
-                            icon: this.createSatelliteIcon(satObj.code, satObj.constellationKey, isVisible),
-                            zIndexOffset: isVisible ? 1000 : 700,
+                            icon: this.createSatelliteIcon(satObj.code, satObj.constellationKey, isTrackedByRtcm),
+                            zIndexOffset: isTrackedByRtcm ? 1000 : 700,
                         });
                         satObj.marker = marker;
                         this.layerGroup.addLayer(marker);
@@ -315,8 +309,8 @@
                         }
                     }
 
-                    // If station is selected, online, and satellite is visible, maintain LOS Ray & IPP
-                    if (obsGd && !isStationOffline && isVisible && look && this.rayLayerGroup) {
+                    // Draw LOS and IPP only for a fresh, exact RTCM PRN match.
+                    if (obsGd && !isStationOffline && isTrackedByRtcm && look && this.rayLayerGroup) {
                         const satKey = satObj.key;
                         activeRayKeys.add(satKey);
 
@@ -344,15 +338,9 @@
                                     Vệ tinh: <b style="color:${cfg.color};">${satObj.code}</b> (${cfg.name})<br>
                                     Trạm: <b>${this.selectedStation.name || this.selectedStation.serial}</b>
                                 </div>
-                                ${liveRtcmSat ? `
-                                    <div class="mb-2 px-2 py-1 rounded" style="background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.35); font-size:0.72rem; color:#86efac;">
-                                        <i class="bi bi-broadcast me-1"></i>Đang khóa tín hiệu RTCM MSM (SNR: <b>${liveRtcmSat.snr || '--'} dB-Hz</b>)
-                                    </div>
-                                ` : `
-                                    <div class="mb-2 px-2 py-1 rounded" style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.25); font-size:0.72rem; color:#7dd3fc;">
-                                        <i class="bi bi-clock me-1"></i>Mô phỏng quỹ đạo SGP4 (Góc ngẩng: ${elDeg.toFixed(1)}°)
-                                    </div>
-                                `}
+                                <div class="mb-2 px-2 py-1 rounded" style="background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.35); font-size:0.72rem; color:#86efac;">
+                                    <i class="bi bi-broadcast me-1"></i>Agent đã giải mã RTCM (SNR: <b>${liveRtcmSat.snr || liveRtcmSat.cnr || '--'} dB-Hz</b>)
+                                </div>
                                 <div class="station-map-popup-grid" style="font-size:0.75rem;">
                                     <span class="station-map-popup-label">Tọa độ IPP</span>
                                     <span class="station-map-popup-value">${ippLat.toFixed(2)}°, ${ippLon.toFixed(2)}°</span>
@@ -372,9 +360,7 @@
                                 </div>
                             </div>
                         `;
-                        const tooltipText = liveRtcmSat
-                            ? `IPP 350km: ${satObj.code} (${vtecVal !== null ? `${vtecVal} TECU` : '--'} • SNR ${liveRtcmSat.snr}dB)`
-                            : `IPP 350km: ${satObj.code} (${vtecVal !== null ? `${vtecVal} TECU` : '--'})`;
+                        const tooltipText = `IPP 350km: ${satObj.code} (RTCM ${liveRtcmSat.messageType || ''} • SNR ${liveRtcmSat.snr || liveRtcmSat.cnr || '--'} dB-Hz)`;
 
                         const cached = this.rayLayersCache.get(satKey);
                         if (cached) {
@@ -433,11 +419,17 @@
                     // Satellite Popup
                     const lookInfo = look ? `
                         <span class="station-map-popup-label">Góc ngẩng (El)</span>
-                        <span class="station-map-popup-value" style="color:${isVisible ? '#22c55e' : '#f87171'};font-weight:700;">
-                            ${elDeg.toFixed(1)}° (${isVisible ? `Khả kiến (≥${minEl}°)` : `Dưới góc cắt <${minEl}°`})
+                        <span class="station-map-popup-value" style="color:${isAboveHorizon ? '#22c55e' : '#f87171'};font-weight:700;">
+                            ${elDeg.toFixed(1)}° (${isAboveHorizon ? 'Trên đường chân trời' : 'Dưới đường chân trời'})
                         </span>
                         <span class="station-map-popup-label">Phương vị (Az)</span>
                         <span class="station-map-popup-value">${azDeg.toFixed(1)}°</span>
+                        ${this.selectedStation ? `
+                            <span class="station-map-popup-label">Trạng thái RTCM</span>
+                            <span class="station-map-popup-value" style="color:${isTrackedByRtcm ? '#22c55e' : '#94a3b8'};font-weight:700;">
+                                ${isTrackedByRtcm ? 'Agent đang nhận' : 'Không có PRN RTCM khớp'}
+                            </span>
+                        ` : ''}
                     ` : '';
 
                     satObj.marker.bindPopup(`

@@ -716,10 +716,9 @@
             };
             const stnPos3D = Math3D.latLonAltToVector3(coords.lat, coords.lon, 4);
 
-            // Compute all satellites currently tracked / visible above station's horizon
+            // A station tracks only fresh RTCM observations matched to a loaded orbit.
             const trackedSats = [];
             const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
-            const minEl = Number.isFinite(window.GnssSatelliteOverlay?.filters?.minElevation) ? window.GnssSatelliteOverlay.filters.minElevation : 12.0;
             const liveRtcmSatellites = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(dev) || [];
             const hasLiveRtcm = liveRtcmSatellites.length > 0;
 
@@ -733,7 +732,7 @@
                         const elDeg = look.elevation * (180.0 / Math.PI);
                         const azDeg = ((look.azimuth * (180.0 / Math.PI)) + 360) % 360;
                         const liveRtcmSat = window.GnssSatelliteOverlay?.getLiveRtcmSatellite(satItem, dev) || null;
-                        if (liveRtcmSat || (!hasLiveRtcm && elDeg >= minEl)) {
+                        if (liveRtcmSat) {
                             trackedSats.push({ satItem, elDeg, azDeg, mesh, liveRtcmSat });
                             constCounts[satItem.constellationKey] = (constCounts[satItem.constellationKey] || 0) + 1;
                         }
@@ -764,11 +763,9 @@
             // Generate satellite chips HTML (clickable to view satellite orbit!)
             const satChipsHtml = trackedSats.slice(0, 24).map(({ satItem, elDeg, liveRtcmSat }) => {
                 const cKey = satItem.constellationKey;
-                const source = liveRtcmSat
-                    ? `RTCM ${liveRtcmSat.messageType || ''} · C/N₀ ${liveRtcmSat.cnr || liveRtcmSat.snr || '--'} dB-Hz`
-                    : `Tính từ quỹ đạo · Góc ngẩng ${elDeg.toFixed(1)}°`;
+                const source = `RTCM ${liveRtcmSat.messageType || ''} · C/N₀ ${liveRtcmSat.cnr || liveRtcmSat.snr || '--'} dB-Hz`;
                 return `<span class="tracked-sat-chip ${cKey}" data-sat-key="${satItem.key}" title="${satItem.name} · ${source}">
-                    ${satItem.code} <small>${liveRtcmSat ? 'RTCM' : `${Math.round(elDeg)}°`}</small>
+                    ${satItem.code} <small>RTCM</small>
                 </span>`;
             }).join('');
 
@@ -801,8 +798,8 @@
                         <span class="stat-value">${coords.lat.toFixed(4)}°, ${coords.lon.toFixed(4)}°</span>
                     </div>
                     <div class="stat-box">
-                        <span class="stat-label">${hasLiveRtcm ? 'Vệ tinh agent giải mã RTCM' : 'Vệ tinh khả kiến theo quỹ đạo'}</span>
-                        <span class="stat-value" style="color:${isOnline || isSleep ? '#10b981' : '#ef4444'}">${(isOnline || isSleep) ? `${totalTracked} Vệ tinh` : '0 Vệ tinh'} <span style="font-size:0.65rem;color:#94a3b8">${hasLiveRtcm ? '(RTCM trực tiếp)' : `(≥${minEl}°)`}</span></span>
+                        <span class="stat-label">Vệ tinh agent giải mã RTCM</span>
+                        <span class="stat-value" style="color:${isOnline || isSleep ? '#10b981' : '#ef4444'}">${(isOnline || isSleep) ? `${totalTracked} Vệ tinh` : '0 Vệ tinh'} <span style="font-size:0.65rem;color:#94a3b8">${hasLiveRtcm ? '(đã ghép PRN)' : '(đang chờ RTCM)'}</span></span>
                     </div>
                 </div>
                 <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">
@@ -817,12 +814,17 @@
                 ${(isOnline || isSleep) && trackedSats.length > 0 ? `
                     <div class="tracked-sats-wrapper">
                         <div class="tracked-sats-header">
-                            <span>${hasLiveRtcm ? 'Vệ tinh RTCM đang nhận (bấm để bám quỹ đạo):' : 'Vệ tinh dự kiến khả kiến (bấm để xem quỹ đạo):'}</span>
+                            <span>Vệ tinh RTCM đang nhận (bấm để bám quỹ đạo):</span>
                             <span>${trackedSats.length} Sats</span>
                         </div>
                         <div class="tracked-sats-chips">
                             ${satChipsHtml}
                         </div>
+                    </div>
+                ` : ''}
+                ${(isOnline || isSleep) && !trackedSats.length ? `
+                    <div class="small text-muted mt-2">
+                        ${hasLiveRtcm ? 'Có RTCM mới nhưng chưa khớp PRN với quỹ đạo đã nạp.' : 'Đang chờ agent gửi RTCM mới.'}
                     </div>
                 ` : ''}
                 <div class="card-footer-actions">

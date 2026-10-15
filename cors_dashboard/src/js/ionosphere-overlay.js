@@ -65,6 +65,7 @@
             this.opacity = 0.65;
             this.refreshTimer = null;
             this.isRefreshing = false;
+            this.attachGeneration = 0;
             this.lastFetchMonotonic = 0;
             this.listeners = new Set();
         }
@@ -224,6 +225,7 @@
         }
 
         async attachToMap(map, options = {}) {
+            const generation = ++this.attachGeneration;
             this.mapInstance = map;
             if (options.opacity !== undefined) this.opacity = options.opacity;
             if (options.mode) this.activeMode = options.mode;
@@ -231,6 +233,7 @@
             if (!this.cachedData) {
                 await this.fetchData();
             }
+            if (generation !== this.attachGeneration || this.mapInstance !== map) return;
 
             const dataUrl = this.generateRasterDataUrl(this.activeMode);
             if (!dataUrl) return;
@@ -259,8 +262,10 @@
         }
 
         detachFromMap() {
-            if (this.mapInstance && this.imageOverlay && this.mapInstance.hasLayer(this.imageOverlay)) {
-                this.mapInstance.removeLayer(this.imageOverlay);
+            this.attachGeneration++;
+            const map = this.mapInstance;
+            if (map && this.imageOverlay && map.hasLayer(this.imageOverlay)) {
+                map.removeLayer(this.imageOverlay);
             }
             this.imageOverlay = null;
             this.mapInstance = null;

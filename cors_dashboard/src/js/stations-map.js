@@ -143,7 +143,7 @@
                 <div class="d-flex gap-1 mt-2">
                     ${(status === 'offline' || status === 'lost')
                         ? `<button type="button" class="btn btn-sm btn-outline-secondary flex-fill station-map-sat-btn opacity-75" data-serial="${escapeHtml(device.serial || '')}" data-offline="true" title="Trạm đang ngoại tuyến - Không thể thu tín hiệu">🛰️ Trạm ngoại tuyến</button>`
-                        : `<button type="button" class="btn btn-sm btn-outline-info flex-fill station-map-sat-btn" data-serial="${escapeHtml(device.serial || '')}">🛰️ Tia vệ tinh & IPP</button>`
+                        : `<button type="button" class="btn btn-sm btn-outline-info flex-fill station-map-sat-btn" data-serial="${escapeHtml(device.serial || '')}">🛰️ Theo dõi RTCM</button>`
                     }
                     <button type="button" class="btn btn-sm btn-primary flex-fill station-map-detail-btn" data-serial="${escapeHtml(device.serial || '')}">Open detail</button>
                 </div>
@@ -178,7 +178,7 @@
         showIonosphereRef.current = showIonosphere;
         const [showSatellites, setShowSatellites] = useState(false);
         const [satelliteStats, setSatelliteStats] = useState({ total: 0, visible: 0, byConstellation: {} });
-        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, onlyVisible: false, minElevation: 12.0, showIpp: true, matchRtcm: true });
+        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, showIpp: true });
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
@@ -198,7 +198,7 @@
             if (map && view) {
                 map.setMaxBounds(null);
                 map.setMinZoom(2);
-                map.setView([view.lat, view.lng], Math.max(5, Math.min(20, view.zoom)), { animate: false });
+                map.setView([view.lat, view.lng], Math.max(2, Math.min(20, view.zoom)), { animate: false });
             }
             globeModeRef.current = false;
             setIsGlobeMode(false);
@@ -379,7 +379,7 @@
                                 serial: dev.serial,
                                 status: devStatus,
                             });
-                            window.CorsUI?.showToast('info', `Đã kích hoạt quan sát vệ tinh & IPP cho trạm ${dev.name || dev.serial}`);
+                            window.CorsUI?.showToast('info', 'Đã bật vị trí vệ tinh. Tia và IPP chỉ hiện khi PRN khớp RTCM của trạm.');
                         }
                     }
                 }, { once: true });
@@ -1058,7 +1058,7 @@
                                 <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
                                 <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
                                 <button className={`station-map-action ${showIonosphere ? 'active' : ''}`} type="button" title="Tầng điện ly (NOAA GloTEC TEC)" aria-label="Tầng điện ly" onClick={() => setShowIonosphere(!showIonosphere)}><i className="bi bi-broadcast-pin"></i></button>
-                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS quỹ đạo thực (GPS/GAL/BDS/GLO)" aria-label="Vệ tinh GNSS" onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar"></i></button>
+                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vị trí quỹ đạo TLE; tracking theo RTCM" aria-label="Vệ tinh GNSS" onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar"></i></button>
                                 <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
                             </React.Fragment>
                         )}
@@ -1277,7 +1277,7 @@
                         <div className="sat-hud-header">
                             <div className="d-flex align-items-center gap-1">
                                 <i className="bi bi-radar" style={{ color: '#38bdf8' }}></i>
-                                <span className="sat-hud-title">Vệ tinh GNSS Realtime</span>
+                                <span className="sat-hud-title">Vị trí vệ tinh GNSS</span>
                             </div>
                             <button
                                 type="button"
@@ -1323,13 +1323,14 @@
                                     </div>
                                     <div className="text-info small">
                                         <i className="bi bi-eye me-1"></i>
-                                        <b>{satelliteStats.visible}</b> vệ tinh & tia IPP {satelliteStats.hasLiveRtcm ? `(RTCM Live)` : `(≥${satelliteFilters.minElevation ?? 12}°)`}
+                                        <b>{satelliteStats.visible}</b> vệ tinh khớp RTCM
+                                        {satelliteStats.hasLiveRtcm ? ` · ${satelliteStats.liveRtcmCount} PRN mới` : ' · đang chờ RTCM'}
                                     </div>
                                 </div>
                             )
                         ) : (
                             <div className="small text-muted mb-2 fst-italic">
-                                <i className="bi bi-cursor me-1"></i>Bấm vào trạm CORS để nối tia sóng & tính IPP.
+                                <i className="bi bi-cursor me-1"></i>Vị trí vệ tinh theo quỹ đạo TLE; chỉ vệ tinh khớp RTCM mới được tô sáng.
                             </div>
                         )}
 
@@ -1356,46 +1357,6 @@
                             ))}
                         </div>
 
-                        {selectedSatStation && (
-                            <div className="d-flex align-items-center justify-content-between my-2 small">
-                                <label htmlFor="sat-elev-mask" className="text-muted me-2" style={{ fontSize: '0.72rem', whiteSpace: 'nowrap' }}>
-                                    Góc cắt (Mask):
-                                </label>
-                                <select
-                                    id="sat-elev-mask"
-                                    className="form-select form-select-sm py-0 ps-1 pe-4 text-light bg-dark border-secondary"
-                                    style={{ fontSize: '0.72rem', height: '24px' }}
-                                    value={satelliteFilters.minElevation ?? 12}
-                                    onChange={(e) => {
-                                        const val = parseFloat(e.target.value);
-                                        window.GnssSatelliteOverlay?.setFilter('minElevation', val);
-                                    }}
-                                >
-                                    <option value={12}>12° (Chuẩn CORS ~29 Sats)</option>
-                                    <option value={15}>15° (Bộ lọc cao ~25 Sats)</option>
-                                    <option value={10}>10° (Mở rộng ~35 Sats)</option>
-                                    <option value={5}>5° (Chân trời ~60 Sats)</option>
-                                </select>
-                            </div>
-                        )}
-
-                        {selectedSatStation && satelliteStats.hasLiveRtcm && (
-                            <div className="form-check form-switch mb-1 small">
-                                <input
-                                    className="form-check-input"
-                                    type="checkbox"
-                                    id="sat-match-rtcm"
-                                    checked={satelliteFilters.matchRtcm !== false}
-                                    onChange={(e) => {
-                                        window.GnssSatelliteOverlay?.setFilter('matchRtcm', e.target.checked);
-                                    }}
-                                />
-                                <label className="form-check-label text-success fw-semibold" htmlFor="sat-match-rtcm" style={{ fontSize: '0.72rem' }}>
-                                    <i className="bi bi-broadcast me-1"></i>Khớp chuẩn RTCM trạm ({satelliteStats.liveRtcmCount} Sats)
-                                </label>
-                            </div>
-                        )}
-
                         <div className="form-check form-switch mb-1 small">
                             <input
                                 className="form-check-input"
@@ -1407,35 +1368,18 @@
                                 }}
                             />
                             <label className="form-check-label" htmlFor="sat-show-ipp" style={{ fontSize: '0.72rem' }}>
-                                Hiện điểm xuyên IPP (350km)
+                                Hiện IPP từ vệ tinh khớp RTCM (350km)
                             </label>
                         </div>
 
-                        {selectedSatStation && (
-                            <div className="form-check form-switch mb-1 small">
-                                <input
-                                    className="form-check-input"
-                                    type="checkbox"
-                                    id="sat-only-visible"
-                                    checked={satelliteFilters.onlyVisible}
-                                    onChange={(e) => {
-                                        window.GnssSatelliteOverlay?.setFilter('onlyVisible', e.target.checked);
-                                    }}
-                                />
-                                <label className="form-check-label" htmlFor="sat-only-visible" style={{ fontSize: '0.72rem' }}>
-                                    Chỉ hiện vệ tinh khả kiến (≥{satelliteFilters.minElevation ?? 12}°)
-                                </label>
-                            </div>
-                        )}
-
                         <div className="sat-hud-source-credit">
-                            <div>🛰️ Quỹ đạo: <b>CelesTrak (NORAD GP)</b> • <b>SGP4 1Hz</b></div>
+                            <div>🛰️ Vị trí quỹ đạo: <b>CelesTrak/NORAD • SGP4</b></div>
                             {satelliteStats.hasLiveRtcm ? (
                                 <div style={{ color: '#86efac' }}>
-                                    ● Luồng trạm: <b>RTCM 1074-1127</b> ({satelliteStats.liveRtcmCount} Sats)
+                                    ● RTCM mới: <b>{satelliteStats.liveRtcmCount} PRN</b> • khớp quỹ đạo: <b>{satelliteStats.visible}</b>
                                 </div>
                             ) : (
-                                <div>Góc ngẩng: <b>≥{satelliteFilters.minElevation ?? 12}°</b> • IPP: <b>350km</b></div>
+                                <div>Đang chờ RTCM • tia và IPP chỉ hiện với PRN khớp</div>
                             )}
                         </div>
                     </div>

@@ -130,8 +130,9 @@ for (const [lat, lng, zoom] of [[21.03, 105.85, 8], [-33.9, 151.2, 10], [51.5, -
     assert.ok(Math.abs(view.zoom - zoom) < 1e-8, '3D-to-2D handoff preserves scale and center');
     assert.equal(geo.shouldEnterGlobe(view.zoom), false, 'surface handoff does not switch back to 3D');
 }
-assert.equal(geo.shouldEnterGlobe(4), true);
-assert.equal(geo.shouldEnterGlobe(4.1), false);
+assert.equal(geo.shouldEnterGlobe(4), false, 'continents remain inspectable in 2D');
+assert.equal(geo.shouldEnterGlobe(2), true, 'automatic 3D handoff waits until world view');
+assert.equal(geo.shouldEnterGlobe(2.1), false);
 assert.equal(geo.surfaceViewFromRay({ x: 0, y: 0, z: 6 }, { x: 0, y: 0, z: 1 }, 45, 900), null, 'looking into space does not enter 2D');
 let handoffs = 0;
 globe.getSurfaceView = () => ({ lat: 21.03, lng: 105.85, zoom: 8 });

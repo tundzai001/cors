@@ -82,6 +82,7 @@
         calculateIpp3D,
         groundRegion,
         surfaceViewFromRay,
-        shouldEnterGlobe: zoom => Number.isFinite(zoom) && zoom <= 4,
+        // Keep the 2D map available down to world view; switch only at minimum zoom.
+        shouldEnterGlobe: zoom => Number.isFinite(zoom) && zoom <= 2,
     };
 })();
