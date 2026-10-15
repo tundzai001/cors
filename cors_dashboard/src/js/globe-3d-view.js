@@ -144,10 +144,10 @@
                 this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
                 this.controls.enableDamping = true;
                 this.controls.dampingFactor = 0.08;
-                this.controls.rotateSpeed = 0.75;
-                this.controls.zoomSpeed = 1.15;
-                this.controls.minDistance = 5.25;
-                this.controls.maxDistance = 75.0;
+                this.controls.rotateSpeed = 0.8;
+                this.controls.zoomSpeed = 1.25;
+                this.controls.minDistance = 5.06; // Allows zooming down to ~75km above surface
+                this.controls.maxDistance = 120.0; // Allows zooming out to view full orbits
                 this.controls.target.set(0, 0, 0);
             }
 
@@ -167,21 +167,39 @@
 
         _createStarfield() {
             const THREE = window.THREE;
-            const starCount = 1800;
+            const starCount = 2800;
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(starCount * 3);
+            const colors = new Float32Array(starCount * 3);
 
             for (let i = 0; i < starCount; i++) {
-                const radius = 180 + Math.random() * 100;
+                const radius = 150 + Math.random() * 120;
                 const theta = Math.random() * Math.PI * 2;
                 const phi = Math.acos(2 * Math.random() - 1);
                 positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
                 positions[i * 3 + 1] = radius * Math.cos(phi);
                 positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
+
+                // Subtle twinkling star tints (white, ice blue, golden)
+                const cRand = Math.random();
+                if (cRand > 0.8) {
+                    colors[i * 3] = 0.7; colors[i * 3 + 1] = 0.85; colors[i * 3 + 2] = 1.0;
+                } else if (cRand > 0.6) {
+                    colors[i * 3] = 1.0; colors[i * 3 + 1] = 0.9; colors[i * 3 + 2] = 0.7;
+                } else {
+                    colors[i * 3] = 0.9; colors[i * 3 + 1] = 0.95; colors[i * 3 + 2] = 1.0;
+                }
             }
 
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            const material = new THREE.PointsMaterial({ size: 1.1, color: 0xcfe8ff, transparent: true, opacity: 0.75, depthWrite: false });
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            const material = new THREE.PointsMaterial({
+                size: 1.2,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.85,
+                depthWrite: false,
+            });
             this.starfield = new THREE.Points(geometry, material);
             this.scene.add(this.starfield);
         }
@@ -324,8 +342,8 @@
         focusVietnam(animate = true) {
             const Math3D = window.Globe3DMath;
             const normal = (Math3D?.latLonAltToVector3(16.0, 108.0, 0) || new window.THREE.Vector3(-1.48, 1.38, -4.57)).normalize();
-            const targetPos = new window.THREE.Vector3(normal.x * 9.2, normal.y * 9.2 + 0.8, normal.z * 9.2);
-            const targetLook = new window.THREE.Vector3(normal.x * 2.5, normal.y * 2.5, normal.z * 2.5);
+            const targetPos = new window.THREE.Vector3(normal.x * 7.8, normal.y * 7.8, normal.z * 7.8);
+            const targetLook = new window.THREE.Vector3(0, 0, 0);
 
             if (!animate || !this.camera) {
                 this.camera.position.copy(targetPos);
@@ -349,8 +367,9 @@
             const Math3D = window.Globe3DMath;
             if (!Math3D || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
             const normal = Math3D.latLonAltToVector3(lat, lon, 0).normalize();
-            const targetPos = new window.THREE.Vector3(normal.x * 6.8, normal.y * 6.8, normal.z * 6.8);
-            const targetLook = new window.THREE.Vector3(normal.x * 4.9, normal.y * 4.9, normal.z * 4.9);
+            // Zoom closely into station coordinates (~380km above surface) with center (0,0,0)
+            const targetPos = new window.THREE.Vector3(normal.x * 5.30, normal.y * 5.30, normal.z * 5.30);
+            const targetLook = new window.THREE.Vector3(0, 0, 0);
 
             this.isTweening = true;
             this.isTrackingSatellite = false;
@@ -480,10 +499,15 @@
 
         _onPointerClick(event) {
             if (!this.hoveredObject) return;
-            const data = this.hoveredObject.userData;
+            let target = this.hoveredObject;
+            while (target && !target.userData?.satItem && !target.userData?.station && target.parent) {
+                target = target.parent;
+            }
+            if (!target) return;
+            const data = target.userData;
 
             if (data?.satItem && this.satelliteLayer) {
-                this.satelliteLayer.openSatelliteCard(data.satItem, this.hoveredObject);
+                this.satelliteLayer.openSatelliteCard(data.satItem, target);
             } else if (data?.station && this.satelliteLayer) {
                 const dev = data.station.device || {};
                 const stnObj = {

@@ -2,8 +2,9 @@
 // Styled like satellitemap.space & network.igs.org:
 // - Luminous glowing star-like satellite particles (GPS, Galileo, BeiDou, GLONASS)
 // - True Keplerian 3D orbital ellipses (GEO equatorial rings, IGSO tilted loops, MEO tracks)
+// - Real-time station satellite tracking: calculates & draws live reception signal rays to visible satellites
 // - Dynamic ground footprint coverage on Earth & 3D floating tag beside selected satellite
-// - Crisp IGS Network station pins (green dot for active, red triangle for offline)
+// - Crisp IGS Network station pins with adaptive zoom scaling
 (() => {
     'use strict';
 
@@ -14,7 +15,7 @@
         glonass: { name: 'GLONASS', flag: '🇷🇺', color: 0xef4444, hex: '#ef4444', nominalAltKm: 19130 },
     };
 
-    // Pre-render luminous star particle texture for satellite dots (satellitemap.space style)
+    // Pre-render luminous star particle texture for satellite dots (satellitemap.space particle look)
     function createSatelliteTexture(colorHex) {
         const canvas = document.createElement('canvas');
         canvas.width = 64;
@@ -130,35 +131,35 @@
         if (!THREE) return null;
 
         const canvas = document.createElement('canvas');
-        canvas.width = 300;
-        canvas.height = 96;
+        canvas.width = 320;
+        canvas.height = 100;
         const ctx = canvas.getContext('2d');
 
         // Rounded dark pill background with glowing border
-        ctx.fillStyle = 'rgba(11, 16, 27, 0.88)';
+        ctx.fillStyle = 'rgba(11, 16, 27, 0.90)';
         ctx.strokeStyle = colorHex || '#38bdf8';
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.roundRect(4, 4, 292, 88, 14);
+        ctx.roundRect(4, 4, 312, 92, 16);
         ctx.fill();
         ctx.stroke();
 
         // Top line: ● Code
-        ctx.font = 'bold 26px Inter, -apple-system, sans-serif';
+        ctx.font = 'bold 28px Inter, -apple-system, sans-serif';
         ctx.fillStyle = colorHex || '#38bdf8';
-        ctx.fillText(`●  ${code}`, 18, 36);
+        ctx.fillText(`●  ${code}`, 20, 38);
 
         // Second line: Satellite Name
-        ctx.font = '600 19px Inter, -apple-system, sans-serif';
+        ctx.font = '600 20px Inter, -apple-system, sans-serif';
         ctx.fillStyle = '#f8fafc';
-        const cleanName = (name || '').replace(/\(.*?\)/g, '').trim().slice(0, 18);
-        ctx.fillText(cleanName, 18, 62);
+        const cleanName = (name || '').replace(/\(.*?\)/g, '').trim().slice(0, 19);
+        ctx.fillText(cleanName, 20, 65);
 
         // Bottom line: Orbit Class & Alt
-        ctx.font = '500 16px Inter, -apple-system, sans-serif';
+        ctx.font = '500 17px Inter, -apple-system, sans-serif';
         ctx.fillStyle = '#94a3b8';
         const altStr = Number.isFinite(altKm) ? `${Math.round(altKm).toLocaleString()} km` : '';
-        ctx.fillText(`${orbitType} • ${altStr}`, 18, 83);
+        ctx.fillText(`${orbitType} • ${altStr}`, 20, 87);
 
         const tex = new THREE.CanvasTexture(canvas);
         tex.minFilter = THREE.LinearFilter;
@@ -171,7 +172,7 @@
             depthTest: false,
         });
         const sprite = new THREE.Sprite(spriteMat);
-        sprite.scale.set(1.3, 0.42, 1);
+        sprite.scale.set(1.4, 0.44, 1);
         return sprite;
     }
 
@@ -210,7 +211,7 @@
         const mat = new THREE.LineBasicMaterial({
             color: colorHex || 0x38bdf8,
             transparent: true,
-            opacity: 0.38,
+            opacity: 0.42,
             blending: THREE.AdditiveBlending,
         });
         return new THREE.LineLoop(geo, mat);
@@ -222,10 +223,12 @@
             this.satellitesGroup = new window.THREE.Group();
             this.stationsGroup = new window.THREE.Group();
             this.singleOrbitGroup = new window.THREE.Group();
+            this.stationTrackingGroup = new window.THREE.Group();
 
             this.globe.scene.add(this.satellitesGroup);
             this.globe.scene.add(this.stationsGroup);
             this.globe.scene.add(this.singleOrbitGroup);
+            this.globe.scene.add(this.stationTrackingGroup);
 
             this.satelliteMeshes = new Map(); // key -> { mesh (group), sprite, satItem }
             this.stationSprites = [];
@@ -287,6 +290,7 @@
             this.satellitesGroup.clear();
             this.satelliteMeshes.clear();
             this.singleOrbitGroup.clear();
+            this.stationTrackingGroup.clear();
 
             rawList.forEach(satItem => {
                 const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
@@ -305,7 +309,7 @@
                 group.add(sprite);
 
                 // Invisible hit sphere for effortless raycasting click
-                const hitGeo = new THREE.SphereGeometry(0.35, 6, 6);
+                const hitGeo = new THREE.SphereGeometry(0.38, 6, 6);
                 const hitMat = new THREE.MeshBasicMaterial({ visible: false });
                 const hitMesh = new THREE.Mesh(hitGeo, hitMat);
                 hitMesh.userData = { satItem, constellation: satItem.constellationKey, type: 'satellite' };
@@ -357,7 +361,7 @@
                     // Update live satellite card and floating label if currently selected
                     if (this.selectedSatellite?.key === key) {
                         if (this.selectedSatelliteLabelSprite) {
-                            this.selectedSatelliteLabelSprite.position.copy(pos3D).add(new window.THREE.Vector3(0.35, 0.25, 0));
+                            this.selectedSatelliteLabelSprite.position.copy(pos3D).add(new window.THREE.Vector3(0.4, 0.3, 0));
                         }
                         if (this.detailCardEl?.style.display === 'block') {
                             const latEl = document.getElementById('card-sat-lat');
@@ -422,12 +426,13 @@
         updateSpriteScales(camera) {
             if (!camera) return;
             const camPos = camera.position;
+            const camDist = camPos.length();
+            const altAboveGround = Math.max(0.06, camDist - 5.0);
 
-            // CORS Station pins
+            // CORS Station pins: adapt to zoom so close stations never clump or overlap
             for (let i = 0; i < this.stationSprites.length; i++) {
                 const sp = this.stationSprites[i];
-                const dist = camPos.distanceTo(sp.position);
-                const s = Math.max(0.024, Math.min(0.09, dist * 0.0075));
+                const s = Math.max(0.014, Math.min(0.075, altAboveGround * 0.020));
                 sp.scale.set(s, s, 1);
             }
 
@@ -436,7 +441,7 @@
                 if (!sprite || !mesh) return;
                 const dist = camPos.distanceTo(mesh.position);
                 const isSelected = this.selectedSatellite?.key === satItem.key;
-                const base = isSelected ? 0.35 : Math.max(0.11, Math.min(0.24, dist * 0.012));
+                const base = isSelected ? 0.38 : Math.max(0.09, Math.min(0.24, dist * 0.012));
                 sprite.scale.set(base, base, 1);
             });
         }
@@ -505,8 +510,14 @@
             if (!this.detailCardEl) return;
             this.selectedSatellite = satItem;
 
+            // Clear station tracking rays
+            this.stationTrackingGroup.clear();
+
+            const satRec = this.satelliteMeshes.get(satItem.key);
+            const satGroup = satRec?.mesh || meshObj;
+            const currentPos3D = satGroup.position.clone();
+            const pos = satGroup.userData?.lastCalculated || meshObj?.userData?.lastCalculated || {};
             const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
-            const pos = meshObj.userData?.lastCalculated || {};
             const orbitInfo = getOrbitTypeInfo(satItem);
 
             // Render single true orbital ellipse
@@ -521,12 +532,12 @@
                 cfg.hex
             );
             if (this.selectedSatelliteLabelSprite) {
-                this.selectedSatelliteLabelSprite.position.copy(meshObj.position).add(new window.THREE.Vector3(0.35, 0.25, 0));
+                this.selectedSatelliteLabelSprite.position.copy(currentPos3D).add(new window.THREE.Vector3(0.4, 0.3, 0));
                 this.singleOrbitGroup.add(this.selectedSatelliteLabelSprite);
             }
 
             // Render ground coverage footprint cone on Earth
-            this.footprintMesh = createFootprintLoop(meshObj.position, pos.altKm || cfg.nominalAltKm, cfg.color);
+            this.footprintMesh = createFootprintLoop(currentPos3D, pos.altKm || cfg.nominalAltKm, cfg.color);
             if (this.footprintMesh) {
                 this.singleOrbitGroup.add(this.footprintMesh);
             }
@@ -596,7 +607,7 @@
             document.getElementById('globe-reset-view-btn').onclick = () => this.globe.focusVietnam(true);
         }
 
-        // Open persistent Station Detail Card with decoded GNSS satellite telemetry
+        // Open persistent Station Detail Card with decoded GNSS satellite telemetry & live tracking rays
         openStationCard(stationItem, coords) {
             if (!this.detailCardEl) return;
             const dev = stationItem.device || {};
@@ -605,14 +616,70 @@
             const statusLabel = isOnline ? 'Trực tuyến' : isSleep ? 'Chế độ chờ (Sleep)' : 'Mất kết nối';
             const statusColor = isOnline ? '#10b981' : isSleep ? '#f59e0b' : '#ef4444';
 
-            // Get satellite stats from GnssSatelliteOverlay or device telemetry
-            const satStats = window.GnssSatelliteOverlay?.stats || {};
-            const byConst = satStats.byConstellation || {};
-            const gpsCount = byConst.gps ?? 9;
-            const galCount = byConst.galileo ?? 9;
-            const bdsCount = byConst.beidou ?? 30;
-            const gloCount = byConst.glonass ?? 8;
-            const totalSats = gpsCount + galCount + bdsCount + gloCount;
+            // Clear satellite orbit & previous tracking rays
+            this.singleOrbitGroup.clear();
+            this.stationTrackingGroup.clear();
+            this.selectedSatellite = null;
+
+            const Math3D = window.Globe3DMath;
+            const satLib = window.satellite;
+            const THREE = window.THREE;
+            const now = new Date();
+            const gmst = satLib.gstime(now);
+
+            const obsGd = {
+                latitude: coords.lat * (Math.PI / 180.0),
+                longitude: coords.lon * (Math.PI / 180.0),
+                height: 0.05,
+            };
+            const stnPos3D = Math3D.latLonAltToVector3(coords.lat, coords.lon, 4);
+
+            // Compute all satellites currently tracked / visible above station's horizon (> 5°)
+            const trackedSats = [];
+            const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
+
+            this.satelliteMeshes.forEach(({ mesh, satItem }) => {
+                if (!satItem?.satrec) return;
+                try {
+                    const posVel = satLib.propagate(satItem.satrec, now);
+                    if (posVel && posVel.position) {
+                        const posEcf = satLib.eciToEcf(posVel.position, gmst);
+                        const look = satLib.ecfToLookAngles(obsGd, posEcf);
+                        const elDeg = look.elevation * (180.0 / Math.PI);
+                        const azDeg = ((look.azimuth * (180.0 / Math.PI)) + 360) % 360;
+                        if (elDeg > 5.0) { // Visible above 5° elevation
+                            trackedSats.push({ satItem, elDeg, azDeg, mesh });
+                            constCounts[satItem.constellationKey] = (constCounts[satItem.constellationKey] || 0) + 1;
+                        }
+                    }
+                } catch (e) {}
+            });
+
+            // Sort by elevation descending (highest overhead satellites first)
+            trackedSats.sort((a, b) => b.elDeg - a.elDeg);
+
+            // Draw luminous reception signal rays from station to each tracked satellite
+            trackedSats.forEach(({ satItem, elDeg, mesh }) => {
+                const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
+                const rayGeo = new THREE.BufferGeometry().setFromPoints([stnPos3D, mesh.position]);
+                const rayMat = new THREE.LineBasicMaterial({
+                    color: cfg.color,
+                    transparent: true,
+                    opacity: Math.min(0.65, Math.max(0.25, elDeg / 60.0)),
+                    blending: THREE.AdditiveBlending,
+                });
+                this.stationTrackingGroup.add(new THREE.Line(rayGeo, rayMat));
+            });
+
+            const totalTracked = trackedSats.length;
+
+            // Generate satellite chips HTML (clickable to view satellite orbit!)
+            const satChipsHtml = trackedSats.slice(0, 24).map(({ satItem, elDeg }) => {
+                const cKey = satItem.constellationKey;
+                return `<span class="tracked-sat-chip ${cKey}" data-sat-key="${satItem.key}" title="${satItem.name} • Góc ngẩng: ${elDeg.toFixed(1)}°">
+                    ${satItem.code} <small>${Math.round(elDeg)}°</small>
+                </span>`;
+            }).join('');
 
             this.detailCardEl.innerHTML = `
                 <div class="card-top-row">
@@ -636,19 +703,28 @@
                         <span class="stat-value">${coords.lat.toFixed(4)}°, ${coords.lon.toFixed(4)}°</span>
                     </div>
                     <div class="stat-box">
-                        <span class="stat-label">Vệ tinh thu nhận</span>
-                        <span class="stat-value" style="color:#10b981">${isOnline ? `${totalSats} Vệ tinh` : '0 Vệ tinh'}</span>
+                        <span class="stat-label">Vệ tinh đang theo dõi</span>
+                        <span class="stat-value" style="color:#10b981">${totalTracked} Vệ tinh <span style="font-size:0.65rem;color:#94a3b8">(>5°)</span></span>
                     </div>
                 </div>
-                ${isOnline ? `
-                    <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">
-                        Phân bố chòm sao thu nhận:
-                    </div>
-                    <div class="sat-constellation-row">
-                        <span class="sat-pill gps">GPS: <b>${gpsCount}</b></span>
-                        <span class="sat-pill gal">GAL: <b>${galCount}</b></span>
-                        <span class="sat-pill bds">BDS: <b>${bdsCount}</b></span>
-                        <span class="sat-pill glo">GLO: <b>${gloCount}</b></span>
+                <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">
+                    Phân bố chòm sao thu nhận:
+                </div>
+                <div class="sat-constellation-row">
+                    <span class="sat-pill gps">GPS: <b>${constCounts.gps}</b></span>
+                    <span class="sat-pill gal">GAL: <b>${constCounts.galileo}</b></span>
+                    <span class="sat-pill bds">BDS: <b>${constCounts.beidou}</b></span>
+                    <span class="sat-pill glo">GLO: <b>${constCounts.glonass}</b></span>
+                </div>
+                ${trackedSats.length > 0 ? `
+                    <div class="tracked-sats-wrapper">
+                        <div class="tracked-sats-header">
+                            <span>Vệ tinh khả kiến (Click để xem quỹ đạo):</span>
+                            <span>${trackedSats.length} Sats</span>
+                        </div>
+                        <div class="tracked-sats-chips">
+                            ${satChipsHtml}
+                        </div>
                     </div>
                 ` : ''}
                 <div class="card-footer-actions">
@@ -667,6 +743,17 @@
             document.getElementById('globe-focus-station-btn').onclick = () => {
                 this.globe.focusCoords(coords.lat, coords.lon);
             };
+
+            // Allow clicking any tracked satellite chip to immediately switch to its 3D orbit!
+            this.detailCardEl.querySelectorAll('.tracked-sat-chip').forEach(chip => {
+                chip.onclick = (e) => {
+                    const key = e.currentTarget.getAttribute('data-sat-key');
+                    const satRec = this.satelliteMeshes.get(key);
+                    if (satRec) {
+                        this.openSatelliteCard(satRec.satItem, satRec.mesh);
+                    }
+                };
+            });
         }
 
         closeDetailCard() {
@@ -675,6 +762,7 @@
             this.selectedSatelliteLabelSprite = null;
             this.footprintMesh = null;
             this.singleOrbitGroup.clear();
+            this.stationTrackingGroup.clear();
             this.globe.isTrackingSatellite = false;
         }
 
