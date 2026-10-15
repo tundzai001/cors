@@ -88,7 +88,7 @@
 
             // Hover / Raycasting
             this.raycaster = null;
-            this.mouse = new window.THREE ? new window.THREE.Vector2() : null;
+            this.mouse = null;
             this.hoveredObject = null;
             this.hoverTooltipEl = null;
 
