@@ -181,3 +181,40 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(unblock_res["status"], "ok")
             self.assertFalse(auth.is_device_blocked("dev_target_1"))
 
+    async def test_admin_sessions_loads_active_sessions_and_blocked_devices(self):
+        from app.main import get_admin_sessions
+        from starlette.requests import Request
+
+        admin = models.User(id=1, username="admin", full_name="Administrator", role="admin")
+        now = int(time.time())
+        session = models.UserSession(
+            session_id="sess_current", user_id=admin.id, username=admin.username,
+            role=admin.role, device_id="dev_current", device_name="Admin PC",
+            created_at=now, last_active_at=now, expires_at=now + 3600,
+            is_revoked=False,
+        )
+        blocked = models.BlockedDevice(
+            device_id="dev_blocked", device_name="Blocked PC", blocked_at=now,
+            blocked_by="admin", reason="Suspicious activity",
+        )
+        db = AsyncMock()
+        db.execute.side_effect = [
+            Mock(scalars=Mock(return_value=Mock(all=Mock(return_value=rows))))
+            for rows in ([session], [blocked], [admin])
+        ]
+        request = Request({"type": "http", "headers": []})
+
+        response = await get_admin_sessions(request=request, auth_db=db, current_user=admin)
+
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(response["total_active"], 1)
+        self.assertEqual(response["active_sessions"][0]["session_id"], "sess_current")
+        self.assertEqual(response["active_sessions"][0]["full_name"], "Administrator")
+        self.assertTrue(response["active_sessions"][0]["is_current"])
+        self.assertEqual(response["total_blocked_devices"], 1)
+        self.assertEqual(response["blocked_devices"][0]["device_id"], "dev_blocked")
+        query = db.execute.await_args_list[0].args[0]
+        self.assertIn("user_sessions.is_revoked = false", str(query))
+        self.assertIn("user_sessions.expires_at >", str(query))
+        self.assertIn("ORDER BY user_sessions.last_active_at DESC", str(query))
+

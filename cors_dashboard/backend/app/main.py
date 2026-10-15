@@ -1179,6 +1179,7 @@ async def get_admin_sessions(
         )
         .order_by(models.UserSession.last_active_at.desc())
     )
+    result = await auth_db.execute(stmt)
     sessions = list(result.scalars().all())
 
     # Tự động đồng bộ/tạo phiên cho admin hiện tại nếu chưa có trong DB (ví dụ đăng nhập từ trước khi có bảng session)
