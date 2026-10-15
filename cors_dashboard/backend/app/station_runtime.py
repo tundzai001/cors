@@ -465,6 +465,14 @@ async def memory_guard_task():
         await asyncio.sleep(1800) # Mỗi 30 phút
 
 
+async def _safe_ws_close(websocket: WebSocket, code: int = 1000, reason: str = "") -> None:
+    """Close websocket safely without raising RuntimeError if connection is already closed/disconnected."""
+    try:
+        await websocket.close(code=code, reason=reason)
+    except Exception:
+        pass
+
+
 async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
     try:
         await websocket.accept()
@@ -472,7 +480,7 @@ async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
         token = auth_message.get("token") if isinstance(auth_message, dict) else None
         message_type = auth_message.get("type") if isinstance(auth_message, dict) else None
         if message_type != "auth" or not token:
-            await websocket.close(code=1008, reason="Missing authentication token")
+            await _safe_ws_close(websocket, code=1008, reason="Missing authentication token")
             return None
 
         payload = auth.decode_token(token)
@@ -500,13 +508,16 @@ async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
                     context["allowed_serials"] = await crud.get_viewer_visible_base_serials(auth_db, devices_db, user)
 
             return context
+    except WebSocketDisconnect:
+        logger.debug(f"UI websocket disconnected during auth from {websocket.client}")
+        return None
     except asyncio.TimeoutError:
         logger.warning(f"Rejected UI websocket from {websocket.client}: auth timeout")
-        await websocket.close(code=1008, reason="Authentication timeout")
+        await _safe_ws_close(websocket, code=1008, reason="Authentication timeout")
         return None
     except Exception as exc:
         logger.warning(f"Rejected UI websocket from {websocket.client}: {exc}")
-        await websocket.close(code=1008, reason="Authentication failed")
+        await _safe_ws_close(websocket, code=1008, reason="Authentication failed")
         return None
 
 
@@ -644,11 +655,11 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
         )
     except (asyncio.TimeoutError, TimeoutError):
         logger.warning("Pi '%s' auth lookup timed out; asking agent to retry", serial)
-        await websocket.close(code=1013, reason="Server busy; retry")
+        await _safe_ws_close(websocket, code=1013, reason="Server busy; retry")
         return
     except Exception as exc:
         logger.warning("Pi '%s' auth lookup failed; asking agent to retry: %s", serial, exc)
-        await websocket.close(code=1013, reason="Server busy; retry")
+        await _safe_ws_close(websocket, code=1013, reason="Server busy; retry")
         return
 
     expected_token = str(metadata.get("device_token") or "").strip()
@@ -666,14 +677,14 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
 
     if not metadata.get("exists"):
         logger.warning("Pi '%s' connection rejected: unknown device serial.", serial)
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        await _safe_ws_close(websocket, code=status.WS_1008_POLICY_VIOLATION)
         return
     if not license_bypass and (
         not license_manager.is_compatible_device_token(expected_token, serial)
         or not hmac.compare_digest(provided_token, expected_token)
     ):
         logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        await _safe_ws_close(websocket, code=status.WS_1008_POLICY_VIOLATION)
         return
     if license_bypass and expected_token and provided_token != expected_token:
         logger.warning("Pi '%s' connection allowed with invalid/missing token because per-device license bypass is enabled.", serial)
