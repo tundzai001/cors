@@ -616,6 +616,19 @@
     min-width: 230px;
 }
 
+.sat-hud-source-credit {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.2);
+    font-size: 0.65rem;
+    color: #64748b;
+    text-align: center;
+    line-height: 1.35;
+}
+.sat-hud-source-credit b {
+    color: #94a3b8;
+}
+
 /* 3D Earth Globe Mode Styles */
 .station-map-globe-canvas {
     position: absolute;

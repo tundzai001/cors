@@ -1388,6 +1388,17 @@
                                 </label>
                             </div>
                         )}
+
+                        <div className="sat-hud-source-credit">
+                            <div>🛰️ Quỹ đạo: <b>CelesTrak (NORAD GP)</b> • <b>SGP4 1Hz</b></div>
+                            {satelliteStats.hasLiveRtcm ? (
+                                <div style={{ color: '#86efac' }}>
+                                    ● Luồng trạm: <b>RTCM 1074-1127</b> ({satelliteStats.liveRtcmCount} Sats)
+                                </div>
+                            ) : (
+                                <div>Góc ngẩng: <b>≥{satelliteFilters.minElevation ?? 12}°</b> • IPP: <b>350km</b></div>
+                            )}
+                        </div>
                     </div>
                 )}
 

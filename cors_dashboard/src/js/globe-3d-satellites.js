@@ -595,6 +595,9 @@
                         <span>📍</span> <span>Tâm Việt Nam</span>
                     </button>
                 </div>
+                <div style="font-size:0.62rem; color:#64748b; text-align:center; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">
+                    Nguồn: <b>CelesTrak (NORAD GP)</b> • Mô hình: <b>SGP4 Realtime</b>
+                </div>
             `;
 
             this.detailCardEl.style.display = 'block';
@@ -744,6 +747,9 @@
                     <button type="button" class="card-action-btn" id="globe-reset-view-btn">
                         <span>📍</span> <span>Tâm Việt Nam</span>
                     </button>
+                </div>
+                <div style="font-size:0.62rem; color:#64748b; text-align:center; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">
+                    Nguồn: <b>CelesTrak (NORAD GP)</b> • <b>SGP4 1Hz</b> • <b>RTCM 1074-1127</b>
                 </div>
             `;
 
