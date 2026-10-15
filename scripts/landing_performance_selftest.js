@@ -41,6 +41,7 @@ assert.equal(constrained.classes.has('reduced-motion'), true);
 const capable = profile({ cpu: 8 });
 assert.equal(capable.tier, 'balanced');
 assert.equal(capable.canUse3D, true);
+assert.equal(capable.decorativeMotion, false, 'landing does not run decorative render loops by default');
 assert.equal(capable.threePixelRatio, 1);
 assert.ok(capable.frameInterval >= 1000 / 30);
 

@@ -1020,7 +1020,9 @@
         return (
             <div className="station-map-container">
                 <div ref={globeEl} className={`station-map-globe-canvas${isGlobeMode ? ' is-visible' : ''}`} aria-hidden={!isGlobeMode}></div>
-                <div ref={mapEl} className={`station-map-canvas${isGlobeMode ? ' is-hidden' : ''}`} aria-hidden={isGlobeMode}></div>
+                <div className={`station-map-flat-layer${isGlobeMode ? ' is-hidden' : ''}`} aria-hidden={isGlobeMode}>
+                    <div ref={mapEl} className="station-map-canvas"></div>
+                </div>
 
                 {mapError && (
                     <div className="station-map-load-error" role="alert">

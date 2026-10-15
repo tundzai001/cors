@@ -40,6 +40,7 @@
         saveData,
         webgl,
         canUse3D,
+        decorativeMotion: false,
         fps: 60,
         ...profiles[tier]
     };
@@ -193,7 +194,7 @@
         }
         requestAnimationFrame(sample);
     };
-    window.addEventListener('load', () => {
+    if (settings.decorativeMotion) window.addEventListener('load', () => {
         monitorReadyAt = (window.performance?.now?.() || 0) + warmupMs;
         requestAnimationFrame(sample);
     }, { once: true });

@@ -26,11 +26,17 @@
 .station-map-canvas {
     height: 100%;
     width: 100%;
+}
+
+/* Animate the wrapper; React must not overwrite Leaflet's own container classes. */
+.station-map-flat-layer {
+    position: absolute;
+    inset: 0;
     opacity: 1;
     transition: opacity 280ms ease, visibility 280ms;
 }
 
-.station-map-canvas.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+.station-map-flat-layer.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
 
 .station-map-load-error {
     align-items: center;
@@ -842,7 +848,7 @@
 
 @media (prefers-reduced-motion: reduce) {
     .globe-detail-card { animation: none; }
-    .station-map-globe-canvas, .station-map-canvas { transition: none; }
+    .station-map-globe-canvas, .station-map-flat-layer { transition: none; }
 }
 
 .globe-detail-card .card-top-row {

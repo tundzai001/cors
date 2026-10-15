@@ -1551,13 +1551,17 @@
         if (!languageButton) return;
         const host = findLanguageHost();
         if (host) {
-            languageButton.classList.remove('app-language-switcher-floating');
+            if (languageButton.classList.contains('app-language-switcher-floating')) {
+                languageButton.classList.remove('app-language-switcher-floating');
+            }
             if (languageButton.parentElement !== host.container || (host.before && languageButton.nextElementSibling !== host.before)) {
                 host.container.insertBefore(languageButton, host.before);
             }
             return;
         }
-        languageButton.classList.add('app-language-switcher-floating');
+        if (!languageButton.classList.contains('app-language-switcher-floating')) {
+            languageButton.classList.add('app-language-switcher-floating');
+        }
         if (languageButton.parentElement !== document.body) document.body.appendChild(languageButton);
     }
 

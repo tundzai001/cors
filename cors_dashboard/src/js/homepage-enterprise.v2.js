@@ -61,7 +61,7 @@ const VietnamSVG = () => {
                 });
                 // GSAP Draw-on with PERIODIC REDRAW LOOP
                 const paths = svgEl.querySelectorAll('path');
-if (typeof gsap !== 'undefined' && paths.length && !window.CorsPerformance?.reducedMotion) {
+if (typeof gsap !== 'undefined' && paths.length && window.CorsPerformance?.decorativeMotion && !window.CorsPerformance?.reducedMotion) {
                     // Prepare all paths with dasharray
                     const pathLengths = [];
                     paths.forEach(p => {
@@ -205,6 +205,7 @@ const ParticleField = () => {
         let height = canvas.height = canvas.offsetHeight;
 
         const performanceSettings = window.CorsPerformance || {};
+        const motionEnabled = performanceSettings.decorativeMotion === true;
         const maxParticleCount = 95;
         const particles = [];
         const lineBuckets = [[], [], [], []];
@@ -238,7 +239,7 @@ const ParticleField = () => {
         };
 
         window.addEventListener('resize', handleResize, { passive: true });
-        if (supportsFinePointer) {
+        if (supportsFinePointer && motionEnabled) {
             window.addEventListener('mousemove', handleMouseMove, { passive: true });
             document.body.addEventListener('mouseleave', handleMouseLeave);
         }
@@ -398,7 +399,7 @@ const ParticleField = () => {
                 ctx.stroke();
             });
 
-            animationFrameId = performanceSettings.reducedMotion ? null : requestAnimationFrame(animate);
+            animationFrameId = !motionEnabled || performanceSettings.reducedMotion ? null : requestAnimationFrame(animate);
         };
 
         animate();
@@ -438,7 +439,7 @@ const SignalWaveform = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const reducedMotion = !!window.CorsPerformance?.reducedMotion;
+        const reducedMotion = !window.CorsPerformance?.decorativeMotion || !!window.CorsPerformance?.reducedMotion;
         let animationFrameId = null;
         let width = canvas.width = canvas.offsetWidth;
         let height = canvas.height = canvas.offsetHeight || 40;
@@ -612,7 +613,7 @@ const HeroThreeScene = () => {
     React.useEffect(() => {
         const mount = mountRef.current;
         const qualitySettings = window.CorsPerformance || {};
-        if (!mount || !window.THREE || qualitySettings.canUse3D === false) {
+        if (!mount || !window.THREE || !qualitySettings.decorativeMotion || qualitySettings.canUse3D === false) {
             if (mount) mount.classList.add('three-scene-fallback');
             return;
         }
@@ -1211,7 +1212,7 @@ const TypingHeadline = () => {
         'Hạ tầng GNSS thế hệ mới',
         'Định vị chính xác centimet'
     ];
-    const reducedMotion = !!window.CorsPerformance?.reducedMotion;
+    const reducedMotion = !window.CorsPerformance?.decorativeMotion || !!window.CorsPerformance?.reducedMotion;
     const [displayed, setDisplayed] = React.useState(reducedMotion ? phrases[0] : '');
     const [phraseIdx, setPhraseIdx] = React.useState(0);
     const [isDeleting, setIsDeleting] = React.useState(false);
@@ -1248,7 +1249,7 @@ const TypingHeadline = () => {
 /* Live Data Bars Continuous Animation Hook */
 const useLiveDataAnimation = () => {
     React.useEffect(() => {
-        if (window.CorsPerformance?.reducedMotion) return;
+        if (!window.CorsPerformance?.decorativeMotion || window.CorsPerformance?.reducedMotion) return;
         const section = document.querySelector('.livedata-section');
         if (!section) return;
         const bars = section.querySelectorAll('.livedata-bar');
@@ -1335,7 +1336,7 @@ const useSectionAnimationVisibility = () => {
 /* Mouse Parallax Hook - shifts map and orbs based on cursor position */
 const useMouseParallax = () => {
     React.useEffect(() => {
-        if (window.CorsPerformance?.reducedMotion) return;
+        if (!window.CorsPerformance?.decorativeMotion || window.CorsPerformance?.reducedMotion) return;
         if (typeof gsap === 'undefined' || !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
         const hero = document.querySelector('.hero-section');
         if (!hero) return;
@@ -1363,7 +1364,7 @@ const useCounter = (targetStr, duration = 1600) => {
     React.useEffect(() => {
         if (targetStr === undefined || targetStr === null || targetStr === '') return;
         const target = String(targetStr);
-        if (window.CorsPerformance?.reducedMotion) {
+        if (!window.CorsPerformance?.decorativeMotion || window.CorsPerformance?.reducedMotion) {
             setDisplayValue(target);
             return;
         }
@@ -1418,7 +1419,7 @@ const useCinematicScroll = () => {
     React.useEffect(() => {
         const performanceProfile = window.CorsPerformance || {};
         const liteMode = performanceProfile.tier === 'lite';
-        if (performanceProfile.reducedMotion) return;
+        if (!performanceProfile.decorativeMotion || performanceProfile.reducedMotion) return;
         if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
             console.warn('[Cinematic] GSAP not loaded');
             return;

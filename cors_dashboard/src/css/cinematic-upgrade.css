@@ -40,6 +40,25 @@ html:is([data-quality="balanced"], [data-quality="lite"]) .enterprise-homepage .
     filter: none;
 }
 
+/* A monitoring site must settle at idle, including its SVG and CSS layers. */
+.enterprise-homepage *,
+.enterprise-homepage *::before,
+.enterprise-homepage *::after {
+    animation: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    will-change: auto !important;
+}
+
+.enterprise-homepage :is(.noise-overlay, .aurora-container, .hero-three-scene),
+.enterprise-homepage .glitch-hud-title::before,
+.enterprise-homepage .glitch-hud-title::after {
+    display: none !important;
+}
+
+.enterprise-homepage .spinner-border { animation: spinner-border 0.75s linear infinite !important; }
+
 html[data-quality="lite"] * {
     scroll-behavior: auto !important;
 }
