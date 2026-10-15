@@ -510,11 +510,13 @@
                 this.satelliteLayer.openSatelliteCard(data.satItem, target);
             } else if (data?.station && this.satelliteLayer) {
                 const dev = data.station.device || {};
+                const stnStatus = data.station.status || dev.status || 'offline';
                 const stnObj = {
                     lat: data.coords.lat,
                     lon: data.coords.lon,
                     name: dev.name || dev.serial,
                     serial: dev.serial,
+                    status: stnStatus,
                 };
                 if (window.GnssSatelliteOverlay) {
                     window.GnssSatelliteOverlay.setSelectedStation(stnObj);

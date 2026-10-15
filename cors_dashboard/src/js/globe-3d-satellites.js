@@ -634,9 +634,10 @@
             };
             const stnPos3D = Math3D.latLonAltToVector3(coords.lat, coords.lon, 4);
 
-            // Compute all satellites currently tracked / visible above station's horizon (> 5°)
+            // Compute all satellites currently tracked / visible above station's horizon
             const trackedSats = [];
             const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
+            const minEl = Number.isFinite(window.GnssSatelliteOverlay?.filters?.minElevation) ? window.GnssSatelliteOverlay.filters.minElevation : 12.0;
 
             this.satelliteMeshes.forEach(({ mesh, satItem }) => {
                 if (!satItem?.satrec) return;
@@ -647,7 +648,7 @@
                         const look = satLib.ecfToLookAngles(obsGd, posEcf);
                         const elDeg = look.elevation * (180.0 / Math.PI);
                         const azDeg = ((look.azimuth * (180.0 / Math.PI)) + 360) % 360;
-                        if (elDeg > 5.0) { // Visible above 5° elevation
+                        if (elDeg >= minEl) { // Visible above elevation cut-off mask (default 12° CORS standard)
                             trackedSats.push({ satItem, elDeg, azDeg, mesh });
                             constCounts[satItem.constellationKey] = (constCounts[satItem.constellationKey] || 0) + 1;
                         }
@@ -658,18 +659,20 @@
             // Sort by elevation descending (highest overhead satellites first)
             trackedSats.sort((a, b) => b.elDeg - a.elDeg);
 
-            // Draw luminous reception signal rays from station to each tracked satellite
-            trackedSats.forEach(({ satItem, elDeg, mesh }) => {
-                const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
-                const rayGeo = new THREE.BufferGeometry().setFromPoints([stnPos3D, mesh.position]);
-                const rayMat = new THREE.LineBasicMaterial({
-                    color: cfg.color,
-                    transparent: true,
-                    opacity: Math.min(0.65, Math.max(0.25, elDeg / 60.0)),
-                    blending: THREE.AdditiveBlending,
+            // Draw luminous reception signal rays from station to each tracked satellite (only if station is online or sleep)
+            if (isOnline || isSleep) {
+                trackedSats.forEach(({ satItem, elDeg, mesh }) => {
+                    const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
+                    const rayGeo = new THREE.BufferGeometry().setFromPoints([stnPos3D, mesh.position]);
+                    const rayMat = new THREE.LineBasicMaterial({
+                        color: cfg.color,
+                        transparent: true,
+                        opacity: Math.min(0.65, Math.max(0.25, elDeg / 60.0)),
+                        blending: THREE.AdditiveBlending,
+                    });
+                    this.stationTrackingGroup.add(new THREE.Line(rayGeo, rayMat));
                 });
-                this.stationTrackingGroup.add(new THREE.Line(rayGeo, rayMat));
-            });
+            }
 
             const totalTracked = trackedSats.length;
 
@@ -681,6 +684,12 @@
                 </span>`;
             }).join('');
 
+            const offlineNoticeHtml = (!isOnline && !isSleep) ? `
+                <div style="font-size:0.75rem; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; border-radius:6px; padding:6px 8px; margin: 8px 0; text-align:center;">
+                    ⚠️ Trạm mất kết nối (Offline) — Ngưng phát tia thu nhận tín hiệu
+                </div>
+            ` : '';
+
             this.detailCardEl.innerHTML = `
                 <div class="card-top-row">
                     <div class="card-title" style="color:#00f2ff">
@@ -689,6 +698,7 @@
                     </div>
                     <button type="button" class="card-close-btn" id="globe-card-close" aria-label="Đóng">✕</button>
                 </div>
+                ${offlineNoticeHtml}
                 <div class="stat-grid">
                     <div class="stat-box">
                         <span class="stat-label">Mã / Serial</span>
@@ -704,19 +714,19 @@
                     </div>
                     <div class="stat-box">
                         <span class="stat-label">Vệ tinh đang theo dõi</span>
-                        <span class="stat-value" style="color:#10b981">${totalTracked} Vệ tinh <span style="font-size:0.65rem;color:#94a3b8">(>5°)</span></span>
+                        <span class="stat-value" style="color:${isOnline || isSleep ? '#10b981' : '#ef4444'}">${(isOnline || isSleep) ? `${totalTracked} Vệ tinh` : '0 Vệ tinh'} <span style="font-size:0.65rem;color:#94a3b8">(≥${minEl}°)</span></span>
                     </div>
                 </div>
                 <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">
                     Phân bố chòm sao thu nhận:
                 </div>
                 <div class="sat-constellation-row">
-                    <span class="sat-pill gps">GPS: <b>${constCounts.gps}</b></span>
-                    <span class="sat-pill gal">GAL: <b>${constCounts.galileo}</b></span>
-                    <span class="sat-pill bds">BDS: <b>${constCounts.beidou}</b></span>
-                    <span class="sat-pill glo">GLO: <b>${constCounts.glonass}</b></span>
+                    <span class="sat-pill gps">GPS: <b>${(isOnline || isSleep) ? constCounts.gps : 0}</b></span>
+                    <span class="sat-pill gal">GAL: <b>${(isOnline || isSleep) ? constCounts.galileo : 0}</b></span>
+                    <span class="sat-pill bds">BDS: <b>${(isOnline || isSleep) ? constCounts.beidou : 0}</b></span>
+                    <span class="sat-pill glo">GLO: <b>${(isOnline || isSleep) ? constCounts.glonass : 0}</b></span>
                 </div>
-                ${trackedSats.length > 0 ? `
+                ${(isOnline || isSleep) && trackedSats.length > 0 ? `
                     <div class="tracked-sats-wrapper">
                         <div class="tracked-sats-header">
                             <span>Vệ tinh khả kiến (Click để xem quỹ đạo):</span>

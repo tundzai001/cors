@@ -141,7 +141,10 @@
                     ${ionoLine}
                 </div>
                 <div class="d-flex gap-1 mt-2">
-                    <button type="button" class="btn btn-sm btn-outline-info flex-fill station-map-sat-btn" data-serial="${escapeHtml(device.serial || '')}">🛰️ Tia vệ tinh & IPP</button>
+                    ${(status === 'offline' || status === 'lost')
+                        ? `<button type="button" class="btn btn-sm btn-outline-secondary flex-fill station-map-sat-btn opacity-75" data-serial="${escapeHtml(device.serial || '')}" data-offline="true" title="Trạm đang ngoại tuyến - Không thể thu tín hiệu">🛰️ Trạm ngoại tuyến</button>`
+                        : `<button type="button" class="btn btn-sm btn-outline-info flex-fill station-map-sat-btn" data-serial="${escapeHtml(device.serial || '')}">🛰️ Tia vệ tinh & IPP</button>`
+                    }
                     <button type="button" class="btn btn-sm btn-primary flex-fill station-map-detail-btn" data-serial="${escapeHtml(device.serial || '')}">Open detail</button>
                 </div>
             </div>
@@ -175,7 +178,7 @@
         showIonosphereRef.current = showIonosphere;
         const [showSatellites, setShowSatellites] = useState(false);
         const [satelliteStats, setSatelliteStats] = useState({ total: 0, visible: 0, byConstellation: {} });
-        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, onlyVisible: false });
+        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, onlyVisible: false, minElevation: 12.0, showIpp: true });
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
@@ -328,6 +331,11 @@
                     const serial = satBtn.dataset.serial;
                     const dev = (devices || []).find(d => String(d.serial).trim() === serial);
                     if (dev) {
+                        const devStatus = dev.status || '';
+                        if (satBtn.dataset.offline === 'true' || devStatus === 'offline' || devStatus === 'lost') {
+                            window.CorsUI?.showToast('warning', `Trạm ${dev.name || dev.serial} đang Mất kết nối (Offline). Không thể thu nhận tín hiệu vệ tinh thời gian thực.`);
+                            return;
+                        }
                         const coords = getCoords(dev);
                         if (coords) {
                             setShowSatellites(true);
@@ -337,6 +345,7 @@
                                 alt: dev.alt || 50,
                                 name: dev.name || dev.serial,
                                 serial: dev.serial,
+                                status: devStatus,
                             });
                             window.CorsUI?.showToast('info', `Đã kích hoạt quan sát vệ tinh & IPP cho trạm ${dev.name || dev.serial}`);
                         }
@@ -1242,23 +1251,43 @@
                         </div>
 
                         {selectedSatStation ? (
-                            <div className="sat-hud-station-banner">
-                                <div className="d-flex justify-content-between align-items-center mb-1">
-                                    <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
-                                    <button
-                                        type="button"
-                                        className="btn btn-xs btn-outline-light py-0 px-1"
-                                        style={{ fontSize: '0.65rem' }}
-                                        onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
-                                    >
-                                        Bỏ chọn
-                                    </button>
+                            (selectedSatStation.status === 'offline' || selectedSatStation.status === 'lost') ? (
+                                <div className="sat-hud-station-banner border border-danger">
+                                    <div className="d-flex justify-content-between align-items-center mb-1">
+                                        <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
+                                        <button
+                                            type="button"
+                                            className="btn btn-xs btn-outline-light py-0 px-1"
+                                            style={{ fontSize: '0.65rem' }}
+                                            onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
+                                        >
+                                            Bỏ chọn
+                                        </button>
+                                    </div>
+                                    <div className="text-danger small fw-semibold">
+                                        <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                        Trạm ngoại tuyến — Ngưng phát tia & IPP
+                                    </div>
                                 </div>
-                                <div className="text-info small">
-                                    <i className="bi bi-eye me-1"></i>
-                                    {satelliteStats.visible} vệ tinh khả kiến & IPP
+                            ) : (
+                                <div className="sat-hud-station-banner">
+                                    <div className="d-flex justify-content-between align-items-center mb-1">
+                                        <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
+                                        <button
+                                            type="button"
+                                            className="btn btn-xs btn-outline-light py-0 px-1"
+                                            style={{ fontSize: '0.65rem' }}
+                                            onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
+                                        >
+                                            Bỏ chọn
+                                        </button>
+                                    </div>
+                                    <div className="text-info small">
+                                        <i className="bi bi-eye me-1"></i>
+                                        <b>{satelliteStats.visible}</b> vệ tinh & tia IPP (≥{satelliteFilters.minElevation ?? 12}°)
+                                    </div>
                                 </div>
-                            </div>
+                            )
                         ) : (
                             <div className="small text-muted mb-2 fst-italic">
                                 <i className="bi bi-cursor me-1"></i>Bấm vào trạm CORS để nối tia sóng & tính IPP.
@@ -1267,10 +1296,10 @@
 
                         <div className="sat-hud-toggles">
                             {[
-                                { key: 'gps', label: 'GPS', color: '#22c55e', count: satelliteStats.byConstellation?.gps ?? 32 },
-                                { key: 'galileo', label: 'Galileo', color: '#3b82f6', count: satelliteStats.byConstellation?.galileo ?? 31 },
-                                { key: 'beidou', label: 'BeiDou', color: '#f97316', count: satelliteStats.byConstellation?.beidou ?? 53 },
-                                { key: 'glonass', label: 'GLONASS', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 27 },
+                                { key: 'gps', label: 'GPS', color: '#22c55e', count: satelliteStats.byConstellation?.gps ?? 0 },
+                                { key: 'galileo', label: 'Galileo', color: '#3b82f6', count: satelliteStats.byConstellation?.galileo ?? 0 },
+                                { key: 'beidou', label: 'BeiDou', color: '#f97316', count: satelliteStats.byConstellation?.beidou ?? 0 },
+                                { key: 'glonass', label: 'GLONASS', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 0 },
                             ].map(item => (
                                 <div
                                     key={item.key}
@@ -1289,6 +1318,44 @@
                         </div>
 
                         {selectedSatStation && (
+                            <div className="d-flex align-items-center justify-content-between my-2 small">
+                                <label htmlFor="sat-elev-mask" className="text-muted me-2" style={{ fontSize: '0.72rem', whiteSpace: 'nowrap' }}>
+                                    Góc cắt (Mask):
+                                </label>
+                                <select
+                                    id="sat-elev-mask"
+                                    className="form-select form-select-sm py-0 ps-1 pe-4 text-light bg-dark border-secondary"
+                                    style={{ fontSize: '0.72rem', height: '24px' }}
+                                    value={satelliteFilters.minElevation ?? 12}
+                                    onChange={(e) => {
+                                        const val = parseFloat(e.target.value);
+                                        window.GnssSatelliteOverlay?.setFilter('minElevation', val);
+                                    }}
+                                >
+                                    <option value={12}>12° (Chuẩn CORS ~29 Sats)</option>
+                                    <option value={15}>15° (Bộ lọc cao ~25 Sats)</option>
+                                    <option value={10}>10° (Mở rộng ~35 Sats)</option>
+                                    <option value={5}>5° (Chân trời ~60 Sats)</option>
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="form-check form-switch mb-1 small">
+                            <input
+                                className="form-check-input"
+                                type="checkbox"
+                                id="sat-show-ipp"
+                                checked={satelliteFilters.showIpp !== false}
+                                onChange={(e) => {
+                                    window.GnssSatelliteOverlay?.setFilter('showIpp', e.target.checked);
+                                }}
+                            />
+                            <label className="form-check-label" htmlFor="sat-show-ipp" style={{ fontSize: '0.72rem' }}>
+                                Hiện điểm xuyên IPP (350km)
+                            </label>
+                        </div>
+
+                        {selectedSatStation && (
                             <div className="form-check form-switch mb-1 small">
                                 <input
                                     className="form-check-input"
@@ -1300,7 +1367,7 @@
                                     }}
                                 />
                                 <label className="form-check-label" htmlFor="sat-only-visible" style={{ fontSize: '0.72rem' }}>
-                                    Chỉ hiện vệ tinh khả kiến (&gt; 5°)
+                                    Chỉ hiện vệ tinh khả kiến (≥{satelliteFilters.minElevation ?? 12}°)
                                 </label>
                             </div>
                         )}

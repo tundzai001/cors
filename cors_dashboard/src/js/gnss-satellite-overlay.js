@@ -22,6 +22,7 @@
             this.mapInstance = null;
             this.layerGroup = null;
             this.rayLayerGroup = null;
+            this.rayLayersCache = new Map(); // satKey -> { rayToIpp, rayToSat, ippMarker }
             this.tickTimer = null;
             this.isPropagating = false;
             this.listeners = new Set();
@@ -32,11 +33,13 @@
                 beidou: true,
                 glonass: true,
                 onlyVisible: false,
+                minElevation: 12.0, // Default 12° CORS elevation mask cutoff (~29 sats)
+                showIpp: true,      // Show/hide 350km IPP diamond markers
             };
 
-            this.selectedStation = null; // { lat, lon, alt, name, serial }
+            this.selectedStation = null; // { lat, lon, alt, name, serial, status }
             this.stationRayMarkers = [];
-            this.stats = { total: 0, visible: 0, byConstellation: {} };
+            this.stats = { total: 0, visible: 0, byConstellation: {}, isStationOffline: false };
         }
 
         subscribe(callback) {
@@ -165,8 +168,15 @@
             const now = new Date();
             const gmst = satLib.gstime(now);
 
+            const isStationOffline = Boolean(
+                this.selectedStation && (
+                    this.selectedStation.status === 'offline' ||
+                    this.selectedStation.status === 'lost'
+                )
+            );
+
             let obsGd = null;
-            if (this.selectedStation && Number.isFinite(this.selectedStation.lat) && Number.isFinite(this.selectedStation.lon)) {
+            if (this.selectedStation && !isStationOffline && Number.isFinite(this.selectedStation.lat) && Number.isFinite(this.selectedStation.lon)) {
                 obsGd = {
                     latitude: this.selectedStation.lat * TO_RAD,
                     longitude: this.selectedStation.lon * TO_RAD,
@@ -174,13 +184,18 @@
                 };
             }
 
-            // Clear previous LOS rays and IPP markers
-            if (this.rayLayerGroup) {
-                this.rayLayerGroup.clearLayers();
+            // If station is offline or unselected, wipe all rays & IPP markers immediately
+            if (isStationOffline || !obsGd) {
+                if (this.rayLayerGroup && this.rayLayersCache.size > 0) {
+                    this.rayLayerGroup.clearLayers();
+                    this.rayLayersCache.clear();
+                }
             }
 
+            const activeRayKeys = new Set();
             let visibleCount = 0;
             const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
+            const minEl = Number.isFinite(this.filters.minElevation) ? this.filters.minElevation : 12.0;
 
             this.activeSatellites.forEach((satObj, key) => {
                 const cfg = CONSTELLATION_META[satObj.constellationKey];
@@ -213,7 +228,7 @@
                         look = satLib.ecfToLookAngles(obsGd, posEcf);
                         azDeg = ((look.azimuth * TO_DEG) + 360) % 360;
                         elDeg = look.elevation * TO_DEG;
-                        isVisible = elDeg > 5.0; // Above 5° horizon
+                        isVisible = elDeg >= minEl; // CORS Elevation cut-off mask
                     }
 
                     if (isVisible) {
@@ -246,8 +261,11 @@
                         }
                     }
 
-                    // If station is selected and satellite is visible, draw LOS Ray & IPP
-                    if (obsGd && isVisible && look && this.rayLayerGroup) {
+                    // If station is selected, online, and satellite is visible, maintain LOS Ray & IPP
+                    if (obsGd && !isStationOffline && isVisible && look && this.rayLayerGroup) {
+                        const satKey = satObj.key;
+                        activeRayKeys.add(satKey);
+
                         const { ippLat, ippLon, mf } = this.calculateIpp(this.selectedStation.lat, this.selectedStation.lon, look.elevation, look.azimuth);
 
                         // Sample TEC at IPP from Ionosphere overlay
@@ -263,24 +281,7 @@
                             }
                         }
 
-                        // Ray: Station -> IPP -> Satellite
-                        const rayToIpp = L.polyline([[this.selectedStation.lat, this.selectedStation.lon], [ippLat, ippLon]], {
-                            color: '#38bdf8',
-                            weight: 2,
-                            opacity: 0.9,
-                        });
-                        const rayToSat = L.polyline([[ippLat, ippLon], [lat, lon]], {
-                            color: cfg.color,
-                            weight: 1.5,
-                            opacity: 0.45,
-                            dashArray: '3 4',
-                        });
-
-                        // IPP Marker
-                        const ippMarker = L.marker([ippLat, ippLon], {
-                            icon: this.createIppIcon(vtecVal),
-                            zIndexOffset: 950,
-                        }).bindPopup(`
+                        const ippPopupHtml = `
                             <div class="station-map-popup gnss-ipp-popup">
                                 <div class="fw-bold mb-1" style="color:#38bdf8;">
                                     <i class="bi bi-bullseye me-1"></i>Điểm xuyên tầng điện ly (IPP)
@@ -293,29 +294,82 @@
                                     <span class="station-map-popup-label">Tọa độ IPP</span>
                                     <span class="station-map-popup-value">${ippLat.toFixed(2)}°, ${ippLon.toFixed(2)}°</span>
                                     <span class="station-map-popup-label">Độ cao IPP</span>
-                                    <span class="station-map-popup-value">350 km</span>
+                                    <span class="station-map-popup-value">350 km (Lớp F2)</span>
                                     <span class="station-map-popup-label">Góc ngẩng / Az</span>
                                     <span class="station-map-popup-value">${elDeg.toFixed(1)}° / ${azDeg.toFixed(1)}°</span>
                                     <span class="station-map-popup-label">VTEC tại IPP</span>
                                     <span class="station-map-popup-value" style="color:#38bdf8;font-weight:700;">${vtecVal !== null ? `${vtecVal} TECU` : '--'}</span>
-                                    <span class="station-map-popup-label">Slant TEC</span>
+                                    <span class="station-map-popup-label">Slant TEC (STEC)</span>
                                     <span class="station-map-popup-value">${stecVal !== null ? `${stecVal} TECU` : '--'}</span>
-                                    <span class="station-map-popup-label">Trễ L1 (delay)</span>
+                                    <span class="station-map-popup-label">Trễ pha L1</span>
                                     <span class="station-map-popup-value" style="color:#f59e0b;font-weight:700;">${delayM !== null ? `~${delayM} m` : '--'}</span>
                                 </div>
+                                <div class="small text-muted mt-2 border-top pt-1" style="font-size:0.7rem;">
+                                    * IPP là giao điểm tia sóng qua độ cao 350km gây trễ tín hiệu trạm CORS.
+                                </div>
                             </div>
-                        `);
+                        `;
+                        const tooltipText = `IPP 350km: ${satObj.code} (${vtecVal !== null ? `${vtecVal} TECU` : '--'})`;
 
-                        this.rayLayerGroup.addLayer(rayToIpp);
-                        this.rayLayerGroup.addLayer(rayToSat);
-                        this.rayLayerGroup.addLayer(ippMarker);
+                        const cached = this.rayLayersCache.get(satKey);
+                        if (cached) {
+                            // In-place update keeps Leaflet popup open continuously
+                            cached.rayToIpp.setLatLngs([[this.selectedStation.lat, this.selectedStation.lon], [ippLat, ippLon]]);
+                            cached.rayToSat.setLatLngs([[ippLat, ippLon], [lat, lon]]);
+                            cached.ippMarker.setLatLng([ippLat, ippLon]);
+                            if (cached.ippMarker.getPopup()) {
+                                cached.ippMarker.setPopupContent(ippPopupHtml);
+                            }
+                            if (cached.ippMarker.getTooltip()) {
+                                cached.ippMarker.setTooltipContent(tooltipText);
+                            }
+
+                            // Show or hide IPP diamond based on showIpp filter
+                            const shouldShowIpp = this.filters.showIpp !== false;
+                            if (shouldShowIpp && !this.rayLayerGroup.hasLayer(cached.ippMarker)) {
+                                this.rayLayerGroup.addLayer(cached.ippMarker);
+                            } else if (!shouldShowIpp && this.rayLayerGroup.hasLayer(cached.ippMarker)) {
+                                this.rayLayerGroup.removeLayer(cached.ippMarker);
+                            }
+                        } else {
+                            // First creation for this satellite
+                            const rayToIpp = L.polyline([[this.selectedStation.lat, this.selectedStation.lon], [ippLat, ippLon]], {
+                                color: '#38bdf8',
+                                weight: 2,
+                                opacity: 0.9,
+                            });
+                            const rayToSat = L.polyline([[ippLat, ippLon], [lat, lon]], {
+                                color: cfg.color,
+                                weight: 1.5,
+                                opacity: 0.45,
+                                dashArray: '3 4',
+                            });
+                            const ippMarker = L.marker([ippLat, ippLon], {
+                                icon: this.createIppIcon(vtecVal),
+                                zIndexOffset: 950,
+                            });
+                            ippMarker.bindPopup(ippPopupHtml, { autoClose: false });
+                            ippMarker.bindTooltip(tooltipText, { direction: 'top', offset: [0, -6] });
+
+                            this.rayLayerGroup.addLayer(rayToIpp);
+                            this.rayLayerGroup.addLayer(rayToSat);
+                            if (this.filters.showIpp !== false) {
+                                this.rayLayerGroup.addLayer(ippMarker);
+                            }
+
+                            this.rayLayersCache.set(satKey, {
+                                rayToIpp,
+                                rayToSat,
+                                ippMarker,
+                            });
+                        }
                     }
 
                     // Satellite Popup
                     const lookInfo = look ? `
                         <span class="station-map-popup-label">Góc ngẩng (El)</span>
                         <span class="station-map-popup-value" style="color:${isVisible ? '#22c55e' : '#f87171'};font-weight:700;">
-                            ${elDeg.toFixed(1)}° (${isVisible ? 'Khả kiến' : 'Dưới chân trời'})
+                            ${elDeg.toFixed(1)}° (${isVisible ? `Khả kiến (≥${minEl}°)` : `Dưới góc cắt <${minEl}°`})
                         </span>
                         <span class="station-map-popup-label">Phương vị (Az)</span>
                         <span class="station-map-popup-value">${azDeg.toFixed(1)}°</span>
@@ -347,10 +401,23 @@
                 }
             });
 
+            // Clean up cached layers for satellites that are no longer active
+            for (const [key, cached] of this.rayLayersCache.entries()) {
+                if (!activeRayKeys.has(key)) {
+                    if (this.rayLayerGroup) {
+                        this.rayLayerGroup.removeLayer(cached.rayToIpp);
+                        this.rayLayerGroup.removeLayer(cached.rayToSat);
+                        this.rayLayerGroup.removeLayer(cached.ippMarker);
+                    }
+                    this.rayLayersCache.delete(key);
+                }
+            }
+
             this.stats = {
                 total: this.rawSatellites.length,
                 visible: visibleCount,
                 byConstellation: constCounts,
+                isStationOffline,
             };
         }
 
@@ -373,6 +440,10 @@
 
         setSelectedStation(station) {
             this.selectedStation = station;
+            if (this.rayLayerGroup) {
+                this.rayLayerGroup.clearLayers();
+            }
+            this.rayLayersCache.clear();
             this.propagateTick();
             this.notify();
         }
@@ -382,16 +453,15 @@
             if (this.rayLayerGroup) {
                 this.rayLayerGroup.clearLayers();
             }
+            this.rayLayersCache.clear();
             this.propagateTick();
             this.notify();
         }
 
         setFilter(key, value) {
-            if (this.filters[key] !== undefined) {
-                this.filters[key] = value;
-                this.propagateTick();
-                this.notify();
-            }
+            this.filters[key] = value;
+            this.propagateTick();
+            this.notify();
         }
 
         attachToMap(map) {
@@ -439,6 +509,9 @@
                 if (this.rayLayerGroup && this.mapInstance.hasLayer(this.rayLayerGroup)) {
                     this.mapInstance.removeLayer(this.rayLayerGroup);
                 }
+            }
+            if (this.rayLayersCache) {
+                this.rayLayersCache.clear();
             }
             this.mapInstance = null;
             this.notify();
