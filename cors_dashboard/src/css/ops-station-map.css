@@ -290,3 +290,455 @@
     border-color: #0ea5e9;
     box-shadow: 0 6px 22px rgba(14, 165, 233, 0.45);
 }
+
+/* Ionosphere HUD Control & Legend */
+.station-map-ionosphere-hud {
+    position: absolute;
+    bottom: 24px;
+    left: 16px;
+    width: min(320px, calc(100vw - 32px));
+    background: rgba(11, 16, 27, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: var(--ops-radius, 12px);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 0 16px rgba(14, 165, 233, 0.15);
+    padding: 12px 14px;
+    color: #f8fafc;
+    z-index: 850;
+    pointer-events: auto;
+    font-size: 0.82rem;
+    animation: fadeIn 200ms ease-out;
+}
+
+.iono-hud-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.iono-hud-title {
+    font-weight: 800;
+    font-size: 0.9rem;
+    letter-spacing: 0.3px;
+    color: #f8fafc;
+}
+
+.iono-hud-chip {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.iono-hud-chip.live {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.iono-hud-chip.stale {
+    background: rgba(234, 179, 8, 0.2);
+    color: #facc15;
+    border: 1px solid rgba(234, 179, 8, 0.4);
+}
+
+.iono-hud-close {
+    background: transparent;
+    border: 0;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: color 150ms ease, background 150ms ease;
+}
+
+.iono-hud-close:hover {
+    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.iono-hud-time {
+    font-size: 0.72rem;
+    color: #94a3b8;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+}
+
+.iono-hud-mode-row {
+    margin-bottom: 10px;
+}
+
+.iono-hud-mode-row .btn-group {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.iono-hud-mode-row .btn {
+    font-size: 0.75rem;
+    padding: 3px 8px;
+    font-weight: 600;
+}
+
+.iono-hud-gradient-wrap {
+    margin-bottom: 8px;
+}
+
+.iono-hud-gradient-bar {
+    height: 12px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+    margin-bottom: 4px;
+}
+
+.iono-hud-gradient-bar.tec-bar {
+    background: linear-gradient(
+        to right,
+        rgb(20, 10, 65) 0%,
+        rgb(25, 65, 180) 12%,
+        rgb(0, 165, 215) 25%,
+        rgb(35, 195, 85) 40%,
+        rgb(245, 215, 25) 55%,
+        rgb(245, 110, 15) 70%,
+        rgb(225, 25, 25) 85%,
+        rgb(245, 50, 210) 100%
+    );
+}
+
+.iono-hud-gradient-bar.anomaly-bar {
+    background: linear-gradient(
+        to right,
+        rgb(30, 60, 210) 0%,
+        rgb(56, 189, 248) 30%,
+        rgb(100, 116, 139) 50%,
+        rgb(251, 191, 36) 70%,
+        rgb(239, 68, 68) 100%
+    );
+}
+
+.iono-hud-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    color: #94a3b8;
+    font-weight: 600;
+    padding: 0 1px;
+}
+
+.iono-hud-stats {
+    display: flex;
+    justify-content: space-between;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.72rem;
+    color: #cbd5e1;
+    margin-bottom: 8px;
+}
+
+.iono-hud-stats b {
+    color: #38bdf8;
+}
+
+.iono-hud-opacity-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.iono-hud-opacity-row .text-muted {
+    white-space: nowrap;
+    font-size: 0.72rem;
+}
+
+.iono-hud-range {
+    height: 4px;
+    cursor: pointer;
+}
+
+.iono-hud-tip {
+    font-size: 0.68rem;
+    color: #64748b;
+    font-style: italic;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    padding-top: 6px;
+}
+
+/* Probe Popup */
+.ionosphere-probe-popup {
+    min-width: 220px;
+}
+
+.ionosphere-probe-popup .station-map-popup-grid {
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    padding-top: 6px;
+    margin-top: 4px;
+}
+
+/* GNSS Satellites & IPP Markers */
+.gnss-sat-icon-wrap {
+    background: transparent;
+    border: none;
+}
+
+.gnss-sat-bubble {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.2px;
+    cursor: pointer;
+    transition: transform 150ms ease;
+    user-select: none;
+}
+
+.gnss-sat-bubble:hover {
+    transform: scale(1.3);
+    z-index: 1200;
+}
+
+.gnss-sat-code {
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.gnss-ipp-icon-wrap {
+    background: transparent;
+    border: none;
+}
+
+.gnss-ipp-diamond {
+    width: 10px;
+    height: 10px;
+    transform: rotate(45deg);
+    border: 1px solid #ffffff;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: transform 150ms ease;
+}
+
+.gnss-ipp-diamond:hover {
+    transform: rotate(45deg) scale(1.5);
+    z-index: 1250;
+}
+
+/* Satellite Floating HUD */
+.station-map-satellite-hud {
+    position: absolute;
+    top: 60px;
+    right: 14px;
+    width: min(290px, calc(100vw - 28px));
+    background: rgba(11, 16, 27, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: var(--ops-radius, 12px);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65);
+    padding: 10px 12px;
+    color: #f8fafc;
+    z-index: 850;
+    pointer-events: auto;
+    font-size: 0.8rem;
+    animation: fadeIn 200ms ease-out;
+}
+
+.sat-hud-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.sat-hud-title {
+    font-weight: 800;
+    font-size: 0.88rem;
+    color: #f8fafc;
+}
+
+.sat-hud-toggles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.sat-hud-pill {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 6px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    transition: background 150ms ease, border-color 150ms ease;
+}
+
+.sat-hud-pill.active {
+    background: rgba(14, 165, 233, 0.15);
+    border-color: rgba(56, 189, 248, 0.4);
+}
+
+.sat-hud-station-banner {
+    background: rgba(14, 165, 233, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    font-size: 0.72rem;
+}
+
+.sat-hud-station-banner b {
+    color: #38bdf8;
+}
+
+.gnss-sat-popup,
+.gnss-ipp-popup {
+    min-width: 230px;
+}
+
+/* 3D Earth Globe Mode Styles */
+.station-map-globe-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 50;
+    background: #020611;
+    overflow: hidden;
+}
+
+.station-map-globe-canvas-element {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+    cursor: grab;
+}
+
+.station-map-globe-canvas-element:active {
+    cursor: grabbing;
+}
+
+/* 3D Globe Hover Tooltip */
+.globe-satellite-tooltip {
+    position: absolute;
+    z-index: 900;
+    background: rgba(11, 16, 27, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+    padding: 8px 12px;
+    color: #f8fafc;
+    font-size: 0.78rem;
+    pointer-events: none;
+    min-width: 190px;
+    animation: fadeIn 150ms ease-out;
+}
+
+.globe-satellite-tooltip .tooltip-header {
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    padding-bottom: 4px;
+}
+
+.globe-satellite-tooltip .tooltip-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.35;
+}
+
+/* 3D Globe Bottom Control Dock */
+.station-map-globe-dock {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 850;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(11, 16, 27, 0.88);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 999px;
+    padding: 6px 14px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75);
+    max-width: calc(100vw - 32px);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.station-map-globe-dock::-webkit-scrollbar {
+    display: none;
+}
+
+.globe-dock-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 999px;
+    color: #cbd5e1;
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 5px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 180ms ease;
+    user-select: none;
+}
+
+.globe-dock-btn:hover {
+    background: rgba(14, 165, 233, 0.2);
+    color: #e0f2fe;
+    border-color: rgba(56, 189, 248, 0.4);
+}
+
+.globe-dock-btn.active {
+    background: rgba(14, 165, 233, 0.28);
+    color: #38bdf8;
+    border-color: #38bdf8;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+}
+
+.globe-dock-separator {
+    width: 1px;
+    height: 18px;
+    background: rgba(148, 163, 184, 0.25);
+    margin: 0 2px;
+}
+
+.globe-dock-chip {
+    font-size: 0.72rem;
+    color: #94a3b8;
+    padding: 2px 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+

@@ -94,6 +94,10 @@ log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 # avoiding three INFO lines for every successful map refresh.
 QUIET_REQUEST_LOG_PATHS = frozenset({
     "/api/public/map-stations",
+    "/api/ionosphere/latest",
+    "/api/ionosphere/status",
+    "/api/gnss/satellites/tle",
+    "/api/gnss/satellites/summary",
 })
 
 
@@ -643,6 +647,14 @@ app.include_router(get_public_map_stations_router)
 
 from .map_routes import get_authenticated_map_stations_router
 app.include_router(get_authenticated_map_stations_router)
+
+
+from .ionosphere_routes import router as ionosphere_router
+app.include_router(ionosphere_router)
+
+
+from .satellite_routes import router as satellite_router
+app.include_router(satellite_router)
 
 
 @app.get("/api/integrations/stations")

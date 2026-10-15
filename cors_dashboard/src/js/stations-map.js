@@ -117,6 +117,13 @@
     function popupHtml(device, status, traffic) {
         const meta = window.CorsUI.getStatusMeta(status);
         const coords = getCoords(device);
+        let ionoLine = '';
+        if (coords && window.IonosphereOverlay?.sample) {
+            const probe = window.IonosphereOverlay.sample(coords.lat, coords.lon);
+            if (probe && probe.tec !== undefined) {
+                ionoLine = `<span class="station-map-popup-label">Local TEC</span><span class="station-map-popup-value" style="color:#38bdf8;font-weight:700;">${probe.tec.toFixed(1)} TECU</span>`;
+            }
+        }
         return `
             <div class="station-map-popup">
                 <div class="d-flex justify-content-between align-items-start gap-2">
@@ -131,8 +138,12 @@
                     <span class="station-map-popup-label">Host</span><span class="station-map-popup-value">${escapeHtml(traffic.host || '--')}</span>
                     <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${escapeHtml(traffic.mountpoint || '--')}</span>
                     <span class="station-map-popup-label">Traffic out</span><span class="station-map-popup-value">${window.CorsUI.formatSpeed(traffic.bps)}</span>
+                    ${ionoLine}
                 </div>
-                <button type="button" class="btn btn-sm btn-primary w-100 station-map-detail-btn" data-serial="${escapeHtml(device.serial || '')}">Open detail</button>
+                <div class="d-flex gap-1 mt-2">
+                    <button type="button" class="btn btn-sm btn-outline-info flex-fill station-map-sat-btn" data-serial="${escapeHtml(device.serial || '')}">🛰️ Tia vệ tinh & IPP</button>
+                    <button type="button" class="btn btn-sm btn-primary flex-fill station-map-detail-btn" data-serial="${escapeHtml(device.serial || '')}">Open detail</button>
+                </div>
             </div>
         `;
     }
@@ -156,6 +167,22 @@
         const [showRovers, setShowRovers] = useState(true);
         const [showProvinces, setShowProvinces] = useState(true);
         const [showVietnamMask, setShowVietnamMask] = useState(true);
+        const [showIonosphere, setShowIonosphere] = useState(false);
+        const [ionosphereMode, setIonosphereMode] = useState('tec');
+        const [ionosphereOpacity, setIonosphereOpacity] = useState(0.65);
+        const [ionosphereInfo, setIonosphereInfo] = useState(null);
+        const showIonosphereRef = useRef(false);
+        showIonosphereRef.current = showIonosphere;
+        const [showSatellites, setShowSatellites] = useState(false);
+        const [satelliteStats, setSatelliteStats] = useState({ total: 0, visible: 0, byConstellation: {} });
+        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, onlyVisible: false });
+        const [selectedSatStation, setSelectedSatStation] = useState(null);
+        const globeEl = useRef(null);
+        const [isGlobeMode, setIsGlobeMode] = useState(false);
+        const [globeSpeed, setGlobeSpeed] = useState(1);
+        const [globeOrbits, setGlobeOrbits] = useState(true);
+        const [globeBeams, setGlobeBeams] = useState(true);
+        const [globeTexture, setGlobeTexture] = useState('dark');
         const [provincesLoaded, setProvincesLoaded] = useState(0);
         const [provincesList, setProvincesList] = useState([]);
         const [selectedProvince, setSelectedProvince] = useState('');
@@ -295,7 +322,8 @@
             }
 
             map.on('popupopen', (event) => {
-                const btn = event.popup.getElement()?.querySelector('.station-map-detail-btn');
+                const el = event.popup.getElement();
+                const btn = el?.querySelector('.station-map-detail-btn');
                 btn?.addEventListener('click', () => {
                     const serial = btn.dataset.serial;
                     if (window.selectDashboardDevice) window.selectDashboardDevice(serial);
@@ -303,33 +331,96 @@
                     window.switchView?.('dashboard');
                     window.history.pushState({}, '', '/');
                 }, { once: true });
+
+                const satBtn = el?.querySelector('.station-map-sat-btn');
+                satBtn?.addEventListener('click', () => {
+                    const serial = satBtn.dataset.serial;
+                    const dev = (devices || []).find(d => String(d.serial).trim() === serial);
+                    if (dev) {
+                        const coords = getCoords(dev);
+                        if (coords) {
+                            setShowSatellites(true);
+                            window.GnssSatelliteOverlay?.setSelectedStation({
+                                lat: coords.lat,
+                                lon: coords.lon,
+                                alt: dev.alt || 50,
+                                name: dev.name || dev.serial,
+                                serial: dev.serial,
+                            });
+                            window.CorsUI?.showToast('info', `Đã kích hoạt quan sát vệ tinh & IPP cho trạm ${dev.name || dev.serial}`);
+                        }
+                    }
+                }, { once: true });
             });
 
             map.on('click', (event) => {
                 const state = measureRef.current;
-                if (!state.enabled) return;
-                const marker = L.circleMarker(event.latlng, { radius: 5, color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 1 }).addTo(map);
-                state.points.push(event.latlng);
-                state.layers.push(marker);
-                if (state.points.length === 2) {
-                    const [a, b] = state.points;
-                    const line = L.polyline([a, b], { color: '#0ea5e9', weight: 3, dashArray: '6 6' }).addTo(map);
-                    const dist = map.distance(a, b);
-                    const label = L.marker(b, {
-                        icon: L.divIcon({
-                            className: 'station-map-measure-label',
-                            html: window.CorsUI.formatDistance(dist),
-                            iconSize: [92, 30],
-                            iconAnchor: [46, 34]
-                        })
-                    }).addTo(map);
-                    state.layers.push(line, label);
-                    state.points = [];
+                if (state.enabled) {
+                    const marker = L.circleMarker(event.latlng, { radius: 5, color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 1 }).addTo(map);
+                    state.points.push(event.latlng);
+                    state.layers.push(marker);
+                    if (state.points.length === 2) {
+                        const [a, b] = state.points;
+                        const line = L.polyline([a, b], { color: '#0ea5e9', weight: 3, dashArray: '6 6' }).addTo(map);
+                        const dist = map.distance(a, b);
+                        const label = L.marker(b, {
+                            icon: L.divIcon({
+                                className: 'station-map-measure-label',
+                                html: window.CorsUI.formatDistance(dist),
+                                iconSize: [92, 30],
+                                iconAnchor: [46, 34]
+                            })
+                        }).addTo(map);
+                        state.layers.push(line, label);
+                        state.points = [];
+                    }
+                    return;
+                }
+
+                if (showIonosphereRef.current && window.IonosphereOverlay?.sample) {
+                    const probe = window.IonosphereOverlay.sample(event.latlng.lat, event.latlng.lng);
+                    if (probe && probe.tec !== undefined) {
+                        const statusBadge = probe.is_stale
+                            ? '<span class="badge bg-warning text-dark">STALE</span>'
+                            : '<span class="badge bg-success">REALTIME</span>';
+                        const anomalyColor = probe.anomaly >= 0 ? '#f87171' : '#60a5fa';
+                        const sign = probe.anomaly >= 0 ? '+' : '';
+                        const content = `
+                            <div class="station-map-popup ionosphere-probe-popup">
+                                <div class="d-flex justify-content-between align-items-center mb-1 gap-2">
+                                    <div class="fw-bold" style="color:#38bdf8;font-size:0.85rem;">
+                                        <i class="bi bi-broadcast-pin me-1"></i>Tầng điện ly GloTEC
+                                    </div>
+                                    ${statusBadge}
+                                </div>
+                                <div class="text-center my-1">
+                                    <span style="font-size:1.6rem;font-weight:900;color:#f8fafc;letter-spacing:-0.02em;">${probe.tec.toFixed(1)}</span>
+                                    <span class="ms-1 small" style="color:#94a3b8;font-weight:700;">TECU</span>
+                                </div>
+                                <div class="station-map-popup-grid" style="font-size:0.75rem;">
+                                    <span class="station-map-popup-label">Tọa độ</span>
+                                    <span class="station-map-popup-value">${probe.lat.toFixed(2)}°, ${probe.lon.toFixed(2)}°</span>
+                                    <span class="station-map-popup-label">Dị thường</span>
+                                    <span class="station-map-popup-value" style="color:${anomalyColor};font-weight:700;">${sign}${probe.anomaly.toFixed(2)} TECU</span>
+                                    <span class="station-map-popup-label">Thời gian</span>
+                                    <span class="station-map-popup-value">${probe.observation_time_vn || '--'}</span>
+                                    <span class="station-map-popup-label">Nguồn</span>
+                                    <span class="station-map-popup-value">NOAA Space Weather</span>
+                                </div>
+                            </div>
+                        `;
+                        L.popup({ maxWidth: 280, className: 'ionosphere-leaflet-popup' })
+                            .setLatLng(event.latlng)
+                            .setContent(content)
+                            .openOn(map);
+                    }
                 }
             });
 
             setTimeout(() => map.invalidateSize(), 80);
             return () => {
+                window.IonosphereOverlay?.detachFromMap();
+                window.GnssSatelliteOverlay?.detachFromMap();
                 Object.values(roverMarkersRef.current).forEach(marker => {
                     if (marker?.__animFrame) cancelAnimationFrame(marker.__animFrame);
                 });
@@ -338,6 +429,113 @@
                 map.remove();
             };
         }, []);
+
+        useEffect(() => {
+            const manager = window.IonosphereOverlay;
+            if (!manager) return;
+            const unsub = manager.subscribe((data, mode, opacity) => {
+                if (data) {
+                    setIonosphereInfo({
+                        status: data.status,
+                        is_stale: data.is_stale,
+                        time_tag: data.time_tag,
+                        observation_time_vn: data.observation_time_vn,
+                        stats: data.stats || {},
+                        mode: mode || 'tec',
+                        opacity: opacity ?? 0.65,
+                    });
+                }
+            });
+            return unsub;
+        }, []);
+
+        useEffect(() => {
+            const manager = window.GnssSatelliteOverlay;
+            if (!manager) return;
+            const unsub = manager.subscribe(({ stats, filters, selectedStation }) => {
+                setSatelliteStats(stats);
+                setSatelliteFilters(filters);
+                setSelectedSatStation(selectedStation);
+            });
+            return unsub;
+        }, []);
+
+        useEffect(() => {
+            const map = mapRef.current;
+            const manager = window.IonosphereOverlay;
+            const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
+            if (!map || !manager || !L) return;
+
+            const southWest = L.latLng(5.0, 100.5);
+            const northEast = L.latLng(24.5, 120.0);
+            const vietnamBounds = L.latLngBounds(southWest, northEast);
+
+            if (showIonosphere) {
+                map.setMaxBounds(null);
+                map.setMinZoom(2);
+                manager.attachToMap(map, { mode: ionosphereMode, opacity: ionosphereOpacity });
+            } else {
+                manager.detachFromMap();
+                if (showVietnamMask && !showSatellites) {
+                    map.setMaxBounds(vietnamBounds);
+                    map.setMinZoom(5);
+                }
+            }
+        }, [showIonosphere, ionosphereMode, ionosphereOpacity, showVietnamMask, showSatellites]);
+
+        useEffect(() => {
+            const map = mapRef.current;
+            const manager = window.GnssSatelliteOverlay;
+            const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
+            if (!map || !manager || !L) return;
+
+            const southWest = L.latLng(5.0, 100.5);
+            const northEast = L.latLng(24.5, 120.0);
+            const vietnamBounds = L.latLngBounds(southWest, northEast);
+
+            if (showSatellites) {
+                map.setMaxBounds(null);
+                map.setMinZoom(2);
+                manager.attachToMap(map);
+            } else {
+                manager.detachFromMap();
+                if (showVietnamMask && !showIonosphere) {
+                    map.setMaxBounds(vietnamBounds);
+                    map.setMinZoom(5);
+                }
+            }
+        }, [showSatellites, showVietnamMask, showIonosphere]);
+
+        useEffect(() => {
+            if (!isGlobeMode) {
+                window.Globe3DView?.detach();
+                if (mapRef.current) {
+                    setTimeout(() => mapRef.current.invalidateSize(), 80);
+                }
+                return;
+            }
+
+            if (globeEl.current && window.Globe3DView) {
+                window.Globe3DView.attach(globeEl.current, {
+                    stations,
+                    selectedStation: selectedSatStation,
+                });
+                window.Globe3DView.setFilter('gps', satelliteFilters.gps);
+                window.Globe3DView.setFilter('galileo', satelliteFilters.galileo);
+                window.Globe3DView.setFilter('beidou', satelliteFilters.beidou);
+                window.Globe3DView.setFilter('glonass', satelliteFilters.glonass);
+                window.Globe3DView.setFilter('showOrbits', globeOrbits);
+                window.Globe3DView.setFilter('showBeams', globeBeams);
+                window.Globe3DView.setSimSpeed(globeSpeed);
+                window.Globe3DView.setEarthTexture(globeTexture);
+            }
+        }, [isGlobeMode]);
+
+        useEffect(() => {
+            if (isGlobeMode && window.Globe3DView) {
+                window.Globe3DView.updateStations(stations, selectedSatStation);
+            }
+        }, [stations, selectedSatStation, isGlobeMode]);
 
         useEffect(() => {
             let active = true;
@@ -780,7 +978,8 @@
 
         return (
             <div className="station-map-container">
-                <div ref={mapEl} className="station-map-canvas"></div>
+                <div ref={globeEl} className="station-map-globe-canvas" style={{ display: isGlobeMode ? 'block' : 'none' }}></div>
+                <div ref={mapEl} className="station-map-canvas" style={{ display: isGlobeMode ? 'none' : 'block' }}></div>
 
                 {mapError && (
                     <div className="station-map-load-error" role="alert">
@@ -794,6 +993,15 @@
 
                 <div className="station-map-toolbar">
                     <div className="station-map-toolgroup">
+                        <button
+                            className={`station-map-action ${isGlobeMode ? 'active text-info' : ''}`}
+                            type="button"
+                            title={isGlobeMode ? "Trở về Bản đồ 2D (Leaflet Map)" : "Quả địa cầu 3D (Full 3D Earth Globe - satellitemap.space style)"}
+                            aria-label="3D Globe"
+                            onClick={() => setIsGlobeMode(!isGlobeMode)}
+                        >
+                            <i className={`bi ${isGlobeMode ? 'bi-map' : 'bi-globe-asia-australia'}`}></i>
+                        </button>
                         <button className={`station-map-action ${filterOpen ? 'active' : ''}`} title="Filter" onClick={() => setFilterOpen(!filterOpen)}><i className="bi bi-funnel"></i></button>
                         <button className="station-map-action" title="Locate" onClick={locate}><i className="bi bi-geo-alt-fill"></i></button>
                         <button className="station-map-action" title="Tìm trạm gần nhất" onClick={findNearestFromBrowser} disabled={findingNearest}>
@@ -801,6 +1009,8 @@
                         </button>
                         <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
                         <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
+                        <button className={`station-map-action ${showIonosphere ? 'active' : ''}`} type="button" title="Tầng điện ly (NOAA GloTEC TEC)" aria-label="Tầng điện ly" onClick={() => setShowIonosphere(!showIonosphere)}><i className="bi bi-broadcast-pin"></i></button>
+                        <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS quỹ đạo thực (GPS/GAL/BDS/GLO)" aria-label="Vệ tinh GNSS" onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar"></i></button>
                         <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
                     </div>
                 </div>
@@ -815,6 +1025,26 @@
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showRovers} onChange={(e) => setShowRovers(e.target.checked)} id="rover-toggle" disabled={!canViewRovers} />
                             <label className="form-check-label" htmlFor="rover-toggle">Rovers</label>
+                        </div>
+                        <div className="form-check form-switch mb-2">
+                            <input className="form-check-input" type="checkbox" checked={showSatellites} onChange={(e) => setShowSatellites(e.target.checked)} id="satellites-toggle" />
+                            <label className="form-check-label d-flex align-items-center justify-content-between" htmlFor="satellites-toggle">
+                                <span>Vệ tinh GNSS (4 chòm)</span>
+                                <span className="badge bg-primary" style={{ fontSize: '0.65rem' }}>
+                                    {satelliteStats.total || 143} SATS
+                                </span>
+                            </label>
+                        </div>
+                        <div className="form-check form-switch mb-2">
+                            <input className="form-check-input" type="checkbox" checked={showIonosphere} onChange={(e) => setShowIonosphere(e.target.checked)} id="ionosphere-toggle" />
+                            <label className="form-check-label d-flex align-items-center justify-content-between" htmlFor="ionosphere-toggle">
+                                <span>Tầng điện ly (GloTEC TEC)</span>
+                                {ionosphereInfo && (
+                                    <span className={`badge ms-1 ${ionosphereInfo.is_stale ? 'bg-warning text-dark' : 'bg-success'}`} style={{ fontSize: '0.65rem' }}>
+                                        {ionosphereInfo.is_stale ? 'STALE' : 'LIVE'}
+                                    </span>
+                                )}
+                            </label>
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showVietnamMask} onChange={(e) => setShowVietnamMask(e.target.checked)} id="mask-toggle" />
@@ -886,6 +1116,284 @@
                     <div className="station-map-legend-row"><span className="station-map-dot locked"></span>Locked</div>
                     <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
                 </div>
+
+                {showIonosphere && (
+                    <div className="station-map-ionosphere-hud">
+                        <div className="iono-hud-header">
+                            <div className="d-flex align-items-center gap-2">
+                                <i className="bi bi-broadcast-pin" style={{ color: '#38bdf8' }}></i>
+                                <span className="iono-hud-title">NOAA GloTEC TEC</span>
+                                <span className={`iono-hud-chip ${ionosphereInfo?.is_stale ? 'stale' : 'live'}`}>
+                                    {ionosphereInfo?.is_stale ? 'STALE' : 'REALTIME'}
+                                </span>
+                            </div>
+                            <button
+                                type="button"
+                                className="iono-hud-close"
+                                onClick={() => setShowIonosphere(false)}
+                                aria-label="Đóng lớp điện ly"
+                            >
+                                <i className="bi bi-x"></i>
+                            </button>
+                        </div>
+
+                        <div className="iono-hud-time">
+                            <i className="bi bi-clock me-1"></i>
+                            <span>{ionosphereInfo?.observation_time_vn || 'Đang tải dữ liệu NOAA...'}</span>
+                        </div>
+
+                        <div className="iono-hud-mode-row">
+                            <div className="btn-group btn-group-sm w-100" role="group">
+                                <button
+                                    type="button"
+                                    className={`btn ${ionosphereMode === 'tec' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                                    onClick={() => {
+                                        setIonosphereMode('tec');
+                                        window.IonosphereOverlay?.setMode('tec');
+                                    }}
+                                >
+                                    Ionosphere VTEC
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`btn ${ionosphereMode === 'anomaly' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                                    onClick={() => {
+                                        setIonosphereMode('anomaly');
+                                        window.IonosphereOverlay?.setMode('anomaly');
+                                    }}
+                                >
+                                    TEC Anomaly
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="iono-hud-gradient-wrap">
+                            <div className={`iono-hud-gradient-bar ${ionosphereMode === 'anomaly' ? 'anomaly-bar' : 'tec-bar'}`}></div>
+                            <div className="iono-hud-ticks">
+                                {ionosphereMode === 'anomaly' ? (
+                                    <React.Fragment>
+                                        <span>-20</span>
+                                        <span>-10</span>
+                                        <span>0</span>
+                                        <span>+10</span>
+                                        <span>+20</span>
+                                    </React.Fragment>
+                                ) : (
+                                    <React.Fragment>
+                                        <span>0</span>
+                                        <span>20</span>
+                                        <span>40</span>
+                                        <span>60</span>
+                                        <span>80+ TECU</span>
+                                    </React.Fragment>
+                                )}
+                            </div>
+                        </div>
+
+                        {ionosphereInfo?.stats && (
+                            <div className="iono-hud-stats">
+                                <span>Min: <b>{ionosphereInfo.stats.min_tec}</b></span>
+                                <span>TB: <b>{ionosphereInfo.stats.avg_tec}</b></span>
+                                <span>Max: <b>{ionosphereInfo.stats.max_tec}</b></span>
+                            </div>
+                        )}
+
+                        <div className="iono-hud-opacity-row">
+                            <span className="text-muted">Độ mờ: {Math.round(ionosphereOpacity * 100)}%</span>
+                            <input
+                                type="range"
+                                className="form-range iono-hud-range"
+                                min="0.2"
+                                max="1.0"
+                                step="0.05"
+                                value={ionosphereOpacity}
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    setIonosphereOpacity(val);
+                                    window.IonosphereOverlay?.setOpacity(val);
+                                }}
+                            />
+                        </div>
+                        <div className="iono-hud-tip">
+                            <i className="bi bi-info-circle me-1"></i>Bấm vào điểm bất kỳ trên bản đồ để đo TEC.
+                        </div>
+                    </div>
+                )}
+
+                {showSatellites && (
+                    <div className="station-map-satellite-hud">
+                        <div className="sat-hud-header">
+                            <div className="d-flex align-items-center gap-1">
+                                <i className="bi bi-radar" style={{ color: '#38bdf8' }}></i>
+                                <span className="sat-hud-title">Vệ tinh GNSS Realtime</span>
+                            </div>
+                            <button
+                                type="button"
+                                className="iono-hud-close"
+                                onClick={() => setShowSatellites(false)}
+                                aria-label="Đóng lớp vệ tinh"
+                            >
+                                <i className="bi bi-x"></i>
+                            </button>
+                        </div>
+
+                        {selectedSatStation ? (
+                            <div className="sat-hud-station-banner">
+                                <div className="d-flex justify-content-between align-items-center mb-1">
+                                    <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
+                                    <button
+                                        type="button"
+                                        className="btn btn-xs btn-outline-light py-0 px-1"
+                                        style={{ fontSize: '0.65rem' }}
+                                        onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
+                                    >
+                                        Bỏ chọn
+                                    </button>
+                                </div>
+                                <div className="text-info small">
+                                    <i className="bi bi-eye me-1"></i>
+                                    {satelliteStats.visible} vệ tinh khả kiến & IPP
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="small text-muted mb-2 fst-italic">
+                                <i className="bi bi-cursor me-1"></i>Bấm vào trạm CORS để nối tia sóng & tính IPP.
+                            </div>
+                        )}
+
+                        <div className="sat-hud-toggles">
+                            {[
+                                { key: 'gps', label: 'GPS', color: '#22c55e', count: satelliteStats.byConstellation?.gps ?? 32 },
+                                { key: 'galileo', label: 'Galileo', color: '#3b82f6', count: satelliteStats.byConstellation?.galileo ?? 31 },
+                                { key: 'beidou', label: 'BeiDou', color: '#f97316', count: satelliteStats.byConstellation?.beidou ?? 53 },
+                                { key: 'glonass', label: 'GLONASS', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 27 },
+                            ].map(item => (
+                                <div
+                                    key={item.key}
+                                    className={`sat-hud-pill ${satelliteFilters[item.key] ? 'active' : ''}`}
+                                    onClick={() => {
+                                        const next = !satelliteFilters[item.key];
+                                        window.GnssSatelliteOverlay?.setFilter(item.key, next);
+                                    }}
+                                >
+                                    <span style={{ color: item.color }}>● {item.label}</span>
+                                    <span className="badge bg-dark ms-1" style={{ fontSize: '0.62rem' }}>
+                                        {selectedSatStation ? item.count : ''}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+
+                        {selectedSatStation && (
+                            <div className="form-check form-switch mb-1 small">
+                                <input
+                                    className="form-check-input"
+                                    type="checkbox"
+                                    id="sat-only-visible"
+                                    checked={satelliteFilters.onlyVisible}
+                                    onChange={(e) => {
+                                        window.GnssSatelliteOverlay?.setFilter('onlyVisible', e.target.checked);
+                                    }}
+                                />
+                                <label className="form-check-label" htmlFor="sat-only-visible" style={{ fontSize: '0.72rem' }}>
+                                    Chỉ hiện vệ tinh khả kiến (&gt; 5°)
+                                </label>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {isGlobeMode && (
+                    <div className="station-map-globe-dock">
+                        <button
+                            type="button"
+                            className="globe-dock-btn active"
+                            onClick={() => window.Globe3DView?.focusVietnam(true)}
+                            title="Tập trung cận cảnh vào Việt Nam"
+                        >
+                            <i className="bi bi-crosshair2 text-info"></i> Tâm VN
+                        </button>
+                        <div className="globe-dock-separator"></div>
+                        {['gps', 'galileo', 'beidou', 'glonass'].map(k => (
+                            <button
+                                key={k}
+                                type="button"
+                                className={`globe-dock-btn ${satelliteFilters[k] ? 'active' : ''}`}
+                                onClick={() => {
+                                    const next = !satelliteFilters[k];
+                                    setSatelliteFilters(prev => ({ ...prev, [k]: next }));
+                                    window.Globe3DView?.setFilter(k, next);
+                                    window.GnssSatelliteOverlay?.setFilter(k, next);
+                                }}
+                            >
+                                <span style={{ color: k === 'gps' ? '#22c55e' : k === 'galileo' ? '#38bdf8' : k === 'beidou' ? '#f59e0b' : '#ef4444' }}>●</span>
+                                <span className="text-uppercase">{k === 'galileo' ? 'GAL' : k === 'beidou' ? 'BDS' : k === 'glonass' ? 'GLO' : 'GPS'}</span>
+                            </button>
+                        ))}
+                        <div className="globe-dock-separator"></div>
+                        <button
+                            type="button"
+                            className={`globe-dock-btn ${globeOrbits ? 'active' : ''}`}
+                            onClick={() => {
+                                const next = !globeOrbits;
+                                setGlobeOrbits(next);
+                                window.Globe3DView?.setFilter('showOrbits', next);
+                            }}
+                            title="Bật/Tắt vòng quỹ đạo vệ tinh"
+                        >
+                            <i className="bi bi-bezier2"></i> Quỹ đạo
+                        </button>
+                        <button
+                            type="button"
+                            className={`globe-dock-btn ${globeBeams ? 'active' : ''}`}
+                            onClick={() => {
+                                const next = !globeBeams;
+                                setGlobeBeams(next);
+                                window.Globe3DView?.setFilter('showBeams', next);
+                            }}
+                            title="Bật/Tắt tia trạm & IPP"
+                        >
+                            <i className="bi bi-broadcast"></i> Tia trạm & IPP
+                        </button>
+                        <div className="globe-dock-separator"></div>
+                        {[1, 5, 30].map(spd => (
+                            <button
+                                key={spd}
+                                type="button"
+                                className={`globe-dock-btn ${globeSpeed === spd ? 'active' : ''}`}
+                                onClick={() => {
+                                    setGlobeSpeed(spd);
+                                    window.Globe3DView?.setSimSpeed(spd);
+                                }}
+                                title={`Tốc độ mô phỏng ${spd}x`}
+                            >
+                                {spd}x
+                            </button>
+                        ))}
+                        <div className="globe-dock-separator"></div>
+                        <button
+                            type="button"
+                            className="globe-dock-btn"
+                            onClick={() => {
+                                const next = globeTexture === 'dark' ? 'night' : globeTexture === 'night' ? 'blue-marble' : 'dark';
+                                setGlobeTexture(next);
+                                window.Globe3DView?.setEarthTexture(next);
+                            }}
+                            title="Đổi giao diện địa cầu"
+                        >
+                            <i className="bi bi-palette"></i> {globeTexture === 'dark' ? 'Cyber Dark' : globeTexture === 'night' ? 'City Lights' : 'Blue Marble'}
+                        </button>
+                        <div className="globe-dock-separator"></div>
+                        <button
+                            type="button"
+                            className="globe-dock-btn"
+                            onClick={() => setIsGlobeMode(false)}
+                            title="Chuyển về bản đồ 2D phẳng"
+                        >
+                            <i className="bi bi-map"></i> 2D Map
+                        </button>
+                    </div>
+                )}
 
             </div>
         );
