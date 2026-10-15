@@ -394,6 +394,7 @@ def is_valid_serial(serial: str) -> bool:
     CÁC ĐỊNH DẠNG HỢP LỆ:
     - Ublox: 10000000xxxxxxxx (16 ký tự hex)
     - LoRa Pi: LP_xxxxxxxxxxxx (MAC address)
+    - Pi agent: PI_xxxxxxxxxxxx (12 ký tự hex)
     - Relay: RELAY_xxxxxxx
     - Monitor: MONITOR_xxxxxxx
     
@@ -418,6 +419,10 @@ def is_valid_serial(serial: str) -> bool:
     
     # Pattern 2: LoRa Pi (LP_MAC)
     if re.match(r'^LP_[0-9A-F]{12}$', serial, re.IGNORECASE):
+        return True
+
+    # Pi agent fallback serial: PI_ + 12 hex chars from uuid4.
+    if re.fullmatch(r'PI_[0-9A-F]{12}', serial, re.IGNORECASE):
         return True
     
     # Pattern 3: Relay (RELAY_XXX)

@@ -178,7 +178,7 @@
         showIonosphereRef.current = showIonosphere;
         const [showSatellites, setShowSatellites] = useState(false);
         const [satelliteStats, setSatelliteStats] = useState({ total: 0, visible: 0, byConstellation: {} });
-        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, onlyVisible: false, minElevation: 12.0, showIpp: true });
+        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, onlyVisible: false, minElevation: 12.0, showIpp: true, matchRtcm: true });
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
@@ -1284,7 +1284,7 @@
                                     </div>
                                     <div className="text-info small">
                                         <i className="bi bi-eye me-1"></i>
-                                        <b>{satelliteStats.visible}</b> vệ tinh & tia IPP (≥{satelliteFilters.minElevation ?? 12}°)
+                                        <b>{satelliteStats.visible}</b> vệ tinh & tia IPP {satelliteStats.hasLiveRtcm ? `(RTCM Live)` : `(≥${satelliteFilters.minElevation ?? 12}°)`}
                                     </div>
                                 </div>
                             )
@@ -1337,6 +1337,23 @@
                                     <option value={10}>10° (Mở rộng ~35 Sats)</option>
                                     <option value={5}>5° (Chân trời ~60 Sats)</option>
                                 </select>
+                            </div>
+                        )}
+
+                        {selectedSatStation && satelliteStats.hasLiveRtcm && (
+                            <div className="form-check form-switch mb-1 small">
+                                <input
+                                    className="form-check-input"
+                                    type="checkbox"
+                                    id="sat-match-rtcm"
+                                    checked={satelliteFilters.matchRtcm !== false}
+                                    onChange={(e) => {
+                                        window.GnssSatelliteOverlay?.setFilter('matchRtcm', e.target.checked);
+                                    }}
+                                />
+                                <label className="form-check-label text-success fw-semibold" htmlFor="sat-match-rtcm" style={{ fontSize: '0.72rem' }}>
+                                    <i className="bi bi-broadcast me-1"></i>Khớp chuẩn RTCM trạm ({satelliteStats.liveRtcmCount} Sats)
+                                </label>
                             </div>
                         )}
 

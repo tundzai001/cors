@@ -57,6 +57,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 
 // === DASHBOARD STATE & LOGIC  ===
 let currentNmeaData = { gga: null, gsa: null, satellites: {} };
+window.getCurrentNmeaData = () => currentNmeaData;
 
 // === RENDER THROTTLING LOGIC ===
 let lastRenderTime = 0;

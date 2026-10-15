@@ -35,11 +35,12 @@
                 onlyVisible: false,
                 minElevation: 12.0, // Default 12° CORS elevation mask cutoff (~29 sats)
                 showIpp: true,      // Show/hide 350km IPP diamond markers
+                matchRtcm: true,    // Match live RTCM stream from CORS edge when available
             };
 
             this.selectedStation = null; // { lat, lon, alt, name, serial, status }
             this.stationRayMarkers = [];
-            this.stats = { total: 0, visible: 0, byConstellation: {}, isStationOffline: false };
+            this.stats = { total: 0, visible: 0, byConstellation: {}, isStationOffline: false, hasLiveRtcm: false, liveRtcmCount: 0 };
         }
 
         subscribe(callback) {
@@ -160,6 +161,35 @@
             return { ippLat, ippLon, mf };
         }
 
+        getLiveRtcmSatellite(satObj) {
+            if (!this.selectedStation) return null;
+            const selSerial = window.globalState?.selectedDeviceSerial;
+            const targetSerial = this.selectedStation.serial;
+            if (selSerial && targetSerial && String(selSerial).trim() !== String(targetSerial).trim()) {
+                return null;
+            }
+            const nmeaData = window.getCurrentNmeaData?.();
+            if (!nmeaData || !nmeaData.satellites) return null;
+
+            const satCode = String(satObj.code || '').toUpperCase(); // e.g. "G08", "C21"
+            const constKey = satObj.constellationKey; // "gps", "glonass", "galileo", "beidou"
+            const expectedSystem = constKey === 'gps' ? 'us' : constKey === 'glonass' ? 'ru' : constKey === 'galileo' ? 'eu' : constKey === 'beidou' ? 'cn' : '';
+            const prnNum = parseInt(satCode.replace(/\D/g, ''), 10);
+
+            for (const sat of Object.values(nmeaData.satellites)) {
+                if (!sat) continue;
+                const satSys = String(sat.system || '').toLowerCase();
+                const sPrnStr = String(sat.prn || '').toUpperCase();
+                const sPrnNum = parseInt(sPrnStr.replace(/\D/g, ''), 10);
+
+                if (sPrnStr === satCode) return sat;
+                if (satSys && expectedSystem && satSys === expectedSystem && sPrnNum === prnNum) {
+                    return sat;
+                }
+            }
+            return null;
+        }
+
         propagateTick() {
             const satLib = window.satellite;
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
@@ -192,6 +222,15 @@
                 }
             }
 
+            const nmeaData = window.getCurrentNmeaData?.();
+            const liveSats = (nmeaData && nmeaData.satellites) ? Object.values(nmeaData.satellites) : [];
+            const hasLiveRtcm = Boolean(
+                this.selectedStation &&
+                !isStationOffline &&
+                liveSats.length > 0 &&
+                (!window.globalState?.selectedDeviceSerial || String(window.globalState.selectedDeviceSerial).trim() === String(this.selectedStation.serial).trim())
+            );
+
             const activeRayKeys = new Set();
             let visibleCount = 0;
             const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
@@ -222,13 +261,21 @@
                     let isVisible = false;
                     let azDeg = null;
                     let elDeg = null;
+                    let liveRtcmSat = null;
 
                     if (obsGd) {
                         const posEcf = satLib.eciToEcf(posVel.position, gmst);
                         look = satLib.ecfToLookAngles(obsGd, posEcf);
                         azDeg = ((look.azimuth * TO_DEG) + 360) % 360;
                         elDeg = look.elevation * TO_DEG;
-                        isVisible = elDeg >= minEl; // CORS Elevation cut-off mask
+                        if (hasLiveRtcm) {
+                            liveRtcmSat = this.getLiveRtcmSatellite(satObj);
+                        }
+                        if (hasLiveRtcm && this.filters.matchRtcm !== false) {
+                            isVisible = Boolean(liveRtcmSat); // Match exact live RTCM tracked satellite
+                        } else {
+                            isVisible = elDeg >= minEl; // CORS Elevation cut-off mask
+                        }
                     }
 
                     if (isVisible) {
@@ -290,6 +337,15 @@
                                     Vệ tinh: <b style="color:${cfg.color};">${satObj.code}</b> (${cfg.name})<br>
                                     Trạm: <b>${this.selectedStation.name || this.selectedStation.serial}</b>
                                 </div>
+                                ${liveRtcmSat ? `
+                                    <div class="mb-2 px-2 py-1 rounded" style="background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.35); font-size:0.72rem; color:#86efac;">
+                                        <i class="bi bi-broadcast me-1"></i>Đang khóa tín hiệu RTCM MSM (SNR: <b>${liveRtcmSat.snr || '--'} dB-Hz</b>)
+                                    </div>
+                                ` : `
+                                    <div class="mb-2 px-2 py-1 rounded" style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.25); font-size:0.72rem; color:#7dd3fc;">
+                                        <i class="bi bi-clock me-1"></i>Mô phỏng quỹ đạo SGP4 (Góc ngẩng: ${elDeg.toFixed(1)}°)
+                                    </div>
+                                `}
                                 <div class="station-map-popup-grid" style="font-size:0.75rem;">
                                     <span class="station-map-popup-label">Tọa độ IPP</span>
                                     <span class="station-map-popup-value">${ippLat.toFixed(2)}°, ${ippLon.toFixed(2)}°</span>
@@ -309,7 +365,9 @@
                                 </div>
                             </div>
                         `;
-                        const tooltipText = `IPP 350km: ${satObj.code} (${vtecVal !== null ? `${vtecVal} TECU` : '--'})`;
+                        const tooltipText = liveRtcmSat
+                            ? `IPP 350km: ${satObj.code} (${vtecVal !== null ? `${vtecVal} TECU` : '--'} • SNR ${liveRtcmSat.snr}dB)`
+                            : `IPP 350km: ${satObj.code} (${vtecVal !== null ? `${vtecVal} TECU` : '--'})`;
 
                         const cached = this.rayLayersCache.get(satKey);
                         if (cached) {
@@ -418,6 +476,8 @@
                 visible: visibleCount,
                 byConstellation: constCounts,
                 isStationOffline,
+                hasLiveRtcm,
+                liveRtcmCount: liveSats.length,
             };
         }
 
