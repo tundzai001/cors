@@ -166,7 +166,7 @@
         const [showStations, setShowStations] = useState(true);
         const [showRovers, setShowRovers] = useState(true);
         const [showProvinces, setShowProvinces] = useState(true);
-        const [showVietnamMask, setShowVietnamMask] = useState(true);
+        const [showVietnamMask, setShowVietnamMask] = useState(false);
         const [showIonosphere, setShowIonosphere] = useState(false);
         const [ionosphereMode, setIonosphereMode] = useState('tec');
         const [ionosphereOpacity, setIonosphereOpacity] = useState(0.65);
@@ -281,16 +281,10 @@
                 return;
             }
 
-            const southWest = L.latLng(5.0, 100.5);
-            const northEast = L.latLng(24.5, 120.0);
-            const vietnamBounds = L.latLngBounds(southWest, northEast);
-
             const map = L.map(mapEl.current, {
                 zoomControl: true,
                 preferCanvas: true,
-                maxBounds: vietnamBounds,
-                maxBoundsViscosity: 1.0,
-                minZoom: 5,
+                minZoom: 2,
                 maxZoom: 20
             }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
             mapRef.current = map;
@@ -571,7 +565,17 @@
             });
             sovereigntyMarkersRef.current = [];
 
-            if (!showVietnamMask) return;
+            if (!showVietnamMask) {
+                map.setMaxBounds(null);
+                map.setMinZoom(2);
+                return;
+            }
+
+            const southWest = L.latLng(5.0, 100.5);
+            const northEast = L.latLng(24.5, 120.0);
+            const vietnamBounds = L.latLngBounds(southWest, northEast);
+            map.setMaxBounds(vietnamBounds);
+            map.setMinZoom(5);
 
             // Sovereign island markers for Hoang Sa & Truong Sa
             const hsMarker = L.marker([16.530, 112.020], {
