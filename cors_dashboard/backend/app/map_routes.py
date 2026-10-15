@@ -397,6 +397,31 @@ async def get_vietnam_provinces_geojson():
     )
 
 
+_WORLD_COUNTRIES_GEOJSON_BYTES: bytes | None = None
+
+def _get_world_countries_geojson_bytes() -> bytes:
+    global _WORLD_COUNTRIES_GEOJSON_BYTES
+    if _WORLD_COUNTRIES_GEOJSON_BYTES is None:
+        target_path = os.path.join(os.path.dirname(__file__), "data", "world_countries.geojson")
+        if os.path.exists(target_path):
+            with open(target_path, "rb") as f:
+                _WORLD_COUNTRIES_GEOJSON_BYTES = f.read()
+        else:
+            _WORLD_COUNTRIES_GEOJSON_BYTES = b'{"type":"FeatureCollection","features":[]}'
+    return _WORLD_COUNTRIES_GEOJSON_BYTES
+
+
+@get_public_map_stations_router.get("/api/public/world-countries-geojson")
+async def get_world_countries_geojson():
+    """Return world country boundaries GeoJSON for 3D Globe overlay."""
+    content = _get_world_countries_geojson_bytes()
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
+    )
+
+
 @get_public_map_stations_router.get("/api/public/vietnam-provinces")
 async def get_vietnam_provinces(db: AsyncSession = Depends(get_db)):
     """Return list of Vietnam provinces from database with fallback to bundled summary."""
