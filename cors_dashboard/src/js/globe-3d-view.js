@@ -562,6 +562,7 @@
                 if (window.GnssSatelliteOverlay) {
                     window.GnssSatelliteOverlay.setSelectedStation(stnObj);
                 }
+                if (dev.serial) window.selectDashboardDevice?.(dev.serial);
                 this.satelliteLayer.updateStations(this.satelliteLayer.stations || [], stnObj);
                 this.satelliteLayer.openStationCard(data.station, data.coords);
             }

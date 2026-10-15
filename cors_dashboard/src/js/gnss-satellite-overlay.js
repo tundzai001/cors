@@ -172,33 +172,35 @@
             return { ippLat, ippLon, mf };
         }
 
-        getLiveRtcmSatellite(satObj) {
-            if (!this.selectedStation) return null;
-            const selSerial = window.globalState?.selectedDeviceSerial;
-            const targetSerial = this.selectedStation.serial;
-            if (selSerial && targetSerial && String(selSerial).trim() !== String(targetSerial).trim()) {
-                return null;
-            }
-            const nmeaData = window.getCurrentNmeaData?.();
-            if (!nmeaData || !nmeaData.satellites) return null;
+        getLiveRtcmSatellites(station = this.selectedStation) {
+            const targetSerial = String(station?.serial || '').trim();
+            if (!targetSerial || String(window.globalState?.selectedDeviceSerial || '').trim() !== targetSerial) return [];
+            const satellites = window.getCurrentNmeaData?.()?.satellites || {};
+            const now = Date.now();
+            return Object.values(satellites).filter(sat => {
+                if (!sat || !(String(sat.id || '').toUpperCase().startsWith('RTCM:') || String(sat.talker || '').toUpperCase() === 'RTCM')) return false;
+                const lastSeen = Number(sat.lastSeen) || 0;
+                return lastSeen > 0 && now - lastSeen >= 0 && now - lastSeen <= 15000;
+            });
+        }
 
-            const satCode = String(satObj.code || '').toUpperCase(); // e.g. "G08", "C21"
-            const constKey = satObj.constellationKey; // "gps", "glonass", "galileo", "beidou"
-            const expectedSystem = constKey === 'gps' ? 'us' : constKey === 'glonass' ? 'ru' : constKey === 'galileo' ? 'eu' : constKey === 'beidou' ? 'cn' : '';
-            const prnNum = parseInt(satCode.replace(/\D/g, ''), 10);
-
-            for (const sat of Object.values(nmeaData.satellites)) {
-                if (!sat) continue;
-                const satSys = String(sat.system || '').toLowerCase();
-                const sPrnStr = String(sat.prn || '').toUpperCase();
-                const sPrnNum = parseInt(sPrnStr.replace(/\D/g, ''), 10);
-
-                if (sPrnStr === satCode) return sat;
-                if (satSys && expectedSystem && satSys === expectedSystem && sPrnNum === prnNum) {
-                    return sat;
-                }
-            }
-            return null;
+        getLiveRtcmSatellite(satObj, station = this.selectedStation) {
+            if (!station) return null;
+            const systemAliases = {
+                gps: 'gps', us: 'gps', g: 'gps',
+                glonass: 'glonass', ru: 'glonass', r: 'glonass',
+                galileo: 'galileo', eu: 'galileo', e: 'galileo',
+                beidou: 'beidou', cn: 'beidou', c: 'beidou',
+            };
+            const expectedSystem = systemAliases[String(satObj.constellationKey || '').toLowerCase()];
+            const prnNum = parseInt(String(satObj.code || '').replace(/\D/g, ''), 10);
+            if (!expectedSystem || !Number.isFinite(prnNum)) return null;
+            return this.getLiveRtcmSatellites(station).find(sat => {
+                const actualSystem = systemAliases[String(sat.system || '').toLowerCase()] ||
+                    systemAliases[String(sat.navSystem || '').toLowerCase()];
+                const actualPrn = parseInt(String(sat.prn || '').replace(/\D/g, ''), 10);
+                return actualSystem === expectedSystem && actualPrn === prnNum;
+            }) || null;
         }
 
         propagateTick() {
@@ -233,14 +235,8 @@
                 }
             }
 
-            const nmeaData = window.getCurrentNmeaData?.();
-            const liveSats = (nmeaData && nmeaData.satellites) ? Object.values(nmeaData.satellites) : [];
-            const hasLiveRtcm = Boolean(
-                this.selectedStation &&
-                !isStationOffline &&
-                liveSats.length > 0 &&
-                (!window.globalState?.selectedDeviceSerial || String(window.globalState.selectedDeviceSerial).trim() === String(this.selectedStation.serial).trim())
-            );
+            const liveRtcmSatellites = this.getLiveRtcmSatellites(this.selectedStation);
+            const hasLiveRtcm = !isStationOffline && liveRtcmSatellites.length > 0;
 
             const activeRayKeys = new Set();
             let visibleCount = 0;

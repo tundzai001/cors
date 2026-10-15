@@ -308,8 +308,10 @@
                 preferCanvas: true,
                 minZoom: 2,
                 maxZoom: 20,
-                zoomSnap: 0,
-                zoomDelta: 0.5
+                zoomSnap: 0.5,
+                zoomDelta: 1,
+                wheelPxPerZoomLevel: 35,
+                wheelDebounceTime: 20
             }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
             mapRef.current = map;
             map.on('zoomend', () => {
@@ -367,6 +369,7 @@
                         }
                         const coords = getCoords(dev);
                         if (coords) {
+                            window.selectDashboardDevice?.(serial);
                             setShowSatellites(true);
                             window.GnssSatelliteOverlay?.setSelectedStation({
                                 lat: coords.lat,
