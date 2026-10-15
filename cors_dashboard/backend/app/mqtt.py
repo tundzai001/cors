@@ -905,7 +905,9 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     metadata = {"exists": False}
                     logging.debug("Device metadata lookup failed for %s: %s", serial, e)
 
-            if metadata.get("exists"):
+            # A discovered agent can hold a local token while no DB row exists.
+            # Its fingerprint alone cannot establish server-side registration.
+            if metadata.get("exists") or crud.is_valid_serial(serial):
                 agent_reported_status = raw_status
                 license_bypass = bool(metadata.get("license_bypass"))
                 configured_token = str(metadata.get("device_token") or "").strip()
@@ -952,6 +954,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     "token_check_available": token_check_available,
                     "token_deployment_pending": token_deployment_pending,
                 }
+                system_info["auth_license_bypass"] = license_bypass
                 data["system_info"] = system_info
                 if metadata.get("name"):
                     data["name"] = metadata["name"]

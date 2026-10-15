@@ -23,12 +23,12 @@
     const canUse3D = webgl && !prefersReducedMotion && !lowPowerDevice;
     let tier = prefersReducedMotion || lowPowerDevice || !webgl
         ? 'lite'
-        : hardwareConcurrency <= 4 ? 'balanced' : 'high';
+        : 'balanced';
 
     const profiles = {
-        high: { particleCount: 95, threePixelRatio: 1.8, frameInterval: 0, effectIntensity: 1 },
-        balanced: { particleCount: 68, threePixelRatio: 1.3, frameInterval: 16, effectIntensity: 0.82 },
-        lite: { particleCount: 42, threePixelRatio: 1, frameInterval: 24, effectIntensity: 0.68 }
+        high: { particleCount: 95, threePixelRatio: 1.5, frameInterval: 1000 / 30, effectIntensity: 1 },
+        balanced: { particleCount: 68, threePixelRatio: 1, frameInterval: 1000 / 30, effectIntensity: 0.82 },
+        lite: { particleCount: 42, threePixelRatio: 1, frameInterval: 1000 / 24, effectIntensity: 0.68 }
     };
     const tierRank = { lite: 0, balanced: 1, high: 2 };
     const maxTier = 'high';

@@ -33,6 +33,45 @@
         return stationPos3D.clone().add(dir.multiplyScalar(t));
     }
 
+    function groundRegion(features, lat, lon) {
+        if (!Array.isArray(features)) return 'Đang tải tên khu vực…';
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '--';
+        const inRing = ring => {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const [xi, yi] = ring[i], [xj, yj] = ring[j];
+                if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+            }
+            return inside;
+        };
+        for (const feature of features) {
+            const geometry = feature.geometry;
+            const polygons = geometry?.type === 'Polygon' ? [geometry.coordinates] : geometry?.type === 'MultiPolygon' ? geometry.coordinates : [];
+            if (polygons.some(rings => rings[0] && inRing(rings[0]) && !rings.slice(1).some(inRing))) {
+                const properties = feature.properties || {};
+                return properties.name_vi || properties.ADMIN || properties.name || properties.NAME || 'Đất liền';
+            }
+        }
+        return 'Biển / đại dương';
+    }
+
+    function surfaceViewFromRay(position, direction, fov, height) {
+        const b = position.x * direction.x + position.y * direction.y + position.z * direction.z;
+        const c = position.x ** 2 + position.y ** 2 + position.z ** 2 - SCENE_EARTH_RADIUS ** 2;
+        const discriminant = b * b - c;
+        if (discriminant < 0 || height <= 0) return null;
+        const distance = -b - Math.sqrt(discriminant);
+        if (distance <= 0) return null;
+        const x = position.x + direction.x * distance;
+        const y = position.y + direction.y * distance;
+        const z = position.z + direction.z * distance;
+        const lat = Math.max(-85, Math.min(85, Math.asin(Math.max(-1, Math.min(1, y / SCENE_EARTH_RADIUS))) * 180 / Math.PI));
+        const lng = Math.atan2(-z, x) * 180 / Math.PI;
+        const metersPerPixel = distance * RE_EARTH_KM / SCENE_EARTH_RADIUS * 2000 * Math.tan(fov * Math.PI / 360) / height;
+        const zoom = Math.log2(156543.03392 * Math.cos(lat * Math.PI / 180) / metersPerPixel);
+        return { lat, lng, zoom };
+    }
+
     // Export to window
     window.Globe3DMath = {
         RE_EARTH_KM,
@@ -41,5 +80,8 @@
         SCENE_IONO_RADIUS,
         latLonAltToVector3,
         calculateIpp3D,
+        groundRegion,
+        surfaceViewFromRay,
+        shouldEnterGlobe: zoom => Number.isFinite(zoom) && zoom <= 4,
     };
 })();

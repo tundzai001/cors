@@ -26,7 +26,11 @@
 .station-map-canvas {
     height: 100%;
     width: 100%;
+    opacity: 1;
+    transition: opacity 280ms ease, visibility 280ms;
 }
+
+.station-map-canvas.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
 
 .station-map-load-error {
     align-items: center;
@@ -638,7 +642,13 @@
     z-index: 50;
     background: #020611;
     overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 280ms ease, visibility 280ms;
 }
+
+.station-map-globe-canvas.is-visible { opacity: 1; visibility: visible; pointer-events: auto; }
 
 .station-map-globe-canvas-element {
     width: 100% !important;
@@ -771,6 +781,68 @@
     z-index: 920;
     font-size: 0.82rem;
     animation: fadeIn 200ms ease-out;
+    max-height: calc(100% - 170px);
+    overflow-y: auto;
+}
+
+.globe-data-status {
+    position: absolute;
+    top: 18px;
+    left: 90px;
+    right: 18px;
+    width: fit-content;
+    max-width: calc(100% - 108px);
+    padding: 8px 12px;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 10px;
+    background: #0b101beb;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+    z-index: 850;
+}
+
+.globe-data-status button {
+    min-height: 44px;
+    padding: 4px 12px;
+    background: transparent;
+    border: 1px solid #38bdf8;
+    border-radius: 6px;
+    color: #7dd3fc;
+    cursor: pointer;
+}
+
+.globe-location-info {
+    margin-bottom: 12px;
+    font-size: 0.72rem;
+    line-height: 1.7;
+    color: #94a3b8;
+}
+
+.globe-selected-label {
+    position: absolute;
+    transform: translate(12px, calc(-100% - 12px));
+    max-width: 190px;
+    padding: 6px 9px;
+    border-left: 3px solid #38bdf8;
+    border-radius: 6px;
+    background: #0b101bf5;
+    color: #f8fafc;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    pointer-events: none;
+    z-index: 900;
+}
+
+.globe-dock-btn:focus-visible,
+.globe-detail-card button:focus-visible,
+.globe-data-status button:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .globe-detail-card { animation: none; }
+    .station-map-globe-canvas, .station-map-canvas { transition: none; }
 }
 
 .globe-detail-card .card-top-row {
@@ -791,6 +863,8 @@
 }
 
 .globe-detail-card .card-close-btn {
+    min-width: 44px;
+    min-height: 44px;
     background: transparent;
     border: 0;
     color: #94a3b8;

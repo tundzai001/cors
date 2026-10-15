@@ -182,6 +182,28 @@
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
+        const globeModeRef = useRef(false);
+        const autoGlobeRef = useRef(false);
+        const mapHandoffRef = useRef(false);
+        globeModeRef.current = isGlobeMode;
+        function enterGlobeMode(automatic = false) {
+            autoGlobeRef.current = automatic;
+            globeModeRef.current = true;
+            setIsGlobeMode(true);
+        }
+        function showSurfaceMap(surface) {
+            const map = mapRef.current;
+            const view = surface || window.Globe3DView?.getSurfaceView();
+            mapHandoffRef.current = true;
+            if (map && view) {
+                map.setMaxBounds(null);
+                map.setMinZoom(2);
+                map.setView([view.lat, view.lng], Math.max(5, Math.min(20, view.zoom)), { animate: false });
+            }
+            globeModeRef.current = false;
+            setIsGlobeMode(false);
+            mapHandoffRef.current = false;
+        }
         const [globeTexture, setGlobeTexture] = useState('blue-marble');
         const [provincesLoaded, setProvincesLoaded] = useState(0);
         const [provincesList, setProvincesList] = useState([]);
@@ -285,9 +307,16 @@
                 zoomControl: true,
                 preferCanvas: true,
                 minZoom: 2,
-                maxZoom: 20
+                maxZoom: 20,
+                zoomSnap: 0,
+                zoomDelta: 0.5
             }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
             mapRef.current = map;
+            map.on('zoomend', () => {
+                if (!globeModeRef.current && !mapHandoffRef.current && window.Globe3DMath?.shouldEnterGlobe(map.getZoom())) {
+                    enterGlobeMode(true);
+                }
+            });
             setMapError('');
 
             const tiles = {
@@ -470,18 +499,18 @@
             const northEast = L.latLng(24.5, 120.0);
             const vietnamBounds = L.latLngBounds(southWest, northEast);
 
-            if (showIonosphere) {
+            if (showIonosphere && !isGlobeMode) {
                 map.setMaxBounds(null);
                 map.setMinZoom(2);
                 manager.attachToMap(map, { mode: ionosphereMode, opacity: ionosphereOpacity });
             } else {
                 manager.detachFromMap();
-                if (showVietnamMask && !showSatellites) {
+                if (!isGlobeMode && showVietnamMask && !showSatellites) {
                     map.setMaxBounds(vietnamBounds);
-                    map.setMinZoom(5);
+                    map.setMinZoom(4);
                 }
             }
-        }, [showIonosphere, ionosphereMode, ionosphereOpacity, showVietnamMask, showSatellites]);
+        }, [showIonosphere, ionosphereMode, ionosphereOpacity, showVietnamMask, showSatellites, isGlobeMode]);
 
         useEffect(() => {
             const map = mapRef.current;
@@ -493,18 +522,18 @@
             const northEast = L.latLng(24.5, 120.0);
             const vietnamBounds = L.latLngBounds(southWest, northEast);
 
-            if (showSatellites) {
+            if (showSatellites && !isGlobeMode) {
                 map.setMaxBounds(null);
                 map.setMinZoom(2);
                 manager.attachToMap(map);
             } else {
                 manager.detachFromMap();
-                if (showVietnamMask && !showIonosphere) {
+                if (!isGlobeMode && showVietnamMask && !showIonosphere) {
                     map.setMaxBounds(vietnamBounds);
-                    map.setMinZoom(5);
+                    map.setMinZoom(4);
                 }
             }
-        }, [showSatellites, showVietnamMask, showIonosphere]);
+        }, [showSatellites, showVietnamMask, showIonosphere, isGlobeMode]);
 
         useEffect(() => {
             if (!isGlobeMode) {
@@ -519,6 +548,10 @@
                 window.Globe3DView.attach(globeEl.current, {
                     stations,
                     selectedStation: selectedSatStation,
+                    center: mapRef.current?.getCenter(),
+                    zoom: mapRef.current?.getZoom(),
+                    autoZoom: autoGlobeRef.current,
+                    onSurfaceView: showSurfaceMap,
                 });
                 window.Globe3DView.setFilter('gps', satelliteFilters.gps);
                 window.Globe3DView.setFilter('galileo', satelliteFilters.galileo);
@@ -526,6 +559,7 @@
                 window.Globe3DView.setFilter('glonass', satelliteFilters.glonass);
                 window.Globe3DView.setEarthTexture(globeTexture);
             }
+            return () => window.Globe3DView?.detach();
         }, [isGlobeMode]);
 
         useEffect(() => {
@@ -578,7 +612,7 @@
             const northEast = L.latLng(24.5, 120.0);
             const vietnamBounds = L.latLngBounds(southWest, northEast);
             map.setMaxBounds(vietnamBounds);
-            map.setMinZoom(5);
+            map.setMinZoom(4);
 
             // Sovereign island markers for Hoang Sa & Truong Sa
             const hsMarker = L.marker([16.530, 112.020], {
@@ -985,8 +1019,8 @@
 
         return (
             <div className="station-map-container">
-                <div ref={globeEl} className="station-map-globe-canvas" style={{ display: isGlobeMode ? 'block' : 'none' }}></div>
-                <div ref={mapEl} className="station-map-canvas" style={{ display: isGlobeMode ? 'none' : 'block' }}></div>
+                <div ref={globeEl} className={`station-map-globe-canvas${isGlobeMode ? ' is-visible' : ''}`} aria-hidden={!isGlobeMode}></div>
+                <div ref={mapEl} className={`station-map-canvas${isGlobeMode ? ' is-hidden' : ''}`} aria-hidden={isGlobeMode}></div>
 
                 {mapError && (
                     <div className="station-map-load-error" role="alert">
@@ -1005,7 +1039,7 @@
                             type="button"
                             title={isGlobeMode ? "Trở về Bản đồ 2D (Leaflet Map)" : "Quả địa cầu 3D (Full 3D Earth Globe - satellitemap.space style)"}
                             aria-label="3D Globe"
-                            onClick={() => setIsGlobeMode(!isGlobeMode)}
+                            onClick={() => isGlobeMode ? showSurfaceMap() : enterGlobeMode()}
                         >
                             <i className={`bi ${isGlobeMode ? 'bi-map' : 'bi-globe-asia-australia'}`}></i>
                         </button>
@@ -1406,6 +1440,14 @@
                     <div className="station-map-globe-dock">
                         <button
                             type="button"
+                            className="globe-dock-btn"
+                            onClick={() => window.Globe3DView?.focusVietnam(true, 90)}
+                            title="Xem toàn bộ vệ tinh GNSS và quỹ đạo"
+                        >
+                            <i className="bi bi-globe"></i> Quỹ đạo
+                        </button>
+                        <button
+                            type="button"
                             className="globe-dock-btn active"
                             onClick={() => window.Globe3DView?.focusVietnam(true)}
                             title="Tập trung cận cảnh vào Việt Nam"
@@ -1446,7 +1488,7 @@
                         <button
                             type="button"
                             className="globe-dock-btn text-warning"
-                            onClick={() => setIsGlobeMode(false)}
+                            onClick={() => showSurfaceMap()}
                             title="Chuyển về bản đồ 2D phẳng"
                         >
                             <i className="bi bi-map"></i> Bản đồ 2D

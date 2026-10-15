@@ -156,9 +156,21 @@ async def send_generic_command(
         raise HTTPException(status_code=403, detail="Coordinators can only send specific commands.")
     if not auth.has_permission(current_user, auth.Permission.EDIT_CHIP_CONFIG):
          raise HTTPException(status_code=403, detail="Permission denied.")
+
+    if command.command == "PROVISION_DEVICE":
+        name = command.payload.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise HTTPException(status_code=400, detail="Tên không được để trống")
     
     # 1. Lấy thiết bị
     device = await crud.get_device_by_serial(db, serial)
+    if not device and command.command == "PROVISION_DEVICE" and serial in mqtt_handler.device_telemetry_cache:
+        # Discovery does not create DB rows. Explicit admin provisioning must
+        # register and deploy a server credential before configuring the agent.
+        if not auth.has_permission(current_user, auth.Permission.MANAGE_LICENSE):
+            raise HTTPException(status_code=403, detail="Bạn không có quyền đăng ký và cấp token cho trạm mới.")
+        await auto_deploy_device_token(serial, db, current_user)
+        device = await crud.get_device_by_serial(db, serial)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
@@ -166,9 +178,6 @@ async def send_generic_command(
     if command.command == "PROVISION_DEVICE":
         # Provisioning must persist the chosen name before sending it to Pi.
         # Reuse rename so offline broadcasts and explicit renames agree.
-        name = command.payload.get("name")
-        if not isinstance(name, str) or not name.strip():
-            raise HTTPException(status_code=400, detail="Tên không được để trống")
         from .users import rename_device
         return await rename_device(serial, schemas.DeviceRename(name=name.strip()), db, current_user)
     await crud.log_system_event(

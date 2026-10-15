@@ -64,3 +64,47 @@ class StationNamePreservationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error.exception.status_code, 400)
         self.db.commit.assert_not_awaited()
         dispatch.assert_not_awaited()
+
+    async def test_discovered_pi_registers_before_provisioning(self):
+        self.serial = 'PI_0bd46c72e7be'
+        self.device.serial = self.serial
+        calls = []
+
+        async def register(serial, db, user):
+            calls.append('register')
+            self.assertEqual(serial, self.serial)
+
+        async def rename(serial, request, db, user):
+            calls.append('rename')
+            self.assertEqual(request.name, 'Ubuntu station')
+            return {'status': 'success', 'name': request.name}
+
+        with patch.object(crud, 'get_device_by_serial', AsyncMock(side_effect=[None, self.device])), \
+             patch.object(devices, 'auto_deploy_device_token', AsyncMock(side_effect=register)), \
+             patch.object(users, 'rename_device', AsyncMock(side_effect=rename)), \
+             patch.object(mqtt, 'device_telemetry_cache', {self.serial: {'status': 'unprovisioned'}}):
+            result = await devices.send_generic_command(self.serial,
+                schemas.Command(command='PROVISION_DEVICE', payload={'name': ' Ubuntu station '}), self.db, self.admin)
+        self.assertEqual(calls, ['register', 'rename'])
+        self.assertEqual(result['name'], 'Ubuntu station')
+
+    async def test_arbitrary_command_does_not_register_unknown_device(self):
+        with patch.object(crud, 'get_device_by_serial', AsyncMock(return_value=None)), \
+             patch.object(devices, 'auto_deploy_device_token', AsyncMock()) as register, \
+             patch.object(mqtt, 'device_telemetry_cache', {self.serial: {'status': 'online'}}):
+            with self.assertRaises(HTTPException) as error:
+                await devices.send_generic_command(self.serial,
+                    schemas.Command(command='REBOOT', payload={}), self.db, self.admin)
+        self.assertEqual(error.exception.status_code, 404)
+        register.assert_not_awaited()
+
+    async def test_provision_cannot_bypass_license_permission(self):
+        with patch.object(crud, 'get_device_by_serial', AsyncMock(return_value=None)), \
+             patch.object(devices, 'auto_deploy_device_token', AsyncMock()) as register, \
+             patch.object(devices.auth, 'has_permission', side_effect=lambda user, permission: permission != devices.auth.Permission.MANAGE_LICENSE), \
+             patch.object(mqtt, 'device_telemetry_cache', {self.serial: {'status': 'online'}}):
+            with self.assertRaises(HTTPException) as error:
+                await devices.send_generic_command(self.serial,
+                    schemas.Command(command='PROVISION_DEVICE', payload={'name': 'Station'}), self.db, self.admin)
+        self.assertEqual(error.exception.status_code, 403)
+        register.assert_not_awaited()

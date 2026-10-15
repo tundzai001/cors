@@ -53,6 +53,11 @@ for (const change of [{ token_synced: false }, { token_deployment_pending: true 
   assert.equal(hasLicenseTab(render(pending)), true, 'Unconfirmed token must retain recovery tab');
 }
 assert.equal(window.CorsDashboardShared.getMapEffectiveStatus({ ...device, status: 'offline' }), 'offline');
+const discovered = { ...device, status: 'awaiting_license', system_info: { auth_status: {
+  server_token_present: false, token_synced: false, agent_token_present: true,
+  needs_token_deploy: true, token_check_available: true, license_bypass: false,
+} } };
+assert.equal(hasLicenseTab(render(discovered)), true, 'MQTT discovery with a local token must show server registration');
 if (process.argv[2]) {
   const escape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
   const html = tree => {
@@ -73,3 +78,17 @@ if (process.argv[2]) {
     </head><body data-bs-theme="dark"><main style="max-width:1200px;margin:40px auto">${html(syncedTree)}</main></body></html>`);
 }
 console.log('PASS: confirmed token hides license tab; runtime wait, offline and token recovery preserved');
+
+vm.runInContext(fs.readFileSync(path.join(dist, 'dashboard-forms.min.js'), 'utf8'), context);
+(async () => {
+  let attempted = false;
+  const tree = window.ProvisionForm({
+    device: { serial: 'PI_0bd46c72e7be', name: 'Ubuntu station' },
+    currentUser: { role: 'admin' },
+    onProvision: async () => { attempted = true; throw new Error('Already reported through toast'); },
+  });
+  const form = collect(tree).find(node => node.type === 'form');
+  await assert.doesNotReject(form.props.onSubmit({ preventDefault() {} }));
+  assert.equal(attempted, true);
+  console.log('PASS: provisioning error does not escape as an unhandled promise');
+})().catch(error => { console.error(error); process.exitCode = 1; });

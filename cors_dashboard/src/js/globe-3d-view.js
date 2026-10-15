@@ -11,6 +11,8 @@
             this.renderer = null;
             this.controls = null;
             this.animFrameId = null;
+            this.lastFrameAt = null;
+            this.lastRenderAt = null;
             this.resizeObserver = null;
 
             this.earthMesh = null;
@@ -39,7 +41,7 @@
             // Camera focus animation
             this.isTweening = false;
             this.tweenStartTime = 0;
-            this.tweenDuration = 1000;
+            this.tweenDuration = 1200;
             this.tweenStartPos = null;
             this.tweenEndPos = null;
             this.tweenStartTarget = null;
@@ -54,6 +56,7 @@
             this._onPointerMove = this._onPointerMove.bind(this);
             this._onPointerClick = this._onPointerClick.bind(this);
             this._animate = this._animate.bind(this);
+            this._onVisibilityChange = this._onVisibilityChange.bind(this);
         }
 
         attach(containerEl, options = {}) {
@@ -73,6 +76,11 @@
             }
 
             this.isActive = true;
+            this.onSurfaceView = options.onSurfaceView || null;
+            // React may mount a fresh container after leaving the map view.
+            this.container.appendChild(this.renderer.domElement);
+            this.container.appendChild(this.hoverTooltipEl);
+            this.satelliteLayer?.start();
             this.container.style.display = 'block';
             this._onResize();
 
@@ -85,15 +93,37 @@
                 this.satelliteLayer.updateStations(options.stations, options.selectedStation);
             }
 
-            this.focusVietnam(false);
+            const center = options.center || { lat: 16, lng: 108 };
+            const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            // Match the Leaflet scale in both directions. Automatic zoom-out
+            // continues from this altitude instead of jumping to an overview.
+            const metersPerPixel = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, options.zoom || 6);
+            const altitudeKm = metersPerPixel * this.container.clientHeight / 2000 / Math.tan(this.camera.fov * Math.PI / 360);
+            const distance = Math.max(5.08, Math.min(90, 5 + altitudeKm / 6371 * 5));
+            this.focusVietnam(false, options.autoZoom ? distance : reducedMotion ? 90 : distance, center);
+            if (!options.autoZoom && !reducedMotion) {
+                this.focusVietnam(true, 90, center);
+            }
 
-            if (!this.animFrameId) {
+            document.addEventListener('visibilitychange', this._onVisibilityChange);
+            this._onVisibilityChange();
+        }
+
+        _onVisibilityChange() {
+            if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+            this.animFrameId = null;
+            this.lastFrameAt = null;
+            this.lastRenderAt = null;
+            if (this.isActive && !document.hidden) {
+                this.satelliteLayer?.onOverlayTick();
                 this.animFrameId = requestAnimationFrame(this._animate);
             }
         }
 
         detach() {
             this.isActive = false;
+            this.onSurfaceView = null;
+            document.removeEventListener('visibilitychange', this._onVisibilityChange);
             if (this.animFrameId) {
                 cancelAnimationFrame(this.animFrameId);
                 this.animFrameId = null;
@@ -103,9 +133,10 @@
                 this.resizeObserver = null;
             }
             if (this.container) {
-                this.container.style.display = 'none';
+                this.container.style.display = '';
             }
             if (this.satelliteLayer) {
+                this.satelliteLayer.stop();
                 this.satelliteLayer.closeDetailCard();
             }
             if (this.hoverTooltipEl) {
@@ -125,12 +156,12 @@
             this.scene.add(this.worldBordersGroup);
             this.scene.add(this.vietnamBoundariesGroup);
 
-            this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+            this.camera = new THREE.PerspectiveCamera(45, width / height, 0.01, 1000);
             this.camera.position.set(-2.0, 3.5, -9.5);
 
-            this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+            this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'default' });
             this.renderer.setSize(width, height);
-            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.0));
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
             this.renderer.setClearColor(0x020611, 1.0);
             this.container.innerHTML = '';
             this.container.appendChild(this.renderer.domElement);
@@ -149,6 +180,7 @@
                 this.controls.minDistance = 5.06; // Allows zooming down to ~75km above surface
                 this.controls.maxDistance = 120.0; // Allows zooming out to view full orbits
                 this.controls.target.set(0, 0, 0);
+                this.controls.addEventListener('start', () => { this.isTweening = false; });
             }
 
             // Balanced lighting for true-color Blue Marble Earth
@@ -167,7 +199,7 @@
 
         _createStarfield() {
             const THREE = window.THREE;
-            const starCount = 2800;
+            const starCount = 1200;
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(starCount * 3);
             const colors = new Float32Array(starCount * 3);
@@ -194,10 +226,10 @@
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             const material = new THREE.PointsMaterial({
-                size: 1.2,
+                size: 0.7,
                 vertexColors: true,
                 transparent: true,
-                opacity: 0.85,
+                opacity: 0.3,
                 depthWrite: false,
             });
             this.starfield = new THREE.Points(geometry, material);
@@ -258,6 +290,8 @@
                 if (!resp.ok) return;
                 const data = await resp.json();
                 if (!data || !data.features || !window.THREE) return;
+
+                this.countryFeatures = data.features;
 
                 const THREE = window.THREE;
                 const Math3D = window.Globe3DMath;
@@ -339,10 +373,10 @@
             }
         }
 
-        focusVietnam(animate = true) {
+        focusVietnam(animate = true, distance = 7.8, center = { lat: 16, lng: 108 }) {
             const Math3D = window.Globe3DMath;
-            const normal = (Math3D?.latLonAltToVector3(16.0, 108.0, 0) || new window.THREE.Vector3(-1.48, 1.38, -4.57)).normalize();
-            const targetPos = new window.THREE.Vector3(normal.x * 7.8, normal.y * 7.8, normal.z * 7.8);
+            const normal = (Math3D?.latLonAltToVector3(center.lat, center.lng, 0) || new window.THREE.Vector3(-1.48, 1.38, -4.57)).normalize();
+            const targetPos = normal.multiplyScalar(distance);
             const targetLook = new window.THREE.Vector3(0, 0, 0);
 
             if (!animate || !this.camera) {
@@ -427,7 +461,8 @@
             const targets = [
                 ...(this.satelliteLayer?.satellitesGroup?.children || []),
                 ...(this.satelliteLayer?.stationsGroup?.children || []),
-            ];
+                this.earthMesh,
+            ].filter(object => object?.visible);
 
             const intersects = this.raycaster.intersectObjects(targets, true);
             if (intersects.length > 0) {
@@ -453,6 +488,10 @@
             const stn = target.userData?.station;
 
             if (sat) {
+                if (this.satelliteLayer?.selectedSatellite?.key === sat.key) {
+                    this.hoverTooltipEl.style.display = 'none';
+                    return;
+                }
                 const cfg = {
                     gps: { name: 'GPS', flag: '🇺🇸', hex: '#22c55e' },
                     galileo: { name: 'Galileo', flag: '🇪🇺', hex: '#38bdf8' },
@@ -460,7 +499,7 @@
                     glonass: { name: 'GLONASS', flag: '🇷🇺', hex: '#ef4444' },
                 }[sat.constellationKey] || { name: 'GNSS', flag: '🛰️', hex: '#38bdf8' };
 
-                const pos = target.userData?.lastCalculated || {};
+                const pos = this.satelliteLayer?.satelliteMeshes.get(sat.key)?.mesh.userData.lastCalculated || {};
                 const altStr = Number.isFinite(pos.altKm) ? `${Math.round(pos.altKm).toLocaleString()} km` : '20,000 km';
                 const cleanName = (sat.name || '').replace(/\(.*?\)/g, '').trim();
 
@@ -498,6 +537,8 @@
         }
 
         _onPointerClick(event) {
+            // Click/touch must raycast at its own position, even without hover.
+            this._onPointerMove(event);
             if (!this.hoveredObject) return;
             let target = this.hoveredObject;
             while (target && !target.userData?.satItem && !target.userData?.station && target.parent) {
@@ -527,12 +568,18 @@
         }
 
         _animate(now) {
-            if (!this.isActive) return;
+            this.animFrameId = null;
+            if (!this.isActive || document.hidden) return;
             this.animFrameId = requestAnimationFrame(this._animate);
+            // Retina/120 Hz displays must not multiply idle WebGL work.
+            const interval = 1000 / (this.isTweening ? 60 : 30);
+            if (this.lastFrameAt !== null && now - this.lastFrameAt < interval - 0.5) return;
+            this.lastFrameAt = now;
 
+            let cameraAnimating = this.isTweening;
             if (this.isTweening) {
                 const progress = Math.min((now - this.tweenStartTime) / this.tweenDuration, 1.0);
-                const ease = 1.0 - Math.pow(1.0 - progress, 3);
+                const ease = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
                 this.camera.position.lerpVectors(this.tweenStartPos, this.tweenEndPos, ease);
                 if (this.controls && this.tweenStartTarget && this.tweenEndTarget) {
                     this.controls.target.lerpVectors(this.tweenStartTarget, this.tweenEndTarget, ease);
@@ -548,11 +595,54 @@
             // Camera Tracking Satellite
             if (this.isTrackingSatellite && this.satelliteLayer?.selectedSatellite && this.controls) {
                 const satRec = this.satelliteLayer.satelliteMeshes.get(this.satelliteLayer.selectedSatellite.key);
-                if (satRec?.mesh) this.controls.target.lerp(satRec.mesh.position, 0.08);
+                if (satRec?.mesh) {
+                    const delta = satRec.mesh.position.clone().sub(this.controls.target);
+                    if (delta.lengthSq() > 0.000001) {
+                        delta.multiplyScalar(0.2);
+                        this.controls.target.add(delta);
+                        this.camera.position.add(delta);
+                        cameraAnimating = true;
+                    }
+                }
             }
 
-            if (this.controls) this.controls.update();
-            if (this.renderer && this.scene && this.camera) this.renderer.render(this.scene, this.camera);
+            const cameraChanged = this.controls?.update();
+            // OrbitControls limits distance to its target, which may be a
+            // satellite. Enforce a separate Earth-centered camera boundary.
+            this._constrainCamera();
+            if (!this.isTweening && !this.isTrackingSatellite && this.onSurfaceView && this.camera.position.lengthSq() <= 5.45 ** 2) {
+                const surface = this.getSurfaceView();
+                if (surface) {
+                    const handoff = this.onSurfaceView;
+                    this.onSurfaceView = null;
+                    handoff(surface);
+                    return;
+                }
+            }
+            // Orbit propagation is 1 Hz. A stationary camera needs no duplicate
+            // frames between telemetry ticks; dragging/tweening stays at 30 FPS.
+            if (!cameraAnimating && !cameraChanged && this.lastRenderAt !== null && now - this.lastRenderAt < 1000) return;
+            if (this.renderer && this.scene && this.camera) {
+                this.renderer.render(this.scene, this.camera);
+                this.satelliteLayer?.updateSelectedLabel();
+                this.lastRenderAt = now;
+            }
+        }
+
+        _constrainCamera() {
+            const minRadius = (window.Globe3DMath?.SCENE_EARTH_RADIUS || 5) + 0.06;
+            if (this.camera?.position.lengthSq() < minRadius * minRadius) {
+                if (this.camera.position.lengthSq() < 0.000001) this.camera.position.set(0, 0, minRadius);
+                else this.camera.position.setLength(minRadius);
+                this.camera.lookAt(this.controls?.target || this.scene.position);
+                this.lastRenderAt = null;
+            }
+        }
+
+        getSurfaceView() {
+            if (!this.camera || !window.Globe3DMath) return null;
+            const direction = this.camera.getWorldDirection(new window.THREE.Vector3());
+            return window.Globe3DMath.surfaceViewFromRay(this.camera.position, direction, this.camera.fov, this.container.clientHeight);
         }
     }
 

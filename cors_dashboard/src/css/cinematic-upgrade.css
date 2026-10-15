@@ -29,6 +29,17 @@ html[data-quality="balanced"] .data-pulse-ring {
     animation-duration: 5.5s;
 }
 
+/* Keep full-screen atmosphere static on the default power budget. Moving
+   noise and blurred layers force continuous Retina-sized compositing. */
+html:is([data-quality="balanced"], [data-quality="lite"]) .enterprise-homepage :is(.noise-overlay, .aurora-band, .landing-grid, .landing-orb) {
+    animation: none !important;
+    will-change: auto;
+}
+
+html:is([data-quality="balanced"], [data-quality="lite"]) .enterprise-homepage .aurora-band {
+    filter: none;
+}
+
 html[data-quality="lite"] * {
     scroll-behavior: auto !important;
 }

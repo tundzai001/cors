@@ -181,6 +181,8 @@ const ProvisionForm = memo(function ProvisionForm({ device, currentUser = {}, on
         setIsSubmitting(true);
         try {
             await onProvision(device.serial, stationName);
+        } catch {
+            // The provisioning handler already reports the failure via toast.
         } finally {
             setIsSubmitting(false);
         }

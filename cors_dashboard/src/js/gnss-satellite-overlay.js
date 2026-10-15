@@ -64,11 +64,22 @@
         }
 
         async fetchTle() {
+            if (this.tleRequest) return this.tleRequest;
+            this.tleRequest = this._fetchTle();
+            try {
+                return await this.tleRequest;
+            } finally {
+                this.tleRequest = null;
+            }
+        }
+
+        async _fetchTle() {
             try {
                 const resp = await (window.apiFetch || fetch)('/api/gnss/satellites/tle');
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
                 if (!data || !data.constellations) return;
+                this.tleInfo = { is_stale: data.is_stale, updated_at_utc: data.updated_at_utc };
 
                 const satLib = window.satellite;
                 if (!satLib) {
@@ -86,7 +97,7 @@
                                     ...satItem,
                                     satrec,
                                     constellationKey: constKey,
-                                    key: `${constKey}:${satItem.code}`,
+                                    key: `${constKey}:${satItem.norad_id || satItem.code}`,
                                 });
                             }
                         } catch (err) {

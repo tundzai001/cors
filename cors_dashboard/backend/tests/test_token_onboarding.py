@@ -13,7 +13,7 @@ from app import crud, license_manager, models, mqtt
 
 class TokenOnboardingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.serial = '10000000e44764d2'
+        self.serial = 'PI_0bd46c72e7be'
         self.db = SimpleNamespace(execute=AsyncMock(), add=Mock(), commit=AsyncMock(),
                                   refresh=AsyncMock(), rollback=AsyncMock())
         source = Path(__file__).parents[1] / 'app/routers/devices.py'

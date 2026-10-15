@@ -445,6 +445,7 @@ const SignalWaveform = () => {
         let gradient = null;
         let pageVisible = document.visibilityState === 'visible';
         let sectionVisible = true;
+        let lastFrameAt = 0;
 
         const handleResize = () => {
             if (!canvas) return;
@@ -473,6 +474,12 @@ const SignalWaveform = () => {
         const draw = () => {
             animationFrameId = null;
             if (!pageVisible || !sectionVisible) return;
+            const now = performance.now();
+            if (!reducedMotion && now - lastFrameAt < (window.CorsPerformance?.frameInterval || 1000 / 30)) {
+                scheduleIfVisible();
+                return;
+            }
+            lastFrameAt = now;
             ctx.clearRect(0, 0, width, height);
 
             if (!gradient) {
@@ -616,7 +623,7 @@ const HeroThreeScene = () => {
         const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
         camera.position.set(0, 1.62, 7.6);
 
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'default' });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualitySettings.threePixelRatio || 1.35));
         renderer.setClearColor(0x000000, 0);
         mount.appendChild(renderer.domElement);
@@ -847,7 +854,7 @@ const HeroThreeScene = () => {
         let rafId = null;
         let width = 0;
         let height = 0;
-        let visible = true;
+        let visible = document.visibilityState !== 'hidden';
         let sectionVisible = true;
         let lastFrameAt = 0;
 
@@ -868,7 +875,7 @@ const HeroThreeScene = () => {
 
         const onVisibilityChange = () => {
             visible = document.visibilityState !== 'hidden';
-            if (visible && !rafId) animate();
+            if (visible && sectionVisible && !rafId) animate();
         };
 
         const clock = new THREE.Clock();

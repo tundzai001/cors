@@ -550,7 +550,9 @@ def get_machine_serial():
         try:
             with open(SERIAL_FILE_PATH, 'r') as f:
                 saved_serial = f.read().strip()
-                if saved_serial.startswith("LP_") and len(saved_serial) > 10:
+                if (saved_serial.startswith("LP_") and len(saved_serial) > 10) or re.fullmatch(
+                    r'(?:PI_[0-9a-f]{12}|[0-9a-f]{16})', saved_serial, re.IGNORECASE
+                ):
                     return saved_serial
         except Exception:
             pass
