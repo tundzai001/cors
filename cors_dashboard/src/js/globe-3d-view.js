@@ -434,6 +434,9 @@
             this.filters[key] = value;
             if (key === 'showOrbits' && this.satelliteLayer?.singleOrbitGroup) {
                 this.satelliteLayer.singleOrbitGroup.visible = !!value;
+                if (!value) {
+                    this.satelliteLayer.singleOrbitGroup.clear();
+                }
             }
             if (key === 'showBeams' && this.satelliteLayer?.beamsGroup) {
                 this.satelliteLayer.beamsGroup.visible = !!value;

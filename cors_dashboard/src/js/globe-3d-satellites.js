@@ -164,23 +164,30 @@
 
                     mesh.userData.lastCalculated = { lat, lon, altKm, elDeg, azDeg };
 
-                    // Laser beam to visible satellite
-                    if (isVisible && obsPos3D && this.beamsGroup) {
+                    // Laser beam to visible satellite (clean & uncluttered)
+                    const showAllBeams = this.globe.filters?.showBeams === true;
+                    const isTargetSat = this.selectedSatellite?.key === key;
+
+                    if (isVisible && obsPos3D && this.beamsGroup && (isTargetSat || showAllBeams)) {
                         const cfg = CONSTELLATIONS[satItem.constellationKey];
                         const rayGeo = new THREE.BufferGeometry().setFromPoints([obsPos3D, pos3D]);
                         const rayMat = new THREE.LineBasicMaterial({
-                            color: cfg.color,
+                            color: isTargetSat ? 0x00f2ff : cfg.color,
                             transparent: true,
-                            opacity: 0.45,
+                            opacity: isTargetSat ? 0.9 : 0.12,
                             blending: THREE.AdditiveBlending,
                         });
                         this.beamsGroup.add(new THREE.Line(rayGeo, rayMat));
 
                         // 3D IPP Point at 350km
                         const ippPos = Math3D.calculateIpp3D(obsPos3D, pos3D);
-                        if (ippPos) {
-                            const ippGeo = new THREE.SphereGeometry(0.06, 8, 8);
-                            const ippMat = new THREE.MeshBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.85 });
+                        if (ippPos && (isTargetSat || showAllBeams)) {
+                            const ippGeo = new THREE.SphereGeometry(isTargetSat ? 0.08 : 0.035, 8, 8);
+                            const ippMat = new THREE.MeshBasicMaterial({
+                                color: isTargetSat ? 0x00f2ff : cfg.color,
+                                transparent: true,
+                                opacity: isTargetSat ? 0.95 : 0.35,
+                            });
                             const ippDot = new THREE.Mesh(ippGeo, ippMat);
                             ippDot.position.copy(ippPos);
                             this.beamsGroup.add(ippDot);
@@ -273,6 +280,7 @@
             if (!THREE || !satLib || !Math3D) return;
 
             this.singleOrbitGroup.clear();
+            this.singleOrbitGroup.visible = true;
             if (!satItem) return;
 
             const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;

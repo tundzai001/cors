@@ -179,8 +179,8 @@
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
-        const [globeOrbits, setGlobeOrbits] = useState(true);
-        const [globeBeams, setGlobeBeams] = useState(true);
+        const [globeOrbits, setGlobeOrbits] = useState(false);
+        const [globeBeams, setGlobeBeams] = useState(false);
         const [globeTexture, setGlobeTexture] = useState('dark');
         const [provincesLoaded, setProvincesLoaded] = useState(0);
         const [provincesList, setProvincesList] = useState([]);
