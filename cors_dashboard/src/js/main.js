@@ -208,6 +208,7 @@ function queueDashboardRender() {
     if (dashboardRafId !== null) return;
     dashboardRafId = requestAnimationFrame(() => {
         dashboardRafId = null;
+        if (globalState.currentView !== 'dashboard') return;
         if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) return;
         renderDashboard();
         lastRenderTime = Date.now();
@@ -229,13 +230,15 @@ function scheduleRender(priority = 'high') {
         deviceListNeedsUpdate = true;
         detailsPanelNeedsUpdate = true;
 
-        const now = Date.now();
-        const waitMs = Math.max(0, RENDER_INTERVAL - (now - lastRenderTime));
-        if (waitMs === 0) {
-            queueDashboardRender();
-        } else {
-            if (dashboardTimerId) clearTimeout(dashboardTimerId);
-            dashboardTimerId = setTimeout(queueDashboardRender, waitMs);
+        if (globalState.currentView === 'dashboard') {
+            const now = Date.now();
+            const waitMs = Math.max(0, RENDER_INTERVAL - (now - lastRenderTime));
+            if (waitMs === 0) {
+                queueDashboardRender();
+            } else {
+                if (dashboardTimerId) clearTimeout(dashboardTimerId);
+                dashboardTimerId = setTimeout(queueDashboardRender, waitMs);
+            }
         }
     }
 
@@ -337,6 +340,7 @@ window.ErrorBoundary = ErrorBoundary;
 // === SPLIT RENDER FUNCTIONS ===
 function renderDashboard() {
     //console.log("[DEBUG] renderDashboard() triggered! deviceListNeedsUpdate:", deviceListNeedsUpdate, "detailsPanelNeedsUpdate:", detailsPanelNeedsUpdate, "selectedDeviceSerial:", globalState.selectedDeviceSerial);
+    if (globalState.currentView !== 'dashboard') return;
     if (!deviceListNeedsUpdate && !detailsPanelNeedsUpdate) {
         //console.log("[DEBUG] renderDashboard() returned early because no update flags were set.");
         return;
@@ -374,6 +378,13 @@ function renderDashboard() {
         }
         const selectedDevice = globalState.devices.find(d => String(d.serial) === String(globalState.selectedDeviceSerial));
         ////console.log("[DEBUG] selectedDevice resolved for DetailsPanel:", selectedDevice);
+
+        if (!selectedDevice) {
+            detailsPanelRoot.render(null);
+            detailsPanelNeedsUpdate = false;
+            updateStaticUI();
+            return;
+        }
         
         ////console.log("[DEBUG] Triggering detailsPanelRoot.render()...");
         detailsPanelRoot.render(
@@ -395,42 +406,6 @@ function renderDashboard() {
             )
         );
         detailsPanelNeedsUpdate = false;
-
-        // Perform DOM inspection after React commits
-        setTimeout(() => {
-            const rootEl = document.getElementById('details-panel-root');
-            if (rootEl) {
-                //console.log("[DEBUG] DOM INSPECTION - details-panel-root children count:", rootEl.children.length, "innerHTML length:", rootEl.innerHTML.length);
-                
-                const rect = rootEl.getBoundingClientRect();
-                //console.log("[DEBUG] #details-panel-root size & position:", rect.width, "x", rect.height, "at", rect.left, ",", rect.top);
-                const style = window.getComputedStyle(rootEl);
-                //console.log("[DEBUG] #details-panel-root computed style - display:", style.display, "visibility:", style.visibility, "opacity:", style.opacity, "height:", style.height);
-                
-                const parentEl = rootEl.parentElement;
-                if (parentEl) {
-                    const pRect = parentEl.getBoundingClientRect();
-                    //////console.log("[DEBUG] Parent (.dashboard-main) size & position:", pRect.width, "x", pRect.height, "at", pRect.left, ",", pRect.top);
-                    const pStyle = window.getComputedStyle(parentEl);
-                    ////console.log("[DEBUG] Parent computed style - display:", pStyle.display, "visibility:", pStyle.visibility, "opacity:", pStyle.opacity, "height:", pStyle.height);
-                }
-
-                if (rootEl.children.length > 0) {
-                    const child = rootEl.children[0];
-                    const cRect = child.getBoundingClientRect();
-                    //console.log("[DEBUG] Child card size & position:", cRect.width, "x", cRect.height, "at", cRect.left, ",", cRect.top);
-                    const cStyle = window.getComputedStyle(child);
-                    //console.log("[DEBUG] Child computed style - display:", cStyle.display, "visibility:", cStyle.visibility, "opacity:", cStyle.opacity, "height:", cStyle.height);
-                    
-                    //console.log("[DEBUG] First child HTML tag:", child.tagName, "classes:", child.className, "style:", child.getAttribute('style'));
-                    //console.log("[DEBUG] First child innerText preview:", child.innerText ? child.innerText.substring(0, 100) : 'none');
-                } else {
-                    console.warn("[DEBUG] DOM INSPECTION WARNING: details-panel-root has 0 children!");
-                }
-            } else {
-                console.error("[DEBUG] DOM INSPECTION ERROR: #details-panel-root element not found in DOM!");
-            }
-        }, 150);
     }
 
     updateStaticUI();

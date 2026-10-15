@@ -29,8 +29,23 @@ for (const [constellationKey, code] of [['gps', 'G08'], ['glonass', 'R05'], ['ga
 assert.equal(overlay.getLiveRtcmSatellite({ constellationKey: 'gps', code: 'G09' }), null, 'stale satellite is not tracked');
 window.globalState.selectedDeviceSerial = 'PI_other';
 assert.equal(overlay.getLiveRtcmSatellites().length, 0, 'telemetry from a different station is never matched');
+window.globalState.selectedDeviceSerial = 'PI_station1';
+overlay.mapInstance = {};
+overlay.layerGroup = { hasLayer: () => false };
+window.L = {};
+window.satellite = { gstime: () => 0 };
+overlay.propagateTick();
+assert.equal(overlay.stats.liveRtcmCount, 4, 'propagation updates live RTCM stats without a stale variable reference');
 
 const mapSource = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/stations-map.js'), 'utf8');
 assert.match(mapSource, /zoomSnap:\s*0\.5[\s\S]*zoomDelta:\s*1[\s\S]*wheelPxPerZoomLevel:\s*35/,
   'wheel zoom should move faster with practical half-step precision');
-console.log('PASS: RTCM system and PRN matching, freshness, station isolation, and map zoom settings');
+
+const mainSource = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/main.js'), 'utf8');
+assert.match(mainSource, /if \(globalState\.currentView !== 'dashboard'\) return;/,
+  'background status updates must not render the hidden dashboard');
+assert.match(mainSource, /if \(!selectedDevice\) \{\s*detailsPanelRoot\.render\(null\)/,
+  'details panel must be cleared when no selected device exists');
+assert.doesNotMatch(mainSource, /DOM INSPECTION WARNING/,
+  'remove the timing-sensitive DOM warning that reported normal React commits as failures');
+console.log('PASS: RTCM system/PRN matching, live propagation stats, view-isolated rendering, and map zoom settings');

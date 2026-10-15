@@ -726,7 +726,6 @@ const DetailsPanel = memo(function DetailsPanel({
     onLock,
     onUnlock
 }) {
-    console.log("[DetailsPanel] RENDERING CYCLE! device:", device, "currentUser:", currentUser, "nmeaData:", nmeaData);
     const isAdmin = currentUser?.role === 'admin';
     const tokenConfirmed = window.CorsDashboardShared?.isAccessTokenSynced?.(device) === true;
     const reportedLifecycle = String(device?.status || 'offline').toLowerCase();
@@ -817,12 +816,10 @@ const DetailsPanel = memo(function DetailsPanel({
     };
 
     useEffect(() => {
-        console.log("[DetailsPanel] useEffect triggered! device.serial:", device?.serial, "device.status:", device?.status, "activeTab:", activeTab);
         if (!device) return;
 
         const isDeviceSwitched = lastSerialRef.current !== device.serial;
         const wasGnssConfigured = isDeviceSwitched ? false : lastGnssConfiguredRef.current;
-        console.log("[DetailsPanel] isDeviceSwitched:", isDeviceSwitched, "lastSerialRef:", lastSerialRef.current, "device.serial:", device.serial);
         lastSerialRef.current = device.serial;
         lastGnssConfiguredRef.current = isGnssConfigured;
 

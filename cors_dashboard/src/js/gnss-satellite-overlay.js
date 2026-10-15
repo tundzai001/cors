@@ -484,7 +484,7 @@
                 byConstellation: constCounts,
                 isStationOffline,
                 hasLiveRtcm,
-                liveRtcmCount: liveSats.length,
+                liveRtcmCount: liveRtcmSatellites.length,
             };
         }
 
