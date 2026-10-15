@@ -179,9 +179,7 @@
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
-        const [globeOrbits, setGlobeOrbits] = useState(false);
-        const [globeBeams, setGlobeBeams] = useState(false);
-        const [globeTexture, setGlobeTexture] = useState('dark');
+        const [globeTexture, setGlobeTexture] = useState('blue-marble');
         const [provincesLoaded, setProvincesLoaded] = useState(0);
         const [provincesList, setProvincesList] = useState([]);
         const [selectedProvince, setSelectedProvince] = useState('');
@@ -517,8 +515,6 @@
                 window.Globe3DView.setFilter('galileo', satelliteFilters.galileo);
                 window.Globe3DView.setFilter('beidou', satelliteFilters.beidou);
                 window.Globe3DView.setFilter('glonass', satelliteFilters.glonass);
-                window.Globe3DView.setFilter('showOrbits', globeOrbits);
-                window.Globe3DView.setFilter('showBeams', globeBeams);
                 window.Globe3DView.setEarthTexture(globeTexture);
             }
         }, [isGlobeMode]);
@@ -1341,40 +1337,15 @@
                         <div className="globe-dock-separator"></div>
                         <button
                             type="button"
-                            className={`globe-dock-btn ${globeOrbits ? 'active' : ''}`}
-                            onClick={() => {
-                                const next = !globeOrbits;
-                                setGlobeOrbits(next);
-                                window.Globe3DView?.setFilter('showOrbits', next);
-                            }}
-                            title="Bật/Tắt vòng quỹ đạo vệ tinh"
-                        >
-                            <i className="bi bi-bezier2"></i> Quỹ đạo
-                        </button>
-                        <button
-                            type="button"
-                            className={`globe-dock-btn ${globeBeams ? 'active' : ''}`}
-                            onClick={() => {
-                                const next = !globeBeams;
-                                setGlobeBeams(next);
-                                window.Globe3DView?.setFilter('showBeams', next);
-                            }}
-                            title="Bật/Tắt tia trạm & IPP"
-                        >
-                            <i className="bi bi-broadcast"></i> Tia trạm & IPP
-                        </button>
-                        <div className="globe-dock-separator"></div>
-                        <button
-                            type="button"
                             className="globe-dock-btn"
                             onClick={() => {
-                                const next = globeTexture === 'dark' ? 'night' : globeTexture === 'night' ? 'blue-marble' : 'dark';
+                                const next = globeTexture === 'blue-marble' ? 'night' : globeTexture === 'night' ? 'dark' : 'blue-marble';
                                 setGlobeTexture(next);
                                 window.Globe3DView?.setEarthTexture(next);
                             }}
-                            title="Đổi giao diện địa cầu (Dark / Night / Blue Marble)"
+                            title="Đổi giao diện địa cầu (Blue Marble / City Lights / Cyber Dark)"
                         >
-                            <i className="bi bi-palette"></i> {globeTexture === 'dark' ? 'Cyber Dark' : globeTexture === 'night' ? 'City Lights' : 'Blue Marble'}
+                            <i className="bi bi-palette"></i> {globeTexture === 'blue-marble' ? 'NASA Blue Marble' : globeTexture === 'night' ? 'City Lights' : 'Cyber Dark'}
                         </button>
                         <div className="globe-dock-separator"></div>
                         <button

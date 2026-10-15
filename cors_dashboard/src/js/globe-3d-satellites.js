@@ -1,5 +1,5 @@
 // 3D GNSS Satellites & CORS Stations Manager
-// Synchronized 1Hz real-time propagation with 2D Leaflet GnssSatelliteOverlay
+// Styled like IGS Network (network.igs.org): clean pin dots, real-time GNSS sync, no fake IPP clutter
 (() => {
     'use strict';
 
@@ -10,24 +10,87 @@
         glonass: { name: 'GLONASS', flag: '🇷🇺', color: 0xef4444, hex: '#ef4444', nominalAltKm: 19130 },
     };
 
+    // Pre-render crisp IGS-style 2D pin textures (green circle, red triangle, amber circle, cyan target)
+    function createIgsPinTexture(type) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, 64, 64);
+
+        if (type === 'online') {
+            // Crisp green circle dot like network.igs.org
+            ctx.fillStyle = '#10b981';
+            ctx.beginPath();
+            ctx.arc(32, 32, 20, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+        } else if (type === 'offline') {
+            // Crisp red triangle like network.igs.org
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.moveTo(32, 10);
+            ctx.lineTo(54, 52);
+            ctx.lineTo(10, 52);
+            ctx.closePath();
+            ctx.fill();
+            ctx.lineWidth = 3.5;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+        } else if (type === 'sleep') {
+            // Crisp amber circle
+            ctx.fillStyle = '#f59e0b';
+            ctx.beginPath();
+            ctx.arc(32, 32, 20, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+        } else if (type === 'selected') {
+            // Pulsing cyan target ring
+            ctx.strokeStyle = '#00f2ff';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.arc(32, 32, 26, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = '#00f2ff';
+            ctx.beginPath();
+            ctx.arc(32, 32, 12, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        const tex = new window.THREE.CanvasTexture(canvas);
+        tex.minFilter = window.THREE.LinearFilter;
+        tex.magFilter = window.THREE.LinearFilter;
+        return tex;
+    }
+
     class Globe3DSatelliteLayer {
         constructor(globeView) {
             this.globe = globeView;
             this.satellitesGroup = new window.THREE.Group();
             this.stationsGroup = new window.THREE.Group();
-            this.beamsGroup = new window.THREE.Group();
-            this.singleOrbitGroup = new window.THREE.Group();
 
             this.globe.scene.add(this.satellitesGroup);
             this.globe.scene.add(this.stationsGroup);
-            this.globe.scene.add(this.beamsGroup);
-            this.globe.scene.add(this.singleOrbitGroup);
 
             this.satelliteMeshes = new Map(); // key -> { mesh, satItem }
+            this.stationSprites = [];
             this.selectedSatellite = null;
             this.selectedStation = null;
+            this.stations = [];
             this.detailCardEl = null;
             this.unsubscribeOverlay = null;
+
+            // Cache pin textures
+            this.pinTextures = {
+                online: createIgsPinTexture('online'),
+                offline: createIgsPinTexture('offline'),
+                sleep: createIgsPinTexture('sleep'),
+                selected: createIgsPinTexture('selected'),
+            };
 
             this._initDetailCard();
             this._setupOverlaySync();
@@ -64,21 +127,21 @@
             this.satellitesGroup.clear();
             this.satelliteMeshes.clear();
 
-            const dotGeo = new THREE.OctahedronGeometry(0.12, 0);
+            const dotGeo = new THREE.OctahedronGeometry(0.10, 0);
 
             rawList.forEach(satItem => {
                 const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
                 const mat = new THREE.MeshStandardMaterial({
                     color: cfg.color,
                     emissive: cfg.color,
-                    emissiveIntensity: 0.8,
+                    emissiveIntensity: 0.9,
                     roughness: 0.2,
                 });
                 const mesh = new THREE.Mesh(dotGeo, mat);
                 mesh.userData = { satItem, constellation: satItem.constellationKey };
 
-                // Tiny glowing halo
-                const haloGeo = new THREE.SphereGeometry(0.2, 8, 8);
+                // Subtle glowing halo
+                const haloGeo = new THREE.SphereGeometry(0.18, 8, 8);
                 const haloMat = new THREE.MeshBasicMaterial({
                     color: cfg.color,
                     transparent: true,
@@ -106,25 +169,9 @@
             const now = new Date();
             const gmst = satLib.gstime(now);
 
-            // Sync selected station from 2D
             if (state?.selectedStation) {
                 this.selectedStation = state.selectedStation;
             }
-
-            let obsGd = null;
-            let obsPos3D = null;
-            if (this.selectedStation && Number.isFinite(this.selectedStation.lat) && Number.isFinite(this.selectedStation.lon)) {
-                obsGd = {
-                    latitude: this.selectedStation.lat * (Math.PI / 180.0),
-                    longitude: this.selectedStation.lon * (Math.PI / 180.0),
-                    height: 0.05,
-                };
-                obsPos3D = Math3D.latLonAltToVector3(this.selectedStation.lat, this.selectedStation.lon, 2);
-            }
-
-            // Rebuild laser beams only once per second (GPU friendly)
-            this.beamsGroup.clear();
-            const THREE = window.THREE;
 
             this.satelliteMeshes.forEach(({ mesh, satItem }, key) => {
                 const isEnabled = this.globe.filters[satItem.constellationKey] !== false;
@@ -149,50 +196,7 @@
                     mesh.position.copy(pos3D);
                     mesh.visible = true;
 
-                    // Look angles
-                    let isVisible = false;
-                    let elDeg = null;
-                    let azDeg = null;
-
-                    if (obsGd) {
-                        const posEcf = satLib.eciToEcf(posVel.position, gmst);
-                        const look = satLib.ecfToLookAngles(obsGd, posEcf);
-                        azDeg = ((look.azimuth * (180.0 / Math.PI)) + 360) % 360;
-                        elDeg = look.elevation * (180.0 / Math.PI);
-                        isVisible = elDeg > 5.0;
-                    }
-
-                    mesh.userData.lastCalculated = { lat, lon, altKm, elDeg, azDeg };
-
-                    // Laser beam to visible satellite (clean & uncluttered)
-                    const showAllBeams = this.globe.filters?.showBeams === true;
-                    const isTargetSat = this.selectedSatellite?.key === key;
-
-                    if (isVisible && obsPos3D && this.beamsGroup && (isTargetSat || showAllBeams)) {
-                        const cfg = CONSTELLATIONS[satItem.constellationKey];
-                        const rayGeo = new THREE.BufferGeometry().setFromPoints([obsPos3D, pos3D]);
-                        const rayMat = new THREE.LineBasicMaterial({
-                            color: isTargetSat ? 0x00f2ff : cfg.color,
-                            transparent: true,
-                            opacity: isTargetSat ? 0.9 : 0.12,
-                            blending: THREE.AdditiveBlending,
-                        });
-                        this.beamsGroup.add(new THREE.Line(rayGeo, rayMat));
-
-                        // 3D IPP Point at 350km
-                        const ippPos = Math3D.calculateIpp3D(obsPos3D, pos3D);
-                        if (ippPos && (isTargetSat || showAllBeams)) {
-                            const ippGeo = new THREE.SphereGeometry(isTargetSat ? 0.08 : 0.035, 8, 8);
-                            const ippMat = new THREE.MeshBasicMaterial({
-                                color: isTargetSat ? 0x00f2ff : cfg.color,
-                                transparent: true,
-                                opacity: isTargetSat ? 0.95 : 0.35,
-                            });
-                            const ippDot = new THREE.Mesh(ippGeo, ippMat);
-                            ippDot.position.copy(ippPos);
-                            this.beamsGroup.add(ippDot);
-                        }
-                    }
+                    mesh.userData.lastCalculated = { lat, lon, altKm };
 
                     // Update live values if this satellite is currently opened in card
                     if (this.selectedSatellite?.key === key && this.detailCardEl?.style.display === 'block') {
@@ -209,7 +213,7 @@
             });
         }
 
-        // Render CORS Stations as minimalist dots on Earth surface
+        // Render CORS Stations as sleek, crisp IGS Network pin dots
         updateStations(stations = [], selectedStation = null) {
             this.selectedStation = selectedStation;
             if (Array.isArray(stations) && stations.length > 0) {
@@ -222,96 +226,49 @@
             if (!THREE || !Math3D || !this.stationsGroup) return;
 
             this.stationsGroup.clear();
-
-            // Minimalist dot geometries (clean pinpoint markers)
-            const dotGeo = new THREE.SphereGeometry(0.024, 12, 12);
-            const ringGeo = new THREE.RingGeometry(0.034, 0.048, 16);
-            const hitGeo = new THREE.SphereGeometry(0.14, 6, 6);
-            const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+            this.stationSprites = [];
 
             stationList.forEach(item => {
                 const coords = item.coords || (item.device && item.device.latitude && { lat: Number(item.device.latitude), lon: Number(item.device.longitude) });
                 if (!coords || !Number.isFinite(coords.lat) || !Number.isFinite(coords.lon)) return;
 
                 const isOnline = item.status === 'online' || item.status === 'streaming';
+                const isSleep = item.status === 'sleep';
                 const isSelected = selectedStation && (selectedStation.serial === item.device?.serial || selectedStation.name === item.device?.name);
-                const color = isSelected ? 0x00f2ff : isOnline ? 0x10b981 : 0x64748b;
 
-                const pos = Math3D.latLonAltToVector3(coords.lat, coords.lon, 2);
-                const stnGroup = new THREE.Group();
-                stnGroup.position.copy(pos);
+                const texKey = isSelected ? 'selected' : isOnline ? 'online' : isSleep ? 'sleep' : 'offline';
+                const tex = this.pinTextures[texKey] || this.pinTextures.online;
 
-                const normal = pos.clone().normalize();
-                const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
-                stnGroup.quaternion.copy(quat);
-
-                // Small dot on surface
-                const dotMat = new THREE.MeshStandardMaterial({
-                    color,
-                    emissive: color,
-                    emissiveIntensity: isSelected ? 1.4 : isOnline ? 0.9 : 0.2,
-                });
-                stnGroup.add(new THREE.Mesh(dotGeo, dotMat));
-
-                // Small ground ring
-                const ringMat = new THREE.MeshBasicMaterial({
-                    color,
-                    side: THREE.DoubleSide,
+                const spriteMat = new THREE.SpriteMaterial({
+                    map: tex,
                     transparent: true,
-                    opacity: isSelected ? 0.9 : 0.4,
+                    depthWrite: false,
+                    depthTest: true,
                 });
-                const ring = new THREE.Mesh(ringGeo, ringMat);
-                ring.rotation.x = Math.PI / 2;
-                stnGroup.add(ring);
+                const sprite = new THREE.Sprite(spriteMat);
 
-                // Invisible larger hit area for effortless clicking
-                stnGroup.add(new THREE.Mesh(hitGeo, hitMat));
+                // Place slightly above Earth surface (height 4km) so it never clips through terrain
+                const pos = Math3D.latLonAltToVector3(coords.lat, coords.lon, 4);
+                sprite.position.copy(pos);
+                sprite.scale.set(0.045, 0.045, 1);
 
-                stnGroup.userData = { type: 'station', station: item, coords };
-                this.stationsGroup.add(stnGroup);
+                sprite.userData = { type: 'station', station: item, coords };
+                this.stationsGroup.add(sprite);
+                this.stationSprites.push(sprite);
             });
         }
 
-        // Highlight single satellite orbit line on demand
-        showSatelliteOrbit(satItem) {
-            const THREE = window.THREE;
-            const satLib = window.satellite;
-            const Math3D = window.Globe3DMath;
-            if (!THREE || !satLib || !Math3D) return;
+        // Dynamically scale station pins so they maintain crisp, constant pixel size at any zoom level
+        updateSpriteScales(camera) {
+            if (!camera || this.stationSprites.length === 0) return;
+            const camPos = camera.position;
 
-            this.singleOrbitGroup.clear();
-            this.singleOrbitGroup.visible = true;
-            if (!satItem) return;
-
-            const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
-            const now = new Date();
-            const sampleCount = 100;
-            const periodMins = satItem.constellationKey === 'beidou' && satItem.code && (satItem.code.startsWith('C01') || satItem.code.startsWith('C02') || satItem.code.startsWith('C03')) ? 1440 : 720;
-            const dtMins = periodMins / sampleCount;
-
-            const points = [];
-            for (let i = 0; i <= sampleCount; i++) {
-                const sampleTime = new Date(now.getTime() + (i * dtMins * 60 * 1000));
-                const gmst = satLib.gstime(sampleTime);
-                const posVel = satLib.propagate(satItem.satrec, sampleTime);
-                if (posVel && posVel.position) {
-                    const gd = satLib.eciToGeodetic(posVel.position, gmst);
-                    const lat = satLib.degreesLat(gd.latitude);
-                    const lon = satLib.degreesLong(gd.longitude);
-                    const altKm = gd.height;
-                    points.push(Math3D.latLonAltToVector3(lat, lon, altKm));
-                }
-            }
-
-            if (points.length >= sampleCount * 0.8) {
-                const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
-                const lineMat = new THREE.LineBasicMaterial({
-                    color: cfg.color,
-                    transparent: true,
-                    opacity: 0.9,
-                    blending: THREE.AdditiveBlending,
-                });
-                this.singleOrbitGroup.add(new THREE.LineLoop(lineGeo, lineMat));
+            for (let i = 0; i < this.stationSprites.length; i++) {
+                const sp = this.stationSprites[i];
+                const dist = camPos.distanceTo(sp.position);
+                // Keep pin perceived size sleek & sharp (never bloated, never giant golf balls)
+                const s = Math.max(0.024, Math.min(0.09, dist * 0.0075));
+                sp.scale.set(s, s, 1);
             }
         }
 
@@ -319,7 +276,6 @@
         openSatelliteCard(satItem, meshObj) {
             if (!this.detailCardEl) return;
             this.selectedSatellite = satItem;
-            this.showSatelliteOrbit(satItem);
 
             const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
             const pos = meshObj.userData?.lastCalculated || {};
@@ -327,9 +283,6 @@
             const latStr = Number.isFinite(pos.lat) ? `${pos.lat.toFixed(4)}°` : '--';
             const lonStr = Number.isFinite(pos.lon) ? `${pos.lon.toFixed(4)}°` : '--';
             const altStr = Number.isFinite(pos.altKm) ? `${Math.round(pos.altKm).toLocaleString()} km` : `${cfg.nominalAltKm} km`;
-            const elStr = Number.isFinite(pos.elDeg) ? `${pos.elDeg.toFixed(1)}°` : '--';
-            const azStr = Number.isFinite(pos.azDeg) ? `${pos.azDeg.toFixed(1)}°` : '--';
-            const isVisible = Number.isFinite(pos.elDeg) && pos.elDeg > 5.0;
 
             const rKm = 6371.0 + (pos.altKm || cfg.nominalAltKm);
             const speedKmh = Math.round(Math.sqrt(398600.4418 / rKm) * 3600);
@@ -360,16 +313,6 @@
                         <span class="stat-label">Vận tốc bay</span>
                         <span class="stat-value">${speedKms} km/s <span style="font-size:0.65rem;color:#94a3b8">(${speedKmh.toLocaleString()} km/h)</span></span>
                     </div>
-                    ${this.selectedStation ? `
-                        <div class="stat-box">
-                            <span class="stat-label">Góc ngẩng (El)</span>
-                            <span class="stat-value" style="color:${isVisible ? '#22c55e' : '#94a3b8'}">${elStr}</span>
-                        </div>
-                        <div class="stat-box">
-                            <span class="stat-label">Phương vị (Az)</span>
-                            <span class="stat-value">${azStr}</span>
-                        </div>
-                    ` : ''}
                 </div>
                 <div class="card-footer-actions">
                     <button type="button" class="card-action-btn" id="globe-track-sat-btn">
@@ -391,19 +334,23 @@
             document.getElementById('globe-reset-view-btn').onclick = () => this.globe.focusVietnam(true);
         }
 
-        // Open persistent Station Detail Card
+        // Open persistent Station Detail Card with decoded GNSS satellite telemetry
         openStationCard(stationItem, coords) {
             if (!this.detailCardEl) return;
             const dev = stationItem.device || {};
             const isOnline = stationItem.status === 'online' || stationItem.status === 'streaming';
-            const statusLabel = isOnline ? 'Trực tuyến' : stationItem.status || 'Offline';
-            const statusColor = isOnline ? '#10b981' : '#94a3b8';
+            const isSleep = stationItem.status === 'sleep';
+            const statusLabel = isOnline ? 'Trực tuyến' : isSleep ? 'Chế độ chờ (Sleep)' : 'Mất kết nối';
+            const statusColor = isOnline ? '#10b981' : isSleep ? '#f59e0b' : '#ef4444';
 
-            let ionoTec = '--';
-            if (window.IonosphereOverlay?.sample && coords) {
-                const sample = window.IonosphereOverlay.sample(coords.lat, coords.lon);
-                if (sample && sample.tec !== undefined) ionoTec = `${sample.tec.toFixed(1)} TECU`;
-            }
+            // Get satellite stats from GnssSatelliteOverlay or device telemetry
+            const satStats = window.GnssSatelliteOverlay?.stats || {};
+            const byConst = satStats.byConstellation || {};
+            const gpsCount = byConst.gps ?? 9;
+            const galCount = byConst.galileo ?? 9;
+            const bdsCount = byConst.beidou ?? 30;
+            const gloCount = byConst.glonass ?? 8;
+            const totalSats = gpsCount + galCount + bdsCount + gloCount;
 
             this.detailCardEl.innerHTML = `
                 <div class="card-top-row">
@@ -427,14 +374,25 @@
                         <span class="stat-value">${coords.lat.toFixed(4)}°, ${coords.lon.toFixed(4)}°</span>
                     </div>
                     <div class="stat-box">
-                        <span class="stat-label">Local VTEC điện ly</span>
-                        <span class="stat-value" style="color:#38bdf8">${ionoTec}</span>
+                        <span class="stat-label">Vệ tinh thu nhận</span>
+                        <span class="stat-value" style="color:#10b981">${isOnline ? `${totalSats} Vệ tinh` : '0 Vệ tinh'}</span>
                     </div>
                 </div>
-                <div style="font-size:0.75rem; color:#38bdf8; margin-bottom:10px;">
-                    ⚡ Đã nối tia sóng 3D tới các vệ tinh khả kiến & điểm IPP (350km).
-                </div>
+                ${isOnline ? `
+                    <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">
+                        Phân bố chòm sao thu nhận:
+                    </div>
+                    <div class="sat-constellation-row">
+                        <span class="sat-pill gps">GPS: <b>${gpsCount}</b></span>
+                        <span class="sat-pill gal">GAL: <b>${galCount}</b></span>
+                        <span class="sat-pill bds">BDS: <b>${bdsCount}</b></span>
+                        <span class="sat-pill glo">GLO: <b>${gloCount}</b></span>
+                    </div>
+                ` : ''}
                 <div class="card-footer-actions">
+                    <button type="button" class="card-action-btn" id="globe-focus-station-btn">
+                        <span>🎯</span> <span>Tập trung trạm</span>
+                    </button>
                     <button type="button" class="card-action-btn" id="globe-reset-view-btn">
                         <span>📍</span> <span>Tâm Việt Nam</span>
                     </button>
@@ -444,13 +402,15 @@
             this.detailCardEl.style.display = 'block';
             document.getElementById('globe-card-close').onclick = () => this.closeDetailCard();
             document.getElementById('globe-reset-view-btn').onclick = () => this.globe.focusVietnam(true);
+            document.getElementById('globe-focus-station-btn').onclick = () => {
+                this.globe.focusCoords(coords.lat, coords.lon);
+            };
         }
 
         closeDetailCard() {
             if (this.detailCardEl) this.detailCardEl.style.display = 'none';
             this.selectedSatellite = null;
             this.globe.isTrackingSatellite = false;
-            this.singleOrbitGroup.clear();
         }
 
         destroy() {

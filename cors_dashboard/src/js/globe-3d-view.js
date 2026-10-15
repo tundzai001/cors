@@ -1,73 +1,7 @@
 // 3D Earth Globe WebGL Core (Three.js)
-// Renders Earth sphere, atmosphere, country boundaries & labels, controls & interaction
+// High-DPI NASA Blue Marble Earth, vector boundaries, sleek IGS Network station pins
 (() => {
     'use strict';
-
-    const KEY_COUNTRY_LABELS = [
-        { name: 'Việt Nam', lat: 15.5, lon: 107.8, isMain: true },
-        { name: 'Lào', lat: 19.2, lon: 102.5 },
-        { name: 'Campuchia', lat: 12.5, lon: 104.9 },
-        { name: 'Thái Lan', lat: 15.5, lon: 100.8 },
-        { name: 'Trung Quốc', lat: 34.0, lon: 104.0 },
-        { name: 'Philippines', lat: 13.0, lon: 122.2 },
-        { name: 'Malaysia', lat: 4.2, lon: 102.0 },
-        { name: 'Indonesia', lat: -1.2, lon: 115.0 },
-        { name: 'Singapore', lat: 1.35, lon: 103.8 },
-        { name: 'Myanmar', lat: 21.0, lon: 96.0 },
-        { name: 'Nhật Bản', lat: 36.2, lon: 138.2 },
-        { name: 'Hàn Quốc', lat: 36.5, lon: 128.0 },
-        { name: 'Đài Loan', lat: 23.7, lon: 121.0 },
-        { name: 'Ấn Độ', lat: 21.0, lon: 78.0 },
-        { name: 'Úc', lat: -25.0, lon: 134.0 },
-        { name: 'Nga', lat: 60.0, lon: 100.0 },
-        { name: 'Hoa Kỳ', lat: 38.0, lon: -97.0 },
-        { name: 'Hoàng Sa (VN)', lat: 16.5, lon: 112.0, isIsland: true },
-        { name: 'Trường Sa (VN)', lat: 9.8, lon: 114.5, isIsland: true },
-    ];
-
-    function createCountryTextSprite(text, options = {}) {
-        const THREE = window.THREE;
-        if (!THREE) return null;
-
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        const fontSize = options.fontSize || 30;
-        ctx.font = `bold ${fontSize}px Inter, -apple-system, sans-serif`;
-
-        const textWidth = ctx.measureText(text).width;
-        canvas.width = Math.ceil(textWidth + 24);
-        canvas.height = Math.ceil(fontSize * 1.5);
-
-        ctx.font = `bold ${fontSize}px Inter, -apple-system, sans-serif`;
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'center';
-
-        if (options.isMain) {
-            ctx.fillStyle = 'rgba(14, 165, 233, 0.25)';
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.roundRect(3, 3, canvas.width - 6, canvas.height - 6, 6);
-            ctx.fill();
-            ctx.stroke();
-        }
-
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-        ctx.shadowBlur = 4;
-        ctx.fillStyle = options.color || (options.isMain ? '#38bdf8' : '#cbd5e1');
-        ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.minFilter = THREE.LinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-
-        const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
-        const sprite = new THREE.Sprite(spriteMat);
-        const aspect = canvas.width / canvas.height;
-        const scaleY = options.scale || 0.2;
-        sprite.scale.set(scaleY * aspect, scaleY, 1);
-        return sprite;
-    }
 
     class Globe3DView {
         constructor() {
@@ -83,9 +17,7 @@
             this.atmosphereMesh = null;
             this.starfield = null;
             this.worldBordersGroup = null;
-            this.countryLabelsGroup = null;
             this.vietnamBoundariesGroup = null;
-            this.countrySprites = [];
 
             // Satellite & CORS layer delegate
             this.satelliteLayer = null;
@@ -99,11 +31,9 @@
                 galileo: true,
                 beidou: true,
                 glonass: true,
-                showOrbits: false,
-                showBeams: true,
             };
 
-            this.earthTextureMode = 'dark';
+            this.earthTextureMode = 'blue-marble';
             this.textureCache = {};
 
             // Camera focus animation
@@ -119,7 +49,6 @@
             this.raycaster = null;
             this.mouse = null;
             this.hoveredObject = null;
-            this.hoverTooltipEl = null;
 
             this._onResize = this._onResize.bind(this);
             this._onPointerMove = this._onPointerMove.bind(this);
@@ -176,10 +105,6 @@
             if (this.container) {
                 this.container.style.display = 'none';
             }
-            if (this.hoverTooltipEl?.parentNode) {
-                this.hoverTooltipEl.parentNode.removeChild(this.hoverTooltipEl);
-                this.hoverTooltipEl = null;
-            }
             if (this.satelliteLayer) {
                 this.satelliteLayer.closeDetailCard();
             }
@@ -192,11 +117,9 @@
 
             this.scene = new THREE.Scene();
             this.worldBordersGroup = new THREE.Group();
-            this.countryLabelsGroup = new THREE.Group();
             this.vietnamBoundariesGroup = new THREE.Group();
 
             this.scene.add(this.worldBordersGroup);
-            this.scene.add(this.countryLabelsGroup);
             this.scene.add(this.vietnamBoundariesGroup);
 
             this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
@@ -216,13 +139,14 @@
                 this.controls.dampingFactor = 0.08;
                 this.controls.rotateSpeed = 0.75;
                 this.controls.zoomSpeed = 1.15;
-                this.controls.minDistance = 5.35;
+                this.controls.minDistance = 5.25;
                 this.controls.maxDistance = 75.0;
                 this.controls.target.set(0, 0, 0);
             }
 
-            this.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-            const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            // Balanced lighting for true-color Blue Marble Earth
+            this.scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+            const sunLight = new THREE.DirectionalLight(0xffffff, 1.35);
             sunLight.position.set(20, 15, -25);
             this.scene.add(sunLight);
 
@@ -232,16 +156,11 @@
             this.renderer.domElement.addEventListener('pointermove', this._onPointerMove);
             this.renderer.domElement.addEventListener('click', this._onPointerClick);
             window.addEventListener('resize', this._onResize);
-
-            this.hoverTooltipEl = document.createElement('div');
-            this.hoverTooltipEl.className = 'globe-satellite-tooltip';
-            this.hoverTooltipEl.style.display = 'none';
-            this.container.appendChild(this.hoverTooltipEl);
         }
 
         _createStarfield() {
             const THREE = window.THREE;
-            const starCount = 2000;
+            const starCount = 1800;
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(starCount * 3);
 
@@ -267,17 +186,22 @@
 
             const earthGeo = new THREE.SphereGeometry(R, 96, 96);
             const textureLoader = new THREE.TextureLoader();
-            const tex = textureLoader.load('/assets/img/earth-dark.jpg');
+            // Default to high-res NASA Blue Marble (1.4MB) with real blue oceans and continents
+            const tex = textureLoader.load('/assets/img/earth-blue-marble.jpg');
             tex.generateMipmaps = true;
             tex.minFilter = THREE.LinearMipmapLinearFilter;
             tex.magFilter = THREE.LinearFilter;
             if (this.renderer) tex.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy());
 
-            const earthMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.72, metalness: 0.1 });
+            const earthMat = new THREE.MeshStandardMaterial({
+                map: tex,
+                roughness: 0.65,
+                metalness: 0.08,
+            });
             this.earthMesh = new THREE.Mesh(earthGeo, earthMat);
             this.scene.add(this.earthMesh);
 
-            // Subtle atmospheric blue rim
+            // Subtle atmospheric blue aura (like IGS Network / NASA)
             const atmoGeo = new THREE.SphereGeometry(R * 1.025, 48, 48);
             const atmoMat = new THREE.ShaderMaterial({
                 vertexShader: `
@@ -290,8 +214,8 @@
                 fragmentShader: `
                     varying vec3 vNormal;
                     void main() {
-                        float intensity = pow(0.68 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.8);
-                        gl_FragColor = vec4(0.18, 0.68, 1.0, 1.0) * intensity * 1.3;
+                        float intensity = pow(0.70 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.8);
+                        gl_FragColor = vec4(0.2, 0.65, 1.0, 1.0) * intensity * 1.2;
                     }
                 `,
                 blending: THREE.AdditiveBlending,
@@ -313,8 +237,6 @@
                 const THREE = window.THREE;
                 const Math3D = window.Globe3DMath;
                 this.worldBordersGroup.clear();
-                this.countryLabelsGroup.clear();
-                this.countrySprites = [];
 
                 const linePoints = [];
                 const addRing = (ringCoords) => {
@@ -322,8 +244,8 @@
                     for (let i = 0; i < ringCoords.length - 1; i++) {
                         const [lon1, lat1] = ringCoords[i];
                         const [lon2, lat2] = ringCoords[i + 1];
-                        linePoints.push(Math3D.latLonAltToVector3(lat1, lon1, 6));
-                        linePoints.push(Math3D.latLonAltToVector3(lat2, lon2, 6));
+                        linePoints.push(Math3D.latLonAltToVector3(lat1, lon1, 4));
+                        linePoints.push(Math3D.latLonAltToVector3(lat2, lon2, 4));
                     }
                 };
 
@@ -339,25 +261,10 @@
 
                 if (linePoints.length > 0) {
                     const borderGeo = new THREE.BufferGeometry().setFromPoints(linePoints);
-                    const borderMat = new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.35 });
+                    // Crisp, subtle country boundary lines
+                    const borderMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.35 });
                     this.worldBordersGroup.add(new THREE.LineSegments(borderGeo, borderMat));
                 }
-
-                // Add country labels
-                KEY_COUNTRY_LABELS.forEach(c => {
-                    const sprite = createCountryTextSprite(c.name, {
-                        isMain: c.isMain,
-                        color: c.isMain ? '#38bdf8' : c.isIsland ? '#f59e0b' : '#cbd5e1',
-                        scale: c.isMain ? 0.35 : c.isIsland ? 0.18 : 0.22,
-                    });
-                    if (sprite) {
-                        const pos = Math3D.latLonAltToVector3(c.lat, c.lon, c.isMain ? 18 : 10);
-                        sprite.position.copy(pos);
-                        sprite.userData = { normal: pos.clone().normalize() };
-                        this.countryLabelsGroup.add(sprite);
-                        this.countrySprites.push(sprite);
-                    }
-                });
             } catch (e) {
                 console.warn('[Globe3DView] Could not load countries GeoJSON:', e);
             }
@@ -373,7 +280,8 @@
                 const THREE = window.THREE;
                 const Math3D = window.Globe3DMath;
                 this.vietnamBoundariesGroup.clear();
-                const lineMat = new THREE.LineBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.8 });
+                // Crisp cyan line for Vietnam provincial borders
+                const lineMat = new THREE.LineBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.75 });
 
                 data.features.forEach(feat => {
                     const geom = feat.geometry;
@@ -384,7 +292,7 @@
                         const points = [];
                         for (let i = 0; i < ringCoords.length; i++) {
                             const [lon, lat] = ringCoords[i];
-                            points.push(Math3D.latLonAltToVector3(lat, lon, 12));
+                            points.push(Math3D.latLonAltToVector3(lat, lon, 8));
                         }
                         this.vietnamBoundariesGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), lineMat));
                     };
@@ -409,7 +317,7 @@
         focusVietnam(animate = true) {
             const Math3D = window.Globe3DMath;
             const normal = (Math3D?.latLonAltToVector3(16.0, 108.0, 0) || new window.THREE.Vector3(-1.48, 1.38, -4.57)).normalize();
-            const targetPos = new window.THREE.Vector3(normal.x * 9.8, normal.y * 9.8 + 1.2, normal.z * 9.8);
+            const targetPos = new window.THREE.Vector3(normal.x * 9.2, normal.y * 9.2 + 0.8, normal.z * 9.2);
             const targetLook = new window.THREE.Vector3(normal.x * 2.5, normal.y * 2.5, normal.z * 2.5);
 
             if (!animate || !this.camera) {
@@ -430,21 +338,24 @@
             this.tweenEndTarget = targetLook;
         }
 
-        setFilter(key, value) {
-            this.filters[key] = value;
-            if (key === 'showOrbits' && this.satelliteLayer?.singleOrbitGroup) {
-                this.satelliteLayer.singleOrbitGroup.visible = !!value;
-                if (!value) {
-                    this.satelliteLayer.singleOrbitGroup.clear();
-                }
-            }
-            if (key === 'showBeams' && this.satelliteLayer?.beamsGroup) {
-                this.satelliteLayer.beamsGroup.visible = !!value;
-            }
+        focusCoords(lat, lon) {
+            const Math3D = window.Globe3DMath;
+            if (!Math3D || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            const normal = Math3D.latLonAltToVector3(lat, lon, 0).normalize();
+            const targetPos = new window.THREE.Vector3(normal.x * 6.8, normal.y * 6.8, normal.z * 6.8);
+            const targetLook = new window.THREE.Vector3(normal.x * 4.9, normal.y * 4.9, normal.z * 4.9);
+
+            this.isTweening = true;
+            this.isTrackingSatellite = false;
+            this.tweenStartTime = performance.now();
+            this.tweenStartPos = this.camera.position.clone();
+            this.tweenEndPos = targetPos;
+            this.tweenStartTarget = this.controls ? this.controls.target.clone() : new window.THREE.Vector3();
+            this.tweenEndTarget = targetLook;
         }
 
-        setSimSpeed(speed) {
-            // Realtime 1Hz synchronized mode
+        setFilter(key, value) {
+            this.filters[key] = value;
         }
 
         setEarthTexture(mode) {
@@ -452,11 +363,11 @@
             if (!this.earthMesh || !window.THREE) return;
 
             const mapFiles = {
-                dark: '/assets/img/earth-dark.jpg',
-                night: '/assets/img/earth-night.jpg',
                 'blue-marble': '/assets/img/earth-blue-marble.jpg',
+                night: '/assets/img/earth-night.jpg',
+                dark: '/assets/img/earth-dark.jpg',
             };
-            const path = mapFiles[mode] || mapFiles.dark;
+            const path = mapFiles[mode] || mapFiles['blue-marble'];
 
             if (!this.textureCache[mode]) {
                 const loader = new window.THREE.TextureLoader();
@@ -544,17 +455,9 @@
                 if (progress >= 1.0) this.isTweening = false;
             }
 
-            // Country labels visibility on camera-facing hemisphere
-            if (this.camera && this.countrySprites.length > 0) {
-                const camDir = this.camera.position.clone().normalize();
-                this.countrySprites.forEach(sprite => {
-                    const norm = sprite.userData?.normal;
-                    if (norm) {
-                        const dot = norm.dot(camDir);
-                        sprite.visible = dot > 0.15;
-                        if (sprite.material) sprite.material.opacity = Math.max(0, Math.min(1.0, (dot - 0.15) * 2.5));
-                    }
-                });
+            // Keep station pin dots constant perceived pixel size at any zoom (IGS Network style)
+            if (this.camera && this.satelliteLayer?.updateSpriteScales) {
+                this.satelliteLayer.updateSpriteScales(this.camera);
             }
 
             // Camera Tracking Satellite
