@@ -708,42 +708,55 @@
         }
 
         _showTooltip(target, x, y) {
-            if (!this.hoverTooltipEl) return;
-            const sat = target.userData?.satItem;
-            const stn = target.userData?.station;
+            if (!this.hoverTooltipEl || !target) return;
+            try {
+                const sat = target.userData?.satItem;
+                const stn = target.userData?.station;
 
-            if (sat) {
-                const cfg = CONSTELLATION_CONFIG[sat.constellationKey] || CONSTELLATION_CONFIG.gps;
-                const pos = target.userData?.lastCalculated || {};
-                this.hoverTooltipEl.innerHTML = `
-                    <div class="tooltip-header" style="color:${cfg.hex}">
-                        <span>${cfg.flag} <b>${sat.code}</b> (${cfg.name})</span>
-                    </div>
-                    <div class="tooltip-body">
-                        <div><b>Tên:</b> ${sat.name || sat.code}</div>
-                        <div><b>Vĩ/Kinh:</b> ${pos.lat ? `${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}°` : '--'}</div>
-                        <div><b>Độ cao quỹ đạo:</b> ${pos.altKm ? `${Math.round(pos.altKm).toLocaleString()} km` : cfg.nominalAltKm + ' km'}</div>
-                        ${pos.elDeg !== undefined ? `<div><b>Góc ngẩng (El):</b> <span style="color:#38bdf8">${pos.elDeg.toFixed(1)}°</span></div>` : ''}
-                    </div>
-                `;
-            } else if (stn) {
-                const dev = stn.device || {};
-                this.hoverTooltipEl.innerHTML = `
-                    <div class="tooltip-header" style="color:#10b981">
-                        <span>📡 <b>${dev.name || dev.serial || 'CORS Station'}</b></span>
-                    </div>
-                    <div class="tooltip-body">
-                        <div><b>Serial:</b> ${dev.serial || '--'}</div>
-                        <div><b>Trạng thái:</b> ${stn.status || 'online'}</div>
-                        <div><b>Tọa độ:</b> ${target.userData.coords.lat.toFixed(4)}°, ${target.userData.coords.lon.toFixed(4)}°</div>
-                        <div class="text-info mt-1" style="font-size:0.75rem;">Nhấp để kết nối tia vệ tinh & IPP</div>
-                    </div>
-                `;
+                if (sat) {
+                    const cfg = CONSTELLATION_CONFIG[sat.constellationKey] || CONSTELLATION_CONFIG.gps;
+                    const pos = target.userData?.lastCalculated || {};
+                    const latStr = Number.isFinite(pos.lat) ? `${pos.lat.toFixed(2)}°` : '--';
+                    const lonStr = Number.isFinite(pos.lon) ? `${pos.lon.toFixed(2)}°` : '--';
+                    const altStr = Number.isFinite(pos.altKm) ? `${Math.round(pos.altKm).toLocaleString()} km` : `${cfg.nominalAltKm} km`;
+                    const elLine = Number.isFinite(pos.elDeg) ? `<div><b>Góc ngẩng (El):</b> <span style="color:#38bdf8">${pos.elDeg.toFixed(1)}°</span></div>` : '';
+
+                    this.hoverTooltipEl.innerHTML = `
+                        <div class="tooltip-header" style="color:${cfg.hex}">
+                            <span>${cfg.flag} <b>${sat.code || '--'}</b> (${cfg.name})</span>
+                        </div>
+                        <div class="tooltip-body">
+                            <div><b>Tên:</b> ${sat.name || sat.code || '--'}</div>
+                            <div><b>Vĩ/Kinh:</b> ${latStr}, ${lonStr}</div>
+                            <div><b>Độ cao quỹ đạo:</b> ${altStr}</div>
+                            ${elLine}
+                        </div>
+                    `;
+                } else if (stn) {
+                    const dev = stn.device || {};
+                    const coords = target.userData?.coords || {};
+                    const latStr = Number.isFinite(coords.lat) ? `${coords.lat.toFixed(4)}°` : '--';
+                    const lonStr = Number.isFinite(coords.lon) ? `${coords.lon.toFixed(4)}°` : '--';
+
+                    this.hoverTooltipEl.innerHTML = `
+                        <div class="tooltip-header" style="color:#10b981">
+                            <span>📡 <b>${dev.name || dev.serial || 'CORS Station'}</b></span>
+                        </div>
+                        <div class="tooltip-body">
+                            <div><b>Serial:</b> ${dev.serial || '--'}</div>
+                            <div><b>Trạng thái:</b> ${stn.status || 'online'}</div>
+                            <div><b>Tọa độ:</b> ${latStr}, ${lonStr}</div>
+                            <div class="text-info mt-1" style="font-size:0.75rem;">Nhấp để kết nối tia vệ tinh & IPP</div>
+                        </div>
+                    `;
+                }
+
+                this.hoverTooltipEl.style.left = `${x + 15}px`;
+                this.hoverTooltipEl.style.top = `${y - 25}px`;
+                this.hoverTooltipEl.style.display = 'block';
+            } catch (err) {
+                console.warn('[Globe3DView] Tooltip display error:', err);
             }
-
-            this.hoverTooltipEl.style.left = `${x + 15}px`;
-            this.hoverTooltipEl.style.top = `${y - 25}px`;
-            this.hoverTooltipEl.style.display = 'block';
         }
 
         // Main Animation Loop
