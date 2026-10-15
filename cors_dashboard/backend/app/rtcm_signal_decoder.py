@@ -101,6 +101,11 @@ def _active_ids(mask: int, width: int) -> list[int]:
     return [idx for idx in range(1, width + 1) if (mask >> (width - idx)) & 1]
 
 
+def _rtcm_msm_prn(system: str, satellite_id: int) -> int:
+    # RTCM MSM numbers QZSS satellites from 1; public PRNs start at 193.
+    return satellite_id + 192 if system == "jp" and 1 <= satellite_id <= 10 else satellite_id
+
+
 class RTCMSignalDecoder:
     def __init__(self) -> None:
         self._buffers: dict[str, bytes] = {}
@@ -580,6 +585,7 @@ class RTCMSignalDecoder:
             "glonass": "R", "ru": "R", "r": "R",
             "galileo": "E", "eu": "E", "e": "E",
             "beidou": "C", "cn": "C", "c": "C",
+            "qzss": "J", "jp": "J", "j": "J",
         }
         sys_code = system_map.get(str(nav_system or "").strip().lower())
         if not sys_code:
@@ -601,7 +607,10 @@ class RTCMSignalDecoder:
                 snr = float(sat.get("snr", 0))
             except (TypeError, ValueError):
                 continue
-            if not 1 <= prn <= 64 or not math.isfinite(snr) or not 0 <= snr <= 99:
+            if sys_code == "J" and 1 <= prn <= 10:
+                prn += 192
+            valid_prn = 193 <= prn <= 202 if sys_code == "J" else 1 <= prn <= 64
+            if not valid_prn or not math.isfinite(snr) or not 0 <= snr <= 99:
                 continue
                 
             sat_str_id = f"RTCM:{sys_code}:{prn}"
@@ -781,7 +790,8 @@ class RTCMSignalDecoder:
             if best_cnr <= 0:
                 continue
                 
-            sat_str_id = f"RTCM:{info.system}:{satellite_id}"
+            prn = _rtcm_msm_prn(info.system, satellite_id)
+            sat_str_id = f"RTCM:{info.system}:{prn}"
             
             elevation = 0.0
             azimuth = 0.0
@@ -811,7 +821,7 @@ class RTCMSignalDecoder:
             satellites.append(
                 {
                     "id": sat_str_id,
-                    "prn": satellite_id,
+                    "prn": prn,
                     "system": info.system,
                     "talker": "RTCM",
                     "snr": round(best_cnr),

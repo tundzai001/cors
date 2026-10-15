@@ -1,4 +1,4 @@
-"""Service to fetch, parse, and cache CelesTrak GNSS satellite TLEs (GPS, Galileo, BeiDou, GLONASS)."""
+"""Service to fetch, parse, and cache CelesTrak GNSS satellite TLEs."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -19,6 +19,7 @@ CONSTELLATIONS_CONFIG = {
     "galileo": {"group": "GALILEO", "prefix": "E", "name": "Galileo (EU)", "color": "#3b82f6"},
     "beidou": {"group": "BEIDOU", "prefix": "C", "name": "BeiDou (China)", "color": "#f97316"},
     "glonass": {"group": "GLO-OPS", "prefix": "R", "name": "GLONASS (Russia)", "color": "#ef4444"},
+    "qzss": {"group": "GNSS", "prefix": "J", "name": "QZSS (Japan)", "color": "#a855f7"},
 }
 
 CELESTRAK_BASE_URL = "https://celestrak.org/NORAD/elements/gp.php"
@@ -43,6 +44,9 @@ class SatelliteService:
             if m:
                 return f"C{int(m.group(1)):02d}"
         elif constellation == "galileo":
+            m = re.search(r"\bGALILEO(?:[\s-]+PRN)?\s+(\d{1,2})\b", name, re.IGNORECASE)
+            if m:
+                return f"E{int(m.group(1)):02d}"
             m = re.search(r"GSAT\s*0?(\d+)", name, re.IGNORECASE)
             if m:
                 val = int(m.group(1))
@@ -51,6 +55,10 @@ class SatelliteService:
             m = re.search(r"\((\d+)\)", name)
             if m:
                 return f"R{int(m.group(1)) % 100:02d}"
+        elif constellation == "qzss":
+            m = re.search(r"QZSS\s*/\s*PRN\s*(\d+)", name, re.IGNORECASE)
+            if m:
+                return f"J{int(m.group(1)):03d}"
 
         # Fallback to last 2 digits of NORAD catalog number
         try:
@@ -67,6 +75,8 @@ class SatelliteService:
             l1 = lines[i + 1]
             l2 = lines[i + 2]
             if not l1.startswith("1 ") or not l2.startswith("2 "):
+                continue
+            if constellation == "qzss" and not re.search(r"QZSS\s*/\s*PRN\s*\d+", name, re.IGNORECASE):
                 continue
 
             norad_id = l1[2:7].strip()
@@ -110,7 +120,8 @@ class SatelliteService:
             # Try to load disk cache on cold boot
             if not self._cached_payload and not force_refresh:
                 disk_data = self._load_disk_cache()
-                if disk_data:
+                cached_constellations = disk_data.get("constellations") if isinstance(disk_data, dict) else None
+                if isinstance(cached_constellations, dict) and set(CONSTELLATIONS_CONFIG).issubset(cached_constellations):
                     self._cached_payload = disk_data
                     self._last_fetch_monotonic = now
                     return disk_data
@@ -160,6 +171,14 @@ class SatelliteService:
             disk_data = self._load_disk_cache()
             if disk_data:
                 disk_data["is_stale"] = True
+                constellations = disk_data.setdefault("constellations", {})
+                for key in CONSTELLATIONS_CONFIG:
+                    constellations.setdefault(key, [])
+                counts = disk_data.get("counts")
+                if not isinstance(counts, dict):
+                    counts = {}
+                    disk_data["counts"] = counts
+                counts.update({key: len(constellations[key]) for key in CONSTELLATIONS_CONFIG})
                 return disk_data
 
             return {

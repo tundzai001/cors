@@ -33,6 +33,7 @@
                 galileo: true,
                 beidou: true,
                 glonass: true,
+                qzss: true,
             };
 
             this.earthTextureMode = 'blue-marble';
@@ -91,6 +92,8 @@
 
             if (this.satelliteLayer && options.stations) {
                 this.satelliteLayer.updateStations(options.stations, options.selectedStation);
+                this.satelliteLayer.restoreSelectedStationCard = Boolean(options.selectedStation?.serial);
+                this.satelliteLayer.showSelectedStationCard();
             }
 
             const center = options.center || { lat: 16, lng: 108 };
@@ -497,6 +500,7 @@
                     galileo: { name: 'Galileo', flag: '🇪🇺', hex: '#38bdf8' },
                     beidou: { name: 'BeiDou', flag: '🇨🇳', hex: '#f59e0b' },
                     glonass: { name: 'GLONASS', flag: '🇷🇺', hex: '#ef4444' },
+                    qzss: { name: 'QZSS', flag: '🇯🇵', hex: '#a855f7' },
                 }[sat.constellationKey] || { name: 'GNSS', flag: '🛰️', hex: '#38bdf8' };
 
                 const pos = this.satelliteLayer?.satelliteMeshes.get(sat.key)?.mesh.userData.lastCalculated || {};

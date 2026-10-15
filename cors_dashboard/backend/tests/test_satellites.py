@@ -30,10 +30,14 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
         # Galileo
         code_gal = self.service._extract_satellite_code("galileo", "GSAT0101 (GALILEO-PFM)", "1 37846U...")
         self.assertEqual(code_gal, "E01")
+        self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0203 (GALILEO 7)", "1 41175U..."), "E07")
 
         # GLONASS
         code_glo = self.service._extract_satellite_code("glonass", "COSMOS 2433 (720)", "1 32275U...")
         self.assertEqual(code_glo, "R20")
+
+        code_qzss = self.service._extract_satellite_code("qzss", "QZS-1R (QZSS/PRN 196)", "1 49336U...")
+        self.assertEqual(code_qzss, "J196")
 
     def test_parse_tle_text(self):
         sample_tle = (
@@ -46,6 +50,18 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sats[0]["code"], "G22")
         self.assertEqual(sats[0]["norad_id"], "26407")
         self.assertEqual(sats[0]["constellation"], "gps")
+
+    def test_parse_gnss_group_filters_qzss_and_uses_rtcm_prn(self):
+        gnss_tles = (
+            "QZS-1R (QZSS/PRN 196)\n"
+            "1 49336U 21096A   26287.19752126  .00000004  00000+0  00000+0 0  9993\n"
+            "2 49336  41.0000 210.4400 0001000 304.4726 228.8000  1.00270000    01\n"
+            "GPS BIIR-5 (PRN 22)\n"
+            "1 26407U 00040A   26287.19752126  .00000004  00000+0  00000+0 0  9993\n"
+            "2 26407  54.8318 210.4400 0116657 304.4726 228.8000  2.00558672192336\n"
+        )
+        sats = self.service._parse_tle_text(gnss_tles, "qzss")
+        self.assertEqual([sat["code"] for sat in sats], ["J196"])
 
     async def test_get_satellites_tle_with_mock(self):
         sample_tle = (
@@ -61,14 +77,15 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(payload["is_stale"])
             self.assertIn("gps", payload["constellations"])
             self.assertEqual(len(payload["constellations"]["gps"]), 1)
+            self.assertEqual(payload["constellations"]["qzss"], [])
 
     def test_api_endpoints(self):
         dummy = {
             "status": "OK",
             "is_stale": False,
             "total_satellites": 143,
-            "counts": {"gps": 32, "galileo": 31, "beidou": 53, "glonass": 27},
-            "constellations": {"gps": [], "galileo": [], "beidou": [], "glonass": []}
+            "counts": {"gps": 32, "galileo": 31, "beidou": 53, "glonass": 27, "qzss": 5},
+            "constellations": {"gps": [], "galileo": [], "beidou": [], "glonass": [], "qzss": []}
         }
         with patch.object(self.service, "get_satellites_tle", new_callable=AsyncMock, return_value=dummy):
             with patch("app.satellite_routes.satellite_service", self.service):

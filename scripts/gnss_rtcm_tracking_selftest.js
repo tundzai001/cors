@@ -18,12 +18,13 @@ telemetry = { satellites: {
   glo: { id: 'RTCM:ru:5', system: 'ru', prn: 5, lastSeen: now },
   gal: { id: 'RTCM:eu:12', system: 'eu', prn: 12, lastSeen: now },
   bds: { id: 'RTCM:cn:21', system: 'cn', prn: 21, lastSeen: now },
+  qzss: { id: 'RTCM:jp:194', system: 'jp', prn: 194, messageType: 1117, lastSeen: now },
   nmea: { id: 'G:8', system: 'us', prn: 'G08', lastSeen: now },
   stale: { id: 'RTCM:G:9', system: 'us', prn: 9, lastSeen: now - 20000 },
 } };
 
-assert.equal(overlay.getLiveRtcmSatellites().length, 4, 'only fresh RTCM records count as live receiver tracking');
-for (const [constellationKey, code] of [['gps', 'G08'], ['glonass', 'R05'], ['galileo', 'E12'], ['beidou', 'C21']]) {
+assert.equal(overlay.getLiveRtcmSatellites().length, 5, 'only fresh RTCM records count as live receiver tracking');
+for (const [constellationKey, code] of [['gps', 'G08'], ['glonass', 'R05'], ['galileo', 'E12'], ['beidou', 'C21'], ['qzss', 'J194']]) {
   assert.ok(overlay.getLiveRtcmSatellite({ constellationKey, code }), `${code} resolves to the exact RTCM PRN`);
 }
 assert.equal(overlay.getLiveRtcmSatellite({ constellationKey: 'gps', code: 'G09' }), null, 'stale satellite is not tracked');
@@ -52,6 +53,8 @@ overlay.selectedStation = { serial: 'PI_station1', lat: 21, lon: 105, alt: 50, s
 overlay.rawSatellites = [
   { key: 'gps:G08', code: 'G08', name: 'GPS 08', norad_id: 1, constellationKey: 'gps', satrec: {}, marker: null },
   { key: 'gps:G09', code: 'G09', name: 'GPS 09', norad_id: 2, constellationKey: 'gps', satrec: {}, marker: null },
+  { key: 'qzss:J194:49336', code: 'J194', name: 'QZS-1R', norad_id: 49336, constellationKey: 'qzss', satrec: {}, marker: null },
+  { key: 'qzss:J194:49337', code: 'J194', name: 'duplicate QZSS fixture', norad_id: 49337, constellationKey: 'qzss', satrec: {}, marker: null },
 ];
 overlay.activeSatellites = new Map(overlay.rawSatellites.map(sat => [sat.key, sat]));
 window.L = {
@@ -69,13 +72,29 @@ window.satellite = {
   ecfToLookAngles: () => ({ elevation: Math.PI / 4, azimuth: Math.PI / 6 }),
 };
 overlay.propagateTick();
-assert.equal(overlay.stats.liveRtcmCount, 4, 'propagation updates live RTCM stats without a stale variable reference');
-assert.equal(satelliteMarkers.length, 2, 'all enabled orbital markers stay visible while station tracking is active');
-assert.equal(overlay.stats.visible, 1, 'only the satellite whose PRN matches RTCM counts as tracked');
-assert.equal(rayLayers.length, 3, 'LOS and IPP layers exist only for the matched RTCM satellite');
+assert.equal(overlay.stats.liveRtcmCount, 5, 'propagation updates unique live RTCM PRNs');
+assert.equal(satelliteMarkers.length, 4, 'all enabled orbital markers stay visible while station tracking is active');
+assert.equal(overlay.stats.visible, 2, 'only unique exact GPS and QZSS PRN matches count as tracked');
+assert.equal(overlay.stats.byConstellation.qzss, 1, 'duplicate TLE entries do not double count a matched QZSS PRN');
+assert.equal(overlay.stats.unmatchedRtcmCount, 3, 'unmatched live PRNs are reported separately');
+assert.equal(rayLayers.length, 6, 'only unique exact RTCM matches draw LOS and IPP layers');
+overlay.setFilter('showIpp', false);
+assert.equal(rayLayers.length, 0, 'turning off the IPP layer removes its marker and both rays');
+assert.equal(overlay.stats.visible, 2, 'hiding the IPP layer does not disable RTCM matching');
+overlay.setFilter('showIpp', true);
+assert.equal(rayLayers.length, 6, 'the IPP layer returns without duplicating rays');
+overlay.mapInstance = {
+  hasLayer: layer => layer === overlay.rayLayerGroup,
+  removeLayer() {},
+};
+overlay.detachFromMap();
+assert.equal(rayLayers.length, 0, 'detaching 2D clears child rays and IPP markers');
+overlay.mapInstance = {};
+overlay.propagateTick();
+assert.equal(rayLayers.length, 6, 'reattaching and propagating recreates one set of tracking layers');
 telemetry = { satellites: {} };
 overlay.propagateTick();
-assert.equal(satelliteMarkers.length, 2, 'satellite positions remain visible when fresh RTCM records stop');
+assert.equal(satelliteMarkers.length, 4, 'satellite positions remain visible when fresh RTCM records stop');
 assert.equal(overlay.stats.visible, 0, 'expired RTCM records stop counting as tracked');
 assert.equal(rayLayers.length, 0, 'expired RTCM records remove their LOS and IPP layers');
 
@@ -90,8 +109,16 @@ assert.match(mapSource, /setMinZoom\(2\)/,
   '2D should remain available through the world view before 3D handoff');
 
 const globeSatSource = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/globe-3d-satellites.js'), 'utf8');
-assert.match(globeSatSource, /if \(liveRtcmSat\) \{\s*trackedSats\.push/,
+assert.match(globeSatSource, /if \(liveRtcmSat && rtcmKey && !matchedRtcmKeys\.has\(rtcmKey\)\) \{\s*matchedRtcmKeys\.add\(rtcmKey\);\s*trackedSats\.push/,
   '3D station cards must count and draw rays only for exact fresh RTCM matches');
+assert.match(globeSatSource, /formatVietnamTime\(now\).*ICT \(UTC\+7\)/,
+  '3D time labels use Vietnam local time');
+assert.match(globeSatSource, /showSelectedStationCard\(\)/,
+  'selected 2D station tracking is restored when 3D orbit data loads');
+assert.match(globeSatSource, /qzss:/,
+  'QZSS orbital data is represented in 3D');
+assert.match(mapSource, /unmatchedRtcmCount/,
+  'the map explains live RTCM PRNs without a loaded matching orbit');
 assert.doesNotMatch(globeSatSource, /Vệ tinh dự kiến khả kiến|Tính từ quỹ đạo/,
   '3D tracking cards must not present modeled visibility as receiver tracking');
 
@@ -102,4 +129,4 @@ assert.match(mainSource, /if \(!selectedDevice\) \{\s*detailsPanelRoot\.render\(
   'details panel must be cleared when no selected device exists');
 assert.doesNotMatch(mainSource, /DOM INSPECTION WARNING/,
   'remove the timing-sensitive DOM warning that reported normal React commits as failures');
-console.log('PASS: RTCM system/PRN matching, live propagation stats, view-isolated rendering, and map zoom settings');
+console.log('PASS: exact RTCM matching, QZSS, IPP lifecycle, local time, 3D station tracking, and map zoom settings');

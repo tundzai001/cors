@@ -13,6 +13,17 @@
         galileo: { name: 'Galileo', flag: '🇪🇺', color: 0x38bdf8, hex: '#38bdf8', nominalAltKm: 23222 },
         beidou: { name: 'BeiDou', flag: '🇨🇳', color: 0xf59e0b, hex: '#f59e0b', nominalAltKm: 21500 },
         glonass: { name: 'GLONASS', flag: '🇷🇺', color: 0xef4444, hex: '#ef4444', nominalAltKm: 19130 },
+        qzss: { name: 'QZSS', flag: '🇯🇵', color: 0xa855f7, hex: '#a855f7', nominalAltKm: 35786 },
+    };
+
+    const formatVietnamTime = (date, includeDate = false) => {
+        if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return '--';
+        const options = {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+        };
+        if (includeDate) Object.assign(options, { day: '2-digit', month: '2-digit', year: 'numeric' });
+        return new Intl.DateTimeFormat('vi-VN', options).format(date);
     };
 
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -205,6 +216,7 @@
             this.stationCard = null;
             this.stationCardMode = null;
             this.stationCardRtcmSignature = null;
+            this.restoreSelectedStationCard = false;
             this.footprintMesh = null;
             this.stations = [];
             this.detailCardEl = null;
@@ -296,6 +308,7 @@
             this._buildSatelliteMeshes(rawList);
             this.catalog = rawList;
             this.onOverlayTick();
+            if (this.restoreSelectedStationCard) this.showSelectedStationCard();
         }
 
         _buildSatelliteMeshes(rawList) {
@@ -398,7 +411,7 @@
                             const regionEl = this.detailCardEl.querySelector('#card-sat-region');
                             if (regionEl) regionEl.textContent = Math3D.groundRegion(this.globe.countryFeatures, lat, lon);
                             const timeEl = this.detailCardEl.querySelector('#card-sat-time');
-                            if (timeEl) timeEl.textContent = now.toISOString().slice(11, 19) + ' UTC';
+                            if (timeEl) timeEl.textContent = `${formatVietnamTime(now)} ICT (UTC+7)`;
                         }
                     }
                 } catch (e) {
@@ -417,7 +430,7 @@
             const count = [...this.satelliteMeshes.values()].filter(record => record.mesh.visible).length;
             const stale = window.GnssSatelliteOverlay?.tleInfo?.is_stale ? ' · Dữ liệu quỹ đạo cũ' : '';
             const rtcmCount = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(this.selectedStation).length || 0;
-            this.statusEl.textContent = `${count} vệ tinh · ${rtcmCount ? `${rtcmCount} RTCM đang nhận · ` : ''}SGP4 1Hz · ${now.toISOString().slice(11, 19)} UTC${stale}`;
+            this.statusEl.textContent = `${count} vệ tinh · ${rtcmCount ? `${rtcmCount} RTCM đang nhận · ` : ''}SGP4 1Hz · ${formatVietnamTime(now)} ICT (UTC+7)${stale}`;
             this.globe.lastRenderAt = null;
         }
 
@@ -463,6 +476,19 @@
                 this.stationsGroup.add(sprite);
                 this.stationSprites.push(sprite);
             });
+        }
+
+        showSelectedStationCard() {
+            const serial = String(this.selectedStation?.serial || '').trim();
+            if (!serial || !this.satelliteMeshes.size) return false;
+            const item = (this.stations || []).find(station => String(station.device?.serial || '').trim() === serial);
+            const coords = item?.coords || (item?.device && {
+                lat: Number(item.device.latitude),
+                lon: Number(item.device.longitude),
+            });
+            if (!item || !Number.isFinite(coords?.lat) || !Number.isFinite(coords?.lon)) return false;
+            this.openStationCard(item, coords);
+            return true;
         }
 
         // Dynamically scale station pins & satellite particles so they maintain crisp, star-like appearance
@@ -653,8 +679,8 @@
                 </div>
                 <div class="globe-location-info">
                     Đang bay trên: <b id="card-sat-region">${escapeHtml(window.Globe3DMath.groundRegion(this.globe.countryFeatures, pos.lat, pos.lon))}</b><br>
-                    Vị trí lúc <span id="card-sat-time">${pos.timestamp?.toISOString().slice(11, 19) || '--'} UTC</span><br>
-                    Dữ liệu quỹ đạo: ${escapeHtml(Number.isFinite(satItem.satrec.jdsatepoch) ? new Date((satItem.satrec.jdsatepoch - 2440587.5) * 86400000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '--')}
+                    Vị trí lúc <span id="card-sat-time">${pos.timestamp instanceof Date ? `${formatVietnamTime(pos.timestamp)} ICT (UTC+7)` : '--'}</span><br>
+                    Dữ liệu quỹ đạo: ${escapeHtml(Number.isFinite(satItem.satrec.jdsatepoch) ? `${formatVietnamTime(new Date((satItem.satrec.jdsatepoch - 2440587.5) * 86400000), true)} ICT (UTC+7)` : '--')}
                 </div>
                 <div class="card-footer-actions">
                     <button type="button" class="card-action-btn" id="globe-track-sat-btn">
@@ -689,6 +715,7 @@
         // Open persistent Station Detail Card with decoded GNSS satellite telemetry & live tracking rays
         openStationCard(stationItem, coords) {
             if (!this.detailCardEl) return;
+            this.restoreSelectedStationCard = false;
             this.stationCardMode = 'station';
             this.stationCard = { item: stationItem, coords };
             this.globe.isTrackingSatellite = false;
@@ -718,9 +745,10 @@
 
             // A station tracks only fresh RTCM observations matched to a loaded orbit.
             const trackedSats = [];
-            const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
+            const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0, qzss: 0 };
             const liveRtcmSatellites = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(dev) || [];
             const hasLiveRtcm = liveRtcmSatellites.length > 0;
+            const matchedRtcmKeys = new Set();
 
             this.satelliteMeshes.forEach(({ mesh, satItem }) => {
                 if (!satItem?.satrec) return;
@@ -731,8 +759,11 @@
                         const look = satLib.ecfToLookAngles(obsGd, posEcf);
                         const elDeg = look.elevation * (180.0 / Math.PI);
                         const azDeg = ((look.azimuth * (180.0 / Math.PI)) + 360) % 360;
-                        const liveRtcmSat = window.GnssSatelliteOverlay?.getLiveRtcmSatellite(satItem, dev) || null;
-                        if (liveRtcmSat) {
+                        const overlay = window.GnssSatelliteOverlay;
+                        const liveRtcmSat = overlay?.getLiveRtcmSatellite(satItem, dev, liveRtcmSatellites) || null;
+                        const rtcmKey = overlay?.getRtcmSatelliteKey(satItem);
+                        if (liveRtcmSat && rtcmKey && !matchedRtcmKeys.has(rtcmKey)) {
+                            matchedRtcmKeys.add(rtcmKey);
                             trackedSats.push({ satItem, elDeg, azDeg, mesh, liveRtcmSat });
                             constCounts[satItem.constellationKey] = (constCounts[satItem.constellationKey] || 0) + 1;
                         }
@@ -759,6 +790,13 @@
             }
 
             const totalTracked = trackedSats.length;
+            const unmatchedRtcmCodes = liveRtcmSatellites
+                .filter(sat => {
+                    const key = window.GnssSatelliteOverlay?.getRtcmSatelliteKey(sat);
+                    return !key || !matchedRtcmKeys.has(key);
+                })
+                .slice(0, 8)
+                .map(sat => window.GnssSatelliteOverlay?.getRtcmSatelliteCode(sat) || sat.id);
 
             // Generate satellite chips HTML (clickable to view satellite orbit!)
             const satChipsHtml = trackedSats.slice(0, 24).map(({ satItem, elDeg, liveRtcmSat }) => {
@@ -799,7 +837,7 @@
                     </div>
                     <div class="stat-box">
                         <span class="stat-label">Vệ tinh agent giải mã RTCM</span>
-                        <span class="stat-value" style="color:${isOnline || isSleep ? '#10b981' : '#ef4444'}">${(isOnline || isSleep) ? `${totalTracked} Vệ tinh` : '0 Vệ tinh'} <span style="font-size:0.65rem;color:#94a3b8">${hasLiveRtcm ? '(đã ghép PRN)' : '(đang chờ RTCM)'}</span></span>
+                    <span class="stat-value" style="color:${isOnline || isSleep ? '#10b981' : '#ef4444'}">${(isOnline || isSleep) ? `${totalTracked} khớp quỹ đạo / ${liveRtcmSatellites.length} RTCM` : '0 Vệ tinh'} <span style="font-size:0.65rem;color:#94a3b8">${hasLiveRtcm ? `(${Math.max(0, liveRtcmSatellites.length - totalTracked)} chưa có TLE${unmatchedRtcmCodes.length ? `: ${unmatchedRtcmCodes.join(', ')}${liveRtcmSatellites.length - totalTracked > 8 ? ', …' : ''}` : ''})` : '(đang chờ RTCM)'}</span></span>
                     </div>
                 </div>
                 <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">
@@ -810,6 +848,7 @@
                     <span class="sat-pill gal">GAL: <b>${(isOnline || isSleep) ? constCounts.galileo : 0}</b></span>
                     <span class="sat-pill bds">BDS: <b>${(isOnline || isSleep) ? constCounts.beidou : 0}</b></span>
                     <span class="sat-pill glo">GLO: <b>${(isOnline || isSleep) ? constCounts.glonass : 0}</b></span>
+                    <span class="sat-pill qzss">QZSS: <b>${(isOnline || isSleep) ? constCounts.qzss : 0}</b></span>
                 </div>
                 ${(isOnline || isSleep) && trackedSats.length > 0 ? `
                     <div class="tracked-sats-wrapper">

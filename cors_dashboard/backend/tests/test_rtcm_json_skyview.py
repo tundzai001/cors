@@ -1,6 +1,6 @@
 import unittest
 
-from app.rtcm_signal_decoder import RTCMSignalDecoder
+from app.rtcm_signal_decoder import RTCMSignalDecoder, _rtcm_msm_prn
 
 
 class RtcmJsonSkyviewTests(unittest.TestCase):
@@ -18,6 +18,18 @@ class RtcmJsonSkyviewTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(decoded)
                 self.assertEqual(decoded["satellites"][0]["id"], f"RTCM:{code}:8")
+
+    def test_qzss_json_accepts_standard_public_prn(self):
+        decoded = RTCMSignalDecoder().decode_json(
+            "PI_test",
+            {"navSystem": "QZSS", "satellites": [{"prn": 196, "snr": 42}]},
+        )
+        self.assertIsNotNone(decoded)
+        self.assertEqual(decoded["satellites"][0]["id"], "RTCM:J:196")
+
+    def test_qzss_msm_satellite_id_maps_to_public_prn(self):
+        self.assertEqual(_rtcm_msm_prn("jp", 4), 196)
+        self.assertEqual(_rtcm_msm_prn("us", 4), 4)
 
 
 if __name__ == "__main__":

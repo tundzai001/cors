@@ -178,7 +178,7 @@
         showIonosphereRef.current = showIonosphere;
         const [showSatellites, setShowSatellites] = useState(false);
         const [satelliteStats, setSatelliteStats] = useState({ total: 0, visible: 0, byConstellation: {} });
-        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, showIpp: true });
+        const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, qzss: true, showIpp: true });
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
@@ -560,6 +560,7 @@
                 window.Globe3DView.setFilter('galileo', satelliteFilters.galileo);
                 window.Globe3DView.setFilter('beidou', satelliteFilters.beidou);
                 window.Globe3DView.setFilter('glonass', satelliteFilters.glonass);
+                window.Globe3DView.setFilter('qzss', satelliteFilters.qzss);
                 window.Globe3DView.setEarthTexture(globeTexture);
             }
             return () => window.Globe3DView?.detach();
@@ -1323,8 +1324,9 @@
                                     </div>
                                     <div className="text-info small">
                                         <i className="bi bi-eye me-1"></i>
-                                        <b>{satelliteStats.visible}</b> vệ tinh khớp RTCM
-                                        {satelliteStats.hasLiveRtcm ? ` · ${satelliteStats.liveRtcmCount} PRN mới` : ' · đang chờ RTCM'}
+                                        <b>{satelliteStats.visible}</b> vệ tinh khớp quỹ đạo
+                                        {satelliteStats.hasLiveRtcm ? ` · ${satelliteStats.liveRtcmCount} PRN RTCM` : ' · đang chờ RTCM'}
+                                        {satelliteStats.unmatchedRtcmCount > 0 ? ` · ${satelliteStats.unmatchedRtcmCount} chưa có quỹ đạo (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
                                     </div>
                                 </div>
                             )
@@ -1340,6 +1342,7 @@
                                 { key: 'galileo', label: 'Galileo', color: '#3b82f6', count: satelliteStats.byConstellation?.galileo ?? 0 },
                                 { key: 'beidou', label: 'BeiDou', color: '#f97316', count: satelliteStats.byConstellation?.beidou ?? 0 },
                                 { key: 'glonass', label: 'GLONASS', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 0 },
+                                { key: 'qzss', label: 'QZSS', color: '#a855f7', count: satelliteStats.byConstellation?.qzss ?? 0 },
                             ].map(item => (
                                 <div
                                     key={item.key}
@@ -1368,7 +1371,7 @@
                                 }}
                             />
                             <label className="form-check-label" htmlFor="sat-show-ipp" style={{ fontSize: '0.72rem' }}>
-                                Hiện IPP từ vệ tinh khớp RTCM (350km)
+                                Hiện tia RTCM và điểm IPP (350 km)
                             </label>
                         </div>
 
@@ -1376,7 +1379,8 @@
                             <div>🛰️ Vị trí quỹ đạo: <b>CelesTrak/NORAD • SGP4</b></div>
                             {satelliteStats.hasLiveRtcm ? (
                                 <div style={{ color: '#86efac' }}>
-                                    ● RTCM mới: <b>{satelliteStats.liveRtcmCount} PRN</b> • khớp quỹ đạo: <b>{satelliteStats.visible}</b>
+                                    ● RTCM: <b>{satelliteStats.liveRtcmCount} PRN</b> • khớp quỹ đạo: <b>{satelliteStats.visible}</b>
+                                    {satelliteStats.unmatchedRtcmCount > 0 ? ` • chưa có TLE: ${satelliteStats.unmatchedRtcmCount} (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
                                 </div>
                             ) : (
                                 <div>Đang chờ RTCM • tia và IPP chỉ hiện với PRN khớp</div>
@@ -1404,7 +1408,7 @@
                             <i className="bi bi-crosshair2 text-info"></i> Tâm VN
                         </button>
                         <div className="globe-dock-separator"></div>
-                        {['gps', 'galileo', 'beidou', 'glonass'].map(k => (
+                        {['gps', 'galileo', 'beidou', 'glonass', 'qzss'].map(k => (
                             <button
                                 key={k}
                                 type="button"
@@ -1416,8 +1420,8 @@
                                     window.GnssSatelliteOverlay?.setFilter(k, next);
                                 }}
                             >
-                                <span style={{ color: k === 'gps' ? '#22c55e' : k === 'galileo' ? '#38bdf8' : k === 'beidou' ? '#f59e0b' : '#ef4444' }}>●</span>
-                                <span className="text-uppercase">{k === 'galileo' ? 'GAL' : k === 'beidou' ? 'BDS' : k === 'glonass' ? 'GLO' : 'GPS'}</span>
+                                <span style={{ color: k === 'gps' ? '#22c55e' : k === 'galileo' ? '#38bdf8' : k === 'beidou' ? '#f59e0b' : k === 'glonass' ? '#ef4444' : '#a855f7' }}>●</span>
+                                <span className="text-uppercase">{k === 'galileo' ? 'GAL' : k === 'beidou' ? 'BDS' : k === 'glonass' ? 'GLO' : k === 'qzss' ? 'QZSS' : 'GPS'}</span>
                             </button>
                         ))}
                         <div className="globe-dock-separator"></div>

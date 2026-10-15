@@ -1,5 +1,5 @@
 // Real-time GNSS Satellite Orbit Propagation & Ionospheric Pierce Point (IPP) Overlay.
-// Constellations: GPS, Galileo, BeiDou, GLONASS.
+// Constellations: GPS, Galileo, BeiDou, GLONASS, QZSS.
 (() => {
     'use strict';
 
@@ -8,6 +8,15 @@
         galileo: { name: 'Galileo (EU)', code: 'GAL', color: '#3b82f6', prefix: 'E', flag: '🇪🇺', nominalAlt: '23,222 km' },
         beidou: { name: 'BeiDou (China)', code: 'BDS', color: '#f97316', prefix: 'C', flag: '🇨🇳', nominalAlt: '21,500 - 35,786 km' },
         glonass: { name: 'GLONASS (Russia)', code: 'GLO', color: '#ef4444', prefix: 'R', flag: '🇷🇺', nominalAlt: '19,130 km' },
+        qzss: { name: 'QZSS (Japan)', code: 'QZSS', color: '#a855f7', prefix: 'J', flag: '🇯🇵', nominalAlt: '32,000 - 40,000 km' },
+    };
+
+    const RTCM_SYSTEM_ALIASES = {
+        gps: 'gps', us: 'gps', g: 'gps',
+        glonass: 'glonass', ru: 'glonass', r: 'glonass',
+        galileo: 'galileo', eu: 'galileo', e: 'galileo',
+        beidou: 'beidou', cn: 'beidou', c: 'beidou',
+        qzss: 'qzss', jp: 'qzss', j: 'qzss',
     };
 
     const RE_EARTH_KM = 6371.0;
@@ -32,12 +41,13 @@
                 galileo: true,
                 beidou: true,
                 glonass: true,
+                qzss: true,
                 showIpp: true,      // Show/hide 350km IPP diamond markers
             };
 
             this.selectedStation = null; // { lat, lon, alt, name, serial, status }
             this.stationRayMarkers = [];
-            this.stats = { total: 0, visible: 0, byConstellation: {}, isStationOffline: false, hasLiveRtcm: false, liveRtcmCount: 0 };
+            this.stats = { total: 0, visible: 0, byConstellation: {}, isStationOffline: false, hasLiveRtcm: false, liveRtcmCount: 0, unmatchedRtcmCount: 0, unmatchedRtcmCodes: [] };
         }
 
         subscribe(callback) {
@@ -174,30 +184,39 @@
             if (!targetSerial || String(window.globalState?.selectedDeviceSerial || '').trim() !== targetSerial) return [];
             const satellites = window.getCurrentNmeaData?.()?.satellites || {};
             const now = Date.now();
-            return Object.values(satellites).filter(sat => {
+            const live = Object.values(satellites).filter(sat => {
                 if (!sat || !(String(sat.id || '').toUpperCase().startsWith('RTCM:') || String(sat.talker || '').toUpperCase() === 'RTCM')) return false;
                 const lastSeen = Number(sat.lastSeen) || 0;
                 return lastSeen > 0 && now - lastSeen >= 0 && now - lastSeen <= 15000;
             });
+            const unique = new Map();
+            live.forEach(sat => {
+                const key = this.getRtcmSatelliteKey(sat) || String(sat.id || `${sat.system || sat.navSystem}:${sat.prn}`);
+                if (!unique.has(key)) unique.set(key, sat);
+            });
+            return [...unique.values()];
         }
 
-        getLiveRtcmSatellite(satObj, station = this.selectedStation) {
+        getRtcmSatelliteKey(satObj) {
+            const system = RTCM_SYSTEM_ALIASES[String(satObj?.constellationKey || satObj?.system || satObj?.navSystem || '').toLowerCase()];
+            const prn = parseInt(String(satObj?.code || satObj?.prn || '').replace(/\D/g, ''), 10);
+            return system && Number.isFinite(prn) ? `${system}:${prn}` : null;
+        }
+
+        getRtcmSatelliteCode(satObj) {
+            const key = this.getRtcmSatelliteKey(satObj);
+            if (!key) return String(satObj?.id || satObj?.prn || 'PRN?');
+            const [system, prn] = key.split(':');
+            const prefix = CONSTELLATION_META[system]?.prefix || '';
+            return `${prefix}${String(prn).padStart(system === 'qzss' ? 3 : 2, '0')}`;
+        }
+
+        getLiveRtcmSatellite(satObj, station = this.selectedStation, liveSatellites = null) {
             if (!station) return null;
-            const systemAliases = {
-                gps: 'gps', us: 'gps', g: 'gps',
-                glonass: 'glonass', ru: 'glonass', r: 'glonass',
-                galileo: 'galileo', eu: 'galileo', e: 'galileo',
-                beidou: 'beidou', cn: 'beidou', c: 'beidou',
-            };
-            const expectedSystem = systemAliases[String(satObj.constellationKey || '').toLowerCase()];
-            const prnNum = parseInt(String(satObj.code || '').replace(/\D/g, ''), 10);
-            if (!expectedSystem || !Number.isFinite(prnNum)) return null;
-            return this.getLiveRtcmSatellites(station).find(sat => {
-                const actualSystem = systemAliases[String(sat.system || '').toLowerCase()] ||
-                    systemAliases[String(sat.navSystem || '').toLowerCase()];
-                const actualPrn = parseInt(String(sat.prn || '').replace(/\D/g, ''), 10);
-                return actualSystem === expectedSystem && actualPrn === prnNum;
-            }) || null;
+            const expectedKey = this.getRtcmSatelliteKey(satObj);
+            if (!expectedKey) return null;
+            return (liveSatellites || this.getLiveRtcmSatellites(station))
+                .find(sat => this.getRtcmSatelliteKey(sat) === expectedKey) || null;
         }
 
         propagateTick() {
@@ -234,10 +253,14 @@
 
             const liveRtcmSatellites = this.getLiveRtcmSatellites(this.selectedStation);
             const hasLiveRtcm = !isStationOffline && liveRtcmSatellites.length > 0;
+            const liveRtcmByKey = new Map(liveRtcmSatellites
+                .map(sat => [this.getRtcmSatelliteKey(sat), sat])
+                .filter(([key]) => Boolean(key)));
+            const matchedRtcmKeys = new Set();
 
             const activeRayKeys = new Set();
             let visibleCount = 0;
-            const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0 };
+            const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0, qzss: 0 };
 
             this.activeSatellites.forEach((satObj, key) => {
                 const cfg = CONSTELLATION_META[satObj.constellationKey];
@@ -272,8 +295,10 @@
                         look = satLib.ecfToLookAngles(obsGd, posEcf);
                         azDeg = ((look.azimuth * TO_DEG) + 360) % 360;
                         elDeg = look.elevation * TO_DEG;
-                        if (hasLiveRtcm) {
-                            liveRtcmSat = this.getLiveRtcmSatellite(satObj);
+                        const rtcmKey = this.getRtcmSatelliteKey(satObj);
+                        if (hasLiveRtcm && rtcmKey && !matchedRtcmKeys.has(rtcmKey)) {
+                            liveRtcmSat = liveRtcmByKey.get(rtcmKey) || null;
+                            if (liveRtcmSat) matchedRtcmKeys.add(rtcmKey);
                         }
                         isAboveHorizon = elDeg >= 0;
                         isTrackedByRtcm = Boolean(liveRtcmSat);
@@ -310,7 +335,7 @@
                     }
 
                     // Draw LOS and IPP only for a fresh, exact RTCM PRN match.
-                    if (obsGd && !isStationOffline && isTrackedByRtcm && look && this.rayLayerGroup) {
+                    if (obsGd && !isStationOffline && isTrackedByRtcm && look && this.rayLayerGroup && this.filters.showIpp !== false) {
                         const satKey = satObj.key;
                         activeRayKeys.add(satKey);
 
@@ -375,12 +400,8 @@
                                 cached.ippMarker.setTooltipContent(tooltipText);
                             }
 
-                            // Show or hide IPP diamond based on showIpp filter
-                            const shouldShowIpp = this.filters.showIpp !== false;
-                            if (shouldShowIpp && !this.rayLayerGroup.hasLayer(cached.ippMarker)) {
+                            if (!this.rayLayerGroup.hasLayer(cached.ippMarker)) {
                                 this.rayLayerGroup.addLayer(cached.ippMarker);
-                            } else if (!shouldShowIpp && this.rayLayerGroup.hasLayer(cached.ippMarker)) {
-                                this.rayLayerGroup.removeLayer(cached.ippMarker);
                             }
                         } else {
                             // First creation for this satellite
@@ -404,9 +425,7 @@
 
                             this.rayLayerGroup.addLayer(rayToIpp);
                             this.rayLayerGroup.addLayer(rayToSat);
-                            if (this.filters.showIpp !== false) {
-                                this.rayLayerGroup.addLayer(ippMarker);
-                            }
+                            this.rayLayerGroup.addLayer(ippMarker);
 
                             this.rayLayersCache.set(satKey, {
                                 rayToIpp,
@@ -470,6 +489,10 @@
                 }
             }
 
+            const unmatchedRtcmSatellites = liveRtcmSatellites.filter(sat => {
+                const key = this.getRtcmSatelliteKey(sat);
+                return !key || !matchedRtcmKeys.has(key);
+            });
             this.stats = {
                 total: this.rawSatellites.length,
                 visible: visibleCount,
@@ -477,6 +500,8 @@
                 isStationOffline,
                 hasLiveRtcm,
                 liveRtcmCount: liveRtcmSatellites.length,
+                unmatchedRtcmCount: unmatchedRtcmSatellites.length,
+                unmatchedRtcmCodes: unmatchedRtcmSatellites.slice(0, 8).map(sat => this.getRtcmSatelliteCode(sat)),
             };
         }
 
@@ -569,6 +594,8 @@
                     this.mapInstance.removeLayer(this.rayLayerGroup);
                 }
             }
+            // Remove child layers too: Leaflet keeps them inside a detached group.
+            this.rayLayerGroup?.clearLayers();
             if (this.rayLayersCache) {
                 this.rayLayersCache.clear();
             }
