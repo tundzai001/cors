@@ -108,6 +108,9 @@
             if (this.satelliteLayer) {
                 this.satelliteLayer.closeDetailCard();
             }
+            if (this.hoverTooltipEl) {
+                this.hoverTooltipEl.style.display = 'none';
+            }
         }
 
         _initThreeScene() {
@@ -132,6 +135,10 @@
             this.container.innerHTML = '';
             this.container.appendChild(this.renderer.domElement);
             this.renderer.domElement.className = 'station-map-globe-canvas-element';
+
+            this.hoverTooltipEl = document.createElement('div');
+            this.hoverTooltipEl.className = 'globe-3d-tooltip';
+            this.container.appendChild(this.hoverTooltipEl);
 
             if (THREE.OrbitControls) {
                 this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
@@ -412,11 +419,63 @@
                 if (target && (target.userData?.satItem || target.userData?.station)) {
                     this.hoveredObject = target;
                     this.renderer.domElement.style.cursor = 'pointer';
+                    this._showTooltip(target, event.clientX - rect.left, event.clientY - rect.top);
                     return;
                 }
             }
             this.hoveredObject = null;
             this.renderer.domElement.style.cursor = 'grab';
+            if (this.hoverTooltipEl) this.hoverTooltipEl.style.display = 'none';
+        }
+
+        _showTooltip(target, x, y) {
+            if (!this.hoverTooltipEl || !target) return;
+            const sat = target.userData?.satItem;
+            const stn = target.userData?.station;
+
+            if (sat) {
+                const cfg = {
+                    gps: { name: 'GPS', flag: '🇺🇸', hex: '#22c55e' },
+                    galileo: { name: 'Galileo', flag: '🇪🇺', hex: '#38bdf8' },
+                    beidou: { name: 'BeiDou', flag: '🇨🇳', hex: '#f59e0b' },
+                    glonass: { name: 'GLONASS', flag: '🇷🇺', hex: '#ef4444' },
+                }[sat.constellationKey] || { name: 'GNSS', flag: '🛰️', hex: '#38bdf8' };
+
+                const pos = target.userData?.lastCalculated || {};
+                const altStr = Number.isFinite(pos.altKm) ? `${Math.round(pos.altKm).toLocaleString()} km` : '20,000 km';
+                const cleanName = (sat.name || '').replace(/\(.*?\)/g, '').trim();
+
+                this.hoverTooltipEl.innerHTML = `
+                    <div class="tooltip-title" style="color:${cfg.hex}">
+                        ${cfg.flag} <b>${sat.code || sat.name}</b> (${cfg.name})
+                    </div>
+                    <div class="tooltip-sub">
+                        ${cleanName ? `${cleanName} • ` : ''}${altStr}
+                    </div>
+                `;
+                this.hoverTooltipEl.style.left = `${x}px`;
+                this.hoverTooltipEl.style.top = `${y}px`;
+                this.hoverTooltipEl.style.display = 'block';
+            } else if (stn) {
+                const dev = stn.device || {};
+                const isOnline = stn.status === 'online' || stn.status === 'streaming';
+                const statusColor = isOnline ? '#10b981' : '#ef4444';
+                const statusLabel = isOnline ? 'Trực tuyến' : 'Ngoại tuyến';
+
+                this.hoverTooltipEl.innerHTML = `
+                    <div class="tooltip-title" style="color:#38bdf8">
+                        📡 <b>${dev.name || dev.serial || 'CORS Station'}</b>
+                    </div>
+                    <div class="tooltip-sub">
+                        Trạng thái: <span style="color:${statusColor}">${statusLabel}</span>
+                    </div>
+                `;
+                this.hoverTooltipEl.style.left = `${x}px`;
+                this.hoverTooltipEl.style.top = `${y}px`;
+                this.hoverTooltipEl.style.display = 'block';
+            } else {
+                this.hoverTooltipEl.style.display = 'none';
+            }
         }
 
         _onPointerClick(event) {

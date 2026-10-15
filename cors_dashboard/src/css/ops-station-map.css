@@ -872,5 +872,34 @@
 .globe-detail-card .sat-pill.bds { color: #f59e0b; border-color: rgba(245, 158, 11, 0.3); }
 .globe-detail-card .sat-pill.glo { color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
 
+.globe-3d-tooltip {
+    position: absolute;
+    pointer-events: none;
+    z-index: 950;
+    background: rgba(11, 16, 27, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #f8fafc;
+    font-size: 0.72rem;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.75), 0 0 15px rgba(56, 189, 248, 0.2);
+    transform: translate(14px, -50%);
+    white-space: nowrap;
+    display: none;
+    animation: fadeIn 120ms ease-out;
+}
+
+.globe-3d-tooltip .tooltip-title {
+    font-weight: 700;
+    margin-bottom: 2px;
+}
+
+.globe-3d-tooltip .tooltip-sub {
+    color: #94a3b8;
+    font-size: 0.68rem;
+}
+
 
 
