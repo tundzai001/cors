@@ -1405,87 +1405,14 @@ def _is_rtk_usable_status(status: str) -> bool:
     # Accept both RTK fixed and float to avoid long stalls when fix quality oscillates.
     return status in ("RTK_FIXED", "RTK_FLOAT")
 
-def _format_gga_sentence(lat: float, lon: float, alt: float, fix_quality: int = 1, num_sats: int = 12, hdop: float = 1.0) -> str:
-    try:
-        from datetime import datetime, timezone
-        now_utc = datetime.now(timezone.utc)
-        utc_str = now_utc.strftime("%H%M%S.00")
-        lat_f = float(lat)
-        lon_f = float(lon)
-        lat_abs = abs(lat_f)
-        lat_deg = int(lat_abs)
-        lat_min = (lat_abs - lat_deg) * 60.0
-        lat_dir = 'N' if lat_f >= 0 else 'S'
-        lon_abs = abs(lon_f)
-        lon_deg = int(lon_abs)
-        lon_min = (lon_abs - lon_deg) * 60.0
-        lon_dir = 'E' if lon_f >= 0 else 'W'
-        body = f"GNGGA,{utc_str},{lat_deg:02d}{lat_min:07.4f},{lat_dir},{lon_deg:03d}{lon_min:07.4f},{lon_dir},{int(fix_quality)},{int(num_sats):02d},{float(hdop):.1f},{float(alt):.3f},M,0.0,M,,"
-        ck = _nmea_checksum(body)
-        return f"${body}*{ck}"
-    except Exception as e:
-        logging.warning(f"Failed to format synthetic GGA: {e}")
-        return ""
-
-def _get_outbound_gga_with_diagnostics(max_age_seconds: float = 30.0, agent=None) -> tuple[str | None, str]:
-    now = time.time()
+def _get_fresh_outbound_gga(max_age_seconds: float = 10.0) -> str | None:
     raw_gga = globals().get('LAST_RAW_GGA')
     gga_ts = float(globals().get('LAST_RAW_GGA_TS') or 0.0)
-    age = now - gga_ts if gga_ts > 0 else 9999.0
-
-    # 1. Fresh raw GGA directly received from GNSS chip
-    if raw_gga and age <= max_age_seconds:
-        normalized = _normalize_gga_for_ntrip(raw_gga)
-        return normalized, f"live_chip (age={age:.1f}s)"
-
-    # 2. Slightly older raw GGA (up to 300s): refresh UTC time so VRS Spider receives valid geometry
-    if raw_gga and age <= 300.0:
-        try:
-            from datetime import datetime, timezone
-            parts = raw_gga.strip().split('*')[0].split(',')
-            parts[1] = datetime.now(timezone.utc).strftime("%H%M%S.00")
-            body = ",".join(parts)[1:] if parts[0].startswith('$') else ",".join(parts)
-            refreshed = f"${body}*{_nmea_checksum(body)}"
-            normalized = _normalize_gga_for_ntrip(refreshed)
-            return normalized, f"refreshed_chip (age={age:.1f}s)"
-        except Exception:
-            pass
-
-    # 3. UBX NAV-HPPOSLLH high-precision position decoded from binary stream
-    hpposllh = globals().get('LAST_HPPOSLLH_COORD')
-    hpposllh_ts = float(globals().get('LAST_HPPOSLLH_TS') or 0.0)
-    if hpposllh and (now - hpposllh_ts) <= 300.0:
-        synth = _format_gga_sentence(hpposllh[0], hpposllh[1], hpposllh[2], fix_quality=1)
-        if synth:
-            return synth, f"ubx_hpposllh_synth (age={now - hpposllh_ts:.1f}s)"
-
-    # 4. LAST_GGA_COORD
-    last_coord = globals().get('LAST_GGA_COORD')
-    if last_coord and len(last_coord) >= 3 and last_coord[0] is not None:
-        synth = _format_gga_sentence(last_coord[0], last_coord[1], last_coord[2], fix_quality=1)
-        if synth:
-            return synth, "last_known_coord_synth"
-
-    # 5. Station base config coordinate fallback
-    if agent:
-        try:
-            b_cfg = agent.get_base_config() or {}
-            coords = b_cfg.get('coords') or {}
-            c_lat = coords.get('lat') or b_cfg.get('lat')
-            c_lon = coords.get('lon') or b_cfg.get('lon')
-            c_alt = coords.get('alt') or b_cfg.get('alt') or 10.0
-            if c_lat is not None and c_lon is not None:
-                synth = _format_gga_sentence(float(c_lat), float(c_lon), float(c_alt), fix_quality=1)
-                if synth:
-                    return synth, "base_config_fallback"
-        except Exception:
-            pass
-
-    return None, f"no_data (raw_gga={'None' if not raw_gga else 'stale'}, age={age:.1f}s)"
-
-def _get_fresh_outbound_gga(max_age_seconds: float = 30.0) -> str | None:
-    gga, _ = _get_outbound_gga_with_diagnostics(max_age_seconds=max_age_seconds, agent=globals().get('agent'))
-    return gga
+    if not raw_gga or gga_ts <= 0.0:
+        return None
+    if (time.time() - gga_ts) > max_age_seconds:
+        return None
+    return raw_gga.strip()
 
 def _mark_gnss_data_stale():
     globals()['LAST_RAW_GGA'] = None
@@ -3524,18 +3451,23 @@ class NTRIPClientWorker(threading.Thread):
                 total_rtcm_bytes = 0
                 total_rtcm_pkts = 0
 
-                out_gga, gga_source = _get_outbound_gga_with_diagnostics(max_age_seconds=30.0, agent=globals().get('agent'))
+                out_gga = _get_fresh_outbound_gga(10.0)
                 if out_gga:
                     try:
                         gga_bytes = (out_gga + '\r\n').encode('ascii')
                         client_socket.sendall(gga_bytes)
                         self.last_sent_gga = out_gga
                         self.last_sent_gga_time = time.time()
-                        self.log("INFO", f"[RTCM Client] >>> [SENT INITIAL GGA to CASTER] ({gga_source}): {out_gga}")
+                        self.log("INFO", f"[RTCM Client] >>> SENT INITIAL GGA: {out_gga}")
                     except Exception as e:
                         self.log("WARNING", f"[RTCM Client] Failed to send initial GGA: {e}")
                 else:
-                    self.log("WARNING", f"[RTCM Client] Waiting for GGA before streaming ({gga_source})")
+                    raw_gga = globals().get('LAST_RAW_GGA')
+                    if raw_gga:
+                        age = time.time() - float(globals().get('LAST_RAW_GGA_TS') or 0.0)
+                        self.log("WARNING", f"[RTCM Client] Last GGA is {age:.1f}s old: {raw_gga}")
+                    else:
+                        self.log("WARNING", "[RTCM Client] Waiting for rover chip to output first GGA sentence...")
                 
                 last_gga_send_time = time.time()
                 gga_send_interval = 5  # Send GGA every 5 seconds for VRS
@@ -3545,22 +3477,24 @@ class NTRIPClientWorker(threading.Thread):
                     # Send GGA to caster periodically (required for VRS)
                     now = time.time()
                     if now - last_gga_send_time >= gga_send_interval:
-                        out_gga, gga_source = _get_outbound_gga_with_diagnostics(max_age_seconds=30.0, agent=globals().get('agent'))
+                        out_gga = _get_fresh_outbound_gga(10.0)
                         if out_gga:
                             try:
                                 gga_bytes = (out_gga + '\r\n').encode('ascii')
                                 client_socket.sendall(gga_bytes)
                                 self.last_sent_gga = out_gga
                                 self.last_sent_gga_time = now
-                                self.log("INFO", f"[RTCM Client] >>> [SENT GGA ({gga_source})]: {out_gga}")
+                                self.log("INFO", f"[RTCM Client] >>> GGA sent: {out_gga}")
                             except Exception as e:
                                 self.log("WARNING", f"[RTCM Client] Failed to send GGA: {e}")
                                 break
                         else:
-                            last_raw = globals().get('LAST_RAW_GGA')
-                            last_ts = globals().get('LAST_RAW_GGA_TS')
-                            age_s = f"{now - last_ts:.1f}s" if last_ts else "never"
-                            self.log("WARNING", f"[RTCM Client] No GGA available ({gga_source}, last_raw={repr(last_raw)}, age={age_s})")
+                            raw_gga = globals().get('LAST_RAW_GGA')
+                            if raw_gga:
+                                age = now - float(globals().get('LAST_RAW_GGA_TS') or 0.0)
+                                self.log("WARNING", f"[RTCM Client] GGA is stale ({age:.1f}s old): {raw_gga}")
+                            else:
+                                self.log("WARNING", "[RTCM Client] No GGA received from rover chip yet")
                         last_gga_send_time = now
                     
                     try:
@@ -6055,18 +5989,12 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         logging.error(f"AutoBase: Failed to set ROVER mode: {e}")
 
     # Wait up to 5 seconds for initial NMEA GGA from rover chip before connecting to NTRIP
-    logging.info("AutoBase: Checking initial GGA for NTRIP Caster...")
+    logging.info("AutoBase: Waiting for rover chip to output NMEA GGA...")
     for _ in range(10):
         if globals().get('LAST_RAW_GGA'):
-            logging.info(f"AutoBase: Initial NMEA GGA ready from chip: {globals().get('LAST_RAW_GGA')}")
+            logging.info(f"AutoBase: Initial NMEA GGA from chip: {globals().get('LAST_RAW_GGA')}")
             break
         await asyncio.sleep(0.5)
-
-    initial_check_gga, initial_check_source = _get_outbound_gga_with_diagnostics(max_age_seconds=30.0, agent=agent)
-    if initial_check_gga:
-        logging.info(f"AutoBase: Initial outbound GGA confirmed ({initial_check_source}): {initial_check_gga}")
-    else:
-        logging.warning("AutoBase: Warning - No initial GGA available yet. NTRIP client will wait for chip data.")
             
     # Start temporary NTRIP client to get RTCM
     ntrip_host = str(cfg.get("ip") or "").strip()
