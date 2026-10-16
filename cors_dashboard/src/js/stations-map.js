@@ -181,19 +181,23 @@
         const [satelliteFilters, setSatelliteFilters] = useState({ gps: true, galileo: true, beidou: true, glonass: true, qzss: true, showIpp: true });
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
+        const mapboxEl = useRef(null);
         const [isGlobeMode, setIsGlobeMode] = useState(false);
+        const [useOrbitView, setUseOrbitView] = useState(false);
+        const [mapboxSpinning, setMapboxSpinning] = useState(false);
         const globeModeRef = useRef(false);
         const autoGlobeRef = useRef(false);
         const mapHandoffRef = useRef(false);
         globeModeRef.current = isGlobeMode;
         function enterGlobeMode(automatic = false) {
+            setUseOrbitView(false);
             autoGlobeRef.current = automatic;
             globeModeRef.current = true;
             setIsGlobeMode(true);
         }
         function showSurfaceMap(surface) {
             const map = mapRef.current;
-            const view = surface || window.Globe3DView?.getSurfaceView();
+            const view = surface || (useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.getSurfaceView();
             mapHandoffRef.current = true;
             if (map && view) {
                 map.setMaxBounds(null);
@@ -541,36 +545,46 @@
         useEffect(() => {
             if (!isGlobeMode) {
                 window.Globe3DView?.detach();
+                window.MapboxGlobeView?.detach();
                 if (mapRef.current) {
                     setTimeout(() => mapRef.current.invalidateSize(), 80);
                 }
                 return;
             }
 
-            if (globeEl.current && window.Globe3DView) {
-                window.Globe3DView.attach(globeEl.current, {
+            const renderer = useOrbitView ? window.Globe3DView : window.MapboxGlobeView;
+            const container = useOrbitView ? globeEl.current : mapboxEl.current;
+            if (container && renderer) {
+                renderer.attach(container, {
                     stations,
                     selectedStation: selectedSatStation,
                     center: mapRef.current?.getCenter(),
                     zoom: mapRef.current?.getZoom(),
                     autoZoom: autoGlobeRef.current,
                     onSurfaceView: showSurfaceMap,
+                    onSpinChange: setMapboxSpinning,
+                    onTrackStation: station => {
+                        if (['offline', 'lost'].includes(station.status)) return;
+                        if (window.selectDashboardDevice) window.selectDashboardDevice(station.serial);
+                        else if (window.globalState) window.globalState.selectedDeviceSerial = station.serial;
+                        setShowSatellites(true);
+                        window.GnssSatelliteOverlay?.setSelectedStation(station);
+                        setUseOrbitView(true);
+                    },
                 });
-                window.Globe3DView.setFilter('gps', satelliteFilters.gps);
-                window.Globe3DView.setFilter('galileo', satelliteFilters.galileo);
-                window.Globe3DView.setFilter('beidou', satelliteFilters.beidou);
-                window.Globe3DView.setFilter('glonass', satelliteFilters.glonass);
-                window.Globe3DView.setFilter('qzss', satelliteFilters.qzss);
-                window.Globe3DView.setEarthTexture(globeTexture);
+                if (useOrbitView) {
+                    Object.entries(satelliteFilters).forEach(([key, value]) => renderer.setFilter(key, value));
+                    renderer.setEarthTexture(globeTexture);
+                }
             }
-            return () => window.Globe3DView?.detach();
-        }, [isGlobeMode]);
+            return () => renderer?.detach();
+        }, [isGlobeMode, useOrbitView]);
 
         useEffect(() => {
-            if (isGlobeMode && window.Globe3DView) {
-                window.Globe3DView.updateStations(stations, selectedSatStation);
+            if (isGlobeMode) {
+                (useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.updateStations(stations, selectedSatStation);
             }
-        }, [stations, selectedSatStation, isGlobeMode]);
+        }, [stations, selectedSatStation, isGlobeMode, useOrbitView]);
 
         useEffect(() => {
             let active = true;
@@ -1023,7 +1037,8 @@
 
         return (
             <div className="station-map-container">
-                <div ref={globeEl} className={`station-map-globe-canvas${isGlobeMode ? ' is-visible' : ''}`} aria-hidden={!isGlobeMode}></div>
+                <div ref={mapboxEl} className={`station-map-globe-canvas${isGlobeMode && !useOrbitView ? ' is-visible' : ''}`} aria-hidden={!isGlobeMode || useOrbitView}></div>
+                <div ref={globeEl} className={`station-map-globe-canvas${isGlobeMode && useOrbitView ? ' is-visible' : ''}`} aria-hidden={!isGlobeMode || !useOrbitView}></div>
                 <div className={`station-map-flat-layer${isGlobeMode ? ' is-hidden' : ''}`} aria-hidden={isGlobeMode}>
                     <div ref={mapEl} className="station-map-canvas"></div>
                 </div>
@@ -1387,19 +1402,22 @@
                         <button
                             type="button"
                             className="globe-dock-btn"
-                            onClick={() => window.Globe3DView?.focusVietnam(true, 90)}
-                            title="Xem toàn bộ vệ tinh GNSS và quỹ đạo"
+                            onClick={() => setUseOrbitView(!useOrbitView)}
+                            title={useOrbitView ? 'Trở về địa cầu Mapbox' : 'Xem quỹ đạo vệ tinh GNSS'}
                         >
-                            <i className="bi bi-globe"></i> Quỹ đạo
+                            <i className={`bi ${useOrbitView ? 'bi-globe' : 'bi-radar'}`} aria-hidden="true"></i> {useOrbitView ? 'Địa cầu' : 'Quỹ đạo GNSS'}
                         </button>
+                        {!useOrbitView && <button type="button" className="globe-dock-btn" onClick={() => window.MapboxGlobeView?.focusVietnam(true, 90)}><i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu</button>}
                         <button
                             type="button"
-                            className="globe-dock-btn active"
-                            onClick={() => window.Globe3DView?.focusVietnam(true)}
+                            className="globe-dock-btn"
+                            onClick={() => (useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.focusVietnam(true)}
                             title="Tập trung cận cảnh vào Việt Nam"
                         >
                             <i className="bi bi-crosshair2 text-info"></i> Tâm VN
                         </button>
+                        {!useOrbitView && <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning(!mapboxSpinning)}><i className="bi bi-arrow-repeat" aria-hidden="true"></i> {mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</button>}
+                        {useOrbitView && <React.Fragment>
                         <div className="globe-dock-separator"></div>
                         {['gps', 'galileo', 'beidou', 'glonass', 'qzss'].map(k => (
                             <button
@@ -1430,6 +1448,7 @@
                         >
                             <i className="bi bi-palette"></i> {globeTexture === 'blue-marble' ? 'NASA Blue Marble' : globeTexture === 'night' ? 'City Lights' : 'Cyber Dark'}
                         </button>
+                        </React.Fragment>}
                     </div>
                 )}
 

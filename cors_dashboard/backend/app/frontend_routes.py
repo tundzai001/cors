@@ -1,11 +1,20 @@
 """Frontend page responses and restricted public asset serving."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from .runtime_config import _get_env_preferring_dotenv
 
 
 router = APIRouter()
+
+
+@router.get("/api/public/map-config")
+async def get_public_map_config(response: Response):
+    """Expose only a browser-safe Mapbox token; never return secret credentials."""
+    token = _get_env_preferring_dotenv("MAPBOX_PUBLIC_TOKEN", "").strip()
+    response.headers["Cache-Control"] = "no-store"
+    return {"mapbox_public_token": token if token.startswith("pk.") else ""}
 
 
 @router.get("/login", include_in_schema=False)

@@ -52,6 +52,18 @@ for (let cycle = 0; cycle < 3; cycle++) {
   assert.equal(nodes.find(node => node.props.ref === ref).props.className, initialCanvas.props.className);
 }
 let nodes = render();
+nodes.find(node => node.props['data-action'] === 'toggle-globe').props.onClick();
+nodes = render();
+assert.ok(nodes.some(node => node.props.title === 'Xem quỹ đạo vệ tinh GNSS'),
+  'production globe starts with Mapbox and offers the orbit view separately');
+assert.ok(!nodes.some(node => node.props.title === 'Đổi giao diện địa cầu (Blue Marble / City Lights / Cyber Dark)'),
+  'Mapbox does not show controls belonging to the orbit renderer');
+nodes.find(node => node.props.title === 'Xem quỹ đạo vệ tinh GNSS').props.onClick();
+nodes = render();
+assert.ok(nodes.some(node => node.props.title === 'Trở về địa cầu Mapbox'));
+assert.ok(nodes.some(node => node.props.title === 'Đổi giao diện địa cầu (Blue Marble / City Lights / Cyber Dark)'));
+nodes.find(node => node.props['data-action'] === 'toggle-globe').props.onClick();
+nodes = render();
 nodes.find(node => node.props['aria-controls'] === 'station-map-filters').props.onClick();
 nodes = render();
 assert.ok(nodes.find(node => node.props.id === 'station-map-filters'));
