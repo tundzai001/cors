@@ -1,0 +1,1 @@
+{"name":"cors-mapbox-globe-preview","private":true,"type":"module","scripts":{"start":"python3 server.py","test":"node --test *.test.js"}}

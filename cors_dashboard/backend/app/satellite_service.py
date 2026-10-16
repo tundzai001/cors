@@ -23,6 +23,7 @@ CONSTELLATIONS_CONFIG = {
 }
 
 CELESTRAK_BASE_URL = "https://celestrak.org/NORAD/elements/gp.php"
+IGS_METADATA_URL = "https://files.igs.org/pub/station/general/igs_satellite_metadata.snx"
 
 
 class SatelliteService:
@@ -32,9 +33,64 @@ class SatelliteService:
         self._last_fetch_monotonic = 0.0
         self._data_dir = os.path.join(os.path.dirname(__file__), "data")
         self._disk_cache_file = os.path.join(self._data_dir, "gnss_satellites_cache.json")
+        with open(os.path.join(self._data_dir, "gnss_identifiers.snx"), encoding="utf-8") as source:
+            self._identifiers = self._parse_identifiers(source.read())
+        self._identifiers_cache_file = os.path.join(self._data_dir, "gnss_identifiers_cache.json")
+        try:
+            with open(self._identifiers_cache_file, encoding="utf-8") as source:
+                identifiers = self._parse_identifiers(json.load(source)["sinex"])
+            if identifiers:
+                self._identifiers = identifiers
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
+    @staticmethod
+    def _parse_identifiers(text: str) -> dict[str, list[tuple[str, str, str]]]:
+        """Join IGS spacecraft identifiers with time-bounded PRN/slot assignments."""
+        if not isinstance(text, str):
+            return {}
+        norad_by_svn = {}
+        assignments = []
+        block = ""
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("+"):
+                block = line[1:]
+            elif line.startswith("-"):
+                block = ""
+            elif line and not line.startswith("*"):
+                fields = line.split()
+                if block == "SATELLITE/IDENTIFIER" and len(fields) >= 3:
+                    norad_by_svn[fields[0]] = fields[2].lstrip("0")
+                elif block == "SATELLITE/PRN" and len(fields) >= 4:
+                    assignments.append(fields[:4])
+        result = {}
+        for svn, start, end, code in assignments:
+            norad = norad_by_svn.get(svn)
+            if norad and re.fullmatch(r"[GRECJI]\d{2,3}", code):
+                result.setdefault(norad, []).append((start, end, code))
+        return result
+
+    def _normalize_codes(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Re-identify old disk/in-memory caches too; TLE names can retain former PRNs.
+        for constellation, satellites in payload.get("constellations", {}).items():
+            for sat in satellites:
+                sat["code"] = self._extract_satellite_code(constellation, sat["name"], sat["line1"])
+        return payload
 
     def _extract_satellite_code(self, constellation: str, name: str, line1: str) -> str:
         prefix = CONSTELLATIONS_CONFIG.get(constellation, {}).get("prefix", "S")
+        assignments = self._identifiers.get(line1[2:7].strip().lstrip("0"))
+        if assignments:
+            now = datetime.now(timezone.utc)
+            epoch = now.strftime("%Y:%j:") + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
+            for start, end, code in reversed(assignments):
+                if start <= epoch and (end == "0000:000:00000" or epoch < end):
+                    if code.startswith(prefix):
+                        if constellation == "qzss" and int(code[1:]) < 100:
+                            return f"J{int(code[1:]) + 192:03d}"
+                        return code
+            return f"{prefix}?"
         if constellation == "gps":
             m = re.search(r"PRN\s*(\d+)", name, re.IGNORECASE)
             if m:
@@ -43,29 +99,13 @@ class SatelliteService:
             m = re.search(r"C(\d+)", name, re.IGNORECASE)
             if m:
                 return f"C{int(m.group(1)):02d}"
-        elif constellation == "galileo":
-            m = re.search(r"\bGALILEO(?:[\s-]+PRN)?\s+(\d{1,2})\b", name, re.IGNORECASE)
-            if m:
-                return f"E{int(m.group(1)):02d}"
-            m = re.search(r"GSAT\s*0?(\d+)", name, re.IGNORECASE)
-            if m:
-                val = int(m.group(1))
-                return f"E{val:02d}" if val < 100 else f"E{val % 100:02d}"
-        elif constellation == "glonass":
-            m = re.search(r"\((\d+)\)", name)
-            if m:
-                return f"R{int(m.group(1)) % 100:02d}"
         elif constellation == "qzss":
             m = re.search(r"QZSS\s*/\s*PRN\s*(\d+)", name, re.IGNORECASE)
             if m:
                 return f"J{int(m.group(1)):03d}"
 
-        # Fallback to last 2 digits of NORAD catalog number
-        try:
-            cat_id = line1[2:7].strip()
-            return f"{prefix}{cat_id[-2:]}"
-        except Exception:
-            return f"{prefix}00"
+        # Unknown identity must never accidentally match a live RTCM PRN.
+        return f"{prefix}?"
 
     def _parse_tle_text(self, text: str, constellation: str) -> list[dict[str, Any]]:
         lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
@@ -115,7 +155,7 @@ class SatelliteService:
             if not force_refresh and self._cached_payload:
                 age = now - self._last_fetch_monotonic
                 if age < CACHE_TTL_SECONDS:
-                    return self._cached_payload
+                    return self._normalize_codes(self._cached_payload)
 
             # Try to load disk cache on cold boot
             if not self._cached_payload and not force_refresh:
@@ -123,8 +163,13 @@ class SatelliteService:
                 cached_constellations = disk_data.get("constellations") if isinstance(disk_data, dict) else None
                 if isinstance(cached_constellations, dict) and set(CONSTELLATIONS_CONFIG).issubset(cached_constellations):
                     self._cached_payload = disk_data
-                    self._last_fetch_monotonic = now
-                    return disk_data
+                    try:
+                        age = (datetime.now(timezone.utc) - datetime.fromisoformat(disk_data["updated_at_utc"])).total_seconds()
+                    except (KeyError, ValueError, TypeError):
+                        age = CACHE_TTL_SECONDS
+                    if 0 <= age < CACHE_TTL_SECONDS:
+                        self._last_fetch_monotonic = now - age
+                        return self._normalize_codes(disk_data)
 
             # Fetch fresh from CelesTrak
             try:
@@ -132,6 +177,19 @@ class SatelliteService:
                 total_count = 0
 
                 async with httpx.AsyncClient(verify=False, timeout=12.0) as client:
+                    try:
+                        metadata = await client.get(IGS_METADATA_URL)
+                        metadata.raise_for_status()
+                        identifiers = self._parse_identifiers(metadata.text)
+                        if identifiers:
+                            self._identifiers = identifiers
+                            try:
+                                with open(self._identifiers_cache_file, "w", encoding="utf-8") as cache:
+                                    json.dump({"sinex": metadata.text}, cache)
+                            except OSError as exc:
+                                logger.debug("Could not cache IGS identifiers: %s", exc)
+                    except Exception as exc:
+                        logger.warning("IGS identifiers unavailable, using bundled/previous assignments: %s", exc)
                     for key, cfg in CONSTELLATIONS_CONFIG.items():
                         url = f"{CELESTRAK_BASE_URL}?GROUP={cfg['group']}&FORMAT=TLE"
                         resp = await client.get(url, headers={"User-Agent": "Aitogy-CORS-System/1.0"})
@@ -165,7 +223,7 @@ class SatelliteService:
                 stale_payload = dict(self._cached_payload)
                 stale_payload["is_stale"] = True
                 stale_payload["warning"] = "CelesTrak update temporarily unreachable, using cached TLEs"
-                return stale_payload
+                return self._normalize_codes(stale_payload)
 
             # Fallback to disk cache if available
             disk_data = self._load_disk_cache()
@@ -179,7 +237,7 @@ class SatelliteService:
                     counts = {}
                     disk_data["counts"] = counts
                 counts.update({key: len(constellations[key]) for key in CONSTELLATIONS_CONFIG})
-                return disk_data
+                return self._normalize_codes(disk_data)
 
             return {
                 "status": "UNAVAILABLE",

@@ -92,6 +92,13 @@ assert.equal(rayLayers.length, 0, 'detaching 2D clears child rays and IPP marker
 overlay.mapInstance = {};
 overlay.propagateTick();
 assert.equal(rayLayers.length, 6, 'reattaching and propagating recreates one set of tracking layers');
+overlay.clearSelectedStation();
+assert.equal(overlay.selectedStation, null, 'stop tracking clears the selected station');
+assert.equal(overlay.stats.visible, 0, 'stop tracking resets matched counts');
+assert.equal(rayLayers.length, 0, 'stop tracking removes rays and IPP');
+assert.equal(satelliteMarkers.length, 4, 'stop tracking keeps orbital positions visible');
+overlay.setSelectedStation({ serial: 'PI_station1', lat: 21, lon: 105, status: 'online' });
+assert.equal(rayLayers.length, 6, 'station tracking can resume after cancellation');
 telemetry = { satellites: {} };
 overlay.propagateTick();
 assert.equal(satelliteMarkers.length, 4, 'satellite positions remain visible when fresh RTCM records stop');

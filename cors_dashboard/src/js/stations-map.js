@@ -1043,48 +1043,39 @@
                         <button
                             className={`station-map-action ${isGlobeMode ? 'active text-info' : ''}`}
                             type="button"
-                            title={isGlobeMode ? "Trở về Bản đồ 2D (Leaflet Map)" : "Quả địa cầu 3D (Full 3D Earth Globe - satellitemap.space style)"}
-                            aria-label="3D Globe"
+                            title={isGlobeMode ? "Trở về bản đồ 2D" : "Mở địa cầu 3D"}
+                            aria-label={isGlobeMode ? "Bản đồ 2D" : "Địa cầu 3D"}
+                            data-action="toggle-globe"
                             onClick={() => isGlobeMode ? showSurfaceMap() : enterGlobeMode()}
                         >
                             <i className={`bi ${isGlobeMode ? 'bi-map' : 'bi-globe-asia-australia'}`}></i>
                         </button>
                         {!isGlobeMode && (
                             <React.Fragment>
-                                <button className={`station-map-action ${filterOpen ? 'active' : ''}`} title="Filter" onClick={() => setFilterOpen(!filterOpen)}><i className="bi bi-funnel"></i></button>
-                                <button className="station-map-action" title="Locate" onClick={locate}><i className="bi bi-geo-alt-fill"></i></button>
-                                <button className="station-map-action" title="Tìm trạm gần nhất" onClick={findNearestFromBrowser} disabled={findingNearest}>
+                                <button className={`station-map-action ${filterOpen ? 'active' : ''}`} type="button" title="Bộ lọc bản đồ" aria-label="Bộ lọc bản đồ" aria-expanded={filterOpen} aria-controls="station-map-filters" onClick={() => { setFilterOpen(!filterOpen); setSearchOpen(false); }}><i className="bi bi-funnel" aria-hidden="true"></i></button>
+                                <button className="station-map-action" type="button" title="Vị trí của tôi" aria-label="Vị trí của tôi" onClick={locate}><i className="bi bi-geo-alt-fill" aria-hidden="true"></i></button>
+                                <button className="station-map-action" type="button" title="Tìm trạm gần nhất" aria-label={findingNearest ? 'Đang tìm trạm gần nhất' : 'Tìm trạm gần nhất'} aria-busy={findingNearest} onClick={findNearestFromBrowser} disabled={findingNearest}>
                                     {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
                                 </button>
-                                <button className={`station-map-action ${searchOpen ? 'active' : ''}`} title="Search" onClick={() => setSearchOpen(!searchOpen)}><i className="bi bi-search"></i></button>
+                                <button className={`station-map-action ${searchOpen ? 'active' : ''}`} type="button" title="Tìm kiếm" aria-label="Tìm kiếm" aria-expanded={searchOpen} aria-controls="station-map-search" onClick={() => { setSearchOpen(!searchOpen); setFilterOpen(false); }}><i className="bi bi-search" aria-hidden="true"></i></button>
                                 <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
-                                <button className={`station-map-action ${showIonosphere ? 'active' : ''}`} type="button" title="Tầng điện ly (NOAA GloTEC TEC)" aria-label="Tầng điện ly" onClick={() => setShowIonosphere(!showIonosphere)}><i className="bi bi-broadcast-pin"></i></button>
-                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vị trí quỹ đạo TLE; tracking theo RTCM" aria-label="Vệ tinh GNSS" onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar"></i></button>
-                                <button className={`station-map-action ${measureOn ? 'active' : ''}`} title="Measure" onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers"></i></button>
+                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS" aria-label="Vệ tinh GNSS" aria-pressed={showSatellites} onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar" aria-hidden="true"></i></button>
+                                <button className={`station-map-action ${measureOn ? 'active' : ''}`} type="button" title="Đo khoảng cách" aria-label="Đo khoảng cách" aria-pressed={measureOn} onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers" aria-hidden="true"></i></button>
                             </React.Fragment>
                         )}
                     </div>
                 </div>
 
                 {filterOpen && !isGlobeMode && (
-                    <div className="station-map-filter-panel">
-                        <div className="fw-bold mb-2">Filters</div>
+                    <div className="station-map-filter-panel" id="station-map-filters">
+                        <div className="fw-bold mb-2">Bộ lọc bản đồ</div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showStations} onChange={(e) => setShowStations(e.target.checked)} id="station-toggle" />
-                            <label className="form-check-label" htmlFor="station-toggle">CORS stations</label>
+                            <label className="form-check-label" htmlFor="station-toggle">Trạm CORS</label>
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showRovers} onChange={(e) => setShowRovers(e.target.checked)} id="rover-toggle" disabled={!canViewRovers} />
                             <label className="form-check-label" htmlFor="rover-toggle">Rovers</label>
-                        </div>
-                        <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={showSatellites} onChange={(e) => setShowSatellites(e.target.checked)} id="satellites-toggle" />
-                            <label className="form-check-label d-flex align-items-center justify-content-between" htmlFor="satellites-toggle">
-                                <span>Vệ tinh GNSS (4 chòm)</span>
-                                <span className="badge bg-primary" style={{ fontSize: '0.65rem' }}>
-                                    {satelliteStats.total || 143} SATS
-                                </span>
-                            </label>
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showIonosphere} onChange={(e) => setShowIonosphere(e.target.checked)} id="ionosphere-toggle" />
@@ -1115,7 +1106,7 @@
                 )}
 
                 {searchOpen && !isGlobeMode && (
-                    <div className="station-map-search-panel">
+                    <div className="station-map-search-panel" id="station-map-search">
                         <input className="form-control form-control-sm mb-2" placeholder="Find station / serial / mountpoint" value={search} onChange={(e) => setSearch(e.target.value)} />
                         <form className="d-flex gap-2 mb-2" onSubmit={searchLocation}>
                             <input className="form-control form-control-sm" placeholder="Search location" value={locationSearch} onChange={(e) => setLocationSearch(e.target.value)} />
@@ -1297,11 +1288,11 @@
                                         <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
                                         <button
                                             type="button"
-                                            className="btn btn-xs btn-outline-light py-0 px-1"
-                                            style={{ fontSize: '0.65rem' }}
+                                            className="btn btn-sm btn-outline-light sat-hud-stop-tracking"
+                                            aria-label="Hủy theo dõi trạm"
                                             onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
                                         >
-                                            Bỏ chọn
+                                            Hủy theo dõi
                                         </button>
                                     </div>
                                     <div className="text-danger small fw-semibold">
@@ -1315,18 +1306,18 @@
                                         <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
                                         <button
                                             type="button"
-                                            className="btn btn-xs btn-outline-light py-0 px-1"
-                                            style={{ fontSize: '0.65rem' }}
+                                            className="btn btn-sm btn-outline-light sat-hud-stop-tracking"
+                                            aria-label="Hủy theo dõi trạm"
                                             onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
                                         >
-                                            Bỏ chọn
+                                            Hủy theo dõi
                                         </button>
                                     </div>
                                     <div className="text-info small">
                                         <i className="bi bi-eye me-1"></i>
                                         <b>{satelliteStats.visible}</b> vệ tinh khớp quỹ đạo
                                         {satelliteStats.hasLiveRtcm ? ` · ${satelliteStats.liveRtcmCount} PRN RTCM` : ' · đang chờ RTCM'}
-                                        {satelliteStats.unmatchedRtcmCount > 0 ? ` · ${satelliteStats.unmatchedRtcmCount} chưa có quỹ đạo (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
+                                        {satelliteStats.unmatchedRtcmCount > 0 ? ` · ${satelliteStats.unmatchedRtcmCount} chưa ghép quỹ đạo (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
                                     </div>
                                 </div>
                             )
@@ -1344,9 +1335,11 @@
                                 { key: 'glonass', label: 'GLONASS', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 0 },
                                 { key: 'qzss', label: 'QZSS', color: '#a855f7', count: satelliteStats.byConstellation?.qzss ?? 0 },
                             ].map(item => (
-                                <div
+                                <button
+                                    type="button"
                                     key={item.key}
                                     className={`sat-hud-pill ${satelliteFilters[item.key] ? 'active' : ''}`}
+                                    aria-pressed={satelliteFilters[item.key]}
                                     onClick={() => {
                                         const next = !satelliteFilters[item.key];
                                         window.GnssSatelliteOverlay?.setFilter(item.key, next);
@@ -1356,7 +1349,7 @@
                                     <span className="badge bg-dark ms-1" style={{ fontSize: '0.62rem' }}>
                                         {selectedSatStation ? item.count : ''}
                                     </span>
-                                </div>
+                                </button>
                             ))}
                         </div>
 
@@ -1380,7 +1373,7 @@
                             {satelliteStats.hasLiveRtcm ? (
                                 <div style={{ color: '#86efac' }}>
                                     ● RTCM: <b>{satelliteStats.liveRtcmCount} PRN</b> • khớp quỹ đạo: <b>{satelliteStats.visible}</b>
-                                    {satelliteStats.unmatchedRtcmCount > 0 ? ` • chưa có TLE: ${satelliteStats.unmatchedRtcmCount} (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
+                                    {satelliteStats.unmatchedRtcmCount > 0 ? ` • chưa ghép quỹ đạo: ${satelliteStats.unmatchedRtcmCount} (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
                                 </div>
                             ) : (
                                 <div>Đang chờ RTCM • tia và IPP chỉ hiện với PRN khớp</div>
@@ -1436,15 +1429,6 @@
                             title="Đổi giao diện địa cầu (Blue Marble / City Lights / Cyber Dark)"
                         >
                             <i className="bi bi-palette"></i> {globeTexture === 'blue-marble' ? 'NASA Blue Marble' : globeTexture === 'night' ? 'City Lights' : 'Cyber Dark'}
-                        </button>
-                        <div className="globe-dock-separator"></div>
-                        <button
-                            type="button"
-                            className="globe-dock-btn text-warning"
-                            onClick={() => showSurfaceMap()}
-                            title="Chuyển về bản đồ 2D phẳng"
-                        >
-                            <i className="bi bi-map"></i> Bản đồ 2D
                         </button>
                     </div>
                 )}

@@ -68,6 +68,7 @@
     position: absolute;
     top: 14px;
     z-index: 800;
+    max-width: calc(100% - 72px);
 }
 
 .station-map-toolgroup {
@@ -79,6 +80,8 @@
     display: flex;
     gap: 4px;
     padding: 6px;
+    overflow-x: auto;
+    scrollbar-width: thin;
 }
 
 .station-map-action {
@@ -88,10 +91,20 @@
     border-radius: var(--ops-radius-sm);
     color: #cbd5e1;
     display: inline-flex;
-    height: 34px;
+    height: 44px;
     justify-content: center;
-    width: 34px;
+    width: 44px;
+    flex-shrink: 0;
+    transition: background 150ms ease, color 150ms ease;
 }
+
+.station-map-action:focus-visible,
+.sat-hud-pill:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: -2px;
+}
+
+.station-map-action:active { background: rgba(14, 165, 233, 0.3); }
 
 .station-map-action:hover,
 .station-map-action.active {
@@ -120,12 +133,24 @@
     min-width: 280px;
     padding: 10px;
     position: absolute;
-    top: 60px;
+    top: 84px;
     z-index: 810;
 }
 
 .station-map-filter-panel {
     min-width: 220px;
+}
+
+.station-map-filter-panel .form-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+}
+
+.station-map-filter-panel .form-check-label {
+    cursor: pointer;
+    flex: 1;
 }
 
 .station-map-legend {
@@ -601,7 +626,11 @@
     cursor: pointer;
     user-select: none;
     transition: background 150ms ease, border-color 150ms ease;
+    width: 100%;
+    min-height: 44px;
 }
+
+.sat-hud-pill:hover { background: rgba(14, 165, 233, 0.22); }
 
 .sat-hud-pill.active {
     background: rgba(14, 165, 233, 0.15);
@@ -619,6 +648,22 @@
 
 .sat-hud-station-banner b {
     color: #38bdf8;
+}
+
+.sat-hud-station-banner > .d-flex {
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.sat-hud-stop-tracking {
+    min-height: 44px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.sat-hud-stop-tracking:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 2px;
 }
 
 .gnss-sat-popup,
@@ -849,6 +894,7 @@
 @media (prefers-reduced-motion: reduce) {
     .globe-detail-card { animation: none; }
     .station-map-globe-canvas, .station-map-flat-layer { transition: none; }
+    .station-map-action, .sat-hud-pill { transition: none; }
 }
 
 .globe-detail-card .card-top-row {

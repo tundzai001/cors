@@ -25,6 +25,7 @@ geodetic/geotek_db.json
 
 # Local secrets
 .env
+.env.*
 *.env
 !.env.example
 !*.env.example

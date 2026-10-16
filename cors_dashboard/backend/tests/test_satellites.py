@@ -1,6 +1,7 @@
 """Unit tests for GNSS satellite service and CelesTrak TLE parsing."""
 
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -11,6 +12,10 @@ from app.satellite_routes import router as satellite_router
 
 class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        clock = patch("app.satellite_service.datetime", wraps=datetime)
+        self.clock = clock.start()
+        self.addCleanup(clock.stop)
+        self.clock.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
         self.service = SatelliteService()
         self.service._save_disk_cache = Mock()
         self.service._load_disk_cache = Mock(return_value=None)
@@ -25,19 +30,55 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
 
         # BeiDou
         code_bds = self.service._extract_satellite_code("beidou", "BEIDOU-2 G4 (C04)", "1 37210U...")
-        self.assertEqual(code_bds, "C04")
+        self.assertEqual(code_bds, "C?")  # Assignment has ended; the old name is not authoritative.
 
         # Galileo
         code_gal = self.service._extract_satellite_code("galileo", "GSAT0101 (GALILEO-PFM)", "1 37846U...")
-        self.assertEqual(code_gal, "E01")
-        self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0203 (GALILEO 7)", "1 41175U..."), "E07")
+        self.assertEqual(code_gal, "E11")
+        self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0203 (GALILEO 7)", "1 40544U..."), "E26")
+        self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0208 (GALILEO 11)", "1 41175U..."), "E08")
 
         # GLONASS
         code_glo = self.service._extract_satellite_code("glonass", "COSMOS 2433 (720)", "1 32275U...")
-        self.assertEqual(code_glo, "R20")
+        self.assertEqual(code_glo, "R25")
+        self.assertEqual(self.service._extract_satellite_code("glonass", "COSMOS 2456 (730)", "1 36111U..."), "R01")
 
         code_qzss = self.service._extract_satellite_code("qzss", "QZS-1R (QZSS/PRN 196)", "1 49336U...")
         self.assertEqual(code_qzss, "J196")
+
+    def test_reassignment_uses_effective_time_and_repairs_cached_code(self):
+        sat = {"name": "BEIDOU-3 IGSO-1 (C38)", "line1": "1 44204U...", "code": "C38"}
+        payload = {"constellations": {"beidou": [sat]}}
+        self.service._normalize_codes(payload)
+        self.assertEqual(sat["code"], "C06")
+        self.clock.now.return_value = datetime(2026, 4, 10, 13, tzinfo=timezone.utc)
+        self.assertEqual(self.service._extract_satellite_code("beidou", sat["name"], sat["line1"]), "C?")
+        self.clock.now.return_value = datetime(2026, 4, 9, tzinfo=timezone.utc)
+        self.assertEqual(self.service._extract_satellite_code("beidou", sat["name"], sat["line1"]), "C38")
+
+    def test_unknown_identity_does_not_invent_prn_from_name_or_norad(self):
+        for constellation, name, prefix in [("glonass", "COSMOS (712)", "R"), ("galileo", "GSAT9999 (GALILEO 8)", "E")]:
+            self.assertEqual(self.service._extract_satellite_code(constellation, name, "1 99999U..."), prefix + "?")
+
+    def test_reported_missing_prns_resolve_by_norad(self):
+        for constellation, norad, expected in [
+            ("beidou", "44204", "C06"), ("galileo", "41175", "E08"),
+            ("glonass", "36111", "R01"), ("glonass", "39155", "R02"),
+            ("glonass", "37867", "R03"), ("glonass", "44299", "R12"),
+            ("glonass", "32393", "R13"), ("glonass", "42939", "R14"),
+            ("glonass", "39620", "R18"), ("glonass", "45358", "R24"),
+        ]:
+            with self.subTest(prn=expected):
+                self.assertEqual(self.service._extract_satellite_code(constellation, "Former satellite name", f"1 {norad}U..."), expected)
+
+    async def test_fresh_disk_cache_codes_are_repaired_without_network(self):
+        payload = {"updated_at_utc": "2026-10-16T00:00:00+00:00", "constellations": {k: [] for k in ("gps", "galileo", "beidou", "glonass", "qzss")}}
+        payload["constellations"]["galileo"] = [{"name": "GSAT0208 (GALILEO 11)", "line1": "1 41175U...", "code": "E11"}]
+        self.service._load_disk_cache.return_value = payload
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as request:
+            result = await self.service.get_satellites_tle()
+            request.assert_not_called()
+        self.assertEqual(result["constellations"]["galileo"][0]["code"], "E08")
 
     def test_parse_tle_text(self):
         sample_tle = (
