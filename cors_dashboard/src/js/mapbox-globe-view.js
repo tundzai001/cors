@@ -144,6 +144,10 @@
                         <div class="iono-hover-val">${sample.tec.toFixed(1)} <span class="small text-muted" style="font-size:0.75rem;">TECU</span></div>
                         <div class="iono-hover-sub">Dị thường: <span style="color:${anomalyColor};font-weight:700;">${sign}${sample.anomaly.toFixed(2)} TECU</span></div>
                         <div class="iono-hover-coords">${sample.lat.toFixed(2)}°, ${sample.lon.toFixed(2)}°</div>
+                        <div class="iono-hover-source" style="font-size:0.68rem;color:#94a3b8;margin-top:4px;border-top:1px solid rgba(255,255,255,0.12);padding-top:3px;display:flex;justify-content:space-between;align-items:center;">
+                            <span>Nguồn:</span>
+                            <a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.58rem;"></i></a>
+                        </div>
                     `;
                     this.ionoTooltip.style.display = 'block';
                     const hostRect = this.container?.getBoundingClientRect() || { width: 800, height: 600 };
@@ -178,7 +182,17 @@
                 });
                 for (const id of ['cors-gnss-points', 'cors-gnss-ipp']) map.on('click', id, event => {
                     const properties = event.features?.[0]?.properties;
-                    if (properties && !this.measureEnabled) this._textPopup(event.lngLat, properties.code, properties.kind === 'ipp' ? `IPP 350 km · VTEC ${properties.vtec ?? '--'} TECU` : `${properties.name} · NORAD ${properties.noradId} · ${Math.round(properties.altKm)} km · ${properties.identityStatus === 'retired' ? 'Đã ngừng khai thác · không ghép RTCM' : properties.identityKnown === false ? 'Chưa xác nhận PRN hiện hành; không ghép RTCM' : properties.tracked ? 'Agent đang nhận RTCM' : 'Không có PRN RTCM khớp'}`);
+                    if (properties && !this.measureEnabled) {
+                        const isIpp = properties.kind === 'ipp';
+                        this._textPopup(
+                            event.lngLat,
+                            properties.code,
+                            isIpp ? `IPP 350 km · VTEC ${properties.vtec ?? '--'} TECU` : `${properties.name} · NORAD ${properties.noradId} · ${Math.round(properties.altKm)} km · ${properties.identityStatus === 'retired' ? 'Đã ngừng khai thác · không ghép RTCM' : properties.identityKnown === false ? 'Chưa xác nhận PRN hiện hành; không ghép RTCM' : properties.tracked ? 'Agent đang nhận RTCM' : 'Không có PRN RTCM khớp'}`,
+                            isIpp
+                                ? `Nguồn: <a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a>`
+                                : `Nguồn: <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">CelesTrak (NORAD GP) <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a>`
+                        );
+                    }
                 });
                 const pause = () => {
                     this.interacting = true; this.flying = false;
@@ -442,12 +456,20 @@
             this.interacting = true; this.map.stop(); this.interacting = false; this.flying = true;
             this.map.fitBounds(bounds, { padding: 60, maxZoom, duration: reducedMotion() ? 0 : 900 }, { corsFlight: true });
         }
-        _textPopup(lngLat, title, description) {
+        _textPopup(lngLat, title, description, linkHtml) {
             this.popup?.remove();
             const content = document.createElement('div'); content.className = 'mapbox-station-card';
             const heading = document.createElement('strong'); heading.textContent = title;
             const text = document.createElement('p'); text.textContent = description;
             content.append(heading, text);
+            if (linkHtml) {
+                const credit = document.createElement('div');
+                credit.className = 'sat-popup-credit mt-1 pt-1 border-top border-secondary border-opacity-25';
+                credit.style.fontSize = '0.72rem';
+                credit.style.color = '#94a3b8';
+                credit.innerHTML = linkHtml;
+                content.append(credit);
+            }
             this._popup(content, lngLat);
         }
         _popup(content, lngLat) {
@@ -482,7 +504,12 @@
                 this._data('cors-measure', this.measureFeatures);
             } else if (this.layerState.showIonosphere) {
                 const probe = window.IonosphereOverlay?.sample(event.lngLat.lat, event.lngLat.lng);
-                if (probe) this._textPopup(event.lngLat, 'NOAA GloTEC TEC', `${probe.tec.toFixed(1)} TECU · ${probe.observation_time_vn || ''}`);
+                if (probe) this._textPopup(
+                    event.lngLat,
+                    'NOAA GloTEC TEC',
+                    `${probe.tec.toFixed(1)} TECU · ${probe.observation_time_vn || ''}`,
+                    `Nguồn: <a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a>`
+                );
             }
         }
         locate() {

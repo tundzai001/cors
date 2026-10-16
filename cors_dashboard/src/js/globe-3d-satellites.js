@@ -693,7 +693,7 @@
                     </button>
                 </div>
                 <div style="font-size:0.62rem; color:#64748b; text-align:center; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">
-                    Nguồn: <b>CelesTrak (NORAD GP)</b> · Vị trí tính từ quỹ đạo, cập nhật 1 giây
+                    Nguồn: <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;"><b>CelesTrak (NORAD GP)</b> <i class="bi bi-box-arrow-up-right" style="font-size:0.58rem;"></i></a> · Vị trí tính từ quỹ đạo, cập nhật 1 giây
                 </div>
             `;
 
@@ -877,7 +877,7 @@
                     </button>
                 </div>
                 <div style="font-size:0.62rem; color:#64748b; text-align:center; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">
-                    Nguồn: <b>CelesTrak (NORAD GP)</b> • <b>SGP4 1Hz</b> • <b>RTCM 1074-1127</b>
+                    Nguồn: <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;"><b>CelesTrak (NORAD GP)</b> <i class="bi bi-box-arrow-up-right" style="font-size:0.58rem;"></i></a> • <b>SGP4 1Hz</b> • <b>RTCM 1074-1127</b>
                 </div>
             `;
 

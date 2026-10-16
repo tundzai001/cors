@@ -463,7 +463,7 @@
                                     <span class="station-map-popup-label">Thời gian</span>
                                     <span class="station-map-popup-value">${probe.observation_time_vn || '--'}</span>
                                     <span class="station-map-popup-label">Nguồn</span>
-                                    <span class="station-map-popup-value">NOAA Space Weather</span>
+                                    <span class="station-map-popup-value"><a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a></span>
                                 </div>
                             </div>
                         `;
@@ -1338,6 +1338,12 @@
                         <div className="iono-hud-tip">
                             <i className="bi bi-info-circle me-1"></i>Bấm vào điểm bất kỳ trên bản đồ để đo TEC.
                         </div>
+                        <div className="iono-hud-source-credit mt-2 pt-2 border-top border-secondary border-opacity-25 d-flex justify-content-between align-items-center" style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                            <span>🌐 Nguồn:</span>
+                            <a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" className="text-info text-decoration-none">
+                                NOAA SWPC GloTEC <i className="bi bi-box-arrow-up-right" style={{ fontSize: '0.62rem' }}></i>
+                            </a>
+                        </div>
                     </div>
                 )}
 
@@ -1446,14 +1452,25 @@
                         </div>
 
                         <div className="sat-hud-source-credit">
-                            <div>🛰️ Vị trí quỹ đạo: <b>CelesTrak/NORAD • SGP4</b></div>
+                            <div className="d-flex justify-content-between align-items-center mb-1">
+                                <span>🛰️ Nguồn quỹ đạo:</span>
+                                <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" className="text-info text-decoration-none">
+                                    CelesTrak (NORAD GP) <i className="bi bi-box-arrow-up-right" style={{ fontSize: '0.62rem' }}></i>
+                                </a>
+                            </div>
+                            <div className="d-flex justify-content-between align-items-center mb-1 text-muted" style={{ fontSize: '0.68rem' }}>
+                                <span>Định danh PRN:</span>
+                                <a href="https://qzss.go.jp/en/technical/satellites/index.html" target="_blank" rel="noopener noreferrer" className="text-info text-decoration-none">
+                                    Cabinet Office (QZSS) / IGS <i className="bi bi-box-arrow-up-right" style={{ fontSize: '0.6rem' }}></i>
+                                </a>
+                            </div>
                             {satelliteStats.hasLiveRtcm ? (
-                                <div style={{ color: '#86efac' }}>
+                                <div style={{ color: '#86efac', fontSize: '0.7rem' }}>
                                     ● RTCM: <b>{satelliteStats.liveRtcmCount} PRN</b> • khớp quỹ đạo: <b>{satelliteStats.visible}</b>
                                     {satelliteStats.unmatchedRtcmCount > 0 ? ` • chưa ghép quỹ đạo: ${satelliteStats.unmatchedRtcmCount} (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
                                 </div>
                             ) : (
-                                <div>Đang chờ RTCM • tia và IPP chỉ hiện với PRN khớp</div>
+                                <div className="text-muted" style={{ fontSize: '0.7rem' }}>Đang chờ RTCM • tia và IPP chỉ hiện với PRN khớp</div>
                             )}
                         </div>
                     </div>
