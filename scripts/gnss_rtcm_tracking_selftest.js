@@ -105,13 +105,31 @@ assert.equal(satelliteMarkers.length, 4, 'satellite positions remain visible whe
 assert.equal(overlay.stats.visible, 0, 'expired RTCM records stop counting as tracked');
 assert.equal(rayLayers.length, 0, 'expired RTCM records remove their LOS and IPP layers');
 
+
+telemetry = { satellites: {
+  gps: { id: 'RTCM:G:8', system: 'G', prn: 8, lastSeen: Date.now() },
+  qzss: { id: 'RTCM:jp:194', system: 'jp', prn: 194, lastSeen: Date.now() },
+} };
+let frame;
+overlay.renderFrame = value => { frame = value; };
+overlay.mapInstance = null;
+overlay.propagateTick();
+assert.equal(frame.features.filter(f => f.properties.kind === 'satellite').length, 4, 'native renderer receives all orbit positions');
+assert.equal(frame.features.filter(f => f.properties.kind === 'ray').length, 2, 'native rays use unique exact RTCM matches');
+assert.equal(frame.features.filter(f => f.properties.kind === 'ipp').length, 2, 'native renderer retains IPP');
+overlay.clearSelectedStation();
+assert.equal(frame.features.filter(f => f.properties.kind === 'ray').length, 0, 'cancel tracking clears native rays');
+assert.equal(frame.features.filter(f => f.properties.kind === 'satellite').length, 4, 'cancel tracking preserves native positions');
+overlay.detachFromMap();
+assert.equal(frame.features.length, 0, 'native detach removes old GNSS data');
+
 const mapSource = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/stations-map.js'), 'utf8');
 assert.match(mapSource, /zoomSnap:\s*0\.5[\s\S]*zoomDelta:\s*1[\s\S]*wheelPxPerZoomLevel:\s*35/,
   'wheel zoom should move faster with practical half-step precision');
 assert.doesNotMatch(mapSource, /onlyVisible|matchRtcm|sat-elev-mask/,
   'global orbital positions must not disappear behind receiver-only visibility filters');
 assert.match(mapSource, /Math\.max\(2, Math\.min\(20, view\.zoom\)\)/,
-  'returning from 3D must preserve world-scale 2D zoom');
+  'fallback must preserve world-scale camera zoom');
 assert.match(mapSource, /setMinZoom\(2\)/,
   '2D should remain available through the world view before 3D handoff');
 

@@ -103,7 +103,7 @@
         }
 
         // Render offscreen canvas raster representing the 72x72 grid
-        generateRasterDataUrl(mode = 'tec') {
+        generateRasterDataUrl(mode = 'tec', options = {}) {
             if (!this.cachedData || !this.cachedData.tec_grid || !this.cachedData.tec_grid.length) {
                 return null;
             }
@@ -131,14 +131,17 @@
 
             for (let y = 0; y < canvasHeight; y++) {
                 // Map pixel y to grid row [0, gridRows - 1]
-                const rowPos = (y / (canvasHeight - 1)) * (gridRows - 1);
+                const fraction = y / (canvasHeight - 1);
+                const latitude = options.mercator ? Math.atan(Math.sinh(Math.PI * (1 - 2 * fraction))) * 180 / Math.PI : 90 - 180 * fraction;
+                const rowPos = (90 - latitude) / 180 * (gridRows - 1);
                 const r0 = Math.floor(rowPos);
                 const r1 = Math.min(gridRows - 1, r0 + 1);
                 const dr = rowPos - r0;
 
                 for (let x = 0; x < canvasWidth; x++) {
                     // Map pixel x to grid col [0, gridCols - 1]
-                    const colPos = (x / (canvasWidth - 1)) * (gridCols - 1);
+                    const longitude = (options.west ?? -180) + x / (canvasWidth - 1) * ((options.east ?? 180) - (options.west ?? -180));
+                    const colPos = (longitude + 180) / 360 * (gridCols - 1);
                     const c0 = Math.floor(colPos);
                     const c1 = (c0 + 1) % gridCols;
                     const dc = colPos - c0;

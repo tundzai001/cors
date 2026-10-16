@@ -1140,3 +1140,13 @@
 .mapbox-station-card strong { font-size: 0.95rem; }
 .mapbox-station-card p { color: #94a3b8; margin: 8px 0 12px; font-variant-numeric: tabular-nums; }
 .mapbox-station-card button { min-height: 44px; }
+
+/* Reserve a separate lane for each renderer's zoom controls. */
+.station-map-engine-mapbox .station-map-toolbar { left: 14px; right: auto; max-width: calc(100% - 84px); }
+.station-map-engine-leaflet .station-map-toolbar { left: 64px; right: auto; max-width: calc(100% - 78px); }
+.station-map-toolbar .station-map-toolgroup { min-width: 0; }
+.station-map-action:disabled { opacity: 0.4; cursor: default; }
+.globe-dock-btn { min-height: 44px; }
+.globe-dock-btn:focus-visible { outline: 2px solid var(--ops-primary, #38bdf8); outline-offset: 2px; }
+.globe-dock-btn:active { background: rgba(14, 165, 233, 0.3); }
+@media (prefers-reduced-motion: reduce) { .globe-dock-btn { transition: none; } }

@@ -1,8 +1,12 @@
 # Mapbox in the production station map
 
-The existing station map opens Mapbox GL JS 3.9.3 through its globe button or when zooming out to world view. Mapbox keeps a single canvas from globe to street scale. Station pins use the dashboard's current station list and filters, not sample data.
+The station map starts with one persistent Mapbox GL JS 3.9.3 map. Globe projection provides continuous zoom from Earth to street scale; the toolbar switches between globe and Mercator on that same map. Projection changes preserve center, zoom, station filters, measurements, selected station, and overlay sources. They do not construct Leaflet or replace the Mapbox canvas.
 
-The globe dock contains one control per action: global overview, Vietnam, automatic rotation, and GNSS orbit view. The orbit view retains the existing Three.js satellite, RTCM and IPP tools. Selecting a Mapbox station and choosing **Theo dõi vệ tinh** selects that station for GNSS tracking. The toolbar's 2D button returns to Leaflet at the current center and scale.
+Stations, coverage circles, authorized rover positions/clusters, province boundaries, Vietnam mask, search/nearest-station lines, measurements, NOAA TEC rasters, and GNSS/RTCM/IPP features render as native Mapbox sources and layers. GNSS shares the existing SGP4 propagation and exact RTCM matching. TEC uses the existing raster generator with Mercator sampling and two hemisphere images. Changing the base style restores custom sources after `style.load`.
+
+The separate GNSS orbit view retains Three.js for actual satellite orbits. Entering orbit mode pauses the surface map without destroying it; returning restores its camera and latest data. Rotation is optional and respects reduced motion.
+
+Missing/invalid tokens, configuration or SDK failures, unavailable WebGL, denied tile requests, repeated tile errors, or a 15-second initial-load timeout activate Leaflet with the original Google hybrid/satellite/streets layers. The Mapbox instance is removed before fallback is mounted, preserving its last center/zoom where available. Fallback lasts until the map is remounted, avoiding automatic retry loops. The legacy station, rover, TEC, GNSS, search and measurement tools remain available.
 
 ## Backend environment
 
@@ -32,6 +36,6 @@ node scripts/landing_performance_selftest.js
 node scripts/build_frontend_assets.mjs
 ```
 
-On production, open the station map, enter the globe, zoom to street level, select a real station, enter GNSS orbit tracking, return to Mapbox, then return to 2D. Repeat to check that no stale canvases, popup handlers or tracking rays remain.
+On production, zoom from Earth to street level and back, toggle globe/Mercator repeatedly, switch base styles, select a real station, enable TEC and GNSS, and cancel tracking. Enter and leave GNSS orbit view. Verify camera/data continuity and one active surface renderer. Separately test an empty/invalid token and confirm Google fallback, its filters and tools. Restore the valid token and remount the map to return to Mapbox.
 
 The provided token successfully serves Mapbox tiles when the Referer is `https://cors.aitogy.com/`; localhost receives 403 because of URL restrictions. Rendering and camera smoothness with live tiles must therefore be verified on the allowed production origin.

@@ -222,7 +222,7 @@
         propagateTick() {
             const satLib = window.satellite;
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
-            if (!satLib || !this.mapInstance || !L) return;
+            if (!satLib || (!this.renderFrame && (!this.mapInstance || !L))) return;
 
             const now = new Date();
             const gmst = satLib.gstime(now);
@@ -259,6 +259,7 @@
             const matchedRtcmKeys = new Set();
 
             const activeRayKeys = new Set();
+            const frameFeatures = [];
             let visibleCount = 0;
             const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0, qzss: 0 };
 
@@ -269,7 +270,7 @@
                 try {
                     const posVel = satLib.propagate(satObj.satrec, now);
                     if (!posVel || !posVel.position) {
-                        if (satObj.marker && this.layerGroup.hasLayer(satObj.marker)) {
+                        if (satObj.marker && this.layerGroup?.hasLayer(satObj.marker)) {
                             this.layerGroup.removeLayer(satObj.marker);
                         }
                         return;
@@ -311,6 +312,27 @@
 
                     // Keep orbital positions visible globally; RTCM only controls tracking state and rays.
                     const shouldDisplay = isConstEnabled;
+
+                    if (this.renderFrame) {
+                        if (shouldDisplay) {
+                            frameFeatures.push({ type: 'Feature', properties: {
+                                kind: 'satellite', code: satObj.code, name: satObj.name, altKm,
+                                tracked: isTrackedByRtcm, color: cfg.color,
+                            }, geometry: { type: 'Point', coordinates: [lon, lat] } });
+                            if (obsGd && isTrackedByRtcm && look && this.filters.showIpp !== false) {
+                                const { ippLat, ippLon } = this.calculateIpp(this.selectedStation.lat, this.selectedStation.lon, look.elevation, look.azimuth);
+                                const probe = window.IonosphereOverlay?.sample?.(ippLat, ippLon);
+                                frameFeatures.push({ type: 'Feature', properties: { kind: 'ipp', code: satObj.code, tracked: true, color: '#38bdf8', vtec: probe?.tec ?? null }, geometry: { type: 'Point', coordinates: [ippLon, ippLat] } });
+                                const coordinates = [[this.selectedStation.lon, this.selectedStation.lat], [ippLon, ippLat], [lon, lat]];
+                                for (let i = 1; i < coordinates.length; i++) {
+                                    while (coordinates[i][0] - coordinates[i - 1][0] > 180) coordinates[i][0] -= 360;
+                                    while (coordinates[i][0] - coordinates[i - 1][0] < -180) coordinates[i][0] += 360;
+                                }
+                                frameFeatures.push({ type: 'Feature', properties: { kind: 'ray', code: satObj.code, color: cfg.color }, geometry: { type: 'LineString', coordinates } });
+                            }
+                        }
+                        return;
+                    }
 
                     if (!shouldDisplay) {
                         if (satObj.marker && this.layerGroup.hasLayer(satObj.marker)) {
@@ -503,11 +525,15 @@
                 unmatchedRtcmCount: unmatchedRtcmSatellites.length,
                 unmatchedRtcmCodes: unmatchedRtcmSatellites.slice(0, 8).map(sat => this.getRtcmSatelliteCode(sat)),
             };
+            if (this.renderFrame) {
+                this.renderFrame({ type: 'FeatureCollection', features: frameFeatures });
+                this.notify();
+            }
         }
 
         updateSatelliteMarkers() {
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
-            if (!this.layerGroup || !L) return;
+            if (!this.renderFrame && (!this.layerGroup || !L)) return;
 
             // Initialize activeSatellites map
             this.rawSatellites.forEach(s => {
@@ -581,7 +607,20 @@
             this.notify();
         }
 
+        attachToRenderer(renderFrame) {
+            this.detachFromMap();
+            this.renderFrame = renderFrame;
+            if (!this.rawSatellites.length) this.fetchTle();
+            else this.updateSatelliteMarkers();
+            this.tickTimer = setInterval(() => {
+                if (document.visibilityState !== 'hidden') this.propagateTick();
+            }, 1000);
+            this.notify();
+        }
+
         detachFromMap() {
+            this.renderFrame?.({ type: 'FeatureCollection', features: [] });
+            this.renderFrame = null;
             if (this.tickTimer) {
                 clearInterval(this.tickTimer);
                 this.tickTimer = null;

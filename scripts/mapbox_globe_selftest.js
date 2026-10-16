@@ -10,6 +10,7 @@ class Element {
     addEventListener(type, callback) { this.listeners[type] = callback; }
 }
 const maps = [];
+let watchdog;
 class FakeMap {
     constructor(options) { this.options = options; this.center = { lng: options.center[0], lat: options.center[1] }; this.zoom = options.zoom; this.events = {}; this.sources = {}; this.layers = {}; this.moves = []; this.canvas = new Element(); this.scrollZoom = { setWheelZoomRate() {} }; maps.push(this); }
     on(type, ...args) { (this.events[type] ||= []).push(args.at(-1)); }
@@ -18,6 +19,14 @@ class FakeMap {
     addSource(id, data) { this.sources[id] = { data: data.data, setData(value) { this.data = value; } }; }
     addLayer(layer) { this.layers[layer.id] = layer; }
     getSource(id) { return this.sources[id]; } getLayer(id) { return this.layers[id]; }
+    setMaxBounds(bounds) { this.bounds = bounds; }
+    setProjection(projection) { this.projection = projection; }
+    resize() {}
+    getStyle() { return { layers: Object.values(this.layers) }; }
+    setLayoutProperty(id, key, value) { (this.layers[id].layout ||= {})[key] = value; }
+    setPaintProperty(id, key, value) { this.layers[id].paint[key] = value; }
+    setStyle(style) { this.style = style; this.sources = {}; this.layers = {}; this.emit('style.load'); }
+    queryRenderedFeatures() { return []; }
     setFilter(id, filter) { this.layers[id].filter = filter; }
     getCanvas() { return this.canvas; } getCenter() { return this.center; } getZoom() { return this.zoom; }
     isMoving() { return Boolean(this.pending); }
@@ -29,11 +38,13 @@ class FakeMap {
 }
 const window = {
     mapboxgl: { Map: FakeMap, NavigationControl: class {}, supported: () => true },
+    CorsUI: { getStatusMeta: () => ({ color: '#22c55e' }) },
+    StationsMapUtils: { getRoverStatusMeta: () => ({ label: 'Online', color: '#22c55e' }) },
     matchMedia: () => ({ matches: false }), addEventListener() {}, removeEventListener() {},
     apiFetch: async () => ({ ok: true, json: async () => ({ mapbox_public_token: 'pk.test' }) }),
 };
 const document = { hidden: false, createElement: () => new Element(), addEventListener() {}, removeEventListener() {} };
-vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors_dashboard/src/js/mapbox-globe-view.js'), 'utf8'), { window, document, console, setTimeout, clearTimeout });
+vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors_dashboard/src/js/mapbox-globe-view.js'), 'utf8'), { window, document, console, setTimeout: (callback, delay) => { if (delay === 15000) watchdog = callback; return setTimeout(callback, delay); }, clearTimeout });
 (async () => {
     const view = window.MapboxGlobeView;
     const container = new Element();
@@ -44,8 +55,36 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     assert.equal(map.options.projection, 'globe');
     map.emit('style.load'); map.emit('load');
     assert.equal(map.getSource('cors-stations').data.features[0].properties.serial, 'PI_real', 'real station data reaches Mapbox');
-    assert.equal(map.moves.at(-1)[0], 'ease', 'overview uses native rotation');
+    assert.equal(map.moves.length, 0, 'station map does not start an unsolicited flight');
+    const source = map.getSource('cors-stations');
+    const center = map.getCenter();
+    for (let cycle = 0; cycle < 3; cycle++) {
+        view.setProjection('mercator'); view.setProjection('globe');
+        assert.equal(view.map, map, '2D/3D keeps one map');
+        assert.equal(map.getSource('cors-stations'), source, '2D/3D preserves data sources');
+        assert.equal(map.getCenter(), center, '2D/3D preserves camera');
+    }
+    view.updateLayers({ coverage: true, rovers: [{ latitude: 16, longitude: 108, username: 'rover1' }] });
+    assert.equal(map.getSource('cors-coverage').data.features.length, 1);
+    assert.equal(map.getSource('cors-rovers').data.features.length, 1);
+    view.setActive(false); view.setActive(true);
+    assert.equal(view.map, map, 'orbit excursion does not destroy the surface map');
+    assert.ok(!map.removed);
+    view.updateLayers({ tileMode: 'streets' });
+    assert.equal(map.getSource('cors-rovers').data.features.length, 1, 'style reload restores custom data');
+    assert.equal(map.getSource('cors-coverage').data.features.length, 1);
+    view.setMeasureEnabled(true);
+    const measure = map.getSource('cors-measure');
+    view.setProjection('mercator'); view.setProjection('globe');
+    assert.equal(map.getSource('cors-measure'), measure, 'measurement survives projection switches');
+    map.zoom = 1.5;
+    view.setSpinning(true);
+    assert.equal(map.moves.at(-1)[0], 'ease', 'explicit rotation uses native camera');
+    view.setSpinning(false);
     view.flyTo(21, 105, 11);
+    const pendingFlight = map.pending;
+    map.canvas.listeners.wheel();
+    assert.equal(map.pending, pendingFlight, 'wheel handler does not cancel native zoom or camera animation');
     const moves = map.moves.length;
     view.flyTo(47, 8, 10);
     assert.equal(map.moves.length, moves + 1, 'interrupting a flight does not insert a rotation');
@@ -54,7 +93,7 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     view.updateStations([], null);
     assert.equal(map.getSource('cors-stations').data.features.length, 0, 'station filtering removes old pins');
     view.detach();
-    assert.ok(map.removed, 'leaving globe releases the WebGL map');
+    assert.ok(map.removed, 'unmount releases the WebGL map');
     assert.equal(container.children.length, 0, 'leaving globe removes its owned DOM');
     let resolveFetch;
     window.apiFetch = () => new Promise(resolve => { resolveFetch = resolve; });
@@ -69,5 +108,36 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     assert.equal(view.map, null, 'missing token does not create an unauthorized map');
     assert.equal(view.status.children[0].textContent, 'Chưa cấu hình bản đồ Mapbox.');
     view.detach();
+    const failures = [];
+    await view.attach(container, { onFailure: error => failures.push(error) });
+    assert.equal(failures.length, 1, 'missing token selects fallback');
+    assert.equal(failures[0].view, null);
+    view.detach();
+    window.apiFetch = async () => ({ ok: true, json: async () => ({ mapbox_public_token: 'pk.test' }) });
+    for (const status of [401, 403, 500]) {
+        await view.attach(container, { onFailure: error => failures.push(error) });
+        const failing = view.map;
+        const previous = failures.length;
+        failing.emit('error', { error: { status } });
+        failing.emit('error', { error: { status } });
+        failing.emit('load');
+        assert.equal(failures.length, previous + 1, `HTTP ${status} fails over once`);
+        assert.equal(view.ready, false, 'late load cannot revive a failed map');
+        assert.equal(failures.at(-1).view.zoom, 6, 'fallback receives current camera');
+        view.detach();
+    }
+    await view.attach(container, { onFailure: error => failures.push(error) });
+    watchdog();
+    assert.equal(view.failed, true, 'initial-load watchdog selects fallback');
+    view.detach();
+    window.apiFetch = async () => ({ ok: false, status: 503 });
+    await view.attach(container, { onFailure: error => failures.push(error) });
+    assert.equal(view.map, null, 'configuration failure selects fallback');
+    view.detach();
+    window.apiFetch = async () => ({ ok: true, json: async () => ({ mapbox_public_token: 'pk.test' }) });
+    window.mapboxgl.supported = () => false;
+    await view.attach(container, { onFailure: error => failures.push(error) });
+    assert.equal(view.map, null, 'unsupported WebGL selects fallback');
+    view.detach();
     console.log('PASS: backend token, real stations, native camera, filtering, teardown, and async cancellation');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => { window.MapboxGlobeView.detach(); console.error(error); process.exitCode = 1; });

@@ -182,31 +182,26 @@
         const [selectedSatStation, setSelectedSatStation] = useState(null);
         const globeEl = useRef(null);
         const mapboxEl = useRef(null);
-        const [isGlobeMode, setIsGlobeMode] = useState(false);
+        const [isGlobeMode, setIsGlobeMode] = useState(true);
+        const [mapEngine, setMapEngine] = useState('mapbox');
+        const [mapReady, setMapReady] = useState(false);
+        const fallbackViewRef = useRef(null);
         const [useOrbitView, setUseOrbitView] = useState(false);
         const [mapboxSpinning, setMapboxSpinning] = useState(false);
-        const globeModeRef = useRef(false);
-        const autoGlobeRef = useRef(false);
-        const mapHandoffRef = useRef(false);
-        globeModeRef.current = isGlobeMode;
-        function enterGlobeMode(automatic = false) {
-            setUseOrbitView(false);
-            autoGlobeRef.current = automatic;
-            globeModeRef.current = true;
+        function enterGlobeMode() {
+            if (mapEngine !== 'mapbox') return;
+            window.MapboxGlobeView?.setProjection('globe');
             setIsGlobeMode(true);
         }
         function showSurfaceMap(surface) {
-            const map = mapRef.current;
-            const view = surface || (useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.getSurfaceView();
-            mapHandoffRef.current = true;
-            if (map && view) {
-                map.setMaxBounds(null);
-                map.setMinZoom(2);
-                map.setView([view.lat, view.lng], Math.max(2, Math.min(20, view.zoom)), { animate: false });
+            if (useOrbitView) {
+                setUseOrbitView(false);
+                if (surface && mapEngine === 'mapbox') window.MapboxGlobeView?.flyTo(surface.lat, surface.lng, surface.zoom);
+                else if (surface && mapRef.current) mapRef.current.setView([surface.lat, surface.lng], Math.max(2, Math.min(20, surface.zoom)));
+                return;
             }
-            globeModeRef.current = false;
+            if (mapEngine === 'mapbox') window.MapboxGlobeView?.setProjection('mercator');
             setIsGlobeMode(false);
-            mapHandoffRef.current = false;
         }
         const [globeTexture, setGlobeTexture] = useState('blue-marble');
         const [provincesLoaded, setProvincesLoaded] = useState(0);
@@ -300,7 +295,7 @@
 
         useEffect(() => {
             const L = window.CorsDashboardShared?.getLeaflet?.();
-            if (!mapEl.current || mapRef.current) return;
+            if (mapEngine !== 'leaflet' || !mapEl.current || mapRef.current) return;
             if (!L) {
                 setMapError('Không tải được thư viện bản đồ. Vui lòng kiểm tra mạng và tải lại trang.');
                 console.error('Stations map initialization skipped: Leaflet is unavailable or invalid.');
@@ -318,11 +313,12 @@
                 wheelDebounceTime: 20
             }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
             mapRef.current = map;
-            map.on('zoomend', () => {
-                if (!globeModeRef.current && !mapHandoffRef.current && window.Globe3DMath?.shouldEnterGlobe(map.getZoom())) {
-                    enterGlobeMode(true);
-                }
-            });
+            if (fallbackViewRef.current) {
+                const view = fallbackViewRef.current;
+                map.setView([view.lat, view.lng], Math.max(2, Math.min(20, view.zoom)), { animate: false });
+                map.__fitOnce = true;
+            }
+            setMapReady(true);
             setMapError('');
 
             const tiles = {
@@ -463,8 +459,9 @@
                 roverMarkersRef.current = {};
                 roverClusterRef.current = null;
                 map.remove();
+                mapRef.current = null;
             };
-        }, []);
+        }, [mapEngine]);
 
         useEffect(() => {
             const manager = window.IonosphereOverlay;
@@ -500,91 +497,130 @@
             const map = mapRef.current;
             const manager = window.IonosphereOverlay;
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
-            if (!map || !manager || !L) return;
+            if (mapEngine !== 'leaflet' || !mapReady || !map || !manager || !L) return;
 
             const southWest = L.latLng(5.0, 100.5);
             const northEast = L.latLng(24.5, 120.0);
             const vietnamBounds = L.latLngBounds(southWest, northEast);
 
-            if (showIonosphere && !isGlobeMode) {
+            if (showIonosphere && !useOrbitView) {
                 map.setMaxBounds(null);
                 map.setMinZoom(2);
                 manager.attachToMap(map, { mode: ionosphereMode, opacity: ionosphereOpacity });
             } else {
                 manager.detachFromMap();
-                if (!isGlobeMode && showVietnamMask && !showSatellites) {
+                if (!useOrbitView && showVietnamMask && !showSatellites) {
                     map.setMaxBounds(vietnamBounds);
                     map.setMinZoom(4);
                 }
             }
-        }, [showIonosphere, ionosphereMode, ionosphereOpacity, showVietnamMask, showSatellites, isGlobeMode]);
+        }, [showIonosphere, ionosphereMode, ionosphereOpacity, showVietnamMask, showSatellites, useOrbitView, mapEngine, mapReady]);
 
         useEffect(() => {
             const map = mapRef.current;
             const manager = window.GnssSatelliteOverlay;
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
-            if (!map || !manager || !L) return;
+            if (mapEngine !== 'leaflet' || !mapReady || !map || !manager || !L) return;
 
             const southWest = L.latLng(5.0, 100.5);
             const northEast = L.latLng(24.5, 120.0);
             const vietnamBounds = L.latLngBounds(southWest, northEast);
 
-            if (showSatellites && !isGlobeMode) {
+            if (showSatellites && !useOrbitView) {
                 map.setMaxBounds(null);
                 map.setMinZoom(2);
                 manager.attachToMap(map);
             } else {
                 manager.detachFromMap();
-                if (!isGlobeMode && showVietnamMask && !showIonosphere) {
+                if (!useOrbitView && showVietnamMask && !showIonosphere) {
                     map.setMaxBounds(vietnamBounds);
                     map.setMinZoom(4);
                 }
             }
-        }, [showSatellites, showVietnamMask, showIonosphere, isGlobeMode]);
+        }, [showSatellites, showVietnamMask, showIonosphere, useOrbitView, mapEngine, mapReady]);
 
         useEffect(() => {
-            if (!isGlobeMode) {
-                window.Globe3DView?.detach();
-                window.MapboxGlobeView?.detach();
-                if (mapRef.current) {
-                    setTimeout(() => mapRef.current.invalidateSize(), 80);
-                }
-                return;
-            }
+            if (mapEngine !== 'mapbox' || !mapboxEl.current) return;
+            if (!window.MapboxGlobeView) { setMapEngine('leaflet'); setIsGlobeMode(false); return; }
+            let active = true;
+            window.MapboxGlobeView?.attach(mapboxEl.current, {
+                stations, selectedStation: selectedSatStation,
+                center: { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] }, zoom: DEFAULT_ZOOM,
+                onReady: () => { if (active) setMapReady(true); },
+                onFailure: ({ view }) => {
+                    if (!active) return;
+                    fallbackViewRef.current = view;
+                    setMapReady(false);
+                    setMapEngine('leaflet');
+                    setUseOrbitView(false);
+                    setIsGlobeMode(false);
+                    window.CorsUI?.showToast('warning', 'Mapbox không khả dụng. Đã chuyển sang bản đồ Google dự phòng.');
+                },
+                onSpinChange: setMapboxSpinning,
+                stationPopup: item => popupHtml(item.device, item.status, item.traffic),
+                onOpenDetail: serial => {
+                    window.selectDashboardDevice?.(serial);
+                    window.switchView?.('dashboard');
+                    window.history.pushState({}, '', '/');
+                },
+                onTrackStation: station => {
+                    if (['offline', 'lost'].includes(station.status)) return;
+                    if (window.selectDashboardDevice) window.selectDashboardDevice(station.serial);
+                    else if (window.globalState) window.globalState.selectedDeviceSerial = station.serial;
+                    setShowSatellites(true);
+                    window.GnssSatelliteOverlay?.setSelectedStation(station);
+                },
+            });
+            return () => { active = false; window.MapboxGlobeView?.detach(); };
+        }, [mapEngine]);
 
-            const renderer = useOrbitView ? window.Globe3DView : window.MapboxGlobeView;
-            const container = useOrbitView ? globeEl.current : mapboxEl.current;
-            if (container && renderer) {
-                renderer.attach(container, {
-                    stations,
-                    selectedStation: selectedSatStation,
-                    center: mapRef.current?.getCenter(),
-                    zoom: mapRef.current?.getZoom(),
-                    autoZoom: autoGlobeRef.current,
-                    onSurfaceView: showSurfaceMap,
-                    onSpinChange: setMapboxSpinning,
-                    onTrackStation: station => {
-                        if (['offline', 'lost'].includes(station.status)) return;
-                        if (window.selectDashboardDevice) window.selectDashboardDevice(station.serial);
-                        else if (window.globalState) window.globalState.selectedDeviceSerial = station.serial;
-                        setShowSatellites(true);
-                        window.GnssSatelliteOverlay?.setSelectedStation(station);
-                        setUseOrbitView(true);
-                    },
-                });
-                if (useOrbitView) {
-                    Object.entries(satelliteFilters).forEach(([key, value]) => renderer.setFilter(key, value));
-                    renderer.setEarthTexture(globeTexture);
-                }
+        useEffect(() => {
+            window.MapboxGlobeView?.setActive(!useOrbitView);
+            if (!useOrbitView || !globeEl.current) return;
+            const view = mapEngine === 'mapbox' ? window.MapboxGlobeView?.getSurfaceView() : null;
+            const renderer = window.Globe3DView;
+            renderer?.attach(globeEl.current, {
+                stations, selectedStation: selectedSatStation,
+                center: view ? { lat: view.lat, lng: view.lng } : mapRef.current?.getCenter(),
+                zoom: view?.zoom ?? mapRef.current?.getZoom(), onSurfaceView: showSurfaceMap,
+            });
+            if (renderer) {
+                Object.entries(satelliteFilters).forEach(([key, value]) => renderer.setFilter(key, value));
+                renderer.setEarthTexture(globeTexture);
             }
             return () => renderer?.detach();
-        }, [isGlobeMode, useOrbitView]);
+        }, [useOrbitView]);
 
         useEffect(() => {
-            if (isGlobeMode) {
-                (useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.updateStations(stations, selectedSatStation);
-            }
-        }, [stations, selectedSatStation, isGlobeMode, useOrbitView]);
+            if (useOrbitView) window.Globe3DView?.updateStations(stations, selectedSatStation);
+            if (mapEngine === 'mapbox') window.MapboxGlobeView?.updateStations(stations, selectedSatStation);
+        }, [stations, selectedSatStation, useOrbitView, mapEngine]);
+
+        useEffect(() => {
+            if (mapEngine !== 'mapbox' || !mapReady) return;
+            window.MapboxGlobeView?.updateLayers({
+                rovers: visibleRovers, coverage, provinces: provincesDataRef.current,
+                showProvinces, showVietnamMask, showIonosphere, ionosphereMode, ionosphereOpacity, tileMode,
+            });
+        }, [mapEngine, mapReady, visibleRovers, coverage, provincesLoaded, showProvinces, showVietnamMask, showIonosphere, ionosphereMode, ionosphereOpacity, tileMode]);
+
+        useEffect(() => {
+            if (mapEngine !== 'mapbox' || !mapReady || useOrbitView) return;
+            const manager = window.IonosphereOverlay;
+            if (!showIonosphere || !manager) return;
+            const render = () => window.MapboxGlobeView?.updateIonosphere();
+            const unsubscribe = manager.subscribe(render);
+            manager.setMode(ionosphereMode); manager.setOpacity(ionosphereOpacity);
+            manager.fetchData(); manager.startAutoRefresh(); render();
+            return () => { unsubscribe(); manager.stopAutoRefresh(); };
+        }, [mapEngine, mapReady, useOrbitView, showIonosphere, ionosphereMode, ionosphereOpacity]);
+
+        useEffect(() => {
+            if (mapEngine !== 'mapbox' || !mapReady || useOrbitView || !showSatellites) return;
+            const manager = window.GnssSatelliteOverlay;
+            manager?.attachToRenderer(frame => window.MapboxGlobeView?.updateGnss(frame));
+            return () => manager?.detachFromMap();
+        }, [mapEngine, mapReady, useOrbitView, showSatellites]);
 
         useEffect(() => {
             let active = true;
@@ -608,7 +644,7 @@
             const map = mapRef.current;
             const L = window.CorsDashboardShared?.getLeaflet?.();
             const geojsonData = provincesDataRef.current;
-            if (!map || !L) return;
+            if (mapEngine !== 'leaflet' || !mapReady || !map || !L) return;
 
             // Clear previous mask and sovereignty markers
             if (vietnamMaskLayerRef.current && map.hasLayer(vietnamMaskLayerRef.current)) {
@@ -734,13 +770,13 @@
             maskLayer.addTo(map);
             if (maskLayer.bringToBack) maskLayer.bringToBack();
             vietnamMaskLayerRef.current = maskLayer;
-        }, [showVietnamMask, provincesLoaded]);
+        }, [showVietnamMask, provincesLoaded, mapEngine, mapReady]);
 
         useEffect(() => {
             const map = mapRef.current;
             const L = window.CorsDashboardShared?.getLeaflet?.();
             const geojsonData = provincesDataRef.current;
-            if (!map || !L) return;
+            if (mapEngine !== 'leaflet' || !mapReady || !map || !L) return;
 
             if (!showProvinces) {
                 if (provincesLayerRef.current && map.hasLayer(provincesLayerRef.current)) {
@@ -828,19 +864,19 @@
                     map.removeLayer(layer);
                 }
             };
-        }, [showProvinces, stations, provincesList]);
+        }, [showProvinces, stations, provincesList, mapEngine, mapReady]);
 
         useEffect(() => {
             const map = mapRef.current;
             if (!map?.__tiles) return;
             Object.values(map.__tiles).forEach(layer => map.removeLayer(layer));
             map.__tiles[tileMode].addTo(map);
-        }, [tileMode]);
+        }, [tileMode, mapEngine, mapReady]);
 
         useEffect(() => {
             const map = mapRef.current;
             const L = window.CorsDashboardShared?.getLeaflet?.();
-            if (!map || !L || !layerRef.current || !coverageRef.current) return;
+            if (mapEngine !== 'leaflet' || !mapReady || !map || !L || !layerRef.current || !coverageRef.current) return;
             layerRef.current.clearLayers();
             coverageRef.current.clearLayers();
 
@@ -878,12 +914,12 @@
                 map.fitBounds(bounds, { padding: [28, 28] });
                 map.__fitOnce = true;
             }
-        }, [stations, coverage]);
+        }, [stations, coverage, mapEngine, mapReady]);
 
         useEffect(() => {
             const map = mapRef.current;
             const L = window.CorsDashboardShared?.getLeaflet?.();
-            if (!map || !L) return;
+            if (mapEngine !== 'leaflet' || !mapReady || !map || !L) return;
 
             const roverMarkers = roverMarkersRef.current;
             const roverCluster = roverClusterRef.current;
@@ -959,17 +995,19 @@
                     delete roverMarkers[key];
                 }
             });
-        }, [visibleRovers]);
+        }, [visibleRovers, mapEngine, mapReady]);
 
         useEffect(() => {
+            if (mapEngine === 'mapbox') { window.MapboxGlobeView?.setMeasureEnabled(measureOn); return; }
             measureRef.current.enabled = measureOn;
             if (!measureOn && mapRef.current) {
                 measureRef.current.layers.forEach(layer => mapRef.current.removeLayer(layer));
                 measureRef.current = { enabled: false, points: [], layers: [] };
             }
-        }, [measureOn]);
+        }, [measureOn, mapEngine, mapReady]);
 
         const locate = () => {
+            if (mapEngine === 'mapbox') { window.MapboxGlobeView?.locate(); return; }
             const map = mapRef.current;
             const L = window.CorsDashboardShared?.getLeaflet?.();
             if (!map || !L || !navigator.geolocation) return;
@@ -990,6 +1028,7 @@
         });
 
         const findNearestFromCoords = (lat, lon, label = 'Vị trí của bạn') => {
+            if (mapEngine === 'mapbox') { window.MapboxGlobeView?.findNearest(lat, lon, label); return; }
             window.StationsMapSearch?.findNearestFromCoords({
                 ...nearestSearchOptions(),
                 lat,
@@ -999,6 +1038,14 @@
         };
 
         const findNearestFromBrowser = () => {
+            if (mapEngine === 'mapbox') {
+                setFindingNearest(true);
+                if (!navigator.geolocation) { setFindingNearest(false); return; }
+                navigator.geolocation.getCurrentPosition(pos => {
+                    findNearestFromCoords(pos.coords.latitude, pos.coords.longitude); setFindingNearest(false);
+                }, () => { setFindingNearest(false); window.CorsUI?.showToast('warning', 'Không xác định được vị trí.'); }, { timeout: 8000 });
+                return;
+            }
             setFindingNearest(true);
             if (!window.StationsMapSearch) {
                 setFindingNearest(false);
@@ -1032,14 +1079,15 @@
                 .filter(item => Number(item.traffic.bps || 0) > 0)
                 .sort((a, b) => Number(b.traffic.bps || 0) - Number(a.traffic.bps || 0))[0] || stations[0];
             if (!withTraffic) return;
-            mapRef.current?.setView([withTraffic.coords.lat, withTraffic.coords.lon], 11);
+            if (mapEngine === 'mapbox') window.MapboxGlobeView?.flyTo(withTraffic.coords.lat, withTraffic.coords.lon, 11);
+            else mapRef.current?.setView([withTraffic.coords.lat, withTraffic.coords.lon], 11);
         };
 
         return (
-            <div className="station-map-container">
-                <div ref={mapboxEl} className={`station-map-globe-canvas${isGlobeMode && !useOrbitView ? ' is-visible' : ''}`} aria-hidden={!isGlobeMode || useOrbitView}></div>
-                <div ref={globeEl} className={`station-map-globe-canvas${isGlobeMode && useOrbitView ? ' is-visible' : ''}`} aria-hidden={!isGlobeMode || !useOrbitView}></div>
-                <div className={`station-map-flat-layer${isGlobeMode ? ' is-hidden' : ''}`} aria-hidden={isGlobeMode}>
+            <div className={`station-map-container station-map-engine-${mapEngine}`}>
+                <div ref={mapboxEl} className={`station-map-globe-canvas${mapEngine === 'mapbox' && !useOrbitView ? ' is-visible' : ''}`} aria-hidden={mapEngine !== 'mapbox' || useOrbitView}></div>
+                <div ref={globeEl} className={`station-map-globe-canvas${useOrbitView ? ' is-visible' : ''}`} aria-hidden={!useOrbitView}></div>
+                <div className={`station-map-flat-layer${mapEngine !== 'leaflet' || useOrbitView ? ' is-hidden' : ''}`} aria-hidden={mapEngine !== 'leaflet' || useOrbitView}>
                     <div ref={mapEl} className="station-map-canvas"></div>
                 </div>
 
@@ -1058,14 +1106,15 @@
                         <button
                             className={`station-map-action ${isGlobeMode ? 'active text-info' : ''}`}
                             type="button"
-                            title={isGlobeMode ? "Trở về bản đồ 2D" : "Mở địa cầu 3D"}
-                            aria-label={isGlobeMode ? "Bản đồ 2D" : "Địa cầu 3D"}
+                            title={useOrbitView ? "Trở về bản đồ" : mapEngine === 'leaflet' ? "Đang dùng bản đồ Google dự phòng" : isGlobeMode ? "Trở về bản đồ 2D" : "Mở địa cầu 3D"}
+                            aria-label={useOrbitView ? "Trở về bản đồ" : isGlobeMode ? "Bản đồ 2D" : "Địa cầu 3D"}
                             data-action="toggle-globe"
-                            onClick={() => isGlobeMode ? showSurfaceMap() : enterGlobeMode()}
+                            disabled={(mapEngine === 'leaflet' || !mapReady) && !useOrbitView}
+                            onClick={() => useOrbitView || isGlobeMode ? showSurfaceMap() : enterGlobeMode()}
                         >
-                            <i className={`bi ${isGlobeMode ? 'bi-map' : 'bi-globe-asia-australia'}`}></i>
+                            <i className={`bi ${isGlobeMode || useOrbitView ? 'bi-map' : 'bi-globe-asia-australia'}`}></i>
                         </button>
-                        {!isGlobeMode && (
+                        {!useOrbitView && (
                             <React.Fragment>
                                 <button className={`station-map-action ${filterOpen ? 'active' : ''}`} type="button" title="Bộ lọc bản đồ" aria-label="Bộ lọc bản đồ" aria-expanded={filterOpen} aria-controls="station-map-filters" onClick={() => { setFilterOpen(!filterOpen); setSearchOpen(false); }}><i className="bi bi-funnel" aria-hidden="true"></i></button>
                                 <button className="station-map-action" type="button" title="Vị trí của tôi" aria-label="Vị trí của tôi" onClick={locate}><i className="bi bi-geo-alt-fill" aria-hidden="true"></i></button>
@@ -1081,7 +1130,7 @@
                     </div>
                 </div>
 
-                {filterOpen && !isGlobeMode && (
+                {filterOpen && !useOrbitView && (
                     <div className="station-map-filter-panel" id="station-map-filters">
                         <div className="fw-bold mb-2">Bộ lọc bản đồ</div>
                         <div className="form-check form-switch mb-2">
@@ -1120,7 +1169,7 @@
                     </div>
                 )}
 
-                {searchOpen && !isGlobeMode && (
+                {searchOpen && !useOrbitView && (
                     <div className="station-map-search-panel" id="station-map-search">
                         <input className="form-control form-control-sm mb-2" placeholder="Find station / serial / mountpoint" value={search} onChange={(e) => setSearch(e.target.value)} />
                         <form className="d-flex gap-2 mb-2" onSubmit={searchLocation}>
@@ -1135,7 +1184,9 @@
                                     onChange={(e) => {
                                         const code = e.target.value;
                                         setSelectedProvince(code);
-                                        if (!code || !provincesLayerRef.current) return;
+                                        if (!code) return;
+                                        if (mapEngine === 'mapbox') { window.MapboxGlobeView?.fitProvince(code); return; }
+                                        if (!provincesLayerRef.current) return;
                                         const layer = provincesLayerRef.current.getLayers().find(
                                             l => String(l.feature?.properties?.code) === String(code)
                                         );
@@ -1165,7 +1216,7 @@
                     </div>
                 )}
 
-                {!isGlobeMode && (
+                {!useOrbitView && (
                     <div className="station-map-legend">
                         <div className="fw-bold mb-1">Legend</div>
                         <div className="station-map-legend-row"><span className="station-map-dot online"></span>Online</div>
@@ -1176,7 +1227,7 @@
                     </div>
                 )}
 
-                {showIonosphere && !isGlobeMode && (
+                {showIonosphere && !useOrbitView && (
                     <div className="station-map-ionosphere-hud">
                         <div className="iono-hud-header">
                             <div className="d-flex align-items-center gap-2">
@@ -1279,7 +1330,7 @@
                     </div>
                 )}
 
-                {showSatellites && !isGlobeMode && (
+                {showSatellites && !useOrbitView && (
                     <div className="station-map-satellite-hud">
                         <div className="sat-hud-header">
                             <div className="d-flex align-items-center gap-1">
@@ -1397,7 +1448,7 @@
                     </div>
                 )}
 
-                {isGlobeMode && (
+                {(mapEngine === 'mapbox' || useOrbitView) && (
                     <div className="station-map-globe-dock">
                         <button
                             type="button"
@@ -1407,7 +1458,7 @@
                         >
                             <i className={`bi ${useOrbitView ? 'bi-globe' : 'bi-radar'}`} aria-hidden="true"></i> {useOrbitView ? 'Địa cầu' : 'Quỹ đạo GNSS'}
                         </button>
-                        {!useOrbitView && <button type="button" className="globe-dock-btn" onClick={() => window.MapboxGlobeView?.focusVietnam(true, 90)}><i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu</button>}
+                        {!useOrbitView && <button type="button" className="globe-dock-btn" onClick={() => { enterGlobeMode(); window.MapboxGlobeView?.focusVietnam(true, 90); }}><i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu</button>}
                         <button
                             type="button"
                             className="globe-dock-btn"
@@ -1416,7 +1467,7 @@
                         >
                             <i className="bi bi-crosshair2 text-info"></i> Tâm VN
                         </button>
-                        {!useOrbitView && <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning(!mapboxSpinning)}><i className="bi bi-arrow-repeat" aria-hidden="true"></i> {mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</button>}
+                        {!useOrbitView && isGlobeMode && <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning(!mapboxSpinning)}><i className="bi bi-arrow-repeat" aria-hidden="true"></i> {mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</button>}
                         {useOrbitView && <React.Fragment>
                         <div className="globe-dock-separator"></div>
                         {['gps', 'galileo', 'beidou', 'glonass', 'qzss'].map(k => (
