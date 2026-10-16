@@ -602,24 +602,28 @@
         }, [mapEngine]);
 
         useEffect(() => {
+            if (mapEngine === 'mapbox') {
+                window.MapboxGlobeView?.setActive(true);
+                return;
+            }
             window.MapboxGlobeView?.setActive(!useOrbitView);
             if (!useOrbitView || !globeEl.current) return;
-            const view = mapEngine === 'mapbox' ? window.MapboxGlobeView?.getSurfaceView() : null;
+            const view = null;
             const renderer = window.Globe3DView;
             renderer?.attach(globeEl.current, {
                 stations, selectedStation: selectedSatStation,
-                center: view ? { lat: view.lat, lng: view.lng } : mapRef.current?.getCenter(),
-                zoom: view?.zoom ?? mapRef.current?.getZoom(), onSurfaceView: showSurfaceMap,
+                center: mapRef.current?.getCenter(),
+                zoom: mapRef.current?.getZoom(), onSurfaceView: showSurfaceMap,
             });
             if (renderer) {
                 Object.entries(satelliteFilters).forEach(([key, value]) => renderer.setFilter(key, value));
                 renderer.setEarthTexture(globeTexture);
             }
             return () => renderer?.detach();
-        }, [useOrbitView]);
+        }, [useOrbitView, mapEngine]);
 
         useEffect(() => {
-            if (useOrbitView) window.Globe3DView?.updateStations(stations, selectedSatStation);
+            if (mapEngine !== 'mapbox' && useOrbitView) window.Globe3DView?.updateStations(stations, selectedSatStation);
             if (mapEngine === 'mapbox') window.MapboxGlobeView?.updateStations(stations, selectedSatStation);
         }, [stations, selectedSatStation, useOrbitView, mapEngine]);
 
@@ -632,7 +636,7 @@
         }, [mapEngine, mapReady, visibleRovers, coverage, provincesLoaded, showProvinces, showVietnamMask, showIonosphere, ionosphereMode, ionosphereOpacity, tileMode]);
 
         useEffect(() => {
-            if (mapEngine !== 'mapbox' || !mapReady || useOrbitView) return;
+            if (mapEngine !== 'mapbox' || !mapReady || (mapEngine !== 'mapbox' && useOrbitView)) return;
             const manager = window.IonosphereOverlay;
             if (!showIonosphere || !manager) return;
             const render = () => window.MapboxGlobeView?.updateIonosphere();
@@ -643,7 +647,7 @@
         }, [mapEngine, mapReady, useOrbitView, showIonosphere, ionosphereMode, ionosphereOpacity]);
 
         useEffect(() => {
-            if (mapEngine !== 'mapbox' || !mapReady || useOrbitView || !showSatellites) return;
+            if (mapEngine !== 'mapbox' || !mapReady || (!showSatellites && !useOrbitView)) return;
             const manager = window.GnssSatelliteOverlay;
             manager?.attachToRenderer(frame => window.MapboxGlobeView?.updateGnss(frame));
             return () => manager?.detachFromMap();
@@ -1088,8 +1092,8 @@
 
         return (
             <div className={`station-map-container station-map-engine-${mapEngine}`}>
-                <div ref={mapboxEl} className={`station-map-globe-canvas${mapEngine === 'mapbox' && !useOrbitView ? ' is-visible' : ''}`} inert={mapEngine !== 'mapbox' || useOrbitView ? '' : undefined}></div>
-                <div ref={globeEl} className={`station-map-globe-canvas${useOrbitView ? ' is-visible' : ''}`} inert={!useOrbitView ? '' : undefined}></div>
+                <div ref={mapboxEl} className={`station-map-globe-canvas${mapEngine === 'mapbox' ? ' is-visible' : ''}`} inert={mapEngine !== 'mapbox' ? '' : undefined}></div>
+                <div ref={globeEl} className={`station-map-globe-canvas${mapEngine !== 'mapbox' && useOrbitView ? ' is-visible' : ''}`} inert={mapEngine === 'mapbox' || !useOrbitView ? '' : undefined}></div>
                 <div className={`station-map-flat-layer${mapEngine !== 'leaflet' || useOrbitView ? ' is-hidden' : ''}`} inert={mapEngine !== 'leaflet' || useOrbitView ? '' : undefined}>
                     <div ref={mapEl} className="station-map-canvas"></div>
                 </div>
@@ -1460,21 +1464,32 @@
                         <button
                             type="button"
                             className="globe-dock-btn"
-                            onClick={() => setUseOrbitView(!useOrbitView)}
+                            onClick={() => {
+                                const next = !useOrbitView;
+                                setUseOrbitView(next);
+                                if (mapEngine === 'mapbox') {
+                                    if (next) {
+                                        setShowSatellites(true);
+                                        window.MapboxGlobeView?.focusVietnam?.(true, 90);
+                                    } else {
+                                        window.MapboxGlobeView?.focusVietnam?.(false);
+                                    }
+                                }
+                            }}
                             title={useOrbitView ? 'Trở về địa cầu Mapbox' : 'Xem quỹ đạo vệ tinh GNSS'}
                         >
                             <i className={`bi ${useOrbitView ? 'bi-globe' : 'bi-radar'}`} aria-hidden="true"></i> {useOrbitView ? 'Địa cầu' : 'Quỹ đạo GNSS'}
                         </button>
-                        {!useOrbitView && <button type="button" className="globe-dock-btn" onClick={() => { enterGlobeMode(); window.MapboxGlobeView?.focusVietnam(true, 90); }}><i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu</button>}
+                        {!useOrbitView && <button type="button" className="globe-dock-btn" onClick={() => { enterGlobeMode(); window.MapboxGlobeView?.focusVietnam?.(true, 90); }}><i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu</button>}
                         <button
                             type="button"
                             className="globe-dock-btn"
-                            onClick={() => (useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.focusVietnam(true)}
+                            onClick={() => (mapEngine !== 'mapbox' && useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.focusVietnam?.(true)}
                             title="Tập trung cận cảnh vào Việt Nam"
                         >
                             <i className="bi bi-crosshair2 text-info"></i> Tâm VN
                         </button>
-                        {!useOrbitView && isGlobeMode && <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning(!mapboxSpinning)}><i className="bi bi-arrow-repeat" aria-hidden="true"></i> {mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</button>}
+                        {isGlobeMode && <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning?.(!mapboxSpinning)}><i className="bi bi-arrow-repeat" aria-hidden="true"></i> {mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</button>}
                         {useOrbitView && <React.Fragment>
                         <div className="globe-dock-separator"></div>
                         {['gps', 'galileo', 'beidou', 'glonass', 'qzss'].map(k => (
@@ -1498,13 +1513,17 @@
                             type="button"
                             className="globe-dock-btn"
                             onClick={() => {
-                                const next = globeTexture === 'blue-marble' ? 'night' : globeTexture === 'night' ? 'dark' : 'blue-marble';
-                                setGlobeTexture(next);
-                                window.Globe3DView?.setEarthTexture(next);
+                                if (mapEngine === 'mapbox') {
+                                    setTileMode(tileMode === 'satellite' ? 'streets' : 'satellite');
+                                } else {
+                                    const next = globeTexture === 'blue-marble' ? 'night' : globeTexture === 'night' ? 'dark' : 'blue-marble';
+                                    setGlobeTexture(next);
+                                    window.Globe3DView?.setEarthTexture(next);
+                                }
                             }}
                             title="Đổi giao diện địa cầu (Blue Marble / City Lights / Cyber Dark)"
                         >
-                            <i className="bi bi-palette"></i> {globeTexture === 'blue-marble' ? 'NASA Blue Marble' : globeTexture === 'night' ? 'City Lights' : 'Cyber Dark'}
+                            <i className="bi bi-palette"></i> {mapEngine === 'mapbox' ? (tileMode === 'satellite' ? 'Vệ tinh Mapbox' : 'Đường phố Mapbox') : (globeTexture === 'blue-marble' ? 'NASA Blue Marble' : globeTexture === 'night' ? 'City Lights' : 'Cyber Dark')}
                         </button>
                         </React.Fragment>}
                     </div>

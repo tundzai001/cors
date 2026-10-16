@@ -162,7 +162,7 @@
             this.camera = new THREE.PerspectiveCamera(45, width / height, 0.01, 1000);
             this.camera.position.set(-2.0, 3.5, -9.5);
 
-            this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'default' });
+            this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'low-power' });
             this.renderer.setSize(width, height);
             this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
             this.renderer.setClearColor(0x020611, 1.0);
@@ -202,7 +202,7 @@
 
         _createStarfield() {
             const THREE = window.THREE;
-            const starCount = 1200;
+            const starCount = 600;
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(starCount * 3);
             const colors = new Float32Array(starCount * 3);
@@ -244,7 +244,7 @@
             const Math3D = window.Globe3DMath;
             const R = Math3D?.SCENE_EARTH_RADIUS || 5.0;
 
-            const earthGeo = new THREE.SphereGeometry(R, 96, 96);
+            const earthGeo = new THREE.SphereGeometry(R, 64, 64);
             const textureLoader = new THREE.TextureLoader();
             // Default to high-res NASA Blue Marble (1.4MB) with real blue oceans and continents
             const tex = textureLoader.load('/assets/img/earth-blue-marble.jpg');

@@ -334,6 +334,32 @@
                                     while (coordinates[i][0] - coordinates[i - 1][0] < -180) coordinates[i][0] += 360;
                                 }
                                 frameFeatures.push({ type: 'Feature', properties: { kind: 'ray', code: satObj.code, color: cfg.color }, geometry: { type: 'LineString', coordinates } });
+                                if (satObj.satrec) {
+                                    const orbitPoints = [];
+                                    const dtMins = 20, steps = 24;
+                                    for (let sIdx = -steps / 2; sIdx <= steps / 2; sIdx++) {
+                                        const t = new Date(now.getTime() + sIdx * dtMins * 60 * 1000);
+                                        const pv = satLib.propagate(satObj.satrec, t);
+                                        if (pv?.position) {
+                                            const geo = satLib.eciToGeodetic(pv.position, satLib.gstime(t));
+                                            let oLon = satLib.degreesLong(geo.longitude);
+                                            while (oLon < -180) oLon += 360;
+                                            while (oLon > 180) oLon -= 360;
+                                            orbitPoints.push([oLon, satLib.degreesLat(geo.latitude)]);
+                                        }
+                                    }
+                                    if (orbitPoints.length >= 2) {
+                                        let seg = [orbitPoints[0]];
+                                        for (let i = 1; i < orbitPoints.length; i++) {
+                                            if (Math.abs(orbitPoints[i][0] - orbitPoints[i - 1][0]) > 180) {
+                                                if (seg.length >= 2) frameFeatures.push({ type: 'Feature', properties: { kind: 'orbit', code: satObj.code, color: cfg.color }, geometry: { type: 'LineString', coordinates: seg } });
+                                                seg = [];
+                                            }
+                                            seg.push(orbitPoints[i]);
+                                        }
+                                        if (seg.length >= 2) frameFeatures.push({ type: 'Feature', properties: { kind: 'orbit', code: satObj.code, color: cfg.color }, geometry: { type: 'LineString', coordinates: seg } });
+                                    }
+                                }
                             }
                         }
                         return;

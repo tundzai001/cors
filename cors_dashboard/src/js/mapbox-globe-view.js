@@ -67,12 +67,18 @@
                 mapHost.className = 'mapbox-globe-map';
                 this.mapHost = mapHost;
                 this.container.prepend(mapHost);
+                const ionoTooltip = document.createElement('div');
+                ionoTooltip.className = 'station-map-iono-hover-card';
+                ionoTooltip.style.display = 'none';
+                this.ionoTooltip = ionoTooltip;
+                this.container.append(ionoTooltip);
                 this.map = new sdk.Map({
                     container: mapHost, accessToken: config.mapbox_public_token,
                     style: 'mapbox://styles/mapbox/satellite-streets-v12', projection: 'globe',
                     center: [center.lng, center.lat], zoom: options.zoom ?? 6,
                     minZoom: 0, maxZoom: 19, maxPitch: 65, renderWorldCopies: false,
                     attributionControl: { compact: true }, fadeDuration: reducedMotion() ? 0 : 300,
+                    antialias: false, refreshExpiredTiles: false,
                     locale: { 'NavigationControl.ZoomIn': 'Phóng to', 'NavigationControl.ZoomOut': 'Thu nhỏ', 'NavigationControl.ResetBearing': 'Hướng Bắc' },
                 });
                 const map = this.map;
@@ -81,7 +87,7 @@
                 map.on('style.load', () => {
                     if (this.map !== map) return;
                     map.setFog({ color: 'rgb(186, 210, 235)', 'high-color': 'rgb(36, 92, 223)',
-                        'horizon-blend': 0.002, 'space-color': 'rgb(11, 11, 25)', 'star-intensity': 0.1 });
+                        'horizon-blend': 0.002, 'space-color': 'rgb(11, 11, 25)', 'star-intensity': 0.0 });
                     map.addSource('cors-stations', { type: 'geojson', data: this._stationData() });
                     map.addLayer({ id: 'cors-station-selected', type: 'circle', source: 'cors-stations',
                         filter: ['==', ['get', 'serial'], this.selectedStation?.serial || ''],
@@ -121,6 +127,35 @@
                 });
                 map.on('sourcedata', event => { if (event.isSourceLoaded) this.tileErrors = 0; });
                 map.on('click', event => this._mapClick(event));
+                map.on('mousemove', event => {
+                    if (!this.layerState?.showIonosphere || this.measureEnabled) {
+                        if (this.ionoTooltip) this.ionoTooltip.style.display = 'none';
+                        return;
+                    }
+                    const sample = window.IonosphereOverlay?.sample(event.lngLat.lat, event.lngLat.lng);
+                    if (!sample || sample.tec === undefined) {
+                        if (this.ionoTooltip) this.ionoTooltip.style.display = 'none';
+                        return;
+                    }
+                    const sign = sample.anomaly >= 0 ? '+' : '';
+                    const anomalyColor = sample.anomaly >= 0 ? '#f87171' : '#60a5fa';
+                    this.ionoTooltip.innerHTML = `
+                        <div class="iono-hover-title"><i class="bi bi-broadcast-pin me-1"></i>Tầng điện ly GloTEC</div>
+                        <div class="iono-hover-val">${sample.tec.toFixed(1)} <span class="small text-muted" style="font-size:0.75rem;">TECU</span></div>
+                        <div class="iono-hover-sub">Dị thường: <span style="color:${anomalyColor};font-weight:700;">${sign}${sample.anomaly.toFixed(2)} TECU</span></div>
+                        <div class="iono-hover-coords">${sample.lat.toFixed(2)}°, ${sample.lon.toFixed(2)}°</div>
+                    `;
+                    this.ionoTooltip.style.display = 'block';
+                    const hostRect = this.container?.getBoundingClientRect() || { width: 800, height: 600 };
+                    let left = event.point.x + 14;
+                    let top = event.point.y + 14;
+                    if (left + 190 > hostRect.width) left = Math.max(10, event.point.x - 190);
+                    if (top + 110 > hostRect.height) top = Math.max(10, event.point.y - 110);
+                    this.ionoTooltip.style.transform = `translate(${left}px, ${top}px)`;
+                });
+                map.on('mouseout', () => {
+                    if (this.ionoTooltip) this.ionoTooltip.style.display = 'none';
+                });
                 map.on('click', 'cors-provinces-fill', event => {
                     if (!this.measureEnabled && event.features?.[0] && !this._hasPointFeature(event)) this.fitProvince(event.features[0].properties.code, { fit: false, lngLat: event.lngLat });
                 });
@@ -288,11 +323,11 @@
             layer('cors-search-point', 'circle', 'cors-search', { 'circle-color': '#38bdf8', 'circle-radius': 7, 'circle-stroke-width': 2, 'circle-stroke-color': '#fff' }, ['==', ['geometry-type'], 'Point']);
             layer('cors-measure-line', 'line', 'cors-measure', { 'line-color': '#38bdf8', 'line-width': 3 }, ['==', ['geometry-type'], 'LineString']);
             layer('cors-measure-point', 'circle', 'cors-measure', { 'circle-color': '#38bdf8', 'circle-radius': 5 }, ['==', ['geometry-type'], 'Point']);
+            layer('cors-gnss-orbits', 'line', 'cors-gnss', { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.45, 'line-dasharray': [3, 2] }, ['==', ['get', 'kind'], 'orbit']);
             layer('cors-gnss-rays', 'line', 'cors-gnss', { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.65 }, ['==', ['get', 'kind'], 'ray']);
             layer('cors-gnss-points', 'circle', 'cors-gnss', { 'circle-color': ['get', 'color'], 'circle-radius': ['case', ['get', 'tracked'], 6, 3], 'circle-stroke-width': 1, 'circle-stroke-color': '#0f172a' }, ['==', ['get', 'kind'], 'satellite']);
             map.addLayer({ id: 'cors-gnss-labels', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'satellite'], layout: { 'text-field': ['get', 'code'], 'text-size': 12, 'text-offset': [0, 1.2] }, paint: { 'text-color': '#f8fafc', 'text-halo-color': '#0f172a', 'text-halo-width': 1.5 } });
-            layer('cors-island-pins', 'circle', 'cors-islands', { 'circle-color': '#ef4444', 'circle-radius': 5, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }, ['==', ['get', 'kind'], 'island']);
-            map.addLayer({ id: 'cors-island-labels', type: 'symbol', source: 'cors-islands', minzoom: 2, layout: { 'text-field': ['get', 'name'], 'text-size': ['interpolate', ['linear'], ['zoom'], 2, 12, 7, 16], 'text-offset': [0, 1.7], 'text-line-height': 1.35, 'text-max-width': 16, 'text-allow-overlap': true }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#075985', 'text-halo-width': 2.5 } });
+            map.addLayer({ id: 'cors-island-labels', type: 'symbol', source: 'cors-islands', minzoom: 2, layout: { 'text-field': ['get', 'name'], 'text-size': ['interpolate', ['linear'], ['zoom'], 2, 12, 7, 16], 'text-offset': [0, 0], 'text-anchor': 'center', 'text-line-height': 1.35, 'text-max-width': 16, 'text-allow-overlap': true }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#075985', 'text-halo-width': 2.5 } });
             this._installMarkerImages();
             map.addLayer({ id: 'cors-gnss-ipp', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'ipp'], layout: { 'icon-image': 'cors-ipp', 'icon-size': 0.6, 'icon-allow-overlap': true } });
             layer('cors-rover-clusters', 'circle', 'cors-rovers', { 'circle-radius': 17, 'circle-color': '#075985', 'circle-stroke-color': '#7dd3fc', 'circle-stroke-width': 1 }, ['has', 'point_count']);
@@ -330,7 +365,7 @@
             const holes = s.showVietnamMask ? (s.provinces?.features || []).flatMap(feature => feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates[0]] : feature.geometry.coordinates.map(polygon => polygon[0])) : [];
             this._data('cors-mask', s.showVietnamMask && holes.length ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]], ...holes] } }] : []);
             this._data('cors-islands', [[112.020, 16.530, 'Quần đảo Hoàng Sa\nVIỆT NAM', 'island'], [114.250, 9.880, 'Quần đảo Trường Sa\nVIỆT NAM', 'island'], [112, 13.2, 'Biển Đông', 'sea']].map(([lon, lat, name, kind]) => ({ type: 'Feature', properties: { name, kind }, geometry: { type: 'Point', coordinates: [lon, lat] } })));
-            this.map.setMaxBounds(s.showVietnamMask ? [[100.5, 5], [120, 24.5]] : null);
+            this.map.setMaxBounds(s.showVietnamMask && !s.showIonosphere ? [[100.5, 5], [120, 24.5]] : null);
             this._updateCoverage();
             this.updateIonosphere();
             const style = s.tileMode === 'streets' ? 'streets-v12' : 'satellite-streets-v12';
@@ -364,7 +399,8 @@
                 if (!this.map.getSource(id) || this.rasterKeys[id] !== key) {
                     const url = manager.generateRasterDataUrl(s.ionosphereMode, { mercator: true, west, east });
                     if (!url) continue;
-                    const coordinates = [[west + 1e-7, 85.05112878], [east - 1e-7, 85.05112878], [east - 1e-7, -85.05112878], [west + 1e-7, -85.05112878]];
+                    const maxLat = 82;
+                    const coordinates = [[west + 0.05, maxLat], [east - 0.05, maxLat], [east - 0.05, -maxLat], [west + 0.05, -maxLat]];
                     if (this.map.getSource(id)) this.map.getSource(id).updateImage({ url, coordinates });
                     else {
                         this.map.addSource(id, { type: 'image', url, coordinates });
@@ -375,6 +411,7 @@
                 this._visibility(id, true);
                 this.map.setPaintProperty(id, 'raster-opacity', s.ionosphereOpacity ?? 0.65);
             }
+            if (!s.showIonosphere && this.ionoTooltip) this.ionoTooltip.style.display = 'none';
         }
         updateGnss(frame) { this.gnssFrame = frame; this.map?.getSource('cors-gnss')?.setData(frame); }
         fitProvince(code, options = {}) {
@@ -483,6 +520,7 @@
             document.removeEventListener('visibilitychange', this._onVisibility);
             this.ready = false; this.spinning = false; this.flying = false; this.interacting = false; this.accessDenied = false;
             this.popup?.remove(); this.popup = null;
+            this.ionoTooltip?.remove(); this.ionoTooltip = null;
             this.map?.remove(); this.map = null;
             this.mapHost?.remove(); this.mapHost = null;
             this._clearStatus(); this.container = null;
