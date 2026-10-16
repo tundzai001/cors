@@ -30,6 +30,31 @@ assert.equal(overlay.getLiveRtcmSatellites().length, 5, 'only fresh RTCM records
 for (const [constellationKey, code] of [['gps', 'G08'], ['glonass', 'R05'], ['galileo', 'E12'], ['beidou', 'C21'], ['qzss', 'J194']]) {
   assert.ok(overlay.getLiveRtcmSatellite({ constellationKey, code }), `${code} resolves to the exact RTCM PRN`);
 }
+
+// Test QZSS slot 1..10 normalization (e.g. J002 -> J194, J003 -> J195, J007 -> J199) and Galileo E13
+assert.equal(overlay.getRtcmSatelliteKey({ system: 'jp', prn: 2 }), 'qzss:194');
+assert.equal(overlay.getRtcmSatelliteKey({ system: 'jp', prn: 3 }), 'qzss:195');
+assert.equal(overlay.getRtcmSatelliteKey({ system: 'jp', prn: 7 }), 'qzss:199');
+assert.equal(overlay.getRtcmSatelliteKey({ system: 'eu', prn: 13 }), 'galileo:13');
+assert.equal(overlay.getRtcmSatelliteCode({ system: 'jp', prn: 2 }), 'J194');
+assert.equal(overlay.getRtcmSatelliteCode({ system: 'jp', prn: 3 }), 'J195');
+assert.equal(overlay.getRtcmSatelliteCode({ system: 'jp', prn: 7 }), 'J199');
+assert.equal(overlay.getRtcmSatelliteCode({ system: 'eu', prn: 13 }), 'E13');
+
+// Live receiver match with slot-based QZSS and Galileo E13
+telemetry.satellites.qzss_slot2 = { id: 'RTCM:jp:2', system: 'jp', prn: 2, lastSeen: now };
+telemetry.satellites.qzss_slot3 = { id: 'RTCM:jp:3', system: 'jp', prn: 3, lastSeen: now };
+telemetry.satellites.qzss_slot7 = { id: 'RTCM:jp:7', system: 'jp', prn: 7, lastSeen: now };
+telemetry.satellites.gal13 = { id: 'RTCM:eu:13', system: 'eu', prn: 13, lastSeen: now };
+assert.ok(overlay.getLiveRtcmSatellite({ constellationKey: 'qzss', code: 'J194' }), 'QZSS slot 2 matches J194');
+assert.ok(overlay.getLiveRtcmSatellite({ constellationKey: 'qzss', code: 'J195' }), 'QZSS slot 3 matches J195');
+assert.ok(overlay.getLiveRtcmSatellite({ constellationKey: 'qzss', code: 'J199' }), 'QZSS slot 7 matches J199');
+assert.ok(overlay.getLiveRtcmSatellite({ constellationKey: 'galileo', code: 'E13' }), 'Galileo PRN 13 matches E13');
+delete telemetry.satellites.qzss_slot2;
+delete telemetry.satellites.qzss_slot3;
+delete telemetry.satellites.qzss_slot7;
+delete telemetry.satellites.gal13;
+
 assert.equal(overlay.getLiveRtcmSatellite({ constellationKey: 'gps', code: 'G09' }), null, 'stale satellite is not tracked');
 window.globalState.selectedDeviceSerial = 'PI_other';
 assert.equal(overlay.getLiveRtcmSatellites().length, 0, 'telemetry from a different station is never matched');

@@ -2825,7 +2825,8 @@ class RTCMSignalDecoder:
             if best_cnr < 0:
                 continue
                 
-            sat_str_id = f"RTCM:{info.system}:{satellite_id}"
+            prn = satellite_id + 192 if info.system == "jp" and 1 <= satellite_id <= 10 else satellite_id
+            sat_str_id = f"RTCM:{info.system}:{prn}"
             
             elevation = 0.0
             azimuth = 0.0
@@ -2855,7 +2856,7 @@ class RTCMSignalDecoder:
             satellites.append(
                 {
                     "id": sat_str_id,
-                    "prn": satellite_id,
+                    "prn": prn,
                     "system": info.system,
                     "talker": "RTCM",
                     "snr": round(best_cnr),

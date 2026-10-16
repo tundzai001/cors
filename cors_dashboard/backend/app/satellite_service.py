@@ -27,6 +27,17 @@ CONSTELLATIONS_CONFIG = {
 CELESTRAK_BASE_URL = "https://celestrak.org/NORAD/elements/gp.php"
 IGS_METADATA_URL = "https://files.igs.org/pub/station/general/igs_satellite_metadata.snx"
 
+SUPPLEMENTAL_TLE: dict[str, str] = {
+    "galileo": (
+        "GSAT0220 (GALILEO 24)\n"
+        "1 43567U 18060D   26259.06046683 -.00000101  00000-0  00000-0 0  9998\n"
+        "2 43567  57.1352 339.3320 0003721 269.4250  90.5848  1.70476412 50724\n"
+        "GSAT0213 (GALILEO 17)\n"
+        "1 41861U 16069C   26258.30017772  .00000003  00000-0  00000-0 0 09995\n"
+        "2 41861  55.5571  98.5941 0002004 331.4312  28.6313  1.70474479 61057"
+    ),
+}
+
 
 class SatelliteService:
     def __init__(self):
@@ -88,8 +99,24 @@ class SatelliteService:
         return result
 
     def _normalize_codes(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Merge supplemental operational satellites when constellation data is present.
+        constellations = payload.get("constellations", {})
+        for key, sup_tle in SUPPLEMENTAL_TLE.items():
+            constellation_sats = constellations.get(key)
+            if isinstance(constellation_sats, list) and constellation_sats:
+                existing_norads = {str(s.get("norad_id", s.get("line1", "")[2:7])).strip().lstrip("0") for s in constellation_sats}
+                for sup_sat in self._parse_tle_text(sup_tle, key):
+                    sup_norad = str(sup_sat.get("norad_id", "")).strip().lstrip("0")
+                    if sup_norad and sup_norad not in existing_norads:
+                        constellation_sats.append(sup_sat)
+                        existing_norads.add(sup_norad)
+                if isinstance(payload.get("counts"), dict) and key in payload["counts"]:
+                    payload["counts"][key] = len(constellation_sats)
+                if "total_satellites" in payload:
+                    payload["total_satellites"] = sum(len(v) for v in constellations.values() if isinstance(v, list))
+
         # Keep operational PRNs distinct from historical TLE names in every cache path.
-        rows = [(constellation, sat) for constellation, satellites in payload.get("constellations", {}).items() for sat in satellites]
+        rows = [(constellation, sat) for constellation, satellites in constellations.items() for sat in satellites]
         owners = {}
         now = datetime.now(timezone.utc)
         epoch = now.strftime("%Y:%j:") + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"

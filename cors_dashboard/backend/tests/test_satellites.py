@@ -41,6 +41,8 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code_gal, "E11")
         self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0203 (GALILEO 7)", "1 40544U..."), "E26")
         self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0208 (GALILEO 11)", "1 41175U..."), "E08")
+        self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0220 (GALILEO 24)", "1 43567U..."), "E13")
+        self.assertEqual(self.service._extract_satellite_code("galileo", "GSAT0213 (GALILEO 17)", "1 41861U..."), "E04")
 
         # GLONASS
         code_glo = self.service._extract_satellite_code("glonass", "COSMOS 2433 (720)", "1 32275U...")
@@ -83,6 +85,13 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
             result = await self.service.get_satellites_tle()
             request.assert_not_called()
         self.assertEqual(result["constellations"]["galileo"][0]["code"], "E08")
+
+    def test_supplemental_galileo_satellites_included(self):
+        payload = {"constellations": {"galileo": [{"name": "GSAT0101 (GALILEO-PFM)", "line1": "1 37846U...", "code": "E11"}]}}
+        self.service._normalize_codes(payload)
+        codes = [s["code"] for s in payload["constellations"]["galileo"]]
+        self.assertIn("E13", codes)
+        self.assertIn("E04", codes)
 
     def test_independent_status_and_safe_prn_fallback(self):
         def satellite(norad, name="Unknown spacecraft"):
