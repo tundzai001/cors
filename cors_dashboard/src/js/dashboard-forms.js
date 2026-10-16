@@ -259,6 +259,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const autoProgressPercent = autoSamplesTarget > 0
         ? Math.min(100, Math.round((autoSamplesCollected / autoSamplesTarget) * 100))
         : null;
+    const rawGgaSentence = autoProgress.last_raw_gga || device?.last_raw_gga || '';
+    const ggaAge = autoProgress.gga_age_seconds !== undefined && autoProgress.gga_age_seconds !== null
+        ? autoProgress.gga_age_seconds
+        : (device?.last_raw_gga_age !== undefined ? device.last_raw_gga_age : null);
+    const ggaFix = autoProgress.gga_fix_status || device?.last_gga_fix_status || 'NO_FIX';
+    const rtcmBytesReceived = autoProgress.rtcm_bytes || 0;
+    const rtcmPktsReceived = autoProgress.rtcm_pkts || 0;
+    const fixedStreak = autoProgress.fixed_streak || 0;
+    const fixedStreakReq = autoProgress.fixed_streak_required || 5;
 
     // Tọa độ Fixed
     const [latitude, setLatitude] = useState('');
@@ -586,31 +595,124 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             <fieldset disabled={disabled}>
                 {method === 'AUTO_CORS' ? (
                     <div className="row g-3 auto-cors-config">
-                        {isAutoSetupStatus && (
+                        {(isAutoSetupStatus || autoProgress.phase || rawGgaSentence) && (
                             <div className="col-12">
-                                <div className="alert alert-info small mb-2">
-                                    <div className="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <i className="bi bi-hourglass-split me-2"></i>
-                                            <strong>Đang tự động cấu hình:</strong> {STATUS_TEXT_MAP[device.status] || device.status}
+                                <div className="card border-info bg-dark shadow-sm">
+                                    <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
+                                        <div className="d-flex align-items-center gap-2">
+                                            {isAutoSetupStatus && (
+                                                <span className="spinner-grow spinner-grow-sm text-info" role="status"></span>
+                                            )}
+                                            <strong className="text-info small text-uppercase">
+                                                {STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & CORS'}
+                                            </strong>
                                         </div>
-                                        {autoProgressPercent !== null && (
-                                            <span className="badge bg-primary">{autoProgressPercent}%</span>
-                                        )}
+                                        <div className="d-flex align-items-center gap-2 flex-wrap">
+                                            {/* Fix Quality Badge */}
+                                            {ggaFix === 'RTK_FIXED' ? (
+                                                <span className="badge bg-success">🎯 RTK FIXED</span>
+                                            ) : ggaFix === 'RTK_FLOAT' ? (
+                                                <span className="badge bg-warning text-dark">📍 RTK FLOAT</span>
+                                            ) : ggaFix === 'SINGLE' || ggaFix === 'GPS_FIX' ? (
+                                                <span className="badge bg-primary">📡 SINGLE</span>
+                                            ) : (
+                                                <span className="badge bg-secondary">⏳ {ggaFix}</span>
+                                            )}
+                                            {/* GGA Age Badge */}
+                                            {ggaAge !== null && (
+                                                <span className={`badge ${ggaAge < 3 ? 'bg-success' : ggaAge < 10 ? 'bg-warning text-dark' : 'bg-danger'}`}>
+                                                    GGA: {ggaAge}s
+                                                </span>
+                                            )}
+                                            {autoProgressPercent !== null && (
+                                                <span className="badge bg-primary">{autoProgressPercent}%</span>
+                                            )}
+                                        </div>
                                     </div>
-                                    {autoSamplesTarget > 0 && (
-                                        <div className="mt-2">
-                                            <div className="progress" style={{ height: '8px' }}>
-                                                <div
-                                                    className="progress-bar progress-bar-striped progress-bar-animated"
-                                                    style={{ width: `${autoProgressPercent || 0}%` }}
-                                                ></div>
+                                    <div className="card-body p-3">
+                                        {/* Sample Collection Progress Bar */}
+                                        {autoSamplesTarget > 0 && (
+                                            <div className="mb-3">
+                                                <div className="d-flex justify-content-between small text-muted mb-1">
+                                                    <span>Tiến độ thu thập mẫu tọa độ</span>
+                                                    <span>{autoSamplesCollected} / {autoSamplesTarget} mẫu</span>
+                                                </div>
+                                                <div className="progress" style={{ height: '8px' }}>
+                                                    <div
+                                                        className="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                                                        style={{ width: `${autoProgressPercent || 0}%` }}
+                                                    ></div>
+                                                </div>
                                             </div>
-                                            <div className="mt-1 text-muted">
-                                                Mẫu tọa độ: {autoSamplesCollected}/{autoSamplesTarget}
+                                        )}
+
+                                        {/* Realtime Raw GGA Box */}
+                                        <div className="mb-3">
+                                            <div className="d-flex justify-content-between align-items-center mb-1">
+                                                <label className="form-label small fw-bold mb-0 text-info">
+                                                    <i className="bi bi-terminal me-1"></i>
+                                                    Bản tin NMEA GGA trực tiếp từ Chip Rover:
+                                                </label>
+                                                {rawGgaSentence && (
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-outline-secondary btn-sm py-0 px-2"
+                                                        style={{ fontSize: '0.75rem' }}
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText(rawGgaSentence);
+                                                            window.showToast?.('Đã sao chép bản tin GGA!');
+                                                        }}
+                                                    >
+                                                        <i className="bi bi-clipboard me-1"></i>Copy
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div
+                                                className="p-2 rounded bg-black border border-secondary font-monospace text-success small text-break user-select-all"
+                                                style={{ minHeight: '38px', lineHeight: '1.4' }}
+                                            >
+                                                {rawGgaSentence || (
+                                                    <span className="text-muted fst-italic">
+                                                        <i className="bi bi-arrow-repeat me-1 spin"></i>
+                                                        Đang chờ bản tin GGA từ chip GNSS (Rover mode)...
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
-                                    )}
+
+                                        {/* Metric Grid: RTCM stream & RTK streak & Coords */}
+                                        <div className="row g-2 text-center small">
+                                            <div className="col-4">
+                                                <div className="p-2 rounded bg-dark border border-secondary-subtle">
+                                                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>RTCM từ Caster</div>
+                                                    <div className="fw-bold text-info">
+                                                        {rtcmBytesReceived > 1024
+                                                            ? `${(rtcmBytesReceived / 1024).toFixed(1)} KB`
+                                                            : `${rtcmBytesReceived} B`}
+                                                        <span className="text-muted ms-1" style={{ fontSize: '0.7rem' }}>({rtcmPktsReceived} pkts)</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="col-4">
+                                                <div className="p-2 rounded bg-dark border border-secondary-subtle">
+                                                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>Giữ RTK Fix</div>
+                                                    <div className="fw-bold text-warning">
+                                                        {fixedStreak} / {fixedStreakReq}s
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="col-4">
+                                                <div className="p-2 rounded bg-dark border border-secondary-subtle">
+                                                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>Tọa độ Rover</div>
+                                                    <div className="fw-bold text-white text-truncate" title={`${autoProgress.current_coord?.lat || '--'}, ${autoProgress.current_coord?.lon || '--'}`}>
+                                                        {autoProgress.current_coord?.lat
+                                                            ? `${formatCoord10(autoProgress.current_coord.lat).slice(0, 10)}...`
+                                                            : 'Đang đợi Fix'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         )}
