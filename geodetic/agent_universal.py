@@ -1,5 +1,5 @@
 #agent_universal.py
-AGENT_VERSION = "V2.3.0"
+AGENT_VERSION = "V2.3.1"
 
 import asyncio
 import copy
@@ -4460,6 +4460,9 @@ class AgentManager:
             "agent_token_fingerprint": get_license_fingerprint(),
             "timestamp": round(time.time(), 3),
             "rtk_fix_status": getattr(self, 'last_gga_fix_status', globals().get('LAST_GGA_FIX_STATUS', 'NO_FIX')),
+            "last_gga_fix_status": getattr(self, 'last_gga_fix_status', globals().get('LAST_GGA_FIX_STATUS', 'NO_FIX')),
+            "last_raw_gga": globals().get('LAST_RAW_GGA'),
+            "last_raw_gga_age": round(time.time() - float(globals().get('LAST_RAW_GGA_TS') or 0.0), 1) if (float(globals().get('LAST_RAW_GGA_TS') or 0.0) > 0 and globals().get('LAST_RAW_GGA')) else None,
             "base_mode_active": bool(self.get_base_config()),
             "detected_chip_type": self.detected_chip.get("type", "UNKNOWN"),
             "detected_chip_port": self.detected_chip.get("port"),

@@ -332,6 +332,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 setMethod(config.base_setup_method);
             }
 
+            if ((device?.status || '').startsWith('auto_setup') || device?.auto_base_progress?.phase) {
+                setMethod('AUTO_CORS');
+            }
+
             // Load Fixed Params
             const coords = config.coords || (
                 (config.lat !== undefined && config.lon !== undefined)
@@ -373,6 +377,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             }
         }
     }, [device.serial]);
+
+    useEffect(() => {
+        if ((device?.status || '').startsWith('auto_setup') || device?.auto_base_progress?.phase) {
+            setMethod('AUTO_CORS');
+        }
+    }, [device?.status, device?.auto_base_progress?.phase]);
 
     const handleDecimalInputChange = (setter) => (e) => {
         const value = e.target.value;
@@ -578,6 +588,130 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 </div>
             )}
 
+            {/* Realtime NMEA GGA & Auto Base Monitor (Rover Mode) - Always displayed at top when active */}
+            {(isAutoSetupStatus || autoProgress.phase || rawGgaSentence) && (
+                <div className="mb-3">
+                    <div className="card border-info bg-dark shadow-sm">
+                        <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
+                            <div className="d-flex align-items-center gap-2">
+                                {isAutoSetupStatus && (
+                                    <span className="spinner-grow spinner-grow-sm text-info" role="status"></span>
+                                )}
+                                <strong className="text-info small text-uppercase">
+                                    <i className="bi bi-broadcast me-1"></i>
+                                    {STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & CORS'}
+                                </strong>
+                            </div>
+                            <div className="d-flex align-items-center gap-2 flex-wrap">
+                                {/* Fix Quality Badge */}
+                                {ggaFix === 'RTK_FIXED' ? (
+                                    <span className="badge bg-success">🎯 RTK FIXED</span>
+                                ) : ggaFix === 'RTK_FLOAT' ? (
+                                    <span className="badge bg-warning text-dark">📍 RTK FLOAT</span>
+                                ) : ggaFix === 'SINGLE' || ggaFix === 'GPS_FIX' ? (
+                                    <span className="badge bg-primary">📡 SINGLE</span>
+                                ) : (
+                                    <span className="badge bg-secondary">⏳ {ggaFix}</span>
+                                )}
+                                {/* GGA Age Badge */}
+                                {ggaAge !== null && (
+                                    <span className={`badge ${ggaAge < 3 ? 'bg-success' : ggaAge < 10 ? 'bg-warning text-dark' : 'bg-danger'}`}>
+                                        GGA: {ggaAge}s
+                                    </span>
+                                )}
+                                {autoProgressPercent !== null && (
+                                    <span className="badge bg-primary">{autoProgressPercent}%</span>
+                                )}
+                            </div>
+                        </div>
+                        <div className="card-body p-3">
+                            {/* Sample Collection Progress Bar */}
+                            {autoSamplesTarget > 0 && (
+                                <div className="mb-3">
+                                    <div className="d-flex justify-content-between small text-muted mb-1">
+                                        <span>Tiến độ thu thập mẫu tọa độ</span>
+                                        <span>{autoSamplesCollected} / {autoSamplesTarget} mẫu</span>
+                                    </div>
+                                    <div className="progress" style={{ height: '8px' }}>
+                                        <div
+                                            className="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                                            style={{ width: `${autoProgressPercent || 0}%` }}
+                                        ></div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Realtime Raw GGA Box */}
+                            <div className="mb-3">
+                                <div className="d-flex justify-content-between align-items-center mb-1">
+                                    <label className="form-label small fw-bold mb-0 text-info">
+                                        <i className="bi bi-terminal me-1"></i>
+                                        Bản tin NMEA GGA trực tiếp từ Chip Rover:
+                                    </label>
+                                    {rawGgaSentence && (
+                                        <button
+                                            type="button"
+                                            className="btn btn-outline-info btn-sm py-0 px-2"
+                                            style={{ fontSize: '0.75rem' }}
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(rawGgaSentence);
+                                                window.showToast?.('Đã sao chép bản tin GGA!');
+                                            }}
+                                        >
+                                            <i className="bi bi-clipboard me-1"></i>Copy GGA
+                                        </button>
+                                    )}
+                                </div>
+                                <div
+                                    className="p-2 rounded bg-black border border-info font-monospace text-success small text-break user-select-all shadow-inner"
+                                    style={{ minHeight: '38px', lineHeight: '1.4', fontSize: '0.85rem' }}
+                                >
+                                    {rawGgaSentence || (
+                                        <span className="text-muted fst-italic">
+                                            <i className="bi bi-arrow-repeat me-1 spin"></i>
+                                            Đang chờ bản tin GGA từ chip GNSS (Rover mode)...
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Metric Grid: RTCM stream & RTK streak & Coords */}
+                            <div className="row g-2 text-center small">
+                                <div className="col-4">
+                                    <div className="p-2 rounded bg-dark border border-secondary-subtle">
+                                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>RTCM từ Caster</div>
+                                        <div className="fw-bold text-info">
+                                            {rtcmBytesReceived > 1024
+                                                ? `${(rtcmBytesReceived / 1024).toFixed(1)} KB`
+                                                : `${rtcmBytesReceived} B`}
+                                            <span className="text-muted ms-1" style={{ fontSize: '0.7rem' }}>({rtcmPktsReceived} pkts)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="col-4">
+                                    <div className="p-2 rounded bg-dark border border-secondary-subtle">
+                                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>Giữ RTK Fix</div>
+                                        <div className="fw-bold text-warning">
+                                            {fixedStreak} / {fixedStreakReq}s
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="col-4">
+                                    <div className="p-2 rounded bg-dark border border-secondary-subtle">
+                                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>Tọa độ Rover</div>
+                                        <div className="fw-bold text-white text-truncate" title={`${autoProgress.current_coord?.lat || '--'}, ${autoProgress.current_coord?.lon || '--'}`}>
+                                            {autoProgress.current_coord?.lat
+                                                ? `${formatCoord10(autoProgress.current_coord.lat)}`
+                                                : 'Đang đợi Fix'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="mb-3">
                 <label className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>
                 <select
@@ -595,127 +729,6 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             <fieldset disabled={disabled}>
                 {method === 'AUTO_CORS' ? (
                     <div className="row g-3 auto-cors-config">
-                        {(isAutoSetupStatus || autoProgress.phase || rawGgaSentence) && (
-                            <div className="col-12">
-                                <div className="card border-info bg-dark shadow-sm">
-                                    <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
-                                        <div className="d-flex align-items-center gap-2">
-                                            {isAutoSetupStatus && (
-                                                <span className="spinner-grow spinner-grow-sm text-info" role="status"></span>
-                                            )}
-                                            <strong className="text-info small text-uppercase">
-                                                {STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & CORS'}
-                                            </strong>
-                                        </div>
-                                        <div className="d-flex align-items-center gap-2 flex-wrap">
-                                            {/* Fix Quality Badge */}
-                                            {ggaFix === 'RTK_FIXED' ? (
-                                                <span className="badge bg-success">🎯 RTK FIXED</span>
-                                            ) : ggaFix === 'RTK_FLOAT' ? (
-                                                <span className="badge bg-warning text-dark">📍 RTK FLOAT</span>
-                                            ) : ggaFix === 'SINGLE' || ggaFix === 'GPS_FIX' ? (
-                                                <span className="badge bg-primary">📡 SINGLE</span>
-                                            ) : (
-                                                <span className="badge bg-secondary">⏳ {ggaFix}</span>
-                                            )}
-                                            {/* GGA Age Badge */}
-                                            {ggaAge !== null && (
-                                                <span className={`badge ${ggaAge < 3 ? 'bg-success' : ggaAge < 10 ? 'bg-warning text-dark' : 'bg-danger'}`}>
-                                                    GGA: {ggaAge}s
-                                                </span>
-                                            )}
-                                            {autoProgressPercent !== null && (
-                                                <span className="badge bg-primary">{autoProgressPercent}%</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="card-body p-3">
-                                        {/* Sample Collection Progress Bar */}
-                                        {autoSamplesTarget > 0 && (
-                                            <div className="mb-3">
-                                                <div className="d-flex justify-content-between small text-muted mb-1">
-                                                    <span>Tiến độ thu thập mẫu tọa độ</span>
-                                                    <span>{autoSamplesCollected} / {autoSamplesTarget} mẫu</span>
-                                                </div>
-                                                <div className="progress" style={{ height: '8px' }}>
-                                                    <div
-                                                        className="progress-bar progress-bar-striped progress-bar-animated bg-info"
-                                                        style={{ width: `${autoProgressPercent || 0}%` }}
-                                                    ></div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Realtime Raw GGA Box */}
-                                        <div className="mb-3">
-                                            <div className="d-flex justify-content-between align-items-center mb-1">
-                                                <label className="form-label small fw-bold mb-0 text-info">
-                                                    <i className="bi bi-terminal me-1"></i>
-                                                    Bản tin NMEA GGA trực tiếp từ Chip Rover:
-                                                </label>
-                                                {rawGgaSentence && (
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-outline-secondary btn-sm py-0 px-2"
-                                                        style={{ fontSize: '0.75rem' }}
-                                                        onClick={() => {
-                                                            navigator.clipboard.writeText(rawGgaSentence);
-                                                            window.showToast?.('Đã sao chép bản tin GGA!');
-                                                        }}
-                                                    >
-                                                        <i className="bi bi-clipboard me-1"></i>Copy
-                                                    </button>
-                                                )}
-                                            </div>
-                                            <div
-                                                className="p-2 rounded bg-black border border-secondary font-monospace text-success small text-break user-select-all"
-                                                style={{ minHeight: '38px', lineHeight: '1.4' }}
-                                            >
-                                                {rawGgaSentence || (
-                                                    <span className="text-muted fst-italic">
-                                                        <i className="bi bi-arrow-repeat me-1 spin"></i>
-                                                        Đang chờ bản tin GGA từ chip GNSS (Rover mode)...
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        {/* Metric Grid: RTCM stream & RTK streak & Coords */}
-                                        <div className="row g-2 text-center small">
-                                            <div className="col-4">
-                                                <div className="p-2 rounded bg-dark border border-secondary-subtle">
-                                                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>RTCM từ Caster</div>
-                                                    <div className="fw-bold text-info">
-                                                        {rtcmBytesReceived > 1024
-                                                            ? `${(rtcmBytesReceived / 1024).toFixed(1)} KB`
-                                                            : `${rtcmBytesReceived} B`}
-                                                        <span className="text-muted ms-1" style={{ fontSize: '0.7rem' }}>({rtcmPktsReceived} pkts)</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="col-4">
-                                                <div className="p-2 rounded bg-dark border border-secondary-subtle">
-                                                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>Giữ RTK Fix</div>
-                                                    <div className="fw-bold text-warning">
-                                                        {fixedStreak} / {fixedStreakReq}s
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="col-4">
-                                                <div className="p-2 rounded bg-dark border border-secondary-subtle">
-                                                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>Tọa độ Rover</div>
-                                                    <div className="fw-bold text-white text-truncate" title={`${autoProgress.current_coord?.lat || '--'}, ${autoProgress.current_coord?.lon || '--'}`}>
-                                                        {autoProgress.current_coord?.lat
-                                                            ? `${formatCoord10(autoProgress.current_coord.lat).slice(0, 10)}...`
-                                                            : 'Đang đợi Fix'}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                         <div className="col-12">
                             <div className="auto-cors-config__panel p-3 rounded border border-info-subtle bg-dark-subtle">
                                 <div className="d-flex align-items-start gap-2 mb-3">

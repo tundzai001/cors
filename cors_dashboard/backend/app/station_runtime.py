@@ -146,6 +146,8 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "serial_health",
         "last_raw_gga",
         "last_raw_gga_age",
+        "last_gga_fix_status",
+        "rtk_fix_status",
     )
     compact = {key: safe_payload[key] for key in allowed_keys if key in safe_payload}
 
