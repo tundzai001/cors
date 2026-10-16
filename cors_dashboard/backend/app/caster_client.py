@@ -53,8 +53,9 @@ class CasterClient:
             await writer.drain()
 
             # 3. Đọc dữ liệu
-            # Phân biệt truy vấn bảng dữ liệu lớn (usertable, sourcetable, clienttable) và lệnh điều khiển ngắn
-            is_table_query = any(x in command for x in ["/usertable", "/sourcetable", "/clienttable"])
+            # Phân biệt truy vấn bảng dữ liệu lớn (usertable, sourcetable, clienttable, hoặc standard NTRIP GET /) và lệnh điều khiển ngắn
+            cmd_clean = command.strip()
+            is_table_query = any(x in command for x in ["/usertable", "/sourcetable", "/clienttable"]) or cmd_clean.startswith("GET / HTTP/") or "\nGET / HTTP/" in command
             
             # Tăng timeout an toàn lên 5.0s để chờ Caster xử lý xong vòng lặp UI (tối đa 2.0s)
             timeout = 5.0
@@ -432,14 +433,30 @@ class CasterClient:
         response = await self._send_command(cmd)
         return self._is_success_response(response)
 
-    async def get_sources(self) -> Optional[List[dict]]:
+    async def get_sources(self, prefer_standard_ntrip: bool = False) -> Optional[List[dict]]:
         """
-        Fetch all available mountpoints/sources from NTRIP Caster via /sourcetable.
+        Fetch all available mountpoints/sources from NTRIP Caster via /sourcetable or standard NTRIP GET /.
         Returns list of sources with mountpoint, identifier, lat/lon, auth required, etc.
         """
-        cmd = f"GET /sourcetable HTTP/1.0\r\n\r\n"
+        import base64
+        headers = ["GET / HTTP/1.0", "User-Agent: NTRIP Aitogy/1.0"]
+        if self.admin_user and self.admin_password:
+            token = base64.b64encode(f"{self.admin_user}:{self.admin_password}".encode("latin1", errors="ignore")).decode("ascii")
+            headers.append(f"Authorization: Basic {token}")
+        headers.append("Connection: close")
+        cmd_standard = "\r\n".join(headers) + "\r\n\r\n"
+        cmd_custom = "GET /sourcetable HTTP/1.0\r\n\r\n"
+
         try:
-            response = await self._send_command(cmd)
+            if prefer_standard_ntrip:
+                response = await self._send_command(cmd_standard)
+                if not response or "SOURCETABLE 200 OK" not in response:
+                    response = await self._send_command(cmd_custom)
+            else:
+                response = await self._send_command(cmd_custom)
+                if not response or "SOURCETABLE 200 OK" not in response:
+                    response = await self._send_command(cmd_standard)
+
             if not response or "SOURCETABLE 200 OK" not in response:
                 logger.warning(f"Invalid sourcetable response from {self.host}:{self.port}")
                 return None
@@ -492,6 +509,8 @@ class CasterClient:
 
                     # Fallback to full NTRIP table layout
                     if len(parts) >= 15:
+                        raw_auth = parts[15] if len(parts) > 15 else "N"
+                        is_auth_req = str(raw_auth).strip().upper() in {"B", "D", "Y", "TRUE", "1"}
                         sources.append({
                             "mountpoint": parts[1],
                             "identifier": parts[2],
@@ -510,7 +529,7 @@ class CasterClient:
                             "single_base_solution": self._parse_bool_token(parts[12], default=True),
                             "generator": parts[13],
                             "compression": parts[14] if len(parts) > 14 else "",
-                            "auth_required": parts[15] if len(parts) > 15 else "N",
+                            "auth_required": is_auth_req,
                             "fee": parts[16] if len(parts) > 16 else "N",
                             "bitrate": parts[17] if len(parts) > 17 else "",
                             "misc": parts[18] if len(parts) > 18 else "",

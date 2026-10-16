@@ -840,7 +840,7 @@ def _is_rtk_usable_status(status: str) -> bool:
     # Accept both RTK fixed and float to avoid long stalls when fix quality oscillates.
     return status in ("RTK_FIXED", "RTK_FLOAT")
 
-def _get_fresh_outbound_gga(max_age_seconds: float = 3.0) -> str | None:
+def _get_fresh_outbound_gga(max_age_seconds: float = 10.0) -> str | None:
     raw_gga = globals().get('LAST_RAW_GGA')
     gga_ts = float(globals().get('LAST_RAW_GGA_TS') or 0.0)
     if not raw_gga or gga_ts <= 0.0:
@@ -3630,6 +3630,14 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
             await asyncio.sleep(2.0)
             gnss_reader.resume()
             
+    # Wait up to 5 seconds for initial NMEA GGA from rover chip before connecting to NTRIP
+    logging.info("AutoBase: Waiting for initial NMEA GGA from rover chip...")
+    for _ in range(10):
+        if globals().get('LAST_RAW_GGA'):
+            logging.info("AutoBase: Initial NMEA GGA ready for NTRIP Caster")
+            break
+        await asyncio.sleep(0.5)
+            
     # Start temporary NTRIP client to get RTCM
     ntrip_host = cfg.get("ip", "14.238.1.125")
     ntrip_port = str(cfg.get("port", "2101"))
@@ -3799,11 +3807,11 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         await send_status(agent, mqtt_client)
         return
         
-    avg_lat = _plain_mean([float(c[0]) for c in coords])
-    avg_lon = _plain_mean([float(c[1]) for c in coords])
-    avg_alt = _plain_mean([float(c[2]) for c in coords])
+    avg_lat = round(_plain_mean([float(c[0]) for c in coords]), 10)
+    avg_lon = round(_plain_mean([float(c[1]) for c in coords]), 10)
+    avg_alt = round(_plain_mean([float(c[2]) for c in coords]), 4)
     
-    logging.info(f"AutoBase: Averaged Pos -> Lat: {avg_lat:.8f}, Lon: {avg_lon:.8f}, Alt: {avg_alt:.3f}")
+    logging.info(f"AutoBase: Averaged Pos -> Lat: {avg_lat:.10f}, Lon: {avg_lon:.10f}, Alt: {avg_alt:.4f}")
 
     transform_applied = False
     vn2000_neh = None
@@ -3853,13 +3861,15 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
                     and -1000.0 <= local_alt <= 100000.0
                 ):
                     vn2000_neh = {"north": n_vn, "east": e_vn, "h": h_vn2000}
+                    avg_lat = round(local_lat, 10)
+                    avg_lon = round(local_lon, 10)
+                    avg_alt = round(local_alt, 4)
                     logging.info(
                         "AutoBase: ITRF->VN2000 transform applied "
                         f"(L0={math.degrees(datum_snapshot.l0):.6f}, k0={datum_snapshot.k0:.6f}, source={projection_source}) "
-                        f"-> Lat: {local_lat:.8f}, Lon: {local_lon:.8f}, Alt: {local_alt:.3f}, "
+                        f"-> Lat: {avg_lat:.10f}, Lon: {avg_lon:.10f}, Alt: {avg_alt:.4f}, "
                         f"N: {n_vn:.4f}, E: {e_vn:.4f}, H: {h_vn2000:.4f}"
                     )
-                    avg_lat, avg_lon, avg_alt = local_lat, local_lon, local_alt
                     transform_applied = True
                 else:
                     logging.warning(
@@ -3880,7 +3890,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         "set_base",
         step=4,
         total_steps=4,
-        averaged_coord={"lat": avg_lat, "lon": avg_lon, "alt": avg_alt},
+        averaged_coord={"lat": f"{avg_lat:.10f}", "lon": f"{avg_lon:.10f}", "alt": f"{avg_alt:.4f}"},
         sample_count=len(coords),
         transform_applied=transform_applied,
         datum_status={
@@ -3906,9 +3916,9 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
     # Save base config in agent
     agent.config['base_config'] = {
         'coords': {
-            'lat': avg_lat,
-            'lon': avg_lon,
-            'alt': avg_alt
+            'lat': f"{avg_lat:.10f}",
+            'lon': f"{avg_lon:.10f}",
+            'alt': f"{avg_alt:.4f}"
         },
         'altitude_reference': 'ELLIPSOID',
         'base_setup_method': 'AUTO_CORS',
@@ -3925,9 +3935,9 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         'province_hint': province_hint,
         'vn2000_neh': vn2000_neh,
         'auto_base_raw_itrf_llh': {
-            'lat': _plain_mean([float(c[0]) for c in coords]),
-            'lon': _plain_mean([float(c[1]) for c in coords]),
-            'alt': _plain_mean([float(c[2]) for c in coords]),
+            'lat': f"{round(_plain_mean([float(c[0]) for c in coords]), 10):.10f}",
+            'lon': f"{round(_plain_mean([float(c[1]) for c in coords]), 10):.10f}",
+            'alt': f"{round(_plain_mean([float(c[2]) for c in coords]), 4):.4f}",
         },
         'samples_collected': len(coords),
         'timestamp': int(time.time())
@@ -3945,7 +3955,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         "completed",
         step=4,
         total_steps=4,
-        averaged_coord={"lat": avg_lat, "lon": avg_lon, "alt": avg_alt},
+        averaged_coord={"lat": f"{avg_lat:.10f}", "lon": f"{avg_lon:.10f}", "alt": f"{avg_alt:.4f}"},
         sample_count=len(coords),
         transform_applied=transform_applied
     )

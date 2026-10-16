@@ -14,10 +14,10 @@ const STATUS_TEXT_MAP = {
     'sleep': 'CHẾ ĐỘ NGỦ',
     'streaming': 'ĐANG PHÁT',
     'starting': 'ĐANG KHỞI CHẠY',
-    'auto_setup_rover': 'AUTO: CHẾ ĐỘ ROVER',
-    'auto_setup_wait_fix': 'AUTO: CHỜ RTK FIX',
-    'auto_setup_averaging': 'AUTO: LẤY MẪU TỌA ĐỘ',
-    'auto_setup_base': 'AUTO: CÀI ĐẶT BASE'
+    'auto_setup_rover': 'Bước 1/4: Đặt chip sang ROVER (mở NMEA GGA)',
+    'auto_setup_wait_fix': 'Bước 2/4: Gửi GGA lên Caster & Chờ RTK Fix',
+    'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu & Tính trung bình (10 số sau dấu phẩy)',
+    'auto_setup_base': 'Bước 4/4: Đặt chip về BASE với tọa độ chuẩn'
 };
 const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {
     const [isDeploying, setIsDeploying] = useState(false);
@@ -373,6 +373,18 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         }
     };
 
+    const formatCoord10 = (val) => {
+        if (val === null || val === undefined || val === '') return '';
+        const num = parseFloat(val);
+        return Number.isFinite(num) ? num.toFixed(10) : String(val);
+    };
+
+    const formatAlt4 = (val) => {
+        if (val === null || val === undefined || val === '') return '';
+        const num = parseFloat(val);
+        return Number.isFinite(num) ? num.toFixed(4) : String(val);
+    };
+
     const handleCorsFieldChange = (setter) => (e) => {
         setter(e.target.value);
         setCorsSources([]);
@@ -682,7 +694,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                             ) : (
                                                 <>
                                                     <i className="bi bi-search me-2" aria-hidden="true"></i>
-                                                    Kết nối CORS & lấy danh sách mountpoint
+                                                    Bước 1: Kết nối CORS & Lấy danh sách Mountpoint
                                                 </>
                                             )}
                                         </button>
@@ -696,7 +708,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         </div>
                                     )}
                                     <div className="col-12">
-                                        <label htmlFor={`cors-mountpoint-${device.serial}`} className="form-label small fw-bold">Mountpoint</label>
+                                        <label htmlFor={`cors-mountpoint-${device.serial}`} className="form-label small fw-bold">Bước 2: Chọn Mountpoint</label>
                                         <select
                                             id={`cors-mountpoint-${device.serial}`}
                                             className="form-select"
@@ -714,8 +726,31 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         </select>
                                         <div className="form-text">
                                             {corsSources.length
-                                                ? `${corsSources.length} mountpoint đã tải. Chọn đúng MP rồi mới áp dụng Auto Base.`
-                                                : 'Bấm nút kết nối để tải danh sách mountpoint.'}
+                                                ? `${corsSources.length} mountpoint đã sẵn sàng. Chọn MP và bấm Bước 3 bên dưới để bắt đầu.`
+                                                : 'Bấm nút Bước 1 để tải danh sách mountpoint.'}
+                                        </div>
+                                    </div>
+                                    <div className="col-12 mt-2">
+                                        <button
+                                            type="submit"
+                                            className="btn btn-primary w-100 py-2 fw-semibold shadow-sm"
+                                            disabled={isSubmitting || isLoadingCorsSources || !selectedMountpoint}
+                                        >
+                                            {isSubmitting ? (
+                                                <>
+                                                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                    Đang chạy quy trình Auto Base từ CORS...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <i className="bi bi-play-circle-fill me-2" aria-hidden="true"></i>
+                                                    Bước 3: Bắt đầu chạy Auto Base từ CORS {selectedMountpoint ? `(${selectedMountpoint})` : ''}
+                                                </>
+                                            )}
+                                        </button>
+                                        <div className="form-text text-muted mt-2">
+                                            <i className="bi bi-info-circle me-1"></i>
+                                            Quy trình: Chuyển chip sang Rover &rarr; Gửi NMEA GGA lên Caster &rarr; Nhận RTCM &rarr; Đạt RTK Fix &rarr; Thu thập tọa độ TB (10 số sau dấu phẩy) &rarr; Đặt Base.
                                         </div>
                                     </div>
                                 </div>
@@ -727,23 +762,23 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 {latitude && longitude ? (
                                     <span>Hệ thống đã tự động cấu hình tọa độ cho trạm từ CORS liên kết thành công!</span>
                                 ) : (
-                                    <span>Hệ thống sẽ tự động ghép nối với máy chủ CORS và tính trung bình tọa độ để thiết lập trạm phát Base hoàn toàn tự động!</span>
+                                    <span>Hệ thống sẽ tự động ghép nối với máy chủ CORS và tính trung bình tọa độ (10 số thập phân) để thiết lập trạm phát Base hoàn toàn tự động!</span>
                                 )}
                             </div>
                         </div>
                         {latitude && longitude && (
                             <>
                                 <div className="col-md-4">
-                                    <label className="form-label small">Lat (Tự động)</label>
-                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={latitude} readOnly />
+                                    <label className="form-label small fw-bold">Lat (Tự động - 10 số thập phân)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatCoord10(latitude)} readOnly />
                                 </div>
                                 <div className="col-md-4">
-                                    <label className="form-label small">Lon (Tự động)</label>
-                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={longitude} readOnly />
+                                    <label className="form-label small fw-bold">Lon (Tự động - 10 số thập phân)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatCoord10(longitude)} readOnly />
                                 </div>
                                 <div className="col-md-4">
-                                    <label className="form-label small">Alt (Tự động)</label>
-                                    <input type="text" className="form-control form-control-sm bg-dark-subtle" value={altitude} readOnly />
+                                    <label className="form-label small fw-bold">Alt (Tự động)</label>
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatAlt4(altitude)} readOnly />
                                 </div>
                             </>
                         )}
@@ -913,12 +948,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         {isSubmitting ? (
                             <>
                                 <span className="spinner-border spinner-border-sm me-2"></span>
-                                Đang gửi...
+                                {method === 'AUTO_CORS' ? 'Đang chạy quy trình Auto Base từ CORS...' : 'Đang gửi...'}
                             </>
                         ) : (
                             <>
                                 <i className="bi bi-lightning-charge-fill me-2"></i>
-                                Áp dụng cấu hình BASE
+                                {method === 'AUTO_CORS' ? 'Bắt đầu chạy Auto Base từ CORS' : 'Áp dụng cấu hình BASE'}
                             </>
                         )}
                     </button>

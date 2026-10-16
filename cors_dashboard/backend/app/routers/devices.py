@@ -254,7 +254,7 @@ async def get_device_cors_mountpoints(
             admin_user=username,
             admin_password=request.password,
         )
-        sources = await caster.get_sources()
+        sources = await caster.get_sources(prefer_standard_ntrip=True)
     except Exception as exc:
         logger.warning("CORS sourcetable lookup failed for %s:%s: %s", host, request.port, exc)
         raise HTTPException(status_code=502, detail="Không thể kết nối hoặc đọc sourcetable từ CORS") from exc
