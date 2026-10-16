@@ -191,7 +191,7 @@
         const provincesDataRef = useRef(null);
         const vietnamMaskLayerRef = useRef(null);
         const sovereigntyMarkersRef = useRef([]);
-        const [coverage, setCoverage] = useState(true);
+        const [coverage, setCoverage] = useState(false);
         const [showStations, setShowStations] = useState(true);
         const [showRovers, setShowRovers] = useState(true);
         const [showProvinces, setShowProvinces] = useState(true);

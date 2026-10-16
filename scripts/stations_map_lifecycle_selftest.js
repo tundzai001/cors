@@ -74,6 +74,7 @@ nodes.find(node => node.props['aria-controls'] === 'station-map-filters').props.
 nodes = render();
 assert.ok(nodes.find(node => node.props.id === 'station-map-filters'));
 assert.equal(nodes.filter(node => node.props.id === 'coverage-toggle').length, 1, 'coverage has a single visible 20 km control');
+assert.equal(nodes.find(node => node.props.id === 'coverage-toggle').props.checked, false, 'coverage is disabled by default');
 assert.equal(nodes.filter(node => node.props.id === 'ionosphere-toggle').length, 1,
   'ionosphere controls live only in the filter panel');
 assert.ok(!nodes.some(node => node.props['aria-label'] === 'Tầng điện ly'),
