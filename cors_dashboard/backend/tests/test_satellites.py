@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.satellite_service import SatelliteService
+from app.gnss_status_sources import QZSS_STATUS_URL, parse_qzss_status
 from app.satellite_routes import router as satellite_router
 
 
@@ -17,6 +18,9 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(clock.stop)
         self.clock.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
         self.service = SatelliteService()
+        import json
+        from pathlib import Path
+        self.service._status_snapshot = json.loads(Path(self.service._data_dir, "gnss_status_snapshot.json").read_text())
         self.service._save_disk_cache = Mock()
         self.service._load_disk_cache = Mock(return_value=None)
         self.app = FastAPI()
@@ -79,6 +83,46 @@ class SatelliteServiceTests(unittest.IsolatedAsyncioTestCase):
             result = await self.service.get_satellites_tle()
             request.assert_not_called()
         self.assertEqual(result["constellations"]["galileo"][0]["code"], "E08")
+
+    def test_independent_status_and_safe_prn_fallback(self):
+        def satellite(norad, name="Unknown spacecraft"):
+            return {"name": name, "norad_id": norad, "line1": f"1 {norad}U..."}
+        retired = satellite("38953", "BEIDOU-2 G6 (C02)")
+        galileo = satellite("40129", "GSAT0202 (GALILEO 6)")
+        self.service._normalize_codes({"constellations": {"galileo": [galileo]}})
+        self.assertEqual(galileo["code"], "E14", "a published unusable PRN remains an identity, not an unknown")
+        self.assertEqual(galileo["operational_status"], "unusable")
+        current = satellite("45344", "BEIDOU-3 G2 (C60)")
+        result = self.service._normalize_codes({"constellations": {"beidou": [retired, current]}})
+        self.assertEqual(retired["identity_status"], "retired")
+        self.assertEqual(retired["code"], "C?")
+        self.assertEqual(retired["status_source"], QZSS_STATUS_URL)
+        self.assertEqual(current["code"], "C02")
+        self.service._status_snapshot = {"source": QZSS_STATUS_URL, "published_at_utc": "2026-09-15T00:00:00+00:00", "records": {
+            "99999": {"code": "C61", "status": "operational"},
+            "99998": {"code": "C02", "status": "operational"},
+        }}
+        fallback, conflict = satellite("99999"), satellite("99998")
+        self.service._normalize_codes({"constellations": {"beidou": [fallback, conflict, current]}})
+        self.assertEqual(fallback["code"], "C61")
+        self.assertEqual(fallback["identity_source"], QZSS_STATUS_URL)
+        self.assertEqual(conflict["code"], "C?", "an independent source cannot steal another current NORAD's PRN")
+        self.service._status_snapshot["published_at_utc"] = "2025-01-01T00:00:00+00:00"
+        self.service._normalize_codes({"constellations": {"beidou": [fallback]}})
+        self.assertEqual(fallback["code"], "C?", "expired independent assignments do not match RTCM")
+
+    def test_parse_independent_status_skips_comments_and_retired_prns(self):
+        from pathlib import Path
+        identifiers = Path(self.service._data_dir, "gnss_identifiers.snx").read_text()
+        rows = "".join(f'<tr class="retired"><td>──</td><td>{svn}</td><td>Name</td><td>Date</td><td>GEO</td><td>B1</td><td>RB</td></tr>'
+                       for svn in ["C006", "C007", "C008", "C009", "C010", "C011", "C012", "C013", "C015", "C016"])
+        active = '<tr><td>02</td><td>C229</td><td>Name</td><td>Date</td><td>GEO</td><td>B1</td><td>RB</td></tr>'
+        html = 'Sep.15,2026<a name="BeiDou">BeiDou</a><table>' + rows + active + '<!--' + active.replace('C229', 'C016') + '--></table>'
+        data = parse_qzss_status(html, identifiers)
+        self.assertEqual(data["records"]["38953"], {"code": None, "status": "retired"})
+        self.assertEqual(data["records"]["45344"]["code"], "C02")
+        with self.assertRaises(ValueError):
+            parse_qzss_status('<html>Missing table</html>', identifiers)
 
     def test_parse_tle_text(self):
         sample_tle = (

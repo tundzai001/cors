@@ -509,7 +509,7 @@
 
                 this.hoverTooltipEl.innerHTML = `
                     <div class="tooltip-title" style="color:${cfg.hex}">
-                        ${cfg.flag} <b>${sat.code || sat.name}</b> (${cfg.name})
+                        ${cfg.flag} <b>${window.GnssSatelliteOverlay?.getSatelliteLabel?.(sat) || sat.code || sat.name}</b> (${cfg.name})
                     </div>
                     <div class="tooltip-sub">
                         ${cleanName ? `${cleanName} • ` : ''}${altStr}

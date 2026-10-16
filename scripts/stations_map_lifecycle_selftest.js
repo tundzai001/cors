@@ -73,6 +73,7 @@ nodes = render();
 nodes.find(node => node.props['aria-controls'] === 'station-map-filters').props.onClick();
 nodes = render();
 assert.ok(nodes.find(node => node.props.id === 'station-map-filters'));
+assert.equal(nodes.filter(node => node.props.id === 'coverage-toggle').length, 1, 'coverage has a single visible 20 km control');
 assert.equal(nodes.filter(node => node.props.id === 'ionosphere-toggle').length, 1,
   'ionosphere controls live only in the filter panel');
 assert.ok(!nodes.some(node => node.props['aria-label'] === 'Tầng điện ly'),
@@ -101,10 +102,12 @@ window.CorsDashboardShared = { getLeaflet: () => ({
   map() {
     assert.equal(nativeMounted, false, 'Mapbox is removed before constructing fallback');
     leafletMaps++;
-    const map = { setView(center, zoom) { this.center = center; this.zoom = zoom; return this; }, on() {}, remove() { this.removed = true; }, removeLayer() {}, setMaxBounds() {}, setMinZoom() {} };
+    const map = { setView(center, zoom) { this.center = center; this.zoom = zoom; return this; }, on() {}, remove() { this.removed = true; }, hasLayer() { return false; }, removeLayer() {}, setMaxBounds() {}, setMinZoom() {} };
     fallbackMaps.push(map); return map;
   },
   tileLayer(url) { return { addTo() { this.active = true; return this; }, url }; },
+  latLng() {}, latLngBounds() {},
+  marker: () => ({ bindPopup() { return this; }, addTo() { return this; } }), divIcon() {},
   layerGroup: () => ({ addTo() { return this; }, clearLayers() {} }),
 }) };
 function commit() {

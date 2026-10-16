@@ -28,6 +28,8 @@
 
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
+    const satelliteLabel = satellite => window.GnssSatelliteOverlay?.getSatelliteLabel?.(satellite) || satellite.code || satellite.name || '';
+
     function disposeGroup(group) {
         group.traverse(child => {
             if (!child.isSprite) child.geometry?.dispose();
@@ -327,7 +329,7 @@
 
                 // Luminous star sprite (satellitemap.space particle look)
                 const spriteMat = new THREE.SpriteMaterial({
-                    map: createSatelliteTexture(cfg.hex, satItem.code),
+                    map: createSatelliteTexture(cfg.hex, satelliteLabel(satItem)),
                     transparent: true,
                     depthWrite: false,
                     blending: THREE.AdditiveBlending,
@@ -623,7 +625,7 @@
             // Render single true orbital ellipse
             this.showSatelliteOrbit(satItem);
 
-            this.selectedLabelEl.textContent = `${satItem.code || ''} · ${satItem.name || ''}`;
+            this.selectedLabelEl.textContent = `${satelliteLabel(satItem)} · ${satItem.name || ''}`;
             this.selectedLabelEl.style.borderColor = cfg.hex;
             this.globe.lastRenderAt = null;
             if (this.globe.hoverTooltipEl) this.globe.hoverTooltipEl.style.display = 'none';
@@ -644,7 +646,7 @@
                 <div class="card-top-row">
                     <div class="card-title" style="color:${cfg.hex}">
                         <span>${cfg.flag}</span>
-                        <span><b>${escapeHtml(satItem.code || satItem.name)}</b> • <span style="font-size:0.75rem;opacity:0.85">${orbitInfo.type}</span></span>
+                        <span><b>${escapeHtml(satelliteLabel(satItem))}</b> • <span style="font-size:0.75rem;opacity:0.85">${orbitInfo.type}</span></span>
                     </div>
                     <button type="button" class="card-close-btn" id="globe-card-close" aria-label="Đóng">✕</button>
                 </div>

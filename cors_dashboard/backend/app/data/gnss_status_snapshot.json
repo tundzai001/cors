@@ -1,0 +1,546 @@
+{
+  "source": "https://qzss.go.jp/en/technical/satellites/index.html",
+  "published_at_utc": "2026-09-15T00:00:00+00:00",
+  "records": {
+    "24876": {
+      "code": null,
+      "status": "retired"
+    },
+    "25933": {
+      "code": null,
+      "status": "retired"
+    },
+    "26360": {
+      "code": null,
+      "status": "retired"
+    },
+    "26407": {
+      "code": "G22",
+      "status": "operational"
+    },
+    "26605": {
+      "code": null,
+      "status": "retired"
+    },
+    "26690": {
+      "code": null,
+      "status": "retired"
+    },
+    "27663": {
+      "code": "G16",
+      "status": "operational"
+    },
+    "27704": {
+      "code": null,
+      "status": "retired"
+    },
+    "28129": {
+      "code": null,
+      "status": "retired"
+    },
+    "28190": {
+      "code": "G19",
+      "status": "operational"
+    },
+    "28361": {
+      "code": null,
+      "status": "retired"
+    },
+    "28474": {
+      "code": "G02",
+      "status": "operational"
+    },
+    "28874": {
+      "code": "G17",
+      "status": "operational"
+    },
+    "29486": {
+      "code": "G31",
+      "status": "operational"
+    },
+    "29601": {
+      "code": "G12",
+      "status": "operational"
+    },
+    "32260": {
+      "code": "G15",
+      "status": "operational"
+    },
+    "32384": {
+      "code": "G29",
+      "status": "operational"
+    },
+    "32711": {
+      "code": "G07",
+      "status": "operational"
+    },
+    "34661": {
+      "code": null,
+      "status": "retired"
+    },
+    "35752": {
+      "code": "G05",
+      "status": "operational"
+    },
+    "36585": {
+      "code": "G25",
+      "status": "operational"
+    },
+    "37753": {
+      "code": null,
+      "status": "retired"
+    },
+    "38833": {
+      "code": "G24",
+      "status": "operational"
+    },
+    "39166": {
+      "code": "G27",
+      "status": "operational"
+    },
+    "39533": {
+      "code": "G30",
+      "status": "operational"
+    },
+    "39741": {
+      "code": "G06",
+      "status": "operational"
+    },
+    "40105": {
+      "code": "G09",
+      "status": "operational"
+    },
+    "40294": {
+      "code": "G03",
+      "status": "operational"
+    },
+    "40534": {
+      "code": "G26",
+      "status": "operational"
+    },
+    "40730": {
+      "code": "G08",
+      "status": "operational"
+    },
+    "41019": {
+      "code": "G10",
+      "status": "operational"
+    },
+    "41328": {
+      "code": "G32",
+      "status": "operational"
+    },
+    "43873": {
+      "code": "G04",
+      "status": "operational"
+    },
+    "44506": {
+      "code": "G18",
+      "status": "operational"
+    },
+    "45854": {
+      "code": "G23",
+      "status": "operational"
+    },
+    "46826": {
+      "code": "G14",
+      "status": "operational"
+    },
+    "48859": {
+      "code": "G11",
+      "status": "operational"
+    },
+    "55268": {
+      "code": "G28",
+      "status": "operational"
+    },
+    "62339": {
+      "code": "G01",
+      "status": "operational"
+    },
+    "64202": {
+      "code": "G21",
+      "status": "operational"
+    },
+    "67588": {
+      "code": "G20",
+      "status": "operational"
+    },
+    "68791": {
+      "code": "G13",
+      "status": "operational"
+    },
+    "36828": {
+      "code": null,
+      "status": "retired"
+    },
+    "37210": {
+      "code": null,
+      "status": "retired"
+    },
+    "37256": {
+      "code": null,
+      "status": "retired"
+    },
+    "37384": {
+      "code": null,
+      "status": "retired"
+    },
+    "37763": {
+      "code": null,
+      "status": "retired"
+    },
+    "37948": {
+      "code": null,
+      "status": "retired"
+    },
+    "38091": {
+      "code": null,
+      "status": "retired"
+    },
+    "38250": {
+      "code": null,
+      "status": "retired"
+    },
+    "38251": {
+      "code": null,
+      "status": "retired"
+    },
+    "38775": {
+      "code": null,
+      "status": "retired"
+    },
+    "38953": {
+      "code": null,
+      "status": "retired"
+    },
+    "40549": {
+      "code": null,
+      "status": "retired"
+    },
+    "40749": {
+      "code": null,
+      "status": "retired"
+    },
+    "40748": {
+      "code": null,
+      "status": "retired"
+    },
+    "40938": {
+      "code": null,
+      "status": "retired"
+    },
+    "41586": {
+      "code": null,
+      "status": "retired"
+    },
+    "41434": {
+      "code": "C09",
+      "status": "operational"
+    },
+    "43001": {
+      "code": "C19",
+      "status": "operational"
+    },
+    "43002": {
+      "code": "C20",
+      "status": "operational"
+    },
+    "43107": {
+      "code": "C27",
+      "status": "operational"
+    },
+    "43108": {
+      "code": "C28",
+      "status": "operational"
+    },
+    "43208": {
+      "code": "C21",
+      "status": "operational"
+    },
+    "43207": {
+      "code": "C22",
+      "status": "operational"
+    },
+    "43245": {
+      "code": "C29",
+      "status": "operational"
+    },
+    "43246": {
+      "code": "C30",
+      "status": "operational"
+    },
+    "43539": {
+      "code": "C10",
+      "status": "operational"
+    },
+    "43581": {
+      "code": "C23",
+      "status": "operational"
+    },
+    "43582": {
+      "code": "C24",
+      "status": "operational"
+    },
+    "43602": {
+      "code": "C25",
+      "status": "operational"
+    },
+    "43603": {
+      "code": "C26",
+      "status": "operational"
+    },
+    "43622": {
+      "code": "C32",
+      "status": "operational"
+    },
+    "43623": {
+      "code": "C33",
+      "status": "operational"
+    },
+    "43647": {
+      "code": "C34",
+      "status": "operational"
+    },
+    "43648": {
+      "code": "C35",
+      "status": "operational"
+    },
+    "43683": {
+      "code": "C04",
+      "status": "operational"
+    },
+    "43706": {
+      "code": "C36",
+      "status": "operational"
+    },
+    "43707": {
+      "code": "C37",
+      "status": "operational"
+    },
+    "44204": {
+      "code": "C06",
+      "status": "operational"
+    },
+    "44231": {
+      "code": null,
+      "status": "retired"
+    },
+    "44337": {
+      "code": "C07",
+      "status": "operational"
+    },
+    "44543": {
+      "code": "C39",
+      "status": "operational"
+    },
+    "44542": {
+      "code": "C40",
+      "status": "operational"
+    },
+    "44709": {
+      "code": "C08",
+      "status": "operational"
+    },
+    "44794": {
+      "code": "C38",
+      "status": "operational"
+    },
+    "44793": {
+      "code": "C31",
+      "status": "operational"
+    },
+    "44864": {
+      "code": "C41",
+      "status": "operational"
+    },
+    "44865": {
+      "code": "C42",
+      "status": "operational"
+    },
+    "45344": {
+      "code": "C02",
+      "status": "operational"
+    },
+    "45807": {
+      "code": "C03",
+      "status": "operational"
+    },
+    "56564": {
+      "code": "C01",
+      "status": "operational"
+    },
+    "58655": {
+      "code": "C12",
+      "status": "operational"
+    },
+    "58654": {
+      "code": "C14",
+      "status": "operational"
+    },
+    "61186": {
+      "code": "C11",
+      "status": "operational"
+    },
+    "61187": {
+      "code": "C13",
+      "status": "operational"
+    },
+    "37846": {
+      "code": "E11",
+      "status": "operational"
+    },
+    "37847": {
+      "code": "E12",
+      "status": "operational"
+    },
+    "38857": {
+      "code": "E19",
+      "status": "operational"
+    },
+    "40128": {
+      "code": "E18",
+      "status": "unusable"
+    },
+    "40129": {
+      "code": "E14",
+      "status": "unusable"
+    },
+    "40544": {
+      "code": "E26",
+      "status": "operational"
+    },
+    "40545": {
+      "code": "E22",
+      "status": "unusable"
+    },
+    "40889": {
+      "code": "E24",
+      "status": "unusable"
+    },
+    "40890": {
+      "code": "E30",
+      "status": "operational"
+    },
+    "41175": {
+      "code": "E08",
+      "status": "operational"
+    },
+    "41174": {
+      "code": "E09",
+      "status": "operational"
+    },
+    "41550": {
+      "code": "E01",
+      "status": "unusable"
+    },
+    "41549": {
+      "code": "E02",
+      "status": "operational"
+    },
+    "41859": {
+      "code": "E07",
+      "status": "operational"
+    },
+    "41860": {
+      "code": "E03",
+      "status": "operational"
+    },
+    "41861": {
+      "code": "E04",
+      "status": "operational"
+    },
+    "41862": {
+      "code": "E05",
+      "status": "operational"
+    },
+    "43055": {
+      "code": "E21",
+      "status": "operational"
+    },
+    "43056": {
+      "code": "E25",
+      "status": "operational"
+    },
+    "43057": {
+      "code": "E27",
+      "status": "operational"
+    },
+    "43058": {
+      "code": "E31",
+      "status": "operational"
+    },
+    "43566": {
+      "code": "E36",
+      "status": "operational"
+    },
+    "43567": {
+      "code": "E13",
+      "status": "operational"
+    },
+    "43564": {
+      "code": "E15",
+      "status": "operational"
+    },
+    "43565": {
+      "code": "E33",
+      "status": "operational"
+    },
+    "49809": {
+      "code": "E34",
+      "status": "operational"
+    },
+    "49810": {
+      "code": "E10",
+      "status": "operational"
+    },
+    "59598": {
+      "code": "E29",
+      "status": "operational"
+    },
+    "59600": {
+      "code": "E06",
+      "status": "operational"
+    },
+    "61183": {
+      "code": "E23",
+      "status": "operational"
+    },
+    "61182": {
+      "code": "E16",
+      "status": "operational"
+    },
+    "67160": {
+      "code": "E28",
+      "status": "operational"
+    },
+    "67162": {
+      "code": "E32",
+      "status": "operational"
+    },
+    "42738": {
+      "code": "J194",
+      "status": "operational"
+    },
+    "42917": {
+      "code": "J199",
+      "status": "operational"
+    },
+    "42965": {
+      "code": "J195",
+      "status": "operational"
+    },
+    "49336": {
+      "code": "J196",
+      "status": "operational"
+    },
+    "62876": {
+      "code": "J200",
+      "status": "operational"
+    },
+    "100270": {
+      "code": "J201",
+      "status": "in-testing"
+    }
+  }
+}

@@ -1150,3 +1150,43 @@
 .globe-dock-btn:focus-visible { outline: 2px solid var(--ops-primary, #38bdf8); outline-offset: 2px; }
 .globe-dock-btn:active { background: rgba(14, 165, 233, 0.3); }
 @media (prefers-reduced-motion: reduce) { .globe-dock-btn { transition: none; } }
+
+/* Compact map panels share a single type scale and predictable rows. */
+.station-map-container .station-map-filter-panel {
+    width: 288px; min-width: 0; max-width: calc(100% - 28px);
+    padding: 12px 14px; font-size: 13px; line-height: 1.4;
+    max-height: calc(100% - 110px); overflow-y: auto;
+}
+.station-map-panel-title { font-size: 14px; font-weight: 750; margin-bottom: 8px; }
+.station-map-container .station-map-filter-panel .form-check {
+    padding-left: 0; margin: 0 !important; gap: 10px; min-height: 36px;
+}
+.station-map-container .station-map-filter-panel .form-check-input {
+    margin: 0; flex: 0 0 auto; width: 16px; height: 16px; min-height: 0;
+}
+.station-map-container .station-map-filter-panel .form-switch .form-check-input { width: 30px; height: 17px; }
+.station-map-container .station-map-filter-panel .form-check-label {
+    display: flex; align-items: center; min-height: 36px; font-size: 13px; font-weight: 500; line-height: 1.4;
+}
+.station-map-status-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; border-top: 1px solid var(--ops-border-soft); margin-top: 8px; padding-top: 6px; }
+.station-map-container .station-map-satellite-hud { width: 300px; max-width: calc(100% - 28px); font-size: 13px; padding: 12px; }
+.station-map-container .sat-hud-title { font-size: 14px; }
+.station-map-container .sat-hud-pill { min-height: 36px; padding: 6px 9px; font-size: 12px; line-height: 1.3; }
+.station-map-container .station-map-satellite-hud .form-check-label { font-size: 12px !important; line-height: 1.4; }
+.station-map-container .station-map-satellite-hud .form-check-input { min-height: 0; }
+.station-map-container .sat-hud-source-credit { font-size: 11px; line-height: 1.5; }
+.station-map-engine-mapbox .mapboxgl-popup .station-map-popup { color: var(--ops-text); }
+.station-map-engine-mapbox .mapboxgl-popup .station-map-popup-label { color: var(--ops-muted); }
+.station-map-engine-mapbox .mapboxgl-popup .station-map-popup-value { color: var(--ops-text); }
+.station-map-engine-mapbox .mapboxgl-popup .text-muted { color: var(--ops-muted) !important; }
+.station-map-dot.rover { width: 12px; height: 12px; border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+@media (pointer: coarse) {
+    .station-map-container .station-map-filter-panel .form-check,
+    .station-map-container .station-map-filter-panel .form-check-label,
+    .station-map-container .sat-hud-pill { min-height: 44px; }
+}
+@media (max-width: 767.98px) {
+    .station-map-container .station-map-satellite-hud { top: 72px; right: 14px; }
+}
+
+.station-map-engine-mapbox .mapboxgl-popup .text-success { color: var(--ops-success, #22c55e) !important; }

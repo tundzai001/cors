@@ -6,7 +6,9 @@ class Element {
     append(...children) { children.forEach(child => { child.parent = this; this.children.push(child); }); }
     prepend(child) { child.parent = this; this.children.unshift(child); }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
-    setAttribute() {}
+    setAttribute(key, value) { (this.attributes ||= {})[key] = value; }
+    removeAttribute(key) { delete this.attributes?.[key]; }
+    getContext() { return { scale() {}, translate() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, stroke() {}, getImageData: () => ({ width: 56, height: 56, data: new Uint8Array(56*56*4) }) }; }
     addEventListener(type, callback) { this.listeners[type] = callback; }
 }
 const maps = [];
@@ -16,6 +18,8 @@ class FakeMap {
     on(type, ...args) { (this.events[type] ||= []).push(args.at(-1)); }
     emit(type, data = {}) { (this.events[type] || []).forEach(callback => callback(data)); }
     addControl() {} setFog() {}
+    hasImage(id) { return Boolean(this.images?.[id]); }
+    addImage(id, data) { (this.images ||= {})[id] = data; }
     addSource(id, data) { this.sources[id] = { data: data.data, setData(value) { this.data = value; } }; }
     addLayer(layer) { this.layers[layer.id] = layer; }
     getSource(id) { return this.sources[id]; } getLayer(id) { return this.layers[id]; }
@@ -25,7 +29,7 @@ class FakeMap {
     getStyle() { return { layers: Object.values(this.layers) }; }
     setLayoutProperty(id, key, value) { (this.layers[id].layout ||= {})[key] = value; }
     setPaintProperty(id, key, value) { this.layers[id].paint[key] = value; }
-    setStyle(style) { this.style = style; this.sources = {}; this.layers = {}; this.emit('style.load'); }
+    setStyle(style, options) { this.style = style; this.styleOptions = options; this.sources = {}; this.layers = {}; this.emit('style.load'); }
     queryRenderedFeatures() { return []; }
     setFilter(id, filter) { this.layers[id].filter = filter; }
     getCanvas() { return this.canvas; } getCenter() { return this.center; } getZoom() { return this.zoom; }
@@ -36,8 +40,16 @@ class FakeMap {
     finish() { const { options, data } = this.pending; this.center = { lng: options.center[0], lat: options.center[1] }; this.zoom = options.zoom; this.pending = null; this.emit('moveend', data); }
     remove() { this.removed = true; this.pending = null; }
 }
+class FakePopup {
+    constructor(options) { this.options = options; this.close = new Element(); this.close.setAttribute('aria-hidden', 'true'); }
+    setLngLat(value) { this.lngLat = value; return this; }
+    setDOMContent(value) { this.content = value; return this; }
+    addTo() { return this; }
+    getElement() { return { querySelector: () => this.close }; }
+    remove() {}
+}
 const window = {
-    mapboxgl: { Map: FakeMap, NavigationControl: class {}, supported: () => true },
+    mapboxgl: { Map: FakeMap, Popup: FakePopup, NavigationControl: class {}, supported: () => true },
     CorsUI: { getStatusMeta: () => ({ color: '#22c55e' }) },
     StationsMapUtils: { getRoverStatusMeta: () => ({ label: 'Online', color: '#22c55e' }) },
     matchMedia: () => ({ matches: false }), addEventListener() {}, removeEventListener() {},
@@ -56,6 +68,20 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     map.emit('style.load'); map.emit('load');
     assert.equal(map.getSource('cors-stations').data.features[0].properties.serial, 'PI_real', 'real station data reaches Mapbox');
     assert.equal(map.moves.length, 0, 'station map does not start an unsolicited flight');
+    assert.equal(map.getLayer('cors-rover-pins').type, 'symbol', 'rovers retain triangular icons');
+    assert.ok(map.hasImage('cors-rover-fixed'));
+    assert.ok(map.hasImage('cors-ipp'));
+    assert.equal(map.getLayer('cors-gnss-ipp').type, 'symbol', 'IPP retains a diamond icon');
+    assert.equal(map.getSource('cors-islands').data.features.length, 3, 'island labels are visible independently of mask');
+    const province = { type: 'Feature', properties: { code: '01', fullName: 'Hà Nội' }, geometry: { type: 'Polygon', coordinates: [[[105, 20], [106, 20], [106, 22], [105, 22], [105, 20]]] } };
+    view.updateLayers({ showProvinces: true, provinces: { type: 'FeatureCollection', features: [province] } });
+    view.fitProvince('01', { fit: false, lngLat: { lat: 21, lng: 105.5 } });
+    assert.equal(map.moves.length, 0, 'province click highlights without unexpectedly moving camera');
+    assert.equal(view.popup.lngLat.lat, 21, 'province popup anchors to clicked location');
+    assert.equal(view.popup.close.attributes['aria-hidden'], undefined, 'focusable popup close button is not aria-hidden');
+    assert.equal(view.popup.close.attributes['aria-label'], 'Đóng thông tin');
+    assert.equal(view.popup.options.focusAfterOpen, false, 'map click does not steal keyboard focus');
+    assert.equal(map.getLayer('cors-province-selected-line').filter.at(-1), '01');
     const source = map.getSource('cors-stations');
     const center = map.getCenter();
     for (let cycle = 0; cycle < 3; cycle++) {
@@ -67,10 +93,14 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     view.updateLayers({ coverage: true, rovers: [{ latitude: 16, longitude: 108, username: 'rover1' }] });
     assert.equal(map.getSource('cors-coverage').data.features.length, 1);
     assert.equal(map.getSource('cors-rovers').data.features.length, 1);
+    view.updateLayers({ coverage: false });
+    assert.equal(map.getSource('cors-coverage').data.features.length, 0, '20 km coverage can be switched off');
+    view.updateLayers({ coverage: true });
     view.setActive(false); view.setActive(true);
     assert.equal(view.map, map, 'orbit excursion does not destroy the surface map');
     assert.ok(!map.removed);
     view.updateLayers({ tileMode: 'streets' });
+    assert.equal(map.styleOptions.diff, false, 'base-style change avoids unsupported sprite diff');
     assert.equal(map.getSource('cors-rovers').data.features.length, 1, 'style reload restores custom data');
     assert.equal(map.getSource('cors-coverage').data.features.length, 1);
     view.setMeasureEnabled(true);

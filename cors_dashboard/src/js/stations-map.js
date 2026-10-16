@@ -151,6 +151,32 @@
         `;
     }
 
+    function provincePopupHtml(feature, stations) {
+        const p = feature.properties || {};
+        const inProvince = stations.filter(s =>
+            pointInGeometry([s.coords.lon, s.coords.lat], feature.geometry)
+        );
+        const onlineCount = inProvince.filter(s =>
+            ['online', 'streaming', 'sleep'].includes(s.status)
+        ).length;
+
+        const areaStr = p.areaKm2 ? `${Number(p.areaKm2).toLocaleString('vi-VN')} km²` : '--';
+        const postalStr = p.postalCodePrefix || '--';
+
+        return `
+            <div class="station-map-popup">
+                <div class="station-map-popup-title">${escapeHtml(p.fullName || p.name || 'Tỉnh/Thành')}</div>
+                <div class="text-muted small">${escapeHtml(p.nameEn || '')}</div>
+                <div class="station-map-popup-grid">
+                    <span class="station-map-popup-label">Mã hành chính</span><span class="station-map-popup-value">${escapeHtml(p.code || '--')}</span>
+                    <span class="station-map-popup-label">Mã bưu chính</span><span class="station-map-popup-value">${escapeHtml(postalStr)}</span>
+                    <span class="station-map-popup-label">Diện tích</span><span class="station-map-popup-value">${escapeHtml(areaStr)}</span>
+                    <span class="station-map-popup-label">Trạm CORS</span><span class="station-map-popup-value text-success font-monospace">${onlineCount} online / ${inProvince.length} tổng</span>
+                </div>
+            </div>
+        `;
+    }
+
     function AllStationsMap({ devices = [], currentUser = null }) {
         const mapEl = useRef(null);
         const mapRef = useRef(null);
@@ -558,6 +584,7 @@
                 },
                 onSpinChange: setMapboxSpinning,
                 stationPopup: item => popupHtml(item.device, item.status, item.traffic),
+                provincePopup: provincePopupHtml,
                 onOpenDetail: serial => {
                     window.selectDashboardDevice?.(serial);
                     window.switchView?.('dashboard');
@@ -656,6 +683,59 @@
             });
             sovereigntyMarkersRef.current = [];
 
+            // Sovereign island markers for Hoang Sa & Truong Sa
+            const hsMarker = L.marker([16.530, 112.020], {
+                icon: L.divIcon({
+                    className: 'station-map-sovereignty-badge',
+                    html: `
+                        <div class="sovereignty-tag">
+                            <span class="flag">🇻🇳</span>
+                            <span class="title">Quần đảo Hoàng Sa</span>
+                            <span class="sub">Việt Nam</span>
+                        </div>
+                    `,
+                    iconSize: [160, 44],
+                    iconAnchor: [80, 22]
+                }),
+                interactive: true
+            }).bindPopup('<b>🇻🇳 Quần đảo Hoàng Sa</b><br>Việt Nam');
+
+            const tsMarker = L.marker([9.880, 114.250], {
+                icon: L.divIcon({
+                    className: 'station-map-sovereignty-badge',
+                    html: `
+                        <div class="sovereignty-tag">
+                            <span class="flag">🇻🇳</span>
+                            <span class="title">Quần đảo Trường Sa</span>
+                            <span class="sub">Việt Nam</span>
+                        </div>
+                    `,
+                    iconSize: [160, 44],
+                    iconAnchor: [80, 22]
+                }),
+                interactive: true
+            }).bindPopup('<b>🇻🇳 Quần đảo Trường Sa</b><br>Việt Nam');
+
+            const bdMarker = L.marker([13.200, 112.000], {
+                icon: L.divIcon({
+                    className: 'station-map-sovereignty-badge',
+                    html: `
+                        <div class="sovereignty-tag maritime-tag">
+                            <span class="flag">🇻🇳</span>
+                            <span class="title">Biển Đông</span>
+                        </div>
+                    `,
+                    iconSize: [160, 44],
+                    iconAnchor: [80, 22]
+                }),
+                interactive: true
+            }).bindPopup('<b>Biển Đông</b>');
+
+            hsMarker.addTo(map);
+            tsMarker.addTo(map);
+            bdMarker.addTo(map);
+            sovereigntyMarkersRef.current = [hsMarker, tsMarker, bdMarker];
+
             if (!showVietnamMask) {
                 map.setMaxBounds(null);
                 map.setMinZoom(2);
@@ -667,60 +747,6 @@
             const vietnamBounds = L.latLngBounds(southWest, northEast);
             map.setMaxBounds(vietnamBounds);
             map.setMinZoom(4);
-
-            // Sovereign island markers for Hoang Sa & Truong Sa
-            const hsMarker = L.marker([16.530, 112.020], {
-                icon: L.divIcon({
-                    className: 'station-map-sovereignty-badge',
-                    html: `
-                        <div class="sovereignty-tag">
-                            <span class="flag">🇻🇳</span>
-                            <span class="title">Quần đảo Hoàng Sa</span>
-                            <span class="sub">TP. Đà Nẵng, Việt Nam</span>
-                        </div>
-                    `,
-                    iconSize: [160, 44],
-                    iconAnchor: [80, 22]
-                }),
-                interactive: true
-            }).bindPopup('<b>🇻🇳 Quần đảo Hoàng Sa</b><br>Huyện đảo Hoàng Sa, TP. Đà Nẵng, Việt Nam');
-
-            const tsMarker = L.marker([9.880, 114.250], {
-                icon: L.divIcon({
-                    className: 'station-map-sovereignty-badge',
-                    html: `
-                        <div class="sovereignty-tag">
-                            <span class="flag">🇻🇳</span>
-                            <span class="title">Quần đảo Trường Sa</span>
-                            <span class="sub">Tỉnh Khánh Hòa, Việt Nam</span>
-                        </div>
-                    `,
-                    iconSize: [160, 44],
-                    iconAnchor: [80, 22]
-                }),
-                interactive: true
-            }).bindPopup('<b>🇻🇳 Quần đảo Trường Sa</b><br>Huyện đảo Trường Sa, Tỉnh Khánh Hòa, Việt Nam');
-
-            const bdMarker = L.marker([13.200, 112.000], {
-                icon: L.divIcon({
-                    className: 'station-map-sovereignty-badge',
-                    html: `
-                        <div class="sovereignty-tag maritime-tag">
-                            <span class="flag">🇻🇳</span>
-                            <span class="title">Biển Đông</span>
-                            <span class="sub">Vùng biển chủ quyền Việt Nam</span>
-                        </div>
-                    `,
-                    iconSize: [160, 44],
-                    iconAnchor: [80, 22]
-                }),
-                interactive: true
-            }).bindPopup('<b>🇻🇳 Biển Đông</b><br>Vùng biển và thềm lục địa thuộc chủ quyền, quyền chủ quyền và quyền tài phán của Việt Nam');
-
-            hsMarker.addTo(map);
-            tsMarker.addTo(map);
-            bdMarker.addTo(map);
-            sovereigntyMarkersRef.current = [hsMarker, tsMarker, bdMarker];
 
             if (!geojsonData?.features?.length) return;
 
@@ -793,9 +819,9 @@
 
             const defaultStyle = {
                 color: '#0284c7',
-                weight: 1.5,
-                dashArray: '3 4',
-                opacity: 0.65,
+                weight: 2.5,
+                dashArray: '',
+                opacity: 0.9,
                 fillColor: '#38bdf8',
                 fillOpacity: 0.04
             };
@@ -823,32 +849,9 @@
                             const bounds = featLayer.getBounds();
                             map.fitBounds(bounds, { padding: [40, 40], maxZoom: 11 });
 
-                            const inProvince = stations.filter(s =>
-                                bounds.contains(L.latLng(s.coords.lat, s.coords.lon)) &&
-                                pointInGeometry([s.coords.lon, s.coords.lat], feature.geometry)
-                            );
-                            const onlineCount = inProvince.filter(s =>
-                                ['online', 'streaming', 'sleep'].includes(s.status)
-                            ).length;
-
-                            const areaStr = p.areaKm2 ? `${Number(p.areaKm2).toLocaleString('vi-VN')} km²` : '--';
-                            const postalStr = p.postalCodePrefix || '--';
-
-                            const popupContent = `
-                                <div class="station-map-popup">
-                                    <div class="station-map-popup-title">${escapeHtml(p.fullName || p.name || 'Tỉnh/Thành')}</div>
-                                    <div class="text-muted small">${escapeHtml(p.nameEn || '')}</div>
-                                    <div class="station-map-popup-grid">
-                                        <span class="station-map-popup-label">Mã hành chính</span><span class="station-map-popup-value">${escapeHtml(p.code || '--')}</span>
-                                        <span class="station-map-popup-label">Mã bưu chính</span><span class="station-map-popup-value">${escapeHtml(postalStr)}</span>
-                                        <span class="station-map-popup-label">Diện tích</span><span class="station-map-popup-value">${escapeHtml(areaStr)}</span>
-                                        <span class="station-map-popup-label">Trạm CORS</span><span class="station-map-popup-value text-success font-monospace">${onlineCount} online / ${inProvince.length} tổng</span>
-                                    </div>
-                                </div>
-                            `;
                             L.popup()
                                 .setLatLng(e.latlng)
-                                .setContent(popupContent)
+                                .setContent(provincePopupHtml(feature, stations))
                                 .openOn(map);
                         }
                     });
@@ -1085,9 +1088,9 @@
 
         return (
             <div className={`station-map-container station-map-engine-${mapEngine}`}>
-                <div ref={mapboxEl} className={`station-map-globe-canvas${mapEngine === 'mapbox' && !useOrbitView ? ' is-visible' : ''}`} aria-hidden={mapEngine !== 'mapbox' || useOrbitView}></div>
-                <div ref={globeEl} className={`station-map-globe-canvas${useOrbitView ? ' is-visible' : ''}`} aria-hidden={!useOrbitView}></div>
-                <div className={`station-map-flat-layer${mapEngine !== 'leaflet' || useOrbitView ? ' is-hidden' : ''}`} aria-hidden={mapEngine !== 'leaflet' || useOrbitView}>
+                <div ref={mapboxEl} className={`station-map-globe-canvas${mapEngine === 'mapbox' && !useOrbitView ? ' is-visible' : ''}`} inert={mapEngine !== 'mapbox' || useOrbitView ? '' : undefined}></div>
+                <div ref={globeEl} className={`station-map-globe-canvas${useOrbitView ? ' is-visible' : ''}`} inert={!useOrbitView ? '' : undefined}></div>
+                <div className={`station-map-flat-layer${mapEngine !== 'leaflet' || useOrbitView ? ' is-hidden' : ''}`} inert={mapEngine !== 'leaflet' || useOrbitView ? '' : undefined}>
                     <div ref={mapEl} className="station-map-canvas"></div>
                 </div>
 
@@ -1132,10 +1135,14 @@
 
                 {filterOpen && !useOrbitView && (
                     <div className="station-map-filter-panel" id="station-map-filters">
-                        <div className="fw-bold mb-2">Bộ lọc bản đồ</div>
+                        <div className="station-map-panel-title">Bộ lọc bản đồ</div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showStations} onChange={(e) => setShowStations(e.target.checked)} id="station-toggle" />
                             <label className="form-check-label" htmlFor="station-toggle">Trạm CORS</label>
+                        </div>
+                        <div className="form-check form-switch mb-2">
+                            <input className="form-check-input" type="checkbox" checked={coverage} onChange={e => setCoverage(e.target.checked)} id="coverage-toggle" />
+                            <label className="form-check-label" htmlFor="coverage-toggle">Vùng phủ 20 km</label>
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showRovers} onChange={(e) => setShowRovers(e.target.checked)} id="rover-toggle" disabled={!canViewRovers} />
@@ -1144,7 +1151,7 @@
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showIonosphere} onChange={(e) => setShowIonosphere(e.target.checked)} id="ionosphere-toggle" />
                             <label className="form-check-label d-flex align-items-center justify-content-between" htmlFor="ionosphere-toggle">
-                                <span>Tầng điện ly (GloTEC TEC)</span>
+                                <span>Tầng điện ly TEC</span>
                                 {ionosphereInfo && (
                                     <span className={`badge ms-1 ${ionosphereInfo.is_stale ? 'bg-warning text-dark' : 'bg-success'}`} style={{ fontSize: '0.65rem' }}>
                                         {ionosphereInfo.is_stale ? 'STALE' : 'LIVE'}
@@ -1154,18 +1161,18 @@
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showVietnamMask} onChange={(e) => setShowVietnamMask(e.target.checked)} id="mask-toggle" />
-                            <label className="form-check-label" htmlFor="mask-toggle">Chỉ xem lãnh thổ VN (Ẩn ngoài lãnh thổ)</label>
+                            <label className="form-check-label" htmlFor="mask-toggle">Chỉ xem Việt Nam</label>
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showProvinces} onChange={(e) => setShowProvinces(e.target.checked)} id="provinces-toggle" />
                             <label className="form-check-label" htmlFor="provinces-toggle">Ranh giới Tỉnh/Thành</label>
                         </div>
-                        {['online', 'sleep', 'offline', 'locked'].map(key => (
+                        <div className="station-map-status-filters">{['online', 'sleep', 'offline', 'locked'].map(key => (
                             <div className="form-check" key={key}>
                                 <input className="form-check-input" type="checkbox" checked={statusFilters[key]} onChange={(e) => setStatusFilters({ ...statusFilters, [key]: e.target.checked })} id={`filter-${key}`} />
-                                <label className="form-check-label text-capitalize" htmlFor={`filter-${key}`}>{key}</label>
+                                <label className="form-check-label" htmlFor={`filter-${key}`}>{{ online: 'Trực tuyến', sleep: 'Sleep', offline: 'Mất kết nối', locked: 'Đã khóa' }[key]}</label>
                             </div>
-                        ))}
+                        ))}</div>
                     </div>
                 )}
 

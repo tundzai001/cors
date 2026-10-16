@@ -46,7 +46,7 @@
             this.active = true;
             this.projection = 'globe';
             this.layerState = {};
-            this.featureData = {};
+            this.featureData = {}; this.selectedProvinceCode = '';
             this.tileErrors = 0;
             this.styleName = null; this.gnssFrame = null; this.rasterKeys = {};
             this.measureEnabled = false; this.measurePoints = []; this.measureFeatures = [];
@@ -90,7 +90,7 @@
                     map.addLayer({ id: 'cors-station-pins', type: 'circle', source: 'cors-stations', paint: {
                         'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 4, 8, 7],
                         'circle-color': ['match', ['get', 'status'], 'online', '#22c55e', 'streaming', '#22c55e', 'sleep', '#38bdf8', 'offline', '#ef4444', 'lost', '#ef4444', '#94a3b8'],
-                        'circle-stroke-color': '#0f172a', 'circle-stroke-width': 1.5,
+                        'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2,
                     } });
                     this._installLayers();
                 });
@@ -113,6 +113,7 @@
                 });
                 map.on('error', event => {
                     if (this.map !== map) return;
+                    if (String(event.error?.url || '').startsWith('https://events.mapbox.com/')) return;
                     if (event.error?.status === 401 || event.error?.status === 403) {
                         this.accessDenied = true; this.ready = false; this.setSpinning(false);
                         this._fail('Mapbox không chấp nhận token hoặc địa chỉ hiện tại.');
@@ -121,7 +122,13 @@
                 map.on('sourcedata', event => { if (event.isSourceLoaded) this.tileErrors = 0; });
                 map.on('click', event => this._mapClick(event));
                 map.on('click', 'cors-provinces-fill', event => {
-                    if (!this.measureEnabled && event.features?.[0] && !this._hasPointFeature(event)) this.fitProvince(event.features[0].properties.code);
+                    if (!this.measureEnabled && event.features?.[0] && !this._hasPointFeature(event)) this.fitProvince(event.features[0].properties.code, { fit: false, lngLat: event.lngLat });
+                });
+                map.on('mouseenter', 'cors-provinces-fill', () => { if (!this.measureEnabled) map.getCanvas().style.cursor = 'pointer'; });
+                map.on('mouseleave', 'cors-provinces-fill', () => { map.getCanvas().style.cursor = this.measureEnabled ? 'crosshair' : ''; });
+                map.on('click', 'cors-island-labels', event => {
+                    const p = event.features?.[0]?.properties;
+                    if (p && !this.measureEnabled) this._textPopup(event.lngLat, p.name.replace('\n', ' · '), p.kind === 'island' ? 'Quần đảo thuộc chủ quyền Việt Nam' : 'Biển Đông');
                 });
                 map.on('click', 'cors-rover-pins', event => {
                     const properties = event.features?.[0]?.properties;
@@ -134,9 +141,9 @@
                         if (!error && this.map === map) this.flyTo(feature.geometry.coordinates[1], feature.geometry.coordinates[0], zoom);
                     });
                 });
-                map.on('click', 'cors-gnss-points', event => {
+                for (const id of ['cors-gnss-points', 'cors-gnss-ipp']) map.on('click', id, event => {
                     const properties = event.features?.[0]?.properties;
-                    if (properties && !this.measureEnabled) this._textPopup(event.lngLat, properties.code, properties.kind === 'ipp' ? `IPP 350 km · VTEC ${properties.vtec ?? '--'} TECU` : `${properties.name} · ${Math.round(properties.altKm)} km · ${properties.tracked ? 'Agent đang nhận RTCM' : 'Không có PRN RTCM khớp'}`);
+                    if (properties && !this.measureEnabled) this._textPopup(event.lngLat, properties.code, properties.kind === 'ipp' ? `IPP 350 km · VTEC ${properties.vtec ?? '--'} TECU` : `${properties.name} · NORAD ${properties.noradId} · ${Math.round(properties.altKm)} km · ${properties.identityStatus === 'retired' ? 'Đã ngừng khai thác · không ghép RTCM' : properties.identityKnown === false ? 'Chưa xác nhận PRN hiện hành; không ghép RTCM' : properties.tracked ? 'Agent đang nhận RTCM' : 'Không có PRN RTCM khớp'}`);
                 });
                 const pause = () => {
                     this.interacting = true; this.flying = false;
@@ -208,7 +215,7 @@
                 content.innerHTML = this.options.stationPopup(item);
                 content.querySelector('.station-map-sat-btn')?.addEventListener('click', () => this.options.onTrackStation?.({ ...device, lat: coords.lat, lon: coords.lon, status: item.status }));
                 content.querySelector('.station-map-detail-btn')?.addEventListener('click', () => this.options.onOpenDetail?.(device.serial));
-                this.popup = new window.mapboxgl.Popup({ offset: 12, maxWidth: '340px' }).setLngLat([coords.lon, coords.lat]).setDOMContent(content).addTo(this.map);
+                this._popup(content, [coords.lon, coords.lat]);
                 return;
             }
             const name = document.createElement('strong'); name.textContent = device.name || device.serial;
@@ -222,8 +229,7 @@
                 ...device, lat: coords.lat, lon: coords.lon, status: item.status,
             }));
             content.append(name, coordinates, button);
-            this.popup = new window.mapboxgl.Popup({ offset: 12, closeButton: true })
-                .setLngLat([coords.lon, coords.lat]).setDOMContent(content).addTo(this.map);
+            this._popup(content, [coords.lon, coords.lat]);
         }
         flyTo(lat, lng, zoom = 11) {
             if (!this.ready) return;
@@ -257,7 +263,7 @@
         }
         setActive(active) {
             this.active = active;
-            if (!active) { this.interacting = true; this.map?.stop(); this.interacting = false; }
+            if (!active) { this.popup?.remove(); this.interacting = true; this.map?.stop(); this.interacting = false; }
             else { this.map?.resize(); this.updateStations(this.stations, this.selectedStation); this.updateLayers(this.layerState); this._rotate(); }
         }
         _data(id, features) { this.featureData ||= {}; this.featureData[id] = features; this.map?.getSource(id)?.setData({ type: 'FeatureCollection', features }); }
@@ -271,7 +277,11 @@
             const layer = (id, type, source, paint, filter) => map.addLayer({ id, type, source, paint, ...(filter ? { filter } : {}) }, before);
             layer('cors-mask-fill', 'fill', 'cors-mask', { 'fill-color': '#070b14', 'fill-opacity': 1 });
             layer('cors-provinces-fill', 'fill', 'cors-provinces', { 'fill-color': '#38bdf8', 'fill-opacity': 0.04 });
-            layer('cors-provinces-line', 'line', 'cors-provinces', { 'line-color': '#0284c7', 'line-width': 1.5, 'line-opacity': 0.65, 'line-dasharray': [3, 4] });
+            layer('cors-provinces-halo', 'line', 'cors-provinces', { 'line-color': '#0c2540', 'line-width': 5, 'line-opacity': 0.6 });
+            layer('cors-provinces-line', 'line', 'cors-provinces', { 'line-color': '#38bdf8', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.4, 8, 2.5], 'line-opacity': 0.95 });
+            const selected = ['==', ['to-string', ['get', 'code']], this.selectedProvinceCode || ''];
+            layer('cors-province-selected-fill', 'fill', 'cors-provinces', { 'fill-color': '#0ea5e9', 'fill-opacity': 0.15 }, selected);
+            layer('cors-province-selected-line', 'line', 'cors-provinces', { 'line-color': '#fbbf24', 'line-width': 3.5, 'line-opacity': 1 }, selected);
             layer('cors-coverage-fill', 'fill', 'cors-coverage', { 'fill-color': ['get', 'color'], 'fill-opacity': 0.12 });
             layer('cors-coverage-line', 'line', 'cors-coverage', { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.6 });
             layer('cors-search-line', 'line', 'cors-search', { 'line-color': ['get', 'color'], 'line-width': 3, 'line-dasharray': [3, 3] }, ['==', ['geometry-type'], 'LineString']);
@@ -279,15 +289,34 @@
             layer('cors-measure-line', 'line', 'cors-measure', { 'line-color': '#38bdf8', 'line-width': 3 }, ['==', ['geometry-type'], 'LineString']);
             layer('cors-measure-point', 'circle', 'cors-measure', { 'circle-color': '#38bdf8', 'circle-radius': 5 }, ['==', ['geometry-type'], 'Point']);
             layer('cors-gnss-rays', 'line', 'cors-gnss', { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.65 }, ['==', ['get', 'kind'], 'ray']);
-            layer('cors-gnss-points', 'circle', 'cors-gnss', { 'circle-color': ['get', 'color'], 'circle-radius': ['case', ['get', 'tracked'], 6, 3], 'circle-stroke-width': 1, 'circle-stroke-color': '#0f172a' }, ['!=', ['get', 'kind'], 'ray']);
+            layer('cors-gnss-points', 'circle', 'cors-gnss', { 'circle-color': ['get', 'color'], 'circle-radius': ['case', ['get', 'tracked'], 6, 3], 'circle-stroke-width': 1, 'circle-stroke-color': '#0f172a' }, ['==', ['get', 'kind'], 'satellite']);
             map.addLayer({ id: 'cors-gnss-labels', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'satellite'], layout: { 'text-field': ['get', 'code'], 'text-size': 12, 'text-offset': [0, 1.2] }, paint: { 'text-color': '#f8fafc', 'text-halo-color': '#0f172a', 'text-halo-width': 1.5 } });
-            map.addLayer({ id: 'cors-island-labels', type: 'symbol', source: 'cors-islands', minzoom: 4, layout: { 'text-field': ['get', 'name'], 'text-size': 12 }, paint: { 'text-color': '#f8fafc', 'text-halo-color': '#075985', 'text-halo-width': 2 } });
+            layer('cors-island-pins', 'circle', 'cors-islands', { 'circle-color': '#ef4444', 'circle-radius': 5, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }, ['==', ['get', 'kind'], 'island']);
+            map.addLayer({ id: 'cors-island-labels', type: 'symbol', source: 'cors-islands', minzoom: 2, layout: { 'text-field': ['get', 'name'], 'text-size': ['interpolate', ['linear'], ['zoom'], 2, 12, 7, 16], 'text-offset': [0, 1.7], 'text-line-height': 1.35, 'text-max-width': 16, 'text-allow-overlap': true }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#075985', 'text-halo-width': 2.5 } });
+            this._installMarkerImages();
+            map.addLayer({ id: 'cors-gnss-ipp', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'ipp'], layout: { 'icon-image': 'cors-ipp', 'icon-size': 0.6, 'icon-allow-overlap': true } });
             layer('cors-rover-clusters', 'circle', 'cors-rovers', { 'circle-radius': 17, 'circle-color': '#075985', 'circle-stroke-color': '#7dd3fc', 'circle-stroke-width': 1 }, ['has', 'point_count']);
             map.addLayer({ id: 'cors-rover-count', type: 'symbol', source: 'cors-rovers', filter: ['has', 'point_count'], layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 12 }, paint: { 'text-color': '#fff' } });
-            layer('cors-rover-pins', 'circle', 'cors-rovers', { 'circle-color': ['get', 'color'], 'circle-radius': 6, 'circle-stroke-width': 2, 'circle-stroke-color': '#fff' }, ['!', ['has', 'point_count']]);
+            map.addLayer({ id: 'cors-rover-pins', type: 'symbol', source: 'cors-rovers', filter: ['!', ['has', 'point_count']], layout: { 'icon-image': ['match', ['get', 'color'], '#22c55e', 'cors-rover-fixed', '#38bdf8', 'cors-rover-float', '#ef4444', 'cors-rover-3d', 'cors-rover-unknown'], 'icon-size': 1, 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
             this.updateLayers(this.layerState);
             this.updateGnss(this.gnssFrame || empty);
             this.setProjection(this.projection);
+        }
+        _installMarkerImages() {
+            for (const [name, color] of [['fixed', '#22c55e'], ['float', '#38bdf8'], ['3d', '#ef4444'], ['unknown', '#a3a3a3'], ['ipp', '#38bdf8']]) {
+                const id = name === 'ipp' ? 'cors-ipp' : `cors-rover-${name}`;
+                if (this.map.hasImage(id)) continue;
+                const canvas = document.createElement('canvas'); canvas.width = 56; canvas.height = 56;
+                const ctx = canvas.getContext('2d');
+                ctx.scale(2, 2); ctx.translate(2, 2);
+                ctx.beginPath();
+                if (name === 'ipp') { ctx.moveTo(12, 3); ctx.lineTo(21, 12); ctx.lineTo(12, 21); ctx.lineTo(3, 12); }
+                else { ctx.moveTo(12, 2); ctx.lineTo(22, 20); ctx.lineTo(2, 20); }
+                ctx.closePath();
+                ctx.fillStyle = color; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+                ctx.fill(); ctx.stroke();
+                this.map.addImage(id, ctx.getImageData(0, 0, 56, 56), { pixelRatio: 2 });
+            }
         }
         updateLayers(state) {
             this.layerState = { ...this.layerState, ...state };
@@ -300,12 +329,12 @@
             this._data('cors-provinces', s.showProvinces ? (s.provinces?.features || []) : []);
             const holes = s.showVietnamMask ? (s.provinces?.features || []).flatMap(feature => feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates[0]] : feature.geometry.coordinates.map(polygon => polygon[0])) : [];
             this._data('cors-mask', s.showVietnamMask && holes.length ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]], ...holes] } }] : []);
-            this._data('cors-islands', s.showVietnamMask ? [[112.020, 16.530, 'Quần đảo Hoàng Sa · Việt Nam'], [114.250, 9.880, 'Quần đảo Trường Sa · Việt Nam'], [112, 13.2, 'Biển Đông']].map(([lon, lat, name]) => ({ type: 'Feature', properties: { name }, geometry: { type: 'Point', coordinates: [lon, lat] } })) : []);
+            this._data('cors-islands', [[112.020, 16.530, 'Quần đảo Hoàng Sa\nVIỆT NAM', 'island'], [114.250, 9.880, 'Quần đảo Trường Sa\nVIỆT NAM', 'island'], [112, 13.2, 'Biển Đông', 'sea']].map(([lon, lat, name, kind]) => ({ type: 'Feature', properties: { name, kind }, geometry: { type: 'Point', coordinates: [lon, lat] } })));
             this.map.setMaxBounds(s.showVietnamMask ? [[100.5, 5], [120, 24.5]] : null);
             this._updateCoverage();
             this.updateIonosphere();
             const style = s.tileMode === 'streets' ? 'streets-v12' : 'satellite-streets-v12';
-            if (this.styleName && this.styleName !== style) { this.styleName = style; this.map.setStyle(`mapbox://styles/mapbox/${style}`); return; }
+            if (this.styleName && this.styleName !== style) { this.styleName = style; this.map.setStyle(`mapbox://styles/mapbox/${style}`, { diff: false }); return; }
             this.styleName = style;
             for (const item of this.map.getStyle().layers || []) if (item.type === 'symbol' && !item.id.startsWith('cors-')) this._visibility(item.id, s.tileMode !== 'satellite');
         }
@@ -348,14 +377,23 @@
             }
         }
         updateGnss(frame) { this.gnssFrame = frame; this.map?.getSource('cors-gnss')?.setData(frame); }
-        fitProvince(code) {
+        fitProvince(code, options = {}) {
             const feature = this.layerState.provinces?.features?.find(item => String(item.properties.code) === String(code));
             if (!feature) return;
             const points = [];
             const collect = value => { if (typeof value[0] === 'number') points.push(value); else value.forEach(collect); };
             collect(feature.geometry.coordinates);
-            this._fit(points, 11);
-            this._textPopup(this.map.getCenter(), feature.properties.fullName || feature.properties.name, `Mã hành chính: ${feature.properties.code}`);
+            this.selectedProvinceCode = String(code);
+            for (const id of ['cors-province-selected-fill', 'cors-province-selected-line']) this.map.setFilter(id, ['==', ['to-string', ['get', 'code']], this.selectedProvinceCode]);
+            let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
+            for (const [lon, lat] of points) { west = Math.min(west, lon); east = Math.max(east, lon); south = Math.min(south, lat); north = Math.max(north, lat); }
+            if (options.fit !== false) this._fit(points, 11);
+            const content = document.createElement('div');
+            if (this.options.provincePopup) content.innerHTML = this.options.provincePopup(feature, this.stations);
+            else content.textContent = feature.properties.fullName || feature.properties.name;
+            const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-sm btn-outline-info w-100 mt-2'; button.textContent = 'Phóng tới tỉnh / thành';
+            button.addEventListener('click', () => this.fitProvince(code)); content.append(button);
+            this._popup(content, options.lngLat || [(west + east) / 2, (south + north) / 2]);
         }
         _fit(points, maxZoom = 13) {
             if (!points.length || !this.ready) return;
@@ -373,7 +411,15 @@
             const heading = document.createElement('strong'); heading.textContent = title;
             const text = document.createElement('p'); text.textContent = description;
             content.append(heading, text);
-            this.popup = new window.mapboxgl.Popup({ offset: 12, maxWidth: '340px' }).setLngLat(lngLat).setDOMContent(content).addTo(this.map);
+            this._popup(content, lngLat);
+        }
+        _popup(content, lngLat) {
+            this.popup?.remove();
+            this.popup = new window.mapboxgl.Popup({ offset: 12, maxWidth: '340px', focusAfterOpen: false })
+                .setLngLat(lngLat).setDOMContent(content).addTo(this.map);
+            const close = this.popup.getElement().querySelector('.mapboxgl-popup-close-button');
+            close?.removeAttribute('aria-hidden');
+            close?.setAttribute('aria-label', 'Đóng thông tin');
         }
         setMeasureEnabled(enabled) {
             this.measureEnabled = enabled; this.measurePoints = []; this.measureFeatures = [];
@@ -381,10 +427,10 @@
             if (this.map) this.map.getCanvas().style.cursor = enabled ? 'crosshair' : '';
         }
         _hasPointFeature(event) {
-            return this.map.queryRenderedFeatures(event.point, { layers: ['cors-station-pins', 'cors-rover-pins', 'cors-rover-clusters', 'cors-gnss-points'].filter(id => this.map.getLayer(id)) }).length > 0;
+            return this.map.queryRenderedFeatures(event.point, { layers: ['cors-station-pins', 'cors-rover-pins', 'cors-rover-clusters', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length > 0;
         }
         _mapClick(event) {
-            if (!this.measureEnabled && this.map.queryRenderedFeatures(event.point, { layers: ['cors-station-pins', 'cors-rover-pins', 'cors-rover-clusters', 'cors-gnss-points', 'cors-provinces-fill'].filter(id => this.map.getLayer(id)) }).length) return;
+            if (!this.measureEnabled && this.map.queryRenderedFeatures(event.point, { layers: ['cors-station-pins', 'cors-rover-pins', 'cors-rover-clusters', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-provinces-fill', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length) return;
             if (this.measureEnabled) {
                 const point = [event.lngLat.lng, event.lngLat.lat];
                 this.measurePoints.push(point);

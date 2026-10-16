@@ -12,6 +12,9 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/j
 const overlay = window.GnssSatelliteOverlay;
 overlay.selectedStation = { serial: 'PI_station1' };
 
+assert.equal(overlay.getSatelliteLabel({ code: 'C?', norad_id: '38953' }), '#38953');
+assert.equal(overlay.getSatelliteLabel({ code: 'C?', norad_id: '37210' }), '#37210', 'unassigned spacecraft have distinct NORAD labels');
+assert.equal(overlay.getRtcmSatelliteKey({ constellationKey: 'beidou', code: '#38953' }), null, 'display NORAD is never matched as a PRN');
 const now = Date.now();
 telemetry = { satellites: {
   gps: { id: 'RTCM:G:8', system: 'G', prn: 8, messageType: 1077, lastSeen: now },

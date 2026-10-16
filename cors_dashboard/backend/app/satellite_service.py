@@ -10,6 +10,8 @@ import time
 from typing import Any, Optional
 import httpx
 
+from .gnss_status_sources import QZSS_STATUS_URL, parse_qzss_status
+
 logger = logging.getLogger("app.satellites")
 
 CACHE_TTL_SECONDS = 7200.0  # 2 hours (in compliance with CelesTrak usage policy)
@@ -34,13 +36,27 @@ class SatelliteService:
         self._data_dir = os.path.join(os.path.dirname(__file__), "data")
         self._disk_cache_file = os.path.join(self._data_dir, "gnss_satellites_cache.json")
         with open(os.path.join(self._data_dir, "gnss_identifiers.snx"), encoding="utf-8") as source:
-            self._identifiers = self._parse_identifiers(source.read())
+            self._identifier_text = source.read()
+            self._identifiers = self._parse_identifiers(self._identifier_text)
+        self._status_cache_file = os.path.join(self._data_dir, "gnss_status_cache.json")
+        self._status_snapshot = {}
+        for filename in ("gnss_status_snapshot.json", "gnss_status_cache.json"):
+            try:
+                with open(os.path.join(self._data_dir, filename), encoding="utf-8") as source:
+                    snapshot = json.load(source)
+                if snapshot.get("source") == QZSS_STATUS_URL and isinstance(snapshot.get("records"), dict):
+                    if snapshot.get("published_at_utc", "") >= self._status_snapshot.get("published_at_utc", ""):
+                        self._status_snapshot = snapshot
+            except (OSError, ValueError, TypeError):
+                pass
         self._identifiers_cache_file = os.path.join(self._data_dir, "gnss_identifiers_cache.json")
         try:
             with open(self._identifiers_cache_file, encoding="utf-8") as source:
-                identifiers = self._parse_identifiers(json.load(source)["sinex"])
+                identifier_text = json.load(source)["sinex"]
+                identifiers = self._parse_identifiers(identifier_text)
             if identifiers:
                 self._identifiers = identifiers
+                self._identifier_text = identifier_text
         except (OSError, ValueError, KeyError, TypeError):
             pass
 
@@ -72,11 +88,74 @@ class SatelliteService:
         return result
 
     def _normalize_codes(self, payload: dict[str, Any]) -> dict[str, Any]:
-        # Re-identify old disk/in-memory caches too; TLE names can retain former PRNs.
-        for constellation, satellites in payload.get("constellations", {}).items():
-            for sat in satellites:
-                sat["code"] = self._extract_satellite_code(constellation, sat["name"], sat["line1"])
+        # Keep operational PRNs distinct from historical TLE names in every cache path.
+        rows = [(constellation, sat) for constellation, satellites in payload.get("constellations", {}).items() for sat in satellites]
+        owners = {}
+        now = datetime.now(timezone.utc)
+        epoch = now.strftime("%Y:%j:") + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
+        for norad, assignments in self._identifiers.items():
+            for start, end, code in assignments:
+                if start <= epoch and (end == "0000:000:00000" or epoch < end):
+                    canonical = f"J{int(code[1:]) + 192:03d}" if code.startswith("J") and int(code[1:]) < 100 else code
+                    owners.setdefault(canonical, set()).add(norad)
+        for constellation, sat in rows:
+            sat["code"] = self._extract_satellite_code(constellation, sat["name"], sat["line1"])
+            if "?" not in sat["code"]:
+                owners.setdefault(sat["code"], set()).add(str(sat.get("norad_id", sat["line1"][2:7].strip())))
+        for constellation, sat in rows:
+            norad = str(sat.get("norad_id", sat["line1"][2:7].strip())).lstrip("0")
+            for field in ("status_source", "status_as_of_utc", "operational_status"):
+                sat.pop(field, None)
+            known = "?" not in sat["code"]
+            sat["identity_source"] = IGS_METADATA_URL if norad in self._identifiers else "CelesTrak TLE name"
+            sat["identity_status"] = "assigned" if known else "unconfirmed"
+            record = self._status_snapshot.get("records", {}).get(norad)
+            if not record:
+                continue
+            published = self._status_snapshot.get("published_at_utc", "")
+            try:
+                date = datetime.fromisoformat(published)
+            except (ValueError, TypeError):
+                continue
+            if date.tzinfo is None:
+                continue
+            epoch = date.strftime("%Y:%j:") + f"{date.hour * 3600 + date.minute * 60 + date.second:05d}"
+            # A monthly table cannot override a later IGS reassignment.
+            boundaries = [boundary for start, end, _ in self._identifiers.get(norad, []) for boundary in (start, end) if boundary != "0000:000:00000"]
+            if date > datetime.now(timezone.utc) or (boundaries and max(boundaries) > epoch):
+                continue
+            sat["status_source"] = self._status_snapshot["source"]
+            sat["status_as_of_utc"] = published
+            sat["operational_status"] = record["status"]
+            if record["status"] == "retired":
+                sat["code"] = CONSTELLATIONS_CONFIG[constellation]["prefix"] + "?"
+                sat["identity_status"] = "retired"
+                sat["identity_source"] = self._status_snapshot["source"]
+                known = False
+            candidate = record.get("code")
+            # Independent fallback needs a recent dated PRN and no other current owner.
+            age = (datetime.now(timezone.utc) - date).total_seconds()
+            if not known and candidate and record["status"] != "retired" and candidate.startswith(CONSTELLATIONS_CONFIG[constellation]["prefix"]) and 0 <= age <= 90 * 86400 and not (owners.get(candidate, set()) - {norad}):
+                sat["code"] = candidate
+                sat["identity_status"] = "assigned"
+                sat["identity_source"] = self._status_snapshot["source"]
+                owners.setdefault(candidate, set()).add(norad)
         return payload
+
+    async def _refresh_independent_status(self, client):
+        try:
+            response = await client.get(QZSS_STATUS_URL)
+            response.raise_for_status()
+            snapshot = parse_qzss_status(response.text, self._identifier_text)
+            if snapshot["published_at_utc"] >= self._status_snapshot.get("published_at_utc", ""):
+                self._status_snapshot = snapshot
+                try:
+                    with open(self._status_cache_file, "w", encoding="utf-8") as target:
+                        json.dump(snapshot, target)
+                except OSError as exc:
+                    logger.debug("Could not cache independent GNSS status: %s", exc)
+        except Exception as exc:
+            logger.warning("Cabinet Office status unavailable, retaining dated snapshot: %s", exc)
 
     def _extract_satellite_code(self, constellation: str, name: str, line1: str) -> str:
         prefix = CONSTELLATIONS_CONFIG.get(constellation, {}).get("prefix", "S")
@@ -183,6 +262,7 @@ class SatelliteService:
                         identifiers = self._parse_identifiers(metadata.text)
                         if identifiers:
                             self._identifiers = identifiers
+                            self._identifier_text = metadata.text
                             try:
                                 with open(self._identifiers_cache_file, "w", encoding="utf-8") as cache:
                                     json.dump({"sinex": metadata.text}, cache)
@@ -190,6 +270,7 @@ class SatelliteService:
                                 logger.debug("Could not cache IGS identifiers: %s", exc)
                     except Exception as exc:
                         logger.warning("IGS identifiers unavailable, using bundled/previous assignments: %s", exc)
+                    await self._refresh_independent_status(client)
                     for key, cfg in CONSTELLATIONS_CONFIG.items():
                         url = f"{CELESTRAK_BASE_URL}?GROUP={cfg['group']}&FORMAT=TLE"
                         resp = await client.get(url, headers={"User-Agent": "Aitogy-CORS-System/1.0"})
@@ -210,6 +291,7 @@ class SatelliteService:
                         "counts": {k: len(v) for k, v in constellations_data.items()},
                         "constellations": constellations_data,
                     }
+                    payload = self._normalize_codes(payload)
                     self._cached_payload = payload
                     self._last_fetch_monotonic = now
                     self._save_disk_cache(payload)

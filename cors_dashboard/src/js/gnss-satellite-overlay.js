@@ -121,6 +121,10 @@
             }
         }
 
+        getSatelliteLabel(satellite) {
+            return /^[GRECJI]\d{2,3}$/.test(satellite.code || '') ? satellite.code : `#${satellite.norad_id || satellite.name || 'N/A'}`;
+        }
+
         createSatelliteIcon(code, constellationKey, isVisible) {
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
             const meta = CONSTELLATION_META[constellationKey] || { color: '#94a3b8' };
@@ -199,6 +203,7 @@
 
         getRtcmSatelliteKey(satObj) {
             const system = RTCM_SYSTEM_ALIASES[String(satObj?.constellationKey || satObj?.system || satObj?.navSystem || '').toLowerCase()];
+            if (satObj?.code && /[?#]/.test(String(satObj.code))) return null;
             const prn = parseInt(String(satObj?.code || satObj?.prn || '').replace(/\D/g, ''), 10);
             return system && Number.isFinite(prn) ? `${system}:${prn}` : null;
         }
@@ -316,7 +321,7 @@
                     if (this.renderFrame) {
                         if (shouldDisplay) {
                             frameFeatures.push({ type: 'Feature', properties: {
-                                kind: 'satellite', code: satObj.code, name: satObj.name, altKm,
+                                kind: 'satellite', code: this.getSatelliteLabel(satObj), name: satObj.name, noradId: satObj.norad_id, identityStatus: satObj.identity_status || 'unconfirmed', identityKnown: /^[GRECJI]\d{2,3}$/.test(satObj.code || ''), altKm,
                                 tracked: isTrackedByRtcm, color: cfg.color,
                             }, geometry: { type: 'Point', coordinates: [lon, lat] } });
                             if (obsGd && isTrackedByRtcm && look && this.filters.showIpp !== false) {
@@ -344,7 +349,7 @@
                     // Update or create marker
                     if (!satObj.marker) {
                         const marker = L.marker([lat, lon], {
-                            icon: this.createSatelliteIcon(satObj.code, satObj.constellationKey, isTrackedByRtcm),
+                            icon: this.createSatelliteIcon(this.getSatelliteLabel(satObj), satObj.constellationKey, isTrackedByRtcm),
                             zIndexOffset: isTrackedByRtcm ? 1000 : 700,
                         });
                         satObj.marker = marker;
@@ -382,7 +387,7 @@
                                     <i class="bi bi-bullseye me-1"></i>Điểm xuyên tầng điện ly (IPP)
                                 </div>
                                 <div class="small mb-1 text-muted">
-                                    Vệ tinh: <b style="color:${cfg.color};">${satObj.code}</b> (${cfg.name})<br>
+                                    Vệ tinh: <b style="color:${cfg.color};">${this.getSatelliteLabel(satObj)}</b> (${cfg.name})<br>
                                     Trạm: <b>${this.selectedStation.name || this.selectedStation.serial}</b>
                                 </div>
                                 <div class="mb-2 px-2 py-1 rounded" style="background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.35); font-size:0.72rem; color:#86efac;">
@@ -407,7 +412,7 @@
                                 </div>
                             </div>
                         `;
-                        const tooltipText = `IPP 350km: ${satObj.code} (RTCM ${liveRtcmSat.messageType || ''} • SNR ${liveRtcmSat.snr || liveRtcmSat.cnr || '--'} dB-Hz)`;
+                        const tooltipText = `IPP 350km: ${this.getSatelliteLabel(satObj)} (RTCM ${liveRtcmSat.messageType || ''} • SNR ${liveRtcmSat.snr || liveRtcmSat.cnr || '--'} dB-Hz)`;
 
                         const cached = this.rayLayersCache.get(satKey);
                         if (cached) {
@@ -476,7 +481,7 @@
                     satObj.marker.bindPopup(`
                         <div class="station-map-popup gnss-sat-popup">
                             <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="fw-bold" style="color:${cfg.color};">${cfg.flag} ${satObj.code}</span>
+                                <span class="fw-bold" style="color:${cfg.color};">${cfg.flag} ${this.getSatelliteLabel(satObj)}</span>
                                 <span class="badge" style="background:${cfg.color}; color:#fff;">${cfg.code}</span>
                             </div>
                             <div class="small text-muted mb-1">${satObj.name}</div>
@@ -535,15 +540,17 @@
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
             if (!this.renderFrame && (!this.layerGroup || !L)) return;
 
-            // Initialize activeSatellites map
+            // Refresh identities/status as well as orbital elements for existing NORADs.
+            const next = new Map();
             this.rawSatellites.forEach(s => {
-                if (!this.activeSatellites.has(s.key)) {
-                    this.activeSatellites.set(s.key, {
-                        ...s,
-                        marker: null,
-                    });
-                }
+                const previous = this.activeSatellites.get(s.key);
+                if (previous?.code !== s.code) previous?.marker?.setIcon?.(this.createSatelliteIcon(this.getSatelliteLabel(s), s.constellationKey, false));
+                next.set(s.key, { ...previous, ...s, marker: previous?.marker || null });
             });
+            for (const [key, satellite] of this.activeSatellites) {
+                if (!next.has(key) && satellite.marker) this.layerGroup?.removeLayer(satellite.marker);
+            }
+            this.activeSatellites = next;
 
             this.propagateTick();
         }
