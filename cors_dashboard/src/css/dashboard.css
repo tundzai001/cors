@@ -67,12 +67,36 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 48px;
-        min-height: 48px;
-        padding: 6px 10px;
+        min-width: 40px;
+        min-height: 44px;
+        padding: 5px 8px;
         border-radius: 10px;
         white-space: nowrap;
-        font-size: 0.76rem;
+        font-size: 0.74rem;
+        gap: 4px;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar #connection-status-pill {
+        font-size: 0 !important;
+        padding: 6px 8px !important;
+        min-width: 0 !important;
+        margin-right: 3px !important;
+        line-height: 1 !important;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar #connection-status-pill .ops-connection-dot {
+        margin-right: 0 !important;
+        display: inline-block !important;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar #app-language-switcher {
+        margin-inline: 2px !important;
+        padding: 2px !important;
+    }
+
+    body.dashboard-fixed-layout > nav.navbar #app-language-switcher .app-language-option {
+        min-height: 28px !important;
+        padding: 3px 5px !important;
     }
 
     body.dashboard-fixed-layout > main.container-fluid {

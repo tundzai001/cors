@@ -1130,7 +1130,7 @@
                                 </button>
                                 <button className={`station-map-action ${searchOpen ? 'active' : ''}`} type="button" title="Tìm kiếm" aria-label="Tìm kiếm" aria-expanded={searchOpen} aria-controls="station-map-search" onClick={() => { setSearchOpen(!searchOpen); setFilterOpen(false); }}><i className="bi bi-search" aria-hidden="true"></i></button>
                                 <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
-                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS" aria-label="Vệ tinh GNSS" aria-pressed={showSatellites} onClick={() => setShowSatellites(!showSatellites)}><i className="bi bi-radar" aria-hidden="true"></i></button>
+                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS" aria-label="Vệ tinh GNSS" aria-pressed={showSatellites} onClick={() => { setShowSatellites(!showSatellites); setFilterOpen(false); setSearchOpen(false); }}><i className="bi bi-radar" aria-hidden="true"></i></button>
                                 <button className={`station-map-action ${measureOn ? 'active' : ''}`} type="button" title="Đo khoảng cách" aria-label="Đo khoảng cách" aria-pressed={measureOn} onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers" aria-hidden="true"></i></button>
                             </React.Fragment>
                         )}
@@ -1412,11 +1412,11 @@
 
                         <div className="sat-hud-toggles">
                             {[
-                                { key: 'gps', label: 'GPS', color: '#22c55e', count: satelliteStats.byConstellation?.gps ?? 0 },
-                                { key: 'galileo', label: 'Galileo', color: '#3b82f6', count: satelliteStats.byConstellation?.galileo ?? 0 },
-                                { key: 'beidou', label: 'BeiDou', color: '#f97316', count: satelliteStats.byConstellation?.beidou ?? 0 },
-                                { key: 'glonass', label: 'GLONASS', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 0 },
-                                { key: 'qzss', label: 'QZSS', color: '#a855f7', count: satelliteStats.byConstellation?.qzss ?? 0 },
+                                { key: 'gps', label: 'GPS', shortLabel: 'GPS', color: '#22c55e', count: satelliteStats.byConstellation?.gps ?? 0 },
+                                { key: 'galileo', label: 'Galileo', shortLabel: 'GAL', color: '#3b82f6', count: satelliteStats.byConstellation?.galileo ?? 0 },
+                                { key: 'beidou', label: 'BeiDou', shortLabel: 'BDS', color: '#f97316', count: satelliteStats.byConstellation?.beidou ?? 0 },
+                                { key: 'glonass', label: 'GLONASS', shortLabel: 'GLO', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 0 },
+                                { key: 'qzss', label: 'QZSS', shortLabel: 'QZSS', color: '#a855f7', count: satelliteStats.byConstellation?.qzss ?? 0 },
                             ].map(item => (
                                 <button
                                     type="button"
@@ -1428,10 +1428,12 @@
                                         window.GnssSatelliteOverlay?.setFilter(item.key, next);
                                     }}
                                 >
-                                    <span style={{ color: item.color }}>● {item.label}</span>
-                                    <span className="badge bg-dark ms-1" style={{ fontSize: '0.62rem' }}>
-                                        {selectedSatStation ? item.count : ''}
-                                    </span>
+                                    <span style={{ color: item.color }}>● <span className="sat-label-full">{item.label}</span><span className="sat-label-short d-none">{item.shortLabel}</span></span>
+                                    {selectedSatStation ? (
+                                        <span className="badge bg-dark ms-1" style={{ fontSize: '0.62rem' }}>
+                                            {item.count}
+                                        </span>
+                                    ) : null}
                                 </button>
                             ))}
                         </div>
@@ -1495,7 +1497,9 @@
                             }}
                             title={useOrbitView ? 'Trở về địa cầu Mapbox' : 'Xem quỹ đạo vệ tinh GNSS'}
                         >
-                            <i className={`bi ${useOrbitView ? 'bi-globe' : 'bi-radar'}`} aria-hidden="true"></i> {useOrbitView ? 'Địa cầu' : 'Quỹ đạo GNSS'}
+                            <i className={`bi ${useOrbitView ? 'bi-globe' : 'bi-radar'}`} aria-hidden="true"></i>{' '}
+                            <span className="dock-btn-text-full">{useOrbitView ? 'Địa cầu' : 'Quỹ đạo GNSS'}</span>
+                            <span className="dock-btn-text-short d-none">{useOrbitView ? 'Địa cầu' : 'Quỹ đạo'}</span>
                         </button>
                         {!useOrbitView && <button type="button" className="globe-dock-btn" onClick={() => { enterGlobeMode(); window.MapboxGlobeView?.focusVietnam?.(true, 90); }}><i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu</button>}
                         <button
@@ -1506,7 +1510,13 @@
                         >
                             <i className="bi bi-crosshair2 text-info"></i> Tâm VN
                         </button>
-                        {isGlobeMode && <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning?.(!mapboxSpinning)}><i className="bi bi-arrow-repeat" aria-hidden="true"></i> {mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</button>}
+                        {isGlobeMode && (
+                            <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning?.(!mapboxSpinning)}>
+                                <i className="bi bi-arrow-repeat" aria-hidden="true"></i>{' '}
+                                <span className="dock-btn-text-full">{mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</span>
+                                <span className="dock-btn-text-short d-none">{mapboxSpinning ? 'Dừng xoay' : 'Tự xoay'}</span>
+                            </button>
+                        )}
                         {useOrbitView && <React.Fragment>
                         <div className="globe-dock-separator"></div>
                         {['gps', 'galileo', 'beidou', 'glonass', 'qzss'].map(k => (

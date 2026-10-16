@@ -296,11 +296,22 @@
 
     .station-map-toolbar {
         top: calc(8px + env(safe-area-inset-top, 0px));
+        left: 8px;
+        right: 56px;
+        max-width: calc(100% - 64px);
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .station-map-toolbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .station-map-engine-leaflet .station-map-toolbar {
         left: 52px;
         right: 8px;
         max-width: calc(100% - 60px);
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
     }
 
     .station-map-toolgroup {
@@ -348,6 +359,89 @@
     .station-map-popup-grid {
         grid-template-columns: 1fr;
     }
+
+    .station-map-container .station-map-satellite-hud,
+    .station-map-container .station-map-ionosphere-hud {
+        top: auto !important;
+        bottom: 8px !important;
+        left: 8px !important;
+        right: 8px !important;
+        width: auto !important;
+        max-width: min(480px, calc(100% - 16px)) !important;
+        margin: 0 auto !important;
+        z-index: 920 !important;
+        max-height: min(52dvh, 320px) !important;
+        overflow-y: auto !important;
+        border-radius: 14px !important;
+        padding: 8px 10px !important;
+        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(56, 189, 248, 0.3) !important;
+    }
+
+    .station-map-satellite-hud ~ .station-map-globe-dock,
+    .station-map-ionosphere-hud ~ .station-map-globe-dock {
+        display: none !important;
+    }
+
+    .sat-hud-header {
+        margin-bottom: 4px !important;
+    }
+
+    .sat-hud-title {
+        font-size: 0.8rem !important;
+    }
+
+    .sat-hud-toggles {
+        grid-template-columns: repeat(5, 1fr) !important;
+        gap: 3px !important;
+        margin-bottom: 4px !important;
+    }
+
+    .sat-hud-pill {
+        min-height: 32px !important;
+        padding: 3px 2px !important;
+        font-size: 0.68rem !important;
+        justify-content: center !important;
+        text-align: center !important;
+        white-space: nowrap !important;
+    }
+
+    .sat-hud-source-credit {
+        font-size: 0.65rem !important;
+        margin-top: 4px !important;
+        padding-top: 4px !important;
+        border-top: 1px solid rgba(148, 163, 184, 0.15) !important;
+    }
+
+    .sat-hud-source-credit .d-flex {
+        margin-bottom: 2px !important;
+        font-size: 0.65rem !important;
+    }
+
+    .sat-hud-source-credit a {
+        font-size: 0.65rem !important;
+    }
+
+    .station-map-globe-dock {
+        bottom: 8px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        padding: 4px 8px !important;
+        gap: 4px !important;
+        max-width: calc(100% - 16px) !important;
+        scrollbar-width: none !important;
+    }
+
+    .globe-dock-btn {
+        padding: 5px 8px !important;
+        font-size: 0.72rem !important;
+        gap: 4px !important;
+        white-space: nowrap !important;
+    }
+
+    .dock-btn-text-full { display: none !important; }
+    .dock-btn-text-short { display: inline !important; }
+    .sat-label-full { display: none !important; }
+    .sat-label-short { display: inline !important; }
 }
 
 @media (max-width: 380px) {
