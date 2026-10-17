@@ -234,6 +234,8 @@ class ZaloBotService:
         self._task = None
         self._polling_task = None
         self._webhook_setup_task = None
+        self._cors_status_task = None
+        self._cors_outbound = contextvars.ContextVar("zalo_cors_outbound", default=None)
         self._debug_events = deque(maxlen=100)
         self._active_trace_id = contextvars.ContextVar("zalo_trace_id", default=None)
         self._allow_revoked_outbound = contextvars.ContextVar(
@@ -462,8 +464,14 @@ class ZaloBotService:
             trace_id = self._active_trace_id.get()
             chat_id = kwargs.get("chat_id", args[0] if args else None)
             text = kwargs.get("text", args[1] if len(args) > 1 else None)
-            if await zalo_repository.is_chat_paused(str(chat_id)):
-                logger.info("Zalo outbound paused for chat_id=%s", chat_id)
+            cors_context = self._cors_outbound.get()
+            # Change delivery already owns the preference row lock. Reuse that
+            # policy rather than acquire a second auth session while holding it.
+            policy = cors_context["policy"] if isinstance(cors_context, dict) else await zalo_repository.chat_delivery_policy(str(chat_id))
+            cors_kind = cors_context.get("kind") if isinstance(cors_context, dict) else cors_context
+            if (not policy["active"] or (policy["mode"] == "cors_only" and not cors_kind)
+                    or (cors_kind == "alert" and not (policy["mode"] == "cors_only" and policy["cors_notify_changes"]))):
+                logger.info("Zalo outbound suppressed by chat policy for chat_id=%s", chat_id)
                 return None
             outbound = {
                 "at": datetime.now().astimezone().isoformat(),
@@ -670,6 +678,7 @@ class ZaloBotService:
 
             if settings.ENABLE_ZALO_ERROR_ALERTS and settings.ZALO_ENABLE_NOTIFICATIONS:
                 self._task = asyncio.create_task(self._error_check_loop())
+            self._cors_status_task = asyncio.create_task(self._cors_status_loop())
                 
             logger.info("Zalo Bot Service started successfully.")
             return True
@@ -866,7 +875,7 @@ class ZaloBotService:
 
     async def stop(self):
         owned_tasks = [
-            task for task in (self._task, self._polling_task, self._webhook_setup_task)
+            task for task in (self._task, self._polling_task, self._webhook_setup_task, self._cors_status_task)
             if task
         ]
         if self.app or owned_tasks:
@@ -892,6 +901,7 @@ class ZaloBotService:
             self._task = None
             self._polling_task = None
             self._webhook_setup_task = None
+            self._cors_status_task = None
             self.dispatcher = None
             self.app = None
 
@@ -2638,15 +2648,53 @@ class ZaloBotService:
             return
         from .reference_network import get_network_status
         health = await get_network_status()
+        token = self._cors_outbound.set("reply")
+        try:
+            await update.message.reply_text(self._cors_status_text(health))
+        finally:
+            self._cors_outbound.reset(token)
+
+    @staticmethod
+    def _cors_status_text(health: dict) -> str:
         headline = {
-            "online": "🟢 CORS Cục đang online. Trang đăng nhập và bản đồ hoạt động bình thường.",
-            "offline": "🔴 CORS Cục đang báo lỗi trên trang dịch vụ.",
+            "online": "🟢 CORS Cục đang online. Trang dịch vụ có form đăng nhập bình thường.",
+            "offline": "🔴 CORS Cục đang lỗi. Trang dịch vụ không có form đăng nhập hoặc đang báo lỗi.",
         }.get(health.get("status"), "⚪ Chưa kiểm tra được CORS Cục; chưa thể kết luận online hay sập.")
         checked_at = datetime.fromtimestamp(health["checked_at"], ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%H:%M:%S %d/%m/%Y")
-        await update.message.reply_text(
+        return (
             f"{headline}\nKiểm tra: {checked_at}\n"
             "Đây là trạng thái hệ thống web Cục, chưa xác nhận tín hiệu RTCM từng trạm."
         )
+
+    async def _notify_cors_changes_once(self):
+        from .reference_network import get_network_status
+        targets = await zalo_repository.cors_subscriptions()
+        if not targets:
+            return
+        health = await get_network_status()
+        status = health.get("status")
+        if status not in {"online", "offline"}:
+            return
+        for target in targets:
+            try:
+                async with zalo_repository.cors_transition(target["id"], status) as delivery:
+                    if delivery["send"]:
+                        token = self._cors_outbound.set({"kind": "alert", "policy": delivery["policy"]})
+                        try:
+                            sent = await self.app.bot.send_message(chat_id=target["chat_id"], text=self._cors_status_text(health))
+                            delivery["sent"] = sent is not None
+                        finally:
+                            self._cors_outbound.reset(token)
+            except Exception as exc:
+                logger.warning("CORS Cục alert failed for chat_id=%s: %s", target["chat_id"], exc)
+
+    async def _cors_status_loop(self):
+        while True:
+            try:
+                await self._notify_cors_changes_once()
+            except Exception as exc:
+                logger.warning("CORS Cục monitor failed: %s", exc)
+            await asyncio.sleep(30)
 
     async def _help_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (

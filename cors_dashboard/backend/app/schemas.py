@@ -82,6 +82,8 @@ def strip_status_config_secrets(value: Any) -> Any:
 
 
 class ZaloBindingAdminUpdate(BaseModel):
+    delivery_mode: Optional[str] = None
+    cors_notify_changes: Optional[bool] = None
     display_name: Optional[str] = None
     binding_type: Optional[str] = None
     is_active: Optional[bool] = None

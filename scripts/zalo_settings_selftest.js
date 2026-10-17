@@ -19,4 +19,24 @@ assert(!table.innerHTML.includes('Tài khoản không khả dụng'), 'Public ca
 state.isAdmin = false;
 scope.renderBindings();
 assert(!table.innerHTML.includes('data-toggle-sending'), 'Only admins can pause entire chats');
+state.isAdmin = true;
+let deliveryMode = 'cors_only';
+const fields = {};
+function field(id) {
+    return fields[id] ||= {value:'', textContent:'', classList:{hidden:false, toggle(name, value) { this.hidden = value; }}};
+}
+field('edit-binding-id').value = 1;
+field('edit-binding-type').value = 'cors_public';
+scope.document = {getElementById:field, querySelector:()=>({value:deliveryMode})};
+vm.runInContext(source.slice(source.indexOf('    function updateScopeEditor'), source.indexOf('    function openEditor')), scope);
+scope.updateScopeEditor();
+assert.equal(field('cors-delivery-settings').classList.hidden, false);
+assert.equal(field('standard-scope-settings').classList.hidden, true);
+deliveryMode = 'paused';
+scope.updateScopeEditor();
+assert.equal(field('cors-delivery-settings').classList.hidden, true);
+assert(field('delivery-preview').textContent.includes('không gửi'));
+deliveryMode = 'standard';
+scope.updateScopeEditor();
+assert.equal(field('standard-scope-settings').classList.hidden, false);
 console.log('PASS: public chat labels, per-chat pause/resume controls, admin-only controls');

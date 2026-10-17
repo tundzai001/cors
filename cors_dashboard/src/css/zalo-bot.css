@@ -768,6 +768,22 @@
     }
 }
 
+.zalo-delivery-fieldset { border: 0; padding: 0; min-width: 0; }
+.zalo-delivery-fieldset legend { font-size: 1rem; font-weight: 750; margin-bottom: 12px; }
+.zalo-delivery-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.zalo-delivery-card { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 18px; border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-surface); cursor: pointer; transition: border-color 150ms ease, background 150ms ease; }
+.zalo-delivery-card i { font-size: 1.35rem; color: var(--ops-primary); }
+.zalo-delivery-card span { font-size: .82rem; line-height: 1.55; color: var(--ops-muted); }
+.zalo-delivery-card:hover { border-color: var(--ops-primary); }
+.zalo-delivery-card:active { background: var(--ops-surface-3); }
+.zalo-delivery-grid input:checked + label { border-color: var(--ops-primary); background: rgba(14, 165, 233, .1); box-shadow: inset 0 0 0 1px var(--ops-primary); }
+.zalo-delivery-grid input:focus-visible + label { outline: 2px solid var(--ops-primary); outline-offset: 3px; }
+.zalo-delivery-grid input:disabled + label { opacity: .5; cursor: not-allowed; }
+.zalo-cors-settings, .zalo-delivery-preview { padding: 16px; background: var(--ops-surface-2); border: 1px solid var(--ops-border-soft); border-radius: 10px; }
+.zalo-delivery-preview { color: var(--ops-muted); font-size: .85rem; line-height: 1.6; }
+@media (max-width: 767.98px) { .zalo-delivery-grid { grid-template-columns: 1fr; } .zalo-delivery-card { padding: 14px; } }
+@media (prefers-reduced-motion: reduce) { .zalo-delivery-card { transition: none; } }
+
 @media (max-width: 380px) {
     .ops-zalo-page .zalo-stat-column {
         width: 100%;

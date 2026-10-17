@@ -8,29 +8,26 @@ from app import reference_network as network
 
 
 LOGIN = '<title>Spider Business Center - SBC Login</title><form id="login-form"><input id="UserName"><input id="Password"></form>'
-MAP = '<title>Site Status</title><script>var Sites = [{"SiteCode":"HOCM","Status":0}];</script>'
 ERROR = '<title>Error</title><div id="handledErrorMessage">Sorry, an error occurred while processing your request -- Error Code: 500</div>'
 
 
 class ReferenceNetworkTests(unittest.IsolatedAsyncioTestCase):
-    def test_page_classification_does_not_infer_individual_station_health(self):
-        self.assertEqual(network.classify_page(LOGIN, 'login'), 'online')
-        self.assertEqual(network.classify_page(MAP, 'map'), 'online')
-        for kind in ('login', 'map'):
-            self.assertEqual(network.classify_page(ERROR, kind), 'offline')
-            self.assertEqual(network.classify_page('<title>Maintenance</title>', kind), 'unknown')
-        self.assertEqual(network.classify_page(LOGIN + '<script>var error="error";</script>', 'login'), 'online')
-        self.assertEqual(network.classify_page('<script>var Sites=[];</script>', 'map'), 'unknown')
+    def test_page_classification_uses_login_form_and_ignores_script_error_words(self):
+        self.assertEqual(network.classify_page(LOGIN), 'online')
+        self.assertEqual(network.classify_page(ERROR), 'offline')
+        self.assertEqual(network.classify_page('<title>Maintenance</title>'), 'offline')
+        self.assertEqual(network.classify_page('<title>OK</title><form><input id="UserName"></form>'), 'offline')
+        self.assertEqual(network.classify_page(LOGIN + '<script>var error="error";</script>'), 'online')
 
-    async def test_healthy_login_with_error_map_is_not_online(self):
-        with patch.object(network, '_read_page', AsyncMock(side_effect=[LOGIN, ERROR])):
+    async def test_missing_login_form_is_error_even_with_http_success(self):
+        with patch.object(network, '_read_page', AsyncMock(return_value='<title>Site unavailable</title>')):
             result = await network.probe_network()
         self.assertEqual(result['status'], 'offline')
         self.assertFalse(result['station_status_available'])
         self.assertEqual(result['scope'], 'website')
 
     async def test_healthy_response_and_failed_probe(self):
-        with patch.object(network, '_read_page', AsyncMock(side_effect=[LOGIN, MAP])):
+        with patch.object(network, '_read_page', AsyncMock(return_value=LOGIN)):
             self.assertEqual((await network.probe_network())['status'], 'online')
         with patch.object(network, '_read_page', AsyncMock(side_effect=httpx.ReadTimeout('timeout'))):
             self.assertEqual((await network.probe_network())['status'], 'unknown')

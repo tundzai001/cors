@@ -30,7 +30,7 @@
     }
 
     function scopeLabel(item) {
-        if (item.binding_type === 'cors_public') return 'Chỉ tình trạng CORS Cục';
+        if (item.delivery_mode === 'cors_only' || item.binding_type === 'cors_public') return 'Chỉ tình trạng CORS Cục';
         if (item.chat_type === 'private') {
             return (item.dashboard_role === 'admin') ? 'Toàn quyền' : 'Theo tài khoản web';
         }
@@ -217,19 +217,19 @@
             const isGroup = item.chat_type === 'group';
             const fallbackName = isGroup ? `Nhóm Zalo …${String(item.chat_id || '').slice(-6)}` : 'Chat cá nhân';
             const notification = item.notifications || {};
-            const isPublic = item.binding_type === 'cors_public';
-            const accountPrimary = isPublic || isGroup ? bindingLabel(item) : (item.dashboard_username || 'Tài khoản không khả dụng');
-            const accountSecondary = isPublic ? 'Không cần /sign hoặc OTP' : isGroup
+            const isPublic = item.delivery_mode === 'cors_only' || item.binding_type === 'cors_public';
+            const accountPrimary = isPublic ? 'Chỉ CORS Cục' : isGroup ? bindingLabel(item) : (item.dashboard_username || 'Tài khoản không khả dụng');
+            const accountSecondary = isPublic ? (item.binding_type === 'cors_public' ? 'Không cần /sign hoặc OTP' : 'Quyền gốc được giữ, không dùng để gửi tin') : isGroup
                 ? (item.binding_type === 'group_admin' ? 'Mọi thành viên có quyền quản trị' : 'Mọi thành viên chỉ được tra cứu')
                 : (item.dashboard_role || 'Không xác định');
             const badgeClass = scopeBadgeClass(item);
-            const actions = (state.isAdmin ? `<button class="btn btn-sm ${item.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${item.is_active ? 'Dừng gửi' : 'Cho gửi'}</button>` : '') + `<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
+            const actions = (state.isAdmin ? `${!isPublic ? `<button class="btn btn-sm btn-outline-primary me-1" data-cors-only="${item.id}">Chỉ Cục</button>` : ''}<button class="btn btn-sm ${item.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${item.is_active ? 'Dừng gửi' : 'Cho gửi'}</button>` : '') + `<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình" aria-label="Cấu hình chat"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết" aria-label="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
             return `<tr>
                 <td data-label="Loại"><span class="badge ${isGroup ? 'bg-warning text-dark' : 'bg-info text-dark'}">${isGroup ? 'Nhóm' : 'Cá nhân'}</span></td>
                 <td data-label="Chat"><strong>${escapeHtml(item.display_name || fallbackName)}</strong><div class="small text-muted font-monospace">${escapeHtml(item.chat_id)}</div></td>
                 <td data-label="Tài khoản"><div>${escapeHtml(accountPrimary)}</div><div class="small text-muted">${escapeHtml(accountSecondary)}</div></td>
                 <td data-label="Phạm vi"><span class="badge ${badgeClass}">${escapeHtml(scopeLabel(item))}</span></td>
-                <td data-label="Cảnh báo">${notification.enabled ? `<span class="text-success"><i class="bi bi-bell-fill me-1"></i>${escapeHtml(notification.min_severity || 'critical')}</span>` : '<span class="text-muted"><i class="bi bi-bell-slash me-1"></i>Tắt</span>'}</td>
+                <td data-label="Cảnh báo">${isPublic ? `<span class="text-info">${notification.cors_notify_changes ? 'Cục đổi trạng thái' : 'Chỉ khi gọi /cors'}</span>` : notification.enabled ? `<span class="text-success"><i class="bi bi-bell-fill me-1"></i>${escapeHtml(notification.min_severity || 'critical')}</span>` : '<span class="text-muted"><i class="bi bi-bell-slash me-1"></i>Tắt</span>'}</td>
                 <td data-label="Lần cuối">${fmtTime(item.last_seen_at)}</td>
                 <td data-label="Trạng thái"><span class="badge ${item.is_active ? 'bg-success' : 'bg-secondary'}">${item.is_active ? 'Đang hoạt động' : 'Đã tắt'}</span></td>
                 <td data-label="Thao tác" class="zalo-binding-actions text-end text-nowrap">${actions}</td>
@@ -471,12 +471,20 @@
     function updateScopeEditor() {
         const item = state.items.find(row => row.id === Number(document.getElementById('edit-binding-id').value));
         const isPrivate = item?.chat_type === 'private';
-        const isPublic = document.getElementById('edit-binding-type').value === 'cors_public';
+        const mode = document.querySelector('input[name="delivery-mode"]:checked')?.value || 'standard';
+        const isPublic = mode === 'cors_only';
+        document.getElementById('cors-delivery-settings').classList.toggle('d-none', !isPublic);
+        document.getElementById('standard-scope-settings').classList.toggle('d-none', mode !== 'standard');
+        document.getElementById('standard-alert-settings').classList.toggle('d-none', mode !== 'standard');
+        document.getElementById('binding-type-field').classList.toggle('d-none', !state.isAdmin || mode !== 'standard');
+        document.getElementById('delivery-preview').textContent = mode === 'paused'
+            ? 'Bot sẽ không gửi phản hồi hoặc thông báo cho cuộc trò chuyện này. Cấu hình hiện tại được giữ nguyên.'
+            : isPublic ? 'Ví dụ: “CORS Cục đang online” hoặc “CORS Cục đang lỗi — không thấy form đăng nhập”. Không kèm cảnh báo base hay rover.'
+            : 'Bot hoạt động theo quyền và phạm vi đã liên kết. Các cảnh báo bên dưới chỉ gửi khi được bật.';
         const isGroupAdmin = !isPrivate && document.getElementById('edit-binding-type').value === 'group_admin';
         document.getElementById('private-scope-note').classList.toggle('d-none', !isPrivate || isPublic);
         document.getElementById('group-admin-scope-note').classList.toggle('d-none', !isGroupAdmin);
         document.getElementById('group-scope-editor').classList.toggle('d-none', isPrivate || isGroupAdmin || isPublic);
-        document.getElementById('edit-notifications').disabled = isPublic;
         document.getElementById('edit-binding-type').disabled = isPrivate;
         document.getElementById('station-checklist').classList.toggle('d-none', document.getElementById('edit-scope-mode').value !== 'selected');
     }
@@ -490,8 +498,13 @@
         document.getElementById('edit-display-name').value = item.display_name || '';
         document.getElementById('edit-binding-type').value = item.binding_type;
         document.getElementById('edit-active').checked = Boolean(item.is_active);
+        const mode = item.is_active ? (item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard')) : 'paused';
+        document.querySelector(`input[name="delivery-mode"][value="${mode}"]`).checked = true;
+        document.getElementById('delivery-standard').disabled = item.binding_type === 'cors_public';
+        document.getElementById('edit-cors-notify').checked = Boolean(notification.cors_notify_changes);
+        document.getElementById('delivery-mode-fields').classList.toggle('d-none', !state.isAdmin);
         document.getElementById('binding-type-field').classList.toggle('d-none', !state.isAdmin);
-        document.getElementById('binding-active-field').classList.toggle('d-none', !state.isAdmin);
+        document.getElementById('binding-active-field').classList.add('d-none');
         document.getElementById('edit-scope-mode').value = item.station_scope_mode || 'all';
         document.getElementById('edit-notifications').checked = Boolean(notification.enabled);
         document.getElementById('edit-severity').value = notification.min_severity || 'critical';
@@ -517,10 +530,13 @@
             critical_override: document.getElementById('edit-critical-override').checked
         };
         if (state.isAdmin) {
+            const mode = document.querySelector('input[name="delivery-mode"]:checked').value;
+            payload.delivery_mode = mode === 'paused' ? (item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard')) : mode;
+            payload.cors_notify_changes = document.getElementById('edit-cors-notify').checked;
             payload.binding_type = document.getElementById('edit-binding-type').value;
-            payload.is_active = document.getElementById('edit-active').checked;
+            payload.is_active = mode !== 'paused';
         }
-        if (item.chat_type === 'group') {
+        if (item.chat_type === 'group' && payload.delivery_mode === 'standard') {
             payload.station_scope_mode = payload.binding_type === 'cors_public' ? 'none' : payload.binding_type === 'group_admin'
                 ? 'all' : document.getElementById('edit-scope-mode').value;
             payload.allowed_bases = payload.station_scope_mode === 'selected' ? selectedStations : [];
@@ -590,8 +606,24 @@
         document.getElementById('binding-search').addEventListener('input', event => { state.query = event.target.value; renderBindings(); });
         document.getElementById('edit-scope-mode').addEventListener('change', updateScopeEditor);
         document.getElementById('edit-binding-type').addEventListener('change', updateScopeEditor);
+        document.querySelectorAll('input[name="delivery-mode"]').forEach(input => input.addEventListener('change', () => {
+            if (input.value === 'cors_only') document.getElementById('edit-cors-notify').checked = true;
+            updateScopeEditor();
+        }));
         document.getElementById('save-binding').addEventListener('click', saveBinding);
         document.getElementById('binding-list').addEventListener('click', async event => {
+            const corsOnly = event.target.closest('[data-cors-only]');
+            if (corsOnly && !corsOnly.disabled) {
+                corsOnly.disabled = true;
+                corsOnly.textContent = 'Đang lưu…';
+                try {
+                    await apiJson(window.ApiRoutes.auth.zaloBinding(Number(corsOnly.dataset.corsOnly)), {method:'PATCH', body:JSON.stringify({delivery_mode:'cors_only', cors_notify_changes:true})});
+                    await loadBindings({silent:true});
+                    window.CorsUI?.showToast?.('success', 'Đã chọn chỉ CORS Cục và bật báo khi đổi trạng thái.');
+                } catch (error) { window.CorsUI?.showToast?.('danger', error.message); }
+                finally { renderBindings(); }
+                return;
+            }
             const toggle = event.target.closest('[data-toggle-sending]');
             if (toggle) {
                 const item = state.items.find(row => row.id === Number(toggle.dataset.toggleSending));

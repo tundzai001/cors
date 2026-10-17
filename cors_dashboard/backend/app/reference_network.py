@@ -1,8 +1,6 @@
 """Public VNGEONET website health; this does not attest individual RTCM streams."""
 
 import asyncio
-import json
-import re
 import time
 from html.parser import HTMLParser
 
@@ -10,7 +8,6 @@ import httpx
 from fastapi import APIRouter, Response
 
 LOGIN_URL = "https://vngeonet.vn/Account/Index?returnUrl=%2F"
-MAP_URL = "https://vngeonet.vn/User/SiteMap/SiteMapPublic"
 CACHE_SECONDS = 30
 MAX_PAGE_BYTES = 1024 * 1024
 router = APIRouter()
@@ -51,7 +48,7 @@ class PageSignals(HTMLParser):
             self.text.append(data)
 
 
-def classify_page(html, kind):
+def classify_page(html):
     page = PageSignals(html)
     title = " ".join(page.title).strip().lower()
     text = " ".join(page.text).lower()
@@ -59,17 +56,7 @@ def classify_page(html, kind):
             or any(word in title for word in ("error", "unavailable", "lỗi"))
             or "sorry, an error occurred while processing your request" in text):
         return "offline"
-    if kind == "login":
-        return "online" if {"login-form", "username", "password"} <= page.ids else "unknown"
-    match = re.search(r"\bvar\s+Sites\s*=\s*(\[.*?\])\s*;", html, re.S)
-    if match:
-        try:
-            sites = json.loads(match.group(1))
-            if sites and all(isinstance(site, dict) and site.get("SiteCode") for site in sites):
-                return "online"
-        except (ValueError, TypeError):
-            pass
-    return "unknown"
+    return "online" if {"login-form", "username", "password"} <= page.ids else "offline"
 
 
 async def _read_page(client, url):
@@ -87,13 +74,9 @@ async def probe_network():
     state, reason = "unknown", "Không kiểm tra được trang dịch vụ"
     try:
         async with httpx.AsyncClient(timeout=5.0, follow_redirects=True, max_redirects=3) as client:
-            login = classify_page(await _read_page(client, LOGIN_URL), "login")
-            if login == "online":
-                state = classify_page(await _read_page(client, MAP_URL), "map")
-            else:
-                state = login
-        reason = {"online": "Trang đăng nhập và bản đồ Cục hoạt động",
-                  "offline": "Trang dịch vụ Cục đang báo lỗi",
+            state = classify_page(await _read_page(client, LOGIN_URL))
+        reason = {"online": "Trang dịch vụ Cục có form đăng nhập bình thường",
+                  "offline": "Trang dịch vụ Cục báo lỗi hoặc không có form đăng nhập",
                   "unknown": "Nội dung trang Cục chưa xác định"}[state]
     except httpx.HTTPStatusError:
         state, reason = "offline", "Trang dịch vụ Cục trả lỗi HTTP"

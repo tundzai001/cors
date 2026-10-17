@@ -5,11 +5,11 @@ bases retain their device status and their own online count. CORS Cục markers
 remain purple and carry a separate website-status ring and a `Cục` label.
 
 `GET /api/public/reference-network-status` checks the public
-[login page](https://vngeonet.vn/Account/Index?returnUrl=%2F) and
-[station overview](https://vngeonet.vn/User/SiteMap/SiteMapPublic). It requires
-the expected login form and a nonempty station list. The provider's Error title
-or `handledErrorMessage` is treated as a failure even with HTTP 200. Unexpected
-HTML, timeouts and TLS failures produce `unknown`, never a retained green state.
+[login page](https://vngeonet.vn/Account/Index?returnUrl=%2F), served by
+`14.238.1.125`. A successful page must contain the expected login form and its
+username/password fields. A page without that form is a service error, even
+with HTTP 200; the provider's Error title or `handledErrorMessage` also fails.
+Timeouts, TLS failures and responses that cannot be inspected produce `unknown`.
 The provider uses a certificate for `vngeonet.vn`; verification stays enabled.
 
 Checks share a 30-second cache per backend worker, including failed results.

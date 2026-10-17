@@ -9,6 +9,7 @@ import string
 import time
 import uuid
 from dataclasses import dataclass
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone as datetime_timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -91,6 +92,52 @@ class ZaloPrincipal:
 
 
 class ZaloAssistantRepository:
+    @staticmethod
+    def delivery_mode(binding, pref) -> str:
+        scopes = pref.scopes if pref and isinstance(pref.scopes, dict) else {}
+        return "cors_only" if binding.binding_type == "cors_public" or scopes.get("delivery_mode") == "cors_only" else "standard"
+
+    async def chat_delivery_policy(self, chat_id: str) -> dict:
+        async with auth_session_scope() as db:
+            result = await db.execute(select(models.ZaloChatBinding, models.ZaloNotificationPreference).outerjoin(
+                models.ZaloNotificationPreference, models.ZaloNotificationPreference.binding_id == models.ZaloChatBinding.id
+            ).where(models.ZaloChatBinding.chat_id == str(chat_id)))
+            row = result.first()
+            if not row:
+                return {"active": True, "mode": "standard", "cors_notify_changes": False}
+            binding, pref = row
+            scopes = pref.scopes if pref and isinstance(pref.scopes, dict) else {}
+            return {"active": bool(binding.is_active), "mode": self.delivery_mode(binding, pref),
+                    "cors_notify_changes": bool(scopes.get("cors_notify_changes", False))}
+
+    async def cors_subscriptions(self) -> list[dict]:
+        async with auth_session_scope() as db:
+            result = await db.execute(select(models.ZaloChatBinding, models.ZaloNotificationPreference).join(
+                models.ZaloNotificationPreference, models.ZaloNotificationPreference.binding_id == models.ZaloChatBinding.id
+            ).where(models.ZaloChatBinding.is_active.is_(True)))
+            return [{"id": binding.id, "chat_id": str(binding.chat_id), "last_status": (pref.scopes or {}).get("cors_last_status")}
+                    for binding, pref in result.all()
+                    if self.delivery_mode(binding, pref) == "cors_only" and (pref.scopes or {}).get("cors_notify_changes")]
+
+    @asynccontextmanager
+    async def cors_transition(self, binding_id: int, status: str):
+        """Serialize each chat's change delivery across bot workers."""
+        async with auth_session_scope() as db:
+            result = await db.execute(select(models.ZaloNotificationPreference).where(
+                models.ZaloNotificationPreference.binding_id == binding_id).with_for_update(skip_locked=True))
+            pref = result.scalars().first()
+            binding = await db.get(models.ZaloChatBinding, binding_id) if pref else None
+            valid = bool(binding and binding.is_active and self.delivery_mode(binding, pref) == "cors_only"
+                         and (pref.scopes or {}).get("cors_notify_changes"))
+            previous = (pref.scopes or {}).get("cors_last_status") if pref else None
+            delivery = {"send": valid and previous is not None and previous != status, "sent": False,
+                        "policy": {"active": valid, "mode": "cors_only", "cors_notify_changes": valid}}
+            yield delivery
+            if valid and (previous is None or delivery["sent"]):
+                pref.scopes = {**(pref.scopes or {}), "cors_last_status": status}
+                pref.updated_at = _now()
+            await db.commit()
+
     async def is_chat_paused(self, chat_id: str) -> bool:
         async with auth_session_scope() as db:
             result = await db.execute(select(models.ZaloChatBinding.is_active).where(
@@ -366,7 +413,9 @@ class ZaloAssistantRepository:
                     frozenset(), False,
                 )
             binding.last_seen_at = _now()
-            if binding.binding_type == "cors_public":
+            pref = (await db.execute(select(models.ZaloNotificationPreference).where(
+                models.ZaloNotificationPreference.binding_id == binding.id))).scalars().first()
+            if self.delivery_mode(binding, pref) == "cors_only":
                 await db.commit()
                 return ZaloPrincipal(
                     str(chat_id), str(sender_id), chat_type, "cors_public", None, None, None,
@@ -424,16 +473,19 @@ class ZaloAssistantRepository:
             items = []
             for binding, pref in rs.all():
                 item = self.binding_dict(binding)
+                mode = self.delivery_mode(binding, pref)
+                item["delivery_mode"] = mode
                 user = await db.get(models.User, binding.user_id) if binding.user_id else None
                 item.update({
                     "dashboard_username": str(user.username) if user else None,
                     "dashboard_role": str(user.role) if user else None,
-                    "permissions": sorted(auth.get_user_permissions(user)) if user else (
+                    "permissions": [] if mode == "cors_only" else sorted(auth.get_user_permissions(user)) if user else (
                         sorted(auth.ROLE_PERMISSIONS[auth.Role.ADMIN])
                         if binding.binding_type == "group_admin"
                         else [] if binding.binding_type == "cors_public" else [auth.Permission.VIEW_DEVICES]
                     ),
                     "notifications": {
+                        "cors_notify_changes": bool((pref.scopes or {}).get("cors_notify_changes", False)),
                         "enabled": bool(pref.enabled),
                         "min_severity": str(pref.min_severity),
                         "quiet_start": pref.quiet_start,
@@ -533,6 +585,8 @@ class ZaloAssistantRepository:
         actor_user_id: Optional[int] = None, is_admin: bool = False,
     ) -> dict[str, Any]:
         now = _now()
+        if "delivery_mode" in changes and changes["delivery_mode"] not in {"standard", "cors_only"}:
+            raise ValueError("Chế độ gửi tin không hợp lệ.")
         if "min_severity" in changes and str(changes["min_severity"]) not in SEVERITY_ORDER:
             raise ValueError("Mức cảnh báo không hợp lệ.")
         quiet_start = changes.get("quiet_start")
@@ -603,7 +657,8 @@ class ZaloAssistantRepository:
                 target: changes[source] for source, target in notification_keys.items() if source in changes
             }
             scope_changed = "station_scope_mode" in changes or "allowed_bases" in changes
-            if notification_changes or scope_changed:
+            policy_changed = "delivery_mode" in changes or "cors_notify_changes" in changes
+            if notification_changes or scope_changed or policy_changed:
                 rs = await db.execute(select(models.ZaloNotificationPreference).where(
                     models.ZaloNotificationPreference.binding_id == binding.id
                 ))
@@ -617,11 +672,23 @@ class ZaloAssistantRepository:
                     db.add(pref)
                 for key, value in notification_changes.items():
                     setattr(pref, key, value)
+                scopes = dict(pref.scopes or {})
                 if scope_changed:
-                    pref.scopes = {
+                    scopes.update({
                         "mode": str(binding.station_scope_mode or "all"),
                         "values": list(binding.allowed_bases or []),
-                    }
+                    })
+                if "delivery_mode" in changes:
+                    if binding.binding_type == "cors_public" and changes["delivery_mode"] == "standard":
+                        raise ValueError("Chat public cần liên kết tài khoản trước khi dùng quyền dashboard.")
+                    if changes["delivery_mode"] == "cors_only" and scopes.get("delivery_mode") != "cors_only":
+                        scopes.pop("cors_last_status", None)
+                    scopes["delivery_mode"] = changes["delivery_mode"]
+                if "cors_notify_changes" in changes:
+                    if changes["cors_notify_changes"] and not scopes.get("cors_notify_changes"):
+                        scopes.pop("cors_last_status", None)
+                    scopes["cors_notify_changes"] = bool(changes["cors_notify_changes"])
+                pref.scopes = scopes
                 pref.updated_at = now
             await db.commit()
             await db.refresh(binding)
@@ -811,7 +878,7 @@ class ZaloAssistantRepository:
                 .where(models.ZaloChatBinding.is_active.is_(True))
             )
             for binding, pref in rs.all():
-                if binding.binding_type == "cors_public":
+                if self.delivery_mode(binding, pref) == "cors_only":
                     continue
                 override = None
                 if binding.binding_type == "private" and binding_scopes is not None:
