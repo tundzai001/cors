@@ -1,5 +1,12 @@
 # Security monitoring
 
+The same session card has an Active view and a History view. History includes
+expired and revoked sessions, sorted by login time and ID descending. The
+`history_page` query selects server-side pages of 20 rows; zero or an omitted
+value keeps the active-only feed. Revoked and expired rows show their state
+without live session controls. These are recorded login sessions, not failed
+login attempts or a per-request activity log.
+
 The session table reports recent authenticated activity, not all unexpired login
 tokens or WebSocket counts. Visible authenticated pages send a heartbeat every
 15 seconds. Sessions with no authenticated activity for 45 seconds disappear

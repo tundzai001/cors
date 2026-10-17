@@ -21,7 +21,7 @@ from fastapi.exception_handlers import http_exception_handler
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -1169,11 +1169,14 @@ async def block_ip_manually(
 async def get_admin_sessions(
     request: Request,
     auth_db: AsyncSession = Depends(get_auth_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+    history_page: int = 0,
 ):
     """Lấy danh sách các phiên đăng nhập đang hoạt động và các máy tính bị chặn."""
     if current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được xem danh sách phiên đăng nhập")
+    if history_page < 0:
+        raise HTTPException(status_code=422, detail="Trang lịch sử phải lớn hơn 0")
 
     auth_header = request.headers.get("Authorization", "")
     current_sid = None
@@ -1195,6 +1198,15 @@ async def get_admin_sessions(
         )
         .order_by(models.UserSession.last_active_at.desc())
     )
+    pagination = None
+    if history_page:
+        total = (await auth_db.execute(select(func.count()).select_from(models.UserSession))).scalar_one()
+        pages = max(1, (total + 19) // 20)
+        history_page = min(history_page, pages)
+        stmt = select(models.UserSession).order_by(
+            models.UserSession.created_at.desc(), models.UserSession.id.desc()
+        ).offset((history_page - 1) * 20).limit(20)
+        pagination = {"page": history_page, "pages": pages, "page_size": 20, "total": total}
     result = await auth_db.execute(stmt)
     sessions = list(result.scalars().all())
 
@@ -1234,6 +1246,9 @@ async def get_admin_sessions(
             "created_at": s.created_at,
             "last_active_at": s.last_active_at,
             "expires_at": s.expires_at,
+            "is_revoked": s.is_revoked,
+            "is_expired": s.expires_at <= now,
+            "is_online": not s.is_revoked and s.expires_at > now and s.last_active_at > now - auth.SESSION_ONLINE_WINDOW_SECONDS,
             "is_current": (s.session_id == current_sid if current_sid else (s.user_id == current_user.id))
         })
 
@@ -1252,9 +1267,11 @@ async def get_admin_sessions(
 
     return {
         "status": "ok",
-        "active_sessions": session_list,
+        "active_sessions": session_list if not history_page else [],
+        "history_sessions": session_list if history_page else [],
+        "pagination": pagination,
         "blocked_devices": blocked_list,
-        "total_active": len(session_list),
+        "total_active": len(session_list) if not history_page else None,
         "total_blocked_devices": len(blocked_list)
     }
 

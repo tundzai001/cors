@@ -216,7 +216,7 @@
                         <h2 id="active-sessions-title" class="ops-section-title mb-1">
                             <i class="bi bi-people-fill me-2 text-primary"></i>Điều khiển phiên đăng nhập (Active Sessions)
                         </h2>
-                        <p class="ops-card-meta mb-0">
+                        <p class="ops-card-meta mb-0" id="sessions-description">
                             Chỉ hiển thị phiên có hoạt động trong 45 giây gần nhất. Trang đang xem gửi tín hiệu mỗi 15 giây; phiên mất tín hiệu tự rời danh sách.
                         </p>
                     </div>
@@ -226,6 +226,10 @@
                             <i class="bi bi-box-arrow-right me-1"></i>Ngắt tất cả máy khác
                         </button>
                     </div>
+                </div>
+                <div class="d-flex gap-2 px-3 py-2" role="group" aria-label="Danh sách phiên đăng nhập">
+                    <button type="button" id="sessions-active-tab" class="btn btn-sm btn-primary" aria-pressed="true">Đang hoạt động</button>
+                    <button type="button" id="sessions-history-tab" class="btn btn-sm btn-outline-secondary" aria-pressed="false">Lịch sử</button>
                 </div>
                 <div class="table-responsive ops-session-scroll" tabindex="0" role="region" aria-labelledby="active-sessions-title">
                     <table class="table ops-table align-middle">
@@ -245,6 +249,10 @@
                         </tbody>
                     </table>
                 </div>
+                <nav id="sessions-pagination" class="d-none d-flex align-items-center justify-content-between gap-2 px-3 py-2" aria-label="Phân trang lịch sử đăng nhập">
+                    <span id="sessions-page-label" class="small text-muted" role="status">Trang 1</span>
+                    <div class="d-flex gap-2"><button type="button" id="sessions-prev" class="btn btn-sm btn-outline-secondary">Trước</button><button type="button" id="sessions-next" class="btn btn-sm btn-outline-secondary">Sau</button></div>
+                </nav>
             </section>
 
             <section class="ops-card ops-security-card mb-4" aria-labelledby="blocked-devices-title">
@@ -412,6 +420,6 @@
     <script src="/assets/js/dist/ops-ui.min.js?v=20261014-sessions-v3"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261014-sessions-v3"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20261014-sessions-v3"></script>
-    <script src="/assets/js/dist/security.min.js?v=20261017-presence-v1"></script>
+    <script src="/assets/js/dist/security.min.js?v=20261017-history-v1"></script>
 </body>
 </html>

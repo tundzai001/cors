@@ -26,5 +26,10 @@ assert.equal(sessionsBadge.textContent, 'Chưa xác định', 'An unavailable fe
 scope.renderActiveSessions([{username:'viewer', role:'viewer', created_at:Date.now()/1000, last_active_at:Date.now()/1000}]);
 assert.equal(sessionsBadge.textContent, '1 phiên đang hoạt động');
 assert(sessionsTable.innerHTML.includes('Vừa xong'));
+scope.renderActiveSessions([{username:'old-viewer', role:'viewer', created_at:1000, last_active_at:1001, is_revoked:true}], null, true);
+assert(sessionsTable.innerHTML.includes('Đã thu hồi'));
+assert(!sessionsTable.innerHTML.includes('revoke-session-btn'), 'Revoked historical sessions have no live revoke action');
+scope.renderActiveSessions([], null, true);
+assert(sessionsTable.innerHTML.includes('Chưa có lịch sử đăng nhập'));
 if (process.argv[2]) fs.writeFileSync(process.argv[2], `<html lang="vi" data-bs-theme="dark"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"><body style="padding:32px;background:#0b101a;color:#eef4ff"><main><h1>Security · Lượt chặn gần đây</h1><p>Lượt chặn vẫn hiển thị sau khi hết hạn.</p><div class="table-responsive"><table class="table"><thead><tr><th>Lần cuối</th><th>IP</th><th>Nguồn chặn</th><th>Lý do</th><th>Số lượt</th></tr></thead><tbody>${history.innerHTML}</tbody></table></div><h2>Đang chặn tạm thời</h2><table class="table"><thead><tr><th>IP</th><th>Còn lại</th><th>Lý do</th><th>Thao tác</th></tr></thead><tbody>${table.rows[0].innerHTML}</tbody></table></main></body></html>`);
 console.log('PASS: temporary seconds, retained block history, escaped IP/reason rendering');

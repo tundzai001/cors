@@ -27,6 +27,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let loadingSecurityData = false;
     let cachedSecuritySettings = null;
     let settingsUpdatedAt = 0;
+    let sessionsView = 'active';
+    let historyPage = 1;
 
     async function apiFetch(url, options = {}) {
         try {
@@ -64,6 +66,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function loadSecurityData(isManualReload = false) {
         if (loadingSecurityData) return;
         loadingSecurityData = true;
+        const requestedView = sessionsView;
+        const requestedPage = historyPage;
         if (isManualReload) {
             refreshBtn.disabled = true;
             refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> LOADING...';
@@ -75,7 +79,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 !cachedSecuritySettings || isManualReload || Date.now() - settingsUpdatedAt > 30000
                     ? apiFetch('/api/admin/settings').then(value => { cachedSecuritySettings = value; settingsUpdatedAt = Date.now(); return value; })
                     : Promise.resolve(cachedSecuritySettings),
-                apiFetch('/api/admin/security/sessions').catch(err => {
+                apiFetch('/api/admin/security/sessions' + (requestedView === 'history' ? `?history_page=${requestedPage}` : '')).catch(err => {
                     console.warn('Could not load sessions:', err);
                     return { active_sessions: [], blocked_devices: [], error: err.message };
                 })
@@ -101,7 +105,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             handleAttackMode(statsData.rate_limiter.attack_mode);
 
             if (sessionsData) {
-                renderActiveSessions(sessionsData.active_sessions || [], sessionsData.error);
+                if (requestedView === sessionsView && requestedPage === historyPage) {
+                    const history = requestedView === 'history';
+                    renderActiveSessions((history ? sessionsData.history_sessions : sessionsData.active_sessions) || [], sessionsData.error, history);
+                    document.getElementById('sessions-pagination').classList.toggle('d-none', !history);
+                    if (history) {
+                        const pagination = sessionsData.pagination;
+                        if (pagination) {
+                            historyPage = pagination.page;
+                            document.getElementById('active-sessions-badge').textContent = `Lịch sử · ${pagination.total} phiên`;
+                            document.getElementById('sessions-page-label').textContent = `Trang ${pagination.page}/${pagination.pages} · 20 phiên/trang`;
+                        }
+                        document.getElementById('sessions-prev').disabled = !pagination || pagination.page <= 1;
+                        document.getElementById('sessions-next').disabled = !pagination || pagination.page >= pagination.pages;
+                    }
+                }
                 renderBlockedDevices(sessionsData.blocked_devices || [], sessionsData.error);
             }
 
@@ -437,7 +455,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return `${Math.floor(diff / 86400)} ngày trước`;
     }
 
-    function renderActiveSessions(sessions, error = null) {
+    function renderActiveSessions(sessions, error = null, history = false) {
         const tbody = document.getElementById('active-sessions-table-body');
         const badge = document.getElementById('active-sessions-badge');
         if (badge) badge.textContent = error ? 'Chưa xác định' : `${sessions.length} phiên đang hoạt động`;
@@ -449,7 +467,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (!sessions.length) {
-            tbody.innerHTML = '<tr><td colspan="7"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có phiên đăng nhập nào đang hoạt động</span></div></td></tr>';
+            tbody.innerHTML = `<tr><td colspan="7"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>${history ? 'Chưa có lịch sử đăng nhập' : 'Không có phiên đăng nhập nào đang hoạt động'}</span></div></td></tr>`;
             return;
         }
 
@@ -476,7 +494,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const deviceName = escapeHtml(s.device_name || 'Không xác định');
             const deviceIdShort = escapeHtml((s.device_id || '').slice(0, 10));
 
-            const actionButtons = s.is_current
+            const sessionState = s.is_revoked ? 'Đã thu hồi' : s.is_expired ? 'Hết hạn' : s.is_online ? 'Đang hoạt động' : 'Không hoạt động';
+            const actionButtons = (s.is_revoked || s.is_expired)
+                ? `<span class="badge bg-secondary">${sessionState}</span>` : s.is_current
                 ? `<span class="badge bg-dark-subtle text-muted border px-2 py-1"><i class="bi bi-shield-check me-1"></i>Đang sử dụng</span>`
                 : `<div class="btn-group btn-group-sm">
                     <button class="btn btn-sm btn-outline-warning revoke-session-btn" 
@@ -516,7 +536,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </td>
                 <td><small class="text-muted">${escapeHtml(new Date(s.created_at * 1000).toLocaleString('vi-VN'))}</small></td>
-                <td><small>${formatRelativeTime(s.last_active_at)}</small></td>
+                <td><small>${formatRelativeTime(s.last_active_at)}</small>${history ? `<div class="small text-muted">${sessionState}</div>` : ''}</td>
                 <td class="text-end">${actionButtons}</td>
             </tr>`;
         }).join('');
@@ -774,6 +794,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function selectSessions(view, page = 1) {
+        sessionsView = view;
+        historyPage = Math.max(1, page);
+        document.getElementById('sessions-description').textContent = view === 'history'
+            ? 'Lịch sử đăng nhập, gồm phiên cũ, hết hạn và đã thu hồi. Mỗi trang 20 phiên.'
+            : 'Chỉ hiển thị phiên có hoạt động trong 45 giây gần nhất. Trang đang xem gửi tín hiệu mỗi 15 giây; phiên mất tín hiệu tự rời danh sách.';
+        for (const name of ['active', 'history']) {
+            const button = document.getElementById(`sessions-${name}-tab`);
+            button.classList.toggle('btn-primary', name === view);
+            button.classList.toggle('btn-outline-secondary', name !== view);
+            button.setAttribute('aria-pressed', String(name === view));
+        }
+        document.getElementById('active-sessions-table-body').innerHTML = '<tr><td colspan="7"><span class="spinner-border spinner-border-sm me-2"></span>Đang tải…</td></tr>';
+        document.getElementById('active-sessions-badge').textContent = 'Đang tải…';
+        document.getElementById('sessions-prev').disabled = true;
+        document.getElementById('sessions-next').disabled = true;
+        loadSecurityData();
+    }
+    document.getElementById('sessions-active-tab').addEventListener('click', () => selectSessions('active'));
+    document.getElementById('sessions-history-tab').addEventListener('click', () => selectSessions('history'));
+    document.getElementById('sessions-prev').addEventListener('click', () => selectSessions('history', historyPage - 1));
+    document.getElementById('sessions-next').addEventListener('click', () => selectSessions('history', historyPage + 1));
     refreshBtn.addEventListener('click', () => loadSecurityData(true));
     document.body.addEventListener('click', (e) => {
         if (e.target.closest('.unblock-btn')) {

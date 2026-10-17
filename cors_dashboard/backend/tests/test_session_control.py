@@ -303,3 +303,35 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         finally:
             engine.dispose()
 
+    async def test_login_history_is_paginated_including_expired_and_revoked(self):
+        from app.main import get_admin_sessions
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+        from starlette.requests import Request
+        engine = create_engine("sqlite:///:memory:")
+        for table in (models.User.__table__, models.UserSession.__table__, models.BlockedDevice.__table__):
+            table.create(engine)
+        now = int(time.time())
+        try:
+            with Session(engine, expire_on_commit=False) as store:
+                admin = models.User(id=1, username="admin", role="admin", hashed_password="unused", created_at=now)
+                store.add(admin)
+                for i in range(45):
+                    store.add(models.UserSession(session_id=f"history-{i}", user_id=1,
+                        username="admin", role="admin", ip_address="192.0.2.1", device_id="test",
+                        created_at=now + i, last_active_at=now - 1000, expires_at=now - 1, is_revoked=True))
+                store.commit()
+                db = SimpleNamespace(execute=AsyncMock(side_effect=store.execute))
+                request = Request({"type": "http", "headers": []})
+                pages = []
+                for page, count in ((1, 20), (2, 20), (3, 5)):
+                    result = await get_admin_sessions(request=request, auth_db=db, current_user=admin, history_page=page)
+                    self.assertEqual(len(result["history_sessions"]), count)
+                    self.assertEqual(result["pagination"], {"page": page, "pages": 3, "page_size": 20, "total": 45})
+                    self.assertEqual(result["active_sessions"], [])
+                    self.assertTrue(result["history_sessions"][0]["is_revoked"])
+                    pages.extend(row["session_id"] for row in result["history_sessions"])
+                self.assertEqual(pages, [f"history-{i}" for i in reversed(range(45))])
+        finally:
+            engine.dispose()
+
