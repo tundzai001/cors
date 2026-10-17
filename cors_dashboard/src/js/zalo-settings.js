@@ -489,7 +489,7 @@
         document.getElementById('binding-type-field').classList.toggle('d-none', !state.isAdmin || mode !== 'standard');
         document.getElementById('delivery-preview').textContent = mode === 'paused'
             ? 'Bot sẽ không gửi phản hồi hoặc thông báo cho cuộc trò chuyện này. Cấu hình hiện tại được giữ nguyên.'
-            : isPublic ? 'Ví dụ: “CORS Cục đang online” hoặc “CORS Cục đang lỗi — không thấy form đăng nhập”. Không kèm cảnh báo base hay rover.'
+            : isPublic ? 'Ví dụ: “CORS Cục đang hoạt động” hoặc “CORS Cục đang gián đoạn”. Không kèm cảnh báo base hay rover.'
             : 'Bot hoạt động theo quyền và phạm vi đã liên kết. Các cảnh báo bên dưới chỉ gửi khi được bật.';
         const isGroupAdmin = !isPrivate && document.getElementById('edit-binding-type').value === 'group_admin';
         document.getElementById('private-scope-note').classList.toggle('d-none', !isPrivate || isPublic);

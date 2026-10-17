@@ -9,6 +9,11 @@ from app import models, zalo_assistant, zalo_bot_service as bot_module
 
 
 class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value={}))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def test_cors_only_sender_blocks_other_content(self):
         service = bot_module.ZaloBotService()
         send = AsyncMock(return_value={"ok": True})
@@ -53,8 +58,8 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                 with patch("app.reference_network.get_network_status", AsyncMock(return_value={"status":status,"checked_at":1792244308})):
                     await service._notify_cors_changes_once()
         self.assertEqual(send.await_count, 2)
-        self.assertIn("đang lỗi", send.await_args_list[0].kwargs["text"])
-        self.assertIn("đang online", send.await_args_list[1].kwargs["text"])
+        self.assertIn("đang gián đoạn", send.await_args_list[0].kwargs["text"])
+        self.assertIn("đang hoạt động", send.await_args_list[1].kwargs["text"])
 
     async def test_failed_or_suppressed_cors_alert_does_not_advance_saved_state(self):
         service = bot_module.ZaloBotService()
@@ -127,7 +132,7 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_public_reply_reports_online_error_and_unknown_without_linking(self):
         service = bot_module.ZaloBotService()
-        for state, expected in (("online", "đang online"), ("offline", "đang lỗi"), ("unknown", "Chưa kiểm tra được")):
+        for state, expected in (("online", "đang hoạt động"), ("offline", "đang gián đoạn"), ("unknown", "Chưa xác định được")):
             update = self.update()
             with patch.object(bot_module.zalo_repository, "remember_cors_chat", AsyncMock(return_value=True)), patch(
                 "app.reference_network.get_network_status", AsyncMock(return_value={"status": state, "checked_at": 1792244308})
@@ -135,7 +140,9 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                 await service._cors_cmd(update, None)
             text = update.message.reply_text.await_args.args[0]
             self.assertIn(expected, text)
-            self.assertIn("RTCM từng trạm", text)
+            self.assertIn("Tầng điện ly", text)
+            for hidden in ("đăng nhập", "form", "14.238", "trang dịch vụ"):
+                self.assertNotIn(hidden, text)
 
     async def test_paused_caller_does_not_probe_or_reply(self):
         service, update = bot_module.ZaloBotService(), self.update()
@@ -149,7 +156,7 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
         cases = ("/cors", "/cors cục đang thế nào", "@Bot Cors manager /cors",
                  "@Bot Cors manager /cors cục đang thế nào", "/cors@Bot", "/CORS",
                  "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "tình trạng Cục",
-                 "corsc cục hnay đo được k mọi người", "cors cuc hnay do dc k mn",
+                 "ở Tuyên Quang đo được k", "tầng điện ly hôm nay", "corsc cục hnay đo được k mọi người", "cors cuc hnay do dc k mn",
                  "cuc sap chua", "CORS Cục đang thế nào?", "kiểm tra VNGEONET",
                  "Cục còn sống không", "14.238.1.125 đang online không?")
         for text in cases:
@@ -176,7 +183,7 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                 remember.assert_awaited_once_with("test-chat", "group", "Test group")
                 reply = updates[0].message.reply_text
                 reply.assert_awaited_once()
-                self.assertIn("đang online", reply.await_args.args[0])
+                self.assertIn("đang hoạt động", reply.await_args.args[0])
                 self.assertNotIn("/register", reply.await_args.args[0])
 
     async def test_natural_cors_questions_use_same_handler_in_chat_dispatch(self):

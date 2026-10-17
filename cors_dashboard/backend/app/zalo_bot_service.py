@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261017-public-menu-v13"
+ZALO_TRACE_VERSION = "20261017-regional-ionosphere-v14"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -90,9 +90,13 @@ def _is_cors_status_question(text: str) -> bool:
     words = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
     if re.search(r"\b(?:base|rover)\b", words):
         return False
+    if re.search(r"\bdien ly\b", words):
+        return True
     target = (re.search(r"\b(?:cuc|vngeonet)\b", words)
               or "14.238.1.125" in normalized
               or re.match(r"^cors\b", words))
+    if not target:
+        target = re.search(r"\bdo\b", words)
     if not target:
         return False
     if words in {"cuc", "cors", "cors cuc", "vngeonet"}:
@@ -2696,21 +2700,10 @@ class ZaloBotService:
         health = await get_network_status()
         token = self._cors_outbound.set("reply")
         try:
-            await update.message.reply_text(self._cors_status_text(health))
+            from .zalo_cors_report import report_text
+            await update.message.reply_text(await report_text(health, str(getattr(update.message, "text", "") or "")))
         finally:
             self._cors_outbound.reset(token)
-
-    @staticmethod
-    def _cors_status_text(health: dict) -> str:
-        headline = {
-            "online": "🟢 CORS Cục đang online. Trang dịch vụ có form đăng nhập bình thường.",
-            "offline": "🔴 CORS Cục đang lỗi. Trang dịch vụ không có form đăng nhập hoặc đang báo lỗi.",
-        }.get(health.get("status"), "⚪ Chưa kiểm tra được CORS Cục; chưa thể kết luận online hay sập.")
-        checked_at = datetime.fromtimestamp(health["checked_at"], ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%H:%M:%S %d/%m/%Y")
-        return (
-            f"{headline}\nKiểm tra: {checked_at}\n"
-            "Đây là trạng thái hệ thống web Cục, chưa xác nhận tín hiệu RTCM từng trạm."
-        )
 
     async def _notify_cors_changes_once(self):
         from .reference_network import get_network_status
@@ -2721,13 +2714,17 @@ class ZaloBotService:
         status = health.get("status")
         if status not in {"online", "offline"}:
             return
+        from .zalo_cors_report import report_text
+        message = None
         for target in targets:
             try:
                 async with zalo_repository.cors_transition(target["id"], status) as delivery:
                     if delivery["send"]:
+                        if message is None:
+                            message = await report_text(health)
                         token = self._cors_outbound.set({"kind": "alert", "policy": delivery["policy"]})
                         try:
-                            sent = await self.app.bot.send_message(chat_id=target["chat_id"], text=self._cors_status_text(health))
+                            sent = await self.app.bot.send_message(chat_id=target["chat_id"], text=message)
                             delivery["sent"] = sent is not None
                         finally:
                             self._cors_outbound.reset(token)
@@ -2758,7 +2755,7 @@ class ZaloBotService:
                 "“cors cục hnay đo được k mọi người”.\n"
                 "• /menu hoặc /help — Xem hướng dẫn này.\n\n"
                 "Trong nhóm, nhắc @bot kèm câu hỏi nếu Zalo yêu cầu.\n"
-                "Kết quả kiểm tra trang dịch vụ Cục; chưa xác nhận tín hiệu RTCM từng trạm."
+                "Có thể hỏi “ở Tuyên Quang đo được không” để xem trạng thái Cục và tầng điện ly khu vực."
             )
         finally:
             self._cors_outbound.reset(token)
