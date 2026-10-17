@@ -23,7 +23,7 @@ state.isAdmin = true;
 let deliveryMode = 'cors_only';
 const fields = {};
 function field(id) {
-    return fields[id] ||= {value:'', textContent:'', classList:{hidden:false, toggle(name, value) { this.hidden = value; }}};
+    return fields[id] ||= {value:'', textContent:'', classList:{hidden:false, add() { this.hidden = true; }, toggle(name, value) { this.hidden = value; }}};
 }
 field('edit-binding-id').value = 1;
 field('edit-binding-type').value = 'cors_public';
@@ -40,3 +40,32 @@ deliveryMode = 'standard';
 scope.updateScopeEditor();
 assert.equal(field('standard-scope-settings').classList.hidden, false);
 console.log('PASS: public chat labels, per-chat pause/resume controls, admin-only controls');
+
+// Public CORS needs no OTP or Base scope. Switching policy hides stale codes.
+field('group-otp-type').value = 'cors_public';
+field('group-otp-scope').value = 'selected';
+scope.clearInterval = () => {};
+vm.runInContext(source.slice(source.indexOf('    function updateGroupOtpFields'), source.indexOf('    function startGroupOtpCountdown')), scope);
+scope.updateGroupOtpFields();
+assert.equal(field('group-public-guide').classList.hidden, false);
+assert.equal(field('group-otp-action').classList.hidden, true);
+assert.equal(field('group-otp-scope-field').classList.hidden, true);
+assert.equal(field('group-otp-result').classList.hidden, true);
+let otpRequests = 0;
+scope.apiJson = async () => { otpRequests++; };
+vm.runInContext(source.slice(source.indexOf('    async function generateGroupOtp'), source.indexOf('    // ═', source.indexOf('    async function generateGroupOtp'))), scope);
+(async () => {
+    await scope.generateGroupOtp();
+    assert.equal(otpRequests, 0, 'Public CORS must never create a registration OTP');
+    field('group-otp-type').value = 'group_public';
+    scope.updateGroupOtpFields();
+    assert.equal(field('group-public-guide').classList.hidden, true);
+    assert.equal(field('group-otp-action').classList.hidden, false);
+    assert.equal(field('group-otp-scope-field').classList.hidden, false);
+    assert.equal(field('group-otp-stations-wrap').classList.hidden, false);
+    field('group-otp-type').value = 'group_admin';
+    scope.updateGroupOtpFields();
+    assert.equal(field('group-otp-action').classList.hidden, false);
+    assert.equal(field('group-otp-scope-field').classList.hidden, true);
+    console.log('PASS: public CORS bypasses OTP; Base scopes remain explicit; stale OTP is hidden');
+})().catch(error => { console.error(error); process.exitCode = 1; });

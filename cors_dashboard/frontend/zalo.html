@@ -97,7 +97,7 @@
         <!-- OTP Section (Google Authenticator style) -->
         <section class="zalo-otp-section mb-3" id="otp-section">
             <div class="otp-header">
-                <div class="otp-header-title"><i class="bi bi-shield-lock-fill"></i>Mã trao đổi liên tục</div>
+                <div class="otp-header-title"><i class="bi bi-shield-lock-fill"></i>Liên kết Base cá nhân bằng OTP</div>
                 <div class="d-flex align-items-center gap-2">
                     <span class="small text-muted" id="otp-status-text">Sẵn sàng</span>
                     <button class="btn btn-sm btn-outline-info" id="otp-toggle-btn">
@@ -110,7 +110,7 @@
                 <div id="otp-idle" class="zalo-otp-idle">
                     <div class="idle-icon"><i class="bi bi-shield-lock"></i></div>
                     <div>Bấm <strong>"Bắt đầu"</strong> để tạo mã liên kết tự động refresh mỗi 30 giây.<br>
-                    <span class="small">Hoạt động giống Google Authenticator — mã chạy liên tục, dùng một lần.</span></div>
+                    <span class="small">Chỉ cần khi truy cập Base theo tài khoản web. Hỏi CORS Cục dùng /cors ngay, không cần mã.</span></div>
                 </div>
                 <!-- Active OTP display -->
                 <div id="otp-active" class="d-none">
@@ -142,33 +142,40 @@
         <!-- Admin-only group OTP builder. Group policy is sealed into the OTP. -->
         <section class="ops-card mb-3 d-none" id="group-otp-section">
             <div class="ops-section-head">
-                <div class="ops-section-title"><i class="bi bi-people-fill me-2 text-warning"></i>Tạo OTP liên kết Group</div>
+                <div class="ops-section-title"><i class="bi bi-people-fill me-2 text-warning"></i>Thiết lập nhóm nhận tin</div>
                 <span class="badge bg-warning text-dark">Chỉ Admin</span>
             </div>
             <div class="p-3 p-lg-4">
                 <div class="row g-3">
                     <div class="col-lg-4">
-                        <label class="form-label fw-bold">Quyền của group</label>
+                        <label class="form-label fw-bold" for="group-otp-type">Nội dung / quyền của nhóm</label>
                         <select id="group-otp-type" class="form-select ops-input">
-                            <option value="group_public">Group public — chỉ tra cứu</option>
-                            <option value="group_admin">Group admin — toàn quyền</option>
+                            <option value="cors_public">Public · CORS Cục — không cần đăng ký</option>
+                            <option value="group_public">Base · chỉ tra cứu — cần OTP</option>
+                            <option value="group_admin">Base · quản trị — cần OTP</option>
                         </select>
-                        <div class="form-text">Group admin luôn có toàn quyền. Group public chỉ xem các trạm được chọn.</div>
+                        <div class="form-text">CORS Cục dùng ngay trong nhóm. Truy cập Base cần OTP để cấp đúng quyền và phạm vi.</div>
                     </div>
                     <div class="col-lg-4" id="group-otp-scope-field">
-                        <label class="form-label fw-bold">Phạm vi trạm</label>
+                        <label class="form-label fw-bold" for="group-otp-scope">Phạm vi Base</label>
                         <select id="group-otp-scope" class="form-select ops-input">
-                            <option value="all">Tất cả trạm</option>
-                            <option value="selected">Chỉ các trạm được chọn</option>
-                            <option value="none">Không cho xem trạm nào</option>
+                            <option value="all">Tất cả Base</option>
+                            <option value="selected">Chỉ các Base được chọn</option>
+                            <option value="none">Không cho xem Base nào</option>
                         </select>
                     </div>
-                    <div class="col-lg-4 d-flex align-items-end">
+                    <div class="col-lg-4 d-flex align-items-end" id="group-otp-action">
                         <button id="generate-group-otp" class="btn btn-warning w-100"><i class="bi bi-shield-lock-fill me-2"></i>Tạo OTP group 30 giây</button>
                     </div>
                 </div>
+                <div id="group-public-guide" class="alert alert-info mt-3 mb-0" role="status">
+                    <strong>CORS Cục · không cần /register, /sign hay OTP</strong>
+                    <p class="mb-2 mt-2">Mời bot vào nhóm rồi gửi <code>/cors</code> hoặc <code>/cors cục đang thế nào</code>. Bot trả lời tình trạng CORS Cục ngay.</p>
+                    <p class="small mb-2">Sau lần gọi đầu, nhóm xuất hiện trong danh sách bên dưới. Mở Cấu hình để bật tự báo khi Cục đổi trạng thái hoặc dừng gửi riêng nhóm.</p>
+                    <button id="copy-public-cors" class="btn btn-sm btn-outline-info" type="button">Sao chép /cors</button>
+                </div>
                 <div id="group-otp-stations-wrap" class="mt-3 d-none">
-                    <label class="form-label fw-bold">Chọn trạm cho group public</label>
+                    <label class="form-label fw-bold">Chọn Base cho nhóm tra cứu</label>
                     <div id="group-otp-station-checklist" class="zalo-group-station-grid"></div>
                 </div>
                 <div id="group-otp-result" class="zalo-group-otp-result d-none mt-4">
@@ -271,6 +278,6 @@
     <script src="/assets/js/dist/ops-ui.min.js?v=20261009-notifications-v1"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261017-base-brand-v1"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20261008-api-keys-v1"></script>
-    <script src="/assets/js/dist/zalo-settings.min.js?v=20261017-delivery-modes-v1"></script>
+    <script src="/assets/js/dist/zalo-settings.min.js?v=20261017-public-group-v1"></script>
 </body>
 </html>

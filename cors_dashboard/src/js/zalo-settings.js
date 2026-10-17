@@ -393,10 +393,19 @@
     }
 
     function updateGroupOtpFields() {
-        const isPublic = document.getElementById('group-otp-type').value === 'group_public';
+        const type = document.getElementById('group-otp-type').value;
+        const isCors = type === 'cors_public';
+        const isBasePublic = type === 'group_public';
         const selected = document.getElementById('group-otp-scope').value === 'selected';
-        document.getElementById('group-otp-scope-field').classList.toggle('d-none', !isPublic);
-        document.getElementById('group-otp-stations-wrap').classList.toggle('d-none', !isPublic || !selected);
+        document.getElementById('group-public-guide').classList.toggle('d-none', !isCors);
+        document.getElementById('group-otp-action').classList.toggle('d-none', isCors);
+        document.getElementById('group-otp-scope-field').classList.toggle('d-none', !isBasePublic);
+        document.getElementById('group-otp-stations-wrap').classList.toggle('d-none', !isBasePublic || !selected);
+        // A code belongs to the policy that generated it; never show it for another choice.
+        document.getElementById('group-otp-result').classList.add('d-none');
+        document.getElementById('copy-group-otp').disabled = true;
+        if (state.groupOtpTimer) clearInterval(state.groupOtpTimer);
+        state.groupOtpTimer = null;
     }
 
     function startGroupOtpCountdown() {
@@ -417,6 +426,7 @@
 
     async function generateGroupOtp() {
         const bindingType = document.getElementById('group-otp-type').value;
+        if (bindingType === 'cors_public') return;
         const scopeMode = bindingType === 'group_admin' ? 'all' : document.getElementById('group-otp-scope').value;
         const allowedBases = [...document.querySelectorAll('.group-otp-station:checked')].map(item => item.value);
         if (bindingType === 'group_public' && scopeMode === 'selected' && !allowedBases.length) {
@@ -591,6 +601,12 @@
         document.getElementById('copy-link-cmd').addEventListener('click', async () => {
             await navigator.clipboard.writeText(document.getElementById('otp-link-cmd').textContent);
             window.CorsUI?.showToast?.('success', 'Đã sao chép lệnh liên kết cá nhân');
+        });
+        document.getElementById('copy-public-cors').addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText('/cors');
+                window.CorsUI?.showToast?.('success', 'Đã sao chép /cors. Gửi trong nhóm để hỏi CORS Cục.');
+            } catch { window.CorsUI?.showToast?.('warning', 'Không thể sao chép. Gửi /cors trong nhóm.'); }
         });
         document.getElementById('group-otp-type').addEventListener('change', updateGroupOtpFields);
         document.getElementById('group-otp-scope').addEventListener('change', updateGroupOtpFields);
