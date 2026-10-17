@@ -145,20 +145,52 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
         probe.assert_not_awaited()
         update.message.reply_text.assert_not_awaited()
 
-    async def test_webhook_allows_cors_in_unlinked_group_but_not_admin_commands(self):
-        for command, expected in (("/cors cục đang thế nào", "dispatched"), ("/status", "rejected_unlinked_group")):
-            service, update = bot_module.ZaloBotService(), self.update(command)
-            service._hydrate_conversation_state = AsyncMock(return_value=None)
-            service.app = SimpleNamespace(bot=object(), process_update=AsyncMock())
-            principal = zalo_assistant.ZaloPrincipal("test-chat", "test-sender", "group", None, None, None, None, frozenset(), False)
-            with patch.object(bot_module, "ZALO_AVAILABLE", True), patch.object(bot_module.settings, "ENABLE_ZALO_BOT", True), patch.object(
-                bot_module, "Update", SimpleNamespace(de_json=lambda payload, bot: update), create=True
-            ), patch.object(bot_module.zalo_repository, "is_chat_paused", AsyncMock(return_value=False)), patch.object(
-                bot_module.zalo_repository, "resolve_principal", AsyncMock(return_value=principal)
-            ):
-                result = await service.process_webhook_payload({"message": {"text": command}})
-            self.assertEqual(result["status"], expected)
-            self.assertEqual(service.app.process_update.await_count, int(expected == "dispatched"))
+    async def test_webhook_public_calls_reply_without_sdk_dispatch_or_base_permissions(self):
+        cases = ("/cors", "/cors cục đang thế nào", "@Bot Cors manager /cors",
+                 "@Bot Cors manager /cors cục đang thế nào", "/cors@Bot", "/CORS",
+                 "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "/help")
+        for text in cases:
+            with self.subTest(text=text):
+                service = bot_module.ZaloBotService()
+                service._hydrate_conversation_state = AsyncMock(return_value=None)
+                service.app = SimpleNamespace(bot=object(), process_update=AsyncMock())
+                principal = zalo_assistant.ZaloPrincipal("test-chat", "test-sender", "group", None, None, None, None, frozenset(), False)
+                updates = []
+                def parse(payload, bot):
+                    update = self.update(payload["message"]["text"])
+                    updates.append(update)
+                    return update
+                with patch.object(bot_module, "ZALO_AVAILABLE", True), patch.object(bot_module.settings, "ENABLE_ZALO_BOT", True), patch.object(
+                    bot_module, "Update", SimpleNamespace(de_json=parse), create=True
+                ), patch.object(bot_module.zalo_repository, "is_chat_paused", AsyncMock(return_value=False)), patch.object(
+                    bot_module.zalo_repository, "resolve_principal", AsyncMock(return_value=principal)
+                ), patch.object(bot_module.zalo_repository, "remember_cors_chat", AsyncMock(return_value=True)) as remember, patch(
+                    "app.reference_network.get_network_status", AsyncMock(return_value={"status":"online","checked_at":1792244308})
+                ):
+                    result = await service.process_webhook_payload({"message": {"text": text}})
+                self.assertEqual(result["status"], "dispatched")
+                service.app.process_update.assert_not_awaited()
+                remember.assert_awaited_once_with("test-chat", "group", "Test group")
+                reply = updates[0].message.reply_text
+                reply.assert_awaited_once()
+                self.assertIn("đang online", reply.await_args.args[0])
+                self.assertNotIn("/register", reply.await_args.args[0])
+
+    async def test_webhook_still_rejects_protected_base_command_in_unlinked_group(self):
+        service, update = bot_module.ZaloBotService(), self.update("/status")
+        service._hydrate_conversation_state = AsyncMock(return_value=None)
+        service.app = SimpleNamespace(bot=object(), process_update=AsyncMock())
+        principal = zalo_assistant.ZaloPrincipal("test-chat", "test-sender", "group", None, None, None, None, frozenset(), False)
+        with patch.object(bot_module, "ZALO_AVAILABLE", True), patch.object(bot_module.settings, "ENABLE_ZALO_BOT", True), patch.object(
+            bot_module, "Update", SimpleNamespace(de_json=lambda payload, bot: update), create=True
+        ), patch.object(bot_module.zalo_repository, "is_chat_paused", AsyncMock(return_value=False)), patch.object(
+            bot_module.zalo_repository, "resolve_principal", AsyncMock(return_value=principal)
+        ), patch.object(service, "_cors_cmd", AsyncMock()) as public:
+            result = await service.process_webhook_payload({"message": {"text": "/status"}})
+        self.assertEqual(result["status"], "rejected_unlinked_group")
+        service.app.process_update.assert_not_awaited()
+        public.assert_not_awaited()
+        self.assertIn("CORS Cục dùng công khai", update.message.reply_text.await_args.args[0])
 
     async def test_outbound_pause_blocks_all_messages_and_resume_sends(self):
         service = bot_module.ZaloBotService()

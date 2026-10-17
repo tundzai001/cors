@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20260705-public-scope-v10"
+ZALO_TRACE_VERSION = "20261017-public-cors-mention-v11"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -798,23 +798,32 @@ class ZaloBotService:
                 event["status"] = "paused_chat"
                 return {"trace_id": trace_id, "status": "paused_chat", "outbound_count": 0}
 
-            # /cors reads public website health without linking. Dashboard
-            # commands still require the existing group grant or registration.
+            # Route public health before the SDK's exact command matching, which
+            # does not accept /cors@Bot or invisible Zalo mention separators.
+            text = str(parsed_text or "").strip().lstrip("\u200b\u200c\u200d\ufeff").strip()
+            command = text.split(maxsplit=1)[0].lower() if text else ""
+            command = command.split("@", 1)[0].rstrip("\u200b\u200c\u200d\ufeff")
+            public_cors = command == "/cors"
             if self._get_chat_type(update) == "group":
                 principal = await zalo_repository.resolve_principal(
                     self._get_chat_id(update), self._get_sender_id(update), "group"
                 )
-                command = str(parsed_text or "").strip().split(maxsplit=1)[0].lower()
-                command = command.split("@", 1)[0]
-                if not principal.is_linked and command not in {"/register", "/cors"}:
+                # New groups can call the bot by mention (for example '@Bot helo')
+                # or ask for help without acquiring any Base permissions.
+                if not principal.is_linked and (
+                    (text.startswith("@") and "/" not in text)
+                    or command in {"/start", "/help", "/menu"}
+                ):
+                    public_cors = True
+                if not principal.is_linked and not public_cors and command != "/register":
                     event["status"] = "rejected_unlinked_group"
                     event["dispatch_method"] = None
                     guidance_token = self._allow_revoked_outbound.set(True)
                     try:
                         await update.message.reply_text(
-                            "❌ Nhóm này chưa được liên kết với CORS Control Center.\n"
-                            "Admin hãy vào Dashboard → Zalo Bot, chọn quyền và phạm vi trạm, "
-                            "tạo OTP 30 giây rồi gửi: /register <OTP>"
+                            "CORS Cục dùng công khai: nhắc tên bot kèm /cors, không cần đăng ký.\n"
+                            "Lệnh Base này cần được cấp quyền. Admin vào Dashboard → Zalo Bot, "
+                            "chọn quyền Base và tạo OTP, rồi gửi /register <OTP>."
                         )
                     finally:
                         self._allow_revoked_outbound.reset(guidance_token)
@@ -834,7 +843,10 @@ class ZaloBotService:
                     revoked_outbound_token = self._allow_revoked_outbound.set(True)
 
             dispatch_method = None
-            if hasattr(self.app, "process_update"):
+            if public_cors:
+                dispatch_method = "public_cors"
+                await self._cors_cmd(update, None)
+            elif hasattr(self.app, "process_update"):
                 dispatch_method = "application.process_update"
                 await self._maybe_await(self.app.process_update(update))
             else:
