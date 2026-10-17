@@ -1066,7 +1066,11 @@ async function handleConfigureChip(serial, payload) {
                 gnss_options: payload?.params?.gnss_options || existingBase.gnss_options,
                 sensor_type: payload?.sensor_type,
                 mode: payload?.mode
-            }
+            },
+            ...(payload?.params?.base_setup_method !== 'AUTO_CORS' ? {
+                auto_base_progress: {},
+                last_raw_gga: null
+            } : {})
         });
         showSuccess('Đã gửi cấu hình GNSS! Giao diện sẽ tự cập nhật.');
     } catch (e) {

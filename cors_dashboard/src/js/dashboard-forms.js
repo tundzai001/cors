@@ -243,7 +243,7 @@ const ProvisionForm = memo(function ProvisionForm({ device, currentUser = {}, on
     );
 });
 
-const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, disabled }) {
+const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, onStopAutoBase, disabled }) {
     const knownChips = ['Ublox', 'Unicorecomm'];
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
 
@@ -252,8 +252,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const activeChip = needsManualSelection ? manualChip : device.detected_chip_type;
     const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
 
+    const ACTIVE_AUTO_BASE_PHASES = ['starting', 'set_rover', 'wait_fix', 'averaging', 'set_base'];
     const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
     const autoProgress = device?.auto_base_progress || {};
+    const isAutoSetupActive = isAutoSetupStatus || ACTIVE_AUTO_BASE_PHASES.includes(autoProgress.phase);
     const autoSamplesCollected = Number(autoProgress.samples_collected || 0);
     const autoSamplesTarget = Number(autoProgress.samples_target || 0);
     const autoProgressPercent = autoSamplesTarget > 0
@@ -327,12 +329,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         if (device.base_config) {
             const config = device.base_config;
 
-            // Set Method
+            // Set Method: Ưu tiên cấu hình đã lưu trong DB. Chỉ dùng AUTO_CORS nếu chưa có cấu hình và đang thực sự chạy Auto Base.
             if (config.base_setup_method) {
                 setMethod(config.base_setup_method);
-            }
-
-            if ((device?.status || '').startsWith('auto_setup') || device?.auto_base_progress?.phase) {
+            } else if (isAutoSetupActive) {
                 setMethod('AUTO_CORS');
             }
 
@@ -377,12 +377,6 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             }
         }
     }, [device.serial]);
-
-    useEffect(() => {
-        if ((device?.status || '').startsWith('auto_setup') || device?.auto_base_progress?.phase) {
-            setMethod('AUTO_CORS');
-        }
-    }, [device?.status, device?.auto_base_progress?.phase]);
 
     const handleDecimalInputChange = (setter) => (e) => {
         const value = e.target.value;
@@ -468,13 +462,22 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             let params = { base_setup_method: method };
 
             if (method === 'FIXED_LLA') {
+                const latStr = String(latitude).trim();
+                const lonStr = String(longitude).trim();
+                const latNum = parseFloat(latStr);
+                const lonNum = parseFloat(lonStr);
+                if (!latStr || !lonStr || isNaN(latNum) || isNaN(lonNum)) {
+                    window.showError('Vui lòng nhập vĩ độ và kinh độ hợp lệ.');
+                    setIsSubmitting(false);
+                    return;
+                }
                 params.coords = {
-                    lat: String(latitude).trim(),
-                    lon: String(longitude).trim(),
-                    alt: String(altitude).trim()
+                    lat: latStr,
+                    lon: lonStr,
+                    alt: String(altitude).trim() || '0'
                 };
                 // Fixed: Input là mm -> Chia 1000 để thành m gửi cho backend
-                params.accuracy = parseFloat(fixedAccuracyMm) / 1000.0;
+                params.accuracy = parseFloat(fixedAccuracyMm || '10') / 1000.0;
             } else if (method === 'SURVEY_IN') {
                 params.survey_in_duration = parseInt(svinDuration);
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
@@ -483,10 +486,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 const port = Number(corsPort);
                 if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
                     window.showError('Vui lòng nhập đủ thông tin kết nối CORS.');
+                    setIsSubmitting(false);
                     return;
                 }
                 if (!selectedMountpoint) {
                     window.showError('Vui lòng bấm "Kết nối CORS & lấy mountpoint" rồi chọn một mountpoint.');
+                    setIsSubmitting(false);
                     return;
                 }
             }
@@ -588,8 +593,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 </div>
             )}
 
-            {/* Realtime NMEA GGA & Auto Base Monitor (Rover Mode) - Always displayed at top when active */}
-            {(isAutoSetupStatus || autoProgress.phase || rawGgaSentence) && (
+            {/* Realtime NMEA GGA & Auto Base Monitor (Rover Mode) - Chỉ hiện khi method là AUTO_CORS hoặc khi trạm đang thực sự chạy Auto Base */}
+            {((method === 'AUTO_CORS' && (isAutoSetupActive || rawGgaSentence || autoProgress.phase)) || isAutoSetupActive) && (
                 <div className="mb-3">
                     <div className="card border-info bg-dark shadow-sm">
                         <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
@@ -603,6 +608,27 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </strong>
                             </div>
                             <div className="d-flex align-items-center gap-2 flex-wrap">
+                                {isAutoSetupActive && onStopAutoBase && (
+                                    <button
+                                        type="button"
+                                        className="btn btn-outline-danger btn-sm py-0 px-2 fw-bold"
+                                        style={{ fontSize: '0.75rem' }}
+                                        onClick={async () => {
+                                            const ok = await window.CorsUI?.confirmAction?.({
+                                                title: 'Dừng Auto Base',
+                                                message: 'Bạn có chắc chắn muốn dừng quy trình Auto Base và đưa trạm về trạng thái bình thường?',
+                                                confirmText: 'Dừng Auto Base',
+                                                confirmVariant: 'danger'
+                                            });
+                                            if (ok) {
+                                                await onStopAutoBase(device.serial);
+                                            }
+                                        }}
+                                    >
+                                        <i className="bi bi-stop-circle-fill me-1"></i>
+                                        Dừng Auto Base
+                                    </button>
+                                )}
                                 {/* Fix Quality Badge */}
                                 {ggaFix === 'RTK_FIXED' ? (
                                     <span className="badge bg-success">🎯 RTK FIXED</span>
@@ -709,6 +735,13 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             </div>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {method !== 'AUTO_CORS' && isAutoSetupActive && (
+                <div className="alert alert-warning small py-2 mb-3">
+                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                    Trạm đang trong tiến trình Auto Base (Rover). Bạn có thể bấm <strong>"Dừng Auto Base"</strong> ở trên hoặc điền tọa độ và bấm <strong>"Áp dụng cấu hình BASE"</strong> bên dưới để dừng Auto Base và lưu tọa độ cố định.
                 </div>
             )}
 
