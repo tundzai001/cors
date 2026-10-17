@@ -25,6 +25,7 @@ class StatusPublishTests(unittest.IsolatedAsyncioTestCase):
             STATUS_BOOT_ID='test-boot', MACHINE_SERIAL='test-device',
             active_websocket_connection=None, get_cached_system_info=lambda: {},
             transport_status={'mqtt_broker': 'test-broker'},
+            get_device_lock_status=lambda: {},
         )
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
         agent = SimpleNamespace(

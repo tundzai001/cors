@@ -85,7 +85,8 @@ class ProtocolCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((envelope['issued_at'], envelope['expires_at']), (1000, 1300))
         # Run the real agent's ingress validation up to payload validation.
         record = Mock()
-        agent_scope = load_functions(AGENT, {'process_command'}, dict(
+        agent_scope = load_functions(AGENT, {'process_command', '_process_command'}, dict(
+            asyncio=asyncio, command_execution_lock=asyncio.Lock(),
             AgentManager=object, GNSSReader=object, mqtt=SimpleNamespace(Client=object),
             time=SimpleNamespace(time=lambda: 1000), re=re, logging=logging,
             _record_command_result=record, send_status=AsyncMock(),

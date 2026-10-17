@@ -341,6 +341,7 @@ current_state = "INITIALIZING"
 active_websocket_connection = None
 control_plane_fail_open_event = threading.Event()
 is_remotely_locked = False 
+command_execution_lock = asyncio.Lock()
 initialization_complete = asyncio.Event()
 remote_unlock_event = asyncio.Event()
 last_command_result = {}
@@ -1402,8 +1403,8 @@ def _normalize_gga_for_ntrip(raw_gga: str) -> str | None:
         return raw_gga
 
 def _is_rtk_usable_status(status: str) -> bool:
-    # Accept both RTK fixed and float to avoid long stalls when fix quality oscillates.
-    return status in ("RTK_FIXED", "RTK_FLOAT")
+    # A float solution must not become the permanent base coordinate.
+    return status == "RTK_FIXED"
 
 def _get_fresh_outbound_gga(max_age_seconds: float = 10.0) -> str | None:
     raw_gga = globals().get('LAST_RAW_GGA')
@@ -3389,9 +3390,10 @@ class NTRIPServerWorker(threading.Thread):
                     client_socket.close()
 
 class NTRIPClientWorker(threading.Thread):
-    def __init__(self, config, log_callback):
+    def __init__(self, config, log_callback, correction_sink=None):
         super().__init__()
         self.config = config; self.log = log_callback
+        self.correction_sink = correction_sink or dispatch_rtcm_data
         self.daemon = True; self._stop_event = threading.Event()
         self.name = "NTRIPClientWorker"
     def stop(self): self._stop_event.set()
@@ -3436,13 +3438,18 @@ class NTRIPClientWorker(threading.Thread):
                     if not byte:
                         raise ConnectionError("Caster closed connection before response headers completed")
                     response_header.extend(byte)
+                    if response_header == b"ICY 200 OK\r\n":
+                        break  # NTRIP v1 may start RTCM immediately after this line.
                 
-                if not (b"ICY 200 OK" in response_header or b"HTTP/1.1 200 OK" in response_header):
+                if not bytes(response_header).startswith((b"ICY 200 OK\r\n", b"HTTP/1.1 200 ", b"HTTP/1.0 200 ")):
                     status_line = bytes(response_header).split(b"\r\n", 1)[0].decode(errors="ignore")[:200]
                     raise ConnectionError(f"Caster rejected request: {status_line}")
 
                 self.log("INFO", "[RTCM Client] Authenticated. Receiving correction data.")
                 
+                if self._stop_event.is_set():
+                    break
+
                 # Send GGA immediately after auth for VRS
                 self.last_sent_gga = None
                 self.last_sent_gga_time = 0.0
@@ -3507,6 +3514,8 @@ class NTRIPClientWorker(threading.Thread):
                         self.log("WARNING", f"[RTCM Client] Server closed connection (recv returned empty). Total received: {total_rtcm_bytes}B")
                         break
                     
+                    if self._stop_event.is_set():
+                        break
                     total_rtcm_bytes += len(rtcm_data)
                     rtcm_stream_buffer.extend(rtcm_data)
 
@@ -3518,11 +3527,12 @@ class NTRIPClientWorker(threading.Thread):
 
                     pkts = extract_valid_rtcm3_packets(rtcm_stream_buffer)
                     for pkt in pkts:
-                        dispatch_rtcm_data(pkt)
+                        self.correction_sink(pkt)
                         total_rtcm_pkts += 1
                     
+                    self.total_rtcm_bytes = total_rtcm_bytes
+                    self.total_rtcm_pkts = total_rtcm_pkts
                     if pkts:
-                        total_rtcm_bytes += len(rtcm_data)
                         # Log summary every 30s instead of every packet
                         now_log = time.time()
                         if not hasattr(self, '_last_rtcm_log_time'):
@@ -3596,7 +3606,8 @@ class GNSSReader(threading.Thread):
         self.log("INFO", "GNSSReader resumed")
     
     def inject_rtcm(self, data: bytes):
-        """Queue RTCM correction data to be written to serial port"""
+        """Queue incoming corrections independently of outbound caster sleep gates."""
+        _update_datum_from_rtcm_packet(data)
         try:
             self.rtcm_inject_queue.put_nowait(data)
         except Full:
@@ -3980,7 +3991,8 @@ class GNSSReader(threading.Thread):
                                 while not self.rtcm_inject_queue.empty():
                                     try:
                                         rtcm_pkt = self.rtcm_inject_queue.get_nowait()
-                                        ser.write(rtcm_pkt)
+                                        if ser.write(rtcm_pkt) != len(rtcm_pkt):
+                                            raise IOError("Incomplete RTCM correction write")
                                         inject_count += 1
                                         inject_bytes += len(rtcm_pkt)
                                     except Empty:
@@ -4472,7 +4484,7 @@ class AgentManager:
             "service_config": _status_safe_config(self.get_service_config()),
             "auto_base_progress": globals().get("AUTO_BASE_PROGRESS", {}),
             "is_locked": is_remote_locked(),
-            "is_synced": True
+            "is_synced": not self.config.get("gnss_config_pending", False)
         }
 
         # Antenna / RTCM health check logic
@@ -4901,6 +4913,10 @@ def _validate_command_payload(command: str, payload: dict, data: dict, agent: Ag
     return True, ""
 
 async def process_command(source: str, data: dict, agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
+    async with command_execution_lock:
+        await _process_command(source, data, agent, gnss_reader, mqtt_client)
+
+async def _process_command(source: str, data: dict, agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
     global current_state, rtcm_stream_active_flag, active_auto_base_task, active_auto_base_client
     if not isinstance(data, dict):
         _record_command_result("UNKNOWN", source, "rejected", "command envelope must be an object")
@@ -5032,6 +5048,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
         
         elif command == "TRIGGER_AUTO_BASE":
             logging.info("Received TRIGGER_AUTO_BASE command. Configuring and starting state machine...")
+            await _stop_auto_base(agent, gnss_reader)
             auto_setup_metadata = payload
             raw_mp = str(auto_setup_metadata.get("mountpoint") or "").strip()
                 
@@ -5052,18 +5069,6 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             agent.save_config()
             _set_auto_base_progress("queued", step=0, total_steps=4)
             await send_status(agent, mqtt_client)
-            
-            # Cancel existing task if running
-            global active_auto_base_task, active_auto_base_client
-            try:
-                if 'active_auto_base_client' in globals() and active_auto_base_client:
-                    active_auto_base_client.stop()
-            except Exception: pass
-            
-            try:
-                if 'active_auto_base_task' in globals() and active_auto_base_task:
-                    active_auto_base_task.cancel()
-            except Exception: pass
             
             # Start the state machine as a background task
             active_auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
@@ -5123,27 +5128,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
 
         elif command == "STOP_AUTO_BASE":
             logging.info("Received STOP_AUTO_BASE command")
-            try:
-                if active_auto_base_client:
-                    active_auto_base_client.stop()
-            except Exception:
-                pass
-            try:
-                if active_auto_base_task:
-                    active_auto_base_task.cancel()
-            except Exception:
-                pass
-            active_auto_base_client = None
-            active_auto_base_task = None
-            rtcm_stream_active_flag = _compute_any_server_can_push(
-                agent.get_service_config() or {},
-                apply_fail_open=True,
-            )
-            if gnss_reader:
-                try:
-                    gnss_reader.resume()
-                except Exception:
-                    pass
+            await _stop_auto_base(agent, gnss_reader)
             current_state = "ONLINE"
             _set_auto_base_progress("stopped", step=0, total_steps=4, reason="Stopped by user")
             await send_status(agent, mqtt_client)
@@ -5200,26 +5185,15 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             
         elif command == "EXECUTE_RAW_COMMANDS":
             _remember_output_mode_from_original_config(data)
-            if data.get("original_config", {}).get("mode") == "BASE":
-                try:
-                    if active_auto_base_client:
-                        active_auto_base_client.stop()
-                except Exception:
-                    pass
-                try:
-                    if active_auto_base_task:
-                        active_auto_base_task.cancel()
-                except Exception:
-                    pass
-                active_auto_base_client = None
-                active_auto_base_task = None
-                agent.config['auto_base_setup'] = {"enabled": False}
-                agent.config['base_config'] = data["original_config"]["params"]
+            original_config = data.get("original_config") or {}
+            configuring_base = original_config.get("mode") == "BASE"
+            if configuring_base:
+                agent.config['gnss_config_pending'] = True
+                await _stop_auto_base(agent, gnss_reader)
                 agent.save_config()
                 globals()['AUTO_BASE_PROGRESS'] = {}
-                globals()['LAST_RAW_GGA'] = None
-                agent.restart_services()
-            
+                _mark_gnss_data_stale()
+
             commands_b64 = payload.get("commands_b64", [])
             port = agent.detected_chip.get("port")
             
@@ -5232,6 +5206,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                     baud = _runtime_serial_baud(agent, gnss_reader)
                     logging.info(f"Opening GNSS command port {port} @ {baud} baud")
                     with serial_port_lock, serial.Serial(port, baud, timeout=2) as ser:
+                        expected_tmode = None
                         for cmd_b64 in commands_b64:
                             decoded_cmd = base64.b64decode(cmd_b64)
                             
@@ -5241,17 +5216,22 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                                 await asyncio.sleep(delay_seconds)
                                 continue
                             
+                            if decoded_cmd[:4] == b"\xb5\x62\x06\x71" and len(decoded_cmd) == 48:
+                                expected_tmode = decoded_cmd
+
                             # Send command
                             logging.info(f"  -> Sending: {decoded_cmd.decode('ascii', errors='ignore').strip()}")
                             ser.write(decoded_cmd)
                             ser.flush()
                             await asyncio.sleep(0.5)
                             
-                            # Read response
-                            if ser.in_waiting > 0:
-                                response = ser.read(ser.in_waiting)
-                                logging.debug(f"     Response: {response.decode('ascii', errors='ignore')[:100]}")
-                    
+                        if expected_tmode is not None:
+                            _verify_ublox_tmode(ser, expected_tmode)
+
+                    if configuring_base:
+                        agent.config['base_config'] = copy.deepcopy(original_config['params'])
+                        agent.config['gnss_config_pending'] = False
+                        agent.save_config()
                     current_state = "ONLINE"
                     logging.info("All base station commands executed successfully")
                     if data.get("original_config", {}).get("mode") == "BASE":
@@ -5265,7 +5245,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                         await asyncio.sleep(2.0)  # Wait for chip to stabilize
                         gnss_reader.resume()
                     current_state = "ONLINE"
-                    logging.info("Base config applied successfully")
+                    logging.info("GNSS command port released; reader resumed")
 
                     await send_status(agent, mqtt_client)
         
@@ -5619,6 +5599,91 @@ async def control_plane_watchdog_task(agent: AgentManager):
 # ==============================================================================
 # === AUTO BASE SETUP STATE MACHINE                                         ===
 # ==============================================================================
+async def _stop_auto_base(agent, gnss_reader):
+    global active_auto_base_task, active_auto_base_client, rtcm_stream_active_flag
+    client = active_auto_base_client
+    task = active_auto_base_task
+    agent.config['auto_base_setup'] = {"enabled": False}
+    agent.save_config()
+    if client:
+        client.stop()
+    if task:
+        if not task.done():
+            task.cancel()
+        # Reference-check cancellation may restore a previous base in its finally
+        # block. It must finish before a new configuration touches the serial port.
+        await asyncio.gather(task, return_exceptions=True)
+    if client and client.is_alive():
+        await asyncio.to_thread(client.join, 6)
+    active_auto_base_task = None
+    active_auto_base_client = None
+    _cleanup_inject_queue(gnss_reader)
+    rtcm_stream_active_flag = _compute_any_server_can_push(
+        agent.get_service_config() or {}, apply_fail_open=True,
+    )
+    if gnss_reader:
+        gnss_reader.resume()
+
+
+def _ubx_packet(msg_class, msg_id, payload=b''):
+    body = bytes([msg_class, msg_id]) + len(payload).to_bytes(2, 'little') + payload
+    ck_a = ck_b = 0
+    for byte in body:
+        ck_a = (ck_a + byte) & 0xff
+        ck_b = (ck_b + ck_a) & 0xff
+    return b'\xb5\x62' + body + bytes([ck_a, ck_b])
+
+
+def _verify_ublox_tmode(ser, expected_packet, timeout=4.0):
+    """Poll TMODE3; a successful serial write is not proof of receiver mode."""
+    expected_flags = int.from_bytes(expected_packet[8:10], 'little') & 0x1ff
+    previous_timeout = ser.timeout
+    ser.timeout = 0.2
+    buffer = bytearray()
+    try:
+        ser.reset_input_buffer()
+        ser.write(_ubx_packet(0x06, 0x71))
+        ser.flush()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            buffer.extend(ser.read(min(ser.in_waiting or 1, 4096)))
+            while len(buffer) >= 8:
+                start = buffer.find(b'\xb5\x62')
+                if start < 0:
+                    del buffer[:-1]
+                    break
+                del buffer[:start]
+                if len(buffer) < 8:
+                    break
+                length = int.from_bytes(buffer[4:6], 'little')
+                if length > 8192:
+                    del buffer[0]
+                    continue
+                if len(buffer) < length + 8:
+                    break
+                packet = bytes(buffer[:length + 8])
+                del buffer[:length + 8]
+                if packet != _ubx_packet(packet[2], packet[3], packet[6:-2]):
+                    continue
+                if packet[2:4] == b'\x05\x00' and packet[6:-2] == b'\x06\x71':
+                    raise RuntimeError("Receiver rejected UBX-CFG-TMODE3 poll")
+                if packet[2:4] != b'\x06\x71' or length != 40:
+                    continue
+                actual_flags = int.from_bytes(packet[8:10], 'little') & 0x1ff
+                if actual_flags != expected_flags:
+                    raise RuntimeError(f"Receiver TMODE mismatch: expected {expected_flags:#x}, got {actual_flags:#x}")
+                if expected_flags & 0xff == 2 and (
+                    packet[10:25] != expected_packet[10:25]
+                    or packet[26:30] != expected_packet[26:30]
+                ):
+                    raise RuntimeError("Receiver fixed coordinates differ from requested coordinates")
+                logging.info("Receiver TMODE3 readback verified: mode=%s", actual_flags & 0xff)
+                return
+        raise TimeoutError("No valid TMODE3 readback from receiver; configuration is unconfirmed")
+    finally:
+        ser.timeout = previous_timeout
+
+
 def _cleanup_inject_queue(gnss_reader):
     """Remove GNSSReader's inject queue from RTCM subscribers after auto-base is done"""
     if gnss_reader:
@@ -5738,8 +5803,10 @@ async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: f
                 msg[47] = ck_b
 
                 ser.write(msg)
+                ser.write(_ubx_packet(0x06, 0x01, b'\xf5\x05\x00\x01\x00\x01\x00\x00'))
                 ser.write(b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab')
                 ser.flush()
+                _verify_ublox_tmode(ser, msg)
             elif chip_type in ("Unicorecomm", "RTCM3_Source"):
                 # Use higher precision for command string to avoid rounding
                 base_cmd = f"MODE BASE {lat:.10f} {lon:.10f} {alt:.3f}\r\n".encode("ascii")
@@ -5778,16 +5845,23 @@ async def _apply_rover_mode_to_chip(chip_type: str, port: str, gnss_reader: GNSS
                     v_msg[15], v_msg[16] = v_a, v_b
                     ser.write(v_msg)
 
+                # Input protocol gates are independent from message output rates.
+                for input_prefix, output_prefix in ((0x10730000, 0x10740000), (0x10750000, 0x10760000), (0x10770000, 0x10780000)):
+                    send_valset_u1(input_prefix | 0x01, 1)  # UBX configuration input
+                    send_valset_u1(input_prefix | 0x04, 1)  # RTCM3 correction input
+                    send_valset_u1(output_prefix | 0x01, 1)  # UBX readback
+                    send_valset_u1(output_prefix | 0x02, 1)  # NMEA GGA output
+
                 # Set TMODE to 0 (Disabled / Rover) via VALSET
                 send_valset_u1(0x20110001, 0)
                 # Output NMEA GGA on USB and UART1 at 1Hz via VALSET
-                send_valset_u1(0x209100bb, 1) # CFG-MSGOUT-NMEA_ID_GGA_USB
-                send_valset_u1(0x209100ba, 1) # CFG-MSGOUT-NMEA_ID_GGA_UART1
+                send_valset_u1(0x209100bd, 1) # CFG-MSGOUT-NMEA_ID_GGA_USB
+                send_valset_u1(0x209100bb, 1) # CFG-MSGOUT-NMEA_ID_GGA_UART1
                 send_valset_u1(0x20910036, 1) # CFG-MSGOUT-UBX_NAV_HPPOSLLH_USB
                 send_valset_u1(0x20910035, 1) # CFG-MSGOUT-UBX_NAV_HPPOSLLH_UART1
                 send_valset_u1(0x20910009, 1) # CFG-MSGOUT-UBX_NAV_PVT_USB
                 # Disable RTCM 1005 output
-                send_valset_u1(0x209102bf, 0) # CFG-MSGOUT-RTCM3X_1005_USB
+                send_valset_u1(0x209102c0, 0) # CFG-MSGOUT-RTCM3X_1005_USB
                 send_valset_u1(0x209102be, 0) # CFG-MSGOUT-RTCM3X_1005_UART1
 
                 # Legacy UBX-CFG-TMODE3 (turn off base mode)
@@ -5809,7 +5883,7 @@ async def _apply_rover_mode_to_chip(chip_type: str, port: str, gnss_reader: GNSS
                 ser.write(gga_msg)
                 
                 # Disable RTCM 1005 output
-                rtcm_off = bytearray(b'\xb5\x62\x06\x01\x08\x00\xd5\x05\x00\x00\x00\x00\x00\x00\x00\x00')
+                rtcm_off = bytearray(b'\xb5\x62\x06\x01\x08\x00\xf5\x05\x00\x00\x00\x00\x00\x00\x00\x00')
                 ck_a = ck_b = 0
                 for index in range(2, 14):
                     ck_a = (ck_a + rtcm_off[index]) & 0xFF
@@ -5821,9 +5895,7 @@ async def _apply_rover_mode_to_chip(chip_type: str, port: str, gnss_reader: GNSS
                 ser.write(b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab')
                 ser.flush()
                 
-                # Fallback: Also send Unicorecomm command in case the chip was manually selected as Ublox but is Unicore
-                ser.write(b'UNLOGALL\r\nMODE ROVER\r\nLOG GNGGA ONTIME 1\r\nLOG GPRMC ONTIME 1\r\nSAVECONFIG\r\n')
-                ser.flush()
+                _verify_ublox_tmode(ser, msg)
                 logging.info("AutoBase: _apply_rover_mode_to_chip Ublox ROVER mode set (VALSET + TMODE3 + NMEA GGA enabled)")
             elif chip_type in ("Unicorecomm", "RTCM3_Source"):
                 ser.write(b'UNLOGALL\r\n')
@@ -5848,12 +5920,11 @@ async def _apply_rover_mode_to_chip(chip_type: str, port: str, gnss_reader: GNSS
             gnss_reader.resume()
 
 async def base_reference_check_state_machine(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client, cfg: dict):
-    global current_state, active_auto_base_client, rtcm_stream_active_flag
+    global current_state, active_auto_base_client
     reference = cfg["reference_coords"]
     restore = cfg["restore_coords"]
     port = agent.detected_chip.get("port")
     temp_client = None
-    saved_rtcm_flag = rtcm_stream_active_flag
     result = None
     failure = None
     try:
@@ -5865,13 +5936,8 @@ async def base_reference_check_state_machine(agent: AgentManager, gnss_reader: G
             "rtcmserver1": cfg["ip"], "rtcmport1": str(cfg["port"]),
             "rtcmusername1": cfg["user"], "rtcmpassword1": cfg["password"],
             "rtcmmountpoint1": cfg["mountpoint"], "reconnectioninterval": 5,
-        }, agent.log)
+        }, agent.log, correction_sink=gnss_reader.inject_rtcm)
         active_auto_base_client = temp_client
-        rtcm_stream_active_flag = True
-        if gnss_reader:
-            with subscriber_lock:
-                if gnss_reader.rtcm_inject_queue not in rtcm_subscribers:
-                    rtcm_subscribers.append(gnss_reader.rtcm_inject_queue)
         temp_client.start()
         current_state = "REFERENCE_CHECK_WAIT_FIX"
         deadline = time.time() + cfg["timeout"]
@@ -5910,7 +5976,6 @@ async def base_reference_check_state_machine(agent: AgentManager, gnss_reader: G
             temp_client.join(timeout=5)
         active_auto_base_client = None
         _cleanup_inject_queue(gnss_reader)
-        rtcm_stream_active_flag = saved_rtcm_flag
         restore_error = None
         try:
             current_state = "REFERENCE_CHECK_RESTORE_BASE"
@@ -5953,6 +6018,34 @@ async def restore_pending_base_if_needed(agent: AgentManager, gnss_reader: GNSSR
         logging.exception("Could not recover pending base mode; will retry after next restart")
 
 async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
+    global active_auto_base_client, current_state
+    if not agent.config.get("auto_base_setup", {}).get("enabled", False):
+        return
+    agent.config['gnss_config_pending'] = True
+    agent.save_config()
+    try:
+        await _run_auto_base_setup(agent, gnss_reader, mqtt_client)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logging.exception("Auto Base setup failed")
+        current_state = "ONLINE"
+        _set_auto_base_progress("failed", reason=str(exc))
+        await send_status(agent, mqtt_client)
+    finally:
+        client = active_auto_base_client
+        if client:
+            client.stop()
+            await asyncio.to_thread(client.join, 6)
+        active_auto_base_client = None
+        _cleanup_inject_queue(gnss_reader)
+        agent.config['auto_base_setup'] = {"enabled": False}
+        agent.save_config()
+        if gnss_reader:
+            gnss_reader.resume()
+
+
+async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
     global current_state, LAST_GGA_COORD
     
     cfg = agent.config.get("auto_base_setup", {})
@@ -5973,9 +6066,8 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
     if cfg.get("sensor_type"):
         logging.info(f"AutoBase: Using manually overridden chip type from Frontend: {chip_type}")
     
-    if not port:
-        logging.error("AutoBase: No port detected, aborting.")
-        return
+    if not port or gnss_reader is None:
+        raise RuntimeError("AutoBase requires a detected GNSS port and reader")
         
     # State 1: Configure ROVER
     current_state = "AUTO_SETUP_ROVER"
@@ -5992,6 +6084,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         logging.info(f"AutoBase: {chip_type} successfully configured to ROVER mode")
     except Exception as e:
         logging.error(f"AutoBase: Failed to set ROVER mode: {e}")
+        raise
 
     # Wait up to 5 seconds for initial NMEA GGA from rover chip before connecting to NTRIP
     logging.info("AutoBase: Waiting for rover chip to output NMEA GGA...")
@@ -6017,26 +6110,14 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         'reconnectioninterval': 5
     }
     
-    temp_client = NTRIPClientWorker(temp_cfg, agent.log)
+    temp_client = NTRIPClientWorker(temp_cfg, agent.log, correction_sink=gnss_reader.inject_rtcm)
     global active_auto_base_client
     active_auto_base_client = temp_client
     
-    # CRITICAL: Enable RTCM dispatch flag so packets reach the inject queue!
-    # Without this, dispatch_rtcm_data() drops ALL packets (rtcm_stream_active_flag=False)
-    global rtcm_stream_active_flag
-    saved_rtcm_flag = rtcm_stream_active_flag
-    rtcm_stream_active_flag = True
-    logging.info("AutoBase: Temporarily enabled rtcm_stream_active_flag for CORS injection")
-    
+    # Corrections go directly to the receiver, never through outbound stream gates
+    # or the shared subscriber list (which also receives the chip's own RTCM).
     temp_client.start()
-    
-    # Register GNSSReader's inject queue so RTCM from CORS goes to chip serial
-    if gnss_reader:
-        with subscriber_lock:
-            if gnss_reader.rtcm_inject_queue not in rtcm_subscribers:
-                rtcm_subscribers.append(gnss_reader.rtcm_inject_queue)
-        logging.info("AutoBase: Registered RTCM injection to chip serial port")
-    
+
     # State 2: Wait for FIX
     current_state = "AUTO_SETUP_WAIT_FIX"
     timeout = int(cfg.get("timeout", 3600))
@@ -6062,7 +6143,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
     
     fixed_streak = 0
     while True:
-        if _is_rtk_usable_status(globals().get('LAST_GGA_FIX_STATUS')):
+        if _get_fresh_outbound_gga(3.0) and _is_rtk_usable_status(globals().get('LAST_GGA_FIX_STATUS')):
             fixed_streak += 1
         else:
             fixed_streak = 0
@@ -6073,8 +6154,6 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
             _set_auto_base_progress("failed", step=2, total_steps=4, reason="RTK fix timeout")
             temp_client.stop()
             _cleanup_inject_queue(gnss_reader)
-            rtcm_stream_active_flag = saved_rtcm_flag
-            logging.info(f"AutoBase: Restored rtcm_stream_active_flag to {saved_rtcm_flag}")
             current_state = "ONLINE"
             await send_status(agent, mqtt_client)
             return
@@ -6106,7 +6185,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
             f"AutoBase: Override requested samples={configured_samples} -> fixed {samples_needed} samples / {averaging_seconds}s"
         )
     logging.info(
-        f"AutoBase: Stable RTK usable status confirmed ({fixed_streak_required}s, fixed/float). "
+        f"AutoBase: Stable RTK usable status confirmed ({fixed_streak_required}s, fixed). "
         f"Collecting up to {samples_needed} samples in {averaging_seconds}s..."
     )
     _set_auto_base_progress(
@@ -6121,12 +6200,13 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
     await send_status(agent, mqtt_client)
     
     coords = []
+    last_sample_ts = 0.0
     averaging_start = time.time()
     sample_deadline = averaging_start + averaging_seconds
     while len(coords) < samples_needed and time.time() < sample_deadline:
         elapsed = int(time.time() - averaging_start)
         await asyncio.sleep(1)
-        if not _is_rtk_usable_status(globals().get('LAST_GGA_FIX_STATUS')):
+        if not _get_fresh_outbound_gga(3.0) or not _is_rtk_usable_status(globals().get('LAST_GGA_FIX_STATUS')):
             _set_auto_base_progress(
                 "averaging",
                 step=3,
@@ -6139,8 +6219,10 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
             )
             continue
         coord = globals().get('LAST_GGA_COORD')
+        sample_ts = float(globals().get('LAST_RAW_GGA_TS') or 0.0)
         if (
-            coord
+            sample_ts > last_sample_ts
+            and coord
             and len(coord) >= 3
             and coord[0] is not None
             and coord[1] is not None
@@ -6148,6 +6230,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
             and -90.0 <= float(coord[0]) <= 90.0
             and -180.0 <= float(coord[1]) <= 180.0
         ):
+            last_sample_ts = sample_ts
             coords.append(coord)
             _set_auto_base_progress(
                 "averaging",
@@ -6171,8 +6254,6 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         )
         temp_client.stop()
         _cleanup_inject_queue(gnss_reader)
-        rtcm_stream_active_flag = saved_rtcm_flag
-        logging.info(f"AutoBase: Restored rtcm_stream_active_flag to {saved_rtcm_flag}")
         current_state = "ONLINE"
         await send_status(agent, mqtt_client)
         return
@@ -6281,6 +6362,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         await _apply_base_mode_to_chip(chip_type, port, avg_lat, avg_lon, avg_alt, gnss_reader)
     except Exception as e:
         logging.error(f"AutoBase: Failed to set BASE mode: {e}")
+        raise
              
     # Save base config in agent
     agent.config['base_config'] = {
@@ -6311,9 +6393,8 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         'samples_collected': len(coords),
         'timestamp': int(time.time())
     }
+    agent.config['gnss_config_pending'] = False
     agent.save_config()
-    rtcm_stream_active_flag = saved_rtcm_flag
-    logging.info(f"AutoBase: Restored rtcm_stream_active_flag to {saved_rtcm_flag}")
     
     # Disable auto_base_setup so it doesn't restart on reboot
     agent.config['auto_base_setup'] = {"enabled": False}
@@ -6335,7 +6416,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
 # === MAIN FUNCTION                                                         ===
 # ==============================================================================
 async def main():
-    global current_state, agent, MACHINE_SERIAL
+    global current_state, agent, MACHINE_SERIAL, active_auto_base_task
     logging.info(f"Agent script path: {os.path.abspath(__file__)}")
     logging.info(f"Parser debug default: enabled={PARSER_DEBUG_ENABLED} interval={PARSER_DEBUG_INTERVAL_SECONDS}s")
     
@@ -6458,7 +6539,14 @@ async def main():
     status_task = asyncio.create_task(status_publisher_task(agent, mqtt_client))
     ws_task = asyncio.create_task(websocket_task(agent, gnss_reader, mqtt_client))
     control_plane_task = asyncio.create_task(control_plane_watchdog_task(agent))
-    auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
+
+    async def run_startup_auto_base(task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            logging.info("Startup Auto Base task cancelled")
+
+    active_auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
     mem_guard_task = asyncio.create_task(memory_guard_task())
     
     try:
@@ -6466,7 +6554,7 @@ async def main():
             status_task,
             ws_task,
             control_plane_task,
-            auto_base_task,
+            run_startup_auto_base(active_auto_base_task),
             mem_guard_task,
         )
     except asyncio.CancelledError:
