@@ -36,10 +36,19 @@ function collect(tree, nodes = []) {
   else if (tree && typeof tree === 'object') { nodes.push(tree); collect(tree.children, nodes); }
   return nodes;
 }
-function render() {
+function render(devices = []) {
   cursor = 0; effectCursor = 0;
-  return collect(window.AllStationsMap({ devices: [], currentUser: { role: 'admin' } }));
+  return collect(window.AllStationsMap({ devices, currentUser: { role: 'admin' } }));
 }
+const connectionCases = [
+  {status: 'online'}, {status: 'sleep'}, {status: 'streaming'}, {status: 'starting'},
+  {status: 'online', is_locked: true}, {status: 'offline'}, {status: 'lost'},
+  {status: 'offline', is_locked: true},
+];
+const connectionHeading = render(connectionCases).find(node =>
+  node.props.className === 'fw-bold mb-1' && node.children[0] === 'Base của mình · ');
+assert.equal(connectionHeading.children.join(''), 'Base của mình · 5/8 online',
+  'Sleep and starting remain connected; locking does not change actual connectivity');
 for (let cycle = 0; cycle < 3; cycle++) {
   let nodes = render();
   const initialCanvas = nodes.find(node => node.props.className === 'station-map-canvas');

@@ -347,7 +347,9 @@
                 .map(station => ({...station, serviceHealth: vngeonetHealth, serviceColor: referenceNetworkMeta(vngeonetHealth).color})) : [];
         }, [showVngeonet, search, vngeonetHealth]);
         const referenceMeta = referenceNetworkMeta(vngeonetHealth);
-        const ownOnlineCount = devices.filter(device => ['online', 'streaming'].includes(effectiveStatus(device))).length;
+        const ownOnlineCount = devices.filter(device => !['offline', 'lost'].includes(
+            window.CorsDashboardShared?.getMapEffectiveStatus?.(device) || String(device?.status || 'offline').toLowerCase()
+        )).length;
 
         useEffect(() => {
             let isMounted = true;
