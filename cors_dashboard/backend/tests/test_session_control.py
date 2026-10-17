@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from types import SimpleNamespace
 from datetime import timedelta
 import time
+import os
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
@@ -15,6 +16,34 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         auth.REVOKED_SESSIONS.clear()
         auth.BLOCKED_DEVICES.clear()
         auth.SESSION_LAST_ACTIVE_CACHE.clear()
+
+    @unittest.skipUnless(hasattr(time, "tzset"), "Requires process timezone support")
+    async def test_viewer_activity_uses_epoch_seconds_in_every_timezone(self):
+        token = auth.create_access_token(
+            data={"sub": "viewer", "role": "viewer", "sid": "sess_viewer"},
+            expires_delta=timedelta(minutes=30),
+        )
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        viewer = models.User(id=2, username="viewer", role="viewer", is_active=True)
+        try:
+            for zone in ("UTC", "Asia/Ho_Chi_Minh"):
+                with self.subTest(timezone=zone), patch.dict(os.environ, {"TZ": zone}):
+                    time.tzset()
+                    auth.SESSION_LAST_ACTIVE_CACHE.clear()
+                    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+                    before = int(time.time())
+                    with patch("app.crud.get_user_by_username", AsyncMock(return_value=viewer)):
+                        self.assertIs(await auth.get_current_user(credentials=credentials, db=db), viewer)
+                        statement = db.execute.await_args.args[0]
+                        recorded = statement.compile().params["last_active_at"]
+                        self.assertGreaterEqual(recorded, before)
+                        self.assertLessEqual(recorded, int(time.time()))
+                        db.commit.assert_awaited_once()
+                        # Repeated requests keep the existing database-write throttle.
+                        await auth.get_current_user(credentials=credentials, db=db)
+                        db.execute.assert_awaited_once()
+        finally:
+            time.tzset()
 
     def test_in_memory_tracking_revoked_session(self):
         session_id = "sess_test_123"

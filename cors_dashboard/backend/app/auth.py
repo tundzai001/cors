@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import secrets
+import time
 
 from dotenv import load_dotenv
 
@@ -179,7 +180,7 @@ async def sync_auth_session_cache(db: AsyncSession):
         for did in b_res.scalars().all():
             BLOCKED_DEVICES.add(did)
 
-        cutoff = int(datetime.utcnow().timestamp()) - 86400 * 7
+        cutoff = int(time.time()) - 86400 * 7
         s_res = await db.execute(
             select(models.UserSession.session_id).filter(
                 models.UserSession.is_revoked == True,
@@ -230,7 +231,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is disabled")
 
     if sid:
-        now = datetime.utcnow().timestamp()
+        now = time.time()
         if now - SESSION_LAST_ACTIVE_CACHE.get(sid, 0) > 60:
             SESSION_LAST_ACTIVE_CACHE[sid] = now
             try:
