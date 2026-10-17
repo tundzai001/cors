@@ -275,7 +275,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [latitude, setLatitude] = useState('');
     const [longitude, setLongitude] = useState('');
     const [altitude, setAltitude] = useState('');
-    const [fixedAccuracyMm, setFixedAccuracyMm] = useState('10'); // Đơn vị mm cho Fixed
+    const [fixedAccuracyCm, setFixedAccuracyCm] = useState('1'); // Centimeters in the form; API and stored accuracy use meters.
 
     // CORS connection for Auto Base (kept in this form only; never read from .env)
     const [corsHost, setCorsHost] = useState('');
@@ -311,7 +311,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setLatitude('');
         setLongitude('');
         setAltitude('');
-        setFixedAccuracyMm('10');
+        setFixedAccuracyCm('1');
         setCorsHost('');
         setCorsPort('2101');
         setCorsUsername('');
@@ -347,9 +347,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 setLongitude(coords.lon ?? '');
                 setAltitude(coords.alt ?? '');
             }
-            // Load Accuracy cho Fixed (Lưu trong DB là mét -> Đổi ra mm để hiển thị)
+            // Convert stored meters to centimeters without rounding away sub-centimeter values.
             if (config.accuracy !== undefined) {
-                setFixedAccuracyMm(String(Math.round(config.accuracy * 1000)));
+                setFixedAccuracyCm(String(Number((Number(config.accuracy) * 100).toFixed(2))));
             }
 
             // Load Survey-In Params
@@ -476,8 +476,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     lon: lonStr,
                     alt: String(altitude).trim() || '0'
                 };
-                // Fixed: Input là mm -> Chia 1000 để thành m gửi cho backend
-                params.accuracy = parseFloat(fixedAccuracyMm || '10') / 1000.0;
+                // Fixed accuracy is entered in centimeters and sent to the API in meters.
+                params.accuracy = parseFloat(fixedAccuracyCm || '1') / 100.0;
             } else if (method === 'SURVEY_IN') {
                 params.survey_in_duration = parseInt(svinDuration);
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
@@ -961,13 +961,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             />
                         </div>
                         <div className="col-md-6">
-                            <label className="form-label fw-bold">Giới hạn sai số (mm)</label>
+                            <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác 3D của tọa độ Base (cm)</label>
                             <input
-                                type="number" className="form-control"
-                                value={fixedAccuracyMm} onChange={(e) => setFixedAccuracyMm(e.target.value)}
-                                required placeholder="Ví dụ: 10"
+                                id={`base-accuracy-${device.serial}`}
+                                type="number" className="form-control" min="0.1" max="1000000" step="0.01"
+                                aria-describedby={`base-accuracy-help-${device.serial}`}
+                                value={fixedAccuracyCm} onChange={(e) => setFixedAccuracyCm(e.target.value)}
+                                required placeholder="Ví dụ: 5"
                             />
-                            <div className="form-text">Đơn vị: Milimet (Thường để 5mm - 20mm)</div>
+                            <div id={`base-accuracy-help-${device.serial}`} className="form-text">Theo độ chính xác của tọa độ gốc từ kết quả đo/mốc chuẩn. Ví dụ: sai số 5 cm thì nhập 5. Giảm giá trị không làm tọa độ chính xác hơn.</div>
                         </div>
                     </div>
                 ) : (

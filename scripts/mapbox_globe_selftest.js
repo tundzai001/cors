@@ -15,7 +15,7 @@ const maps = [];
 let watchdog;
 class FakeMap {
     constructor(options) { this.options = options; this.center = { lng: options.center[0], lat: options.center[1] }; this.zoom = options.zoom; this.events = {}; this.sources = {}; this.layers = {}; this.moves = []; this.canvas = new Element(); this.scrollZoom = { setWheelZoomRate() {} }; maps.push(this); }
-    on(type, ...args) { (this.events[type] ||= []).push(args.at(-1)); }
+    on(type, ...args) { (this.events[type] ||= []).push(args.at(-1)); if (args.length > 1) (this.layerEvents ||= {})[`${type}:${args[0]}`] = args.at(-1); }
     emit(type, data = {}) { (this.events[type] || []).forEach(callback => callback(data)); }
     addControl() {} setFog() {}
     hasImage(id) { return Boolean(this.images?.[id]); }
@@ -55,18 +55,46 @@ const window = {
     matchMedia: () => ({ matches: false }), addEventListener() {}, removeEventListener() {},
     apiFetch: async () => ({ ok: true, json: async () => ({ mapbox_public_token: 'pk.test' }) }),
 };
+vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors_dashboard/frontend/js/dist/vngeonet-stations.min.js'), 'utf8'), { window });
+const referenceStations = window.VngeonetStations;
+assert.equal(referenceStations.length, 65, '66 input rows contain 65 unique VNGEONET stations');
+assert.equal(new Set(referenceStations.map(station => station.code)).size, 65);
+assert.equal(referenceStations.find(station => station.code === 'TQUA').lat, 21.8237045, 'retain the more precise first duplicate');
+assert(referenceStations.every(station => Number.isFinite(station.lat) && Number.isFinite(station.lon)
+    && station.lat >= 6 && station.lat <= 24 && station.lon >= 102 && station.lon <= 118));
 const document = { hidden: false, createElement: () => new Element(), addEventListener() {}, removeEventListener() {} };
 vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors_dashboard/src/js/mapbox-globe-view.js'), 'utf8'), { window, document, console, setTimeout: (callback, delay) => { if (delay === 15000) watchdog = callback; return setTimeout(callback, delay); }, clearTimeout });
 (async () => {
     const view = window.MapboxGlobeView;
     const container = new Element();
     const stations = [{ device: { serial: 'PI_real', name: 'Actual station' }, coords: { lat: 16, lon: 108 }, status: 'sleep' }];
-    await view.attach(container, { stations });
+    await view.attach(container, { stations, referenceStationPopup: station => `VNGEONET ${station.code}` });
     const map = view.map;
     assert.equal(map.options.accessToken, 'pk.test', 'globe uses the backend configuration');
     assert.equal(map.options.projection, 'globe');
     map.emit('style.load'); map.emit('load');
     assert.equal(map.getSource('cors-stations').data.features[0].properties.serial, 'PI_real', 'real station data reaches Mapbox');
+    view.updateLayers({ referenceStations });
+    assert.equal(map.getSource('cors-vngeonet').data.features.length, 65);
+    const hanoi = map.getSource('cors-vngeonet').data.features.find(feature => feature.properties.code === 'HNOI');
+    assert.deepEqual(Array.from(hanoi.geometry.coordinates), [105.7837116, 21.0454262], 'GeoJSON uses longitude then latitude');
+    assert.equal(hanoi.properties.status, undefined, 'reference stations do not invent a live status');
+    assert.equal(map.getSource('cors-stations').data.features.length, 1, 'reference points do not inflate managed station counts');
+    assert.equal(map.getLayer('cors-vngeonet-pins').paint['circle-color'], '#a78bfa');
+    map.layerEvents['click:cors-vngeonet-pins']({ features: [{ properties: { code: 'HNOI' } }] });
+    assert.equal(view.popup.content.innerHTML, 'VNGEONET HNOI');
+    assert.deepEqual(Array.from(view.popup.lngLat), [105.7837116, 21.0454262]);
+    const queryFeatures = map.queryRenderedFeatures;
+    map.queryRenderedFeatures = (point, options) => options.layers.includes('cors-vngeonet-pins') ? [{}] : [];
+    assert(view._hasPointFeature({ point: {} }), 'reference markers must suppress province popups');
+    view._mapClick({ point: {} });
+    assert.equal(view.popup.content.innerHTML, 'VNGEONET HNOI', 'generic map clicks must not replace reference popups');
+    map.queryRenderedFeatures = queryFeatures;
+
+    view.updateLayers({ referenceStations: [] });
+    assert.equal(map.getSource('cors-vngeonet').data.features.length, 0, 'reference overlay can be hidden');
+    view.updateLayers({ referenceStations });
+
     assert.equal(map.moves.length, 0, 'station map does not start an unsolicited flight');
     assert.equal(map.getLayer('cors-rover-pins').type, 'symbol', 'rovers retain triangular icons');
     assert.equal(map.getSource('cors-rovers').cluster, false, 'rover clustering is disabled');
@@ -104,6 +132,7 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     view.updateLayers({ tileMode: 'streets' });
     assert.equal(map.styleOptions.diff, false, 'base-style change avoids unsupported sprite diff');
     assert.equal(map.getSource('cors-rovers').data.features.length, 1, 'style reload restores custom data');
+    assert.equal(map.getSource('cors-vngeonet').data.features.length, 65, 'style reload restores VNGEONET');
     assert.equal(map.getSource('cors-coverage').data.features.length, 1);
     view.setMeasureEnabled(true);
     const measure = map.getSource('cors-measure');

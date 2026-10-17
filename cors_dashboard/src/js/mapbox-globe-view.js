@@ -105,6 +105,19 @@
                     const station = this.stations.find(item => item.device.serial === serial);
                     if (station) this._openStation(station);
                 });
+                for (const layerId of ['cors-vngeonet-pins', 'cors-vngeonet-labels']) {
+                    map.on('click', layerId, event => {
+                        if (this.measureEnabled) return;
+                        const code = event.features?.[0]?.properties?.code;
+                        const station = this.layerState?.referenceStations?.find(item => item.code === code);
+                        if (!station || !this.options.referenceStationPopup) return;
+                        const content = document.createElement('div');
+                        content.innerHTML = this.options.referenceStationPopup(station);
+                        this._popup(content, [station.lon, station.lat]);
+                    });
+                    map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = this.measureEnabled ? 'crosshair' : 'pointer'; });
+                    map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = this.measureEnabled ? 'crosshair' : ''; });
+                }
                 map.on('mouseenter', 'cors-station-pins', () => { map.getCanvas().style.cursor = 'pointer'; });
                 map.on('mouseleave', 'cors-station-pins', () => { map.getCanvas().style.cursor = ''; });
                 map.on('load', () => {
@@ -313,7 +326,7 @@
         _installLayers() {
             const map = this.map;
             const empty = { type: 'FeatureCollection', features: [] };
-            for (const id of ['cors-coverage', 'cors-provinces', 'cors-mask', 'cors-search', 'cors-measure', 'cors-gnss', 'cors-islands']) map.addSource(id, { type: 'geojson', data: { ...empty, features: this.featureData?.[id] || [] } });
+            for (const id of ['cors-coverage', 'cors-provinces', 'cors-mask', 'cors-search', 'cors-measure', 'cors-gnss', 'cors-islands', 'cors-vngeonet']) map.addSource(id, { type: 'geojson', data: { ...empty, features: this.featureData?.[id] || [] } });
             map.addSource('cors-rovers', { type: 'geojson', data: empty, cluster: false });
             const before = 'cors-station-selected';
             const layer = (id, type, source, paint, filter) => map.addLayer({ id, type, source, paint, ...(filter ? { filter } : {}) }, before);
@@ -335,6 +348,13 @@
             layer('cors-gnss-points', 'circle', 'cors-gnss', { 'circle-color': ['get', 'color'], 'circle-radius': ['case', ['get', 'tracked'], 6, 3], 'circle-stroke-width': 1, 'circle-stroke-color': '#0f172a' }, ['==', ['get', 'kind'], 'satellite']);
             map.addLayer({ id: 'cors-gnss-labels', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'satellite'], layout: { 'text-field': ['get', 'code'], 'text-size': 12, 'text-offset': [0, 1.2] }, paint: { 'text-color': '#f8fafc', 'text-halo-color': '#0f172a', 'text-halo-width': 1.5 } });
             map.addLayer({ id: 'cors-island-labels', type: 'symbol', source: 'cors-islands', minzoom: 2, layout: { 'text-field': ['get', 'name'], 'text-size': ['interpolate', ['linear'], ['zoom'], 2, 12, 7, 16], 'text-offset': [0, 0], 'text-anchor': 'center', 'text-line-height': 1.35, 'text-max-width': 16, 'text-allow-overlap': true }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#075985', 'text-halo-width': 2.5 } });
+            layer('cors-vngeonet-pins', 'circle', 'cors-vngeonet', {
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 3, 8, 6],
+                'circle-color': '#a78bfa', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2,
+            });
+            map.addLayer({ id: 'cors-vngeonet-labels', type: 'symbol', source: 'cors-vngeonet', minzoom: 7,
+                layout: { 'text-field': ['get', 'code'], 'text-size': 12, 'text-offset': [0, 1.3] },
+                paint: { 'text-color': '#ddd6fe', 'text-halo-color': '#0f172a', 'text-halo-width': 2 } });
             this._installMarkerImages();
             map.addLayer({ id: 'cors-gnss-ipp', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'ipp'], layout: { 'icon-image': 'cors-ipp', 'icon-size': 0.6, 'icon-allow-overlap': true } });
             map.addLayer({ id: 'cors-rover-pins', type: 'symbol', source: 'cors-rovers', layout: { 'icon-image': ['match', ['get', 'color'], '#22c55e', 'cors-rover-fixed', '#38bdf8', 'cors-rover-float', '#ef4444', 'cors-rover-3d', 'cors-rover-unknown'], 'icon-size': 1, 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
@@ -362,6 +382,10 @@
             this.layerState = { ...this.layerState, ...state };
             if (!this.active || !this.map?.getSource('cors-rovers')) return;
             const s = this.layerState;
+            this._data('cors-vngeonet', (s.referenceStations || []).map(station => ({
+                type: 'Feature', geometry: { type: 'Point', coordinates: [station.lon, station.lat] },
+                properties: { code: station.code, network: 'VNGEONET' },
+            })));
             this._data('cors-rovers', (s.rovers || []).map(rover => {
                 const meta = window.StationsMapUtils.getRoverStatusMeta(rover.status);
                 return { type: 'Feature', geometry: { type: 'Point', coordinates: [Number(rover.longitude), Number(rover.latitude)] }, properties: { username: rover.username || '', mountpoint: rover.mountpoint || '', nsv: rover.nsv || 0, statusLabel: meta.label, color: meta.color } };
@@ -477,10 +501,10 @@
             if (this.map) this.map.getCanvas().style.cursor = enabled ? 'crosshair' : '';
         }
         _hasPointFeature(event) {
-            return this.map.queryRenderedFeatures(event.point, { layers: ['cors-station-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length > 0;
+            return this.map.queryRenderedFeatures(event.point, { layers: ['cors-vngeonet-pins', 'cors-vngeonet-labels', 'cors-station-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length > 0;
         }
         _mapClick(event) {
-            if (!this.measureEnabled && this.map.queryRenderedFeatures(event.point, { layers: ['cors-station-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-provinces-fill', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length) return;
+            if (!this.measureEnabled && this.map.queryRenderedFeatures(event.point, { layers: ['cors-vngeonet-pins', 'cors-vngeonet-labels', 'cors-station-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-provinces-fill', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length) return;
             if (this.measureEnabled) {
                 const point = [event.lngLat.lng, event.lngLat.lat];
                 this.measurePoints.push(point);

@@ -151,6 +151,18 @@
         `;
     }
 
+    function referenceStationPopup(station) {
+        return `<div class="station-map-popup">
+            <div class="station-map-popup-title">VNGEONET · ${escapeHtml(station.code)}</div>
+            <div class="text-muted small">Trạm tham khảo</div>
+            <div class="station-map-popup-grid">
+                <span class="station-map-popup-label">Lat/Lon</span>
+                <span class="station-map-popup-value">${station.lat.toFixed(7)}, ${station.lon.toFixed(7)}</span>
+            </div>
+            <div class="small mt-2">Chưa có trạng thái trực tiếp</div>
+        </div>`;
+    }
+
     function provincePopupHtml(feature, stations) {
         const p = feature.properties || {};
         const inProvince = stations.filter(s =>
@@ -193,6 +205,7 @@
         const sovereigntyMarkersRef = useRef([]);
         const [coverage, setCoverage] = useState(false);
         const [showStations, setShowStations] = useState(true);
+        const [showVngeonet, setShowVngeonet] = useState(true);
         const [showRovers, setShowRovers] = useState(true);
         const [showProvinces, setShowProvinces] = useState(true);
         const [showVietnamMask, setShowVietnamMask] = useState(false);
@@ -283,6 +296,12 @@
                 .filter(item => statusFilters[item.status === 'streaming' ? 'online' : item.status] !== false)
                 .filter(item => !term || `${item.device.name || ''} ${item.device.serial || ''} ${item.traffic.mountpoint || ''}`.toLowerCase().includes(term));
         }, [devices, search, statusFilters, showStations]);
+
+        const referenceStations = useMemo(() => {
+            const term = search.trim().toLowerCase();
+            return showVngeonet ? (window.VngeonetStations || []).filter(station =>
+                !term || `vngeonet ${station.code}`.toLowerCase().includes(term)) : [];
+        }, [showVngeonet, search]);
 
         useEffect(() => {
             let isMounted = true;
@@ -577,6 +596,7 @@
                 },
                 onSpinChange: setMapboxSpinning,
                 stationPopup: item => popupHtml(item.device, item.status, item.traffic),
+                referenceStationPopup,
                 provincePopup: provincePopupHtml,
                 onOpenDetail: serial => {
                     window.selectDashboardDevice?.(serial);
@@ -623,10 +643,10 @@
         useEffect(() => {
             if (mapEngine !== 'mapbox' || !mapReady) return;
             window.MapboxGlobeView?.updateLayers({
-                rovers: visibleRovers, coverage, provinces: provincesDataRef.current,
+                rovers: visibleRovers, referenceStations, coverage, provinces: provincesDataRef.current,
                 showProvinces, showVietnamMask, showIonosphere, ionosphereMode, ionosphereOpacity, tileMode,
             });
-        }, [mapEngine, mapReady, visibleRovers, coverage, provincesLoaded, showProvinces, showVietnamMask, showIonosphere, ionosphereMode, ionosphereOpacity, tileMode]);
+        }, [mapEngine, mapReady, visibleRovers, referenceStations, coverage, provincesLoaded, showProvinces, showVietnamMask, showIonosphere, ionosphereMode, ionosphereOpacity, tileMode]);
 
         useEffect(() => {
             if (mapEngine !== 'mapbox' || !mapReady || (mapEngine !== 'mapbox' && useOrbitView)) return;
@@ -872,6 +892,21 @@
             Object.values(map.__tiles).forEach(layer => map.removeLayer(layer));
             map.__tiles[tileMode].addTo(map);
         }, [tileMode, mapEngine, mapReady]);
+
+        useEffect(() => {
+            const map = mapRef.current;
+            const L = window.CorsDashboardShared?.getLeaflet?.();
+            if (mapEngine !== 'leaflet' || !mapReady || !map || !L) return;
+            const layer = L.layerGroup().addTo(map);
+            referenceStations.forEach(station => {
+                L.circleMarker([station.lat, station.lon], {
+                    radius: 6, color: '#ffffff', weight: 2,
+                    fillColor: '#a78bfa', fillOpacity: 0.95,
+                }).bindTooltip(`VNGEONET · ${station.code}`, { direction: 'top' })
+                    .bindPopup(referenceStationPopup(station), { maxWidth: 300 }).addTo(layer);
+            });
+            return () => { if (map.hasLayer(layer)) map.removeLayer(layer); };
+        }, [referenceStations, mapEngine, mapReady]);
 
         useEffect(() => {
             const map = mapRef.current;
@@ -1138,6 +1173,15 @@
                             <label className="form-check-label" htmlFor="station-toggle">Trạm CORS</label>
                         </div>
                         <div className="form-check form-switch mb-2">
+                            <input className="form-check-input" type="checkbox" checked={showVngeonet}
+                                onChange={e => setShowVngeonet(e.target.checked)} id="vngeonet-toggle"
+                                disabled={!window.VngeonetStations?.length} aria-describedby="vngeonet-help" />
+                            <label className="form-check-label" htmlFor="vngeonet-toggle">VNGEONET ({window.VngeonetStations?.length || 0})</label>
+                            <div className="form-text" id="vngeonet-help">
+                                {window.VngeonetStations?.length ? 'Trạm tham khảo · chưa có trạng thái trực tiếp' : 'Không tải được danh sách VNGEONET'}
+                            </div>
+                        </div>
+                        <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={coverage} onChange={e => setCoverage(e.target.checked)} id="coverage-toggle" />
                             <label className="form-check-label" htmlFor="coverage-toggle">Vùng phủ 20 km</label>
                         </div>
@@ -1228,6 +1272,7 @@
                         <div className="station-map-legend-row"><span className="station-map-dot offline"></span>Offline</div>
                         <div className="station-map-legend-row"><span className="station-map-dot locked"></span>Locked</div>
                         <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
+                        {showVngeonet && <div className="station-map-legend-row"><span className="station-map-dot" style={{ background: '#a78bfa' }}></span>VNGEONET ({referenceStations.length})</div>}
                     </div>
                 )}
 
