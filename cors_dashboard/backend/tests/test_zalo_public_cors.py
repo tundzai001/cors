@@ -148,7 +148,8 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
     async def test_webhook_public_calls_reply_without_sdk_dispatch_or_base_permissions(self):
         cases = ("/cors", "/cors cục đang thế nào", "@Bot Cors manager /cors",
                  "@Bot Cors manager /cors cục đang thế nào", "/cors@Bot", "/CORS",
-                 "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "/help", "tình trạng Cục",
+                 "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "tình trạng Cục",
+                 "corsc cục hnay đo được k mọi người", "cors cuc hnay do dc k mn",
                  "cuc sap chua", "CORS Cục đang thế nào?", "kiểm tra VNGEONET",
                  "Cục còn sống không", "14.238.1.125 đang online không?")
         for text in cases:
@@ -187,6 +188,53 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(handler.await_count, 6)
         for text in ("base đang thế nào", "rover online không", "rover Cục đang lỗi", "xóa rover cuc", "/station cuc", "@Bot Cors manager kiểm tra base Hà Nội"):
             self.assertFalse(bot_module._is_cors_status_question(text), text)
+
+    async def test_public_menu_only_lists_public_health_and_passes_cors_delivery_policy(self):
+        for command in ("/menu", "@Bot Cors manager /menu", "/help", "/start"):
+            with self.subTest(command=command):
+                service = bot_module.ZaloBotService()
+                send = AsyncMock(return_value={"ok":True})
+                service.app = SimpleNamespace(bot=SimpleNamespace(send_message=send), process_update=AsyncMock())
+                service._install_send_trace()
+                service._hydrate_conversation_state = AsyncMock(return_value=None)
+                principal = zalo_assistant.ZaloPrincipal("test-chat", "test-sender", "group", None, None, None, None, frozenset(), False)
+                def parse(payload, bot):
+                    update = self.update(payload["message"]["text"])
+                    update.message.reply_text = lambda text: bot.send_message(chat_id="test-chat", text=text)
+                    return update
+                with patch.object(bot_module, "ZALO_AVAILABLE", True), patch.object(bot_module.settings, "ENABLE_ZALO_BOT", True), patch.object(
+                    bot_module, "Update", SimpleNamespace(de_json=parse), create=True
+                ), patch.object(bot_module.zalo_repository, "is_chat_paused", AsyncMock(return_value=False)), patch.object(
+                    bot_module.zalo_repository, "resolve_principal", AsyncMock(return_value=principal)
+                ), patch.object(bot_module.zalo_repository, "remember_cors_chat", AsyncMock(return_value=True)), patch.object(
+                    bot_module.zalo_repository, "chat_delivery_policy", AsyncMock(return_value={"active":True,"mode":"cors_only","cors_notify_changes":False})
+                ), patch("app.reference_network.get_network_status", AsyncMock()) as probe:
+                    result = await service.process_webhook_payload({"message":{"text":command}})
+                self.assertEqual(result["status"], "dispatched")
+                send.assert_awaited_once()
+                menu = send.await_args.kwargs["text"]
+                self.assertIn("MENU CÔNG KHAI", menu)
+                self.assertIn("/cors", menu)
+                self.assertNotIn("/register", menu)
+                self.assertNotIn("/station", menu)
+                self.assertNotIn("/rover", menu)
+                probe.assert_not_awaited()
+                service.app.process_update.assert_not_awaited()
+
+    async def test_public_menu_handlers_work_for_unlinked_private_chat_and_respect_pause(self):
+        service = bot_module.ZaloBotService()
+        principal = zalo_assistant.ZaloPrincipal("test-chat", "test-sender", "private", None, None, None, None, frozenset(), False)
+        with patch.object(service, "_resolve_principal", AsyncMock(return_value=principal)), patch.object(
+            bot_module.zalo_repository, "remember_cors_chat", AsyncMock(return_value=True)
+        ):
+            for handler in (service._menu_cmd, service._help_cmd, service._start_cmd):
+                update = self.update("/menu", "private")
+                await handler(update, None)
+                self.assertIn("MENU CÔNG KHAI", update.message.reply_text.await_args.args[0])
+        update = self.update("/menu")
+        with patch.object(bot_module.zalo_repository, "remember_cors_chat", AsyncMock(return_value=False)):
+            await service._public_menu_cmd(update, None)
+        update.message.reply_text.assert_not_awaited()
 
     async def test_webhook_still_rejects_protected_base_command_in_unlinked_group(self):
         service, update = bot_module.ZaloBotService(), self.update("/status")

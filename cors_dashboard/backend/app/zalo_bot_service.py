@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261017-natural-cors-status-v12"
+ZALO_TRACE_VERSION = "20261017-public-menu-v13"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -100,7 +100,8 @@ def _is_cors_status_question(text: str) -> bool:
     return bool(re.search(
         r"\b(?:tinh trang|tinh hinh|trang thai|the nao|ra sao|sap|song|chet|loi|"
         r"on|online|offline|hoat dong|ket noi|chay|kiem tra|check|status|mat|ngat|"
-        r"sao roi|bi gi|co van de|su co|dung duoc|down|up)\b",
+        r"sao roi|bi gi|co van de|su co|dung (?:duoc|dc|dk)|"
+        r"do (?:duoc|dc|dk|on|khong|ko|k)|co do|ok|down|up)\b",
         words,
     ))
 
@@ -827,18 +828,17 @@ class ZaloBotService:
             command = text.split(maxsplit=1)[0].lower() if text else ""
             command = command.split("@", 1)[0].rstrip("\u200b\u200c\u200d\ufeff")
             public_cors = command == "/cors" or _is_cors_status_question(text)
+            public_menu = False
             if self._get_chat_type(update) == "group":
                 principal = await zalo_repository.resolve_principal(
                     self._get_chat_id(update), self._get_sender_id(update), "group"
                 )
                 # New groups can call the bot by mention (for example '@Bot helo')
                 # or ask for help without acquiring any Base permissions.
-                if not principal.is_linked and (
-                    (text.startswith("@") and "/" not in text)
-                    or command in {"/start", "/help", "/menu"}
-                ):
+                public_menu = not principal.is_linked and command in {"/start", "/help", "/menu"}
+                if not principal.is_linked and text.startswith("@") and "/" not in text:
                     public_cors = True
-                if not principal.is_linked and not public_cors and command != "/register":
+                if not principal.is_linked and not (public_cors or public_menu) and command != "/register":
                     event["status"] = "rejected_unlinked_group"
                     event["dispatch_method"] = None
                     guidance_token = self._allow_revoked_outbound.set(True)
@@ -866,7 +866,10 @@ class ZaloBotService:
                     revoked_outbound_token = self._allow_revoked_outbound.set(True)
 
             dispatch_method = None
-            if public_cors:
+            if public_menu:
+                dispatch_method = "public_menu"
+                await self._public_menu_cmd(update, None)
+            elif public_cors:
                 dispatch_method = "public_cors"
                 await self._cors_cmd(update, None)
             elif hasattr(self.app, "process_update"):
@@ -2642,6 +2645,9 @@ class ZaloBotService:
         sender_id = self._get_sender_id(update)
         chat_type = self._get_chat_type(update)
         principal = await self._resolve_principal(update)
+        if not principal.is_linked:
+            await self._public_menu_cmd(update, context)
+            return
         logger.info(
             "Zalo /start chat_id=%s sender_id=%s chat_type=%s binding=%s role=%s",
             chat_id, sender_id, chat_type, principal.binding_type, principal.role,
@@ -2736,7 +2742,31 @@ class ZaloBotService:
                 logger.warning("CORS Cục monitor failed: %s", exc)
             await asyncio.sleep(30)
 
+    async def _public_menu_cmd(self, update: Update, context):
+        chat_id = self._get_chat_id(update)
+        if chat_id in self._revoked_chat_ids or not await zalo_repository.remember_cors_chat(
+            chat_id, self._get_chat_type(update), self._get_display_name(update)
+        ):
+            return
+        token = self._cors_outbound.set("reply")
+        try:
+            await update.message.reply_text(
+                "📋 MENU CÔNG KHAI · CORS CỤC\n"
+                "Không cần liên kết tài khoản.\n\n"
+                "• Hỏi tình trạng Cục: /cors\n"
+                "• Hoặc nhắn tự nhiên: “tình trạng Cục”, “Cục sập chưa”, "
+                "“cors cục hnay đo được k mọi người”.\n"
+                "• /menu hoặc /help — Xem hướng dẫn này.\n\n"
+                "Trong nhóm, nhắc @bot kèm câu hỏi nếu Zalo yêu cầu.\n"
+                "Kết quả kiểm tra trang dịch vụ Cục; chưa xác nhận tín hiệu RTCM từng trạm."
+            )
+        finally:
+            self._cors_outbound.reset(token)
+
     async def _help_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not (await self._resolve_principal(update)).is_linked:
+            await self._public_menu_cmd(update, context)
+            return
         text = (
             "💡 HƯỚNG DẪN BOT CORS\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -2754,15 +2784,8 @@ class ZaloBotService:
 
     async def _menu_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         principal = await self._resolve_principal(update)
-        chat_type = self._get_chat_type(update)
         if not principal.is_linked:
-            join_cmd = "/register <mã group>" if chat_type == "group" else "/link <mã dashboard>"
-            await update.message.reply_text(
-                "📋 MENU BOT CORS\n"
-                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Chat này chưa liên kết. Dùng {join_cmd}.\n"
-                "/help — Hướng dẫn cách dùng"
-            )
+            await self._public_menu_cmd(update, context)
             return
 
         lines = [
