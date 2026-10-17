@@ -708,6 +708,9 @@ async def configure_integration_station_chip(
 from .map_routes import get_public_network_summary_router
 app.include_router(get_public_network_summary_router)
 
+from .reference_network import router as reference_network_router
+app.include_router(reference_network_router)
+
 
 from .caster_routes import router as caster_router
 app.include_router(caster_router)

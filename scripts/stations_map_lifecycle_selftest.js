@@ -29,7 +29,7 @@ const projections = [];
 const window = { MapboxGlobeView: { setProjection: value => projections.push(value) }, Globe3DView: { getSurfaceView: () => null } };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/vngeonet-stations.min.js'), 'utf8'), { window });
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/stations-map.min.js'), 'utf8'), {
-  React, window, console, navigator: {}, document: { visibilityState: 'hidden' }, fetch: async () => ({ ok: true, json: async () => [] }), Date, setTimeout: () => 1, clearTimeout, setInterval: () => 1, clearInterval() {},
+  React, window, console, navigator: {}, document: { visibilityState: 'hidden', addEventListener() {}, removeEventListener() {} }, AbortController, fetch: async () => ({ ok: true, json: async () => [] }), Date, setTimeout: () => 1, clearTimeout, setInterval: () => 1, clearInterval() {},
 });
 function collect(tree, nodes = []) {
   if (Array.isArray(tree)) tree.forEach(node => collect(node, nodes));
@@ -171,7 +171,16 @@ assert.equal(fallbackMaps[0].zoom, 10, 'fallback preserves camera');
 const vngeonetGroup = fallbackGroups.find(group => group.markers.length === 65);
 assert.ok(vngeonetGroup, 'Leaflet fallback renders all VNGEONET reference markers');
 assert(vngeonetGroup.markers[0].tooltip.includes('VNGEONET'));
-assert(vngeonetGroup.markers[0].popup.includes('Chưa có trạng thái trực tiếp'));
+assert(vngeonetGroup.markers[0].popup.includes('RTCM từng trạm: chưa công bố'));
+assert(vngeonetGroup.markers[0].popup.includes('CORS Cục'));
+const helpers = {Date, escapeHtml: value => String(value || '').replaceAll('<', '&lt;')};
+const mapSource = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/stations-map.js'), 'utf8');
+vm.runInNewContext(mapSource.slice(mapSource.indexOf('    function referenceNetworkMeta'), mapSource.indexOf('    function provincePopupHtml')), helpers);
+assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000}).label, 'Online');
+assert.equal(helpers.referenceNetworkMeta({status: 'offline', checked_at: Date.now()/1000}).label, 'Đang báo lỗi');
+assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 76}).label, 'Chưa xác định', 'Old website health must not stay green');
+const referencePopup = helpers.referenceStationPopup({code: 'TEST', lat: 21, lon: 105, serviceHealth: {status: 'offline', checked_at: Date.now()/1000, reason: '<error>'}});
+assert(referencePopup.includes('&lt;error>'), 'External error text stays escaped');
 
 assert.ok(fallbackMaps[0].__tiles.hybrid.url.includes('google.com/vt/lyrs=y'), 'fallback uses original Google hybrid');
 assert.ok(nodes.some(node => node.props.className === 'station-map-flat-layer'));

@@ -186,6 +186,8 @@
 .station-map-dot.offline { background: var(--ops-danger); }
 .station-map-dot.locked { background: var(--ops-locked); }
 .station-map-dot.rover { background: var(--ops-primary); }
+.station-map-dot.reference { background: #a78bfa; border: 1px solid #fff; }
+.station-map-network { border-top: 1px solid var(--ops-border-soft); margin-top: 10px; padding-top: 8px; }
 
 .station-map-popup {
     color: #0f172a;

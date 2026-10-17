@@ -350,10 +350,10 @@
             map.addLayer({ id: 'cors-island-labels', type: 'symbol', source: 'cors-islands', minzoom: 2, layout: { 'text-field': ['get', 'name'], 'text-size': ['interpolate', ['linear'], ['zoom'], 2, 12, 7, 16], 'text-offset': [0, 0], 'text-anchor': 'center', 'text-line-height': 1.35, 'text-max-width': 16, 'text-allow-overlap': true }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#075985', 'text-halo-width': 2.5 } });
             layer('cors-vngeonet-pins', 'circle', 'cors-vngeonet', {
                 'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 3, 8, 6],
-                'circle-color': '#a78bfa', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2,
+                'circle-color': '#a78bfa', 'circle-stroke-color': ['coalesce', ['get', 'serviceColor'], '#94a3b8'], 'circle-stroke-width': 2,
             });
             map.addLayer({ id: 'cors-vngeonet-labels', type: 'symbol', source: 'cors-vngeonet', minzoom: 7,
-                layout: { 'text-field': ['get', 'code'], 'text-size': 12, 'text-offset': [0, 1.3] },
+                layout: { 'text-field': ['concat', 'Cục · ', ['get', 'code']], 'text-size': 12, 'text-offset': [0, 1.3] },
                 paint: { 'text-color': '#ddd6fe', 'text-halo-color': '#0f172a', 'text-halo-width': 2 } });
             this._installMarkerImages();
             map.addLayer({ id: 'cors-gnss-ipp', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'ipp'], layout: { 'icon-image': 'cors-ipp', 'icon-size': 0.6, 'icon-allow-overlap': true } });
@@ -384,7 +384,7 @@
             const s = this.layerState;
             this._data('cors-vngeonet', (s.referenceStations || []).map(station => ({
                 type: 'Feature', geometry: { type: 'Point', coordinates: [station.lon, station.lat] },
-                properties: { code: station.code, network: 'VNGEONET' },
+                properties: { code: station.code, network: 'VNGEONET', serviceColor: station.serviceColor || '#94a3b8' },
             })));
             this._data('cors-rovers', (s.rovers || []).map(rover => {
                 const meta = window.StationsMapUtils.getRoverStatusMeta(rover.status);

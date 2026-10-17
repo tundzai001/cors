@@ -151,10 +151,20 @@
         `;
     }
 
+    function referenceNetworkMeta(health) {
+        const fresh = health?.checked_at && Date.now() / 1000 - health.checked_at < 75;
+        const status = fresh ? health.status : 'unknown';
+        return status === 'online' ? {label: 'Online', color: '#22c55e'}
+            : status === 'offline' ? {label: 'Đang báo lỗi', color: '#ef4444'}
+            : {label: 'Chưa xác định', color: '#94a3b8'};
+    }
+
     function referenceStationPopup(station) {
+        const health = station.serviceHealth;
+        const meta = referenceNetworkMeta(health);
         return `<div class="station-map-popup">
-            <div class="station-map-popup-title">VNGEONET · ${escapeHtml(station.code)}</div>
-            <div class="text-muted small">Trạm tham khảo</div>
+            <div class="station-map-popup-title">CORS Cục · ${escapeHtml(station.code)}</div>
+            <div class="text-muted small">Mạng CORS Cục · VNGEONET</div>
             <div class="station-map-popup-grid">
                 <span class="station-map-popup-label">Lat/Lon</span>
                 <span class="station-map-popup-value">${station.lat.toFixed(9)}, ${station.lon.toFixed(9)}</span>
@@ -163,7 +173,9 @@
                 <span class="station-map-popup-label">Độ cao (m)</span>
                 <span class="station-map-popup-value">${Number.isFinite(station.heightM) ? station.heightM.toFixed(3) : '—'}</span>
             </div>
-            <div class="small mt-2">Chưa có trạng thái trực tiếp</div>
+            <div class="small mt-2">Hệ thống Cục: <strong style="color:${meta.color}">${meta.label}</strong></div>
+            <div class="small mt-1">${escapeHtml(health?.reason || 'Đang kiểm tra trang dịch vụ')}</div>
+            <div class="small mt-1">Trạng thái RTCM từng trạm: chưa công bố.</div>
             <div class="small mt-2">Nguồn: <a href="https://vngeonet.vn/User/SiteMap/SiteMapPublic" target="_blank" rel="noopener noreferrer">VNGEONET</a> · 17/10/2026</div>
             <div class="small mt-1">Chưa xác định hệ quy chiếu và loại độ cao.</div>
         </div>`;
@@ -212,6 +224,7 @@
         const [coverage, setCoverage] = useState(false);
         const [showStations, setShowStations] = useState(true);
         const [showVngeonet, setShowVngeonet] = useState(true);
+        const [vngeonetHealth, setVngeonetHealth] = useState(null);
         const [showRovers, setShowRovers] = useState(true);
         const [showProvinces, setShowProvinces] = useState(true);
         const [showVietnamMask, setShowVietnamMask] = useState(false);
@@ -303,11 +316,38 @@
                 .filter(item => !term || `${item.device.name || ''} ${item.device.serial || ''} ${item.traffic.mountpoint || ''}`.toLowerCase().includes(term));
         }, [devices, search, statusFilters, showStations]);
 
+        useEffect(() => {
+            let active = true;
+            let pending = false;
+            let controller = null;
+            async function refresh() {
+                if (pending || document.visibilityState === 'hidden') return;
+                pending = true;
+                controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 12000);
+                try {
+                    const response = await fetch('/api/public/reference-network-status', {cache: 'no-store', signal: controller.signal});
+                    if (!response.ok) throw new Error('Reference network unavailable');
+                    const health = await response.json();
+                    if (active) setVngeonetHealth(health);
+                } catch (_) {
+                    if (active) setVngeonetHealth({status: 'unknown', reason: 'Mất cập nhật trạng thái Cục'});
+                } finally { clearTimeout(timeout); pending = false; }
+            }
+            refresh();
+            const interval = setInterval(refresh, 30000);
+            document.addEventListener('visibilitychange', refresh);
+            return () => { active = false; controller?.abort(); clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
+        }, []);
+
         const referenceStations = useMemo(() => {
             const term = search.trim().toLowerCase();
             return showVngeonet ? (window.VngeonetStations || []).filter(station =>
-                !term || `vngeonet ${station.code}`.toLowerCase().includes(term)) : [];
-        }, [showVngeonet, search]);
+                !term || `cors cục vngeonet ${station.code}`.toLowerCase().includes(term))
+                .map(station => ({...station, serviceHealth: vngeonetHealth, serviceColor: referenceNetworkMeta(vngeonetHealth).color})) : [];
+        }, [showVngeonet, search, vngeonetHealth]);
+        const referenceMeta = referenceNetworkMeta(vngeonetHealth);
+        const ownOnlineCount = devices.filter(device => ['online', 'streaming'].includes(effectiveStatus(device))).length;
 
         useEffect(() => {
             let isMounted = true;
@@ -906,9 +946,9 @@
             const layer = L.layerGroup().addTo(map);
             referenceStations.forEach(station => {
                 L.circleMarker([station.lat, station.lon], {
-                    radius: 6, color: '#ffffff', weight: 2,
+                    radius: 6, color: station.serviceColor, weight: 2,
                     fillColor: '#a78bfa', fillOpacity: 0.95,
-                }).bindTooltip(`VNGEONET · ${station.code}`, { direction: 'top' })
+                }).bindTooltip(`CORS Cục · VNGEONET · ${station.code}`, { direction: 'top' })
                     .bindPopup(referenceStationPopup(station), { maxWidth: 300 }).addTo(layer);
             });
             return () => { if (map.hasLayer(layer)) map.removeLayer(layer); };
@@ -1176,15 +1216,15 @@
                         <div className="station-map-panel-title">Bộ lọc bản đồ</div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showStations} onChange={(e) => setShowStations(e.target.checked)} id="station-toggle" />
-                            <label className="form-check-label" htmlFor="station-toggle">Trạm CORS</label>
+                            <label className="form-check-label" htmlFor="station-toggle">Base của mình ({devices.length})</label>
                         </div>
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showVngeonet}
                                 onChange={e => setShowVngeonet(e.target.checked)} id="vngeonet-toggle"
                                 disabled={!window.VngeonetStations?.length} aria-describedby="vngeonet-help" />
-                            <label className="form-check-label" htmlFor="vngeonet-toggle">VNGEONET ({window.VngeonetStations?.length || 0})</label>
+                            <label className="form-check-label" htmlFor="vngeonet-toggle">CORS Cục · VNGEONET ({window.VngeonetStations?.length || 0})</label>
                             <div className="form-text" id="vngeonet-help">
-                                {window.VngeonetStations?.length ? 'Trạm tham khảo · chưa có trạng thái trực tiếp' : 'Không tải được danh sách VNGEONET'}
+                                {window.VngeonetStations?.length ? `Trang dịch vụ: ${referenceMeta.label} · kiểm tra mỗi 30 giây` : 'Không tải được danh sách VNGEONET'}
                             </div>
                         </div>
                         <div className="form-check form-switch mb-2">
@@ -1272,13 +1312,18 @@
 
                 {!useOrbitView && (
                     <div className="station-map-legend">
-                        <div className="fw-bold mb-1">Legend</div>
+                        <div className="fw-bold mb-1">Base của mình · {ownOnlineCount}/{devices.length} online</div>
                         <div className="station-map-legend-row"><span className="station-map-dot online"></span>Online</div>
                         <div className="station-map-legend-row"><span className="station-map-dot sleep"></span>Sleep</div>
                         <div className="station-map-legend-row"><span className="station-map-dot offline"></span>Offline</div>
                         <div className="station-map-legend-row"><span className="station-map-dot locked"></span>Locked</div>
                         <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
-                        {showVngeonet && <div className="station-map-legend-row"><span className="station-map-dot" style={{ background: '#a78bfa' }}></span>VNGEONET ({referenceStations.length})</div>}
+                        <div className="station-map-network" role="status" aria-atomic="true">
+                            <div className="station-map-legend-row fw-bold"><span className="station-map-dot reference"></span>CORS Cục · VNGEONET</div>
+                            <div style={{color: referenceMeta.color}}>Trang dịch vụ: {referenceMeta.label}</div>
+                            <div className="text-muted" title={vngeonetHealth?.reason}>Kiểm tra {vngeonetHealth?.checked_at ? new Date(vngeonetHealth.checked_at * 1000).toLocaleTimeString('vi-VN') : '…'}</div>
+                            {showVngeonet && <div className="text-muted">{referenceStations.length} trạm · RTCM chưa xác định</div>}
+                        </div>
                     </div>
                 )}
 
