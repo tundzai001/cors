@@ -440,7 +440,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function renderActiveSessions(sessions, error = null) {
         const tbody = document.getElementById('active-sessions-table-body');
         const badge = document.getElementById('active-sessions-badge');
-        if (badge) badge.textContent = `${sessions.length} phiên đang mở`;
+        if (badge) badge.textContent = error ? 'Chưa xác định' : `${sessions.length} phiên đang hoạt động`;
         if (!tbody) return;
 
         if (error && !sessions.length) {

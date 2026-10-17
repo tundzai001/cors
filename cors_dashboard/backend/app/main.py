@@ -1182,79 +1182,26 @@ async def get_admin_sessions(
             pass
 
     now = int(time.time())
-    # Lấy các phiên chưa bị hủy và chưa hết hạn
+    # Online requires a recent authenticated signal, not merely a valid token.
     stmt = (
         select(models.UserSession)
         .filter(
             models.UserSession.is_revoked == False,
-            models.UserSession.expires_at > now
+            models.UserSession.expires_at > now,
+            models.UserSession.last_active_at > now - auth.SESSION_ONLINE_WINDOW_SECONDS
         )
         .order_by(models.UserSession.last_active_at.desc())
     )
     result = await auth_db.execute(stmt)
     sessions = list(result.scalars().all())
 
-    # Tự động đồng bộ/tạo phiên cho admin hiện tại nếu chưa có trong DB (ví dụ đăng nhập từ trước khi có bảng session)
-    current_has_session = any(s.user_id == current_user.id and (s.session_id == current_sid if current_sid else True) for s in sessions)
-    if not current_has_session:
-        import secrets
-        import urllib.parse
-        new_sid = current_sid or secrets.token_hex(24)
-
-        client_ip = request.headers.get("x-forwarded-for")
-        if client_ip:
-            client_ip = client_ip.split(",")[0].strip()
-        else:
-            client_ip = request.client.host if request.client else "127.0.0.1"
-
-        raw_dev_name = request.headers.get("x-device-name")
-        device_name = urllib.parse.unquote(raw_dev_name) if raw_dev_name else "Trình duyệt hiện tại"
-        device_id = request.headers.get("x-device-id") or f"dev_{secrets.token_hex(8)}"
-        local_ip = request.headers.get("x-local-ip")
-
-        check_sess = await auth_db.execute(select(models.UserSession).filter(models.UserSession.session_id == new_sid))
-        existing_s = check_sess.scalar_one_or_none()
-        if existing_s:
-            existing_s.is_revoked = False
-            existing_s.last_active_at = now
-            existing_s.expires_at = now + 86400 * 7
-            if local_ip: existing_s.local_ip = local_ip
-            current_sess_obj = existing_s
-        else:
-            current_sess_obj = models.UserSession(
-                session_id=new_sid,
-                user_id=current_user.id,
-                username=current_user.username,
-                role=current_user.role,
-                ip_address=client_ip,
-                local_ip=local_ip,
-                device_id=device_id,
-                device_name=device_name,
-                user_agent=request.headers.get("user-agent"),
-                created_at=now,
-                last_active_at=now,
-                expires_at=now + 86400 * 7,
-                is_revoked=False
-            )
-            auth_db.add(current_sess_obj)
-        try:
-            await auth_db.commit()
-            sessions.insert(0, current_sess_obj)
-            current_sid = new_sid
-        except Exception as e:
-            logger.warning(f"Could not auto-register current session: {e}")
-    else:
-        req_local_ip = request.headers.get("x-local-ip")
-        if req_local_ip:
-            for s in sessions:
-                if s.session_id == current_sid or (not current_sid and s.user_id == current_user.id):
-                    if not s.local_ip:
-                        s.local_ip = req_local_ip
-                        try:
-                            await auth_db.commit()
-                        except Exception:
-                            pass
-                    break
+    req_local_ip = request.headers.get("x-local-ip")
+    if req_local_ip and current_sid:
+        for session in sessions:
+            if session.session_id == current_sid and not session.local_ip:
+                session.local_ip = req_local_ip
+                await auth_db.commit()
+                break
 
     # Lấy danh sách máy tính bị chặn
     blocked_stmt = select(models.BlockedDevice).order_by(models.BlockedDevice.blocked_at.desc())

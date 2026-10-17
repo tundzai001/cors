@@ -156,6 +156,8 @@ async def get_password_hash(password: str) -> str:
 REVOKED_SESSIONS: set[str] = set()
 BLOCKED_DEVICES: set[str] = set()
 SESSION_LAST_ACTIVE_CACHE: dict[str, float] = {}
+SESSION_ONLINE_WINDOW_SECONDS = 45
+SESSION_ACTIVITY_INTERVAL_SECONDS = 10
 
 def revoke_session_in_memory(session_id: str):
     REVOKED_SESSIONS.add(session_id)
@@ -232,8 +234,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
     if sid:
         now = time.time()
-        if now - SESSION_LAST_ACTIVE_CACHE.get(sid, 0) > 60:
-            SESSION_LAST_ACTIVE_CACHE[sid] = now
+        if now - SESSION_LAST_ACTIVE_CACHE.get(sid, 0) > SESSION_ACTIVITY_INTERVAL_SECONDS:
             try:
                 from sqlalchemy import update
                 await db.execute(
@@ -242,7 +243,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                     .values(last_active_at=int(now))
                 )
                 await db.commit()
+                SESSION_LAST_ACTIVE_CACHE[sid] = now
             except Exception as e:
+                await db.rollback()
                 logger.debug(f"Could not update session activity: {e}")
 
     return user

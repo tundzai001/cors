@@ -15,5 +15,16 @@ scope.renderBlockHistory([{ip:'192.0.2.1',source:'http_rate_limit',reason:'HTTP 
 assert(history.innerHTML.includes('192.0.2.1'), 'Expired short block remains visible in history');
 assert(history.innerHTML.includes('Giới hạn HTTP'));
 assert(history.innerHTML.includes('&lt;limit&gt;'));
+const sessionsTable = {innerHTML:''};
+const sessionsBadge = {textContent:''};
+scope.document.getElementById = id => id === 'active-sessions-badge' ? sessionsBadge : sessionsTable;
+vm.runInContext(source.slice(source.indexOf('    function formatRelativeTime'), source.indexOf('    function renderBlockedDevices')), scope);
+scope.renderActiveSessions([]);
+assert.equal(sessionsBadge.textContent, '0 phiên đang hoạt động');
+scope.renderActiveSessions([], 'Network unavailable');
+assert.equal(sessionsBadge.textContent, 'Chưa xác định', 'An unavailable feed must not pretend nobody is online');
+scope.renderActiveSessions([{username:'viewer', role:'viewer', created_at:Date.now()/1000, last_active_at:Date.now()/1000}]);
+assert.equal(sessionsBadge.textContent, '1 phiên đang hoạt động');
+assert(sessionsTable.innerHTML.includes('Vừa xong'));
 if (process.argv[2]) fs.writeFileSync(process.argv[2], `<html lang="vi" data-bs-theme="dark"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"><body style="padding:32px;background:#0b101a;color:#eef4ff"><main><h1>Security · Lượt chặn gần đây</h1><p>Lượt chặn vẫn hiển thị sau khi hết hạn.</p><div class="table-responsive"><table class="table"><thead><tr><th>Lần cuối</th><th>IP</th><th>Nguồn chặn</th><th>Lý do</th><th>Số lượt</th></tr></thead><tbody>${history.innerHTML}</tbody></table></div><h2>Đang chặn tạm thời</h2><table class="table"><thead><tr><th>IP</th><th>Còn lại</th><th>Lý do</th><th>Thao tác</th></tr></thead><tbody>${table.rows[0].innerHTML}</tbody></table></main></body></html>`);
 console.log('PASS: temporary seconds, retained block history, escaped IP/reason rendering');

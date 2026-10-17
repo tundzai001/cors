@@ -66,7 +66,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         )
         auth.revoke_session_in_memory("sess_revoked_test")
 
-        db = SimpleNamespace(execute=AsyncMock())
+        db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock())
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
         with self.assertRaises(HTTPException) as ctx:
@@ -81,7 +81,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         )
         auth.block_device_in_memory("dev_blocked_pc")
 
-        db = SimpleNamespace(execute=AsyncMock())
+        db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock())
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
         with self.assertRaises(HTTPException) as ctx:
@@ -113,7 +113,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         auth.block_device_in_memory(dev_1)
         auth.revoke_session_in_memory(sid_1)
 
-        db = SimpleNamespace(execute=AsyncMock())
+        db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock())
         user_2_obj = models.User(id=2, username="user2", role="viewer", is_active=True)
         # Mock crud lookup for user2
         from unittest.mock import patch
@@ -245,5 +245,61 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         query = db.execute.await_args_list[0].args[0]
         self.assertIn("user_sessions.is_revoked = false", str(query))
         self.assertIn("user_sessions.expires_at >", str(query))
+        self.assertIn("user_sessions.last_active_at >", str(query))
         self.assertIn("ORDER BY user_sessions.last_active_at DESC", str(query))
+
+    async def test_presence_excludes_old_sessions_and_recovers_on_heartbeat(self):
+        from app.main import get_admin_sessions
+        from app.auth_routes import session_heartbeat
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+        from starlette.requests import Request
+
+        engine = create_engine("sqlite:///:memory:")
+        for table in (models.User.__table__, models.UserSession.__table__, models.BlockedDevice.__table__):
+            table.create(engine)
+        now = int(time.time())
+        try:
+            with Session(engine, expire_on_commit=False) as store:
+                admin = models.User(id=1, username="admin", role="admin", hashed_password="unused", created_at=now)
+                viewer = models.User(id=2, username="viewer", role="viewer", hashed_password="unused", created_at=now)
+                store.add_all([admin, viewer])
+                for sid, seen, expires, revoked in (
+                    ("live", now, now + 3600, False),
+                    ("stale", now - 45, now + 3600, False),
+                    ("seven-hours", now - 25200, now + 3600, False),
+                    ("revoked", now, now + 3600, True),
+                    ("expired", now, now, False),
+                ):
+                    store.add(models.UserSession(
+                        session_id=sid, user_id=viewer.id, username=viewer.username,
+                        role=viewer.role, ip_address="192.0.2.1", device_id=sid,
+                        created_at=now - 3600, last_active_at=seen,
+                        expires_at=expires, is_revoked=revoked,
+                    ))
+                store.commit()
+                db = SimpleNamespace(
+                    execute=AsyncMock(side_effect=store.execute),
+                    commit=AsyncMock(side_effect=store.commit),
+                    rollback=AsyncMock(side_effect=store.rollback),
+                )
+                request = Request({"type": "http", "headers": []})
+                with patch("app.main.time.time", return_value=now):
+                    response = await get_admin_sessions(request=request, auth_db=db, current_user=admin)
+                    self.assertEqual([s["session_id"] for s in response["active_sessions"]], ["live"])
+                    self.assertEqual(response["total_active"], 1)
+                with patch("app.main.time.time", return_value=now + 46):
+                    response = await get_admin_sessions(request=request, auth_db=db, current_user=admin)
+                    self.assertEqual(response["total_active"], 0)
+                    # A viewer's new signal brings its session back without re-login.
+                    token = auth.create_access_token({"sub": "viewer", "sid": "stale"})
+                    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+                    with patch("app.crud.get_user_by_username", AsyncMock(return_value=viewer)):
+                        authenticated = await auth.get_current_user(credentials=credentials, db=db)
+                        await session_heartbeat(current_user=authenticated)
+                    response = await get_admin_sessions(request=request, auth_db=db, current_user=admin)
+                    self.assertEqual([s["session_id"] for s in response["active_sessions"]], ["stale"])
+                    self.assertEqual(response["active_sessions"][0]["last_active_at"], now + 46)
+        finally:
+            engine.dispose()
 

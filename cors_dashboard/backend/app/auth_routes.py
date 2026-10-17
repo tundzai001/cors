@@ -174,6 +174,11 @@ async def login(
 
 get_current_user_info_router = APIRouter()
 
+@get_current_user_info_router.post("/api/auth/heartbeat", status_code=204)
+async def session_heartbeat(current_user: models.User = Depends(auth.get_current_user)):
+    """Refresh activity through the shared authenticated-session dependency."""
+    return None
+
 @get_current_user_info_router.get("/api/auth/me", response_model=schemas.UserResponse)
 async def get_current_user_info(current_user: models.User = Depends(auth.get_current_user)):
     permissions = auth.get_user_permissions(current_user)

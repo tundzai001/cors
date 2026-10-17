@@ -305,4 +305,25 @@
     };
 
     window.apiFetch = apiFetch;
+
+    // Only a visible, authenticated page reports presence. Expired signals age
+    // out on the server; closing a tab never revokes another tab's login.
+    let heartbeatPending = false;
+    async function reportSessionPresence() {
+        if (heartbeatPending || sessionInvalidated || !hasToken() || document.hidden) return;
+        heartbeatPending = true;
+        try {
+            const response = await apiFetch('/api/auth/heartbeat', { method: 'POST', timeoutMs: 8000 }, 0);
+            if (response.status === 403) forceLogout('device_blocked');
+        } catch (_) {
+            // No successful signal means no online status; retry next interval.
+        } finally {
+            heartbeatPending = false;
+        }
+    }
+    setInterval(reportSessionPresence, 15000);
+    document.addEventListener('visibilitychange', reportSessionPresence);
+    window.addEventListener('online', reportSessionPresence);
+    window.addEventListener('pageshow', reportSessionPresence);
+    reportSessionPresence();
 })();
