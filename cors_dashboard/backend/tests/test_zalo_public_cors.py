@@ -148,7 +148,9 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
     async def test_webhook_public_calls_reply_without_sdk_dispatch_or_base_permissions(self):
         cases = ("/cors", "/cors cục đang thế nào", "@Bot Cors manager /cors",
                  "@Bot Cors manager /cors cục đang thế nào", "/cors@Bot", "/CORS",
-                 "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "/help")
+                 "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "/help", "tình trạng Cục",
+                 "cuc sap chua", "CORS Cục đang thế nào?", "kiểm tra VNGEONET",
+                 "Cục còn sống không", "14.238.1.125 đang online không?")
         for text in cases:
             with self.subTest(text=text):
                 service = bot_module.ZaloBotService()
@@ -175,6 +177,16 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                 reply.assert_awaited_once()
                 self.assertIn("đang online", reply.await_args.args[0])
                 self.assertNotIn("/register", reply.await_args.args[0])
+
+    async def test_natural_cors_questions_use_same_handler_in_chat_dispatch(self):
+        service = bot_module.ZaloBotService()
+        with patch.object(service, "_cors_cmd", AsyncMock()) as handler:
+            for text in ("tình trạng cục", "cuc loi khong", "status Cục", "Cục chạy chưa", "Cục sao rồi", "cục dùng được không"):
+                self.assertTrue(await service._try_dispatch_intent(self.update(text), text))
+                self.assertEqual(service._detect_natural_language_intent(text), ("cors", []))
+            self.assertEqual(handler.await_count, 6)
+        for text in ("base đang thế nào", "rover online không", "rover Cục đang lỗi", "xóa rover cuc", "/station cuc", "@Bot Cors manager kiểm tra base Hà Nội"):
+            self.assertFalse(bot_module._is_cors_status_question(text), text)
 
     async def test_webhook_still_rejects_protected_base_command_in_unlinked_group(self):
         service, update = bot_module.ZaloBotService(), self.update("/status")

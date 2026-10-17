@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261017-public-cors-mention-v11"
+ZALO_TRACE_VERSION = "20261017-natural-cors-status-v12"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -80,6 +80,29 @@ def _normalize_to_ascii(text: str) -> str:
     text = text.lower().replace("đ", "d").strip()
     normalized = unicodedata.normalize("NFD", text)
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+
+def _is_cors_status_question(text: str) -> bool:
+    """Recognize public Cục health questions with or without Vietnamese accents."""
+    normalized = _normalize_to_ascii(text).lstrip("\u200b\u200c\u200d\ufeff").strip()
+    if normalized.startswith("/"):
+        return False  # Explicit commands keep their own permissions and arguments.
+    words = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+    if re.search(r"\b(?:base|rover)\b", words):
+        return False
+    target = (re.search(r"\b(?:cuc|vngeonet)\b", words)
+              or "14.238.1.125" in normalized
+              or re.match(r"^cors\b", words))
+    if not target:
+        return False
+    if words in {"cuc", "cors", "cors cuc", "vngeonet"}:
+        return True
+    return bool(re.search(
+        r"\b(?:tinh trang|tinh hinh|trang thai|the nao|ra sao|sap|song|chet|loi|"
+        r"on|online|offline|hoat dong|ket noi|chay|kiem tra|check|status|mat|ngat|"
+        r"sao roi|bi gi|co van de|su co|dung duoc|down|up)\b",
+        words,
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -803,7 +826,7 @@ class ZaloBotService:
             text = str(parsed_text or "").strip().lstrip("\u200b\u200c\u200d\ufeff").strip()
             command = text.split(maxsplit=1)[0].lower() if text else ""
             command = command.split("@", 1)[0].rstrip("\u200b\u200c\u200d\ufeff")
-            public_cors = command == "/cors"
+            public_cors = command == "/cors" or _is_cors_status_question(text)
             if self._get_chat_type(update) == "group":
                 principal = await zalo_repository.resolve_principal(
                     self._get_chat_id(update), self._get_sender_id(update), "group"
@@ -1649,6 +1672,8 @@ class ZaloBotService:
 
         Returns (command_name, args_list) or None.
         """
+        if _is_cors_status_question(text):
+            return "cors", []
         ascii_text = _normalize_to_ascii(text)
         for pattern, command in _NLP_INTENT_PATTERNS:
             m = pattern.match(ascii_text)
@@ -1666,6 +1691,9 @@ class ZaloBotService:
         words = text.split()
         if not words:
             return False
+        if _is_cors_status_question(text):
+            await self._cors_cmd(update, None)
+            return True
 
         # Strategy 1: first word is a known command name (e.g. "stationdelete Geotek")
         first_word = words[0].lower().lstrip("/")
