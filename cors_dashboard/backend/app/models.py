@@ -202,7 +202,7 @@ class ZaloChatBinding(AuthBase):
     id = Column(Integer, primary_key=True, autoincrement=True)
     chat_id = Column(String, unique=True, nullable=False, index=True)
     chat_type = Column(String, nullable=False, default="private")
-    binding_type = Column(String, nullable=False, index=True)  # private, group_admin, group_public
+    binding_type = Column(String, nullable=False, index=True)  # private, group_admin, group_public, cors_public
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     sender_id = Column(String, nullable=True, index=True)
     display_name = Column(String, nullable=True)

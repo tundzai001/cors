@@ -26,10 +26,11 @@
     }
 
     function bindingLabel(item) {
-        return ({ group_admin: 'Group quản trị', group_public: 'Group tra cứu', private: 'Theo tài khoản web' })[item.binding_type] || item.binding_type;
+        return ({ cors_public: 'Public · CORS Cục', group_admin: 'Group quản trị', group_public: 'Group tra cứu', private: 'Theo tài khoản web' })[item.binding_type] || item.binding_type;
     }
 
     function scopeLabel(item) {
+        if (item.binding_type === 'cors_public') return 'Chỉ tình trạng CORS Cục';
         if (item.chat_type === 'private') {
             return (item.dashboard_role === 'admin') ? 'Toàn quyền' : 'Theo tài khoản web';
         }
@@ -216,12 +217,13 @@
             const isGroup = item.chat_type === 'group';
             const fallbackName = isGroup ? `Nhóm Zalo …${String(item.chat_id || '').slice(-6)}` : 'Chat cá nhân';
             const notification = item.notifications || {};
-            const accountPrimary = isGroup ? bindingLabel(item) : (item.dashboard_username || 'Tài khoản không khả dụng');
-            const accountSecondary = isGroup
+            const isPublic = item.binding_type === 'cors_public';
+            const accountPrimary = isPublic || isGroup ? bindingLabel(item) : (item.dashboard_username || 'Tài khoản không khả dụng');
+            const accountSecondary = isPublic ? 'Không cần /sign hoặc OTP' : isGroup
                 ? (item.binding_type === 'group_admin' ? 'Mọi thành viên có quyền quản trị' : 'Mọi thành viên chỉ được tra cứu')
                 : (item.dashboard_role || 'Không xác định');
             const badgeClass = scopeBadgeClass(item);
-            const actions = `<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
+            const actions = (state.isAdmin ? `<button class="btn btn-sm ${item.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${item.is_active ? 'Dừng gửi' : 'Cho gửi'}</button>` : '') + `<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
             return `<tr>
                 <td data-label="Loại"><span class="badge ${isGroup ? 'bg-warning text-dark' : 'bg-info text-dark'}">${isGroup ? 'Nhóm' : 'Cá nhân'}</span></td>
                 <td data-label="Chat"><strong>${escapeHtml(item.display_name || fallbackName)}</strong><div class="small text-muted font-monospace">${escapeHtml(item.chat_id)}</div></td>
@@ -469,10 +471,12 @@
     function updateScopeEditor() {
         const item = state.items.find(row => row.id === Number(document.getElementById('edit-binding-id').value));
         const isPrivate = item?.chat_type === 'private';
+        const isPublic = document.getElementById('edit-binding-type').value === 'cors_public';
         const isGroupAdmin = !isPrivate && document.getElementById('edit-binding-type').value === 'group_admin';
-        document.getElementById('private-scope-note').classList.toggle('d-none', !isPrivate);
+        document.getElementById('private-scope-note').classList.toggle('d-none', !isPrivate || isPublic);
         document.getElementById('group-admin-scope-note').classList.toggle('d-none', !isGroupAdmin);
-        document.getElementById('group-scope-editor').classList.toggle('d-none', isPrivate || isGroupAdmin);
+        document.getElementById('group-scope-editor').classList.toggle('d-none', isPrivate || isGroupAdmin || isPublic);
+        document.getElementById('edit-notifications').disabled = isPublic;
         document.getElementById('edit-binding-type').disabled = isPrivate;
         document.getElementById('station-checklist').classList.toggle('d-none', document.getElementById('edit-scope-mode').value !== 'selected');
     }
@@ -517,7 +521,7 @@
             payload.is_active = document.getElementById('edit-active').checked;
         }
         if (item.chat_type === 'group') {
-            payload.station_scope_mode = payload.binding_type === 'group_admin'
+            payload.station_scope_mode = payload.binding_type === 'cors_public' ? 'none' : payload.binding_type === 'group_admin'
                 ? 'all' : document.getElementById('edit-scope-mode').value;
             payload.allowed_bases = payload.station_scope_mode === 'selected' ? selectedStations : [];
             if (payload.station_scope_mode === 'selected' && !payload.allowed_bases.length) {
@@ -587,7 +591,22 @@
         document.getElementById('edit-scope-mode').addEventListener('change', updateScopeEditor);
         document.getElementById('edit-binding-type').addEventListener('change', updateScopeEditor);
         document.getElementById('save-binding').addEventListener('click', saveBinding);
-        document.getElementById('binding-list').addEventListener('click', event => {
+        document.getElementById('binding-list').addEventListener('click', async event => {
+            const toggle = event.target.closest('[data-toggle-sending]');
+            if (toggle) {
+                const item = state.items.find(row => row.id === Number(toggle.dataset.toggleSending));
+                if (!item || toggle.disabled) return;
+                toggle.disabled = true;
+                toggle.textContent = 'Đang lưu…';
+                try {
+                    await apiJson(window.ApiRoutes.auth.zaloBinding(item.id), {method: 'PATCH', body: JSON.stringify({is_active: !item.is_active})});
+                    await loadBindings({silent: true});
+                    window.CorsUI?.showToast?.('success', item.is_active ? 'Đã dừng gửi cho chat này.' : 'Đã cho phép gửi lại.');
+                } catch (error) {
+                    window.CorsUI?.showToast?.('danger', error.message);
+                } finally { renderBindings(); }
+                return;
+            }
             const edit = event.target.closest('[data-edit]');
             const revoke = event.target.closest('[data-revoke]');
             if (edit) openEditor(edit.dataset.edit);

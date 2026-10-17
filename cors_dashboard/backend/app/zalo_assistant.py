@@ -91,6 +91,31 @@ class ZaloPrincipal:
 
 
 class ZaloAssistantRepository:
+    async def is_chat_paused(self, chat_id: str) -> bool:
+        async with auth_session_scope() as db:
+            result = await db.execute(select(models.ZaloChatBinding.is_active).where(
+                models.ZaloChatBinding.chat_id == str(chat_id),
+            ))
+            return result.scalar_one_or_none() is False
+
+    async def remember_cors_chat(self, chat_id: str, chat_type: str, display_name: Optional[str] = None) -> bool:
+        """Remember public callers for per-chat muting without granting dashboard access."""
+        now = _now()
+        async with auth_session_scope() as db:
+            await db.execute(pg_insert(models.ZaloChatBinding).values(
+                chat_id=str(chat_id), chat_type=chat_type, binding_type="cors_public",
+                display_name=str(display_name or "")[:255] or None, is_active=True,
+                station_scope_mode="none", allowed_bases=[], created_at=now, last_seen_at=now,
+            ).on_conflict_do_nothing(index_elements=["chat_id"]))
+            result = await db.execute(select(models.ZaloChatBinding).where(
+                models.ZaloChatBinding.chat_id == str(chat_id),
+            ))
+            binding = result.scalars().first()
+            if binding and binding.is_active:
+                binding.last_seen_at = now
+            await db.commit()
+            return bool(binding and binding.is_active)
+
     @staticmethod
     def _notification_allowed(
         pref: models.ZaloNotificationPreference,
@@ -341,6 +366,12 @@ class ZaloAssistantRepository:
                     frozenset(), False,
                 )
             binding.last_seen_at = _now()
+            if binding.binding_type == "cors_public":
+                await db.commit()
+                return ZaloPrincipal(
+                    str(chat_id), str(sender_id), chat_type, "cors_public", None, None, None,
+                    frozenset(), False, station_scope_mode="none",
+                )
             if binding.binding_type == "group_admin":
                 permissions = frozenset(auth.ROLE_PERMISSIONS[auth.Role.ADMIN])
                 allowed_bases = frozenset(
@@ -400,7 +431,7 @@ class ZaloAssistantRepository:
                     "permissions": sorted(auth.get_user_permissions(user)) if user else (
                         sorted(auth.ROLE_PERMISSIONS[auth.Role.ADMIN])
                         if binding.binding_type == "group_admin"
-                        else [auth.Permission.VIEW_DEVICES]
+                        else [] if binding.binding_type == "cors_public" else [auth.Permission.VIEW_DEVICES]
                     ),
                     "notifications": {
                         "enabled": bool(pref.enabled),
@@ -535,7 +566,7 @@ class ZaloAssistantRepository:
                 binding.display_name = str(changes.get("display_name") or "").strip()[:255] or None
             if "binding_type" in changes:
                 binding_type = str(changes["binding_type"])
-                allowed_types = {"private"} if binding.chat_type == "private" else {"group_admin", "group_public"}
+                allowed_types = {"private", "cors_public"} if binding.chat_type == "private" else {"group_admin", "group_public", "cors_public"}
                 if binding_type not in allowed_types:
                     raise ValueError("Loại liên kết không phù hợp với loại chat.")
                 binding.binding_type = binding_type
@@ -564,6 +595,10 @@ class ZaloAssistantRepository:
                 "quiet_end": "quiet_end",
                 "critical_override": "critical_override",
             }
+            if binding.binding_type == "cors_public":
+                binding.station_scope_mode = "none"
+                binding.allowed_bases = []
+                changes["notifications_enabled"] = False
             notification_changes = {
                 target: changes[source] for source, target in notification_keys.items() if source in changes
             }
@@ -776,6 +811,8 @@ class ZaloAssistantRepository:
                 .where(models.ZaloChatBinding.is_active.is_(True))
             )
             for binding, pref in rs.all():
+                if binding.binding_type == "cors_public":
+                    continue
                 override = None
                 if binding.binding_type == "private" and binding_scopes is not None:
                     values = binding_scopes.get(int(binding.id), set())

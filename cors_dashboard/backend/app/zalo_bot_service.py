@@ -15,6 +15,7 @@ import difflib
 from collections import deque
 from typing import Optional, Dict, List, Set, Callable, Awaitable, Any
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .database import settings
 from . import auth
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 ZALO_TRACE_VERSION = "20260705-public-scope-v10"
 
 BOT_COMMANDS = (
-    "start", "menu", "help", "register", "link", "notifications", "status", "errors", "stations", "station",
+    "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
     "config", "configset", "coord", "stationlock", "stationunlock", "stationreset",
     "stationdelete", "rovers", "rover", "rovercreate", "roverupdate", "roverdelete",
     "roverrenew", "roverblock", "roverunblock", "confirm", "cancel", "logout", "unlink",
@@ -41,6 +42,7 @@ BOT_COMMANDS = (
 # Smart dispatch: map command names to handler method names
 # ---------------------------------------------------------------------------
 _COMMAND_DISPATCH = {
+    "cors": "_cors_cmd",
     "start": "_start_cmd",
     "help": "_help_cmd",
     "menu": "_menu_cmd",
@@ -460,6 +462,9 @@ class ZaloBotService:
             trace_id = self._active_trace_id.get()
             chat_id = kwargs.get("chat_id", args[0] if args else None)
             text = kwargs.get("text", args[1] if len(args) > 1 else None)
+            if await zalo_repository.is_chat_paused(str(chat_id)):
+                logger.info("Zalo outbound paused for chat_id=%s", chat_id)
+                return None
             outbound = {
                 "at": datetime.now().astimezone().isoformat(),
                 "chat_id": str(chat_id) if chat_id is not None else None,
@@ -525,6 +530,7 @@ class ZaloBotService:
         return mode if mode in {"polling", "webhook"} else "polling"
 
     def _register_handlers(self, target) -> None:
+        target.add_handler(CommandHandler("cors", self._cors_cmd))
         target.add_handler(CommandHandler("start", self._start_cmd))
         target.add_handler(CommandHandler("help", self._help_cmd))
         target.add_handler(CommandHandler("menu", self._menu_cmd))
@@ -779,15 +785,19 @@ class ZaloBotService:
             logger.info("[ZALO TRACE %s] SDK dispatch text=%r", trace_id, safe_parsed_text)
             event["status"] = "parsed"
 
-            # A revoked/unregistered group is silent.  Only /register is
-            # allowed through so an admin can explicitly attach a fresh OTP.
+            if await zalo_repository.is_chat_paused(self._get_chat_id(update)):
+                event["status"] = "paused_chat"
+                return {"trace_id": trace_id, "status": "paused_chat", "outbound_count": 0}
+
+            # /cors reads public website health without linking. Dashboard
+            # commands still require the existing group grant or registration.
             if self._get_chat_type(update) == "group":
                 principal = await zalo_repository.resolve_principal(
                     self._get_chat_id(update), self._get_sender_id(update), "group"
                 )
                 command = str(parsed_text or "").strip().split(maxsplit=1)[0].lower()
                 command = command.split("@", 1)[0]
-                if not principal.is_linked and command != "/register":
+                if not principal.is_linked and command not in {"/register", "/cors"}:
                     event["status"] = "rejected_unlinked_group"
                     event["dispatch_method"] = None
                     guidance_token = self._allow_revoked_outbound.set(True)
@@ -2617,10 +2627,32 @@ class ZaloBotService:
             )
         await update.message.reply_text(text)
 
+    async def _cors_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = self._get_chat_id(update)
+        if chat_id in self._revoked_chat_ids:
+            return
+        allowed = await zalo_repository.remember_cors_chat(
+            chat_id, self._get_chat_type(update), self._get_display_name(update),
+        )
+        if not allowed:
+            return
+        from .reference_network import get_network_status
+        health = await get_network_status()
+        headline = {
+            "online": "🟢 CORS Cục đang online. Trang đăng nhập và bản đồ hoạt động bình thường.",
+            "offline": "🔴 CORS Cục đang báo lỗi trên trang dịch vụ.",
+        }.get(health.get("status"), "⚪ Chưa kiểm tra được CORS Cục; chưa thể kết luận online hay sập.")
+        checked_at = datetime.fromtimestamp(health["checked_at"], ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%H:%M:%S %d/%m/%Y")
+        await update.message.reply_text(
+            f"{headline}\nKiểm tra: {checked_at}\n"
+            "Đây là trạng thái hệ thống web Cục, chưa xác nhận tín hiệu RTCM từng trạm."
+        )
+
     async def _help_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             "💡 HƯỚNG DẪN BOT CORS\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "• /cors hoặc /cors cục đang thế nào: hỏi tình trạng CORS Cục, không cần liên kết.\n"
             "• /menu: mở danh sách chức năng.\n"
             "• Có thể gõ đủ lệnh: /station HCM-01.\n"
             "• Nếu thiếu tham số, bot sẽ hỏi tiếp từng bước.\n"

@@ -104,13 +104,17 @@ async def probe_network():
             "scope": "website", "station_status_available": False}
 
 
-@router.get("/api/public/reference-network-status")
-async def reference_network_status(response: Response):
+async def get_network_status():
     global _cache, _cached_at
     # All viewers share one bounded probe per worker, including failed results.
     async with _lock:
         if _cache is None or time.monotonic() - _cached_at >= CACHE_SECONDS:
             _cache = await probe_network()
             _cached_at = time.monotonic()
-    response.headers["Cache-Control"] = "no-store"
     return dict(_cache)
+
+
+@router.get("/api/public/reference-network-status")
+async def reference_network_status(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await get_network_status()
