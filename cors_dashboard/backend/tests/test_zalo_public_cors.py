@@ -156,7 +156,7 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
         cases = ("/cors", "/cors cục đang thế nào", "@Bot Cors manager /cors",
                  "@Bot Cors manager /cors cục đang thế nào", "/cors@Bot", "/CORS",
                  "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "tình trạng Cục",
-                 "ở Tuyên Quang đo được k", "tầng điện ly hôm nay", "corsc cục hnay đo được k mọi người", "cors cuc hnay do dc k mn",
+                 "@Bot Cors manager hà nội đo được ko", "ở Tuyên Quang đo được k", "tầng điện ly hôm nay", "corsc cục hnay đo được k mọi người", "cors cuc hnay do dc k mn",
                  "cuc sap chua", "CORS Cục đang thế nào?", "kiểm tra VNGEONET",
                  "Cục còn sống không", "14.238.1.125 đang online không?")
         for text in cases:

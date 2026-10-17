@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app.zalo_cors_report import ionosphere_text, region_for_question, report_text
+from app.zalo_cors_report import _regions, ionosphere_text, region_for_question, report_text
 
 
 class CorsReportTests(unittest.IsolatedAsyncioTestCase):
@@ -15,6 +16,20 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
                 {'geometry': {'coordinates':[0, 0]}, 'properties': {'tec':200, 'anomaly':99}},
             ],
         }
+
+    def test_vietnamese_province_file_uses_utf8_on_windows(self):
+        original_open = Path.open
+        def windows_open(path, *args, **kwargs):
+            if kwargs.get('encoding') in (None, 'locale'):
+                kwargs['encoding'] = 'cp1252'
+            return original_open(path, *args, **kwargs)
+        _regions.cache_clear()
+        try:
+            with patch.object(Path, 'open', windows_open):
+                self.assertEqual(region_for_question('hà nội đo được ko')[0], 'Hà Nội')
+                self.assertEqual(region_for_question('Tuyên Quang đo được không')[0], 'Tuyên Quang')
+        finally:
+            _regions.cache_clear()
 
     def test_province_lookup_and_regional_values_exclude_remote_cells(self):
         self.assertEqual(region_for_question('ở tuyen quang đo được không')[0], 'Tuyên Quang')

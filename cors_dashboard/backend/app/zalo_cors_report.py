@@ -19,7 +19,7 @@ def _plain(text):
 
 @lru_cache(maxsize=1)
 def _regions():
-    features = json.loads((Path(__file__).parent / 'data/vietnam_provinces.geojson').read_text())['features']
+    features = json.loads((Path(__file__).parent / 'data/vietnam_provinces.geojson').read_text(encoding='utf-8'))['features']
     result = []
     for feature in features:
         props, geometry = feature['properties'], feature['geometry']
