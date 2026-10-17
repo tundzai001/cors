@@ -438,7 +438,7 @@
                                     <span class="station-map-popup-value" style="color:#f59e0b;font-weight:700;">${delayM !== null ? `~${delayM} m` : '--'}</span>
                                 </div>
                                 <div class="small text-muted mt-2 border-top pt-1" style="font-size:0.7rem;">
-                                    * IPP là giao điểm tia sóng qua độ cao 350km gây trễ tín hiệu trạm CORS.
+                                    * IPP là giao điểm tia sóng qua độ cao 350km gây trễ tín hiệu trạm Base.
                                 </div>
                             </div>
                         `;

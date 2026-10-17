@@ -33,7 +33,7 @@ function OperationsView() {
     <nav className="navbar navbar-expand-lg sticky-top ops-admin-nav">
         <div className="container-fluid">
             <a className="navbar-brand fw-bold text-light" href="/">
-                <i className="bi bi-activity me-2"></i>Trung tâm điều khiển CORS
+                <i className="bi bi-activity me-2"></i>Trung tâm điều khiển Base
             </a>
             <button className="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span className="navbar-toggler-icon"></span>
@@ -55,7 +55,7 @@ function OperationsView() {
             <div className="ops-command-heading">
                 <span className="ops-kicker"><span className="ops-live-dot"></span> GIÁM SÁT HỆ THỐNG</span>
                 <h1>Trung tâm điều hành</h1>
-                <p>Theo dõi trạng thái mạng CORS và xử lý tác vụ tại một nơi.</p>
+                <p>Theo dõi trạng thái mạng Base và xử lý tác vụ tại một nơi.</p>
             </div>
             <div className="ops-command-actions">
                 <span id="ops-last-updated" className="ops-last-updated" aria-live="polite">Đang cập nhật...</span>

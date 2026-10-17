@@ -26,23 +26,23 @@ router = APIRouter(tags=["Devices"])
 def _normalize_auto_cors_config(payload: dict) -> dict:
     raw_config = payload.get("auto_cors") if isinstance(payload, dict) else None
     if not isinstance(raw_config, dict):
-        raise ValueError("AUTO_CORS requires the CORS connection fields")
+        raise ValueError("AUTO_CORS requires the Base connection fields")
 
     host = str(raw_config.get("ip") or "").strip()
     user = str(raw_config.get("user") or "").strip()
     password = str(raw_config.get("password") or "")
     mountpoint = str(raw_config.get("mountpoint") or "").strip()
     if not host or not user or not password or not mountpoint:
-        raise ValueError("CORS IP, port, username, password, and mountpoint are required")
+        raise ValueError("Base IP, port, username, password, and mountpoint are required")
     if any(char in "\r\n" for char in f"{host}{user}{password}{mountpoint}"):
-        raise ValueError("CORS connection fields contain invalid line breaks")
+        raise ValueError("Base connection fields contain invalid line breaks")
 
     try:
         port = int(raw_config.get("port"))
     except (TypeError, ValueError):
-        raise ValueError("CORS port must be a valid number") from None
+        raise ValueError("Base port must be a valid number") from None
     if not 1 <= port <= 65535:
-        raise ValueError("CORS port must be between 1 and 65535")
+        raise ValueError("Base port must be between 1 and 65535")
 
     return {
         "ip": host,
@@ -240,9 +240,9 @@ async def get_device_cors_mountpoints(
     host = request.host.strip()
     username = request.username.strip()
     if any(char in "\r\n/" for char in host):
-        raise HTTPException(status_code=400, detail="CORS host must be a hostname or IP address")
+        raise HTTPException(status_code=400, detail="Base host must be a hostname or IP address")
     if not host or not username or not request.password:
-        raise HTTPException(status_code=400, detail="CORS host, username, and password are required")
+        raise HTTPException(status_code=400, detail="Base host, username, and password are required")
 
     try:
         caster = CasterClient(
@@ -254,10 +254,10 @@ async def get_device_cors_mountpoints(
         sources = await caster.get_sources(prefer_standard_ntrip=True)
     except Exception as exc:
         logger.warning("CORS sourcetable lookup failed for %s:%s: %s", host, request.port, exc)
-        raise HTTPException(status_code=502, detail="Không thể kết nối hoặc đọc sourcetable từ CORS") from exc
+        raise HTTPException(status_code=502, detail="Không thể kết nối hoặc đọc sourcetable từ Base") from exc
 
     if sources is None:
-        raise HTTPException(status_code=502, detail="CORS không trả về sourcetable hợp lệ")
+        raise HTTPException(status_code=502, detail="Base không trả về sourcetable hợp lệ")
 
     # Do not send source-table passwords or other caster-side secrets to the browser.
     safe_sources = []

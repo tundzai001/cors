@@ -47,7 +47,7 @@ const BlogSystem = ({ slug }) => {
         },
         {
             slug: 'huong-dan-ket-noi-cors',
-            title: 'Hướng dẫn kết nối CORS cho Drone và máy thi công',
+            title: 'Hướng dẫn kết nối Base cho Drone và máy thi công',
             excerpt: 'Quy trình cấu hình tài khoản NTRIP, kiểm tra FIX, tối ưu độ trễ và xử lý các lỗi mất fix khi làm việc ngoài thực địa.',
             date: '2025-05-06',
             readTime: '6 phút',
@@ -85,14 +85,14 @@ const BlogSystem = ({ slug }) => {
         },
         {
             slug: 'bao-mat-truyen-dan-cors',
-            title: 'Bảo mật truyền dẫn CORS: TLS, phân quyền và audit',
-            excerpt: 'Thiết kế lớp bảo mật cho hạ tầng CORS theo hướng thực dụng: mã hóa, tách quyền và theo dõi truy cập có truy vết.',
+            title: 'Bảo mật truyền dẫn Base: TLS, phân quyền và audit',
+            excerpt: 'Thiết kế lớp bảo mật cho hạ tầng Base theo hướng thực dụng: mã hóa, tách quyền và theo dõi truy cập có truy vết.',
             date: '2025-04-28',
             readTime: '9 phút',
             category: 'Bảo mật hạ tầng',
             content: `
                 <h2>Tối thiểu cần những lớp bảo mật nào?</h2>
-                <p>Một hệ CORS production cần có TLS đầu cuối, kiểm soát quyền theo vai trò và nhật ký truy cập đủ chi tiết để phục vụ điều tra sự cố.</p>
+                <p>Một hệ Base production cần có TLS đầu cuối, kiểm soát quyền theo vai trò và nhật ký truy cập đủ chi tiết để phục vụ điều tra sự cố.</p>
                 <h3>Nguyên tắc phân quyền</h3>
                 <ul>
                     <li>Ẩn định danh thiết bị nhạy cảm với người dùng public</li>
@@ -126,7 +126,7 @@ const BlogSystem = ({ slug }) => {
                     <div className="blog-body" dangerouslySetInnerHTML={{ __html: currentPost.content }} />
 
                     <div className="blog-cta glass-card mt-5 p-4 text-center border-primary">
-                        <h4>Tư vấn kiến trúc CORS theo khu vực triển khai</h4>
+                        <h4>Tư vấn kiến trúc Base theo khu vực triển khai</h4>
                         <p className="text-muted">Đội kỹ thuật Aitogy hỗ trợ dựng luồng NTRIP, mountpoint và phương án giám sát theo tải thực tế.</p>
                         <a href="https://aitogy.com" target="_blank" className="btn btn-enterprise">Làm việc với đội triển khai</a>
                     </div>
@@ -162,7 +162,7 @@ const BlogSystem = ({ slug }) => {
         <div className="container py-5 blog-shell">
             <div className="text-center mb-5 blog-hero">
                 <h1 className="display-4 fw-bold mb-2">Technical Knowledge Base</h1>
-                <p className="text-muted mb-0">Kiến thức GNSS/RTK thực chiến cho triển khai CORS quy mô lớn.</p>
+                <p className="text-muted mb-0">Kiến thức GNSS/RTK thực chiến cho triển khai Base quy mô lớn.</p>
             </div>
 
             <div className="row g-4 mb-4">
@@ -194,7 +194,7 @@ const BlogSystem = ({ slug }) => {
                 <div className="col-lg-4">
                     <div className="blog-side-card blog-anim-block">
                         <h5>Series đề xuất</h5>
-                        <p className="text-muted mb-0">Từ khảo sát hiện trạng, dựng hạ tầng Caster đến giám sát production cho mạng CORS nhiều khu vực.</p>
+                        <p className="text-muted mb-0">Từ khảo sát hiện trạng, dựng hạ tầng Caster đến giám sát production cho mạng Base nhiều khu vực.</p>
                     </div>
                 </div>
                 <div className="col-lg-4">

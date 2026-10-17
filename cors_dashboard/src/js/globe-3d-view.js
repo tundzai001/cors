@@ -526,7 +526,7 @@
 
                 this.hoverTooltipEl.innerHTML = `
                     <div class="tooltip-title" style="color:#38bdf8">
-                        📡 <b>${dev.name || dev.serial || 'CORS Station'}</b>
+                        📡 <b>${dev.name || dev.serial || 'Base Station'}</b>
                     </div>
                     <div class="tooltip-sub">
                         Trạng thái: <span style="color:${statusColor}">${statusLabel}</span>

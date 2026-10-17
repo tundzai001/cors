@@ -227,7 +227,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     } else if (liveDataAvailable && device.base_mode_active) {
         const baseConfig = device.base_config || {};
         if (baseConfig.auto_configured) {
-            fixInfo = { label: 'BASE (Auto CORS)', color: '#00ff00', icon: '🏯' };
+            fixInfo = { label: 'BASE (Auto)', color: '#00ff00', icon: '🏯' };
         } else if (baseConfig.base_setup_method === 'FIXED_LLA') {
             fixInfo = { label: 'BASE FIXED', color: '#00ff00', icon: '🏯' };
         } else {

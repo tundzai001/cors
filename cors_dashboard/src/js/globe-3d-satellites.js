@@ -819,7 +819,7 @@
                 <div class="card-top-row">
                     <div class="card-title" style="color:#00f2ff">
                         <span>📡</span>
-                        <span><b>${dev.name || dev.serial || 'CORS Station'}</b></span>
+                        <span><b>${dev.name || dev.serial || 'Base Station'}</b></span>
                     </div>
                     <button type="button" class="card-close-btn" id="globe-card-close" aria-label="Đóng">✕</button>
                 </div>

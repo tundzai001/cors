@@ -61,7 +61,7 @@ const ApiDocs = () => {
         <div className="container py-5 api-shell">
             <div className="text-center mb-5 api-hero">
                 <h1 className="display-4 fw-bold">Developer Portal</h1>
-                <p className="text-muted mb-0">API cho tích hợp giám sát CORS, trạng thái mạng và dữ liệu vận hành GNSS theo thời gian thực.</p>
+                <p className="text-muted mb-0">API cho tích hợp giám sát Base, trạng thái mạng và dữ liệu vận hành GNSS theo thời gian thực.</p>
             </div>
 
             <div className="row g-4">

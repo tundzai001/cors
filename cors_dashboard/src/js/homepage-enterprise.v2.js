@@ -1170,7 +1170,7 @@ const useMagneticButtons = () => {
 /* Why Choose Us Section */
 const WhyChooseSection = () => {
     const items = [
-        { number: '10+', label: 'Năm kinh nghiệm', desc: 'Triển khai và vận hành hạ tầng GNSS/CORS quy mô quốc gia với đội ngũ kỹ sư chuyên sâu.', icon: 'bi-award' },
+        { number: '10+', label: 'Năm kinh nghiệm', desc: 'Triển khai và vận hành hạ tầng GNSS/Base quy mô quốc gia với đội ngũ kỹ sư chuyên sâu.', icon: 'bi-award' },
         { number: '50+', label: 'Đối tác tin dùng', desc: 'Doanh nghiệp khảo sát, xây dựng và viễn thám trên toàn quốc đã lựa chọn nền tảng Aitogy.', icon: 'bi-people' },
         { number: '24/7', label: 'Hỗ trợ kỹ thuật', desc: 'Đội ngũ vận hành trực 24 giờ, xử lý sự cố trong vòng 15 phút qua Telegram và hotline.', icon: 'bi-headset' }
     ];
@@ -1182,7 +1182,7 @@ const WhyChooseSection = () => {
             ),
             React.createElement('h2', { className: 'neon-title', style: { fontSize: '2.2rem', fontWeight: 900, color: '#fff' } }, 'Tại sao chọn Aitogy?'),
             React.createElement('p', { style: { color: '#6a8aaa', maxWidth: '600px', margin: '0 auto' } },
-                'Nền tảng CORS duy nhất được thiết kế và vận hành bởi đội ngũ kỹ sư Việt Nam, tối ưu cho điều kiện thực tế trong nước.'
+                'Nền tảng Base duy nhất được thiết kế và vận hành bởi đội ngũ kỹ sư Việt Nam, tối ưu cho điều kiện thực tế trong nước.'
             )
         ),
         React.createElement('div', { className: 'why-choose-grid' },
@@ -1208,7 +1208,7 @@ const ScrollProgressBar = () => React.createElement('div', { className: 'scroll-
 /* Typing Headline - cycles through phrases with typing/erasing effect */
 const TypingHeadline = () => {
     const phrases = [
-        'Trung tâm điều hành CORS',
+        'Trung tâm điều hành Base',
         'Hạ tầng GNSS thế hệ mới',
         'Định vị chính xác centimet'
     ];
@@ -1988,7 +1988,7 @@ const LoginPanel = ({ isOpen, onClose }) => {
                     src: '/assets/img/aitogy.png', alt: 'Aitogy',
                     className: 'login-panel-logo'
                 }),
-                React.createElement('div', { className: 'login-panel-title' }, 'TRUNG TÂM ĐIỀU HÀNH CORS')
+                React.createElement('div', { className: 'login-panel-title' }, 'TRUNG TÂM ĐIỀU HÀNH Base')
             ),
             React.createElement('div', { className: 'login-panel-body' },
                 error && React.createElement('div', { className: 'login-error' },
@@ -2062,7 +2062,7 @@ const LoginPanel = ({ isOpen, onClose }) => {
                         }, 'Giải pháp GNSS toàn diện'),
                         React.createElement('div', {
                             style: { color: '#6a8aaa', fontSize: '0.72rem' }
-                        }, 'Thiết bị và hạ tầng CORS chính xác cao')
+                        }, 'Thiết bị và hạ tầng Base chính xác cao')
                     )
                 ),
                 React.createElement('div', { className: 'login-company-info' },
@@ -2087,7 +2087,7 @@ const CinematicFeatures = ({ features }) => {
 
         React.createElement('div', { className: 'text-center mb-5' },
             React.createElement('h2', { style: { fontSize: '2.2rem', fontWeight: 800, color: '#fff' } }, 'Tính năng nổi bật'),
-            React.createElement('p', { style: { color: '#6a8aaa' } }, 'Nền tảng CORS thế hệ mới cho hạ tầng đo đạc Việt Nam')
+            React.createElement('p', { style: { color: '#6a8aaa' } }, 'Nền tảng Base thế hệ mới cho hạ tầng đo đạc Việt Nam')
         ),
 
         React.createElement('div', { className: 'row g-4 feature-card-grid' },
@@ -2173,13 +2173,13 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
         document.querySelector('.network-map-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
     const openTechnicalConsult = () => {
-        const subject = encodeURIComponent('Tu van ky thuat CORS Aitogy');
-        const body = encodeURIComponent('Chao Aitogy,\n\nToi can tu van ve giai phap CORS/GNSS/RTK.');
+        const subject = encodeURIComponent('Tu van ky thuat Base Aitogy');
+        const body = encodeURIComponent('Chao Aitogy,\n\nToi can tu van ve giai phap Base/GNSS/RTK.');
         window.location.href = `mailto:aitogyaitogy@gmail.com?subject=${subject}&body=${body}`;
     };
 
     const stats = [
-        { label: 'Tổng số trạm', value: animStations, sub: 'Mạng lưới CORS Aitogy', icon: 'bi-broadcast-pin', color: '#4facfe' },
+        { label: 'Tổng số trạm', value: animStations, sub: 'Mạng lưới Base Aitogy', icon: 'bi-broadcast-pin', color: '#4facfe' },
         { label: 'Đang hoạt động', value: animOnline, sub: 'Online · Sleep · Streaming', icon: 'bi-check-circle-fill', color: '#51cf66' },
         { label: 'Khu vực phủ sóng', value: animProvinces, sub: 'Tỉnh/TP trên toàn quốc', icon: 'bi-geo-alt-fill', color: '#cc5de8' },
         { label: 'Uptime', value: animUptime, sub: 'Tỷ lệ hoạt động', icon: 'bi-lightning-charge-fill', color: '#00f2ff' }
@@ -2247,7 +2247,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                 React.createElement('img', { src: '/assets/img/aitogy.png', alt: 'Aitogy' }),
                 React.createElement('div', null,
                     'Aitogy ',
-                    React.createElement('span', null, 'Mạng CORS')
+                    React.createElement('span', null, 'Mạng Base')
                 )
             ),
             React.createElement('div', { className: 'landing-nav-actions' },
@@ -2293,10 +2293,10 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                     }, 'Aitogy Network'),
                     React.createElement('div', { className: 'glitch-hud-scanline' }),
                     React.createElement('br'),
-                    React.createElement('span', { className: 'hero-title-gradient' }, 'Trung tâm điều hành CORS')
+                    React.createElement('span', { className: 'hero-title-gradient' }, 'Trung tâm điều hành Base')
                 ),
                 React.createElement('p', { className: 'hero-subtitle' },
-                    'Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh CORS trên toàn lãnh thổ Việt Nam. ',
+                    'Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh Base trên toàn lãnh thổ Việt Nam. ',
                     'Cung cấp hạ tầng RTK/NTRIP chuyên nghiệp cho khảo sát, đo đạc và tự động hóa.'
                 ),
                 React.createElement(SignalWaveform),
@@ -2353,7 +2353,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
         // === NETWORK MAP SHOWCASE ===
         React.createElement('section', { className: 'network-map-section container' },
             React.createElement('h2', { className: 'section-title', style: { fontSize: '2.2rem', fontWeight: 900, color: '#fff', letterSpacing: '-1px', textAlign: 'center', marginBottom: '8px' } },
-                'Mạng lưới CORS Việt Nam'
+                'Mạng lưới Base Việt Nam'
             ),
             React.createElement('p', { style: { color: '#6a8aaa', textAlign: 'center', marginBottom: '48px' } },
                 `${stationTotal} trạm toàn mạng - ${visibleStationTotal} trạm có tọa độ bản đồ, băng thông lớn và kết nối ổn định toàn quốc`
@@ -2412,7 +2412,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                     React.createElement('img', {
                         className: 'network-mobile-map',
                         src: '/assets/img/vietnam-map.svg',
-                        alt: 'Bản đồ mạng lưới CORS Việt Nam',
+                        alt: 'Bản đồ mạng lưới Base Việt Nam',
                         width: 634,
                         height: 875,
                         loading: 'lazy',
@@ -2462,7 +2462,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                     React.createElement('div', { className: 'hiw-step-content' },
                         React.createElement('div', { className: 'hiw-step-icon' }, React.createElement('i', { className: 'bi bi-satellite' })),
                         React.createElement('div', { className: 'hiw-step-title' }, 'Thu tín hiệu vệ tinh'),
-                        React.createElement('div', { className: 'hiw-step-desc' }, 'Trạm CORS thu tín hiệu từ 4 hệ thống vệ tinh: GPS, GLONASS, Galileo, BeiDou với anten đa tần số chuyên dụng.')
+                        React.createElement('div', { className: 'hiw-step-desc' }, 'Trạm Base thu tín hiệu từ 4 hệ thống vệ tinh: GPS, GLONASS, Galileo, BeiDou với anten đa tần số chuyên dụng.')
                     ),
                     React.createElement('div', { className: 'hiw-step-number' }, '1')
                 ),
@@ -2660,7 +2660,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
         // === STATION DIRECTORY (SEO) ===
         devices.length > 0 && React.createElement('section', { className: 'station-directory-section container mb-5' },
             React.createElement('div', { className: 'text-center mb-4' },
-                React.createElement('h2', { className: 'station-directory-title' }, 'Danh mục trạm CORS'),
+                React.createElement('h2', { className: 'station-directory-title' }, 'Danh mục trạm Base'),
                 React.createElement('p', { className: 'station-directory-sub' }, `${visibleStationTotal} trạm có tọa độ trên toàn Việt Nam`)
             ),
             React.createElement('div', { className: 'station-directory-grid row g-2', style: { maxHeight: '320px', overflowY: 'auto' } },
@@ -2683,7 +2683,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
             React.createElement('div', { className: 'footer-surface row g-4' },
                 React.createElement('div', { className: 'col-lg-5' },
                     React.createElement('div', { className: 'fw-bold mb-2 footer-brand' }, 'AITOGY .,JSC'),
-                    React.createElement('p', { className: 'footer-copy mb-0' }, 'Hạ tầng CORS quy mô quốc gia cho khảo sát, xây dựng và giám sát với độ chính xác cao, vận hành ổn định.')
+                    React.createElement('p', { className: 'footer-copy mb-0' }, 'Hạ tầng Base quy mô quốc gia cho khảo sát, xây dựng và giám sát với độ chính xác cao, vận hành ổn định.')
                 ),
                 React.createElement('div', { className: 'col-lg-3 col-6' },
                     React.createElement('div', { className: 'footer-heading' }, 'Nền tảng'),

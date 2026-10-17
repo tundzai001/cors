@@ -410,7 +410,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         const port = Number(corsPort);
         const username = corsUsername.trim();
         if (!host || !Number.isInteger(port) || port < 1 || port > 65535 || !username || !corsPassword) {
-            setCorsLookupError('Vui lòng nhập đủ IP/Host, Port, Username và Password của CORS.');
+            setCorsLookupError('Vui lòng nhập đủ IP/Host, Port, Username và Password của Base.');
             return;
         }
 
@@ -423,7 +423,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
-                throw new Error(data.detail || 'Không thể đọc danh sách mountpoint từ CORS.');
+                throw new Error(data.detail || 'Không thể đọc danh sách mountpoint từ Base.');
             }
 
             const sources = Array.isArray(data.sources)
@@ -436,9 +436,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     : (sources[0]?.mountpoint || '')
             ));
             if (!sources.length) {
-                setCorsLookupError('CORS đã kết nối nhưng chưa trả về mountpoint nào.');
+                setCorsLookupError('Base đã kết nối nhưng chưa trả về mountpoint nào.');
             } else {
-                window.showSuccess(`Đã tải ${sources.length} mountpoint từ CORS.`);
+                window.showSuccess(`Đã tải ${sources.length} mountpoint từ Base.`);
             }
         } catch (error) {
             setCorsSources([]);
@@ -485,12 +485,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             } else if (method === 'AUTO_CORS') {
                 const port = Number(corsPort);
                 if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
-                    window.showError('Vui lòng nhập đủ thông tin kết nối CORS.');
+                    window.showError('Vui lòng nhập đủ thông tin kết nối Base.');
                     setIsSubmitting(false);
                     return;
                 }
                 if (!selectedMountpoint) {
-                    window.showError('Vui lòng bấm "Kết nối CORS & lấy mountpoint" rồi chọn một mountpoint.');
+                    window.showError('Vui lòng bấm "Kết nối Base & lấy mountpoint" rồi chọn một mountpoint.');
                     setIsSubmitting(false);
                     return;
                 }
@@ -604,7 +604,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 )}
                                 <strong className="text-info small text-uppercase">
                                     <i className="bi bi-broadcast me-1"></i>
-                                    {STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & CORS'}
+                                    {STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & Base'}
                                 </strong>
                             </div>
                             <div className="d-flex align-items-center gap-2 flex-wrap">
@@ -753,7 +753,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     onChange={(e) => setMethod(e.target.value)}
                     disabled={disabled}
                 >
-                    <option value="AUTO_CORS">Tự động cấu hình Base từ CORS liên kết</option>
+                    <option value="AUTO_CORS">Tự động cấu hình Base từ Base liên kết</option>
                     <option value="FIXED_LLA">Nhập tọa độ thủ công (Fixed Mode - Độ chính xác cao)</option>
                     <option value="SURVEY_IN">Tự động khảo sát (Survey-In - Độ chính xác thấp)</option>
                 </select>
@@ -767,15 +767,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 <div className="d-flex align-items-start gap-2 mb-3">
                                     <i className="bi bi-broadcast-pin text-info fs-5" aria-hidden="true"></i>
                                     <div>
-                                        <div className="fw-bold text-info">Thông tin CORS liên kết</div>
+                                        <div className="fw-bold text-info">Thông tin Base liên kết</div>
                                         <div className="form-text mt-1">
-                                            Nhập đúng tài khoản CORS tại đây. Các giá trị này chỉ dùng cho lần Auto Base này và được gửi trực tiếp xuống agent.
+                                            Nhập đúng tài khoản Base tại đây. Các giá trị này chỉ dùng cho lần Auto Base này và được gửi trực tiếp xuống agent.
                                         </div>
                                     </div>
                                 </div>
                                 <div className="row g-3">
                                     <div className="col-md-8">
-                                        <label htmlFor={`cors-host-${device.serial}`} className="form-label small fw-bold">IP / Host CORS</label>
+                                        <label htmlFor={`cors-host-${device.serial}`} className="form-label small fw-bold">IP / Host Base</label>
                                         <input
                                             id={`cors-host-${device.serial}`}
                                             type="text"
@@ -802,7 +802,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         />
                                     </div>
                                     <div className="col-md-6">
-                                        <label htmlFor={`cors-user-${device.serial}`} className="form-label small fw-bold">Username CORS</label>
+                                        <label htmlFor={`cors-user-${device.serial}`} className="form-label small fw-bold">Username Base</label>
                                         <input
                                             id={`cors-user-${device.serial}`}
                                             type="text"
@@ -815,7 +815,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         />
                                     </div>
                                     <div className="col-md-6">
-                                        <label htmlFor={`cors-password-${device.serial}`} className="form-label small fw-bold">Password CORS</label>
+                                        <label htmlFor={`cors-password-${device.serial}`} className="form-label small fw-bold">Password Base</label>
                                         <input
                                             id={`cors-password-${device.serial}`}
                                             type="password"
@@ -837,12 +837,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                             {isLoadingCorsSources ? (
                                                 <>
                                                     <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                                    Đang kết nối CORS...
+                                                    Đang kết nối Base...
                                                 </>
                                             ) : (
                                                 <>
                                                     <i className="bi bi-search me-2" aria-hidden="true"></i>
-                                                    Bước 1: Kết nối CORS & Lấy danh sách Mountpoint
+                                                    Bước 1: Kết nối Base & Lấy danh sách Mountpoint
                                                 </>
                                             )}
                                         </button>
@@ -865,7 +865,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                             disabled={!corsSources.length || isSubmitting}
                                             required
                                         >
-                                            <option value="">-- Chọn mountpoint từ CORS --</option>
+                                            <option value="">-- Chọn mountpoint từ Base --</option>
                                             {corsSources.map((source) => (
                                                 <option key={source.mountpoint} value={source.mountpoint}>
                                                     {source.mountpoint}{source.identifier ? ` · ${source.identifier}` : ''}
@@ -887,12 +887,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                             {isSubmitting ? (
                                                 <>
                                                     <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                                    Đang chạy quy trình Auto Base từ CORS...
+                                                    Đang chạy quy trình Auto Base từ Base...
                                                 </>
                                             ) : (
                                                 <>
                                                     <i className="bi bi-play-circle-fill me-2" aria-hidden="true"></i>
-                                                    Bước 3: Bắt đầu chạy Auto Base từ CORS {selectedMountpoint ? `(${selectedMountpoint})` : ''}
+                                                    Bước 3: Bắt đầu chạy Auto Base từ Base {selectedMountpoint ? `(${selectedMountpoint})` : ''}
                                                 </>
                                             )}
                                         </button>
@@ -908,9 +908,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <div className="alert alert-success small mb-2">
                                 <i className="bi bi-robot me-2"></i>
                                 {latitude && longitude ? (
-                                    <span>Hệ thống đã tự động cấu hình tọa độ cho trạm từ CORS liên kết thành công!</span>
+                                    <span>Hệ thống đã tự động cấu hình tọa độ cho trạm từ Base liên kết thành công!</span>
                                 ) : (
-                                    <span>Hệ thống sẽ tự động ghép nối với máy chủ CORS và tính trung bình tọa độ (10 số thập phân) để thiết lập trạm phát Base hoàn toàn tự động!</span>
+                                    <span>Hệ thống sẽ tự động ghép nối với máy chủ Base và tính trung bình tọa độ (10 số thập phân) để thiết lập trạm phát Base hoàn toàn tự động!</span>
                                 )}
                             </div>
                         </div>
@@ -1098,12 +1098,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         {isSubmitting ? (
                             <>
                                 <span className="spinner-border spinner-border-sm me-2"></span>
-                                {method === 'AUTO_CORS' ? 'Đang chạy quy trình Auto Base từ CORS...' : 'Đang gửi...'}
+                                {method === 'AUTO_CORS' ? 'Đang chạy quy trình Auto Base từ Base...' : 'Đang gửi...'}
                             </>
                         ) : (
                             <>
                                 <i className="bi bi-lightning-charge-fill me-2"></i>
-                                {method === 'AUTO_CORS' ? 'Bắt đầu chạy Auto Base từ CORS' : 'Áp dụng cấu hình BASE'}
+                                {method === 'AUTO_CORS' ? 'Bắt đầu chạy Auto Base từ Base' : 'Áp dụng cấu hình BASE'}
                             </>
                         )}
                     </button>

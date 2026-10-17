@@ -63,14 +63,14 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
             alt = coords.get("alt") or base_cfg.get("alt", 0.0)
 
             # 2. BUILD DYNAMIC SEO TAGS
-            title = f"{station_name} GNSS CORS Station | RTK Network Vietnam | Aitogy"
-            desc = f"Trạm CORS {station_name} ({serial}) tại {lat}, {lon}. Trạng thái: {status_text}. Theo dõi tín hiệu vệ tinh GPS/GLONASS/BDS và độ trễ RTK thời gian thực."
+            title = f"{station_name} GNSS Base Station | RTK Network Vietnam | Aitogy"
+            desc = f"Trạm Base {station_name} ({serial}) tại {lat}, {lon}. Trạng thái: {status_text}. Theo dõi tín hiệu vệ tinh GPS/GLONASS/BDS và độ trễ RTK thời gian thực."
 
             # 3. BUILD DEEP JSON-LD (Schema.org)
             json_ld = {
                 "@context": "https://schema.org",
                 "@type": "Place",
-                "name": f"GNSS CORS Station {station_name}",
+                "name": f"GNSS Base Station {station_name}",
                 "description": desc,
                 "identifier": serial,
                 "geo": {
@@ -95,12 +95,12 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
             # Inject standard meta
             safe_title = html_escape.escape(title, quote=True)
             safe_desc = html_escape.escape(desc, quote=True)
-            html_content = html_content.replace("<title>Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{safe_title}</title>")
-            html_content = html_content.replace('name="description" content="Aitogy CORS Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (CORS) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{safe_desc}"')
+            html_content = html_content.replace("<title>Hệ thống trạm Base Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{safe_title}</title>")
+            html_content = html_content.replace('name="description" content="Aitogy Base Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (Base) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{safe_desc}"')
 
             # Inject OG Tags
-            html_content = html_content.replace('property="og:title" content="Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao"', f'property="og:title" content="{safe_title}"')
-            html_content = html_content.replace('property="og:description" content="Quản lý và vận hành mạng lưới trạm CORS Aitogy. Giải pháp định vị chính xác cao hàng đầu."', f'property="og:description" content="{safe_desc}"')
+            html_content = html_content.replace('property="og:title" content="Hệ thống trạm Base Aitogy | Quản lý định vị chính xác cao"', f'property="og:title" content="{safe_title}"')
+            html_content = html_content.replace('property="og:description" content="Quản lý và vận hành mạng lưới trạm Base Aitogy. Giải pháp định vị chính xác cao hàng đầu."', f'property="og:description" content="{safe_desc}"')
 
             # Inject JSON-LD before head closing
             html_content = html_content.replace("</head>", f"{json_ld_script}\n</head>")
@@ -113,7 +113,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
 @router.get("/sitemap.xml")
 async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_db)):
     """
-    Generates a dynamic XML sitemap listing the homepage and all active CORS stations.
+    Generates a dynamic XML sitemap listing the homepage and all active Base stations.
     This ensures Google always has an up-to-date list of every station page.
     """
     base_url = "https://cors.aitogy.com"
@@ -159,17 +159,17 @@ async def get_blog_post_seo(slug: str, request: Request):
     blog_metadata = {
         "ntrip-caster-la-gi": {
             "title": "NTRIP Caster là gì? Hướng dẫn toàn tập về giao thức RTK | Aitogy",
-            "desc": "Tìm hiểu về NTRIP Caster, vai trò của nó trong mạng lưới CORS và cách kết nối đầu thu GNSS để đạt độ chính xác centimet."
+            "desc": "Tìm hiểu về NTRIP Caster, vai trò của nó trong mạng lưới Base và cách kết nối đầu thu GNSS để đạt độ chính xác centimet."
         },
         "huong-dan-ket-noi-cors": {
-            "title": "Cách kết nối trạm CORS Aitogy cho Drone và Máy công trình",
-            "desc": "Hướng dẫn chi tiết từng bước cấu hình tài khoản NTRIP để nhận tín hiệu hiệu chỉnh RTK từ hệ thống trạm CORS Aitogy."
+            "title": "Cách kết nối trạm Base Aitogy cho Drone và Máy công trình",
+            "desc": "Hướng dẫn chi tiết từng bước cấu hình tài khoản NTRIP để nhận tín hiệu hiệu chỉnh RTK từ hệ thống trạm Base Aitogy."
         }
     }
 
     meta = blog_metadata.get(slug, {
         "title": "Blog Kỹ thuật GNSS/RTK | Aitogy Knowledge Base",
-        "desc": "Kiến thức chuyên sâu về công nghệ định vị vệ tinh, hạ tầng CORS và giải pháp RTK chính xác cao."
+        "desc": "Kiến thức chuyên sâu về công nghệ định vị vệ tinh, hạ tầng Base và giải pháp RTK chính xác cao."
     })
 
     try:
@@ -177,8 +177,8 @@ async def get_blog_post_seo(slug: str, request: Request):
             html_content = f.read()
 
         # Inject Blog Meta
-        html_content = html_content.replace("<title>Hệ thống trạm CORS Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{meta['title']}</title>")
-        html_content = html_content.replace('name="description" content="Aitogy CORS Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (CORS) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{meta["desc"]}"')
+        html_content = html_content.replace("<title>Hệ thống trạm Base Aitogy | Quản lý định vị chính xác cao GNSS/RTK</title>", f"<title>{meta['title']}</title>")
+        html_content = html_content.replace('name="description" content="Aitogy Base Control - Hệ thống quản trị mạng lưới trạm định vị vệ tinh (Base) chuyên nghiệp. Cung cấp giải pháp định vị chính xác cao cho khảo sát và đo đạc."', f'name="description" content="{meta["desc"]}"')
 
         # Article Schema
         article_schema = {

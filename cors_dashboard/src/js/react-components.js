@@ -742,7 +742,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
 
                     const popupContent = `
                         <div style="color: #333; min-width: 180px;">
-                            <strong>Trạm CORS: ${displayName}</strong> <br>
+                            <strong>Trạm Base: ${displayName}</strong> <br>
                             <span class="badge ${STATUS_CLASS_MAP[mapEffectiveStatus] || 'bg-secondary'}">${STATUS_TEXT_MAP[mapEffectiveStatus] || mapEffectiveStatus}</span><br>
                             ${serialHtml}
                         </div>
@@ -966,7 +966,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         const validDevices = devices.filter(d => getDeviceCoords(d) !== null);
 
         if (validDevices.length === 0) {
-            if (window.showError) window.showError("Không có trạm CORS nào có tọa độ hợp lệ trên hệ thống.");
+            if (window.showError) window.showError("Không có trạm Base nào có tọa độ hợp lệ trên hệ thống.");
             return;
         }
 
@@ -1001,7 +1001,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         const nearestOffline = findNearest(offlineDevices);
 
         if (!nearestConnected && !nearestOffline) {
-            if (window.showError) window.showError("Không tìm thấy trạm CORS nào phù hợp.");
+            if (window.showError) window.showError("Không tìm thấy trạm Base nào phù hợp.");
             return;
         }
 
@@ -1248,7 +1248,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                                 onChange={(e) => setShowCors(e.target.checked)}
                             />
                             <label className="form-check-label text-light small fw-bold m-0" htmlFor="toggle-cors-layer">
-                                Trạm CORS
+                                Trạm Base
                             </label>
                         </div>
 
