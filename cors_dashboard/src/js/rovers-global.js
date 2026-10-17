@@ -1159,7 +1159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </div>
             </td>
-            <td data-label="Password"><code class="rover-password-chip">${escapeHtml(r.password || '******')}</code></td>
+            <td data-label="Password"><code class="rover-password-chip">${escapeHtml(r.password || '---')}</code></td>
             <td data-label="Mountpoints">
                 <div class="rover-mount-cell">
                     <div class="rover-mountpoint-list" title="${mpsTitle}" aria-label="Mountpoints được cấp">${mpsDisplay}</div>
@@ -2298,6 +2298,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(cu.username))) {
                 mergedData.push({
                     username: cu.username,
+                    password: cu.password || '',
                     type: 'unknown',
                     caster_info: cu,
                     mountpoints: cu.mountpoints.join(';'),
@@ -2420,12 +2421,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('edit-rover-id').value = rover.id;
         document.getElementById('edit-username').value = rover.username;
         
-        // Nếu là tài khoản ngoại lai (chưa lưu DB), mật khẩu lấy trực tiếp từ Caster (không bị mã hóa/ẩn) nên ta hiện rõ
-        if (rover.id === 0) {
-            document.getElementById('edit-password').value = rover.password || '';
-        } else {
-            document.getElementById('edit-password').value = '';
-        } 
+        // Hiển thị mật khẩu hiện tại trong modal sửa
+        document.getElementById('edit-password').value = rover.password || ''; 
         const expirySelect = document.getElementById('edit-expiry');
         
         // Cập nhật text hiển thị của tùy chọn "Giữ nguyên" (options[0])

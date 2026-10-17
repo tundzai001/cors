@@ -20,7 +20,7 @@ class FakeMap {
     addControl() {} setFog() {}
     hasImage(id) { return Boolean(this.images?.[id]); }
     addImage(id, data) { (this.images ||= {})[id] = data; }
-    addSource(id, data) { this.sources[id] = { data: data.data, setData(value) { this.data = value; } }; }
+    addSource(id, data) { this.sources[id] = { ...data, data: data.data, setData(value) { this.data = value; } }; }
     addLayer(layer) { this.layers[layer.id] = layer; }
     getSource(id) { return this.sources[id]; } getLayer(id) { return this.layers[id]; }
     setMaxBounds(bounds) { this.bounds = bounds; }
@@ -69,6 +69,8 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     assert.equal(map.getSource('cors-stations').data.features[0].properties.serial, 'PI_real', 'real station data reaches Mapbox');
     assert.equal(map.moves.length, 0, 'station map does not start an unsolicited flight');
     assert.equal(map.getLayer('cors-rover-pins').type, 'symbol', 'rovers retain triangular icons');
+    assert.equal(map.getSource('cors-rovers').cluster, false, 'rover clustering is disabled');
+    assert.equal(map.getLayer('cors-rover-clusters'), undefined, 'cluster layer is removed');
     assert.ok(map.hasImage('cors-rover-fixed'));
     assert.ok(map.hasImage('cors-ipp'));
     assert.equal(map.getLayer('cors-gnss-ipp').type, 'symbol', 'IPP retains a diamond icon');

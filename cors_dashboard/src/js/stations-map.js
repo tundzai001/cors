@@ -360,14 +360,7 @@
             coverageRef.current.addTo(map);
             layerRef.current.addTo(map);
 
-            roverClusterRef.current = window.CorsDashboardShared?.createMarkerClusterGroup?.({
-                    chunkedLoading: true,
-                    removeOutsideVisibleBounds: true,
-                    showCoverageOnHover: false,
-                    spiderfyOnMaxZoom: false,
-                    maxClusterRadius: 45,
-                    disableClusteringAtZoom: 14
-                }) || L.layerGroup();
+            roverClusterRef.current = L.layerGroup();
             if (roverClusterRef.current) {
                 roverClusterRef.current.addTo(map);
             }

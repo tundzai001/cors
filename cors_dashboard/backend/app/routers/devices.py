@@ -83,9 +83,6 @@ def _device_response_list(devices: list[models.Device], current_user: models.Use
 
 def _rover_response_list(rovers: list[models.RoverAccount], current_user: models.User) -> list:
     items = [schemas.RoverAccountResponse.from_orm(rover).model_dump() for rover in rovers]
-    if current_user.role != auth.Role.ADMIN:
-        for item in items:
-            item["password"] = ""
     return items
 
 

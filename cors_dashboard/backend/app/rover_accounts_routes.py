@@ -112,8 +112,6 @@ async def get_all_rovers_global(
 
         # Nối tên các trạm lại: "Trạm A, Trạm B"
         rover_dict['base_name'] = ", ".join(station_names)
-        if current_user.role != auth.Role.ADMIN:
-            rover_dict["password"] = ""
 
         enriched_rovers.append(rover_dict)
 

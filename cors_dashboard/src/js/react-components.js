@@ -666,16 +666,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 maxZoom: 20, attribution: '&copy; Google'
             }).addTo(map);
 
-            roverClusterRef.current = window.CorsDashboardShared?.createMarkerClusterGroup?.({
-                chunkedLoading: true,
-                chunkInterval: 40,
-                chunkDelay: 40,
-                removeOutsideVisibleBounds: true,
-                showCoverageOnHover: false,
-                spiderfyOnMaxZoom: false,
-                maxClusterRadius: 45,
-                disableClusteringAtZoom: 14
-            }) || leaflet.layerGroup();
+            roverClusterRef.current = leaflet.layerGroup();
             if (roverClusterRef.current) {
                 map.addLayer(roverClusterRef.current);
             }

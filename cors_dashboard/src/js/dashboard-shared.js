@@ -1,4 +1,4 @@
-﻿// ======================
+// ======================
 // dashboard-shared.js
 // Shared map/status helpers for dashboard modules.
 // ======================
@@ -12,18 +12,6 @@ function getLeaflet() {
 function createMarkerClusterGroup(options = {}) {
     const leaflet = getLeaflet();
     if (!leaflet) return null;
-
-    try {
-        if (typeof leaflet.MarkerClusterGroup === 'function') {
-            return new leaflet.MarkerClusterGroup(options);
-        }
-        if (typeof leaflet.markerClusterGroup === 'function') {
-            return leaflet.markerClusterGroup(options);
-        }
-    } catch (error) {
-        console.warn('MarkerCluster plugin is invalid; using a standard Leaflet layer group.');
-    }
-
     return typeof leaflet.layerGroup === 'function' ? leaflet.layerGroup() : null;
 }
 

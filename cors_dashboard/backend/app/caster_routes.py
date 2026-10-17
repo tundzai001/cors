@@ -198,7 +198,7 @@ async def get_caster_users(
 
         enriched_items.append(schemas.CasterRoverItem(
             username=username,
-            password=str(cu.get("password", "")) if current_user.role == auth.Role.ADMIN else "",
+            password=str(cu.get("password", "")),
             mountpoints=cu.get("mountpoints", []),
             datacount=cu.get("datacount", 0),
             status=cu.get("status", 0),
