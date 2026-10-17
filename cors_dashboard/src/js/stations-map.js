@@ -157,9 +157,15 @@
             <div class="text-muted small">Trạm tham khảo</div>
             <div class="station-map-popup-grid">
                 <span class="station-map-popup-label">Lat/Lon</span>
-                <span class="station-map-popup-value">${station.lat.toFixed(7)}, ${station.lon.toFixed(7)}</span>
+                <span class="station-map-popup-value">${station.lat.toFixed(9)}, ${station.lon.toFixed(9)}</span>
+            </div>
+            <div class="station-map-popup-grid">
+                <span class="station-map-popup-label">Độ cao (m)</span>
+                <span class="station-map-popup-value">${Number.isFinite(station.heightM) ? station.heightM.toFixed(3) : '—'}</span>
             </div>
             <div class="small mt-2">Chưa có trạng thái trực tiếp</div>
+            <div class="small mt-2">Nguồn: <a href="https://vngeonet.vn/User/SiteMap/SiteMapPublic" target="_blank" rel="noopener noreferrer">VNGEONET</a> · 17/10/2026</div>
+            <div class="small mt-1">Chưa xác định hệ quy chiếu và loại độ cao.</div>
         </div>`;
     }
 

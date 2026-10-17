@@ -657,6 +657,8 @@
         ['Alt (Tự động)', 'Altitude (automatic)'],
         ['Độ cao', 'Height'],
         ['Giới hạn sai số', 'Error limit'],
+        ['Độ cao (m)', 'Height (m)'],
+        ['Chưa xác định hệ quy chiếu và loại độ cao.', 'Coordinate reference frame and height type are unspecified.'],
         ['Trạm tham khảo', 'Reference station'],
         ['Chưa có trạng thái trực tiếp', 'Live status unavailable'],
         ['Trạm tham khảo · chưa có trạng thái trực tiếp', 'Reference stations · live status unavailable'],
