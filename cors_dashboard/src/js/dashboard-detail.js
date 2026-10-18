@@ -1225,9 +1225,14 @@ const DetailsPanel = memo(function DetailsPanel({
                     ) : (
                         <div></div>
                     )}
-                    <span className="badge bg-dark-subtle text-light border border-secondary">
-                        {device.detected_chip_type || 'UNKNOWN'}
-                    </span>
+                    <div className="d-flex flex-wrap align-items-center gap-2">
+                        <span className="badge bg-dark-subtle text-light border border-secondary text-nowrap">
+                            {/^esp_/i.test(device.serial) ? 'Firmware' : 'Agent'}: {device.version || 'Chưa rõ phiên bản'}
+                        </span>
+                        <span className="badge bg-dark-subtle text-light border border-secondary">
+                            {device.detected_chip_type || 'UNKNOWN'}
+                        </span>
+                    </div>
                 </div>
 
                 {rawStatusKey === 'offline' && !(activeTab === 'dashboard' && staleOffline) && (

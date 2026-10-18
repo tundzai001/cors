@@ -35,7 +35,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend
 const station = (serial, status = 'online') => ({serial, name: serial, status, is_synced: true});
 let props = {devices: [station('1000000037a7201b'), station('LP_00E04C0CFB9E'), station('RELAY_ATG_DT'),
     station('esp_9896E5124B00'), station('ESP_000000000001', 'offline')],
-    searchTerm: '', currentUser: {id: 1, role: 'admin'}, onSearch() {}};
+    selectedDeviceSerial: 'esp_9896E5124B00', searchTerm: '', currentUser: {id: 1, role: 'admin'}, onSearch() {}};
 function render() {
     let tree, rounds = 0;
     do {
@@ -65,8 +65,9 @@ nodes(tree).find(node => node.type === 'button' && node.props.key === 'offline')
 assert.deepEqual(cards(render()), ['ESP_000000000001']);
 typeButton(render(), 'fixed').props.onClick();
 assert.equal(cards(render()).length, 3, 'Switching type resets status filter');
-props.selectedDeviceSerial = 'esp_9896E5124B00'; tree = render();
-assert.equal(typeButton(tree, 'mobile').props['aria-pressed'], true, 'Selecting a mobile station reveals its group');
+props.selectedDeviceSerial = 'ESP_000000000001'; tree = render();
+assert.equal(typeButton(tree, 'fixed').props['aria-pressed'], true, 'Selection does not override the fixed default or manual group');
+typeButton(tree, 'mobile').props.onClick();
 
 // The list receives only the authenticated API scope; it must never fetch or
 // synthesize unassigned stations for coordinators.

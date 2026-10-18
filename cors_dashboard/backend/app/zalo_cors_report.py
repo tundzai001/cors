@@ -22,6 +22,10 @@ def _plain(text):
 
 @lru_cache(maxsize=1)
 def _regions():
+    regions_file = Path(__file__).parent / 'data/vietnam_regions.json'
+    if regions_file.exists():
+        raw = json.loads(regions_file.read_text(encoding='utf-8'))
+        return [(item['name'], tuple(item['bounds']), set(item['aliases'])) for item in raw]
     features = json.loads((Path(__file__).parent / 'data/vietnam_provinces.geojson').read_text(encoding='utf-8'))['features']
     result = []
     for feature in features:

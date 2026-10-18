@@ -348,7 +348,7 @@ const isMobileBase = serial => /^esp_/i.test(String(serial || '').trim());
 
 const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
-    const [stationType, setStationType] = useState(() => isMobileBase(selectedDeviceSerial) ? 'mobile' : 'fixed');
+    const [stationType, setStationType] = useState('fixed');
     const [statusFilter, setStatusFilter] = useState('all');
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [clockNow, setClockNow] = useState(Date.now());
@@ -367,9 +367,6 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
     const typeDevices = React.useMemo(() => devices.filter(device =>
         isMobileBase(device.serial) === (stationType === 'mobile')
     ), [devices, stationType]);
-    useEffect(() => {
-        if (selectedDeviceSerial) setStationType(isMobileBase(selectedDeviceSerial) ? 'mobile' : 'fixed');
-    }, [selectedDeviceSerial]);
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
     const getListStatus = React.useCallback((device) => {
         const rawStatus = isDeviceStaleOffline(device, clockNow) ? 'offline' : String(device?.status || 'offline').toLowerCase();

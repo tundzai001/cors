@@ -38,6 +38,10 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
 
     def test_province_lookup_and_regional_values_exclude_remote_cells(self):
         self.assertEqual(region_for_question('ở tuyen quang đo được không')[0], 'Tuyên Quang')
+        self.assertEqual(region_for_question('@Bot Cors manager đo được không ở quảng nam')[0], 'Quảng Nam')
+        self.assertEqual(region_for_question('ở tam kỳ đo được không')[0], 'Quảng Nam')
+        self.assertEqual(region_for_question('ở hà nam đo được không')[0], 'Hà Nam')
+        self.assertEqual(region_for_question('ở đà nẵng đo được không')[0], 'Đà Nẵng')
         local = ionosphere_text(self.data(), 'Tuyên Quang đo được không')
         self.assertIn('Tuyên Quang', local)
         self.assertIn('TEC 30.0 TECU', local)

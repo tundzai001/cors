@@ -1,0 +1,842 @@
+[
+  {
+    "name": "An Giang",
+    "bounds": [
+      104.7765,
+      10.1846,
+      105.574,
+      10.9622
+    ],
+    "aliases": [
+      "an giang",
+      "chau doc",
+      "long xuyen"
+    ]
+  },
+  {
+    "name": "Bà Rịa - Vũng Tàu",
+    "bounds": [
+      106.0781,
+      8.5775,
+      107.5701,
+      10.8054
+    ],
+    "aliases": [
+      "ba ria",
+      "ba ria vung tau",
+      "vung tau"
+    ]
+  },
+  {
+    "name": "Bắc Giang",
+    "bounds": [
+      105.8789,
+      21.1227,
+      107.0322,
+      21.627
+    ],
+    "aliases": [
+      "bac giang"
+    ]
+  },
+  {
+    "name": "Bắc Kạn",
+    "bounds": [
+      105.4299,
+      21.8056,
+      106.2437,
+      22.7417
+    ],
+    "aliases": [
+      "bac can",
+      "bac kan"
+    ]
+  },
+  {
+    "name": "Bạc Liêu",
+    "bounds": [
+      105.231,
+      9.0208,
+      105.8587,
+      9.6388
+    ],
+    "aliases": [
+      "bac lieu"
+    ]
+  },
+  {
+    "name": "Bắc Ninh",
+    "bounds": [
+      105.9029,
+      20.9693,
+      106.3096,
+      21.2648
+    ],
+    "aliases": [
+      "bac ninh"
+    ]
+  },
+  {
+    "name": "Bến Tre",
+    "bounds": [
+      106.027,
+      9.8002,
+      106.7898,
+      10.341
+    ],
+    "aliases": [
+      "ben tre"
+    ]
+  },
+  {
+    "name": "Bình Định",
+    "bounds": [
+      108.6001,
+      13.5177,
+      109.3706,
+      14.6991
+    ],
+    "aliases": [
+      "binh dinh",
+      "quy nhon"
+    ]
+  },
+  {
+    "name": "Bình Dương",
+    "bounds": [
+      106.3248,
+      10.8655,
+      106.9648,
+      11.5023
+    ],
+    "aliases": [
+      "binh duong",
+      "thu dau mot"
+    ]
+  },
+  {
+    "name": "Bình Phước",
+    "bounds": [
+      106.4086,
+      11.3026,
+      107.4254,
+      12.2988
+    ],
+    "aliases": [
+      "binh phuoc",
+      "dong xoai"
+    ]
+  },
+  {
+    "name": "Bình Thuận",
+    "bounds": [
+      107.3928,
+      9.9653,
+      109.0827,
+      11.5568
+    ],
+    "aliases": [
+      "binh thuan",
+      "phan thiet"
+    ]
+  },
+  {
+    "name": "Cà Mau",
+    "bounds": [
+      104.5204,
+      8.381,
+      105.4174,
+      9.5641
+    ],
+    "aliases": [
+      "ca mau"
+    ]
+  },
+  {
+    "name": "Cần Thơ",
+    "bounds": [
+      105.224,
+      9.9201,
+      105.8429,
+      10.3279
+    ],
+    "aliases": [
+      "can tho"
+    ]
+  },
+  {
+    "name": "Cao Bằng",
+    "bounds": [
+      105.2648,
+      22.358,
+      106.8349,
+      23.1203
+    ],
+    "aliases": [
+      "cao bang"
+    ]
+  },
+  {
+    "name": "Đắk Lắk",
+    "bounds": [
+      107.4835,
+      12.1622,
+      108.9921,
+      13.4147
+    ],
+    "aliases": [
+      "buon ma thuot",
+      "dac lac",
+      "dak lak",
+      "daklak"
+    ]
+  },
+  {
+    "name": "Đắk Nông",
+    "bounds": [
+      107.2029,
+      11.7502,
+      108.1114,
+      12.8129
+    ],
+    "aliases": [
+      "dac nong",
+      "dak nong",
+      "daknong",
+      "gia nghia"
+    ]
+  },
+  {
+    "name": "Điện Biên",
+    "bounds": [
+      102.1421,
+      20.8947,
+      103.5961,
+      22.5493
+    ],
+    "aliases": [
+      "dien bien",
+      "dien bien phu"
+    ]
+  },
+  {
+    "name": "Đồng Nai",
+    "bounds": [
+      106.7496,
+      10.525,
+      107.5745,
+      11.5829
+    ],
+    "aliases": [
+      "bien hoa",
+      "dong nai"
+    ]
+  },
+  {
+    "name": "Đồng Tháp",
+    "bounds": [
+      105.1871,
+      10.135,
+      105.941,
+      10.9746
+    ],
+    "aliases": [
+      "cao lanh",
+      "dong thap",
+      "sa dec"
+    ]
+  },
+  {
+    "name": "Gia Lai",
+    "bounds": [
+      107.4489,
+      12.9973,
+      108.8709,
+      14.6031
+    ],
+    "aliases": [
+      "gia lai",
+      "pleiku"
+    ]
+  },
+  {
+    "name": "Hà Giang",
+    "bounds": [
+      104.3323,
+      22.1667,
+      105.5708,
+      23.3939
+    ],
+    "aliases": [
+      "ha giang"
+    ]
+  },
+  {
+    "name": "Hà Nam",
+    "bounds": [
+      105.768,
+      20.3643,
+      106.1836,
+      20.7053
+    ],
+    "aliases": [
+      "ha nam",
+      "phu ly"
+    ]
+  },
+  {
+    "name": "Hà Nội",
+    "bounds": [
+      105.2847,
+      20.5651,
+      106.0184,
+      21.386
+    ],
+    "aliases": [
+      "ha noi",
+      "hanoi",
+      "thu do"
+    ]
+  },
+  {
+    "name": "Hà Tĩnh",
+    "bounds": [
+      105.1022,
+      17.9155,
+      106.5085,
+      18.7603
+    ],
+    "aliases": [
+      "ha tinh"
+    ]
+  },
+  {
+    "name": "Hải Dương",
+    "bounds": [
+      106.1229,
+      20.6851,
+      106.6099,
+      21.2382
+    ],
+    "aliases": [
+      "hai duong"
+    ]
+  },
+  {
+    "name": "Hải Phòng",
+    "bounds": [
+      106.3992,
+      20.1281,
+      107.7372,
+      21.0222
+    ],
+    "aliases": [
+      "hai phong",
+      "haiphong"
+    ]
+  },
+  {
+    "name": "Hậu Giang",
+    "bounds": [
+      105.3266,
+      9.5833,
+      105.8954,
+      9.9953
+    ],
+    "aliases": [
+      "hau giang",
+      "vi thanh"
+    ]
+  },
+  {
+    "name": "Hoà Bình",
+    "bounds": [
+      104.8334,
+      20.3065,
+      105.8596,
+      21.1137
+    ],
+    "aliases": [
+      "hoa binh"
+    ]
+  },
+  {
+    "name": "Hưng Yên",
+    "bounds": [
+      105.8937,
+      20.6042,
+      106.2677,
+      21.008
+    ],
+    "aliases": [
+      "hung yen"
+    ]
+  },
+  {
+    "name": "Kiên Giang",
+    "bounds": [
+      103.418,
+      9.2639,
+      105.5375,
+      10.5409
+    ],
+    "aliases": [
+      "kien giang",
+      "phu quoc",
+      "rach gia"
+    ]
+  },
+  {
+    "name": "Kon Tum",
+    "bounds": [
+      107.3308,
+      13.9246,
+      108.5455,
+      15.4184
+    ],
+    "aliases": [
+      "kon tum",
+      "kontum"
+    ]
+  },
+  {
+    "name": "Lai Châu",
+    "bounds": [
+      102.3191,
+      21.6866,
+      103.9829,
+      22.8174
+    ],
+    "aliases": [
+      "lai chau"
+    ]
+  },
+  {
+    "name": "Lâm Đồng",
+    "bounds": [
+      107.264,
+      11.2168,
+      108.7271,
+      12.3179
+    ],
+    "aliases": [
+      "bao loc",
+      "da lat",
+      "dalat",
+      "lam dong"
+    ]
+  },
+  {
+    "name": "Lạng Sơn",
+    "bounds": [
+      106.093,
+      21.3253,
+      107.362,
+      22.4609
+    ],
+    "aliases": [
+      "lang son"
+    ]
+  },
+  {
+    "name": "Lào Cai",
+    "bounds": [
+      103.5253,
+      21.8774,
+      104.627,
+      22.8458
+    ],
+    "aliases": [
+      "lao cai",
+      "sa pa",
+      "sapa"
+    ]
+  },
+  {
+    "name": "Long An",
+    "bounds": [
+      105.4976,
+      10.3963,
+      106.7469,
+      11.0333
+    ],
+    "aliases": [
+      "long an",
+      "tan an"
+    ]
+  },
+  {
+    "name": "Nam Định",
+    "bounds": [
+      105.9228,
+      19.8908,
+      106.5977,
+      20.5005
+    ],
+    "aliases": [
+      "nam dinh"
+    ]
+  },
+  {
+    "name": "Nghệ An",
+    "bounds": [
+      103.8727,
+      18.5541,
+      105.9883,
+      19.9987
+    ],
+    "aliases": [
+      "nghe an",
+      "tp vinh"
+    ]
+  },
+  {
+    "name": "Ninh Bình",
+    "bounds": [
+      105.5411,
+      19.9182,
+      106.1662,
+      20.4555
+    ],
+    "aliases": [
+      "ninh binh"
+    ]
+  },
+  {
+    "name": "Ninh Thuận",
+    "bounds": [
+      108.5506,
+      11.308,
+      109.2311,
+      12.1681
+    ],
+    "aliases": [
+      "ninh thuan",
+      "phan rang"
+    ]
+  },
+  {
+    "name": "Phú Thọ",
+    "bounds": [
+      104.8117,
+      20.9181,
+      105.4548,
+      21.721
+    ],
+    "aliases": [
+      "phu tho",
+      "viet tri"
+    ]
+  },
+  {
+    "name": "Phú Yên",
+    "bounds": [
+      108.6723,
+      12.707,
+      109.4578,
+      13.6953
+    ],
+    "aliases": [
+      "phu yen",
+      "tuy hoa"
+    ]
+  },
+  {
+    "name": "Quảng Bình",
+    "bounds": [
+      105.6064,
+      16.923,
+      106.9896,
+      18.0908
+    ],
+    "aliases": [
+      "dong hoi",
+      "quang binh"
+    ]
+  },
+  {
+    "name": "Quảng Nam",
+    "bounds": [
+      107.2084,
+      14.9516,
+      108.7368,
+      16.0684
+    ],
+    "aliases": [
+      "dien ban",
+      "hoi an",
+      "nui thanh",
+      "quang nam",
+      "tam ky",
+      "thang binh"
+    ]
+  },
+  {
+    "name": "Quảng Ngãi",
+    "bounds": [
+      108.2336,
+      14.5341,
+      109.1416,
+      15.4338
+    ],
+    "aliases": [
+      "quang ngai"
+    ]
+  },
+  {
+    "name": "Quảng Ninh",
+    "bounds": [
+      106.4376,
+      20.6867,
+      108.0952,
+      21.6648
+    ],
+    "aliases": [
+      "cam pha",
+      "ha long",
+      "mong cai",
+      "quang ninh",
+      "uong bi"
+    ]
+  },
+  {
+    "name": "Quảng Trị",
+    "bounds": [
+      106.5136,
+      16.303,
+      107.3862,
+      17.1681
+    ],
+    "aliases": [
+      "dong ha",
+      "quang tri"
+    ]
+  },
+  {
+    "name": "Sóc Trăng",
+    "bounds": [
+      105.5421,
+      9.2458,
+      106.3019,
+      9.9391
+    ],
+    "aliases": [
+      "soc trang"
+    ]
+  },
+  {
+    "name": "Sơn La",
+    "bounds": [
+      103.2123,
+      20.5747,
+      105.0227,
+      22.031
+    ],
+    "aliases": [
+      "son la"
+    ]
+  },
+  {
+    "name": "Tây Ninh",
+    "bounds": [
+      105.8078,
+      10.9638,
+      106.4881,
+      11.7803
+    ],
+    "aliases": [
+      "tay ninh"
+    ]
+  },
+  {
+    "name": "Thái Bình",
+    "bounds": [
+      106.1082,
+      20.2543,
+      106.6288,
+      20.7331
+    ],
+    "aliases": [
+      "thai binh"
+    ]
+  },
+  {
+    "name": "Thái Nguyên",
+    "bounds": [
+      105.4757,
+      21.3264,
+      106.236,
+      22.0487
+    ],
+    "aliases": [
+      "thai nguyen"
+    ]
+  },
+  {
+    "name": "Thanh Hóa",
+    "bounds": [
+      104.3726,
+      19.2925,
+      106.0733,
+      20.6711
+    ],
+    "aliases": [
+      "thanh hoa"
+    ]
+  },
+  {
+    "name": "Huế",
+    "bounds": [
+      106.9857,
+      15.996,
+      108.1924,
+      16.7437
+    ],
+    "aliases": [
+      "hue"
+    ]
+  },
+  {
+    "name": "Tiền Giang",
+    "bounds": [
+      105.814,
+      10.1913,
+      106.8257,
+      10.5881
+    ],
+    "aliases": [
+      "my tho",
+      "tien giang"
+    ]
+  },
+  {
+    "name": "Hồ Chí Minh",
+    "bounds": [
+      106.3546,
+      10.3294,
+      107.0115,
+      11.1607
+    ],
+    "aliases": [
+      "ho chi minh",
+      "sai gon",
+      "tp hcm",
+      "tp ho chi minh",
+      "tphcm"
+    ]
+  },
+  {
+    "name": "Trà Vinh",
+    "bounds": [
+      105.9519,
+      9.5282,
+      106.5962,
+      10.0828
+    ],
+    "aliases": [
+      "tra vinh"
+    ]
+  },
+  {
+    "name": "Tuyên Quang",
+    "bounds": [
+      104.847,
+      21.4982,
+      105.596,
+      22.6966
+    ],
+    "aliases": [
+      "tuyen quang"
+    ]
+  },
+  {
+    "name": "Vĩnh Long",
+    "bounds": [
+      105.6808,
+      9.8845,
+      106.2875,
+      10.3319
+    ],
+    "aliases": [
+      "vinh long"
+    ]
+  },
+  {
+    "name": "Vĩnh Phúc",
+    "bounds": [
+      105.3208,
+      21.1533,
+      105.7885,
+      21.575
+    ],
+    "aliases": [
+      "vinh phuc",
+      "vinh yen"
+    ]
+  },
+  {
+    "name": "Yên Bái",
+    "bounds": [
+      103.8847,
+      21.3266,
+      105.098,
+      22.291
+    ],
+    "aliases": [
+      "yen bai"
+    ]
+  },
+  {
+    "name": "Trường Sa",
+    "bounds": [
+      109.1119,
+      6.9533,
+      116.9473,
+      11.7579
+    ],
+    "aliases": [
+      "spratly islands truong sa",
+      "truong sa"
+    ]
+  },
+  {
+    "name": "Khánh Hòa",
+    "bounds": [
+      108.668,
+      11.7731,
+      116.1769,
+      12.8682
+    ],
+    "aliases": [
+      "cam ranh",
+      "khanh hoa",
+      "nha trang"
+    ]
+  },
+  {
+    "name": "Hoàng Sa",
+    "bounds": [
+      111.1942,
+      15.7714,
+      112.7421,
+      17.1152
+    ],
+    "aliases": [
+      "hoang sa",
+      "paracel islands hoang sa"
+    ]
+  },
+  {
+    "name": "Đà Nẵng",
+    "bounds": [
+      107.8167,
+      15.9207,
+      108.3374,
+      16.2271
+    ],
+    "aliases": [
+      "da nang",
+      "danang"
+    ]
+  }
+]
