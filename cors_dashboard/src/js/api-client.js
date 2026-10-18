@@ -196,20 +196,22 @@
             const ua = navigator.userAgent || '';
             const uaLower = ua.toLowerCase();
             let os = 'Máy tính';
-            if (uaLower.includes('windows nt 10.0') || uaLower.includes('windows nt 11.0')) os = 'Windows 10/11';
-            else if (uaLower.includes('windows')) os = 'Windows';
-            else if (uaLower.includes('macintosh') || uaLower.includes('mac os x')) os = 'macOS';
-            else if (uaLower.includes('iphone')) os = 'iPhone';
-            else if (uaLower.includes('ipad')) os = 'iPad';
+            if (uaLower.includes('iphone')) os = 'iPhone · iOS';
+            else if (uaLower.includes('ipad')) os = 'iPad · iPadOS';
+            else if (uaLower.includes('ipod')) os = 'iPod · iOS';
             else if (uaLower.includes('android')) os = 'Android';
+            else if (uaLower.includes('windows nt 10.0') || uaLower.includes('windows nt 11.0')) os = 'Windows 10/11';
+            else if (uaLower.includes('windows')) os = 'Windows';
+            else if (uaLower.includes('macintosh') && navigator.maxTouchPoints > 1) os = 'iPad · iPadOS';
+            else if (uaLower.includes('macintosh') || uaLower.includes('mac os x')) os = 'macOS';
             else if (uaLower.includes('linux')) os = 'Linux';
 
             let browser = 'Trình duyệt';
-            if (ua.includes('Edg/')) browser = 'Edge';
-            else if (ua.includes('Chrome/') && !ua.includes('Edg/')) browser = 'Chrome';
-            else if (ua.includes('Firefox/')) browser = 'Firefox';
-            else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Safari';
-            else if (ua.includes('OPR/') || ua.includes('Opera/')) browser = 'Opera';
+            if (/edg\/|edgios\/|edga\//i.test(ua)) browser = 'Edge';
+            else if (/opr\/|opera\/|opios\//i.test(ua)) browser = 'Opera';
+            else if (/chrome\/|crios\//i.test(ua)) browser = 'Chrome';
+            else if (/firefox\/|fxios\//i.test(ua)) browser = 'Firefox';
+            else if (uaLower.includes('safari/')) browser = 'Safari';
 
             return `${os} · ${browser}`;
         } catch (_) {

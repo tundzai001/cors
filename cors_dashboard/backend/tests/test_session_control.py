@@ -319,6 +319,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
                 for i in range(45):
                     store.add(models.UserSession(session_id=f"history-{i}", user_id=1,
                         username="admin", role="admin", ip_address="192.0.2.1", device_id="test",
+                        device_name="macOS · Safari", user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) Version/18.0 Safari/604.1",
                         created_at=now + i, last_active_at=now - 1000, expires_at=now - 1, is_revoked=True))
                 store.commit()
                 db = SimpleNamespace(execute=AsyncMock(side_effect=store.execute))
@@ -330,6 +331,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(result["pagination"], {"page": page, "pages": 3, "page_size": 20, "total": 45})
                     self.assertEqual(result["active_sessions"], [])
                     self.assertTrue(result["history_sessions"][0]["is_revoked"])
+                    self.assertEqual(result["history_sessions"][0]["device_name"], "iPhone · iOS · Safari")
                     pages.extend(row["session_id"] for row in result["history_sessions"])
                 self.assertEqual(pages, [f"history-{i}" for i in reversed(range(45))])
         finally:

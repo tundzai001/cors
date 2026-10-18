@@ -649,6 +649,7 @@ from .map_routes import get_authenticated_map_stations_router
 app.include_router(get_authenticated_map_stations_router)
 
 
+from .client_device import client_device_name
 from .ionosphere_routes import router as ionosphere_router
 app.include_router(ionosphere_router)
 
@@ -1241,7 +1242,7 @@ async def get_admin_sessions(
             "ip_address": s.ip_address,
             "local_ip": s.local_ip,
             "device_id": s.device_id,
-            "device_name": s.device_name or "Thiết bị",
+            "device_name": client_device_name(s.user_agent, s.device_name or ""),
             "user_agent": s.user_agent,
             "created_at": s.created_at,
             "last_active_at": s.last_active_at,

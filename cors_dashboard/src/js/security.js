@@ -492,6 +492,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : `<span class="text-muted small"><i class="bi bi-hdd-network me-1"></i>Chung IP mạng</span>`;
 
             const deviceName = escapeHtml(s.device_name || 'Không xác định');
+            const deviceIcon = /ipad/i.test(s.device_name || '') ? 'bi-tablet'
+                : /iphone|ipod|android/i.test(`${s.device_name || ''} ${s.user_agent || ''}`) ? 'bi-phone' : 'bi-laptop';
             const deviceIdShort = escapeHtml((s.device_id || '').slice(0, 10));
 
             const sessionState = s.is_revoked ? 'Đã thu hồi' : s.is_expired ? 'Hết hạn' : s.is_online ? 'Đang hoạt động' : 'Không hoạt động';
@@ -532,7 +534,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </td>
                 <td>
                     <div class="text-truncate" style="max-width: 220px;" title="${escapeHtml(s.user_agent || '')}">
-                        <i class="bi bi-laptop me-1 text-info"></i>${deviceName}
+                        <i class="bi ${deviceIcon} me-1 text-info" aria-hidden="true"></i>${deviceName}
                     </div>
                 </td>
                 <td><small class="text-muted">${escapeHtml(new Date(s.created_at * 1000).toLocaleString('vi-VN'))}</small></td>

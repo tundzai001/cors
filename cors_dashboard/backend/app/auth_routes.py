@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import auth, crud, models, schemas
 from .database import get_auth_db, get_db, settings
 from .security import rate_limiter
+from .client_device import client_device_name
 
 logger = logging.getLogger("app.main")
 
@@ -119,11 +120,7 @@ async def login(
             pass
 
     user_agent = request.headers.get("User-Agent", "") if request else ""
-    if not device_name:
-        ua_lower = user_agent.lower()
-        os_part = "Windows" if "windows" in ua_lower else "macOS" if "mac" in ua_lower else "Linux" if "linux" in ua_lower else "Android" if "android" in ua_lower else "iOS" if "iphone" in ua_lower or "ipad" in ua_lower else "Máy tính"
-        br_part = "Edge" if "edg" in ua_lower else "Chrome" if "chrome" in ua_lower else "Firefox" if "firefox" in ua_lower else "Safari" if "safari" in ua_lower else "Trình duyệt"
-        device_name = f"{os_part} ({br_part})"
+    device_name = client_device_name(user_agent, device_name or "")
 
     try:
         new_session = models.UserSession(
