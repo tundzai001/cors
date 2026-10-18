@@ -63,10 +63,9 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
             text = await report_text({'status':'online'}, 'ở Tuyên Quang đo được không')
             self.assertIn('CORS Cục đang hoạt động', text)
             self.assertIn('TEC 30.0 TECU', text)
-            self.assertIn('chưa thấy trở ngại để bắt đầu ca đo', text)
+            self.assertIn('đang thuận cho việc triển khai ca đo', text)
             self.assertIn('Kp 1.33', text)
-            self.assertTrue(text.startswith('Tuyên Quang nhé.'))
-            self.assertNotIn('cao hơn nền 30 ngày', text)
+            self.assertTrue(text.startswith('📍 Tuyên Quang'))
             offline = await report_text({'status':'offline'}, 'Tuyên Quang')
             self.assertIn('chuyển sang nguồn dự phòng', offline)
         for hidden in ('form', 'đăng nhập', '14.238', 'trang dịch vụ'):
@@ -87,7 +86,7 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('TEC 30.0', text)
         self.assertNotIn('Đo thận trọng', text)
         self.assertNotIn('chưa dùng bản tin', text)
-        self.assertIn('chưa thấy trở ngại', text)
+        self.assertIn('đang thuận cho việc triển khai ca đo', text)
 
     async def test_intents_produce_different_useful_answers(self):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
@@ -95,7 +94,7 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
             diagnostic = await report_text({'status':'online'}, 'ở Tuyên Quang máy cứ FLOAT')
             detailed = await report_text({'status':'online'}, 'điện ly Tuyên Quang chi tiết')
             future = await report_text({'status':'online'}, 'ngày mai đo được không')
-        self.assertNotIn('cao hơn nền 30 ngày', quick)
+        self.assertNotIn('Gợi ý cho ca đo', quick)
         self.assertIn('tuổi hiệu chỉnh', diagnostic)
         self.assertNotIn('Có thể triển khai đo', diagnostic)
         self.assertIn('TEC 30.0', detailed)
@@ -110,6 +109,22 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Nên hoãn đo khống chế', storm)
         self.assertNotIn('Có thể triển khai đo', missing)
         self.assertNotIn('địa từ yên tĩnh', missing)
+
+    async def test_workflow_advice_matches_job_and_service_risk(self):
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
+            terrain = await report_text({'status':'online'}, 'đo địa hình Tuyên Quang được không')
+            control = await report_text({'status':'online'}, 'tư vấn đo khống chế Tuyên Quang')
+            self.assertIn('điểm kiểm tra đầu/cuối ca', terrain)
+            self.assertNotIn('Với khống chế/bố trí', terrain)
+            self.assertIn('đo lặp điểm quan trọng ở thời điểm khác', control)
+            self.assertNotIn('đầu/cuối ca', control)
+            offline = await report_text({'status':'offline'}, 'đo địa hình Tuyên Quang được không')
+            self.assertIn('chưa chốt số đo bằng nguồn Cục', offline)
+            self.assertNotIn('có thể lên ca', offline)
+            self.kp.return_value = {'value':7, 'stamp':'14:00 18/10'}
+            storm = await report_text({'status':'online'}, 'đo địa hình Tuyên Quang được không')
+            self.assertIn('Dời phần đo khống chế', storm)
+            self.assertNotIn('có thể lên ca', storm)
 
 
 class GeomagneticTests(unittest.IsolatedAsyncioTestCase):

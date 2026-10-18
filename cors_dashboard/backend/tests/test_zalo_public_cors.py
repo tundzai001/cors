@@ -193,11 +193,11 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
     async def test_natural_cors_questions_use_same_handler_in_chat_dispatch(self):
         service = bot_module.ZaloBotService()
         with patch.object(service, "_cors_cmd", AsyncMock()) as handler:
-            for text in ("tình trạng cục", "cuc loi khong", "status Cục", "Cục chạy chưa", "Cục sao rồi", "cục dùng được không", "ở Tuyên Quang máy cứ FLOAT", "địa từ hôm nay thế nào", "khó FIX quá", "Hà Nội", "còn Tuyên Quang"):
+            for text in ("tình trạng cục", "cuc loi khong", "status Cục", "Cục chạy chưa", "Cục sao rồi", "cục dùng được không", "ở Tuyên Quang máy cứ FLOAT", "địa từ hôm nay thế nào", "khó FIX quá", "Hà Nội", "còn Tuyên Quang", "tư vấn đo khống chế Hà Nội", "đo địa hình Tuyên Quang hôm nay"):
                 self.assertTrue(await service._try_dispatch_intent(self.update(text), text))
                 self.assertEqual(service._detect_natural_language_intent(text), ("cors", []))
-            self.assertEqual(handler.await_count, 11)
-        for text in ("base đang thế nào", "rover online không", "rover Cục đang lỗi", "xóa rover cuc", "/station cuc", "@Bot Cors manager kiểm tra base Hà Nội"):
+            self.assertEqual(handler.await_count, 13)
+        for text in ("tư vấn mua xe", "khuyến nghị đầu tư", "base đang thế nào", "rover online không", "rover Cục đang lỗi", "xóa rover cuc", "/station cuc", "@Bot Cors manager kiểm tra base Hà Nội"):
             self.assertFalse(bot_module._is_cors_status_question(text), text)
 
     async def test_public_menu_only_lists_public_health_and_passes_cors_delivery_policy(self):

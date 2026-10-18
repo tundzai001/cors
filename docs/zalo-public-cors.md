@@ -97,3 +97,12 @@ including a follow-up such as “còn Hà Nội”. The last province is remembe
 follow-up measurement/FLOAT question reuses that province; `/cors` or a national
 question resets it. Revoking a chat clears this context. This memory grants no
 Base permissions and does not share one group member's location with another.
+
+
+Measurement recommendations distinguish terrain/detail surveying from
+control/construction work. They suggest known-point checks, independent repeat
+observations and attention to multipath, without inventing an accuracy tolerance
+or claiming the coarse TEC model certifies a station or a receiver. These general
+workflow recommendations follow the [NGS real-time user guidelines](https://www.ngs.noaa.gov/PUBS_LIB/NGSRealTimeUserGuidelines.v2.1.pdf);
+project requirements and field verification still govern acceptance. Outage or
+strong-storm guidance takes priority over a normal surveying workflow.

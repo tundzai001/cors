@@ -125,6 +125,32 @@ async def geomagnetic_observation():
             return None
 
 
+def field_advice(status, kp, words):
+    """Practical workflow advice; no inferred receiver accuracy or local RTCM status."""
+    if status == 'offline':
+        return ('Khuyến nghị: chuyển sang nguồn hiệu chỉnh dự phòng đã được kiểm tra. '
+                'Nếu không có nguồn thay thế, tranh thủ chuẩn bị điểm và kiểm tra thiết bị; chưa chốt số đo bằng nguồn Cục lúc này.')
+    if status != 'online':
+        return 'Khuyến nghị: xác nhận máy có nhận hiệu chỉnh trước khi bố trí cả ca đo; trạng thái nguồn hiện chưa được xác minh.'
+    if kp is not None and kp >= 7:
+        return ('Khuyến nghị: chuyển ca này sang khảo sát hiện trường, chuẩn bị mốc hoặc xử lý số liệu. '
+                'Dời phần đo khống chế sang khi cảnh báo giảm; nếu buộc phải đo, cần phương pháp kiểm tra độc lập.')
+    control = bool(re.search(r'\b(khong che|moc|chinh xac cao|bo tri|cong trinh|dia chinh|ranh)\b', words))
+    terrain = bool(re.search(r'\b(dia hinh|chi tiet|binh do)\b', words))
+    if control:
+        return ('Với khống chế/bố trí: kiểm tra trên mốc đã biết, đo lặp điểm quan trọng ở thời điểm khác '
+                'và đối chiếu trước khi chốt. Bản tin điện ly không thay được kiểm tra độ chính xác tại công trình.')
+    if kp is not None and kp >= 4:
+        return ('Khuyến nghị: ưu tiên phần đo chi tiết ở khu vực thoáng, bố trí điểm kiểm tra trong ca. '
+                'Các điểm khống chế hoặc ranh quan trọng nên đo lặp độc lập, tránh chốt theo một lượt đo.')
+    if terrain:
+        return ('Với đo địa hình: có thể lên ca theo tình hình nguồn và địa từ hiện có. '
+                'Bố trí điểm kiểm tra đầu/cuối ca; ưu tiên chỗ thoáng, kiểm tra riêng các điểm sát nhà hoặc dưới tán cây.')
+    return ('Gợi ý cho ca đo:\n'
+            '• Đo địa hình: ưu tiên khu vực thoáng, bố trí điểm kiểm tra đầu/cuối ca.\n'
+            '• Khống chế/bố trí: kiểm tra mốc đã biết và đo lặp điểm quan trọng ở thời điểm khác trước khi chốt.')
+
+
 async def report_text(health, question=''):
     headline = {
         'online': '🟢 CORS Cục đang hoạt động.',
@@ -142,8 +168,8 @@ async def report_text(health, question=''):
     words = _plain(question)
     name = region_for_question(question)[0]
     diagnostic = bool(re.search(r'\b(float|khong fix|kho fix|fix kho|nhay|mat fix)\b', words))
-    detail = bool(re.search(r'\b(chi tiet|dien ly|tec|kp|dia tu)\b', words))
-    measurement = bool(re.search(r'\b(do|trien khai|di lam)\b', words))
+    detail = bool(re.search(r'\b(chi tiet|dien ly|tec|kp|dia tu)\b', words)) and not re.search(r'\b(do chi tiet|do dia hinh)\b', words)
+    measurement = bool(re.search(r'\b(do|trien khai|di lam|khuyen nghi|tu van|khong che|bo tri)\b', words))
     future = bool(re.search(r'\b(chieu nay|toi nay|ngay mai|tuan sau)\b', words))
     value = kp['value'] if kp else None
     magnetic = (f"Địa từ Kp {value:.2f} · " +
@@ -164,7 +190,7 @@ async def report_text(health, question=''):
     elif value is not None and value >= 4:
         decision = 'Cục vẫn hoạt động, nhưng địa từ đang nhiễu động. Ca đo chính xác cao cần thận trọng.'
     elif value is not None:
-        decision = 'Về nguồn Cục và địa từ, hiện chưa thấy trở ngại để bắt đầu ca đo.'
+        decision = 'CORS Cục đang hoạt động, địa từ yên tĩnh. Hai tín hiệu này đang thuận cho việc triển khai ca đo.'
     else:
         decision = 'Cục đang hoạt động. Địa từ mất cập nhật nên tôi chỉ xác nhận được tình trạng nguồn.'
 
@@ -193,7 +219,7 @@ async def report_text(health, question=''):
     if observation:
         timing = (f" · bản gần nhất, trễ {observation['age_minutes']} phút"
                   if observation['delayed'] else '')
-        evidence = (f"Điện ly {name}: TEC {observation['tec']} TECU (ước tính).\n"
+        evidence = (f"Điện ly {name}: {observation['comparison']}; TEC {observation['tec']} TECU (ước tính).\n"
                     f"NOAA GloTEC {observation['stamp']}{timing}.")
     else:
         evidence = atmosphere
@@ -202,8 +228,9 @@ async def report_text(health, question=''):
                        'nhiễu động' if value >= 4 else 'địa từ yên tĩnh') +
                       f" · {kp['stamp']}." if kp else 'Kp đang mất cập nhật.')
     if measurement or name != 'Việt Nam':
-        opening = f'{name} nhé. ' if name != 'Việt Nam' else ''
+        opening = f'📍 {name}\n' if name != 'Việt Nam' else ''
         scope = ('\nAnh đang đo ở tỉnh nào?'
                  if name == 'Việt Nam' else '')
-        return f'{opening}{decision}\n{headline} {short_magnetic}\n\n{evidence}{scope}'
+        return (f'{opening}{decision}\n\n{field_advice(health.get("status"), value, words)}'
+                f'\n\n{evidence}\n{short_magnetic}{scope}')
     return f'{headline}\n{short_magnetic}\n\n{evidence}'

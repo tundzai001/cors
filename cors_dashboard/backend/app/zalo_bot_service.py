@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261018-conversational-cors-v16"
+ZALO_TRACE_VERSION = "20261018-field-advice-v17"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -96,6 +96,8 @@ def _is_cors_status_question(text: str) -> bool:
         return True
     if re.search(r"\b(?:dien ly|dia tu|kp|float|khong fix|kho fix|fix kho|mat fix)\b", words):
         return True
+    if region != "Việt Nam" and re.search(r"\b(?:khuyen nghi|tu van|khong che|bo tri)\b", words):
+        return True
     target = (re.search(r"\b(?:cuc|vngeonet)\b", words)
               or "14.238.1.125" in normalized
               or re.match(r"^cors\b", words))
@@ -107,7 +109,7 @@ def _is_cors_status_question(text: str) -> bool:
         return True
     return bool(re.search(
         r"\b(?:tinh trang|tinh hinh|trang thai|the nao|ra sao|sap|song|chet|loi|"
-        r"on|online|offline|hoat dong|ket noi|chay|kiem tra|check|status|mat|ngat|"
+        r"on|online|offline|hoat dong|ket noi|chay|kiem tra|check|status|mat|ngat|khuyen nghi|tu van|khong che|bo tri|dia hinh|"
         r"sao roi|bi gi|co van de|su co|dung (?:duoc|dc|dk)|"
         r"do (?:duoc|dc|dk|on|khong|ko|k)|co do|ok|down|up)\b",
         words,
