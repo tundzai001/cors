@@ -80,6 +80,11 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(added_rover.base_serial, "esp_1234567890AB")
             self.assertEqual(added_rover.max_connections, 0)
             self.assertFalse(added_rover.show_position)
+            self.assertFalse(added_rover.auto_save_sessions)
+            self.assertFalse(added_rover.auto_save_fixed_points)
+            self.assertFalse(added_rover.rtcm_cycle_enabled)
+            self.assertFalse(added_rover.is_shared_with_managers)
+            self.assertIsNone(added_rover.expires_at)
             self.assertIsNone(added_rover.created_by_user_id)
 
             # Check decoder notified

@@ -109,20 +109,31 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
                 password=password,
                 base_serial=device.serial,
                 mountpoints=mountpoint,
-                max_connections=0,
-                show_position=False,
+                max_connections=0,  # 0 = không giới hạn kết nối
+                show_position=False,  # TẮT: không hiển thị vị trí trên bản đồ
+                auto_save_sessions=False,  # TẮT: không lưu phiên rover
+                auto_save_fixed_points=False,  # TẮT: không lưu điểm cố định
+                rtcm_cycle_enabled=False,  # TẮT: không chu kỳ ngắt RTCM
+                is_shared_with_managers=False,  # TẮT: không chia sẻ chủ trạm
+                expires_at=None,  # Vô hạn
                 is_active=True,
                 created_by_user_id=None,  # system-generated
                 created_at=now,
             )
             auth_db.add(new_rover)
             await auth_db.commit()
-            logger.info(f"[ESP ROVER] Saved system RoverAccount '{username}' in DB for base {device.serial}")
+            logger.info(f"[ESP ROVER] Saved system RoverAccount '{username}' in DB for base {device.serial} (all extra features disabled)")
         else:
-            # Update base_serial if needed
-            if existing.base_serial != device.serial:
-                existing.base_serial = device.serial
-                await auth_db.commit()
+            # Update base_serial and ensure features remain disabled
+            existing.base_serial = device.serial
+            existing.mountpoints = mountpoint
+            existing.max_connections = 0
+            existing.show_position = False
+            existing.auto_save_sessions = False
+            existing.auto_save_fixed_points = False
+            existing.rtcm_cycle_enabled = False
+            existing.is_shared_with_managers = False
+            await auth_db.commit()
 
     # 3. Notify Decoder via MQTT
     await notify_decoder_worker("start", device.serial, mountpoint, username, password)
@@ -225,6 +236,14 @@ async def sync_esp_base_rovers() -> None:
             else:
                 # Account already exists; ensure decoder knows to keep running
                 await notify_decoder_worker("start", serial, mp, mp, DEFAULT_ROVER_PASSWORD)
+
+            # Cleanup any stale system rover accounts for this base if its mountpoint changed
+            for rover_user_key, rover_obj in list(rover_map.items()):
+                if isinstance(rover_obj, models.RoverAccount):
+                    if rover_obj.base_serial == serial and rover_obj.created_by_user_id is None and rover_obj.username.lower() != mp_key:
+                        logger.info(f"[ESP ROVER] Base {serial} mountpoint changed from '{rover_obj.username}' to '{mp}' -> deleting old rover")
+                        await auto_deprovision_esp_rover_account(serial, rover_obj.username)
+                        rover_map.pop(rover_user_key, None)
 
         elif status == "offline":
             # Check offline duration
