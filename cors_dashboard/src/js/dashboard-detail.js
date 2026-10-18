@@ -433,19 +433,41 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                     )}
 
                     {/* RAM Ring */}
-                    {info.memory && window.ProgressRing && (
-                        <div className="col-6 d-flex justify-content-center">
-                            <window.ProgressRing
-                                value={info.memory.percent}
-                                max={100}
-                                size={110}
-                                strokeWidth={8}
-                                color={info.memory.percent > 85 ? '#fa5252' : '#74c0fc'}
-                                label="RAM Usage"
-                                subLabel={`${Math.round(info.memory.used_mb)}/${Math.round(info.memory.total_mb)}MB`}
-                            />
-                        </div>
-                    )}
+                    {info.memory && window.ProgressRing && (() => {
+                        const isEsp = /^esp_/i.test(device.serial);
+                        let subLabel = '';
+                        if (isEsp || info.memory.total_heap_bytes || (info.memory.total_mb && info.memory.total_mb < 5)) {
+                            const totalKb = info.memory.total_kb !== undefined
+                                ? Math.round(info.memory.total_kb)
+                                : info.memory.total_heap_bytes
+                                    ? Math.round(info.memory.total_heap_bytes / 1024)
+                                    : Math.round((info.memory.total_mb || 0) * 1024);
+                            const usedKb = info.memory.used_kb !== undefined
+                                ? Math.round(info.memory.used_kb)
+                                : (info.memory.total_heap_bytes && info.memory.free_heap_bytes !== undefined)
+                                    ? Math.round((info.memory.total_heap_bytes - info.memory.free_heap_bytes) / 1024)
+                                    : Math.round((info.memory.used_mb || 0) * 1024);
+                            subLabel = (totalKb > 0) ? `${usedKb}/${totalKb} KB` : `${Math.round(info.memory.percent || 0)}%`;
+                        } else if (info.memory.total_mb !== undefined && info.memory.used_mb !== undefined) {
+                            subLabel = `${Math.round(info.memory.used_mb)}/${Math.round(info.memory.total_mb)}MB`;
+                        } else {
+                            subLabel = `${Math.round(info.memory.percent || 0)}%`;
+                        }
+
+                        return (
+                            <div className="col-6 d-flex justify-content-center">
+                                <window.ProgressRing
+                                    value={info.memory.percent}
+                                    max={100}
+                                    size={110}
+                                    strokeWidth={8}
+                                    color={info.memory.percent > 85 ? '#fa5252' : '#74c0fc'}
+                                    label="RAM Usage"
+                                    subLabel={subLabel}
+                                />
+                            </div>
+                        );
+                    })()}
                 </div>
 
                 {/* 3. TEMPERATURE & DISK (Bar Style for Compactness) */}
@@ -468,18 +490,38 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                 </div>
 
                 <div className="info-section mt-3">
-                    <div className="section-title"><i className="bi bi-hdd me-2"></i>Disk Usage</div>
+                    <div className="section-title">
+                        <i className={`bi ${/^esp_/i.test(device.serial) ? 'bi-memory' : 'bi-hdd'} me-2`}></i>
+                        {/^esp_/i.test(device.serial) ? 'Flash Storage (ROM)' : 'Disk Usage'}
+                    </div>
                     {info.disk ? (
                         <div className="metric-card">
                             <div className="d-flex justify-content-between mb-1">
                                 <span className="fw-bold text-light">{info.disk.percent}% Used</span>
-                                <span className="text-muted small">Free: {(info.disk.total_gb - info.disk.used_gb).toFixed(1)} GB</span>
+                                <span className="text-muted small">
+                                    {info.disk.total_gb >= 1 
+                                        ? `Free: ${(info.disk.total_gb - info.disk.used_gb).toFixed(1)} GB`
+                                        : info.disk.total_mb !== undefined
+                                            ? `Free: ${(info.disk.total_mb - (info.disk.used_mb || 0)).toFixed(1)} MB (${Math.round(info.disk.total_mb)}MB Flash)`
+                                            : `Free: ${(info.disk.total_gb - info.disk.used_gb).toFixed(2)} GB`
+                                    }
+                                </span>
                             </div>
                             <div className="progress" style={{ height: '8px' }}>
                                 <div
                                     className={`progress-bar ${info.disk.percent > 90 ? 'bg-danger' : 'bg-primary'}`}
                                     style={{ width: `${info.disk.percent}%` }}
                                 ></div>
+                            </div>
+                        </div>
+                    ) : /^esp_/i.test(device.serial) ? (
+                        <div className="metric-card">
+                            <div className="d-flex justify-content-between mb-1">
+                                <span className="fw-bold text-light">Flash 4MB / NVS</span>
+                                <span className="badge bg-success-subtle text-success border border-success-subtle">An toàn</span>
+                            </div>
+                            <div className="small text-muted mt-1">
+                                ESP32 stream RTCM trực tiếp qua 4G, không lưu đệm vào bộ nhớ; cấu hình lưu gọn trên phân vùng NVS.
                             </div>
                         </div>
                     ) : <div className="text-muted small">No disk data</div>}
