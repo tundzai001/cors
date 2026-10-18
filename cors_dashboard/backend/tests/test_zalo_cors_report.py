@@ -62,8 +62,8 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
             text = await report_text({'status':'online'}, 'ở Tuyên Quang đo được không')
             self.assertIn('CORS Cục đang hoạt động', text)
-            self.assertIn('TEC 30.0 TECU', text)
-            self.assertIn('đang thuận cho việc triển khai ca đo', text)
+            self.assertIn('TEC tuyệt đối 30.0 TECU', text)
+            self.assertIn('Kp thấp không chứng minh RTK', text)
             self.assertIn('Kp 1.33', text)
             self.assertTrue(text.startswith('📍 Tuyên Quang'))
             offline = await report_text({'status':'offline'}, 'Tuyên Quang')
@@ -83,10 +83,10 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=data)):
             text = await report_text({'status':'online'}, 'Tuyên Quang đo được không')
         self.assertIn('trễ 31 phút', text)
-        self.assertIn('TEC 30.0', text)
+        self.assertIn('TEC tuyệt đối 30.0', text)
         self.assertNotIn('Đo thận trọng', text)
         self.assertNotIn('chưa dùng bản tin', text)
-        self.assertIn('đang thuận cho việc triển khai ca đo', text)
+        self.assertIn('Kp thấp không chứng minh RTK', text)
 
     async def test_intents_produce_different_useful_answers(self):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
@@ -125,6 +125,25 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
             storm = await report_text({'status':'online'}, 'đo địa hình Tuyên Quang được không')
             self.assertIn('Dời phần đo khống chế', storm)
             self.assertNotIn('có thể lên ca', storm)
+
+    async def test_high_absolute_tec_and_quiet_kp_do_not_become_favorable_rtk(self):
+        data = self.data()
+        data['features'][0]['properties'] = {'tec':72.6, 'anomaly':1.18}
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=data)):
+            text = await report_text({'status':'online'}, 'Tuyên Quang đo được không')
+        self.assertIn('TEC tuyệt đối 72.6', text)
+        self.assertIn('+1.2 đến +1.2', text)
+        self.assertIn('Kp thấp không chứng minh RTK', text)
+        self.assertNotIn('đang thuận', text)
+        self.assertNotIn('có thể lên ca', text)
+
+    def test_opposite_local_anomalies_are_not_hidden_by_mean(self):
+        data = self.data()
+        data['features'][0]['properties']['anomaly'] = 20
+        data['features'][1]['properties']['anomaly'] = -20
+        text = ionosphere_text(data, 'Việt Nam')
+        self.assertIn('xấp xỉ mức nền', text)
+        self.assertIn('-20.0 đến +20.0', text)
 
 
 class GeomagneticTests(unittest.IsolatedAsyncioTestCase):

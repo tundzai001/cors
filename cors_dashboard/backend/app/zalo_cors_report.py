@@ -72,6 +72,7 @@ def ionosphere_observation(data, question, now=None):
                       else f'thấp hơn nền 30 ngày khoảng {abs(anomaly):.1f} TECU' if round(anomaly, 1) < 0
                       else 'xấp xỉ mức nền 30 ngày')
         return {'name': name, 'tec': tec_text, 'comparison': comparison, 'stamp': stamp,
+                'anomaly_low': min(p[3] for p in cells), 'anomaly_high': max(p[3] for p in cells),
                 'age_minutes': max(0, int(age // 60)),
                 'delayed': age > 1800 or data['metadata'].get('is_stale', False)}
     except (KeyError, ValueError, TypeError, IndexError, OverflowError):
@@ -85,7 +86,8 @@ def ionosphere_text(data, question, now=None):
     delay = (f" · bản gần nhất, trễ {observation['age_minutes']} phút"
              if observation['delayed'] else '')
     return (f"Tầng điện ly · {observation['name']} (ước tính khu vực):\n"
-            f"TEC {observation['tec']} TECU; {observation['comparison']}.\n"
+            f"TEC {observation['tec']} TECU; trung bình {observation['comparison']}.\n"
+            f"Độ lệch từng ô so với nền 30 ngày: {observation['anomaly_low']:+.1f} đến {observation['anomaly_high']:+.1f} TECU.\n"
             f"NOAA GloTEC · {observation['stamp']}{delay}.")
 
 
@@ -144,7 +146,7 @@ def field_advice(status, kp, words):
         return ('Khuyến nghị: ưu tiên phần đo chi tiết ở khu vực thoáng, bố trí điểm kiểm tra trong ca. '
                 'Các điểm khống chế hoặc ranh quan trọng nên đo lặp độc lập, tránh chốt theo một lượt đo.')
     if terrain:
-        return ('Với đo địa hình: có thể lên ca theo tình hình nguồn và địa từ hiện có. '
+        return ('Với đo địa hình: kiểm soát chất lượng ngay trong ca, nhất là khi số đo thay đổi giữa các lượt. '
                 'Bố trí điểm kiểm tra đầu/cuối ca; ưu tiên chỗ thoáng, kiểm tra riêng các điểm sát nhà hoặc dưới tán cây.')
     return ('Gợi ý cho ca đo:\n'
             '• Đo địa hình: ưu tiên khu vực thoáng, bố trí điểm kiểm tra đầu/cuối ca.\n'
@@ -190,7 +192,7 @@ async def report_text(health, question=''):
     elif value is not None and value >= 4:
         decision = 'Cục vẫn hoạt động, nhưng địa từ đang nhiễu động. Ca đo chính xác cao cần thận trọng.'
     elif value is not None:
-        decision = 'CORS Cục đang hoạt động, địa từ yên tĩnh. Hai tín hiệu này đang thuận cho việc triển khai ca đo.'
+        decision = 'CORS Cục đang hoạt động, địa từ yên tĩnh. Phần điện ly cần xem riêng: Kp thấp không chứng minh RTK tại điểm đo đang ổn định.'
     else:
         decision = 'Cục đang hoạt động. Địa từ mất cập nhật nên tôi chỉ xác nhận được tình trạng nguồn.'
 
@@ -219,7 +221,8 @@ async def report_text(health, question=''):
     if observation:
         timing = (f" · bản gần nhất, trễ {observation['age_minutes']} phút"
                   if observation['delayed'] else '')
-        evidence = (f"Điện ly {name}: {observation['comparison']}; TEC {observation['tec']} TECU (ước tính).\n"
+        evidence = (f"Điện ly {name}: TEC tuyệt đối {observation['tec']} TECU (ước tính).\n"
+                    f"So với nền 30 ngày: trung bình {observation['comparison']}; từng ô {observation['anomaly_low']:+.1f} đến {observation['anomaly_high']:+.1f} TECU.\n"
                     f"NOAA GloTEC {observation['stamp']}{timing}.")
     else:
         evidence = atmosphere
@@ -233,4 +236,5 @@ async def report_text(health, question=''):
                  if name == 'Việt Nam' else '')
         return (f'{opening}{decision}\n\n{field_advice(health.get("status"), value, words)}'
                 f'\n\n{evidence}\n{short_magnetic}{scope}')
-    return f'{headline}\n{short_magnetic}\n\n{evidence}'
+    return (f'{headline}\n{short_magnetic}\n\n{evidence}\n'
+            'Kp yên tĩnh hay TEC gần nền đều không xác nhận độ ổn định RTK tại điểm đo.')

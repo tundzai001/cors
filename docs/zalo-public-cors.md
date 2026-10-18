@@ -106,3 +106,10 @@ or claiming the coarse TEC model certifies a station or a receiver. These genera
 workflow recommendations follow the [NGS real-time user guidelines](https://www.ngs.noaa.gov/PUBS_LIB/NGSRealTimeUserGuidelines.v2.1.pdf);
 project requirements and field verification still govern acceptance. Outage or
 strong-storm guidance takes priority over a normal surveying workflow.
+
+
+Absolute TEC, mean anomaly and the min/max anomaly across selected cells are
+reported separately. A national mean must not hide opposite local deviations.
+Quiet Kp is not used to label a measurement session favorable: it indicates
+geomagnetic conditions, not local ionospheric irregularities or receiver
+performance. No arbitrary TEC threshold is treated as an RTK go/no-go rule.

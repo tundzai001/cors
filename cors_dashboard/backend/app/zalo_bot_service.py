@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261018-webhook-probe-v18"
+ZALO_TRACE_VERSION = "20261018-ionosphere-assessment-v19"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
