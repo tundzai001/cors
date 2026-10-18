@@ -269,6 +269,10 @@ def _cache_rtcm_signal_snapshot(serial: str, decoded: dict) -> None:
         "updated_at_ms": now_ms,
     }
     live["satellite_count"] = len(fresh_satellites)
+    if decoded.get("packets"):
+        live["rtcm_stats"] = decoded["packets"]
+    elif decoded.get("rtcm_stats"):
+        live["rtcm_stats"] = decoded["rtcm_stats"]
 
 
 def _expects_nmea_skyview(serial: str) -> bool:
@@ -546,6 +550,7 @@ def on_connect(client, userdata, flags, rc):
         # NTRIP control plane -> backend listens and translates to agent commands.
         client.subscribe("ntrip/rtcm/start", qos=1)
         client.subscribe("ntrip/rtcm/stop", qos=1)
+        client.subscribe("pi/decoder/esp_base/sync_request", qos=1)
     else:
         logging.error(f"MQTT Connect Failed with code: {rc}")
 
@@ -555,6 +560,12 @@ def on_disconnect(client, userdata, rc, properties=None):
 
 def on_message(client, userdata, msg):
     if IS_SHUTTING_DOWN: 
+        return
+
+    if msg.topic == "pi/decoder/esp_base/sync_request":
+        if main_loop and main_loop.is_running():
+            from .esp_base_manager import sync_esp_base_rovers
+            main_loop.call_soon_threadsafe(lambda: asyncio.create_task(sync_esp_base_rovers()))
         return
 
     if msg.topic.startswith("ntrip/rtcm/"):
@@ -1012,6 +1023,15 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
 
             # --- 2.5. BROADCAST REAL-TIME TO UI ---
             live_snapshot = dict(device_telemetry_cache.get(serial) or {})
+            if crud.is_mobile_base(serial) or str(serial or "").lower().startswith("esp_"):
+                incoming_rtcm = data.get("rtcm_stats")
+                existing_rtcm = live_snapshot.get("rtcm_stats")
+                if (not incoming_rtcm or incoming_rtcm.get("decoder") is False) and existing_rtcm and any(k.isdigit() for k in existing_rtcm.keys()):
+                    data["rtcm_stats"] = existing_rtcm
+                existing_nmea = live_snapshot.get("nmea_data") or {}
+                incoming_nmea = data.get("nmea_data")
+                if (not incoming_nmea or not incoming_nmea.get("satellites")) and existing_nmea.get("satellites"):
+                    data.setdefault("nmea_data", {})["satellites"] = existing_nmea["satellites"]
             live_snapshot.update(data)
             device_telemetry_cache[serial] = live_snapshot
             status_message = {

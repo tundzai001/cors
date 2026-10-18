@@ -22,6 +22,7 @@ from .device_command_routes import (
     unlock_device,
 )
 from .caster_monitor import caster_monitor_task
+from .esp_base_manager import esp_base_manager_task
 from .station_runtime import (
     PI_INGEST_WORKER_COUNT,
     enqueue_ui_broadcast,
@@ -248,6 +249,7 @@ async def lifespan(app: FastAPI):
 
         # Start global caster monitor (synchronizes multiple caster servers into local cache)
         tasks.append(asyncio.create_task(caster_monitor_task()))
+        tasks.append(asyncio.create_task(esp_base_manager_task()))
 
         logger.info("=" * 60)
         logger.info("🎉 Application startup complete!")

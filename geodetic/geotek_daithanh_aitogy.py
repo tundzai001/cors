@@ -2163,8 +2163,15 @@ class MonitorWorker(threading.Thread):
         self.daemon = True
         self.stop_event = threading.Event()
         
-        self.serial = f"MONITOR_{self.cfg['mountpoint'].replace('.', '_')}"
+        configured_serial = str(self.cfg.get('serial') or self.cfg.get('device_serial') or '').strip()
+        if configured_serial:
+            self.serial = configured_serial
+        elif str(self.cfg.get('mountpoint', '')).lower().startswith('esp_'):
+            self.serial = self.cfg['mountpoint']
+        else:
+            self.serial = f"MONITOR_{self.cfg['mountpoint'].replace('.', '_')}"
         self.topic_status = f"pi/devices/{self.serial}/status"
+        self.satellites = {}
         
         self.is_connected = False
         self.bytes_received = 0
@@ -2181,6 +2188,11 @@ class MonitorWorker(threading.Thread):
     
     def log(self, level, msg):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['mountpoint']}] {msg}")
+
+    def stop(self):
+        self.stop_event.set()
+        self.wakeup_event.set()
+        self._close_live_socket()
     
     def publish_status(self):
         if not self.mqtt_client or not self.mqtt_client.is_connected():
@@ -2190,20 +2202,30 @@ class MonitorWorker(threading.Thread):
             current_status = "online" if self.current_bps > 0 else "sleep"
         else:
             current_status = "offline"
+
+        now = time.time()
+        satellites = {
+            key: sat for key, sat in self.satellites.items()
+            if now - float(sat.get("last_seen", 0)) <= 30
+        }
+        self.satellites = satellites
+        satellite_count = len([sat for sat in satellites.values() if sat.get("snr", 0) > 0])
+        decoder = globals().get("rtcm_signal_decoder")
+        rtcm_stats = decoder.get_stats(self.serial) if decoder else {}
         
         status = {
             "serial": self.serial,
-            "rtcm_stats": globals().get("rtcm_signal_decoder").get_stats(self.serial) if globals().get("rtcm_signal_decoder") else {},
-            "name": self.cfg['mountpoint'],
+            "rtcm_stats": rtcm_stats,
+            "name": self.cfg.get('name') or self.cfg['mountpoint'],
             "status": current_status,
             "version": RELAY_VERSION,
             "agent_token_fingerprint": get_license_fingerprint(self.serial),
-            "timestamp": round(time.time(), 3),
+            "timestamp": round(now, 3),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
                 "coords": {
-                    "lat": self.cfg['lat'],
-                    "lon": self.cfg['lon'],
+                    "lat": self.cfg.get('lat', 0.0),
+                    "lon": self.cfg.get('lon', 0.0),
                     "alt": self.cfg.get('alt', 0.0)
                 }
             },
@@ -2219,14 +2241,36 @@ class MonitorWorker(threading.Thread):
                 "active_mountpoint": self.cfg['mountpoint']
             },
             "source_mountpoint": self.cfg['mountpoint'],
-            "rtk_fix_status": "FIXED",
+            "rtk_fix_status": "FIXED" if satellite_count > 0 else "NO_FIX",
             "detected_chip_type": "Ublox",
-            "is_provisioned": has_license(self.serial)
+            "is_provisioned": has_license(self.serial),
+            "nmea_data": {
+                "gga": None,
+                "gsa": None,
+                "satellites": satellites,
+                "base_coords": {
+                    "lat": self.cfg.get('lat', 0.0),
+                    "lon": self.cfg.get('lon', 0.0),
+                    "alt": self.cfg.get('alt', 0.0)
+                }
+            },
+            "gnss_stats": {
+                "satellites": satellite_count
+            },
+            "satellite_count": satellite_count
         }
         
         try:
             self.mqtt_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
-        except:
+            if satellites:
+                skyview_payload = {
+                    "type": "rtcm_skyview_calculated",
+                    "satellites": list(satellites.values()),
+                    "packets": rtcm_stats,
+                    "timestamp": round(now, 3)
+                }
+                self.mqtt_client.publish(f"pi/devices/{self.serial}/raw_data", json.dumps(skyview_payload), qos=0)
+        except Exception:
             pass
 
     def set_stream_active(self, active: bool):
@@ -2256,14 +2300,18 @@ class MonitorWorker(threading.Thread):
                     self._sock = sock
                 
                 # Cấu trúc y hệt chuẩn thiết bị Rover Ntrip 1.0 cổ điển:
-                r_user = self.cfg.get('rover_user') or "aitogy"
-                r_pass = self.cfg.get('rover_pass') or TARGET_PASS
+                r_user = self.cfg.get('rover_user') or self.cfg['mountpoint']
+                r_pass = self.cfg.get('rover_pass') or "12345"
                 auth = base64.b64encode(f"{r_user}:{r_pass}".encode()).decode()
                 request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP NtripClient/1.0\r\nAuthorization: Basic {auth}\r\n\r\n"
                 sock.sendall(request.encode())
                 
-                gga = generate_gga(self.cfg['lat'], self.cfg['lon'], self.cfg.get('alt', 0.0))
-                sock.sendall(gga.encode())
+                lat = self.cfg.get('lat', 0.0)
+                lon = self.cfg.get('lon', 0.0)
+                alt = self.cfg.get('alt', 0.0)
+                if lat or lon:
+                    gga = generate_gga(lat, lon, alt)
+                    sock.sendall(gga.encode())
                 
                 self.is_connected = True
                 self.publish_status()
@@ -2274,6 +2322,7 @@ class MonitorWorker(threading.Thread):
                 self.last_data_received_at = time.time()
                 
                 sock.settimeout(10.0)
+                rtcm_buffer = bytearray()
                 while not self.stop_event.is_set():
                     try:
                         data = sock.recv(4096)
@@ -2284,10 +2333,23 @@ class MonitorWorker(threading.Thread):
                         self.bytes_received += len(data)
                         now = time.time()
                         self.last_data_received_at = now
+
+                        rtcm_buffer.extend(data)
+                        frames = extract_rtcm3_frames(rtcm_buffer)
+                        decoder = globals().get("rtcm_signal_decoder")
+                        if decoder and frames:
+                            for frame in frames:
+                                decoded = decoder.decode_sync(self.serial, frame)
+                                sats = decoded.get("satellites", []) if decoded else []
+                                for sat in sats:
+                                    sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
+                                    existing = self.satellites.get(sat_key, {})
+                                    existing.update({k: v for k, v in sat.items() if v or k not in existing})
+                                    existing["last_seen"] = now
+                                    self.satellites[sat_key] = existing
+
                         if now - self.last_stat_update >= 1.0:
                             self.current_bps = int(self.bytes_received / (now - self.last_stat_update))
-                            # if self.current_bps > 0:
-                            #     self.log("INFO", f"[MONITOR] {self.current_bps} B/s")
                             self.bytes_received = 0
                             self.last_stat_update = now
                             self.is_connected = True
@@ -3376,15 +3438,68 @@ def setup_mqtt(worker_map):
     
     def on_connect(c, userdata, flags, rc, properties=None):
         if rc == 0:
-            logging.info("âœ“ MQTT Connected")
+            logging.info("✓ MQTT Connected")
             c.subscribe("pi/devices/+/command", qos=1)
             c.subscribe("pi/devices/+/commands", qos=1)
             c.subscribe("pi/device/+/command", qos=1)
+            c.subscribe("pi/decoder/esp_base", qos=1)
+            try:
+                c.publish("pi/decoder/esp_base/sync_request", json.dumps({"ready": True}), qos=1)
+            except Exception:
+                pass
             logging.info(f"MQTT control broker {MQTT_BROKER}:{MQTT_PORT}; waiting for dashboard commands")
         else:
             logging.error(f"MQTT failed: {rc}")
 
     def on_message(c, userdata, msg):
+        if msg.topic == "pi/decoder/esp_base":
+            try:
+                payload = json.loads((msg.payload or b"{}").decode("utf-8"))
+                action = payload.get("action")
+                serial = payload.get("serial")
+                mp = payload.get("mountpoint")
+                if not serial or not mp:
+                    return
+                with WORKER_MAP_LOCK:
+                    if action == "start":
+                        existing = worker_map.get(serial)
+                        if existing and existing.is_alive() and getattr(existing, "cfg", {}).get("mountpoint") == mp:
+                            return
+                        if existing:
+                            if hasattr(existing, "stop"):
+                                existing.stop()
+                            try:
+                                existing.join(timeout=2)
+                            except Exception:
+                                pass
+                        cfg = {
+                            "serial": serial,
+                            "mountpoint": mp,
+                            "rover_user": payload.get("rover_user") or mp,
+                            "rover_pass": payload.get("rover_pass") or "12345",
+                            "lat": payload.get("lat", 0.0),
+                            "lon": payload.get("lon", 0.0),
+                            "alt": payload.get("alt", 0.0),
+                        }
+                        worker = MonitorWorker(cfg, c)
+                        worker_map[serial] = worker
+                        worker.start()
+                        logging.info(f"✓ Dynamically started ESP Decoder Worker: serial={serial}, mp={mp}")
+                    elif action == "stop":
+                        existing = worker_map.get(serial)
+                        if existing:
+                            if hasattr(existing, "stop"):
+                                existing.stop()
+                            try:
+                                existing.join(timeout=2)
+                            except Exception:
+                                pass
+                            worker_map.pop(serial, None)
+                            logging.info(f"✓ Stopped ESP Decoder Worker: serial={serial}, mp={mp}")
+            except Exception as e:
+                logging.error(f"Error handling esp_base decoder control: {e}")
+            return
+
         try:
             payload = json.loads((msg.payload or b"{}").decode("utf-8"))
         except Exception:
