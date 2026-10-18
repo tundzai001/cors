@@ -174,7 +174,6 @@
                 <span class="station-map-popup-value">${Number.isFinite(station.heightM) ? station.heightM.toFixed(3) : '—'}</span>
             </div>
             <div class="small mt-2">Hệ thống Cục: <strong style="color:${meta.color}">${meta.label}</strong></div>
-            <div class="small mt-1">${escapeHtml(health?.reason || 'Đang kiểm tra trang dịch vụ')}</div>
             <div class="small mt-1">Trạng thái RTCM từng trạm: chưa công bố.</div>
             <div class="small mt-2">Nguồn: <a href="https://vngeonet.vn/User/SiteMap/SiteMapPublic" target="_blank" rel="noopener noreferrer">VNGEONET</a> · 17/10/2026</div>
             <div class="small mt-1">Chưa xác định hệ quy chiếu và loại độ cao.</div>
@@ -1322,8 +1321,8 @@
                         <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
                         <div className="station-map-network" role="status" aria-atomic="true">
                             <div className="station-map-legend-row fw-bold"><span className="station-map-dot reference"></span>CORS Cục · VNGEONET</div>
-                            <div style={{color: referenceMeta.color}}>Trang dịch vụ: {referenceMeta.label}</div>
-                            <div className="text-muted" title={vngeonetHealth?.reason}>Kiểm tra {vngeonetHealth?.checked_at ? new Date(vngeonetHealth.checked_at * 1000).toLocaleTimeString('vi-VN') : '…'}</div>
+                            <div style={{color: referenceMeta.color}}>Hệ thống Cục: {referenceMeta.label}</div>
+                            <div className="text-muted" >Kiểm tra {vngeonetHealth?.checked_at ? new Date(vngeonetHealth.checked_at * 1000).toLocaleTimeString('vi-VN') : '…'}</div>
                             {showVngeonet && <div className="text-muted">{referenceStations.length} trạm · RTCM chưa xác định</div>}
                         </div>
                     </div>

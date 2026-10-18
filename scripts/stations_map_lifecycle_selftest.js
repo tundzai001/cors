@@ -189,7 +189,11 @@ assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.no
 assert.equal(helpers.referenceNetworkMeta({status: 'offline', checked_at: Date.now()/1000}).label, 'Đang báo lỗi');
 assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 76}).label, 'Chưa xác định', 'Old website health must not stay green');
 const referencePopup = helpers.referenceStationPopup({code: 'TEST', lat: 21, lon: 105, serviceHealth: {status: 'offline', checked_at: Date.now()/1000, reason: '<error>'}});
-assert(referencePopup.includes('&lt;error>'), 'External error text stays escaped');
+assert(!referencePopup.includes('error'), 'Public popup does not disclose probe details');
+assert(referencePopup.includes('Đang báo lỗi'), 'Public status stays visible');
+const onlinePopup = helpers.referenceStationPopup({code:'THOA', lat:19.762069101, lon:105.778061405, serviceHealth:{status:'online',checked_at:Date.now()/1000,reason:'Trang dịch vụ Cục có form đăng nhập bình thường'}});
+assert(!onlinePopup.includes('form đăng nhập'), 'Login-form details never appear in the public popup');
+assert(onlinePopup.includes('Online'));
 
 assert.ok(fallbackMaps[0].__tiles.hybrid.url.includes('google.com/vt/lyrs=y'), 'fallback uses original Google hybrid');
 assert.ok(nodes.some(node => node.props.className === 'station-map-flat-layer'));
