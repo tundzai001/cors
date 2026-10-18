@@ -63,10 +63,12 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
             text = await report_text({'status':'online'}, 'ở Tuyên Quang đo được không')
             self.assertIn('CORS Cục đang hoạt động', text)
             self.assertIn('TEC 30.0 TECU', text)
-            self.assertIn('Có thể triển khai đo', text)
+            self.assertIn('chưa thấy trở ngại để bắt đầu ca đo', text)
             self.assertIn('Kp 1.33', text)
+            self.assertTrue(text.startswith('Tuyên Quang nhé.'))
+            self.assertNotIn('cao hơn nền 30 ngày', text)
             offline = await report_text({'status':'offline'}, 'Tuyên Quang')
-            self.assertIn('Tạm dừng phương án đo dùng CORS Cục', offline)
+            self.assertIn('chuyển sang nguồn dự phòng', offline)
         for hidden in ('form', 'đăng nhập', '14.238', 'trang dịch vụ'):
             self.assertNotIn(hidden, text)
 
@@ -77,13 +79,15 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('đang mất cập nhật', text)
         self.assertNotIn('có thể đo thử', text)
 
-    async def test_delayed_observation_is_usable_and_labelled_without_green_light(self):
+    async def test_delayed_observation_does_not_become_a_field_warning(self):
         data = self.data(time_tag=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat())
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=data)):
             text = await report_text({'status':'online'}, 'Tuyên Quang đo được không')
         self.assertIn('trễ 31 phút', text)
         self.assertIn('TEC 30.0', text)
-        self.assertNotIn('Có thể triển khai đo', text)
+        self.assertNotIn('Đo thận trọng', text)
+        self.assertNotIn('chưa dùng bản tin', text)
+        self.assertIn('chưa thấy trở ngại', text)
 
     async def test_intents_produce_different_useful_answers(self):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):

@@ -66,7 +66,10 @@ Future questions explicitly describe the observations as current, not a forecast
 NOAA GloTEC regional estimates are usable for up to 90 minutes, matching the
 existing service freshness limit. Observations older than 30 minutes, or returned
 from fallback cache, are labelled delayed with their observation time. Older or
-invalid observations never support a positive measurement recommendation.
+invalid observations are omitted from the current regional evidence. Observation
+age is separate from field risk: a delayed model alone does not produce a caution
+or postponement recommendation. Quiet Kp replies are explicitly limited to
+source availability and geomagnetic conditions, not overall RTK suitability.
 Fetch failures no longer mutate the original cached GeoJSON metadata.
 
 A shared five-minute cache fetches NOAA's estimated planetary Kp from
@@ -85,3 +88,12 @@ URL, login form details or internal Base information.
 
 Sources: [NOAA GloTEC](https://www.spaceweather.gov/products/glotec) and
 [NOAA space weather scales](https://www.spaceweather.gov/noaa-scales-explanation).
+
+
+Short questions now receive a direct answer with compact evidence; only detail
+requests include the full TEC comparison. A bare province name is a public lookup,
+including a follow-up such as “còn Hà Nội”. The last province is remembered for
+20 minutes per chat and sender, with a maximum of 512 process-local entries. A
+follow-up measurement/FLOAT question reuses that province; `/cors` or a national
+question resets it. Revoking a chat clears this context. This memory grants no
+Base permissions and does not share one group member's location with another.

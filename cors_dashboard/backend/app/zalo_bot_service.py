@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261018-contextual-measurement-v15"
+ZALO_TRACE_VERSION = "20261018-conversational-cors-v16"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -90,6 +90,10 @@ def _is_cors_status_question(text: str) -> bool:
     words = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
     if re.search(r"\b(?:base|rover)\b", words):
         return False
+    from .zalo_cors_report import region_for_question, _plain
+    region = region_for_question(words)[0]
+    if region != "Việt Nam" and words in {_plain(region), f"con {_plain(region)}", f"the con {_plain(region)}"}:
+        return True
     if re.search(r"\b(?:dien ly|dia tu|kp|float|khong fix|kho fix|fix kho|mat fix)\b", words):
         return True
     target = (re.search(r"\b(?:cuc|vngeonet)\b", words)
@@ -256,6 +260,7 @@ class ZaloBotService:
         self._get_binding_scopes_cb: Optional[Callable[[], Awaitable[Dict[int, Set[str]]]]] = None
         self._pending_admin_actions: Dict[str, Dict[str, Any]] = {}
         self._conversation_states: Dict[str, Dict[str, Any]] = {}
+        self._cors_regions: Dict[str, tuple[str, float]] = {}
         self._chat_mention_prefixes: Dict[str, str] = {}
         self._revoked_chat_ids: Set[str] = set()
         
@@ -301,6 +306,9 @@ class ZaloBotService:
         for key in list(self._conversation_states):
             if key == chat_id or key.startswith(f"{chat_id}:"):
                 self._conversation_states.pop(key, None)
+        for key in list(self._cors_regions):
+            if key.startswith(f"{chat_id}:"):
+                self._cors_regions.pop(key, None)
         for key in list(self._pending_admin_actions):
             pending = self._pending_admin_actions.get(key) or {}
             if str(pending.get("chat_id") or "") == chat_id:
@@ -2700,8 +2708,23 @@ class ZaloBotService:
         health = await get_network_status()
         token = self._cors_outbound.set("reply")
         try:
-            from .zalo_cors_report import report_text
-            await update.message.reply_text(await report_text(health, str(getattr(update.message, "text", "") or "")))
+            from .zalo_cors_report import report_text, region_for_question, _plain
+            question = str(getattr(update.message, "text", "") or "")
+            key = self._conversation_key(update)
+            now = time.monotonic()
+            self._cors_regions = {k: v for k, v in self._cors_regions.items() if now - v[1] < 1200}
+            name = region_for_question(question)[0]
+            words = _plain(question)
+            if name != "Việt Nam":
+                self._cors_regions.pop(key, None)
+                if len(self._cors_regions) >= 512:
+                    self._cors_regions.pop(next(iter(self._cors_regions)))
+                self._cors_regions[key] = (name, now)
+            elif re.search(r"\b(viet nam|ca nuoc|toan quoc)\b", words) or words == "cors" or re.search(r"(?:^|\s)/cors(?:@\S+)?\s*$", question, re.IGNORECASE):
+                self._cors_regions.pop(key, None)
+            elif key in self._cors_regions and re.search(r"\b(do|o do|cho do|tai do|float|fix|dien ly)\b", words):
+                question += " " + self._cors_regions[key][0]
+            await update.message.reply_text(await report_text(health, question))
         finally:
             self._cors_outbound.reset(token)
 

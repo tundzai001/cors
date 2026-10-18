@@ -153,23 +153,20 @@ async def report_text(health, question=''):
                 f" NOAA SWPC · {kp['stamp']}." if kp else
                 'Chỉ số địa từ đang tạm mất cập nhật.')
 
-    # Operational advice, not a claim to measure receiver accuracy from TEC or Kp.
+    # Keep operational signals separate from observation age: a delayed model
+    # is not evidence that the field conditions themselves have deteriorated.
     if health.get('status') == 'offline':
-        decision = 'Tạm dừng phương án đo dùng CORS Cục; chuyển nguồn hiệu chỉnh dự phòng nếu có.'
+        decision = 'Cục đang gián đoạn, ca đo dùng nguồn này cần chuyển sang nguồn dự phòng hoặc chờ kết nối lại.'
     elif health.get('status') != 'online':
-        decision = 'Chưa xác nhận được nguồn Cục; kiểm tra kết nối hiệu chỉnh trước khi triển khai.'
+        decision = 'Tôi chưa xác nhận được nguồn Cục, nên chưa chốt được phương án đo dùng nguồn này.'
     elif value is not None and value >= 7:
-        decision = 'Nên hoãn đo khống chế hoặc công việc cần độ chính xác cao: đang có bão từ mạnh.'
+        decision = 'Nên hoãn đo khống chế: bão từ mạnh đang làm tăng nguy cơ gián đoạn định vị.'
     elif value is not None and value >= 4:
-        decision = 'Đo thận trọng: địa từ đang nhiễu động; ưu tiên ca đo ngắn, kiểm tra chéo điểm quan trọng.'
-    elif observation and not observation['delayed'] and value is not None:
-        decision = 'Có thể triển khai đo: nguồn Cục hoạt động, địa từ yên tĩnh.'
-    elif observation and observation['delayed']:
-        decision = 'Đo thận trọng: bản điện ly đang trễ. Có thể triển khai phần việc thông thường, chưa dùng bản tin này để chốt ca đo chính xác cao.'
-    elif observation:
-        decision = 'Nguồn Cục hoạt động, bản điện ly khu vực đã có. Địa từ mất cập nhật; ưu tiên công việc thông thường, kiểm tra chéo điểm quan trọng.'
+        decision = 'Cục vẫn hoạt động, nhưng địa từ đang nhiễu động. Ca đo chính xác cao cần thận trọng.'
+    elif value is not None:
+        decision = 'Về nguồn Cục và địa từ, hiện chưa thấy trở ngại để bắt đầu ca đo.'
     else:
-        decision = 'Nguồn Cục sẵn sàng. Bản điện ly đang mất cập nhật; chưa có căn cứ quy lỗi cho tầng điện ly.'
+        decision = 'Cục đang hoạt động. Địa từ mất cập nhật nên tôi chỉ xác nhận được tình trạng nguồn.'
 
     if diagnostic:
         if health.get('status') == 'offline':
@@ -184,16 +181,29 @@ async def report_text(health, question=''):
 
     atmosphere = ionosphere_text(data, question)
     if not observation:
-        atmosphere = f'Tầng điện ly · {name}: bản NOAA khu vực đang mất cập nhật.'
+        atmosphere = f'Tầng điện ly · {name}: NOAA đang mất cập nhật.'
     if future:
-        decision = 'Đây là tình hình hiện tại, chưa phải dự báo cho ca đo sắp tới. ' + decision
-    if detail or measurement:
-        result = f'{headline}\n\n{name} · {decision}\n\n{atmosphere}\n{magnetic}'
-        if detail:
-            result += '\nTEC phản ánh lượng electron, không cho biết trực tiếp sai số máy hay trạng thái FIX.'
-        return result
-    # A quick status question gets a quick answer; detailed data is available on request.
-    summary = (f"Tầng điện ly · {name}: TEC {observation['tec']} TECU · {observation['stamp']}"
-               + (f" · bản gần nhất, trễ {observation['age_minutes']} phút." if observation['delayed'] else '.')
-               if observation else atmosphere)
-    return f'{headline}\n{decision}\n{summary}\n{magnetic}'
+        return (f'{name}: đây là tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.\n\n'
+                f'{headline}\n{magnetic}\n{atmosphere}')
+    if detail:
+        return (f'{headline}\n\n{atmosphere}\n{magnetic}\n'
+                'TEC là ước tính điện ly khu vực, không phải sai số đo hay chất lượng FIX của máy.')
+
+    # Put the answer first. Keep model timing as evidence, not a blanket warning.
+    if observation:
+        timing = (f" · bản gần nhất, trễ {observation['age_minutes']} phút"
+                  if observation['delayed'] else '')
+        evidence = (f"Điện ly {name}: TEC {observation['tec']} TECU (ước tính).\n"
+                    f"NOAA GloTEC {observation['stamp']}{timing}.")
+    else:
+        evidence = atmosphere
+    short_magnetic = (f"Kp {value:.2f} · " +
+                      ('bão từ mạnh' if value >= 7 else 'bão từ' if value >= 5 else
+                       'nhiễu động' if value >= 4 else 'địa từ yên tĩnh') +
+                      f" · {kp['stamp']}." if kp else 'Kp đang mất cập nhật.')
+    if measurement or name != 'Việt Nam':
+        opening = f'{name} nhé. ' if name != 'Việt Nam' else ''
+        scope = ('\nAnh đang đo ở tỉnh nào?'
+                 if name == 'Việt Nam' else '')
+        return f'{opening}{decision}\n{headline} {short_magnetic}\n\n{evidence}{scope}'
+    return f'{headline}\n{short_magnetic}\n\n{evidence}'
