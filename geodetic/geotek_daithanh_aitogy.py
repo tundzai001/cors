@@ -991,6 +991,13 @@ class RTCMSignalDecoder:
             return {k: {"interval": v["interval"], "count": v["count"]} for k, v in raw.items()}
         return {}
 
+    def get_base_coordinates(self, serial: str) -> tuple[float, float, float] | None:
+        base_pos = self._base_positions.get(serial)
+        if not base_pos:
+            return None
+        lat, lon, alt = self._ecef2pos(*base_pos)
+        return math.degrees(lat), math.degrees(lon), alt
+
     def decode_sync(self, serial: str, payload: bytes) -> dict[str, Any] | None:
         buffer = self._buffers.get(serial, b"") + payload
         packets: list[dict[str, Any]] = []
@@ -2179,6 +2186,8 @@ class MonitorWorker(threading.Thread):
         self.last_data_received_at = 0.0
         self.max_no_data_seconds = 12.0
         self.current_bps = 0
+        self.last_gga_send_time = 0.0
+        self.gga_send_interval = 5.0
         
         self.name = f"Monitor-{self.cfg['mountpoint']}"
         self.desired_active = True
@@ -2188,6 +2197,21 @@ class MonitorWorker(threading.Thread):
     
     def log(self, level, msg):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['mountpoint']}] {msg}")
+
+    def _send_rover_gga(self, sock: socket.socket) -> None:
+        decoder = globals().get("rtcm_signal_decoder")
+        base_coords = decoder.get_base_coordinates(self.serial) if decoder else None
+        if base_coords:
+            lat, lon, alt = base_coords
+        else:
+            lat = float(self.cfg.get('lat') or 0.0)
+            lon = float(self.cfg.get('lon') or 0.0)
+            alt = float(self.cfg.get('alt') or 0.0)
+            if not (lat or lon):
+                lat, lon, alt = 21.0285, 105.8542, 10.0
+        gga = generate_gga(lat, lon, alt)
+        sock.sendall(gga.encode())
+        self.last_gga_send_time = time.time()
 
     def stop(self):
         self.stop_event.set()
@@ -2306,12 +2330,10 @@ class MonitorWorker(threading.Thread):
                 request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP NtripClient/1.0\r\nAuthorization: Basic {auth}\r\n\r\n"
                 sock.sendall(request.encode())
                 
-                lat = self.cfg.get('lat', 0.0)
-                lon = self.cfg.get('lon', 0.0)
-                alt = self.cfg.get('alt', 0.0)
-                if lat or lon:
-                    gga = generate_gga(lat, lon, alt)
-                    sock.sendall(gga.encode())
+                try:
+                    self._send_rover_gga(sock)
+                except Exception as e:
+                    self.log("WARNING", f"Failed to send initial GGA: {e}")
                 
                 self.is_connected = True
                 self.publish_status()
@@ -2321,7 +2343,7 @@ class MonitorWorker(threading.Thread):
                 self.last_stat_update = time.time()
                 self.last_data_received_at = time.time()
                 
-                sock.settimeout(10.0)
+                sock.settimeout(2.0)
                 rtcm_buffer = bytearray()
                 while not self.stop_event.is_set():
                     try:
@@ -2333,6 +2355,13 @@ class MonitorWorker(threading.Thread):
                         self.bytes_received += len(data)
                         now = time.time()
                         self.last_data_received_at = now
+
+                        if now - self.last_gga_send_time >= self.gga_send_interval:
+                            try:
+                                self._send_rover_gga(sock)
+                            except Exception as e:
+                                self.log("WARNING", f"Periodic GGA send error: {e}")
+                                break
 
                         rtcm_buffer.extend(data)
                         frames = extract_rtcm3_frames(rtcm_buffer)
@@ -2357,7 +2386,14 @@ class MonitorWorker(threading.Thread):
                             
                     except socket.timeout:
                         self.current_bps = 0
-                        no_data_for = time.time() - self.last_data_received_at
+                        now = time.time()
+                        if now - self.last_gga_send_time >= self.gga_send_interval:
+                            try:
+                                self._send_rover_gga(sock)
+                            except Exception as e:
+                                self.log("WARNING", f"Periodic GGA send error: {e}")
+                                break
+                        no_data_for = now - self.last_data_received_at
                         # If source has no RTCM data for too long, treat it as offline and force reconnect.
                         if no_data_for >= self.max_no_data_seconds:
                             self.is_connected = False

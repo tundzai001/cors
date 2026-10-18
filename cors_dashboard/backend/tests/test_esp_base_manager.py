@@ -89,7 +89,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
 
             # Check decoder notified
             mock_notify.assert_awaited_once_with(
-                "start", "esp_1234567890AB", "ESP_TEST", "ESP_TEST", DEFAULT_ROVER_PASSWORD
+                "start", "esp_1234567890AB", "ESP_TEST", "ESP_TEST", DEFAULT_ROVER_PASSWORD, lat=0.0, lon=0.0, alt=0.0
             )
 
     @patch("app.esp_base_manager._get_configured_casters")

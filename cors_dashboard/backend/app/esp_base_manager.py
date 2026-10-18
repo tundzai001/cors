@@ -136,7 +136,8 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
             await auth_db.commit()
 
     # 3. Notify Decoder via MQTT
-    await notify_decoder_worker("start", device.serial, mountpoint, username, password)
+    lat, lon, alt = _extract_device_coords(device)
+    await notify_decoder_worker("start", device.serial, mountpoint, username, password, lat=lat, lon=lon, alt=alt)
     return True
 
 
@@ -175,7 +176,32 @@ async def auto_deprovision_esp_rover_account(device_serial: str, username: str) 
     return True
 
 
-async def notify_decoder_worker(action: str, serial: str, mountpoint: str, rover_user: str, rover_pass: str) -> None:
+def _extract_device_coords(device: models.Device | None) -> tuple[float, float, float]:
+    """Extract coordinates from device base_config if available."""
+    if not device:
+        return 0.0, 0.0, 0.0
+    coords = {}
+    if getattr(device, "base_config", None) and isinstance(device.base_config, dict):
+        coords = device.base_config.get("coords") or {}
+    try:
+        lat = float(coords.get("lat") or 0.0)
+    except Exception:
+        lat = 0.0
+    try:
+        lon = float(coords.get("lon") or 0.0)
+    except Exception:
+        lon = 0.0
+    try:
+        alt = float(coords.get("alt") or 0.0)
+    except Exception:
+        alt = 0.0
+    return lat, lon, alt
+
+
+async def notify_decoder_worker(
+    action: str, serial: str, mountpoint: str, rover_user: str, rover_pass: str,
+    lat: float = 0.0, lon: float = 0.0, alt: float = 0.0,
+) -> None:
     """Publish MQTT control message to geotek_daithanh_aitogy decoder worker."""
     try:
         from . import mqtt as mqtt_module
@@ -186,6 +212,9 @@ async def notify_decoder_worker(action: str, serial: str, mountpoint: str, rover
                 "mountpoint": mountpoint,
                 "rover_user": rover_user,
                 "rover_pass": rover_pass,
+                "lat": lat,
+                "lon": lon,
+                "alt": alt,
                 "timestamp": int(time.time()),
             })
             mqtt_module.client.publish(MQTT_DECODER_TOPIC, payload, qos=1)
@@ -235,7 +264,8 @@ async def sync_esp_base_rovers() -> None:
                 rover_map[mp_key] = True
             else:
                 # Account already exists; ensure decoder knows to keep running
-                await notify_decoder_worker("start", serial, mp, mp, DEFAULT_ROVER_PASSWORD)
+                lat, lon, alt = _extract_device_coords(dev)
+                await notify_decoder_worker("start", serial, mp, mp, DEFAULT_ROVER_PASSWORD, lat=lat, lon=lon, alt=alt)
 
             # Cleanup any stale system rover accounts for this base if its mountpoint changed
             for rover_user_key, rover_obj in list(rover_map.items()):

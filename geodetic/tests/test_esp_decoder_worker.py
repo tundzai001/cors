@@ -85,6 +85,37 @@ class EspDecoderWorkerTests(unittest.TestCase):
         self.assertTrue(worker.stop_event.is_set())
         self.assertTrue(worker.wakeup_event.is_set())
 
+    def test_monitor_worker_send_rover_gga(self):
+        mqtt_mock = MagicMock()
+        cfg = {
+            "mountpoint": "ESP_TEST",
+            "serial": "esp_1234",
+            "lat": 20.9712,
+            "lon": 105.7831,
+            "alt": 15.0,
+        }
+        worker = MonitorWorker(cfg, mqtt_mock)
+        sock_mock = MagicMock()
+        worker._send_rover_gga(sock_mock)
+        
+        sock_mock.sendall.assert_called_once()
+        sent_data = sock_mock.sendall.call_args[0][0].decode("ascii")
+        self.assertTrue(sent_data.startswith("$GPGGA,"))
+        self.assertTrue(sent_data.endswith("\r\n"))
+        self.assertIn("2058.", sent_data)  # 20 deg 58 min for lat 20.9712
+        self.assertGreater(worker.last_gga_send_time, 0.0)
+
+    def test_rtcm_signal_decoder_get_base_coordinates(self):
+        from geotek_daithanh_aitogy import RTCMSignalDecoder
+        decoder = RTCMSignalDecoder()
+        # Hanoi rough ECEF coords (-1629864.0, 5747683.0, 2270967.0)
+        decoder._base_positions["esp_1234"] = (-1629864.0, 5747683.0, 2270967.0)
+        coords = decoder.get_base_coordinates("esp_1234")
+        self.assertIsNotNone(coords)
+        lat, lon, alt = coords
+        self.assertAlmostEqual(lat, 21.0, places=0)
+        self.assertAlmostEqual(lon, 105.8, places=0)
+
 
 if __name__ == "__main__":
     unittest.main()
