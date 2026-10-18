@@ -249,6 +249,7 @@ class IonosphereService:
                     stale_compact["warning"] = f"NOAA SWPC update temporarily unavailable: {exc}"
                     if format_type == "geojson" and self._cached_geojson:
                         stale_geo = dict(self._cached_geojson)
+                        stale_geo["metadata"] = dict(stale_geo["metadata"])
                         stale_geo["metadata"]["is_stale"] = True
                         stale_geo["metadata"]["status"] = "STALE"
                         return stale_geo

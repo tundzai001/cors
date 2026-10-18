@@ -92,6 +92,16 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
             geo = await self.service.get_latest(format_type="geojson")
             self.assertEqual(geo["type"], "FeatureCollection")
 
+    async def test_fetch_failure_does_not_poison_cached_metadata(self):
+        compact, geo = self.service._parse_glotec_payload(self._sample_glotec_geojson(), 'https://example.test')
+        self.service._cached_compact = compact
+        self.service._cached_geojson = geo
+        with patch.object(self.service, '_fetch_catalog', AsyncMock(side_effect=TimeoutError)):
+            stale = await self.service.get_latest(format_type='geojson', force_refresh=True)
+        self.assertTrue(stale['metadata']['is_stale'])
+        self.assertFalse(geo['metadata']['is_stale'])
+        self.assertEqual(geo['metadata']['status'], 'ACTIVE')
+
     def test_api_endpoint(self):
         sample = self._sample_glotec_geojson()
         compact, geojson = self.service._parse_glotec_payload(sample, "http://test.url/sample.geojson")

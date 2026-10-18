@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261017-regional-ionosphere-v14"
+ZALO_TRACE_VERSION = "20261018-contextual-measurement-v15"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -90,7 +90,7 @@ def _is_cors_status_question(text: str) -> bool:
     words = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
     if re.search(r"\b(?:base|rover)\b", words):
         return False
-    if re.search(r"\bdien ly\b", words):
+    if re.search(r"\b(?:dien ly|dia tu|kp|float|khong fix|kho fix|fix kho|mat fix)\b", words):
         return True
     target = (re.search(r"\b(?:cuc|vngeonet)\b", words)
               or "14.238.1.125" in normalized
@@ -2753,6 +2753,8 @@ class ZaloBotService:
                 "• Hỏi tình trạng Cục: /cors\n"
                 "• Hoặc nhắn tự nhiên: “tình trạng Cục”, “Cục sập chưa”, "
                 "“cors cục hnay đo được k mọi người”.\n"
+                "• Máy cứ FLOAT: hỏi để khoanh vùng mạng, hiệu chỉnh hoặc nhiễu động.\n"
+                "• Điện ly Hà Nội chi tiết: xem TEC và địa từ Kp mới nhất.\n"
                 "• /menu hoặc /help — Xem hướng dẫn này.\n\n"
                 "Trong nhóm, nhắc @bot kèm câu hỏi nếu Zalo yêu cầu.\n"
                 "Có thể hỏi “ở Tuyên Quang đo được không” để xem trạng thái Cục và tầng điện ly khu vực."

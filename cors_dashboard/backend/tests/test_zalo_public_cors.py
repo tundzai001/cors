@@ -14,6 +14,10 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+        kp_patcher = patch('app.zalo_cors_report.geomagnetic_observation', AsyncMock(return_value=None))
+        kp_patcher.start()
+        self.addCleanup(kp_patcher.stop)
+
     async def test_cors_only_sender_blocks_other_content(self):
         service = bot_module.ZaloBotService()
         send = AsyncMock(return_value={"ok": True})
@@ -189,10 +193,10 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
     async def test_natural_cors_questions_use_same_handler_in_chat_dispatch(self):
         service = bot_module.ZaloBotService()
         with patch.object(service, "_cors_cmd", AsyncMock()) as handler:
-            for text in ("tình trạng cục", "cuc loi khong", "status Cục", "Cục chạy chưa", "Cục sao rồi", "cục dùng được không"):
+            for text in ("tình trạng cục", "cuc loi khong", "status Cục", "Cục chạy chưa", "Cục sao rồi", "cục dùng được không", "ở Tuyên Quang máy cứ FLOAT", "địa từ hôm nay thế nào", "khó FIX quá"):
                 self.assertTrue(await service._try_dispatch_intent(self.update(text), text))
                 self.assertEqual(service._detect_natural_language_intent(text), ("cors", []))
-            self.assertEqual(handler.await_count, 6)
+            self.assertEqual(handler.await_count, 9)
         for text in ("base đang thế nào", "rover online không", "rover Cục đang lỗi", "xóa rover cuc", "/station cuc", "@Bot Cors manager kiểm tra base Hà Nội"):
             self.assertFalse(bot_module._is_cors_status_question(text), text)
 

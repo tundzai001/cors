@@ -53,3 +53,35 @@ A loaded page without the login form counts as an error. Network/TLS failures
 remain unknown because the page could not be inspected. This same rule drives
 map status, `/cors` replies and automatic CORS alerts. No live Zalo delivery was
 performed during development validation.
+
+
+## Contextual measurement replies
+
+Public answers now distinguish a short status request, a province measurement
+question, an ionosphere detail request, and FLOAT diagnosis. FLOAT guidance
+branches on service availability and geomagnetic storms; it asks for correction
+age, satellites and baseline distance rather than repeating a generic FIX check.
+Future questions explicitly describe the observations as current, not a forecast.
+
+NOAA GloTEC regional estimates are usable for up to 90 minutes, matching the
+existing service freshness limit. Observations older than 30 minutes, or returned
+from fallback cache, are labelled delayed with their observation time. Older or
+invalid observations never support a positive measurement recommendation.
+Fetch failures no longer mutate the original cached GeoJSON metadata.
+
+A shared five-minute cache fetches NOAA's estimated planetary Kp from
+`https://services.swpc.noaa.gov/json/planetary_k_index_1m.json`. Records must be
+within 30 minutes of UTC now and Kp must be finite within 0–9. Failed requests
+return no index, with a one-minute retry cooldown; they never reuse an old quiet
+index. Data requests run concurrently, and existing paused-chat and Base access
+controls still apply. No Zalo traffic is sent by the tests.
+
+Operational guidance uses Kp >=4 for caution and >=7 for recommending postponing
+high-accuracy work. These are application recommendations, not NOAA guarantees
+of RTK performance. GloTEC TEC alone does not measure scintillation, receiver
+accuracy, or the availability of a particular station's RTCM. The model's coarse
+regional cells remain labelled estimates. Public replies never show the probe
+URL, login form details or internal Base information.
+
+Sources: [NOAA GloTEC](https://www.spaceweather.gov/products/glotec) and
+[NOAA space weather scales](https://www.spaceweather.gov/noaa-scales-explanation).
