@@ -330,3 +330,48 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
             await ask('Hà Nội')
             service.forget_chat('test-chat')
             self.assertNotIn(key, service._cors_regions)
+
+    async def test_webhook_verification_bypasses_sdk_and_conversation_state(self):
+        service = bot_module.ZaloBotService()
+        service.app = SimpleNamespace(process_update=AsyncMock())
+        service._hydrate_conversation_state = AsyncMock()
+        probe = {'event_name':'webhook.test', 'message':{
+            'msg_id':'webhook-test', 'text':'Zalo Bot Platform webhook test - please respond with HTTP 200'}}
+        with patch.object(bot_module, 'ZALO_AVAILABLE', False):
+            for payload in (probe, {'result':probe}, probe):
+                result = await service.process_webhook_payload(payload)
+                self.assertEqual(result['status'], 'webhook_test')
+                self.assertEqual(result['outbound_count'], 0)
+        service._hydrate_conversation_state.assert_not_awaited()
+        service.app.process_update.assert_not_awaited()
+
+    async def test_sdk_update_without_chat_is_not_dispatched(self):
+        service = bot_module.ZaloBotService()
+        service.app = SimpleNamespace(bot=SimpleNamespace(), process_update=AsyncMock())
+        service._hydrate_conversation_state = AsyncMock()
+        update = SimpleNamespace(message=SimpleNamespace(chat=None, text='service event'))
+        with patch.object(bot_module, 'ZALO_AVAILABLE', True), patch.object(
+            bot_module.settings, 'ENABLE_ZALO_BOT', True
+        ), patch.object(bot_module, 'Update', SimpleNamespace(de_json=lambda *args:update), create=True):
+            result = await service.process_webhook_payload({'event_name':'service.event'})
+        self.assertEqual(result['status'], 'ignored_no_chat')
+        service.app.process_update.assert_not_awaited()
+
+    def test_webhook_probe_http_200_still_requires_correct_secret(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.zalo_routes import router
+        service = bot_module.ZaloBotService()
+        app = FastAPI()
+        app.include_router(router)
+        with patch.object(bot_module.settings, 'ENABLE_ZALO_BOT', True), patch.object(
+            bot_module.settings, 'ZALO_WEBHOOK_SECRET', 'test-only-secret'
+        ), patch.object(bot_module, 'zalo_bot_service', service), patch.object(bot_module, 'ZALO_AVAILABLE', False):
+            with TestClient(app) as client:
+                probe = {'event_name':'webhook.test', 'message':{'msg_id':'webhook-test','text':'HTTP 200'}}
+                rejected = client.post('/api/zalo/webhook', json=probe)
+                self.assertEqual(rejected.status_code, 401)
+                accepted = client.post('/api/zalo/webhook', json=probe, headers={'x-zalo-webhook-secret':'test-only-secret'})
+                self.assertEqual(accepted.status_code, 200)
+                self.assertEqual(accepted.text, 'ok')
+                self.assertEqual(accepted.headers['X-Zalo-Outbound-Count'], '0')

@@ -29,7 +29,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261018-field-advice-v17"
+ZALO_TRACE_VERSION = "20261018-webhook-probe-v18"
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -730,6 +730,17 @@ class ZaloBotService:
     async def process_webhook_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         trace_id = uuid.uuid4().hex[:12]
         summary = self._summarize_payload(payload)
+        # Platform verification is not a user message and has no chat to reply to.
+        root = payload.get("result", payload)
+        if isinstance(root, dict) and root.get("event_name") == "webhook.test":
+            self._debug_events.append({
+                "trace_id": trace_id,
+                "received_at": datetime.now().astimezone().isoformat(),
+                "status": "webhook_test", "summary": {"event": "webhook.test"},
+                "outbound": [], "outbound_count": 0,
+            })
+            logger.info("[ZALO TRACE %s v=%s] webhook test acknowledged", trace_id, ZALO_TRACE_VERSION)
+            return {"trace_id": trace_id, "status": "webhook_test", "outbound_count": 0}
         try:
             await self._hydrate_conversation_state(
                 summary.get("chat_id"), summary.get("sender_id")
@@ -822,6 +833,12 @@ class ZaloBotService:
                     update.to_dict() if hasattr(update, "to_dict") else update
                 )
             )
+            message = getattr(update, "message", None)
+            if not getattr(getattr(message, "chat", None), "id", None):
+                event["status"] = "ignored_no_chat"
+                event["outbound_count"] = 0
+                logger.info("[ZALO TRACE %s] ignored update without a replyable chat", trace_id)
+                return {"trace_id": trace_id, "status": "ignored_no_chat", "outbound_count": 0}
             parsed_text = getattr(getattr(update, "message", None), "text", None)
             safe_parsed_text = (
                 "<redacted>" if sensitive_input
