@@ -220,6 +220,9 @@ async def create_user(
         can_view_rovers=user_data.can_view_rovers if current_user.role == 'admin' else False,
         can_create_rovers=user_data.can_create_rovers if current_user.role == 'admin' else False,
         can_create_users=user_data.can_create_users if current_user.role == 'admin' and user_data.role == 'coordinator' else False,
+        can_view_mobile_bases=user_data.can_view_mobile_bases if (
+            current_user.role == 'admin' or (current_user.role == 'coordinator' and getattr(current_user, 'can_view_mobile_bases', False))
+        ) else False,
         extra_mountpoints=user_data.extra_mountpoints if current_user.role == 'admin' else None,
         parent_id=parent_id,
         allowed_bases=user_data.allowed_bases,
@@ -279,6 +282,8 @@ async def update_user(
     update_dict = user_data.dict(exclude_unset=True)
     if current_user.role != 'admin':
         forbidden = {'assigned_devices', 'view_only_bases', 'can_view_rovers', 'can_create_rovers', 'can_create_users', 'extra_mountpoints'}
+        if not (current_user.role == 'coordinator' and getattr(current_user, 'can_view_mobile_bases', False)):
+            forbidden.add('can_view_mobile_bases')
         if any(field in update_dict for field in forbidden):
             raise HTTPException(status_code=403, detail="Chỉ admin được thay đổi quyền tài khoản")
         if 'allowed_bases' in update_dict:
@@ -344,7 +349,7 @@ async def update_user(
 
     if assigned_serials is not None or set(update_dict).intersection({
         'allowed_bases', 'view_only_bases', 'allowed_rovers', 'extra_mountpoints',
-        'can_view_rovers', 'can_create_rovers', 'can_create_users', 'role', 'is_active',
+        'can_view_rovers', 'can_create_rovers', 'can_create_users', 'can_view_mobile_bases', 'role', 'is_active',
     }):
         # Notify after commit so the browser reloads the new device scope.
         await _notify_station_scope_changed(auth_db, affected_users)

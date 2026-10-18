@@ -263,7 +263,12 @@ class UserBase(BaseModel):
     full_name: str | None = None
     role: str
     is_active: bool = True
+    can_view_mobile_bases: bool = False
     
+    @validator('can_view_mobile_bases', pre=True)
+    def normalize_mobile_bases(cls, v):
+        return bool(v) if v is not None else False
+
     @validator('role')
     def validate_role(cls, v):
         allowed_roles = ['admin', 'viewer', 'coordinator']
@@ -277,6 +282,7 @@ class UserCreate(UserBase):
     can_view_rovers: bool = False
     can_create_rovers: bool = False
     can_create_users: bool = False
+    can_view_mobile_bases: bool = False
     extra_mountpoints: str | None = None
     allowed_bases: List[str] | None = None
     view_only_bases: List[str] | None = None
@@ -299,6 +305,7 @@ class UserUpdate(BaseModel):
     can_view_rovers: bool | None = None
     can_create_rovers: bool | None = None
     can_create_users: bool | None = None
+    can_view_mobile_bases: bool | None = None
     extra_mountpoints: str | None = None
     allowed_bases: List[str] | None = None
     view_only_bases: List[str] | None = None
@@ -324,6 +331,7 @@ class UserResponse(UserBase):
     can_view_rovers: bool = False
     can_create_rovers: bool = False
     can_create_users: bool = False
+    can_view_mobile_bases: bool = False
     extra_mountpoints: str | None = None
     parent_id: int | None = None
     allowed_bases: List[str] | None = None

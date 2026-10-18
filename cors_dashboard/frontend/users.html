@@ -157,13 +157,25 @@
                                         <label class="form-check-label" for="can_create_users">Can create users</label>
                                     </div>
                                 </div>
+                                <div class="col-md-3 d-flex align-items-end">
+                                    <div id="mobile-base-permission-section" class="form-check form-switch d-none">
+                                        <input class="form-check-input" type="checkbox" id="can_view_mobile_bases">
+                                        <label class="form-check-label" for="can_view_mobile_bases" title="Cấp quyền xem và quản lý trạm Base 4G (ESP32)">Xem trạm Base 4G</label>
+                                    </div>
+                                </div>
                             </div>
                         </section>
 
                         <section id="device-assignment-section" class="mb-4 d-none">
-                            <h6 class="fw-bold mb-2">Quyền trạm</h6>
+                            <h6 class="fw-bold mb-2">Quyền trạm cố định</h6>
                             <p class="small text-muted mb-2">Khi tạo hoặc sửa Coordinator, chọn Chỉ xem hoặc Được sửa cho từng trạm. Muốn tạo Rover bằng MP của trạm Chỉ xem, bật cả quyền xem và tạo Rover ở trên.</p>
-                            <div id="device-checklist" class="ops-card-body border rounded" style="max-height: 220px; overflow: auto;"></div>
+                            <div id="device-checklist" class="ops-card-body border rounded" style="max-height: 200px; overflow: auto;"></div>
+
+                            <div id="mobile-device-assignment-section" class="mt-3 d-none">
+                                <h6 class="fw-bold mb-2">Quyền trạm Base 4G</h6>
+                                <p class="small text-muted mb-2">Danh sách trạm Base 4G di động (ESP32) được cấp quyền cho người dùng này.</p>
+                                <div id="mobile-device-checklist" class="ops-card-body border rounded" style="max-height: 200px; overflow: auto;"></div>
+                            </div>
                         </section>
 
                         <section id="rover-assignment-section" class="mb-4 d-none">

@@ -74,6 +74,22 @@ class StationScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(device.user_id, 10)
         self.assertTrue(response.can_create_users)
 
+    async def test_mobile_base_filtered_without_permission(self):
+        viewer_without = SimpleNamespace(id=21, role="viewer", parent_id=None,
+                                         allowed_bases='["FIXED_01", "esp_9896E5124B00"]',
+                                         can_view_mobile_bases=False)
+        viewer_with = SimpleNamespace(id=22, role="viewer", parent_id=None,
+                                      allowed_bases='["FIXED_01", "esp_9896E5124B00"]',
+                                      can_view_mobile_bases=True)
+        self.assertEqual(
+            await crud.get_viewer_visible_base_serials(object(), object(), viewer_without),
+            {"FIXED_01"}
+        )
+        self.assertEqual(
+            await crud.get_viewer_visible_base_serials(object(), object(), viewer_with),
+            {"FIXED_01", "ESP_9896E5124B00"}
+        )
+
     def test_assignment_notification_invalidates_websocket_scope(self):
         manager = ConnectionManager()
         socket = object()

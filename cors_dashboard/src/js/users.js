@@ -13,6 +13,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const roverPagePermissionSection = document.getElementById('rover-page-permission-section');
     const roverPermissionSection = document.getElementById('rover-permission-section');
     const userPermissionSection = document.getElementById('user-permission-section');
+    const mobileBasePermissionSection = document.getElementById('mobile-base-permission-section');
+    const canViewMobileBases = document.getElementById('can_view_mobile_bases');
+    const mobileDeviceAssignmentSection = document.getElementById('mobile-device-assignment-section');
+    const mobileDeviceChecklist = document.getElementById('mobile-device-checklist');
     const deviceChecklist = document.getElementById('device-checklist');
     const roverChecklist = document.getElementById('rover-checklist');
     const extraMountpointsSection = document.getElementById('extra-mountpoints-section');
@@ -167,6 +171,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         return allCasterSources;
     }
 
+    const isMobileBase = serial => /^esp_/i.test(String(serial || '').trim());
+
     function shouldShowAccessSections(role) {
         return ['coordinator', 'viewer'].includes(role);
     }
@@ -177,6 +183,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!canViewRovers || !canCreateRovers) return;
         canCreateRovers.disabled = !canViewRovers.checked;
         if (!canViewRovers.checked) canCreateRovers.checked = false;
+    }
+
+    function syncMobileBasePermissionState() {
+        if (!canViewMobileBases || !mobileDeviceAssignmentSection) return;
+        const isEnabled = Boolean(canViewMobileBases.checked);
+        mobileDeviceAssignmentSection.classList.toggle('d-none', !isEnabled);
     }
 
     function updateRoleSections() {
@@ -199,25 +211,31 @@ document.addEventListener('DOMContentLoaded', async () => {
             roverAssignmentSection.classList.toggle('d-none', true);
         }
         
-        // Only Admin can see extra mountpoints and permission sections
+        // Only Admin or Coordinator with mobile base access can manage mobile base permissions
         const isAdmin = currentUser.role === 'admin';
+        const canManageMobileBases = isAdmin || (currentUser.role === 'coordinator' && Boolean(currentUser.can_view_mobile_bases));
         extraMountpointsSection.classList.toggle('d-none', !(show && isAdmin));
         roverPagePermissionSection.classList.toggle('d-none', !(show && isAdmin));
         roverPermissionSection.classList.toggle('d-none', !(show && isAdmin));
         if (userPermissionSection) {
             userPermissionSection.classList.toggle('d-none', !(show && isAdmin));
         }
+        if (mobileBasePermissionSection) {
+            mobileBasePermissionSection.classList.toggle('d-none', !(show && canManageMobileBases));
+        }
         syncRoverPermissionState();
+        syncMobileBasePermissionState();
     }
 
-    function renderDeviceChecklist(editSerials = [], viewSerials = []) {
-        if (!allDevices.length) {
-            deviceChecklist.innerHTML = '<div class="ops-empty-state"><i class="bi bi-inbox"></i><span>No devices</span></div>';
+    function renderDeviceListToContainer(container, devices, editSerials = [], viewSerials = []) {
+        if (!container) return;
+        if (!devices.length) {
+            container.innerHTML = '<div class="ops-empty-state"><i class="bi bi-inbox"></i><span>No devices</span></div>';
             return;
         }
         const editable = new Set(editSerials.map(String));
         const viewable = new Set(viewSerials.map(String));
-        deviceChecklist.innerHTML = allDevices.map(device => {
+        container.innerHTML = devices.map(device => {
             const serial = String(device.serial);
             const label = `<span><strong>${escapeHtml(device.name || serial)}</strong><span class="text-muted ms-2">${escapeHtml(serial)}</span></span>`;
             if (roleSelect.value === 'coordinator') {
@@ -233,6 +251,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <input class="form-check-input device-checkbox" type="checkbox" value="${escapeHtml(serial)}" ${editable.has(serial) ? 'checked' : ''}>
                 ${label}</label>`;
         }).join('');
+    }
+
+    function renderDeviceChecklist(editSerials = [], viewSerials = []) {
+        const fixedDevices = allDevices.filter(d => !isMobileBase(d.serial));
+        const mobileDevices = allDevices.filter(d => isMobileBase(d.serial));
+        renderDeviceListToContainer(deviceChecklist, fixedDevices, editSerials, viewSerials);
+        if (mobileDeviceChecklist) {
+            renderDeviceListToContainer(mobileDeviceChecklist, mobileDevices, editSerials, viewSerials);
+        }
     }
 
     function renderRoverChecklist(assignedUsernames = []) {
@@ -296,6 +323,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
         isActiveCheckbox.checked = true;
+        if (canViewMobileBases) canViewMobileBases.checked = false;
+        syncMobileBasePermissionState();
         document.getElementById('password').placeholder = 'Required for new user';
         modalTitle.textContent = 'Add user';
         renderDeviceChecklist([]);
@@ -348,6 +377,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (document.getElementById('can_create_users')) {
             document.getElementById('can_create_users').checked = !!user.can_create_users;
         }
+        if (canViewMobileBases) {
+            canViewMobileBases.checked = Boolean(user.can_view_mobile_bases);
+        }
+        syncMobileBasePermissionState();
         document.getElementById('password').value = '';
         document.getElementById('password').placeholder = 'Leave blank to keep current';
         modalTitle.textContent = `Edit user: ${user.username}`;
@@ -416,8 +449,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const stationAccess = Array.from(document.querySelectorAll('.device-access-select'));
-        const checkedStations = Array.from(document.querySelectorAll('.device-checkbox:checked')).map(input => input.value);
+        const canViewMobile = Boolean(canViewMobileBases?.checked);
+        const stationAccess = Array.from(document.querySelectorAll('.device-access-select')).filter(input => {
+            const serial = input.dataset.serial;
+            return canViewMobile || !isMobileBase(serial);
+        });
+        const checkedStations = Array.from(document.querySelectorAll('.device-checkbox:checked'))
+            .map(input => input.value)
+            .filter(serial => canViewMobile || !isMobileBase(serial));
         const payload = {
             username: document.getElementById('username').value.trim(),
             full_name: document.getElementById('full_name').value.trim(),
@@ -428,6 +467,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             view_only_bases: stationAccess.filter(input => input.value === 'view').map(input => input.dataset.serial),
             allowed_rovers: Array.from(document.querySelectorAll('.rover-checkbox:checked')).map(input => input.value),
         };
+        const canManageMobileBases = currentUser.role === 'admin' || (currentUser.role === 'coordinator' && Boolean(currentUser.can_view_mobile_bases));
+        if (canManageMobileBases) {
+            payload.can_view_mobile_bases = canViewMobile;
+        }
         if (currentUser.role === 'admin') {
             payload.can_view_rovers = document.getElementById('can_view_rovers').checked;
             payload.can_create_rovers = document.getElementById('can_create_rovers').checked;
@@ -502,6 +545,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     userForm.addEventListener('submit', (event) => saveUser(event).catch(error => window.CorsUI.showToast('danger', error.message)));
     roleSelect.addEventListener('change', updateRoleSections);
     document.getElementById('can_view_rovers')?.addEventListener('change', syncRoverPermissionState);
+    canViewMobileBases?.addEventListener('change', syncMobileBasePermissionState);
     searchExtraMpsInput.addEventListener('input', () => renderExtraMpsChecklist(Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value)));
     [userSearch, roleFilter, statusFilter].forEach(el => el.addEventListener('input', applyFilters));
 

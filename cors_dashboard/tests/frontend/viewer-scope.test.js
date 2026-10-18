@@ -34,6 +34,8 @@ function app() {
         Event: class {},
         setTimeout: (fn) => { const id = nextId++; timers.set(id, fn); return id; },
         clearTimeout: (id) => timers.delete(id),
+        setInterval: () => nextId++,
+        clearInterval() {},
         requestAnimationFrame: (fn) => { const id = nextId++; frames.set(id, fn); return id; },
         cancelAnimationFrame: (id) => frames.delete(id),
     });

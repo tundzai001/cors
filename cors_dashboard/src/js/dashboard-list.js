@@ -344,8 +344,11 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
 
 window.DeviceListItem = DeviceListItem;
 
+const isMobileBase = serial => /^esp_/i.test(String(serial || '').trim());
+
 const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
+    const [stationType, setStationType] = useState(() => isMobileBase(selectedDeviceSerial) ? 'mobile' : 'fixed');
     const [statusFilter, setStatusFilter] = useState('all');
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [clockNow, setClockNow] = useState(Date.now());
@@ -356,6 +359,17 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
         ['offline', 'Offline'], ['locked', 'Locked'], ['alerts', 'Alerts'],
         ['unsynced', 'Unsynced'], ['no_stream', 'No stream']
     ];
+    const typeCounts = React.useMemo(() => devices.reduce((result, device) => {
+        result[isMobileBase(device.serial) ? 'mobile' : 'fixed'] += 1;
+        return result;
+    }, { fixed: 0, mobile: 0 }), [devices]);
+    const canViewMobile = isAdmin || Boolean(currentUser?.can_view_mobile_bases) || typeCounts.mobile > 0;
+    const typeDevices = React.useMemo(() => devices.filter(device =>
+        isMobileBase(device.serial) === (stationType === 'mobile')
+    ), [devices, stationType]);
+    useEffect(() => {
+        if (selectedDeviceSerial) setStationType(isMobileBase(selectedDeviceSerial) ? 'mobile' : 'fixed');
+    }, [selectedDeviceSerial]);
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
     const getListStatus = React.useCallback((device) => {
         const rawStatus = isDeviceStaleOffline(device, clockNow) ? 'offline' : String(device?.status || 'offline').toLowerCase();
@@ -364,7 +378,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
         return hasAccessTokenGap(device) && effective === 'offline' ? 'awaiting_license' : effective;
     }, [getEffectiveStatus, clockNow]);
     const counts = React.useMemo(() => {
-        return devices.reduce((acc, device) => {
+        return typeDevices.reduce((acc, device) => {
             const status = getListStatus(device);
             const bucket = status === 'streaming' ? 'online' : status;
             const flags = getDeviceOpsFlags(device);
@@ -375,10 +389,10 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             acc.all += 1;
             return acc;
         }, { all: 0, online: 0, sleep: 0, offline: 0, awaiting_license: 0, locked: 0, alerts: 0, unsynced: 0, no_stream: 0 });
-    }, [devices, getListStatus]);
+    }, [typeDevices, getListStatus]);
     const displayedDevices = React.useMemo(() => {
-        if (statusFilter === 'all') return devices;
-        return devices.filter(device => {
+        if (statusFilter === 'all') return typeDevices;
+        return typeDevices.filter(device => {
             const flags = getDeviceOpsFlags(device);
             if (statusFilter === 'alerts') return flags.alert;
             if (statusFilter === 'unsynced') return flags.unsynced;
@@ -386,7 +400,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             const status = getListStatus(device);
             return (status === 'streaming' ? 'online' : status) === statusFilter;
         });
-    }, [devices, statusFilter, getListStatus]);
+    }, [typeDevices, statusFilter, getListStatus]);
 
     useEffect(() => {
         setLocalSearchTerm(searchTerm);
@@ -411,7 +425,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             {/* Header: Số lượng & Search */}
             <div className="dashboard-list-toolbar p-3">
                 <div className="d-flex justify-content-between align-items-center mb-2">
-                    <h6 className="text-white mb-0 fw-bold">Trạm ({devices.length}){statusFilter !== 'all' && <span className="dashboard-active-filter ms-2">{filterOptions.find(([key]) => key === statusFilter)?.[1]}</span>}</h6>
+                    <h6 className="text-white mb-0 fw-bold">Trạm ({typeDevices.length}){statusFilter !== 'all' && <span className="dashboard-active-filter ms-2">{filterOptions.find(([key]) => key === statusFilter)?.[1]}</span>}</h6>
                     <button
                         className="btn btn-sm btn-link text-muted text-decoration-none p-0 dashboard-filter-toggle"
                         type="button"
@@ -423,6 +437,18 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                         <i className="bi bi-filter-right fs-5" aria-hidden="true"></i>
                     </button>
                 </div>
+                {canViewMobile && (
+                    <div className="dashboard-station-types" role="group" aria-label="Loại trạm">
+                        {[["fixed", "Trạm cố định"], ["mobile", "Base 4G"]].map(([key, label]) => (
+                            <button key={key} type="button"
+                                className={`dashboard-station-type ${stationType === key ? 'active' : ''}`}
+                                aria-pressed={stationType === key}
+                                onClick={() => { setStationType(key); setStatusFilter('all'); }}>
+                                <span>{label}</span><strong>{typeCounts[key]}</strong>
+                            </button>
+                        ))}
+                    </div>
+                )}
                 <div className="input-group input-group-sm">
                     <span className="input-group-text bg-dark border-secondary text-secondary">
                         <i className="bi bi-search"></i>
@@ -463,25 +489,13 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
             {/* List */}
             <div className="device-list-scroll flex-grow-1 overflow-auto custom-scrollbar p-2">
                 {displayedDevices.length === 0 ? (
-                    localSearchTerm ? (
-                        <div className="text-center mt-5 text-muted animate-fade-in-up">
-                            <i className="bi bi-search display-4 opacity-25"></i>
-                            <p className="mt-2 small">Không tìm thấy trạm nào.</p>
-                        </div>
-                    ) : (
-                        <div className="d-flex flex-column gap-2">
-                            {[1, 2, 3, 4, 5].map((n, i) => (
-                                <div key={n} className="device-card skeleton p-3 border border-secondary border-opacity-25" style={{ animationDelay: `${i * 0.05}s`, opacity: 0, animation: `fadeInUp 0.4s forwards, shimmer 2s infinite linear forwards` }}>
-                                    <div className="d-flex justify-content-between mb-2">
-                                        <div className="skeleton-title"></div>
-                                        <div className="skeleton-badge"></div>
-                                    </div>
-                                    <div className="skeleton-text"></div>
-                                    <div className="skeleton-text short"></div>
-                                </div>
-                            ))}
-                        </div>
-                    )
+                    <div className="text-center mt-4 text-muted" role="status">
+                        <i className="bi bi-search opacity-50" aria-hidden="true"></i>
+                        <p className="mt-2 small">{localSearchTerm || statusFilter !== 'all'
+                            ? 'Không tìm thấy trạm phù hợp trong nhóm này.'
+                            : stationType === 'mobile' ? 'Chưa có Base 4G trong danh sách của bạn.'
+                            : 'Chưa có trạm cố định trong danh sách của bạn.'}</p>
+                    </div>
                 ) : (
                     displayedDevices.map((device, index) => (
                         <DeviceListItem

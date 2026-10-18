@@ -393,8 +393,9 @@ def is_valid_serial(serial: str) -> bool:
     
     CÁC ĐỊNH DẠNG HỢP LỆ:
     - Ublox: 10000000xxxxxxxx (16 ký tự hex)
-    - LoRa Pi: LP_xxxxxxxxxxxx (MAC address)
+    - LP win Pi: LP_xxxxxxxxxxxx (MAC address)
     - Pi agent: PI_xxxxxxxxxxxx (12 ký tự hex)
+    - Mobile ESP32 base: esp_xxxxxxxxxxxx (12 ký tự hex từ MAC)
     - Relay: RELAY_xxxxxxx
     - Monitor: MONITOR_xxxxxxx
     
@@ -423,6 +424,10 @@ def is_valid_serial(serial: str) -> bool:
 
     # Pi agent fallback serial: PI_ + 12 hex chars from uuid4.
     if re.fullmatch(r'PI_[0-9A-F]{12}', serial, re.IGNORECASE):
+        return True
+
+    # ESP32 base firmware derives a stable device serial from its eFuse MAC.
+    if re.fullmatch(r'ESP_[0-9A-F]{12}', serial, re.IGNORECASE):
         return True
     
     # Pattern 3: Relay (RELAY_XXX)
@@ -759,7 +764,7 @@ async def get_all_users(db: AsyncSession) -> list[models.User]:
 
 import json
 
-async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, can_create_users: bool = False, extra_mountpoints: str | None = None, parent_id: int | None = None, allowed_bases: list[str] | None = None, view_only_bases: list[str] | None = None, allowed_rovers: list[str] | None = None, can_view_rovers: bool = False) -> models.User:
+async def create_user(db: AsyncSession, username: str, hashed_password: str, role: str, full_name: str | None = None, is_active: bool = True, can_create_rovers: bool = False, can_create_users: bool = False, extra_mountpoints: str | None = None, parent_id: int | None = None, allowed_bases: list[str] | None = None, view_only_bases: list[str] | None = None, allowed_rovers: list[str] | None = None, can_view_rovers: bool = False, can_view_mobile_bases: bool = False) -> models.User:
     db_user = models.User(
         username=username, 
         hashed_password=hashed_password, 
@@ -769,6 +774,7 @@ async def create_user(db: AsyncSession, username: str, hashed_password: str, rol
         can_view_rovers=can_view_rovers,
         can_create_rovers=can_create_rovers,
         can_create_users=can_create_users,
+        can_view_mobile_bases=can_view_mobile_bases,
         extra_mountpoints=extra_mountpoints,
         parent_id=parent_id,
         allowed_bases=json.dumps(allowed_bases) if allowed_bases is not None else None,
@@ -921,12 +927,21 @@ def _json_string_set(value, *, lowercase: bool = False) -> set[str]:
     result = {str(item).strip() for item in value if str(item).strip()}
     return {item.lower() for item in result} if lowercase else result
 
+def is_mobile_base(serial: str) -> bool:
+    return str(serial or "").strip().lower().startswith("esp_")
+
 def get_allowed_base_serials(user: models.User) -> set[str]:
-    return {serial.upper() for serial in _json_string_set(getattr(user, "allowed_bases", None))}
+    serials = {serial.upper() for serial in _json_string_set(getattr(user, "allowed_bases", None))}
+    if getattr(user, "role", "") != "admin" and not getattr(user, "can_view_mobile_bases", False):
+        serials = {s for s in serials if not is_mobile_base(s)}
+    return serials
 
 
 def get_coordinator_view_base_serials(user: models.User) -> set[str]:
-    return {serial.upper() for serial in _json_string_set(getattr(user, "view_only_bases", None))}
+    serials = {serial.upper() for serial in _json_string_set(getattr(user, "view_only_bases", None))}
+    if getattr(user, "role", "") != "admin" and not getattr(user, "can_view_mobile_bases", False):
+        serials = {s for s in serials if not is_mobile_base(s)}
+    return serials
 
 
 async def get_coordinator_visible_base_serials(db: AsyncSession, user: models.User) -> set[str]:
@@ -934,11 +949,16 @@ async def get_coordinator_visible_base_serials(db: AsyncSession, user: models.Us
     result = await db.execute(select(models.Device.serial).where(
         or_(models.Device.user_id == user.id, func.upper(models.Device.serial).in_(allowed))
     ))
-    return {str(serial).strip().upper() for serial in result.scalars().all() if serial}
+    serials = {str(serial).strip().upper() for serial in result.scalars().all() if serial}
+    if getattr(user, "role", "") != "admin" and not getattr(user, "can_view_mobile_bases", False):
+        serials = {s for s in serials if not is_mobile_base(s)}
+    return serials
 
 
 async def get_viewer_visible_base_serials(auth_db: AsyncSession, devices_db: AsyncSession, user: models.User) -> set[str]:
     allowed = get_allowed_base_serials(user)
+    if getattr(user, "role", "") != "admin" and not getattr(user, "can_view_mobile_bases", False):
+        allowed = {s for s in allowed if not is_mobile_base(s)}
     if not user.parent_id:
         return allowed
     parent = await get_user_by_id(auth_db, user.parent_id)
