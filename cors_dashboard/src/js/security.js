@@ -96,6 +96,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             // === LOGIC CŨ (Khi không có lỗi) ===
             updateDashboardMetrics(statsData.rate_limiter, settingsData);
             renderBlacklistTable(statsData.rate_limiter.blacklisted_ips);
+            const edge = statsData.rate_limiter.nginx_security || {};
+            const edgeStatus = document.getElementById('proxy-block-status');
+            if (edgeStatus) edgeStatus.textContent = edge.state === 'reload_requested'
+                ? 'Nginx: đã gửi cập nhật danh sách chặn'
+                : edge.state === 'error' ? 'Đồng bộ Nginx lỗi · chặn ứng dụng vẫn hoạt động'
+                : edge.enabled ? 'Đang đồng bộ danh sách sang Nginx' : 'Hiện chỉ chặn tại ứng dụng';
             renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips || []);
             renderBlockHistory(statsData.rate_limiter.recent_blocks || []);
             renderSuspiciousIPs(statsData.rate_limiter.suspicious_ips);
@@ -391,14 +397,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     function renderBlacklistTable(blacklistedIps) {
         blacklistTableBody.innerHTML = '';
         if (blacklistedIps.length === 0) {
-            blacklistTableBody.innerHTML = `<tr><td colspan="3"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No blacklisted IPs</span></div></td></tr>`;
+            blacklistTableBody.innerHTML = `<tr><td colspan="4"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No blacklisted IPs</span></div></td></tr>`;
             return;
         }
         blacklistedIps.forEach(block => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><code>${escapeHtml(block.ip)}</code></td>
-                <td>${escapeHtml(block.reason || 'N/A')}</td>
+                <td>${block.blocked_at ? escapeHtml(new Date(block.blocked_at * 1000).toLocaleString('vi-VN')) : 'Chưa có thời điểm (lệnh cũ)'}<br><small class="text-muted">Vĩnh viễn · đến khi mở chặn</small></td>
+                <td>${escapeHtml(block.reason || 'Chưa ghi nhận lý do')}<br><small class="text-muted">${block.nginx_reload_requested ? 'Ứng dụng · đã gửi lệnh cập nhật Nginx' : 'Chặn tại ứng dụng'}</small></td>
                 <td class="text-end">
                     <button class="btn btn-sm btn-outline-primary unblock-btn" data-ip="${escapeHtml(block.ip)}">
                         <i class="bi bi-unlock-fill me-1"></i>Unblock

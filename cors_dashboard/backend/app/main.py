@@ -10,6 +10,7 @@ import os
 import time
 import psutil
 import ctypes
+import ipaddress
 from collections import deque
 from typing import Optional, Dict
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, Request, Query, status, Body, Header
@@ -351,6 +352,13 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
             security_rep_scores[client_ip] = score
             if score >= VIOLATION_THRESHOLD:
                 await redis_client.ban_ip(client_ip)
+                try:
+                    from .database import auth_session_scope
+                    async with auth_session_scope() as auth_db:
+                        await rate_limiter.block_ip(auth_db, client_ip,
+                            reason=f"Security Gate: {score} violations; last {method} {path[:160]}")
+                except Exception as exc:
+                    logger.error("Could not persist automatic IP ban: %s", exc)
                 # Dọn dẹp score vì đã ban
                 security_rep_scores[client_ip] = 0
                 logger.critical(f"🚨 AUTOMATIC BAN: IP {client_ip} has been BANNED after {score} violations.")
@@ -1086,6 +1094,10 @@ async def get_security_stats(
         if security_stats.get("error"):
             raise RuntimeError("Security database statistics unavailable")
 
+        from .nginx_security import nginx_security
+        security_stats["nginx_security"] = dict(nginx_security.status)
+        for block in security_stats.get("blacklisted_ips", []):
+            block["nginx_reload_requested"] = block["ip"] in nginx_security.requested_ips and nginx_security.status["state"] == "reload_requested"
         # 2. System health
         system_health = health_monitor.get_health_status()
 
@@ -1156,7 +1168,14 @@ async def block_ip_manually(
     if not ip:
         raise HTTPException(status_code=400, detail="ip_address is required")
 
-    await rate_limiter.block_ip(db, ip)
+    try:
+        address = ipaddress.ip_address(ip)
+        if address.is_loopback or address.is_unspecified:
+            raise ValueError("Proxy loopback cannot be banned")
+        ip = str(address)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Địa chỉ IP không hợp lệ hoặc là địa chỉ proxy nội bộ")
+    await rate_limiter.block_ip(db, ip, reason=f"Manual by {current_user.username}")
     logger.warning(f"âš ï¸ Admin '{current_user.username}' permanently blocked IP: {ip}")
 
     return {"status": "blocked", "ip": ip}

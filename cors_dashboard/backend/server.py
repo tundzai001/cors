@@ -5,6 +5,7 @@ Quick start server:
 """
 import asyncio
 import sys
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -36,7 +37,7 @@ logging.getLogger("uvicorn.error").addFilter(UvicornWebsocketFilter())
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app", 
-        host="0.0.0.0", 
+        host=os.getenv("BACKEND_HOST", "0.0.0.0"),
         port=8000, 
         reload=False, 
         workers=1

@@ -254,6 +254,13 @@ async def lifespan(app: FastAPI):
         logger.info("=" * 60)
 
         await redis_client.connect()
+        from .nginx_security import nginx_security, nginx_security_loop, sync_security_bans
+        try:
+            await sync_security_bans(restore_application=True)
+        except Exception as exc:
+            logger.error("Could not restore persistent IP bans: %s", exc)
+        if nginx_security.enabled:
+            tasks.append(asyncio.create_task(nginx_security_loop()))
 
         # --- ZALO BOT INTEGRATION ---
         if settings.ENABLE_ZALO_BOT:

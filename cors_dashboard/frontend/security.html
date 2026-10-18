@@ -319,19 +319,21 @@
                 <div class="col-xl-8">
                     <div class="ops-card ops-security-card h-100">
                         <div class="ops-section-head">
-                            <div class="ops-section-title"><i class="bi bi-exclamation-octagon-fill me-2"></i>Permanent Blacklist</div>
+                            <div class="ops-section-title"><i class="bi bi-exclamation-octagon-fill me-2"></i>Danh sách IP bị chặn vĩnh viễn</div>
                         </div>
+                        <p id="proxy-block-status" class="text-muted px-3 pt-2 mb-2" role="status" aria-atomic="true">Đang kiểm tra tầng chặn…</p>
                         <div class="table-responsive">
                             <table class="table ops-table">
                                 <thead>
                                     <tr>
                                         <th>IP address</th>
-                                        <th>Reason</th>
+                                        <th>Bắt đầu / thời hạn</th>
+                                        <th>Lý do / tầng chặn</th>
                                         <th class="text-end">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody id="blacklist-table-body">
-                                    <tr><td colspan="3"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No blacklisted IPs</span></div></td></tr>
+                                    <tr><td colspan="4"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No blacklisted IPs</span></div></td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -416,10 +418,10 @@
         setInterval(updateLastScanTime, 1000);
     </script>
     <script src="/assets/js/dist/api-routes.min.js?v=20261014-sessions-v3"></script>
-    <script src="/assets/js/dist/api-client.min.js?v=20261018-mobile-device-v1"></script>
+    <script src="/assets/js/dist/api-client.min.js?v=20261018-nginx-bans-v1"></script>
     <script src="/assets/js/dist/ops-ui.min.js?v=20261014-sessions-v3"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261017-base-brand-v1"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20261014-sessions-v3"></script>
-    <script src="/assets/js/dist/security.min.js?v=20261018-mobile-device-v1"></script>
+    <script src="/assets/js/dist/security.min.js?v=20261018-nginx-bans-v1"></script>
 </body>
 </html>

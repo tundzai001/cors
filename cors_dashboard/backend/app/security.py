@@ -469,6 +469,8 @@ class AdvancedRateLimiter:
         db.add(new_block)
         await db.commit()
         self._stats_cache.clear()
+        from .redis_client import redis_client
+        await redis_client.ban_ip(ip)
         self.record_block_event(ip, reason, 'login', permanent=True)
 
     async def unblock_ip(self, db: AsyncSession, ip: str) -> bool:

@@ -37,3 +37,65 @@ Focused checks:
 python3 -m unittest cors_dashboard.backend.tests.test_security_observability
 node scripts/security_dashboard_selftest.js
 ```
+
+
+## Blocking before Python with Nginx (Windows)
+
+The admin application block returns HTTP 403 after a request reaches Python. An
+Nginx block closes the client connection with 444 in the CORS virtual host before
+proxying to Python. Nginx still receives the TCP/TLS connection and request headers;
+this is not a claim that packets stop reaching the host. Filtering traffic before
+the host requires an upstream network firewall. Existing upgraded WebSockets are
+not terminated by a graceful reload.
+
+Install once on the Windows server, from the deployed repository root:
+
+```powershell
+python scripts/configure_nginx_security.py --prefix "C:/nginx-1.28.0" --backend "C:/inetpub/wwwroot/cors/cors_dashboard/backend"
+```
+
+The installer backs up `conf/nginx.conf`, provisions the generated IP include,
+adds the geo lookup in `http` and a 444 guard only to the HTTP/HTTPS
+`cors.aitogy.com` servers, tests the configuration and requests a reload. Other
+virtual hosts retain their configuration. On test/reload failure the original
+configuration is restored. It sets `NGINX_SECURITY_PREFIX` and
+`BACKEND_HOST=127.0.0.1` in the deployed backend's `.env`; restart `server.py`.
+Loopback binding prevents clients bypassing Nginx through public port 8000.
+Devices must connect through the public Nginx HTTPS/WSS routes rather than 8000.
+
+New Security Gate permanent bans are persisted with creation time, violation
+count and last path. Manual bans include the administrator in the reason. The
+shared permanent-ban method also updates the HTTP gate. Startup restores database
+permanent bans into the application gate, including when Redis is disabled.
+Legacy Redis-only bans without an original timestamp remain labelled unknown;
+no timestamp is invented for them.
+
+A ten-second background sync exports permanent database/application bans to
+`conf/cors-blocked-ips.conf`, writes it atomically, runs `nginx -t`, and requests
+`nginx -s reload` only when the content changes. Unblocking removes the IP on the
+next sync. Temporary login/HTTP rate limits retain their existing application
+expiry behavior and are not exported to Nginx. Exact IPv4/IPv6 addresses only;
+invalid values and loopback/unspecified addresses fail publication. A failed
+command restores the previous include and reports a sync error; application
+blocks remain in effect. No subprocess command uses a shell.
+
+The dashboard shows the ban start, permanent expiry policy, reason and whether a
+Nginx reload has been requested. A successful reload command only confirms that
+the signal was sent, not remote enforcement. Validate on deployment from a test
+client IP: block it, wait for sync, confirm its connection closes and its requests
+no longer reach backend logs; verify an unrelated client and unblock/retry. Do
+not use an untrusted forwarded header as the Nginx geo address. This setup uses
+the direct Nginx TCP peer; a future CDN requires a separately trusted real-IP
+configuration.
+
+Focused checks:
+
+```sh
+# From cors_dashboard/backend with test database configuration:
+python3 -m unittest tests.test_nginx_security tests.test_security_observability
+# From repository root:
+node scripts/security_dashboard_selftest.js
+```
+
+References: [Nginx 444](https://nginx.org/en/docs/http/request_processing.html),
+[Nginx configuration testing/reload](https://nginx.org/en/docs/switches.html).
