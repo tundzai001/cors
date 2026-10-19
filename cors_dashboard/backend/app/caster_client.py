@@ -317,7 +317,8 @@ class CasterClient:
         for cmd in cmds:
             try:
                 resp = await self._send_command(cmd)
-                if resp and ("CLIENTTABLE 200 OK" in resp or "OK" in resp[:30]):
+                if (resp and "ENDCLIENTTABLE" in resp
+                        and ("CLIENTTABLE 200 OK" in resp or "OK" in resp[:30])):
                     response = resp
                     if CLIENTTABLE_DEBUG: logger.info(f"-> THÀNH CÔNG VỚI LỆNH: {repr(cmd)}")
                     break

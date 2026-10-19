@@ -97,8 +97,8 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
                 "last_update": scan_timestamp,
                 "users_last_update": users_sampled_at,
                 "users": users or [],
-                "clients": clients or [],
-                "error": None,
+                "clients": clients if clients is not None else [],
+                "error": None if clients is not None else "clienttable query failed",
                 "host": host,
                 "port": port
             })

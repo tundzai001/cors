@@ -31,7 +31,7 @@ logger = logging.getLogger("app.main")
 router = APIRouter()
 
 
-rtcm_keepalive_miss_counts = {}  # {(username, mountpoint): miss_count}
+rtcm_keepalive_miss_counts = {}  # {session_id: (last_snapshot_timestamp, miss_count)}
 rtcm_last_auto_wake_times = {} # {serial: last_timestamp}
 rtcm_session_lock = asyncio.Lock()
 RTCM_MIN_TTL = 30
@@ -809,6 +809,53 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
         logger.warning(f"[NTRIP MQTT] Command failed mountpoint={mountpoint}: {e}")
 
 
+def _fresh_rtcm_clienttable(cache: Optional[dict], now: int) -> bool:
+    if not cache or cache.get("error") or not isinstance(cache.get("clients"), list):
+        return False
+    # Polling may be faster than the monitor. Allow its normal scan interval,
+    # but never use an old or failed snapshot as evidence that a rover left.
+    max_age = max(
+        RTCM_KEEPALIVE_FETCH_GRACE_SECONDS,
+        2 * float(_get_env_preferring_dotenv("CASTER_MONITOR_INTERVAL", "30")),
+    )
+    sampled_at = int(cache.get("last_update") or 0)
+    return sampled_at > 0 and 0 <= now - sampled_at <= max_age
+
+
+def _record_rtcm_keepalive_miss(session_id: str, cache: Optional[dict], now: int, created_at: int) -> int:
+    if (now - created_at < RTCM_KEEPALIVE_NEW_SESSION_GRACE_SECONDS
+            or not _fresh_rtcm_clienttable(cache, now)
+            or int(cache["last_update"]) <= created_at):
+        rtcm_keepalive_miss_counts.pop(session_id, None)
+        return 0
+
+    sampled_at = int(cache["last_update"])
+    previous_sample, misses = rtcm_keepalive_miss_counts.get(session_id, (0, 0))
+    if sampled_at > previous_sample:
+        misses += 1
+        rtcm_keepalive_miss_counts[session_id] = (sampled_at, misses)
+    return misses
+
+
+async def _deactivate_idle_rtcm_mountpoint(serial: str, mountpoint: str):
+    # Re-check mode and fresh leases under the same lock used by wake. A
+    # candidate may have become Always-On or gained a rover since the scan.
+    async with rtcm_session_lock:
+        async with device_session_scope() as db:
+            device = await crud.get_device_by_serial(db, serial)
+            targets = [
+                (server_id, mp)
+                for server_id, mp in _extract_reapable_server_streams(device)
+                if mp == mountpoint
+            ]
+            if not targets or await _count_active_mountpoint_sessions(db, serial, mountpoint, int(time.time())):
+                return
+
+        for server_id, mp in targets:
+            await _set_station_stream(serial, active=False, mountpoint=mp, server_id=server_id)
+            logger.info(f"[RTCM] Deactivated station {serial} S{server_id} (mp={mp}, no remaining sessions)")
+
+
 async def rtcm_ntrip_clienttable_keepalive_task():
     global rtcm_keepalive_miss_counts
 
@@ -838,8 +885,11 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                         for r in rs.all() if r and r[0]
                     ]
 
+            active_ids = {row[0] for row in active_rows}
+            for session_id in list(rtcm_keepalive_miss_counts):
+                if session_id not in active_ids:
+                    rtcm_keepalive_miss_counts.pop(session_id, None)
             if not active_rows:
-                # No active sessions to check.
                 continue
 
             # 2. Match each session against Global Caster Cache
@@ -851,24 +901,20 @@ async def rtcm_ntrip_clienttable_keepalive_task():
             # Group sessions by host for easier lookup
             for sid, client_id, serial, mountpoint, host, expires_at, created_at in active_rows:
                 # Resolve host to find cache entry
-                target_host = host or settings.CASTER_HOST or "localhost"
+                target_host = host or next((h.strip() for h in settings.CASTER_HOST.split(",") if h.strip()), "localhost")
                 port = int(settings.CASTER_PORT or 2101)
-                cache_key = f"{target_host}:{port}"
 
                 hosts_to_check = [target_host]
                 other_hosts = [h.strip() for h in settings.CASTER_HOST.split(",") if h.strip() and h.strip() != target_host]
                 hosts_to_check.extend(other_hosts)
 
                 found_on_host = None
-                in_clienttable = False
-                # Check if the primary host's cache has an error (connection failure, etc.)
                 primary_cache = await _get_caster_cache(f"{target_host}:{port}")
-                caster_error_on_primary = bool(primary_cache and primary_cache.get("error"))
                 for h in hosts_to_check:
                     h_port = int(settings.CASTER_PORT or 2101)
                     h_key = f"{h}:{h_port}"
                     h_cache = await _get_caster_cache(h_key)
-                    if not h_cache or h_cache.get("error"): continue
+                    if not _fresh_rtcm_clienttable(h_cache, now): continue
 
                     clients = h_cache.get("clients", [])
                     session_mp_norm = _normalize_mountpoint(mountpoint)
@@ -893,7 +939,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                         break
 
                 if found_on_host:
-                    rtcm_keepalive_miss_counts.pop((client_id, mountpoint), None)
+                    rtcm_keepalive_miss_counts.pop(sid, None)
                     updated_ids.append(sid)
                     if found_on_host != target_host:
                         logger.info(f"[RTCM KEEPALIVE] User '{client_id}' switched from {target_host} to {found_on_host}. Updating session.")
@@ -906,27 +952,16 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                                 )
                                 await db.commit()
                 else:
-                    # Grace period for new sessions (60s default)
-                    session_age = now - created_at
-                    if session_age < RTCM_KEEPALIVE_NEW_SESSION_GRACE_SECONDS:
-                        updated_ids.append(sid)
-                        continue
-
-                    # SAFETY LOCK: Only skip if the primary caster actually had an error.
-                    # If it's healthy but empty, we MUST allow miss counting.
-                    if caster_error_on_primary:
-                        updated_ids.append(sid)
-                        continue
-
-                    m_key = (client_id, mountpoint)
-                    miss_count = rtcm_keepalive_miss_counts.get(m_key, 0) + 1
-                    rtcm_keepalive_miss_counts[m_key] = miss_count
+                    miss_count = _record_rtcm_keepalive_miss(sid, primary_cache, now, created_at)
 
                     if miss_count >= RTCM_KEEPALIVE_MISS_THRESHOLD:
                         expired_ids.append(sid)
                         candidates_for_deactivation.add((serial, _normalize_mountpoint(mountpoint)))
                         logger.warning(f"[RTCM] User '{client_id}' (@{mountpoint}) on station {serial} expired after {miss_count} misses.")
                     else:
+                        # Keep the lease alive until enough independent, successful
+                        # scans confirm absence, including during cache outages.
+                        updated_ids.append(sid)
                         if RTCM_KEEPALIVE_DEBUG:
                             logger.info(f"[RTCM DEBUG] User '{client_id}' miss {miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD} on {target_host}")
 
@@ -952,23 +987,8 @@ async def rtcm_ntrip_clienttable_keepalive_task():
 
             # 4. Station Deactivation (On-Demand only)
             for serial, mp_norm in candidates_for_deactivation:
-                if not mp_norm: continue
-                async with device_session_scope() as db:
-                    # Check if ANY active session still remains for this (serial, mp)
-                    remain_q = select(func.count(models.RTCMStreamSession.session_id)).where(
-                        models.RTCMStreamSession.serial == serial,
-                        models.RTCMStreamSession.expires_at > now
-                    )
-                    remain_rs = await db.execute(remain_q)
-                    remaining = remain_rs.scalar() or 0
-
-                    if remaining == 0:
-                        device = await crud.get_device_by_serial(db, serial)
-                        cfg = _device_service_config(device)
-                        if not cfg.get("stream_on_demand", True):
-                            continue
-                        await _set_station_stream(serial, active=False)
-                        logger.info(f"[RTCM] Deactivated station {serial} (mp={mp_norm}, no remaining sessions)")
+                if mp_norm:
+                    await _deactivate_idle_rtcm_mountpoint(serial, mp_norm)
 
         except Exception as e:
             logger.error(f"[RTCM] Keepalive task error: {e}", exc_info=True)
