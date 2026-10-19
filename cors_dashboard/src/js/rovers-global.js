@@ -136,6 +136,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function syncExpiryFields(prefix) {
+        const custom = document.getElementById(`${prefix}-expiry`).value === 'custom';
+        document.getElementById(`${prefix}-expiry-custom`).classList.toggle('d-none', !custom);
+        document.getElementById(`${prefix}-expiry-count`).disabled = !custom;
+        document.getElementById(`${prefix}-expiry-unit`).disabled = !custom;
+    }
+
+    function readExpiryDays(prefix) {
+        const value = document.getElementById(`${prefix}-expiry`).value;
+        if (value !== 'custom') return value === '' ? null : Number(value);
+        const countInput = document.getElementById(`${prefix}-expiry-count`);
+        const count = Number(countInput.value);
+        const unit = Number(document.getElementById(`${prefix}-expiry-unit`).value);
+        const days = count * unit;
+        if (!Number.isSafeInteger(count) || count < 1 || ![1, 7, 30, 365].includes(unit)
+            || !Number.isSafeInteger(days) || !Number.isSafeInteger(days * 86400)) {
+            countInput.setCustomValidity('Nhập số nguyên dương hợp lệ cho thời hạn.');
+            countInput.reportValidity();
+            return undefined;
+        }
+        return days;
+    }
+
+    for (const prefix of ['new', 'edit']) {
+        document.getElementById(`${prefix}-expiry`).addEventListener('change', () => syncExpiryFields(prefix));
+        document.getElementById(`${prefix}-expiry-count`).addEventListener('input', event => event.target.setCustomValidity(''));
+        document.getElementById(`${prefix}-expiry-unit`).addEventListener('change', () => {
+            document.getElementById(`${prefix}-expiry-count`).setCustomValidity('');
+        });
+        syncExpiryFields(prefix);
+    }
+
     // === 3. DATA LOADING ===
     async function initData() {
         await fetchCasterConfig(); // Load available servers first
@@ -2444,6 +2476,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         expirySelect.value = '';
+        syncExpiryFields('edit');
         const liveMaxClients = getCasterInfosForUsername(rover.username)
             .map(i => Number(i?.maxclient))
             .filter(v => Number.isFinite(v) && v >= 0);
@@ -2574,7 +2607,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             const roverId = document.getElementById('edit-rover-id').value;
             const newPass = document.getElementById('edit-password').value;
-            const newExpiry = document.getElementById('edit-expiry').value;
+            const newExpiry = readExpiryDays('edit');
+            if (newExpiry === undefined) return;
 
             // --- LẤY DỮ LIỆU TỪ CHECKLIST & TEXT BOX ---
             const checkedStations = document.querySelectorAll('.edit-station-check:checked');
@@ -2603,7 +2637,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 payload.auto_save_fixed_points = document.getElementById('edit-auto-save-fixed-points')?.checked !== false;
             }
             if (newPass) payload.password = newPass;
-            if (newExpiry) payload.expiry_days = parseInt(newExpiry);
+            if (newExpiry !== null) payload.expiry_days = newExpiry;
             const maxConn = document.getElementById('edit-max-connections')?.value;
             if (maxConn) payload.max_connections = parseInt(maxConn);
 
@@ -2860,12 +2894,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
+            const expiryDays = readExpiryDays('new');
+            if (expiryDays === undefined) return;
+
             const targetCasters = Array.from(document.querySelectorAll('.caster-target-check:checked')).map(cb => cb.value);
 
             const payload = {
                 username: document.getElementById('new-username').value,
                 password: document.getElementById('new-password').value,
-                expiry_days: parseInt(document.getElementById('new-expiry').value),
+                expiry_days: expiryDays,
                 selected_serials: selectedSerials,
                 mountpoint_override: mpOverride,
                 target_casters: targetCasters,
@@ -2901,6 +2938,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast(`Tạo Rover "${payload.username}" thành công!`, 'success');
                 bootstrap.Modal.getInstance(document.getElementById('createRoverModal')).hide();
                 createForm.reset();
+                syncExpiryFields('new');
                 const newAutoSaveSessions = document.getElementById('new-auto-save-sessions');
                 if (newAutoSaveSessions) newAutoSaveSessions.checked = true;
                 const newAutoSaveFixedPoints = document.getElementById('new-auto-save-fixed-points');

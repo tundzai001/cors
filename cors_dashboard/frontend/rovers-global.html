@@ -305,16 +305,35 @@
                                 </div>
 
                                 <div class="row g-3 mb-3">
-                                    <div class="col-6">
-                                        <label class="form-label small text-muted fw-bold">Thời hạn</label>
+                                    <div class="col-12 col-sm-6">
+                                        <label class="form-label small text-muted fw-bold" for="new-expiry">Thời hạn</label>
                                         <select class="form-select" id="new-expiry">
+                                            <option value="1">1 Ngày</option>
+                                            <option value="7">1 Tuần</option>
                                             <option value="30">1 Tháng</option>
                                             <option value="180">6 Tháng</option>
                                             <option value="365" selected>1 Năm</option>
                                             <option value="3650">Vĩnh viễn</option>
+                                            <option value="custom">Tùy chọn...</option>
                                         </select>
+                                        <div id="new-expiry-custom" class="row g-2 mt-1 d-none">
+                                            <div class="col-6">
+                                                <label class="form-label small text-muted" for="new-expiry-count">Số lượng</label>
+                                                <input type="number" class="form-control" id="new-expiry-count" min="1" step="1" value="1" disabled required>
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label small text-muted" for="new-expiry-unit">Đơn vị</label>
+                                                <select class="form-select" id="new-expiry-unit" disabled aria-describedby="new-expiry-help">
+                                                    <option value="1">Ngày</option>
+                                                    <option value="7">Tuần</option>
+                                                    <option value="30">Tháng</option>
+                                                    <option value="365">Năm</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-12 small text-muted" id="new-expiry-help">1 tuần = 7 ngày; 1 tháng = 30 ngày; 1 năm = 365 ngày.</div>
+                                        </div>
                                     </div>
-                                    <div class="col-6">
+                                    <div class="col-12 col-sm-6">
                                         <label class="form-label small text-muted fw-bold">Kết nối tối đa (0 = không giới hạn)</label>
                                         <input type="number" class="form-control" id="new-max-connections" value="1" min="0" max="100">
                                     </div>
@@ -452,17 +471,36 @@
                                 </div>
 
                                 <div class="row g-3 mb-3">
-                                    <div class="col-6">
-                                        <label class="form-label small text-muted fw-bold">Thời hạn (Gia hạn mới)</label>
+                                    <div class="col-12 col-sm-6">
+                                        <label class="form-label small text-muted fw-bold" for="edit-expiry">Thời hạn (Gia hạn mới)</label>
                                         <select class="form-select" id="edit-expiry">
                                             <option value="" selected>--- Giữ nguyên ---</option>
+                                            <option value="1">1 Ngày</option>
+                                            <option value="7">1 Tuần</option>
                                             <option value="30">1 Tháng</option>
                                             <option value="180">6 Tháng</option>
                                             <option value="365">1 Năm</option>
                                             <option value="3650">Vĩnh viễn</option>
+                                            <option value="custom">Tùy chọn...</option>
                                         </select>
+                                        <div id="edit-expiry-custom" class="row g-2 mt-1 d-none">
+                                            <div class="col-6">
+                                                <label class="form-label small text-muted" for="edit-expiry-count">Số lượng</label>
+                                                <input type="number" class="form-control" id="edit-expiry-count" min="1" step="1" value="1" disabled required>
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label small text-muted" for="edit-expiry-unit">Đơn vị</label>
+                                                <select class="form-select" id="edit-expiry-unit" disabled aria-describedby="edit-expiry-help">
+                                                    <option value="1">Ngày</option>
+                                                    <option value="7">Tuần</option>
+                                                    <option value="30">Tháng</option>
+                                                    <option value="365">Năm</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-12 small text-muted" id="edit-expiry-help">1 tuần = 7 ngày; 1 tháng = 30 ngày; 1 năm = 365 ngày.</div>
+                                        </div>
                                     </div>
-                                    <div class="col-6">
+                                    <div class="col-12 col-sm-6">
                                         <label class="form-label small text-muted fw-bold">Kết nối tối đa (0 = không giới hạn)</label>
                                         <input type="number" class="form-control" id="edit-max-connections" min="0" max="100">
                                     </div>
@@ -727,6 +765,6 @@
     <script src="/assets/js/dist/ops-ui.min.js?v=20261009-notifications-v1" charset="UTF-8"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261017-base-brand-v1" charset="UTF-8"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20261008-api-keys-v1" charset="UTF-8"></script>
-    <script src="/assets/js/dist/rovers-global.min.js?v=20261011-rover-base-session-v1" charset="UTF-8"></script>
+    <script src="/assets/js/dist/rovers-global.min.js?v=20261019-rover-custom-expiry-v1" charset="UTF-8"></script>
 </body>
 </html>
