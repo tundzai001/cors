@@ -102,6 +102,73 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(geo['metadata']['is_stale'])
         self.assertEqual(geo['metadata']['status'], 'ACTIVE')
 
+    async def test_empty_catalog_retries_and_succeeds(self):
+        sample_geo = self._sample_glotec_geojson()
+        catalog_mock = [{"url": "/products/glotec/sample.geojson", "time_tag": sample_geo["time_tag"]}]
+
+        resp_empty = Mock(status_code=200, json=Mock(return_value=[]), raise_for_status=Mock())
+        resp_cat = Mock(status_code=200, json=Mock(return_value=catalog_mock), raise_for_status=Mock())
+        resp_geo = Mock(status_code=200, json=Mock(return_value=sample_geo), raise_for_status=Mock())
+
+        call_count = 0
+
+        async def mock_get(url, *args, **kwargs):
+            nonlocal call_count
+            if "geojson_2d_urt.json" in url:
+                call_count += 1
+                if call_count == 1:
+                    return resp_empty
+                return resp_cat
+            return resp_geo
+
+        with patch("httpx.AsyncClient.get", side_effect=mock_get):
+            data = await self.service.get_latest(format_type="compact", force_refresh=True)
+            self.assertEqual(data["time_tag"], sample_geo["time_tag"])
+            self.assertEqual(call_count, 2)
+
+    async def test_directory_fallback_when_catalog_empty(self):
+        sample_geo = self._sample_glotec_geojson()
+        html_dir = (
+            '<html><body>'
+            '<a href="glotec_icao_20261019T034500Z.geojson">glotec_icao_20261019T034500Z.geojson</a>'
+            '<a href="glotec_icao_20261019T035500Z.geojson">glotec_icao_20261019T035500Z.geojson</a>'
+            '</body></html>'
+        )
+        resp_empty = Mock(status_code=200, json=Mock(return_value=[]), raise_for_status=Mock())
+        resp_dir = Mock(status_code=200, text=html_dir, raise_for_status=Mock())
+        resp_geo = Mock(status_code=200, json=Mock(return_value=sample_geo), raise_for_status=Mock())
+
+        async def mock_get(url, *args, **kwargs):
+            if "geojson_2d_urt.json" in url:
+                return resp_empty
+            if "geojson_2d_urt/" in url:
+                return resp_dir
+            return resp_geo
+
+        with patch("httpx.AsyncClient.get", side_effect=mock_get):
+            data = await self.service.get_latest(format_type="compact", force_refresh=True)
+            self.assertEqual(data["time_tag"], sample_geo["time_tag"])
+
+    async def test_candidate_failover_when_latest_file_errors(self):
+        sample_geo = self._sample_glotec_geojson()
+        catalog_mock = [
+            {"url": "/products/glotec/sample1.geojson", "time_tag": "2026-10-19T03:45:00Z"},
+            {"url": "/products/glotec/sample2_broken.geojson", "time_tag": "2026-10-19T03:55:00Z"},
+        ]
+        resp_cat = Mock(status_code=200, json=Mock(return_value=catalog_mock), raise_for_status=Mock())
+        resp_geo = Mock(status_code=200, json=Mock(return_value=sample_geo), raise_for_status=Mock())
+
+        async def mock_get(url, *args, **kwargs):
+            if "geojson_2d_urt.json" in url:
+                return resp_cat
+            if "sample2_broken" in url:
+                raise httpx.HTTPStatusError("404 Not Found", request=Mock(), response=Mock(status_code=404))
+            return resp_geo
+
+        with patch("httpx.AsyncClient.get", side_effect=mock_get):
+            data = await self.service.get_latest(format_type="compact", force_refresh=True)
+            self.assertEqual(data["time_tag"], sample_geo["time_tag"])
+
     def test_api_endpoint(self):
         sample = self._sample_glotec_geojson()
         compact, geojson = self.service._parse_glotec_payload(sample, "http://test.url/sample.geojson")
@@ -118,3 +185,4 @@ class IonosphereServiceTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
