@@ -70,7 +70,7 @@ def _is_cors_status_question(text: str) -> bool:
     region = region_for_question(words)[0]
     from ..zalo_cors_dialogue import cors_intent, DIAGNOSTIC_INTENTS
     intent = cors_intent(words)
-    if intent.startswith('faq_') or intent in DIAGNOSTIC_INTENTS:
+    if intent.startswith('faq_') or intent in DIAGNOSTIC_INTENTS or intent == 'fix_possible':
         return True
     if region_options(words) and intent in {"stability", "measurement", "detail", "diagnostic"}:
         return True

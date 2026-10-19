@@ -26,7 +26,7 @@ def _phrase_groups():
     # Reuse the rule file's public deparse API instead of a second synonym list.
     arrays = _brain().deparse()['begin']['array']
     intents = {'diagnostic': 'diagnostic', 'fieldwork': 'measurement',
-               'measurement': 'measurement', 'stability': 'stability'}
+               'measurement': 'measurement', 'stability': 'stability', 'fix_possible': 'fix_possible'}
     groups = {}
     for array, intent in intents.items():
         for phrase in arrays[array]:

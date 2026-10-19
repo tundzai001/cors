@@ -23,6 +23,7 @@
 ! array fieldwork = do dia hinh|do chi tiet|do khong che|do bo tri|do ranh|do dia chinh|do moc|tu van do|khuyen nghi do
 ! array measurement = do duoc|co nen do|di do|trien khai do
 ! array stability = on dinh|on khong|co on|co tot|chat luong|dung duoc
+! array fix_possible = fix khong|co the fix|fix duoc khong|co fix duoc|fix duoc chua|co fix khong
 ! array explain = noi ro hon|giai thich them|cu the hon|chi tiet hon|tai sao|vi sao
 ! array brief = ngan gon|tom tat|noi ngan thoi
 
@@ -51,8 +52,11 @@
 + [*] gga (la gi|nghia la gi) [*] {weight=130}
 - faq_gga
 
-+ [*] @diagnostic [*] {weight=100}
++ [*] @diagnostic [*] {weight=120}
 - diagnostic
+
++ [*] @fix_possible [*] {weight=110}
+- fix_possible
 
 + [*] @forecast [*] {weight=90}
 - forecast

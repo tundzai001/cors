@@ -30,7 +30,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261019-scoped-cors-replies-v22"
+ZALO_TRACE_VERSION = "20261019-fix-feasibility-v23"
 
 # Preserve existing imports of command constants and intent helpers.
 from .zalo_bot.common import (

@@ -175,6 +175,7 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
 
     def test_rule_priorities_and_bounded_shared_state(self):
         from app.zalo_cors_dialogue import cors_intent, _brain
+        from app.zalo_cors_report import _plain
         for question, expected in (
             ('may cu float ha noi', 'diagnostic'),
             ('ngay mai do dia hinh', 'forecast'),
@@ -182,9 +183,40 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
             ('do chi tiet tuyen quang', 'measurement'),
             ('co on dinh khong', 'stability'),
             ('cors', 'status'),
+            ('@Bot Cors manager fix không', 'fix_possible'),
+            ('@Bot Cors manager có thể fix không', 'fix_possible'),
+            ('fix được k', 'fix_possible'),
+            ('máy không FIX được', 'diagnostic'),
+            ('FIX là gì', 'faq_fix'),
         ):
-            self.assertEqual(cors_intent(question), expected)
+            self.assertEqual(cors_intent(_plain(question)), expected, question)
         self.assertFalse(_brain().get_uservars())
+
+    async def test_fix_possibility_answers_directly_without_repeating_observation_report(self):
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock()) as noaa:
+            for mode in ('cors_only', 'standard'):
+                text = await report_text({'status':'online'}, 'có thể fix không Bà Rịa - Vũng Tàu', delivery_mode=mode)
+                self.assertIn('Bà Rịa - Vũng Tàu', text)
+                self.assertIn('thử thu FIX', text)
+                self.assertIn('chưa thể bảo đảm', text)
+                self.assertNotIn('TECU', text)
+                self.assertNotIn('mountpoint nào', text)
+            future = await report_text({'status':'online'}, 'ngày mai có thể FIX không')
+            self.assertIn('chưa phải dự báo', future)
+            self.kp.return_value = None
+            missing = await report_text({'status':'online'}, 'fix không')
+            self.assertIn('thiếu cập nhật', missing)
+            self.assertNotIn('yên tĩnh', missing)
+            self.kp.return_value = {'value':7, 'stamp':'now'}
+            storm = await report_text({'status':'online'}, 'fix không')
+            self.assertIn('bão từ mạnh', storm)
+            self.assertNotIn('yên tĩnh', storm)
+            self.kp.reset_mock()
+            for status in ('offline', 'unknown'):
+                text = await report_text({'status':status}, 'fix không')
+                self.assertNotIn('thử thu FIX', text)
+            self.kp.assert_not_awaited()
+            noaa.assert_not_awaited()
 
     async def test_local_definitions_are_not_fault_reports_and_do_not_fetch_observations(self):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock()) as noaa:

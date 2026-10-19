@@ -353,6 +353,29 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
             service.forget_chat('test-chat')
             self.assertNotIn(key, service._cors_regions)
 
+    async def test_actual_fix_followups_keep_region_and_do_not_repeat_status_report(self):
+        service = bot_module.ZaloBotService()
+        with patch.object(bot_module.zalo_repository, 'remember_cors_chat', AsyncMock(return_value=True)), patch.object(
+            bot_module.zalo_repository, 'chat_delivery_policy', AsyncMock(return_value={'active':True, 'mode':'cors_only'})
+        ), patch('app.reference_network.get_network_status', AsyncMock(return_value={'status':'online'})), patch(
+            'app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value={})
+        ) as noaa:
+            first = self.update('@Bot Cors manager tình trạng bà rịa vũng tàu')
+            await service._cors_cmd(first, None)
+            status_reply = first.message.reply_text.await_args.args[0]
+            noaa.reset_mock()
+            for text in ('@Bot Cors manager fix không', '@Bot Cors manager có thể fix không'):
+                self.assertTrue(bot_module._is_cors_status_question(text))
+                update = self.update(text)
+                self.assertTrue(service._is_cors_followup(update, text))
+                await service._cors_cmd(update, None)
+                reply = update.message.reply_text.await_args.args[0]
+                self.assertIn('Bà Rịa - Vũng Tàu', reply)
+                self.assertIn('thử thu FIX', reply)
+                self.assertNotEqual(reply, status_reply)
+                self.assertNotIn('Khuyến nghị:', reply)
+            noaa.assert_not_awaited()
+
     async def test_diagnostic_conversation_and_unknown_area_cannot_reuse_another_scope(self):
         service = bot_module.ZaloBotService()
         async def ask(text):

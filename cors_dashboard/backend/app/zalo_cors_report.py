@@ -226,6 +226,35 @@ def status_change_text(health):
     return '🔴 CORS Cục đang gián đoạn. Nếu đang đo bằng nguồn này, chuyển sang nguồn dự phòng đã kiểm tra.'
 
 
+async def _fix_possible_report(health, question):
+    name = region_for_question(question)[0]
+    heading = f'📍 {name}\n' if name != 'Việt Nam' else ''
+    status = health.get('status')
+    if status == 'offline':
+        return (f'{heading}Nguồn Cục đang gián đoạn nên chưa thể trông chờ FIX bằng nguồn này. '
+                'Anh chuyển sang nguồn dự phòng đã kiểm tra rồi thử lại tại điểm thoáng nhé.')
+    if status != 'online':
+        return (f'{heading}Chưa xác nhận được nguồn Cục đang hoạt động, nên mình chưa thể khẳng định khả năng FIX. '
+                'Anh xác nhận máy có nhận hiệu chỉnh trước khi triển khai nhé.')
+    kp = await geomagnetic_observation()
+    if kp and kp['value'] >= 7:
+        return (f'{heading}Hiện có bão từ mạnh, việc giữ FIX có thể khó hơn. '
+                'Nên dời phần đo khống chế; nếu buộc phải đo, cần kiểm tra độc lập trước khi chốt.')
+    if kp and kp['value'] >= 4:
+        return (f'{heading}Có thể thử thu FIX, nhưng hiện địa từ đang nhiễu động nên cần thận trọng. '
+                'Anh kiểm tra trên mốc đã biết và đo lặp điểm quan trọng; đừng chốt chỉ vì máy hiện FIX.')
+    context = 'Nguồn Cục đang hoạt động'
+    if kp:
+        context += ', địa từ hiện yên tĩnh'
+    else:
+        context += ', nhưng bản tin địa từ đang thiếu cập nhật'
+    future = (' Đây chỉ là tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.'
+              if re.search(r'\b(chieu nay|toi nay|ngay mai|tuan sau)\b', _plain(question)) else '')
+    return (f'{heading}Anh có thể thử thu FIX, nhưng chưa thể bảo đảm sẽ FIX chỉ từ bản tin điện ly. '
+            f'{context}.{future} '
+            'Hãy thử ở điểm thoáng và kiểm tra trên mốc đã biết; giữ FIX và kiểm tra đạt rồi mới triển khai.')
+
+
 async def _cors_only_report(health, question, intent):
     """A public-source/atmosphere assessment, not a private station diagnosis."""
     words = _plain(question)
@@ -280,6 +309,8 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
     if len(options) > 1:
         names = ' hay '.join(option[0] for option in options)
         return f'Anh muốn kiểm tra {names}? Mình cần xác định đúng khu vực trước nhé.'
+    if intent == 'fix_possible':
+        return await _fix_possible_report(health, question)
     if delivery_mode == 'cors_only':
         return await _cors_only_report(health, question, intent)
     name = region_for_question(question)[0]
