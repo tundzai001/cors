@@ -11,8 +11,10 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from rapidfuzz import fuzz, process
 
 from .ionosphere_service import ionosphere_service
+from .zalo_cors_dialogue import cors_intent, static_reply, STATIC_INTENTS, DIAGNOSTIC_INTENTS
 
 
 def _plain(text):
@@ -25,23 +27,83 @@ def _regions():
     regions_file = Path(__file__).parent / 'data/vietnam_regions.json'
     if regions_file.exists():
         raw = json.loads(regions_file.read_text(encoding='utf-8'))
-        return [(item['name'], tuple(item['bounds']), set(item['aliases'])) for item in raw]
-    features = json.loads((Path(__file__).parent / 'data/vietnam_provinces.geojson').read_text(encoding='utf-8'))['features']
-    result = []
-    for feature in features:
-        props, geometry = feature['properties'], feature['geometry']
-        polygons = geometry['coordinates'] if geometry['type'] == 'MultiPolygon' else [geometry['coordinates']]
-        points = [point for polygon in polygons for point in polygon[0]]
-        bounds = (min(p[0] for p in points), min(p[1] for p in points), max(p[0] for p in points), max(p[1] for p in points))
-        result.append((props['name'], bounds, {_plain(props.get(key, '')) for key in ('name', 'nameEn')} - {''}))
+        result = [(item['name'], tuple(item['bounds']), set(item['aliases'])) for item in raw]
+    else:
+        features = json.loads((Path(__file__).parent / 'data/vietnam_provinces.geojson').read_text(encoding='utf-8'))['features']
+        result = []
+        for feature in features:
+            props, geometry = feature['properties'], feature['geometry']
+            polygons = geometry['coordinates'] if geometry['type'] == 'MultiPolygon' else [geometry['coordinates']]
+            points = [point for polygon in polygons for point in polygon[0]]
+            bounds = (min(p[0] for p in points), min(p[1] for p in points), max(p[0] for p in points), max(p[1] for p in points))
+            result.append((props['name'], bounds, {_plain(props.get(key, '')) for key in ('name', 'nameEn')} - {''}))
+    abbreviations = {'Hà Nội': {'hn'}, 'Hồ Chí Minh': {'hcm', 'tphcm', 'tp hcm', 'sg'},
+                     'Bà Rịa - Vũng Tàu': {'brvt', 'br vt'},
+                     'Đà Nẵng': {'dn'}, 'Đồng Nai': {'dn'}}
+    for name, _, aliases in result:
+        aliases.update({alias.replace(' ', '') for alias in aliases if len(alias.replace(' ', '')) >= 6})
+        aliases.update(abbreviations.get(name, set()))
     return result
 
 
+@lru_cache(maxsize=1)
+def _fuzzy_aliases():
+    groups = {}
+    for name, bounds, aliases in _regions():
+        for alias in sorted(aliases):
+            if len(alias) >= 6:
+                groups.setdefault(len(alias.split()), {})[alias] = (name, bounds)
+    return groups
+
+
+def region_options(question):
+    return _region_options(_plain(question)[:1000])
+
+
+@lru_cache(maxsize=256)
+def _region_options(words):
+    text = f' {words} '
+    exact, covered = {}, []
+    for name, bounds, aliases in _regions():
+        for alias in aliases:
+            for match in re.finditer(r'(?<!\S)' + re.escape(alias) + r'(?!\S)', text):
+                exact[(name, bounds)] = 100
+                covered.append(match.span())
+    scores, spans = {}, {}
+    tokens = list(re.finditer(r'\S+', text))[:100]
+    for size, choices in _fuzzy_aliases().items():
+        for index in range(len(tokens) - size + 1):
+            start, end = tokens[index].start(), tokens[index + size - 1].end()
+            if any(start < right and end > left for left, right in covered):
+                continue  # Do not turn an already resolved Hà Nội into Hà Nam.
+            for alias, score, _ in process.extract(text[start:end], list(choices), scorer=fuzz.ratio, score_cutoff=90, limit=3):
+                region = choices[alias]
+                if score > scores.get(region, 0):
+                    scores[region], spans[region] = score, (start, end)
+    ranked = sorted(scores, key=lambda region: (-scores[region], region[0]))
+    if exact:
+        # A second, separately written province must not be replaced by chat history.
+        return tuple(dict.fromkeys([*exact, *ranked[:2]]))[:3]
+    if len(ranked) > 1:
+        first, second = ranked[:2]
+        separate = spans[first][1] <= spans[second][0] or spans[second][1] <= spans[first][0]
+        if separate or scores[first] - scores[second] < 5:
+            return tuple(ranked[:3])
+    return tuple(ranked[:1])
+
+
 def region_for_question(question):
-    text = f' {_plain(question)} '
-    matches = [(name, bounds) for name, bounds, aliases in _regions() if any(f' {alias} ' in text for alias in aliases)]
-    # Multiple provinces need a national report rather than silently choosing one.
-    return matches[0] if len(matches) == 1 else ('Việt Nam', (102, 8, 110, 24))
+    options = region_options(question)
+    return options[0] if len(options) == 1 else ('Việt Nam', (102, 8, 110, 24))
+
+
+def is_region_only(question):
+    words = re.sub(r'^(?:(?:the con|con|o|tai|tinh|thanh pho|tp)\s+)+', '', _plain(question))
+    aliases = {alias for _, _, names in _regions() for alias in names}
+    if words in aliases:
+        return True
+    return bool(process.extractOne(words, [alias for alias in aliases if len(alias) >= 6],
+                                   scorer=fuzz.ratio, score_cutoff=90))
 
 
 def ionosphere_observation(data, question, now=None):
@@ -152,31 +214,71 @@ def field_advice(status, kp, words):
     if terrain:
         return ('Với đo địa hình: kiểm soát chất lượng ngay trong ca, nhất là khi số đo thay đổi giữa các lượt. '
                 'Bố trí điểm kiểm tra đầu/cuối ca; ưu tiên chỗ thoáng, kiểm tra riêng các điểm sát nhà hoặc dưới tán cây.')
-    return ('Gợi ý cho ca đo:\n'
-            '• Đo địa hình: ưu tiên khu vực thoáng, bố trí điểm kiểm tra đầu/cuối ca.\n'
-            '• Khống chế/bố trí: kiểm tra mốc đã biết và đo lặp điểm quan trọng ở thời điểm khác trước khi chốt.')
+    return 'Anh đang dùng trạm hoặc mountpoint nào?'
 
 
-async def report_text(health, question=''):
+async def report_text(health, question='', previous_intent='status'):
+    words = _plain(question)
+    intent = cors_intent(words, previous_intent)
+    if intent in STATIC_INTENTS:
+        return static_reply(intent)
+    options = region_options(question)
+    if len(options) > 1:
+        names = ' hay '.join(option[0] for option in options)
+        return f'Anh muốn kiểm tra {names}? Mình cần xác định đúng khu vực trước nhé.'
+    name = region_for_question(question)[0]
+    heading = f'📍 {name}\n' if name != 'Việt Nam' else ''
+    status = health.get('status')
     headline = {
-        'online': '🟢 CORS Cục đang hoạt động.',
-        'offline': '🔴 CORS Cục đang gián đoạn.',
-    }.get(health.get('status'), '⚪ Chưa xác định được trạng thái CORS Cục.')
+        'online': 'CORS Cục đang hoạt động.',
+        'offline': 'CORS Cục đang gián đoạn.',
+    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
+
+    # Source availability is not evidence of local RTCM delivery or receiver FIX.
+    # Ordinary questions need no NOAA request and no atmospheric data dump.
+    if intent == 'summary' and previous_intent in DIAGNOSTIC_INTENTS:
+        return (f'{heading}{headline} Nếu máy vẫn FLOAT, xem RTCM và tuổi hiệu chỉnh trước; '
+                'dữ liệu vẫn đều thì kiểm tra che khuất và khoảng cách trạm.')
+    if intent in {'status', 'stability', 'summary'}:
+        if status == 'offline':
+            return f'{heading}{headline} Nếu anh đang dùng nguồn này, chuyển sang nguồn dự phòng đã kiểm tra.'
+        if status != 'online':
+            return f'{heading}{headline} Anh đang dùng trạm hoặc mountpoint nào để mình khoanh vùng tiếp?'
+        if name == 'Việt Nam':
+            return f'{headline} Anh muốn kiểm tra khu vực hoặc trạm nào?'
+        return (f'{heading}{headline} Nhưng mình chưa có số liệu RTCM/FIX tại khu vực này '
+                'để xác nhận độ ổn định.\nAnh đang dùng trạm hoặc mountpoint nào?')
+
+    if intent == 'diagnostic_steps':
+        return (f'{heading}{headline}\n'
+                '1. Xem số byte RTCM có tăng và tuổi hiệu chỉnh có cập nhật không.\n'
+                '2. Nếu mất dữ liệu, kiểm tra mạng, tài khoản và đúng mountpoint.\n'
+                '3. Nếu dữ liệu vẫn đều mà chưa FIX, kiểm tra che khuất và khoảng cách tới trạm.\n'
+                'Anh gửi tuổi hiệu chỉnh hiện tại để mình khoanh vùng bước tiếp nhé.')
+
+    if intent == 'diagnostic_age':
+        age = re.search(r'\b(\d{1,3})\s*(?:s|giay)\b', words)
+        age_text = f"{int(age[1])} giây" if age else 'một thời điểm'
+        return (f'{heading}{headline}\nTuổi hiệu chỉnh {age_text} là một lần quan sát, '
+                'chưa đủ để kết luận trạm hay mạng có lỗi. '
+                'Anh nhìn thêm vài giây: số này giữ quanh mức đó hay tăng liên tục?')
+    if intent == 'diagnostic_stream':
+        return (f'{heading}{headline}\nNếu tuổi hiệu chỉnh tăng liên tục, dữ liệu hiệu chỉnh đang không cập nhật đều. '
+                'Anh xem số byte RTCM còn tăng không; nếu đứng yên, kiểm tra mạng và kết nối đúng mountpoint trước.')
+    if intent == 'diagnostic_signal':
+        return (f'{heading}{headline}\nTuổi hiệu chỉnh cập nhật đều là một tín hiệu, chưa bảo đảm máy sẽ FIX. '
+                'Nếu vẫn FLOAT, kiểm tra che khuất, khoảng cách tới trạm và đối chiếu máy khác cùng khu vực. '
+                'Anh đang cách trạm khoảng bao nhiêu km?')
 
     async def fetch_ionosphere():
+        if intent not in {'detail', 'detail_brief', 'forecast'}:
+            return {}
         try:
             return await asyncio.wait_for(ionosphere_service.get_latest(format_type='geojson'), timeout=15)
         except Exception:
             return {}
 
     data, kp = await asyncio.gather(fetch_ionosphere(), geomagnetic_observation())
-    observation = ionosphere_observation(data, question)
-    words = _plain(question)
-    name = region_for_question(question)[0]
-    diagnostic = bool(re.search(r'\b(float|khong fix|kho fix|fix kho|nhay|mat fix)\b', words))
-    detail = bool(re.search(r'\b(chi tiet|dien ly|tec|kp|dia tu)\b', words)) and not re.search(r'\b(do chi tiet|do dia hinh)\b', words)
-    measurement = bool(re.search(r'\b(do|trien khai|di lam|khuyen nghi|tu van|khong che|bo tri)\b', words))
-    future = bool(re.search(r'\b(chieu nay|toi nay|ngay mai|tuan sau)\b', words))
     value = kp['value'] if kp else None
     magnetic = (f"Địa từ Kp {value:.2f} · " +
                 ('bão từ mạnh, nguy cơ gián đoạn định vị tăng.' if value >= 7 else
@@ -185,60 +287,47 @@ async def report_text(health, question=''):
                 f" NOAA SWPC · {kp['stamp']}." if kp else
                 'Chỉ số địa từ đang tạm mất cập nhật.')
 
-    # Keep operational signals separate from observation age: a delayed model
-    # is not evidence that the field conditions themselves have deteriorated.
-    if health.get('status') == 'offline':
-        decision = 'Cục đang gián đoạn, ca đo dùng nguồn này cần chuyển sang nguồn dự phòng hoặc chờ kết nối lại.'
-    elif health.get('status') != 'online':
-        decision = 'Tôi chưa xác nhận được nguồn Cục, nên chưa chốt được phương án đo dùng nguồn này.'
-    elif value is not None and value >= 7:
-        decision = 'Nên hoãn đo khống chế: bão từ mạnh đang làm tăng nguy cơ gián đoạn định vị.'
-    elif value is not None and value >= 4:
-        decision = 'Cục vẫn hoạt động, nhưng địa từ đang nhiễu động. Ca đo chính xác cao cần thận trọng.'
-    elif value is not None:
-        decision = 'CORS Cục đang hoạt động, địa từ yên tĩnh. Phần điện ly cần xem riêng: Kp thấp không chứng minh RTK tại điểm đo đang ổn định.'
-    else:
-        decision = 'Cục đang hoạt động. Địa từ mất cập nhật nên tôi chỉ xác nhận được tình trạng nguồn.'
-
-    if diagnostic:
-        if health.get('status') == 'offline':
-            action = 'FLOAT lúc này: xử lý nguồn hiệu chỉnh trước; chưa cần đổi thiết lập vệ tinh.'
+    if intent == 'diagnostic':
+        if status == 'offline':
+            action = 'Xử lý nguồn hiệu chỉnh trước vì nguồn Cục đang gián đoạn. Chưa cần đổi thiết lập vệ tinh.'
         elif value is not None and value >= 5:
-            action = 'FLOAT kéo dài có thể liên quan nhiễu động hiện tại. So sánh với máy khác cùng khu vực trước khi đổi cấu hình.'
+            action = ('Hiện có nhiễu động địa từ, nhưng chưa đủ để kết luận nguyên nhân mất FIX. '
+                      'Anh gửi tuổi hiệu chỉnh và mountpoint đang dùng để mình khoanh vùng tiếp nhé.')
         else:
-            action = ('FLOAT kéo dài: xem tuổi hiệu chỉnh và luồng RTCM trước. Tuổi tăng/mất gói thì kiểm tra mạng hoặc mountpoint; '
-                      'hiệu chỉnh đều thì kiểm tra khoảng cách trạm, che khuất và đa đường. '
-                      'Gửi tuổi hiệu chỉnh, số vệ tinh và khoảng cách trạm để khoanh vùng tiếp.')
-        return f'{headline}\n\n{name} · {action}\n\n{magnetic}'
+            action = ('Anh kiểm tra tuổi hiệu chỉnh trước nhé: nếu tuổi tăng liên tục hoặc mất RTCM, '
+                      'kiểm tra mạng và mountpoint. Nếu hiệu chỉnh vẫn đều, kiểm tra khoảng cách trạm và che khuất. '
+                      'Tuổi hiệu chỉnh hiện bao nhiêu giây?')
+        return f'{heading}{headline}\n{action}' + (f'\n{magnetic}' if value is not None and value >= 4 else '')
 
     atmosphere = ionosphere_text(data, question)
-    if not observation:
-        atmosphere = f'Tầng điện ly · {name}: NOAA đang mất cập nhật.'
-    if future:
-        return (f'{name}: đây là tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.\n\n'
+    if intent == 'forecast':
+        return (f'{heading}Mình chỉ có tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.\n'
                 f'{headline}\n{magnetic}\n{atmosphere}')
-    if detail:
-        return (f'{headline}\n\n{atmosphere}\n{magnetic}\n'
+    if intent == 'detail_brief':
+        observation = ionosphere_observation(data, question)
+        if not observation:
+            return f'{heading}{headline} Điện ly chưa có dữ liệu cập nhật để đánh giá.'
+        delay = f"; trễ {observation['age_minutes']} phút" if observation['delayed'] else ''
+        return (f"{heading}{headline} TEC {observation['tec']} TECU, {observation['comparison']} "
+                f"(ước tính NOAA {observation['stamp']}{delay}).\n{magnetic}")
+    if intent == 'detail':
+        return (f'{heading}{headline}\n\n{atmosphere}\n{magnetic}\n'
                 'TEC là ước tính điện ly khu vực, không phải sai số đo hay chất lượng FIX của máy.')
 
-    # Put the answer first. Keep model timing as evidence, not a blanket warning.
-    if observation:
-        timing = (f" · bản gần nhất, trễ {observation['age_minutes']} phút"
-                  if observation['delayed'] else '')
-        evidence = (f"Điện ly {name}: TEC tuyệt đối {observation['tec']} TECU (ước tính).\n"
-                    f"So với nền 30 ngày: trung bình {observation['comparison']}; từng ô {observation['anomaly_low']:+.1f} đến {observation['anomaly_high']:+.1f} TECU.\n"
-                    f"NOAA GloTEC {observation['stamp']}{timing}.")
+    if status == 'offline':
+        decision = 'Cục đang gián đoạn, ca đo dùng nguồn này cần chuyển sang nguồn dự phòng hoặc chờ kết nối lại.'
+    elif status != 'online':
+        decision = 'Mình chưa xác nhận được nguồn Cục nên chưa thể chốt phương án đo dùng nguồn này.'
+    elif value is not None and value >= 7:
+        decision = 'Nên hoãn đo khống chế: hiện có bão từ mạnh, nguy cơ gián đoạn định vị tăng.'
+    elif value is not None and value >= 4:
+        decision = 'CORS Cục đang hoạt động, nhưng địa từ đang nhiễu động. Ca đo chính xác cao cần thận trọng.'
     else:
-        evidence = atmosphere
-    short_magnetic = (f"Kp {value:.2f} · " +
-                      ('bão từ mạnh' if value >= 7 else 'bão từ' if value >= 5 else
-                       'nhiễu động' if value >= 4 else 'địa từ yên tĩnh') +
-                      f" · {kp['stamp']}." if kp else 'Kp đang mất cập nhật.')
-    if measurement or name != 'Việt Nam':
-        opening = f'📍 {name}\n' if name != 'Việt Nam' else ''
-        scope = ('\nAnh đang đo ở tỉnh nào?'
-                 if name == 'Việt Nam' else '')
-        return (f'{opening}{decision}\n\n{field_advice(health.get("status"), value, words)}'
-                f'\n\n{evidence}\n{short_magnetic}{scope}')
-    return (f'{headline}\n{short_magnetic}\n\n{evidence}\n'
-            'Kp yên tĩnh hay TEC gần nền đều không xác nhận độ ổn định RTK tại điểm đo.')
+        decision = (f'{headline} Chưa có số liệu RTCM/FIX tại điểm đo để xác nhận ca đo ổn định.')
+    advice = field_advice(status, value, words)
+    if name == 'Việt Nam' and advice == 'Anh đang dùng trạm hoặc mountpoint nào?':
+        advice = 'Anh đang đo ở tỉnh nào?'
+    if value is None:
+        advice += '\nChỉ số địa từ đang tạm mất cập nhật.'
+    scope = '\nAnh đang đo ở tỉnh nào?' if name == 'Việt Nam' and '?' not in advice else ''
+    return f'{heading}{decision}\n{advice}{scope}'

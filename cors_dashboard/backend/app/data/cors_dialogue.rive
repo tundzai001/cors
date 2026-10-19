@@ -1,0 +1,158 @@
+! version = 2.0
+
+! sub ko = khong
+! sub k = khong
+! sub hok = khong
+! sub khum = khong
+! sub dc = duoc
+! sub dk = duoc
+! sub hnay = hom nay
+! sub hqua = hom qua
+! sub bjo = bay gio
+! sub bh = bay gio
+! sub ntn = nhu the nao
+! sub vs = voi
+! sub thanks = cam on
+! sub thank = cam on
+! sub tks = cam on
+! sub helo = hello
+
+! array diagnostic = float|khong fix|kho fix|fix kho|mat fix|nhay toa do|fix roi mat|luc fix luc float|khong nhan rtcm|mat rtcm|mat hieu chinh|tuoi hieu chinh tang|khong on dinh
+! array forecast = chieu nay|toi nay|ngay mai|tuan sau
+! array atmosphere = dien ly|tec|kp|dia tu
+! array fieldwork = do dia hinh|do chi tiet|do khong che|do bo tri|do ranh|do dia chinh|do moc|tu van do|khuyen nghi do
+! array measurement = do duoc|co nen do|di do|trien khai do
+! array stability = on dinh|on khong|co on|co tot|chat luong|dung duoc
+! array explain = noi ro hon|giai thich them|cu the hon|chi tiet hon|tai sao|vi sao
+! array brief = ngan gon|tom tat|noi ngan thoi
+
++ [*] (tuoi hieu chinh|age) # (s|giay) [*] {weight=125}
+- diagnostic_age
+
+// Definitions precede fault diagnosis: "FLOAT là gì" is not a reported fault.
++ [*] (fix|float) (la gi|nghia la gi|khac nhau the nao) [*] {weight=130}
+- faq_fix
+
++ [*] (phan biet|so sanh) [*] fix [*] float [*] {weight=130}
+- faq_fix
+
++ [*] (tuoi hieu chinh|age) (la gi|nghia la gi|xem o dau) [*] {weight=130}
+- faq_age
+
++ [*] rtcm (la gi|nghia la gi) [*] {weight=130}
+- faq_rtcm
+
++ [*] ntrip (la gi|nghia la gi) [*] {weight=130}
+- faq_ntrip
+
++ [*] mountpoint (la gi|nghia la gi) [*] {weight=130}
+- faq_mountpoint
+
++ [*] gga (la gi|nghia la gi) [*] {weight=130}
+- faq_gga
+
++ [*] @diagnostic [*] {weight=100}
+- diagnostic
+
++ [*] @forecast [*] {weight=90}
+- forecast
+
++ [*] @atmosphere [*] {weight=80}
+- detail
+
++ [*] chi tiet [*] {weight=70}
+- detail
+
++ [*] @fieldwork [*] {weight=85}
+- measurement
+
++ [*] @measurement [*] {weight=60}
+- measurement
+
++ [*] @stability [*] {weight=50}
+- stability
+
++ [*] @explain [*] {weight=45}
+* <get previous> == diagnostic => diagnostic_steps
+* <get previous> == diagnostic_steps => diagnostic_steps
+* <get previous> == diagnostic_age => diagnostic_steps
+* <get previous> == diagnostic_stream => diagnostic_steps
+* <get previous> == diagnostic_signal => diagnostic_steps
+* <get previous> == forecast => forecast
+* <get previous> == faq_fix => faq_fix_more
+* <get previous> == faq_fix_more => faq_fix_more
+* <get previous> == faq_age => faq_age
+* <get previous> == faq_rtcm => faq_rtcm
+* <get previous> == faq_ntrip => faq_ntrip
+* <get previous> == faq_mountpoint => faq_mountpoint
+* <get previous> == faq_gga => faq_gga
+- detail
+
++ [*] @brief [*] {weight=45}
+* <get previous> == detail => detail_brief
+* <get previous> == detail_brief => detail_brief
+- summary
+
++ [*] (cam on|ok roi|hieu roi|ro roi) [*] {weight=30}
+- thanks
+
++ [*] (xin chao|chao bot|hello|hi bot|bot oi) [*] {weight=20}
+- greeting
+
++ (giup voi|huong dan|help|hoi duoc gi)
+- help
+
++ *
+- status
+
+// Numeric answers and observations are only interpreted inside a diagnostic topic.
+> topic diagnosing includes random
+
++ # (s|giay) [*]
+- diagnostic_age
+
++ [*] (tang lien tuc|cu tang|tang dan|khong cap nhat) [*] {weight=115}
+- diagnostic_stream
+
++ [*] (giu on dinh|van deu|van cap nhat|khong tang) [*] {weight=115}
+- diagnostic_signal
+
+< topic
+
+// Curated replies have no access to live status or control commands.
+> topic answers
+
++ greeting
+- Mình đây. Anh muốn kiểm tra CORS ở khu vực nào, hay đang gặp lỗi FIX/RTCM?
+
++ thanks
+- Có gì cần kiểm tra thêm, anh cứ gửi khu vực và tình trạng máy nhé.
+
++ help
+- Anh có thể hỏi “CORS Hà Nội ổn định không?”, “máy cứ FLOAT”, hoặc “điện ly Bà Rịa - Vũng Tàu”. Nếu vừa hỏi một khu vực, anh có thể nói tiếp “chi tiết đi” hoặc “ngắn gọn thôi”.
+
++ faq_fix
+- FIX và FLOAT là hai trạng thái nghiệm RTK. FIX đã giải được số nguyên đa trị; FLOAT chưa giải được số nguyên. Có chữ FIX vẫn cần kiểm tra tuổi hiệu chỉnh và đối chiếu điểm đã biết, không tự bảo đảm mọi số đo đều đúng.
+
++ faq_fix_more
+- Số nguyên đa trị là phần chưa biết trong phép đo pha sóng mang. Khi máy giải được phần này, nghiệm có thể chuyển từ FLOAT sang FIX. Nếu máy cứ đổi qua lại, cần xem dữ liệu hiệu chỉnh và điều kiện thu vệ tinh; không nên chỉ đổi thiết lập để ép chữ FIX.
+
++ faq_age
+- Tuổi hiệu chỉnh là thời gian đã trôi qua kể từ dữ liệu hiệu chỉnh mà máy đang dùng, thường hiển thị bằng giây ở mục Age/Diff Age. Nếu số này tăng liên tục, hãy kiểm tra dữ liệu hiệu chỉnh có còn tới máy không; chưa thể chỉ từ đó kết luận do trạm hay mạng.
+
++ faq_rtcm
+- RTCM là định dạng dữ liệu hiệu chỉnh GNSS. Máy báo kết nối NTRIP thành công chưa chứng minh có RTCM về: anh xem số byte nhận có tăng và tuổi hiệu chỉnh có cập nhật không.
+
++ faq_ntrip
+- NTRIP là cách truyền dữ liệu GNSS qua mạng. Caster nhận luồng từ nguồn rồi phân phối cho máy khách; vì vậy đăng nhập được caster và nhận được dữ liệu là hai bước cần kiểm tra riêng.
+
++ faq_mountpoint
+- Mountpoint là tên luồng anh chọn trên caster, ví dụ PT.HaHoa. Khi báo lỗi, gửi đúng mountpoint giúp khoanh vùng luồng đang dùng; tên tài khoản và tên mountpoint không nhất thiết giống nhau.
+
++ faq_gga
+- GGA là bản tin NMEA chứa vị trí và thông tin nghiệm định vị của máy. Một số dịch vụ NTRIP dùng GGA để biết vị trí rover và chọn hoặc tạo hiệu chỉnh phù hợp; gửi được GGA chưa chứng minh RTCM đã về.
+
++ *
+- Anh muốn kiểm tra trạng thái CORS, lỗi FIX/RTCM hay điện ly?
+
+< topic

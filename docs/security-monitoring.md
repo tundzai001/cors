@@ -63,6 +63,22 @@ configuration is restored. It sets `NGINX_SECURITY_PREFIX` and
 Loopback binding prevents clients bypassing Nginx through public port 8000.
 Devices must connect through the public Nginx HTTPS/WSS routes rather than 8000.
 
+AiCaster on a separate server must also use the public proxy. Its wake endpoints
+are `https://cors.aitogy.com/api/ntrip/wake-station` and
+`https://cors.aitogy.com/api/ntrip/wake-listen`. Rebuild and deploy AiCaster after
+updating these endpoints; restarting the Python backend does not update the
+caster executable. Keep `BACKEND_HOST=127.0.0.1` on the backend server.
+
+The dedicated control token is embedded in AiCaster's
+`PointNav/CASTER/Configs/Driver.cs`; the backend `.env` value of
+`NTRIP_CONTROL_TOKEN` must match it. Rebuild and deploy the caster when rotating
+the token, update the backend `.env`, and restart both processes. The caster
+sends `X-NTRIP-Control-Token` over HTTPS and needs no local `.env` file.
+Without a token, the backend only accepts the actual source IP of a configured
+caster. Check that `CASTER_HOST` resolves to that server's outbound public IP and
+that the local proxy preserves the client IP. Do not disable control authentication.
+The caster logs HTTP failures and connection failures without printing the token.
+
 New Security Gate permanent bans are persisted with creation time, violation
 count and last path. Manual bans include the administrator in the reason. The
 shared permanent-ban method also updates the HTTP gate. Startup restores database

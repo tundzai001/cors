@@ -66,9 +66,10 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
             text = await report_text({'status':'online'}, 'ở Tuyên Quang đo được không')
             self.assertIn('CORS Cục đang hoạt động', text)
-            self.assertIn('TEC tuyệt đối 30.0 TECU', text)
-            self.assertIn('Kp thấp không chứng minh RTK', text)
-            self.assertIn('Kp 1.33', text)
+            self.assertIn('Chưa có số liệu RTCM/FIX', text)
+            self.assertIn('mountpoint nào', text)
+            self.assertNotIn('TECU', text)
+            self.assertNotIn('Kp', text)
             self.assertTrue(text.startswith('📍 Tuyên Quang'))
             offline = await report_text({'status':'offline'}, 'Tuyên Quang')
             self.assertIn('chuyển sang nguồn dự phòng', offline)
@@ -77,20 +78,20 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ionosphere_failure_still_returns_health_without_a_good_measurement_claim(self):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(side_effect=TimeoutError)):
-            text = await report_text({'status':'online'}, 'Tuyên Quang')
+            text = await report_text({'status':'online'}, 'điện ly Tuyên Quang chi tiết')
         self.assertIn('đang hoạt động', text)
-        self.assertIn('đang mất cập nhật', text)
+        self.assertIn('chưa có dữ liệu cập nhật', text)
         self.assertNotIn('có thể đo thử', text)
 
     async def test_delayed_observation_does_not_become_a_field_warning(self):
         data = self.data(time_tag=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat())
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=data)):
-            text = await report_text({'status':'online'}, 'Tuyên Quang đo được không')
+            text = await report_text({'status':'online'}, 'điện ly Tuyên Quang chi tiết')
         self.assertIn('trễ 31 phút', text)
-        self.assertIn('TEC tuyệt đối 30.0', text)
+        self.assertIn('TEC 30.0', text)
         self.assertNotIn('Đo thận trọng', text)
         self.assertNotIn('chưa dùng bản tin', text)
-        self.assertIn('Kp thấp không chứng minh RTK', text)
+        self.assertIn('không phải sai số đo hay chất lượng FIX', text)
 
     async def test_intents_produce_different_useful_answers(self):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
@@ -134,10 +135,10 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         data = self.data()
         data['features'][0]['properties'] = {'tec':72.6, 'anomaly':1.18}
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=data)):
-            text = await report_text({'status':'online'}, 'Tuyên Quang đo được không')
-        self.assertIn('TEC tuyệt đối 72.6', text)
+            text = await report_text({'status':'online'}, 'điện ly Tuyên Quang chi tiết')
+        self.assertIn('TEC 72.6', text)
         self.assertIn('+1.2 đến +1.2', text)
-        self.assertIn('Kp thấp không chứng minh RTK', text)
+        self.assertIn('không phải sai số đo hay chất lượng FIX', text)
         self.assertNotIn('đang thuận', text)
         self.assertNotIn('có thể lên ca', text)
 
@@ -148,6 +149,97 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         text = ionosphere_text(data, 'Việt Nam')
         self.assertIn('xấp xỉ mức nền', text)
         self.assertIn('-20.0 đến +20.0', text)
+
+    async def test_actual_stability_question_is_short_and_needs_no_noaa_calls(self):
+        question = '@Bot Cors manager cors tại tỉnh bà rịa vũng tàu có ổn định không ạ'
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock()) as noaa:
+            text = await report_text({'status': 'online'}, question)
+        noaa.assert_not_awaited()
+        self.kp.assert_not_awaited()
+        self.assertIn('Bà Rịa - Vũng Tàu', text)
+        self.assertIn('chưa có số liệu RTCM/FIX', text)
+        self.assertEqual(text.count('?'), 1)
+        self.assertLess(len(text), 350)
+        for unwanted in ('TECU', 'Kp', 'Gợi ý cho ca đo', 'đo khống chế'):
+            self.assertNotIn(unwanted, text)
+
+    def test_typo_lookup_and_ambiguity(self):
+        self.assertEqual(region_for_question('ở Tuyên Quangg đo được không')[0], 'Tuyên Quang')
+        self.assertEqual(region_for_question('ở Quảg Nam đo được không')[0], 'Quảng Nam')
+        self.assertEqual(region_for_question('ha noii có ổn định không')[0], 'Hà Nội')
+        self.assertEqual(region_for_question('ở Hà Nam đo được không')[0], 'Hà Nam')
+        self.assertEqual(region_for_question('Tuyên Quangg và Quảg Nam')[0], 'Việt Nam')
+        self.assertEqual(region_for_question('mất kết nối rồi')[0], 'Việt Nam')
+
+    def test_rule_priorities_and_bounded_shared_state(self):
+        from app.zalo_cors_dialogue import cors_intent, _brain
+        for question, expected in (
+            ('may cu float ha noi', 'diagnostic'),
+            ('ngay mai do dia hinh', 'forecast'),
+            ('dien ly ha noi chi tiet', 'detail'),
+            ('do chi tiet tuyen quang', 'measurement'),
+            ('co on dinh khong', 'stability'),
+            ('cors', 'status'),
+        ):
+            self.assertEqual(cors_intent(question), expected)
+        self.assertFalse(_brain().get_uservars())
+
+    async def test_local_definitions_are_not_fault_reports_and_do_not_fetch_observations(self):
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock()) as noaa:
+            for question, expected in (
+                ('FLOAT là gì', 'hai trạng thái nghiệm RTK'),
+                ('RTCM là gì', 'định dạng dữ liệu hiệu chỉnh'),
+                ('NTRIP nghĩa là gì', 'truyền dữ liệu GNSS'),
+                ('mountpoint là gì', 'tên luồng'),
+                ('GGA là gì', 'bản tin NMEA'),
+                ('tuổi hiệu chỉnh là gì', 'thời gian đã trôi qua'),
+                ('chào bot', 'Mình đây'),
+            ):
+                with self.subTest(question=question):
+                    text = await report_text({}, question)
+                    self.assertIn(expected, text)
+                    self.assertNotIn('CORS Cục đang hoạt động', text)
+            more = await report_text({}, 'nói rõ hơn', previous_intent='faq_fix')
+            self.assertIn('pha sóng mang', more)
+        noaa.assert_not_awaited()
+        self.kp.assert_not_awaited()
+
+    async def test_abbreviations_and_multiple_provinces_require_the_correct_scope(self):
+        self.assertEqual(region_for_question('BRVT')[0], 'Bà Rịa - Vũng Tàu')
+        self.assertEqual(region_for_question('HN')[0], 'Hà Nội')
+        self.assertEqual(region_for_question('TPHCM')[0], 'Hồ Chí Minh')
+        self.assertEqual(region_for_question('tuyenquangg')[0], 'Tuyên Quang')
+        for question in ('DN có ổn định không', 'Hà Nội và Tuyên Quangg ổn không'):
+            text = await report_text({'status': 'online'}, question)
+            self.assertIn('Anh muốn kiểm tra', text)
+            self.assertIn(' hay ', text)
+            self.assertNotIn('đang hoạt động', text)
+
+    def test_fuzzy_intents_preserve_qualifiers_and_context_does_not_leak(self):
+        from app.zalo_cors_dialogue import cors_intent, _brain
+        for question, previous, expected in (
+            ('on ddinh khong', 'status', 'stability'),
+            ('may cu floatt', 'status', 'diagnostic'),
+            ('khong on ddinh', 'status', 'diagnostic'),
+            ('giai thich them', 'diagnostic', 'diagnostic_steps'),
+            ('3s ha noi', 'diagnostic', 'diagnostic_age'),
+            ('3s', 'status', 'status'),
+            ('cu tang lien tuc', 'diagnostic_age', 'diagnostic_stream'),
+            ('van giu on dinh', 'diagnostic_age', 'diagnostic_signal'),
+            ('tom tat', 'detail', 'detail_brief'),
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(cors_intent(question, previous), expected)
+        self.assertFalse(_brain().get_uservars())
+
+    async def test_brief_detail_keeps_observation_age_and_avoids_a_table(self):
+        data = self.data(time_tag=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat())
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=data)):
+            text = await report_text({'status': 'online'}, 'ngắn gọn Tuyên Quang', previous_intent='detail')
+        self.assertIn('TEC 30.0', text)
+        self.assertIn('trễ 31 phút', text)
+        self.assertNotIn('Độ lệch từng ô', text)
+        self.assertNotIn('đang ổn định', text)
 
 
 class GeomagneticTests(unittest.IsolatedAsyncioTestCase):

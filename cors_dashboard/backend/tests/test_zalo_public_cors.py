@@ -144,7 +144,7 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                 await service._cors_cmd(update, None)
             text = update.message.reply_text.await_args.args[0]
             self.assertIn(expected, text)
-            self.assertIn("Tầng điện ly", text)
+            self.assertNotIn("TECU", text)
             for hidden in ("đăng nhập", "form", "14.238", "trang dịch vụ"):
                 self.assertNotIn(hidden, text)
 
@@ -162,7 +162,9 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                  "\u200b/cors", "/cors\u200b cục", "@Bot Cors manager helo", "tình trạng Cục",
                  "@Bot Cors manager hà nội đo được ko", "ở Tuyên Quang đo được k", "tầng điện ly hôm nay", "corsc cục hnay đo được k mọi người", "cors cuc hnay do dc k mn",
                  "cuc sap chua", "CORS Cục đang thế nào?", "kiểm tra VNGEONET",
-                 "Cục còn sống không", "14.238.1.125 đang online không?")
+                 "Cục còn sống không", "14.238.1.125 đang online không?",
+                 "@Bot Cors manager cors tại tỉnh bà rịa vũng tàu có ổn định không ạ",
+                 "ở Tuyên Quangg đo được không")
         for text in cases:
             with self.subTest(text=text):
                 service = bot_module.ZaloBotService()
@@ -187,7 +189,10 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                 remember.assert_awaited_once_with("test-chat", "group", "Test group")
                 reply = updates[0].message.reply_text
                 reply.assert_awaited_once()
-                self.assertIn("đang hoạt động", reply.await_args.args[0])
+                if text == "@Bot Cors manager helo":
+                    self.assertIn("Mình đây", reply.await_args.args[0])
+                else:
+                    self.assertIn("đang hoạt động", reply.await_args.args[0])
                 self.assertNotIn("/register", reply.await_args.args[0])
 
     async def test_natural_cors_questions_use_same_handler_in_chat_dispatch(self):
@@ -313,6 +318,14 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
             'app.reference_network.get_network_status', AsyncMock(return_value={'status':'online'})
         ), patch('app.zalo_cors_report.report_text', AsyncMock(return_value='reply')) as report:
             await ask('Hà Nội')
+            self.assertTrue(service._is_cors_followup(self.update('chi tiết đi'), 'chi tiết đi'))
+            other = self.update('chi tiết đi')
+            other.message.from_user.id = 'another'
+            self.assertFalse(service._is_cors_followup(other, 'chi tiết đi'))
+            self.assertFalse(service._is_cors_followup(self.update('/station HN'), '/station HN'))
+            self.assertFalse(service._is_cors_followup(self.update('rover chi tiết'), 'rover chi tiết'))
+            await ask('chi tiết đi')
+            self.assertIn('Hà Nội', report.await_args.args[1])
             await ask('đo được không')
             self.assertIn('Hà Nội', report.await_args.args[1])
             await ask('đo được không', sender='another')
@@ -330,6 +343,51 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
             await ask('Hà Nội')
             service.forget_chat('test-chat')
             self.assertNotIn(key, service._cors_regions)
+
+    async def test_diagnostic_conversation_and_unknown_area_cannot_reuse_another_scope(self):
+        service = bot_module.ZaloBotService()
+        async def ask(text):
+            update = self.update(text)
+            await service._cors_cmd(update, None)
+            return update.message.reply_text.await_args.args[0]
+        with patch.object(bot_module.zalo_repository, 'remember_cors_chat', AsyncMock(return_value=True)), patch(
+            'app.reference_network.get_network_status', AsyncMock(return_value={'status':'online'})
+        ):
+            await ask('ở HN máy cứ FLOAT')
+            self.assertTrue(service._is_cors_followup(self.update('3s'), '3s'))
+            another = self.update('3s')
+            another.message.from_user.id = 'another'
+            self.assertFalse(service._is_cors_followup(another, '3s'))
+            age = await ask('3s')
+            self.assertIn('3 giây', age)
+            self.assertIn('Hà Nội', age)
+            self.assertIn('số byte RTCM', await ask('cứ tăng liên tục'))
+            self.assertIn('1.', await ask('nói rõ hơn'))
+            short = await ask('ngắn gọn thôi')
+            self.assertIn('Hà Nội', short)
+            self.assertNotIn('1.', short)
+            ambiguous = await ask('DN có ổn định không')
+            self.assertIn('Đà Nẵng', ambiguous)
+            self.assertIn('Đồng Nai', ambiguous)
+            self.assertNotIn('Hà Nội', ambiguous)
+            self.assertFalse(service._is_cors_followup(self.update('3s'), '3s'))
+            await ask('ở HN máy cứ FLOAT')
+            unknown = await ask('ở tỉnh Atlantis có ổn định không')
+            self.assertNotIn('Hà Nội', unknown)
+
+    async def test_faq_uses_local_rules_without_probing_or_granting_base_commands(self):
+        service = bot_module.ZaloBotService()
+        for text in ('RTCM là gì', 'FLOAT là gì', 'Tuyên Quangg', 'con BRVT', 'DN ổn định không', 'on ddinh tại HN'):
+            self.assertTrue(bot_module._is_cors_status_question(text), text)
+        for text in ('/stationdelete HN', 'xóa rover cuc', 'base đang thế nào', 'mua xe ở HN', 'rover GGA là gì'):
+            self.assertFalse(bot_module._is_cors_status_question(text), text)
+        with patch.object(bot_module.zalo_repository, 'remember_cors_chat', AsyncMock(return_value=True)), patch(
+            'app.reference_network.get_network_status', AsyncMock()
+        ) as probe:
+            update = self.update('RTCM là gì')
+            await service._cors_cmd(update, None)
+        probe.assert_not_awaited()
+        self.assertIn('định dạng dữ liệu hiệu chỉnh', update.message.reply_text.await_args.args[0])
 
     async def test_webhook_verification_bypasses_sdk_and_conversation_state(self):
         service = bot_module.ZaloBotService()
