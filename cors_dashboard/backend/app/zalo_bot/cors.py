@@ -32,6 +32,9 @@ class CorsMixin:
         )
         if not allowed:
             return
+        policy = await zalo_repository.chat_delivery_policy(chat_id)
+        if not policy.get('active', False):
+            return
         from ..reference_network import get_network_status
         from ..zalo_cors_report import report_text, region_for_question, region_options, _plain
         from ..zalo_cors_dialogue import cors_intent, STATIC_INTENTS
@@ -63,7 +66,10 @@ class CorsMixin:
         health = {} if intent in STATIC_INTENTS or len(options) > 1 else await get_network_status()
         token = self._cors_outbound.set("reply")
         try:
-            await update.message.reply_text(await report_text(health, question, previous_intent=previous_intent))
+            await update.message.reply_text(await report_text(
+                health, question, previous_intent=previous_intent,
+                delivery_mode=policy.get('mode', 'standard'),
+            ))
         finally:
             self._cors_outbound.reset(token)
 
@@ -76,14 +82,14 @@ class CorsMixin:
         status = health.get("status")
         if status not in {"online", "offline"}:
             return
-        from ..zalo_cors_report import report_text
+        from ..zalo_cors_report import status_change_text
         message = None
         for target in targets:
             try:
                 async with zalo_repository.cors_transition(target["id"], status) as delivery:
                     if delivery["send"]:
                         if message is None:
-                            message = await report_text(health)
+                            message = status_change_text(health)
                         token = self._cors_outbound.set({"kind": "alert", "policy": delivery["policy"]})
                         try:
                             sent = await self.app.bot.send_message(chat_id=target["chat_id"], text=message)

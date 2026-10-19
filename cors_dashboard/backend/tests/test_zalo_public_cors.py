@@ -10,6 +10,11 @@ from app import models, zalo_assistant, zalo_bot_service as bot_module
 
 class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        policy_patcher = patch.object(bot_module.zalo_repository, 'chat_delivery_policy', AsyncMock(
+            return_value={'active': True, 'mode': 'standard', 'cors_notify_changes': False}
+        ))
+        policy_patcher.start()
+        self.addCleanup(policy_patcher.stop)
         patcher = patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value={}))
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -64,6 +69,9 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(send.await_count, 2)
         self.assertIn("đang gián đoạn", send.await_args_list[0].kwargs["text"])
         self.assertIn("đang hoạt động", send.await_args_list[1].kwargs["text"])
+        for call in send.await_args_list:
+            self.assertNotIn('?', call.kwargs['text'])
+            self.assertNotIn('Anh muốn', call.kwargs['text'])
 
     async def test_failed_or_suppressed_cors_alert_does_not_advance_saved_state(self):
         service = bot_module.ZaloBotService()
@@ -164,6 +172,7 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
                  "cuc sap chua", "CORS Cục đang thế nào?", "kiểm tra VNGEONET",
                  "Cục còn sống không", "14.238.1.125 đang online không?",
                  "@Bot Cors manager cors tại tỉnh bà rịa vũng tàu có ổn định không ạ",
+                 "khu vực tỉnh bà rịa vũng tàu", "@Bot Cors manager tình trạng bà rịa vũng tàu",
                  "ở Tuyên Quangg đo được không")
         for text in cases:
             with self.subTest(text=text):
@@ -388,6 +397,35 @@ class PublicCorsTests(unittest.IsolatedAsyncioTestCase):
             await service._cors_cmd(update, None)
         probe.assert_not_awaited()
         self.assertIn('định dạng dữ liệu hiệu chỉnh', update.message.reply_text.await_args.args[0])
+
+    async def test_reply_scope_uses_chat_configuration_in_both_groups_and_private_chats(self):
+        for chat_type in ('group', 'private'):
+            for mode in ('cors_only', 'standard'):
+                with self.subTest(chat_type=chat_type, mode=mode):
+                    service = bot_module.ZaloBotService()
+                    update = self.update('khu vực tỉnh bà rịa vũng tàu', chat_type=chat_type)
+                    with patch.object(bot_module.zalo_repository, 'remember_cors_chat', AsyncMock(return_value=True)), patch.object(
+                        bot_module.zalo_repository, 'chat_delivery_policy', AsyncMock(return_value={'active': True, 'mode': mode})
+                    ), patch('app.reference_network.get_network_status', AsyncMock(return_value={'status':'online'})):
+                        await service._cors_cmd(update, None)
+                    text = update.message.reply_text.await_args.args[0]
+                    self.assertIn('Bà Rịa - Vũng Tàu', text)
+                    if mode == 'cors_only':
+                        self.assertIn('Điện ly', text)
+                        self.assertIn('Khuyến nghị', text)
+                        self.assertNotIn('mountpoint', text)
+                        self.assertNotIn('chưa có số liệu RTCM/FIX', text)
+                    else:
+                        self.assertIn('mountpoint', text)
+
+    async def test_chat_disabled_between_remember_and_policy_does_not_reply(self):
+        service, update = bot_module.ZaloBotService(), self.update('/cors')
+        with patch.object(bot_module.zalo_repository, 'remember_cors_chat', AsyncMock(return_value=True)), patch.object(
+            bot_module.zalo_repository, 'chat_delivery_policy', AsyncMock(return_value={'active': False, 'mode':'cors_only'})
+        ), patch('app.reference_network.get_network_status', AsyncMock()) as probe:
+            await service._cors_cmd(update, None)
+        probe.assert_not_awaited()
+        update.message.reply_text.assert_not_awaited()
 
     async def test_webhook_verification_bypasses_sdk_and_conversation_state(self):
         service = bot_module.ZaloBotService()

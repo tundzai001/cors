@@ -17,10 +17,23 @@ detail and future-time questions. Future-time replies identify current condition
 as observations, not forecasts. This is a bounded set of conversations, not an
 unrestricted language model.
 
-Ordinary status/stability replies do not fetch NOAA observations. They confirm
-source availability, distinguish it from local RTCM/FIX, and ask one relevant
-follow-up. TEC/Kp tables are reserved for atmospheric detail questions. The source
-health check is not proof that a particular mountpoint delivers corrections.
+Reply scope follows each chat's saved `delivery_mode`, for groups and private
+chats alike. In `cors_only`, regional questions combine source availability,
+regional ionosphere observations, geomagnetic conditions and practical survey
+advice. This mode does not ask for a mountpoint or claim access to a receiver's
+RTCM/FIX telemetry. Missing/delayed observations remain identified, and the
+operational advice differs for terrain work, control points and source/storm risk.
+The existing NOAA caches are reused.
+Routine replies show the regional TEC estimate and timestamp without a historical
+baseline comparison. Detailed replies label the raw NOAA anomaly range as
+“Dị thường”, consistent with the web map. The bot does not present an internally
+computed 30-day reference series; the application has no such comparison view.
+
+In `standard`, ordinary status/stability questions retain concise diagnostic
+follow-ups without fetching NOAA. Detailed atmospheric questions can request the
+observations. Source availability alone never proves local RTCM/FIX quality.
+Automatic source-status notifications use a separate declarative formatter;
+they do not ask conversational questions or create sender context.
 
 Province lookup recognizes common abbreviations (HN, HCM/TPHCM, BRVT) and joined
 names. Fuzzy matching compares short word windows at a minimum score of 90.
@@ -45,7 +58,8 @@ then distinguishes “tăng liên tục” from “giữ ổn định”. A sing
 establishes a failure or measurement accuracy. “Nói rõ hơn” follows the current
 topic; “ngắn gọn thôi” summarizes it. Local definitions cover FIX/FLOAT, RTCM,
 NTRIP, mountpoint, GGA and correction age. Greetings, definitions and clarification
-do not fetch live source health or NOAA data. No user-derived object code runs.
+do not fetch live source health or NOAA data. CORS-only greetings/help only offer
+public source and atmospheric questions. No user-derived object code runs.
 
 The FIX/FLOAT and GGA definitions follow the manufacturer's GPGGA field reference:
 https://docs.novatel.com/OEM7/Content/Logs/GPGGA.htm
@@ -72,7 +86,8 @@ relative imports were adjusted for the package, with a lazy service import in th
 editor's static formatting helper to retain its existing class lookup.
 
 Validation covers report content, misspellings, ambiguous provinces, fresh/stale
-observations, source failures, scoped follow-ups and public command permissions:
+observations, source failures, scoped follow-ups, per-chat delivery modes and
+public command permissions:
 
 ```powershell
 python -m unittest tests.test_zalo_cors_report tests.test_zalo_public_cors

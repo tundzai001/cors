@@ -98,7 +98,7 @@ def region_for_question(question):
 
 
 def is_region_only(question):
-    words = re.sub(r'^(?:(?:the con|con|o|tai|tinh|thanh pho|tp)\s+)+', '', _plain(question))
+    words = re.sub(r'^(?:(?:the con|con|o|tai|khu vuc|tinh|thanh pho|tp)\s+)+', '', _plain(question))
     aliases = {alias for _, _, names in _regions() for alias in names}
     if words in aliases:
         return True
@@ -131,13 +131,9 @@ def ionosphere_observation(data, question, now=None):
         if not cells:
             return unavailable
         low, high = min(p[2] for p in cells), max(p[2] for p in cells)
-        anomaly = sum(p[3] for p in cells) / len(cells)
         tec_text = f'{low:.1f}' if low == high else f'{low:.1f}–{high:.1f}'
         stamp = observed.astimezone(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%H:%M %d/%m')
-        comparison = (f'cao hơn nền 30 ngày khoảng {anomaly:.1f} TECU' if round(anomaly, 1) > 0
-                      else f'thấp hơn nền 30 ngày khoảng {abs(anomaly):.1f} TECU' if round(anomaly, 1) < 0
-                      else 'xấp xỉ mức nền 30 ngày')
-        return {'name': name, 'tec': tec_text, 'comparison': comparison, 'stamp': stamp,
+        return {'name': name, 'tec': tec_text, 'stamp': stamp,
                 'anomaly_low': min(p[3] for p in cells), 'anomaly_high': max(p[3] for p in cells),
                 'age_minutes': max(0, int(age // 60)),
                 'delayed': age > 1800 or data['metadata'].get('is_stale', False)}
@@ -152,8 +148,8 @@ def ionosphere_text(data, question, now=None):
     delay = (f" · bản gần nhất, trễ {observation['age_minutes']} phút"
              if observation['delayed'] else '')
     return (f"Tầng điện ly · {observation['name']} (ước tính khu vực):\n"
-            f"TEC {observation['tec']} TECU; trung bình {observation['comparison']}.\n"
-            f"Độ lệch từng ô so với nền 30 ngày: {observation['anomaly_low']:+.1f} đến {observation['anomaly_high']:+.1f} TECU.\n"
+            f"TEC {observation['tec']} TECU.\n"
+            f"Dị thường NOAA: {observation['anomaly_low']:+.1f} đến {observation['anomaly_high']:+.1f} TECU.\n"
             f"NOAA GloTEC · {observation['stamp']}{delay}.")
 
 
@@ -217,15 +213,75 @@ def field_advice(status, kp, words):
     return 'Anh đang dùng trạm hoặc mountpoint nào?'
 
 
-async def report_text(health, question='', previous_intent='status'):
+async def _latest_ionosphere():
+    try:
+        return await asyncio.wait_for(ionosphere_service.get_latest(format_type='geojson'), timeout=15)
+    except Exception:
+        return {}
+
+
+def status_change_text(health):
+    if health.get('status') == 'online':
+        return '🟢 CORS Cục đang hoạt động trở lại.'
+    return '🔴 CORS Cục đang gián đoạn. Nếu đang đo bằng nguồn này, chuyển sang nguồn dự phòng đã kiểm tra.'
+
+
+async def _cors_only_report(health, question, intent):
+    """A public-source/atmosphere assessment, not a private station diagnosis."""
+    words = _plain(question)
+    name = region_for_question(question)[0]
+    heading = f'📍 {name}\n' if name != 'Việt Nam' else ''
+    data, kp = await asyncio.gather(_latest_ionosphere(), geomagnetic_observation())
+    observation = ionosphere_observation(data, question)
+    value = kp['value'] if kp else None
+    status = health.get('status')
+    headline = {'online': 'CORS Cục đang hoạt động.',
+                'offline': 'CORS Cục đang gián đoạn.'}.get(status, 'Chưa xác định được trạng thái CORS Cục.')
+    if kp:
+        state = ('bão từ mạnh' if value >= 7 else 'bão từ' if value >= 5 else
+                 'địa từ nhiễu động' if value >= 4 else 'địa từ yên tĩnh')
+        magnetic = f"Kp {value:.2f} · {state} ({kp['stamp']})."
+    else:
+        magnetic = 'Địa từ đang thiếu bản tin cập nhật.'
+    if intent == 'detail':
+        atmosphere = ionosphere_text(data, question)
+    elif observation:
+        delay = f", trễ {observation['age_minutes']} phút" if observation['delayed'] else ''
+        atmosphere = (f"Điện ly khu vực: TEC {observation['tec']} TECU (ước tính). "
+                      f"NOAA {observation['stamp']}{delay}.")
+    else:
+        atmosphere = 'Điện ly khu vực chưa có dữ liệu cập nhật để đánh giá.'
+
+    if status != 'online' or (value is not None and value >= 4):
+        advice = field_advice(status, value, words)
+    elif re.search(r'\b(khong che|bo tri|ranh|moc|dia chinh|dia hinh|binh do|do chi tiet)\b', words):
+        advice = field_advice(status, value, words)
+    else:
+        advice = ('Khuyến nghị: kiểm tra trên mốc đã biết đầu ca; đạt yêu cầu rồi mới triển khai. '
+                  'Các điểm quan trọng nên đo lặp để đối chiếu trước khi chốt.')
+    if intent in DIAGNOSTIC_INTENTS:
+        advice += ' Nếu máy vẫn FLOAT, kiểm tra điều kiện thu và dữ liệu hiệu chỉnh tại máy; bản tin điện ly không xác định được nguyên nhân riêng của máy.'
+    if not observation or value is None:
+        advice += ' Phần bản tin còn thiếu chưa đủ để nhận định điều kiện đo hiện tại.'
+    if intent == 'forecast':
+        headline += ' Đây là tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.'
+    scope = '\nAnh muốn xem điện ly ở tỉnh nào?' if name == 'Việt Nam' else ''
+    return f'{heading}{headline}\n{magnetic}\n{atmosphere}\n\n{advice}{scope}'
+
+
+async def report_text(health, question='', previous_intent='status', delivery_mode='standard'):
     words = _plain(question)
     intent = cors_intent(words, previous_intent)
     if intent in STATIC_INTENTS:
+        if delivery_mode == 'cors_only' and intent in {'greeting', 'help'}:
+            return 'Mình theo dõi CORS Cục, điện ly và địa từ. Anh có thể hỏi “tình trạng Bà Rịa - Vũng Tàu”, “đo địa hình Hà Nội hôm nay” hoặc “điện ly chi tiết”.'
         return static_reply(intent)
     options = region_options(question)
     if len(options) > 1:
         names = ' hay '.join(option[0] for option in options)
         return f'Anh muốn kiểm tra {names}? Mình cần xác định đúng khu vực trước nhé.'
+    if delivery_mode == 'cors_only':
+        return await _cors_only_report(health, question, intent)
     name = region_for_question(question)[0]
     heading = f'📍 {name}\n' if name != 'Việt Nam' else ''
     status = health.get('status')
@@ -273,10 +329,7 @@ async def report_text(health, question='', previous_intent='status'):
     async def fetch_ionosphere():
         if intent not in {'detail', 'detail_brief', 'forecast'}:
             return {}
-        try:
-            return await asyncio.wait_for(ionosphere_service.get_latest(format_type='geojson'), timeout=15)
-        except Exception:
-            return {}
+        return await _latest_ionosphere()
 
     data, kp = await asyncio.gather(fetch_ionosphere(), geomagnetic_observation())
     value = kp['value'] if kp else None
@@ -308,7 +361,7 @@ async def report_text(health, question='', previous_intent='status'):
         if not observation:
             return f'{heading}{headline} Điện ly chưa có dữ liệu cập nhật để đánh giá.'
         delay = f"; trễ {observation['age_minutes']} phút" if observation['delayed'] else ''
-        return (f"{heading}{headline} TEC {observation['tec']} TECU, {observation['comparison']} "
+        return (f"{heading}{headline} TEC {observation['tec']} TECU "
                 f"(ước tính NOAA {observation['stamp']}{delay}).\n{magnetic}")
     if intent == 'detail':
         return (f'{heading}{headline}\n\n{atmosphere}\n{magnetic}\n'

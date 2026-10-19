@@ -92,6 +92,7 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Đo thận trọng', text)
         self.assertNotIn('chưa dùng bản tin', text)
         self.assertIn('không phải sai số đo hay chất lượng FIX', text)
+        self.assertNotIn('30 ngày', text)
 
     async def test_intents_produce_different_useful_answers(self):
         with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
@@ -147,7 +148,8 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         data['features'][0]['properties']['anomaly'] = 20
         data['features'][1]['properties']['anomaly'] = -20
         text = ionosphere_text(data, 'Việt Nam')
-        self.assertIn('xấp xỉ mức nền', text)
+        self.assertIn('Dị thường NOAA', text)
+        self.assertNotIn('mức nền', text)
         self.assertIn('-20.0 đến +20.0', text)
 
     async def test_actual_stability_question_is_short_and_needs_no_noaa_calls(self):
@@ -240,6 +242,46 @@ class CorsReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('trễ 31 phút', text)
         self.assertNotIn('Độ lệch từng ô', text)
         self.assertNotIn('đang ổn định', text)
+
+    async def test_cors_only_answers_the_actual_regional_question_with_observations_and_advice(self):
+        data = self.data()
+        data['features'] = [{'geometry': {'coordinates': [107, 10]}, 'properties': {'tec':30.6, 'anomaly':0.2}}]
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=data)):
+            text = await report_text({'status':'online'}, 'tình trạng bà rịa vũng tàu', delivery_mode='cors_only')
+        self.assertIn('Bà Rịa - Vũng Tàu', text)
+        self.assertIn('TEC 30.6', text)
+        self.assertNotIn('0.2 TECU', text)
+        self.assertNotIn('30 ngày', text)
+        self.assertNotIn('Dị thường', text)
+        self.assertIn('địa từ yên tĩnh', text)
+        self.assertIn('kiểm tra trên mốc', text)
+        self.assertNotIn('mountpoint', text)
+        self.assertNotIn('chưa có số liệu RTCM/FIX', text)
+        self.assertNotIn('?', text)
+
+    async def test_cors_only_distinguishes_jobs_storms_and_missing_observations(self):
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value=self.data())):
+            terrain = await report_text({'status':'online'}, 'đo địa hình Tuyên Quang', delivery_mode='cors_only')
+            control = await report_text({'status':'online'}, 'đo khống chế Tuyên Quang', delivery_mode='cors_only')
+            self.assertIn('điểm kiểm tra đầu/cuối ca', terrain)
+            self.assertIn('đo lặp điểm quan trọng', control)
+            self.kp.return_value = {'value':7, 'stamp':'14:00 18/10'}
+            storm = await report_text({'status':'online'}, 'Tuyên Quang có ổn định không', delivery_mode='cors_only')
+            self.assertIn('bão từ mạnh', storm)
+            self.assertIn('Dời phần đo khống chế', storm)
+            self.assertNotIn('địa từ yên tĩnh', storm)
+        self.kp.return_value = None
+        with patch('app.zalo_cors_report.ionosphere_service.get_latest', AsyncMock(return_value={})):
+            missing = await report_text({'status':'online'}, 'Tuyên Quang', delivery_mode='cors_only')
+        self.assertIn('chưa có dữ liệu cập nhật', missing)
+        self.assertIn('chưa đủ', missing)
+        self.assertNotIn('mountpoint', missing)
+
+    async def test_cors_only_help_does_not_offer_station_management(self):
+        text = await report_text({}, 'chào bot', delivery_mode='cors_only')
+        self.assertIn('CORS Cục, điện ly và địa từ', text)
+        self.assertNotIn('mountpoint', text)
+        self.assertNotIn('FIX/RTCM', text)
 
 
 class GeomagneticTests(unittest.IsolatedAsyncioTestCase):

@@ -74,6 +74,8 @@ def _is_cors_status_question(text: str) -> bool:
         return True
     if region_options(words) and intent in {"stability", "measurement", "detail", "diagnostic"}:
         return True
+    if region_options(words) and re.search(r'\b(tinh trang|tinh hinh|trang thai)\b', words):
+        return True
     if is_region_only(words):
         return True
     if region != "Việt Nam" and words in {_plain(region), f"con {_plain(region)}", f"the con {_plain(region)}"}:
