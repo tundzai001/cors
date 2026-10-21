@@ -298,7 +298,7 @@ def save_license(serial, token):
 
 MQTT_SOURCE_CONFIG_FIELDS = {
     "name", "display_name",
-    "setup_method", "duration", "lat", "lon", "alt", "accuracy",
+    "setup_method", "duration", "lat", "lon", "alt", "accuracy", "altitude_reference",
     "base_setup_method", "survey_in_duration", "survey_in_accuracy",
     "target_host", "target_port", "target_pass", "target_mp",
     "stream_on_demand", "stream_active",
@@ -1560,6 +1560,15 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
     ]
 
     if method == "FIXED_LLA":
+        # A new fixed-position payload without metadata retains legacy semantics;
+        # on restart, a saved explicit reference must survive FRESET.
+        reference = params.get("altitude_reference", payload.get("altitude_reference"))
+        if not params and not payload:
+            reference = runtime_cfg.get("altitude_reference")
+        if reference not in (None, "LEGACY", "ELLIPSOID"):
+            raise ValueError("Unsupported altitude reference")
+        if reference == "ELLIPSOID":
+            commands.append(b"config undulation 0.0\r\n")
         commands.extend([
             f"mode base {lat} {lon} {alt}\r\n".encode("ascii"),
             b"$DELAY_2000$",
@@ -2935,6 +2944,7 @@ class MqttSourceWorker(threading.Thread):
                 runtime["survey_in_accuracy"] = params["survey_in_accuracy"]
         if method == "FIXED_LLA":
             coords = params.get("coords", {}) if isinstance(params.get("coords"), dict) else params
+            runtime["altitude_reference"] = params.get("altitude_reference", "LEGACY")
             for key in ("lat", "lon", "alt"):
                 if key in coords:
                     runtime[key] = coords[key]

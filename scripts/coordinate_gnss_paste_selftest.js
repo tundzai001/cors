@@ -66,6 +66,7 @@ function paste(name, text) {
     await tree.props.onSubmit({ preventDefault() {} }); render();
     assert.deepEqual(JSON.parse(JSON.stringify(sent[0].params.coords)), { lat: '20.8450000000', lon: '106.6880000000', alt: '30.0000' });
     assert.equal(sent[0].params.accuracy, 0.05);
+    assert.equal(sent[0].params.altitude_reference, 'ELLIPSOID');
     const before = position();
     for (const patch of [{ crs: 'EPSG:9210' }, { height_type: 'orthometric' }, { version: 2 },
         { coords: { lat: 91, lon: 106, alt: 30 } }, { coords: { lat: 20, lon: 106 } },
@@ -83,5 +84,19 @@ function paste(name, text) {
     assert.deepEqual(position(), ['0.0000000000', '0.0000000000', '0.0000']);
     assert(field('latitude').props.disabled);
     assert.throws(() => clipboard.encode({ lat: 20, lon: 106, alt: NaN }));
+    disabled = false;
+    device.serial = 'UNICORE_LEGACY'; device.detected_chip_type = 'Unicorecomm'; render();
+    assert.equal(field('altitude-reference').props.value, 'LEGACY');
+    await tree.props.onSubmit({ preventDefault() {} }); render();
+    assert.equal(sent.at(-1).params.altitude_reference, 'LEGACY');
+    const sentBeforePaste = sent.length;
+    assert.equal(paste('altitude', text), true);
+    assert.equal(sent.length, sentBeforePaste);
+    assert.equal(field('altitude-reference').props.value, 'ELLIPSOID');
+    await tree.props.onSubmit({ preventDefault() {} }); render();
+    assert.equal(sent.at(-1).params.altitude_reference, 'ELLIPSOID');
+    assert.equal(sent.at(-1).params.coords.alt, '30.0000');
+    device.serial = 'UNICORE_NEW'; device.base_config = {}; render();
+    assert.equal(field('altitude-reference').props.value, 'ELLIPSOID');
     console.log('PASS: shipped GNSS form fills all fields from any coordinate input, validates frame/height, preserves accuracy, blocks partial writes, and configures only on submit');
 })().catch(error => { console.error(error); process.exitCode = 1; });

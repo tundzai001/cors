@@ -168,7 +168,8 @@ async def configure_chip_endpoint(
 
                 accuracy = params.get('accuracy', 10.0)
                 commands_to_send = command_builder.build_base_fixed_lla_command(
-                    sensor_type, coords['lat'], coords['lon'], coords['alt'], accuracy, gnss_options
+                    sensor_type, coords['lat'], coords['lon'], coords['alt'], accuracy, gnss_options,
+                    altitude_reference=params.get('altitude_reference')
                 )
                 logging.info(f"Built Fixed LLA commands for {serial}: lat/lon/alt, acc={accuracy}m")
             else:

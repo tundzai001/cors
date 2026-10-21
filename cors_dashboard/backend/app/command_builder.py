@@ -306,8 +306,10 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
     return commands
 
 
-def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: float, accuracy: float, gnss_options: dict | None = None) -> list[bytes]:
+def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: float, accuracy: float, gnss_options: dict | None = None, *, altitude_reference: str | None = None) -> list[bytes]:
     commands = []
+    if altitude_reference not in (None, 'LEGACY', 'ELLIPSOID'):
+        raise ValueError('Unsupported altitude reference')
     lat = _bounded_finite_number(lat, "Latitude", -90, 90)
     lon = _bounded_finite_number(lon, "Longitude", -180, 180)
     alt = _bounded_finite_number(alt, "Altitude", -12000, 100000)
@@ -385,6 +387,11 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         lat_str = str(lat)
         lon_str = str(lon)
         alt_str = str(alt)
+
+        # MODE BASE otherwise interprets altitude using the receiver's undulation.
+        # Missing metadata preserves legacy configurations instead of reinterpreting them.
+        if altitude_reference == 'ELLIPSOID':
+            commands.append(b'config undulation 0.0\r\n')
         
         cmd_str = f'mode base {lat_str} {lon_str} {alt_str}\r\n'
         logging.info(f"🔍 Fixed position command: {repr(cmd_str)}")
@@ -398,12 +405,14 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
     return commands
 
 
-def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: float = 0, lon: float = 0, alt: float = 0) -> list[bytes]:
+def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: float = 0, lon: float = 0, alt: float = 0, *, altitude_reference: str | None = None) -> list[bytes]:
     """
     Hàm chuyên biệt dành riêng cho chip Unicorecomm LTE.
     Sử dụng mặc định cổng COM2 và chuỗi lệnh tối ưu theo yêu cầu người dùng.
     Trình tự: FRESET -> unlogall -> mode base -> RTCM-only -> saveconfig
     """
+    if altitude_reference not in (None, 'LEGACY', 'ELLIPSOID'):
+        raise ValueError('Unsupported altitude reference')
     commands = []
     port = "com2"
     
@@ -416,6 +425,8 @@ def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: 
         commands.append(f'mode base time {duration}\r\n'.encode('ascii'))
     else:
         # Giữ nguyên độ chính xác của tọa độ
+        if altitude_reference == 'ELLIPSOID':
+            commands.append(b'config undulation 0.0\r\n')
         commands.append(f'mode base {lat} {lon} {alt}\r\n'.encode('ascii'))
     
     # 3. LTE bridge is RTCM-only. Do not enable NMEA on the chip output port.

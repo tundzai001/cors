@@ -5810,6 +5810,10 @@ async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: f
             elif chip_type in ("Unicorecomm", "RTCM3_Source"):
                 # Use higher precision for command string to avoid rounding
                 base_cmd = f"MODE BASE {lat:.10f} {lon:.10f} {alt:.3f}\r\n".encode("ascii")
+                # Auto Base supplies ellipsoidal h; Unicore's default is geoid-based altitude.
+                ser.write(b"CONFIG UNDULATION 0.0\r\n")
+                ser.flush()
+                await asyncio.sleep(0.2)
                 ser.write(base_cmd)
                 ser.flush()
                 await asyncio.sleep(0.5)

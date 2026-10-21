@@ -132,6 +132,33 @@ Pasting does not send configuration commands. Measurement accuracy and other
 GNSS settings are preserved; the user reviews and submits the form normally.
 CSV export remains available separately for copying multiple result points.
 
+## Receiver height convention and compatibility
+
+New Fixed LLA submissions carry `params.altitude_reference = "ELLIPSOID"`.
+u-blox TMODE3 receives WGS 84 ellipsoidal h. Unicore MODE BASE instead uses
+its configured undulation; an ellipsoidal submission sends
+`CONFIG UNDULATION 0.0` **before** MODE BASE and SAVECONFIG. This follows the
+[Unicore FAQ](https://en.unicore.com/faq/). Zeroing undulation is a receiver
+input convention, not a conversion to national orthometric height. It can also
+change the receiver's geoid-based height output; downstream consumers must
+respect the reported separation.
+
+Stored Unicore coordinates without metadata display as legacy and retain the
+existing command behavior. Pasting a named ellipsoidal point selects ELLIPSOID.
+The operator can retain the legacy convention explicitly; no stored numeric
+height is migrated or guessed. u-blox submissions always identify ellipsoidal h.
+
+The LTE relay persists the reference and reapplies it after FRESET/restart.
+Python Auto Base agents already compute ellipsoidal h and now explicitly set
+zero undulation before applying it. Deploy the matching Python agent/relay
+update with the server/frontend; older local builders ignore the new metadata.
+ESP32 firmware has a separate local Auto Base command builder and requires its
+own corresponding update before this guarantee applies there. No existing
+receiver is reconfigured automatically by this change. Rolling back code leaves
+stored coordinates intact but loses the explicit height convention on Unicore.
+Wire-order and UI checks use simulated receivers; hardware readback remains
+required to validate the installed receiver/firmware.
+
 ## Development and validation
 
 Install backend requirements, including `pyproj==3.7.2`, before starting the app.

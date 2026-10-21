@@ -276,6 +276,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [longitude, setLongitude] = useState('');
     const [altitude, setAltitude] = useState('');
     const [coordinatePasteNotice, setCoordinatePasteNotice] = useState(null);
+    const [altitudeReference, setAltitudeReference] = useState('ELLIPSOID');
     const [fixedAccuracyCm, setFixedAccuracyCm] = useState('1'); // Centimeters in the form; API and stored accuracy use meters.
 
     // CORS connection for Auto Base (kept in this form only; never read from .env)
@@ -313,6 +314,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setLongitude('');
         setAltitude('');
         setCoordinatePasteNotice(null);
+        setAltitudeReference('ELLIPSOID');
         setFixedAccuracyCm('1');
         setCorsHost('');
         setCorsPort('2101');
@@ -348,6 +350,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 setLatitude(coords.lat ?? '');
                 setLongitude(coords.lon ?? '');
                 setAltitude(coords.alt ?? '');
+                setAltitudeReference(config.altitude_reference === 'ELLIPSOID' || device.detected_chip_type === 'Ublox'
+                    ? 'ELLIPSOID' : 'LEGACY');
             }
             // Convert stored meters to centimeters without rounding away sub-centimeter values.
             if (config.accuracy !== undefined) {
@@ -410,6 +414,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             setLatitude(formatCoord10(coords.lat));
             setLongitude(formatCoord10(coords.lon));
             setAltitude(formatAlt4(coords.alt));
+            setAltitudeReference('ELLIPSOID');
             setCoordinatePasteNotice({ error: false, message: 'Đã điền vĩ độ, kinh độ WGS 84 và độ cao h. Kiểm tra tọa độ rồi bấm áp dụng.' });
         } catch (error) {
             event.preventDefault();
@@ -495,6 +500,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     lon: lonStr,
                     alt: String(altitude).trim() || '0'
                 };
+                params.altitude_reference = finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
                 // Fixed accuracy is entered in centimeters and sent to the API in meters.
                 params.accuracy = parseFloat(fixedAccuracyCm || '1') / 100.0;
             } else if (method === 'SURVEY_IN') {
@@ -982,7 +988,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             />
                         </div>
                         <div className="col-md-6">
-                            <label htmlFor={`base-altitude-${device.serial}`} className="form-label">Độ cao h ellipsoid (mét)</label>
+                            <label htmlFor={`base-altitude-${device.serial}`} className="form-label">{activeChip === 'Ublox' || altitudeReference === 'ELLIPSOID' ? 'Độ cao h ellipsoid (mét)' : 'Độ cao theo cấu hình chip (mét)'}</label>
                             <input
                                 id={`base-altitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
@@ -991,6 +997,17 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 15.5"
                             />
+                            {activeChip !== 'Ublox' && <>
+                                <label htmlFor={`base-altitude-reference-${device.serial}`} className="form-label small mt-2">Cách chip hiểu độ cao</label>
+                                <select id={`base-altitude-reference-${device.serial}`} className="form-select"
+                                    value={altitudeReference} disabled={disabled || isSubmitting}
+                                    aria-describedby={`base-altitude-reference-help-${device.serial}`}
+                                    onChange={event => { setAltitudeReference(event.target.value); setCoordinatePasteNotice(null); }}>
+                                    <option value="ELLIPSOID">h ellipsoid WGS 84</option>
+                                    <option value="LEGACY">Giữ theo cấu hình geoid hiện tại của chip</option>
+                                </select>
+                                <div id={`base-altitude-reference-help-${device.serial}`} className="form-text">Dán từ công cụ sẽ chọn h ellipsoid. Cấu hình cũ giữ cách hiểu hiện tại của chip.</div>
+                            </>}
                         </div>
                         <div className="col-md-6">
                             <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác 3D của tọa độ Base (cm)</label>

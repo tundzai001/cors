@@ -64,6 +64,16 @@ class ServiceConfigPatchTests(unittest.TestCase):
         self.assertEqual(agent.cfg['password1'], 'replacement')
         saved = config.update_mqtt_source_config.call_args.args[1]
         self.assertEqual(saved['password2'], 'backup')
+        apply(agent, {'payload': {'method': 'FIXED_LLA', 'params': {
+            'coords': {'lat': 20, 'lon': 106, 'alt': 30}, 'altitude_reference': 'ELLIPSOID'}}})
+        saved = config.update_mqtt_source_config.call_args.args[1]
+        self.assertEqual(saved['altitude_reference'], 'ELLIPSOID')
+        self.assertEqual(saved['alt'], 30)
+        apply(agent, {'payload': {'method': 'FIXED_LLA', 'params': {
+            'coords': {'lat': 20, 'lon': 106, 'alt': 5}}}})
+        saved = config.update_mqtt_source_config.call_args.args[1]
+        self.assertEqual(saved['altitude_reference'], 'LEGACY')
+        self.assertEqual(saved['alt'], 5)
 
 
 if __name__ == '__main__':

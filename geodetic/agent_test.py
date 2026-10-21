@@ -3138,7 +3138,6 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
             
         elif command == "EXECUTE_RAW_COMMANDS":
             if data.get("original_config", {}).get("mode") == "BASE":
-                global active_auto_base_client, active_auto_base_task
                 try:
                     if 'active_auto_base_client' in globals() and active_auto_base_client:
                         active_auto_base_client.stop()
@@ -3540,6 +3539,10 @@ async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: f
                 ser.flush()
             elif chip_type in ("Unicorecomm", "RTCM3_Source"):
                 base_cmd = f"MODE BASE {lat:.8f} {lon:.8f} {alt:.3f}\r\n".encode("ascii")
+                # Auto Base supplies ellipsoidal h; keep the same convention as u-blox.
+                ser.write(b"CONFIG UNDULATION 0.0\r\n")
+                ser.flush()
+                await asyncio.sleep(0.2)
                 ser.write(base_cmd)
                 ser.flush()
                 await asyncio.sleep(0.5)
