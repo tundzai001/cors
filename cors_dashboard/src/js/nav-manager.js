@@ -60,6 +60,7 @@ const NavigationManager = {
         navContainer.innerHTML = '';
 
         this.addGroup(navContainer, 'Operate');
+        this.addNavItem(navContainer, { id: 'coordinates', icon: 'bi-crosshair', text: 'Đổi tọa độ', href: '/coordinates', active: this.currentPage === 'coordinates' });
         this.addNavItem(navContainer, { id: 'dashboard', icon: 'bi-grid-1x2-fill', text: 'Dashboard', href: '/', active: this.currentPage === 'dashboard' });
         this.addNavItem(navContainer, { id: 'map', icon: 'bi-map-fill', text: 'Station Map', href: '/?view=map', active: this.currentPage === 'map' });
         this.addNavItem(navContainer, { id: 'zalo', icon: 'bi-chat-dots-fill', text: 'Zalo Bot', href: '/zalo.html', active: this.currentPage === 'zalo' });

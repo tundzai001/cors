@@ -661,6 +661,9 @@ from .client_device import client_device_name
 from .ionosphere_routes import router as ionosphere_router
 app.include_router(ionosphere_router)
 
+from .coordinate_routes import router as coordinate_router
+app.include_router(coordinate_router)
+
 
 from .satellite_routes import router as satellite_router
 app.include_router(satellite_router)

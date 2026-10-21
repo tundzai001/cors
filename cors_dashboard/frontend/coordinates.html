@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Chuyển đổi tọa độ | Aitogy</title>
+<link rel="icon" href="/assets/img/aitogy.png">
+<link rel="stylesheet" href="/assets/css/dist/coordinates.min.css?v=1">
+<script defer src="/assets/js/dist/coordinates.min.js?v=2"></script>
+</head>
+<body>
+<header><a href="/" class="brand">AITOGY <span>/ Công cụ đo đạc</span></a><a href="/">Về trang chủ</a></header>
+<main>
+<div class="intro"><p class="eyebrow">HỆ QUY CHIẾU & TỌA ĐỘ</p><h1>Chuyển đổi tọa độ</h1><p>VN-2000, WGS 84, UTM và Web Mercator. Đổi một điểm hoặc cả danh sách.</p></div>
+<form id="converter" aria-busy="true">
+<div class="toolbar"><label for="edition">Danh mục tỉnh thành</label><select id="edition"><option value="63">63 tỉnh thành trước sáp nhập</option><option value="34">34 tỉnh thành hiện tại</option></select><button type="button" id="swap" disabled>Đảo chiều</button></div>
+<div class="systems">
+<section class="card" aria-labelledby="source-title"><p class="eyebrow">01 / ĐẦU VÀO</p><h2 id="source-title">Hệ tọa độ nguồn</h2><label for="source">Hệ quy chiếu / phép chiếu</label><select id="source" aria-describedby="source-meridian" required disabled></select><div id="source-location" class="location" hidden><label for="source-province">Tỉnh thành</label><select id="source-province"></select><label for="source-region">Vùng đo theo tỉnh cũ</label><select id="source-region"></select></div><p class="hint" id="source-meridian" aria-live="polite"></p><p class="axis" id="source-axis"></p></section>
+<section class="card" aria-labelledby="target-title"><p class="eyebrow">02 / ĐẦU RA</p><h2 id="target-title">Hệ tọa độ đích</h2><label for="target">Hệ quy chiếu / phép chiếu</label><select id="target" aria-describedby="target-meridian" required disabled></select><div id="target-location" class="location" hidden><label for="target-province">Tỉnh thành</label><select id="target-province"></select><label for="target-region">Vùng đo theo tỉnh cũ</label><select id="target-region"></select></div><p class="hint" id="target-meridian" aria-live="polite"></p><p class="axis" id="target-axis"></p></section>
+</div>
+<section class="card input-card"><div class="section-head"><h2>Danh sách tọa độ</h2><button type="button" id="example" disabled>Dùng ví dụ</button></div><label for="points" id="points-label">Mỗi dòng một điểm</label><textarea id="points" rows="6" spellcheck="false" required aria-describedby="input-help" placeholder="21.0285 105.8542"></textarea><p id="input-help" class="hint">Hai giá trị cách nhau bằng khoảng trắng, dấu phẩy hoặc dấu chấm phẩy. Dùng dấu chấm thập phân. Tối đa 1.000 điểm.</p><div class="actions"><button class="primary" id="convert" type="submit" disabled>Chuyển đổi tọa độ</button><p id="status" role="status" aria-live="polite">Đang tải danh mục hệ tọa độ…</p></div></section>
+</form>
+<section class="card result" id="result" hidden aria-labelledby="result-title"><div class="section-head"><h2 id="result-title">Kết quả</h2><div><button type="button" id="copy">Sao chép</button> <button type="button" id="download">Tải CSV</button></div></div><p id="result-summary"></p><div class="table-wrap"><table><thead><tr><th scope="col">Điểm</th><th scope="col" id="first-heading"></th><th scope="col" id="second-heading"></th></tr></thead><tbody id="result-body"></tbody></table></div><p class="hint" id="accuracy"></p></section>
+<aside><strong>Chọn theo hồ sơ đo đạc</strong><p>Tỉnh sau sáp nhập có thể chứa nhiều vùng chiếu cũ. Danh mục 34 tỉnh giúp tra cứu vùng đo, không tự gán kinh tuyến mới cho toàn tỉnh. Chỉ đổi tọa độ ngang; không chuyển độ cao. Sai số phép đổi datum có thể ở mức mét, không thay thế hiệu chỉnh địa phương.</p><details><summary>Nguồn và quy ước</summary><p>VN-2000 TM-3: múi 3°, k₀ = 0,9999; X là tọa độ Bắc, Y là tọa độ Đông. Các hệ UTM dùng múi 6°, k₀ = 0,9996. Tọa độ địa lý dùng độ thập phân theo thứ tự vĩ độ, kinh độ.</p><p>Kinh tuyến tỉnh cũ: Phụ lục 01, <a href="https://dlrpd.monre.gov.vn/noidung/Lists/VBQPPL/Attachments/186/26-2024-tt-btnmt_Signed.pdf" target="_blank" rel="noopener">Thông tư 26/2024/TT-BTNMT</a>. Phép chuyển từ cơ sở dữ liệu EPSG trong PROJ, gồm <a href="https://epsg.io/6960" target="_blank" rel="noopener">VN-2000 sang WGS 84 (2)</a>. Danh mục 34 tỉnh dùng dữ liệu hành chính hiện có của hệ thống.</p></details></aside>
+</main><footer>Aitogy · Công cụ chuyển đổi tọa độ ngang</footer>
+</body></html>

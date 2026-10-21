@@ -1,0 +1,317 @@
+[
+  {
+    "name": "Hà Nội",
+    "current_code": "01",
+    "central_meridian": 105
+  },
+  {
+    "name": "Cao Bằng",
+    "current_code": "04",
+    "central_meridian": 105.75
+  },
+  {
+    "name": "Tuyên Quang",
+    "current_code": "08",
+    "central_meridian": 106
+  },
+  {
+    "name": "Hà Giang",
+    "current_code": "08",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Điện Biên",
+    "current_code": "11",
+    "central_meridian": 103
+  },
+  {
+    "name": "Lai Châu",
+    "current_code": "12",
+    "central_meridian": 103
+  },
+  {
+    "name": "Sơn La",
+    "current_code": "14",
+    "central_meridian": 104
+  },
+  {
+    "name": "Lào Cai",
+    "current_code": "15",
+    "central_meridian": 104.75
+  },
+  {
+    "name": "Yên Bái",
+    "current_code": "15",
+    "central_meridian": 104.75
+  },
+  {
+    "name": "Thái Nguyên",
+    "current_code": "19",
+    "central_meridian": 106.5
+  },
+  {
+    "name": "Bắc Kạn",
+    "current_code": "19",
+    "central_meridian": 106.5
+  },
+  {
+    "name": "Lạng Sơn",
+    "current_code": "20",
+    "central_meridian": 107.25
+  },
+  {
+    "name": "Quảng Ninh",
+    "current_code": "22",
+    "central_meridian": 107.75
+  },
+  {
+    "name": "Bắc Ninh",
+    "current_code": "24",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Bắc Giang",
+    "current_code": "24",
+    "central_meridian": 107
+  },
+  {
+    "name": "Phú Thọ",
+    "current_code": "25",
+    "central_meridian": 104.75
+  },
+  {
+    "name": "Vĩnh Phúc",
+    "current_code": "25",
+    "central_meridian": 105
+  },
+  {
+    "name": "Hoà Bình",
+    "current_code": "25",
+    "central_meridian": 106
+  },
+  {
+    "name": "Hải Phòng",
+    "current_code": "31",
+    "central_meridian": 105.75
+  },
+  {
+    "name": "Hải Dương",
+    "current_code": "31",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Hưng Yên",
+    "current_code": "33",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Thái Bình",
+    "current_code": "33",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Ninh Bình",
+    "current_code": "37",
+    "central_meridian": 105
+  },
+  {
+    "name": "Hà Nam",
+    "current_code": "37",
+    "central_meridian": 105
+  },
+  {
+    "name": "Nam Định",
+    "current_code": "37",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Thanh Hoá",
+    "current_code": "38",
+    "central_meridian": 105
+  },
+  {
+    "name": "Nghệ An",
+    "current_code": "40",
+    "central_meridian": 104.75
+  },
+  {
+    "name": "Hà Tĩnh",
+    "current_code": "42",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Quảng Trị",
+    "current_code": "44",
+    "central_meridian": 106.25
+  },
+  {
+    "name": "Quảng Bình",
+    "current_code": "44",
+    "central_meridian": 106
+  },
+  {
+    "name": "Thừa Thiên Huế",
+    "current_code": "46",
+    "central_meridian": 107
+  },
+  {
+    "name": "Đà Nẵng",
+    "current_code": "48",
+    "central_meridian": 107.75
+  },
+  {
+    "name": "Quảng Nam",
+    "current_code": "48",
+    "central_meridian": 107.75
+  },
+  {
+    "name": "Quảng Ngãi",
+    "current_code": "51",
+    "central_meridian": 108
+  },
+  {
+    "name": "Kon Tum",
+    "current_code": "51",
+    "central_meridian": 107.5
+  },
+  {
+    "name": "Gia Lai",
+    "current_code": "52",
+    "central_meridian": 108.5
+  },
+  {
+    "name": "Bình Định",
+    "current_code": "52",
+    "central_meridian": 108.25
+  },
+  {
+    "name": "Khánh Hoà",
+    "current_code": "56",
+    "central_meridian": 108.25
+  },
+  {
+    "name": "Ninh Thuận",
+    "current_code": "56",
+    "central_meridian": 108.25
+  },
+  {
+    "name": "Đắk Lắk",
+    "current_code": "66",
+    "central_meridian": 108.5
+  },
+  {
+    "name": "Phú Yên",
+    "current_code": "66",
+    "central_meridian": 108.5
+  },
+  {
+    "name": "Lâm Đồng",
+    "current_code": "68",
+    "central_meridian": 107.75
+  },
+  {
+    "name": "Đắk Nông",
+    "current_code": "68",
+    "central_meridian": 108.5
+  },
+  {
+    "name": "Bình Thuận",
+    "current_code": "68",
+    "central_meridian": 108.5
+  },
+  {
+    "name": "Đồng Nai",
+    "current_code": "75",
+    "central_meridian": 107.75
+  },
+  {
+    "name": "Bình Phước",
+    "current_code": "75",
+    "central_meridian": 106.25
+  },
+  {
+    "name": "Hồ Chí Minh",
+    "current_code": "79",
+    "central_meridian": 105.75
+  },
+  {
+    "name": "Bình Dương",
+    "current_code": "79",
+    "central_meridian": 105.75
+  },
+  {
+    "name": "Bà Rịa - Vũng Tàu",
+    "current_code": "79",
+    "central_meridian": 107.75
+  },
+  {
+    "name": "Tây Ninh",
+    "current_code": "80",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Long An",
+    "current_code": "80",
+    "central_meridian": 105.75
+  },
+  {
+    "name": "Đồng Tháp",
+    "current_code": "82",
+    "central_meridian": 105
+  },
+  {
+    "name": "Tiền Giang",
+    "current_code": "82",
+    "central_meridian": 105.75
+  },
+  {
+    "name": "Vĩnh Long",
+    "current_code": "86",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Bến Tre",
+    "current_code": "86",
+    "central_meridian": 105.75
+  },
+  {
+    "name": "Trà Vinh",
+    "current_code": "86",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "An Giang",
+    "current_code": "91",
+    "central_meridian": 104.75
+  },
+  {
+    "name": "Kiên Giang",
+    "current_code": "91",
+    "central_meridian": 104.5
+  },
+  {
+    "name": "Cần Thơ",
+    "current_code": "92",
+    "central_meridian": 105
+  },
+  {
+    "name": "Sóc Trăng",
+    "current_code": "92",
+    "central_meridian": 105.5
+  },
+  {
+    "name": "Hậu Giang",
+    "current_code": "92",
+    "central_meridian": 105
+  },
+  {
+    "name": "Cà Mau",
+    "current_code": "96",
+    "central_meridian": 104.5
+  },
+  {
+    "name": "Bạc Liêu",
+    "current_code": "96",
+    "central_meridian": 105
+  }
+]

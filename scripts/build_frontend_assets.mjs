@@ -17,7 +17,7 @@ const jsx = [
 const css = [
     'style.css', 'enterprise-theme.css', 'cinematic-cards.css',
     'cinematic-upgrade.css', 'dashboard.css', 'ops-ui.css',
-    'responsive-layout.css', 'zalo-bot.css', 'api-keys.css',
+    'responsive-layout.css', 'zalo-bot.css', 'api-keys.css', 'coordinates.css',
 ];
 const jsDist = `${publicRoot}/js/dist`;
 const cssDist = `${publicRoot}/css/dist`;

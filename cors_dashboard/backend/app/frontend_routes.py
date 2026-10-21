@@ -47,6 +47,10 @@ async def serve_security():
 async def serve_operations():
     return FileResponse("../frontend/operations.html")
 
+@router.get("/coordinates", include_in_schema=False)
+async def serve_coordinates():
+    return FileResponse("../frontend/coordinates.html")
+
 @router.get("/zalo", include_in_schema=False)
 async def serve_zalo():
     return FileResponse("../frontend/zalo.html")
@@ -90,7 +94,7 @@ async def serve_robots():
 
 @router.get("/{page_name}.html", include_in_schema=False)
 async def serve_public_html(page_name: str):
-    if page_name not in {"operations", "rovers-global", "security", "users", "zalo"}:
+    if page_name not in {"operations", "rovers-global", "security", "users", "zalo", "coordinates"}:
         raise HTTPException(status_code=404)
     return FileResponse(f"../frontend/{page_name}.html")
 
