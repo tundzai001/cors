@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     ZALO_BOT_MODE: str = "polling"
     ZALO_WEBHOOK_URL: str = ""
     ZALO_WEBHOOK_SECRET: str = ""
+    ZALO_TB_BOT_TOKEN: str = ""
+    ZALO_TB_BOT_MODE: str = "polling"
+    ZALO_TB_WEBHOOK_URL: str = ""
+    ZALO_TB_WEBHOOK_SECRET: str = ""
     ENABLE_ZALO_ERROR_ALERTS: bool = True
     ZALO_STATE_ENCRYPTION_KEY: str = ""
     ZALO_SMART_ASSISTANT_V2: bool = True

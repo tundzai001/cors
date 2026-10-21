@@ -5,7 +5,7 @@
     const OTP_CIRCUMFERENCE = 2 * Math.PI * 28; // r=28 in SVG
 
     const state = {
-        items: [], stations: [], isAdmin: false, query: '', modal: null, polling: null,
+        items: [], stations: [], bots: [], botFilter: '', isAdmin: false, query: '', modal: null, polling: null,
         otpStreaming: false, otpTimer: null, otpAnimFrame: null, otpStartTime: 0,
         otpExpiresAt: 0, otpDurationMs: OTP_INTERVAL_MS,
         currentCode: '', currentUser: null,
@@ -27,6 +27,26 @@
 
     function bindingLabel(item) {
         return ({ cors_public: 'Public · CORS Cục', group_admin: 'Group quản trị', group_public: 'Group tra cứu', private: 'Theo tài khoản web' })[item.binding_type] || item.binding_type;
+    }
+
+    function botLabel(item) {
+        return item.bot_name || (item.bot_key === 'tb' ? 'Bot TB CORS' : 'Bot CORS Manager');
+    }
+
+    function renderBotOverview() {
+        const target = document.getElementById('zalo-bot-overview');
+        if (!target) return;
+        target.innerHTML = state.bots.map(bot => {
+            const count = state.items.filter(item => (item.bot_key || 'tun') === bot.key).length;
+            const status = !bot.token_configured ? 'Chưa cấu hình' : !state.system.enabled ? 'Đã tắt' : bot.running ? 'Đang chạy' : 'Chưa chạy';
+            const color = bot.running && state.system.enabled ? 'bg-success' : !bot.token_configured ? 'bg-warning text-dark' : 'bg-secondary';
+            return `<div class="col-12 col-md-6"><div class="ops-card zalo-bot-summary p-3 h-100">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2"><div>
+                    <h2 class="h6 mb-1">${escapeHtml(bot.name)}</h2><div class="small text-muted">Chủ bot: ${escapeHtml(bot.owner)}</div>
+                </div><span class="badge ${color}">${status}</span></div>
+                <div class="small mt-3">${count} liên kết${state.isAdmin ? '' : ' của bạn'}</div>
+            </div></div>`;
+        }).join('');
     }
 
     function scopeLabel(item) {
@@ -111,11 +131,11 @@
 
         if (description) {
             if (available) {
-                description.textContent = `Trạng thái được lưu trực tiếp vào ${state.system.env_file || '.env'} và áp dụng ngay cho runtime.`;
+                description.textContent = 'Điều khiển cả Bot CORS Manager (Tun) và Bot TB CORS (Trường). Mỗi bot có liên kết và quyền riêng.';
             } else if (!sdkAvailable) {
                 description.textContent = 'Thiếu Zalo SDK trong môi trường hiện tại nên không thể bật bot.';
             } else if (!tokenConfigured) {
-                description.textContent = 'Thiếu ZALO_BOT_TOKEN trong .env nên không thể bật bot.';
+                description.textContent = 'Chưa cấu hình token cho bot nào nên không thể bật hệ thống.';
             } else {
                 description.textContent = 'Bot chưa sẵn sàng để bật.';
             }
@@ -151,6 +171,8 @@
             state.system.token_configured = Boolean(data.token_configured);
             state.system.sdk_available = Boolean(data.sdk_available);
             state.system.env_file = data.env_file || '.env';
+            state.bots = data.bots || [];
+            renderBotOverview();
         } catch (error) {
             window.CorsUI?.showToast?.('danger', `Không tải được trạng thái Zalo Bot: ${error.message}`);
         } finally {
@@ -176,13 +198,15 @@
             state.system.token_configured = Boolean(data.token_configured);
             state.system.sdk_available = Boolean(data.sdk_available);
             state.system.env_file = data.env_file || '.env';
+            state.bots = data.bots || [];
+            renderBotOverview();
             if (state.system.enabled) {
                 if (!state.otpStreaming) startOtpStream();
                 await loadBindings({ silent: true });
-                window.CorsUI?.showToast?.('success', 'Đã bật Zalo Bot và cập nhật .env.');
+                window.CorsUI?.showToast?.('success', 'Đã bật hệ thống Zalo.');
             } else {
                 stopOtpStream();
-                window.CorsUI?.showToast?.('success', 'Đã tắt Zalo Bot và cập nhật .env.');
+                window.CorsUI?.showToast?.('success', 'Đã tắt hệ thống Zalo.');
             }
         } catch (error) {
             state.system = previous;
@@ -206,11 +230,11 @@
     function renderBindings() {
         const body = document.getElementById('binding-list');
         const query = state.query.trim().toLocaleLowerCase('vi');
-        const items = state.items.filter(item => !query || [
-            item.display_name, item.chat_id, item.dashboard_username, item.binding_type
-        ].some(value => String(value || '').toLocaleLowerCase('vi').includes(query)));
+        const items = state.items.filter(item => (!state.botFilter || (item.bot_key || 'tun') === state.botFilter) && (!query || [
+            item.display_name, item.chat_id, item.dashboard_username, item.binding_type, botLabel(item), item.bot_owner
+        ].some(value => String(value || '').toLocaleLowerCase('vi').includes(query))));
         if (!items.length) {
-            body.innerHTML = '<tr><td colspan="8"><div class="ops-empty-state"><i class="bi bi-chat"></i><span>Không có liên kết phù hợp</span></div></td></tr>';
+            body.innerHTML = '<tr><td colspan="9"><div class="ops-empty-state"><i class="bi bi-chat"></i><span>Không có liên kết phù hợp</span></div></td></tr>';
             return;
         }
         body.innerHTML = items.map(item => {
@@ -225,6 +249,7 @@
             const badgeClass = scopeBadgeClass(item);
             const actions = (state.isAdmin ? `${!isPublic ? `<button class="btn btn-sm btn-outline-primary me-1" data-cors-only="${item.id}">Chỉ Cục</button>` : ''}<button class="btn btn-sm ${item.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${item.is_active ? 'Dừng gửi' : 'Cho gửi'}</button>` : '') + `<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình" aria-label="Cấu hình chat"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết" aria-label="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
             return `<tr>
+                <td data-label="Bot"><div><strong>${escapeHtml(botLabel(item))}</strong><div class="small text-muted">${escapeHtml(item.bot_owner || (item.bot_key === 'tb' ? 'Trường' : 'Tun'))}</div></div></td>
                 <td data-label="Loại"><span class="badge ${isGroup ? 'bg-warning text-dark' : 'bg-info text-dark'}">${isGroup ? 'Nhóm' : 'Cá nhân'}</span></td>
                 <td data-label="Chat"><strong>${escapeHtml(item.display_name || fallbackName)}</strong><div class="small text-muted font-monospace">${escapeHtml(item.chat_id)}</div></td>
                 <td data-label="Tài khoản"><div>${escapeHtml(accountPrimary)}</div><div class="small text-muted">${escapeHtml(accountSecondary)}</div></td>
@@ -244,13 +269,18 @@
             state.stations = data.stations || [];
             state.isAdmin = Boolean(data.is_admin);
             state.system.enabled = Boolean(data.system_enabled);
+            state.bots = data.bots || [];
+            renderBotOverview();
             applyRoleLayout();
             renderGroupOtpStations();
             renderStats();
             renderBindings();
             syncSystemControls();
         } catch (error) {
-            if (!silent) document.getElementById('binding-list').innerHTML = `<tr><td colspan="8" class="text-danger p-3">${escapeHtml(error.message)}</td></tr>`;
+            if (!silent) {
+                document.getElementById('binding-list').innerHTML = `<tr><td colspan="9" class="text-danger p-3">${escapeHtml(error.message)}</td></tr>`;
+                document.getElementById('zalo-bot-overview').textContent = 'Không tải được trạng thái bot. Bấm làm mới để thử lại.';
+            }
         }
     }
 
@@ -504,7 +534,7 @@
         if (!item) return;
         const notification = item.notifications || {};
         document.getElementById('edit-binding-id').value = item.id;
-        document.getElementById('edit-chat-id').textContent = item.chat_id;
+        document.getElementById('edit-chat-id').textContent = `${botLabel(item)} · ${item.chat_id}`;
         document.getElementById('edit-display-name').value = item.display_name || '';
         document.getElementById('edit-binding-type').value = item.binding_type;
         document.getElementById('edit-active').checked = Boolean(item.is_active);
@@ -620,6 +650,7 @@
         // Binding controls
         document.getElementById('refresh-bindings').addEventListener('click', () => loadBindings());
         document.getElementById('binding-search').addEventListener('input', event => { state.query = event.target.value; renderBindings(); });
+        document.getElementById('binding-bot-filter').addEventListener('change', event => { state.botFilter = event.target.value; renderBindings(); });
         document.getElementById('edit-scope-mode').addEventListener('change', updateScopeEditor);
         document.getElementById('edit-binding-type').addEventListener('change', updateScopeEditor);
         document.querySelectorAll('input[name="delivery-mode"]').forEach(input => input.addEventListener('change', () => {

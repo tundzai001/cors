@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 from . import auth, models, schemas
 from .database import get_db, settings
 from .runtime_config import ENV_FILE_PATH
+from .zalo_bot_identity import BOT_IDENTITIES, chat_bot_key
 
 logger = logging.getLogger("app.main")
 router = APIRouter()
@@ -53,11 +54,19 @@ def _extract_zalo_webhook_secret(request: Request) -> str:
     return ""
 
 
-def _validate_zalo_webhook_secret(request: Request) -> None:
+def _get_bot_service(bot_key: str):
+    from .zalo_bot_service import zalo_bot_services
+    if bot_key not in zalo_bot_services:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bot Zalo.")
+    return zalo_bot_services[bot_key]
+
+
+def _validate_zalo_webhook_secret(request: Request, bot_key: str = "tun") -> None:
     if not settings.ENABLE_ZALO_BOT:
         raise HTTPException(status_code=503, detail="Zalo Bot is disabled")
 
-    expected_secret = str(getattr(settings, "ZALO_WEBHOOK_SECRET", "") or "").strip()
+    service = _get_bot_service(bot_key)
+    expected_secret = service._bot_setting("WEBHOOK_SECRET")
     if not expected_secret:
         logger.error("Zalo webhook request rejected because ZALO_WEBHOOK_SECRET is not configured.")
         raise HTTPException(status_code=503, detail="Zalo webhook secret is not configured")
@@ -80,32 +89,38 @@ def _persist_zalo_bot_enabled(enabled: bool) -> None:
 
 
 def _get_zalo_system_state() -> dict[str, Any]:
-    from .zalo_bot_service import zalo_bot_service
-    from .zalo_bot_service import ZALO_AVAILABLE
+    from .zalo_bot_service import zalo_bot_services, ZALO_AVAILABLE
 
-    token = str(getattr(settings, "ZALO_BOT_TOKEN", "") or "").strip()
-    running = bool(getattr(zalo_bot_service, "app", None))
+    bots = [{"key": key, **BOT_IDENTITIES[key],
+             "token_configured": bool(service._bot_setting("BOT_TOKEN")),
+             "running": service.app is not None, "mode": service._bot_mode()}
+            for key, service in zalo_bot_services.items()]
+    configured = [bot for bot in bots if bot["token_configured"]]
+    running = bool(configured) and all(bot["running"] for bot in configured)
     sdk_available = bool(ZALO_AVAILABLE)
     return {
         "enabled": bool(settings.ENABLE_ZALO_BOT),
         "running": running,
-        "token_configured": bool(token),
+        "token_configured": bool(configured),
         "sdk_available": sdk_available,
-        "available": bool(token) and sdk_available,
+        "available": bool(configured) and sdk_available,
+        "bots": bots,
         "mode": str(getattr(settings, "ZALO_BOT_MODE", "polling") or "polling").strip().lower(),
         "env_file": str(ENV_FILE_PATH),
     }
 
 
 @router.get("/api/zalo/webhook", response_class=PlainTextResponse)
-async def zalo_webhook_verify(request: Request):
-    _validate_zalo_webhook_secret(request)
+@router.get("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse)
+async def zalo_webhook_verify(request: Request, bot_key: str = "tun"):
+    _validate_zalo_webhook_secret(request, bot_key)
     return "ok"
 
 
 @router.post("/api/zalo/webhook", response_class=PlainTextResponse)
-async def zalo_webhook(request: Request, response: Response):
-    _validate_zalo_webhook_secret(request)
+@router.post("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse)
+async def zalo_webhook(request: Request, response: Response, bot_key: str = "tun"):
+    _validate_zalo_webhook_secret(request, bot_key)
 
     try:
         payload = await request.json()
@@ -116,8 +131,7 @@ async def zalo_webhook(request: Request, response: Response):
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
 
     try:
-        from .zalo_bot_service import zalo_bot_service
-        result = await zalo_bot_service.process_webhook_payload(payload)
+        result = await _get_bot_service(bot_key).process_webhook_payload(payload)
         response.headers["X-Zalo-Trace-Id"] = result["trace_id"]
         response.headers["X-Zalo-Outbound-Count"] = str(result["outbound_count"])
     except ValueError as e:
@@ -135,19 +149,19 @@ async def zalo_webhook(request: Request, response: Response):
 @router.get("/api/admin/zalo/diagnostics")
 async def get_zalo_diagnostics(
     limit: int = Query(default=20, ge=1, le=100),
+    bot_key: str = Query(default="tun"),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
 ):
     """Show recent, credential-redacted Zalo inbound/dispatch/outbound traces."""
-    from .zalo_bot_service import zalo_bot_service
-    return zalo_bot_service.get_debug_events(limit=limit)
+    return _get_bot_service(bot_key).get_debug_events(limit=limit)
 
 
 @router.delete("/api/admin/zalo/diagnostics")
 async def clear_zalo_diagnostics(
+    bot_key: str = Query(default="tun"),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
 ):
-    from .zalo_bot_service import zalo_bot_service
-    zalo_bot_service.clear_debug_events()
+    _get_bot_service(bot_key).clear_debug_events()
     return {"status": "cleared"}
 
 
@@ -187,19 +201,19 @@ async def update_zalo_system_state(
     if enabled == current_state["enabled"]:
         return current_state
 
-    from .zalo_bot_service import zalo_bot_service
+    from .zalo_bot_service import start_zalo_bots, stop_zalo_bots
 
     _persist_zalo_bot_enabled(enabled)
     try:
         if enabled:
             if not current_state["running"]:
-                await zalo_bot_service.start(strict=True)
+                await start_zalo_bots(strict=True)
         else:
-            await zalo_bot_service.stop()
+            await stop_zalo_bots()
     except Exception as exc:
         if enabled:
             try:
-                await zalo_bot_service.stop()
+                await stop_zalo_bots()
             except Exception:
                 pass
         _persist_zalo_bot_enabled(not enabled)
@@ -289,6 +303,7 @@ async def get_zalo_bindings(
         "stations": stations,
         "is_admin": current_user.role == auth.Role.ADMIN,
         "system_enabled": bool(settings.ENABLE_ZALO_BOT),
+        "bots": _get_zalo_system_state()["bots"],
     }
 
 
@@ -328,6 +343,5 @@ async def revoke_zalo_binding(
     )
     if not deleted_chat_id:
         raise HTTPException(status_code=404, detail="Không tìm thấy liên kết Zalo hoặc bạn không có quyền xóa")
-    from .zalo_bot_service import zalo_bot_service
-    zalo_bot_service.forget_chat(deleted_chat_id)
+    _get_bot_service(chat_bot_key(deleted_chat_id)).forget_chat(deleted_chat_id)
     return {"status": "deleted", "binding_id": binding_id, "chat_id": deleted_chat_id}

@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from .database import settings
 from . import auth
 from .zalo_assistant import ZaloPrincipal, payload_fingerprint, zalo_repository
+from .zalo_bot_identity import BOT_IDENTITIES, chat_bot_key, raw_chat_id, scoped_chat_id
 
 try:
     from zalo_bot import Update
@@ -30,7 +31,7 @@ except ImportError:
     ZALO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-ZALO_TRACE_VERSION = "20261019-fix-feasibility-v23"
+ZALO_TRACE_VERSION = "20261021-two-bots-v24"
 
 # Preserve existing imports of command constants and intent helpers.
 from .zalo_bot.common import (
@@ -50,11 +51,14 @@ from .zalo_bot.alerts import AlertsMixin
 class ZaloBotService(
     AdministrationMixin, EditorMixin, ConversationMixin, CommandsMixin, CorsMixin, AlertsMixin
 ):
-    def __init__(self):
+    def __init__(self, bot_key: str = "tun"):
+        if bot_key not in BOT_IDENTITIES:
+            raise ValueError("Unknown Zalo bot")
+        self.bot_key = bot_key
         self.app = None
         self.dispatcher = None
         self.chats = {}
-        self.CHATS_FILE = "zalo_chats.json"
+        self.CHATS_FILE = "zalo_chats.json" if bot_key == "tun" else "zalo_tb_chats.json"
 
         self.prev_statuses = {}
         self.prev_alerts = set()
@@ -82,6 +86,13 @@ class ZaloBotService(
             "zalo_allow_revoked_outbound", default=False
         )
         self._processed_msg_ids: Dict[str, float] = {}
+
+    def _bot_setting(self, suffix: str) -> str:
+        prefix = "ZALO_" if self.bot_key == "tun" else "ZALO_TB_"
+        return str(getattr(settings, prefix + suffix, "") or "").strip()
+
+    def owns_chat(self, chat_id: str) -> bool:
+        return chat_bot_key(chat_id) == self.bot_key
 
     def set_callbacks(
         self, get_devices: Callable, get_alerts: Callable,
@@ -283,6 +294,8 @@ class ZaloBotService(
         events = list(self._debug_events)[-max(1, min(limit, 100)):]
         return {
             "code_version": ZALO_TRACE_VERSION,
+            "bot_key": self.bot_key,
+            "bot_name": BOT_IDENTITIES[self.bot_key]["name"],
             "mode": self._bot_mode(),
             "sdk_available": ZALO_AVAILABLE,
             "bot_enabled": bool(settings.ENABLE_ZALO_BOT),
@@ -306,6 +319,10 @@ class ZaloBotService(
         async def traced_send_message(*args, **kwargs):
             trace_id = self._active_trace_id.get()
             chat_id = kwargs.get("chat_id", args[0] if args else None)
+            # SDK replies carry a raw ID; background deliveries carry a stored key.
+            if self.bot_key == "tun" and not self.owns_chat(str(chat_id)):
+                raise ValueError("Chat belongs to another Zalo bot")
+            chat_id = scoped_chat_id(self.bot_key, str(chat_id))
             text = kwargs.get("text", args[1] if len(args) > 1 else None)
             cors_context = self._cors_outbound.get()
             # Change delivery already owns the preference row lock. Reuse that
@@ -343,6 +360,10 @@ class ZaloBotService(
             )
             attempts = max(1, min(int(getattr(settings, "ZALO_SEND_RETRY_ATTEMPTS", 3) or 3), 5))
             base_delay = max(0.1, min(float(getattr(settings, "ZALO_SEND_RETRY_BASE_DELAY_SECONDS", 0.4) or 0.4), 5.0))
+            if "chat_id" in kwargs:
+                kwargs["chat_id"] = raw_chat_id(chat_id)
+            elif args:
+                args = (raw_chat_id(chat_id), *args[1:])
             try:
                 for attempt in range(1, attempts + 1):
                     outbound["attempts"] = attempt
@@ -377,7 +398,7 @@ class ZaloBotService(
             logger.warning("Could not install Zalo outbound tracing: %s", exc)
 
     def _bot_mode(self) -> str:
-        mode = str(getattr(settings, "ZALO_BOT_MODE", "polling") or "polling").strip().lower()
+        mode = (self._bot_setting("BOT_MODE") or "polling").lower()
         return mode if mode in {"polling", "webhook"} else "polling"
 
     def _register_handlers(self, target) -> None:
@@ -422,7 +443,7 @@ class ZaloBotService(
     def _build_app(self) -> None:
         if self.app:
             return
-        self.app = ApplicationBuilder().token(settings.ZALO_BOT_TOKEN).build()
+        self.app = ApplicationBuilder().token(self._bot_setting("BOT_TOKEN")).build()
         self._install_send_trace()
         self._register_handlers(self.app)
 
@@ -445,8 +466,8 @@ class ZaloBotService(
 
     async def _delayed_set_webhook(self) -> None:
         await asyncio.sleep(3)
-        webhook_url = str(getattr(settings, "ZALO_WEBHOOK_URL", "") or "").strip()
-        secret_token = str(getattr(settings, "ZALO_WEBHOOK_SECRET", "") or "").strip()
+        webhook_url = self._bot_setting("WEBHOOK_URL")
+        secret_token = self._bot_setting("WEBHOOK_SECRET")
         if not webhook_url or not secret_token:
             logger.warning("Zalo webhook mode is enabled but ZALO_WEBHOOK_URL or ZALO_WEBHOOK_SECRET is missing.")
             return
@@ -497,7 +518,9 @@ class ZaloBotService(
 
     async def start(self, *, strict: bool = False) -> bool:
         try:
-            if not ZALO_AVAILABLE or not settings.ENABLE_ZALO_BOT or not settings.ZALO_BOT_TOKEN:
+            if self._polling_task is not None or self._webhook_setup_task is not None:
+                return True
+            if not ZALO_AVAILABLE or not settings.ENABLE_ZALO_BOT or not self._bot_setting("BOT_TOKEN"):
                 message = "Zalo Bot is disabled or missing requirements/token."
                 logger.warning(message)
                 if strict:
@@ -547,11 +570,12 @@ class ZaloBotService(
             logger.info("[ZALO TRACE %s v=%s] webhook test acknowledged", trace_id, ZALO_TRACE_VERSION)
             return {"trace_id": trace_id, "status": "webhook_test", "outbound_count": 0}
         try:
+            stored_chat_id = scoped_chat_id(self.bot_key, str(summary["chat_id"])) if summary.get("chat_id") else None
             await self._hydrate_conversation_state(
-                summary.get("chat_id"), summary.get("sender_id")
+                stored_chat_id, summary.get("sender_id")
             )
             sensitive_input = self._is_sensitive_conversation_input(
-                summary.get("chat_id"), summary.get("sender_id")
+                stored_chat_id, summary.get("sender_id")
             )
         except Exception as exc:
             # If persistent state cannot be checked, fail closed for logging: an
@@ -620,7 +644,7 @@ class ZaloBotService(
             update_data, normalization = self._normalize_group_command(update_data)
             if normalization:
                 event["group_command_normalization"] = normalization
-                chat_id = str(event["summary"].get("chat_id") or "")
+                chat_id = scoped_chat_id(self.bot_key, str(event["summary"].get("chat_id") or ""))
                 if chat_id and normalization.get("mention_prefix"):
                     self._chat_mention_prefixes[chat_id] = normalization["mention_prefix"]
                 logger.info(
@@ -780,6 +804,10 @@ class ZaloBotService(
             self.app = None
 
     def _get_chat_id(self, update: Update) -> str:
+        return scoped_chat_id(self.bot_key, self._get_raw_chat_id(update))
+
+    @staticmethod
+    def _get_raw_chat_id(update: Update) -> str:
         if hasattr(update, 'effective_chat') and update.effective_chat:
             return str(update.effective_chat.id)
         if hasattr(update, 'message') and update.message:
@@ -845,7 +873,7 @@ class ZaloBotService(
         # Zalo private-chat payloads use the sender id as the chat id. This
         # fallback keeps context-aware replies working with older SDK models
         # that do not expose chat.type/chat_type.
-        chat_id = self._get_chat_id(update)
+        chat_id = self._get_raw_chat_id(update)
         sender_id = self._get_sender_id(update)
         if chat_id not in {"", "unknown"} and sender_id not in {"", "unknown"}:
             return "private" if chat_id == sender_id else "group"
@@ -877,3 +905,17 @@ class ZaloBotService(
 
 
 zalo_bot_service = ZaloBotService()
+zalo_bot_services = {"tun": zalo_bot_service, "tb": ZaloBotService("tb")}
+
+
+async def start_zalo_bots(*, strict: bool = False) -> None:
+    configured = [service for service in zalo_bot_services.values() if service._bot_setting("BOT_TOKEN")]
+    tokens = [service._bot_setting("BOT_TOKEN") for service in configured]
+    if len(tokens) != len(set(tokens)):
+        raise RuntimeError("Hai bot Zalo phải dùng token khác nhau.")
+    for service in configured:
+        await service.start(strict=strict)
+
+
+async def stop_zalo_bots() -> None:
+    await asyncio.gather(*(service.stop() for service in zalo_bot_services.values()))

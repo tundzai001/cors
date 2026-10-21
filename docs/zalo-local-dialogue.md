@@ -108,3 +108,33 @@ delivery and source observations; they do not send messages to actual Zalo chats
 - SymSpellPy: https://github.com/mammothb/symspellpy — dictionary-based spelling
   correction was considered; the existing short intent/province vocabulary is
   handled by RapidFuzz without adding a dictionary service or package.
+
+## Two bots on one backend
+
+The backend runs Bot CORS Manager (Tun, key `tun`) and Bot TB CORS (Trường,
+key `tb`) through the same handlers and callbacks. `ENABLE_ZALO_BOT` controls both.
+Existing `ZALO_BOT_*` and `ZALO_WEBHOOK_*` settings still configure Tun. Configure
+Trường with `ZALO_TB_BOT_TOKEN`, `ZALO_TB_BOT_MODE`, `ZALO_TB_WEBHOOK_URL`, and
+`ZALO_TB_WEBHOOK_SECRET`. An empty TB token keeps the single-bot setup working.
+Never commit tokens or webhook secrets. Each bot must have a different token.
+
+Tun keeps `/api/zalo/webhook`; TB uses `/api/zalo/webhook/tb`, with its own secret.
+Deploy the backend and frontend together before registering the TB webhook.
+Each bot uses either polling or webhook reception. For webhook mode, configure
+the public HTTPS URL and secret before enabling the system. The UI reports each
+bot's initialization state; this does not prove live Zalo message delivery.
+
+Legacy chat keys remain owned by Tun. TB stores `tb:<chat_id>` internally, so
+bindings, permissions, encrypted workflows, pending actions and notification
+reservations remain separate even when both bots receive the same Zalo chat ID.
+The sender removes the prefix only at the Zalo API boundary. The UI receives the
+raw chat ID plus `bot_key`, `bot_name` and `bot_owner`. Existing Tun links need no
+migration. To link the same dashboard account to both bots, use a different
+single-use OTP for each bot. Group scopes and pauses apply to each bot's binding.
+
+Diagnostics accept `?bot_key=tun` or `?bot_key=tb`. Verify isolation with:
+
+```sh
+cd cors_dashboard/backend
+python -m unittest tests.test_zalo_two_bots tests.test_zalo_public_cors
+```

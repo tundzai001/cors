@@ -312,11 +312,27 @@
     },
     {
       "type": "APIRoute",
+      "path": "/api/zalo/webhook/{bot_key}",
+      "methods": [
+        "GET"
+      ],
+      "name": "zalo_webhook_verify"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/zalo/webhook",
       "methods": [
         "GET"
       ],
       "name": "zalo_webhook_verify"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/zalo/webhook/{bot_key}",
+      "methods": [
+        "POST"
+      ],
+      "name": "zalo_webhook"
     },
     {
       "type": "APIRoute",
@@ -432,6 +448,14 @@
     },
     {
       "type": "APIRoute",
+      "path": "/api/public/world-countries-geojson",
+      "methods": [
+        "GET"
+      ],
+      "name": "get_world_countries_geojson"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/public/vietnam-provinces",
       "methods": [
         "GET"
@@ -480,6 +504,38 @@
     },
     {
       "type": "APIRoute",
+      "path": "/api/ionosphere/latest",
+      "methods": [
+        "GET"
+      ],
+      "name": "get_latest_ionosphere"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/ionosphere/status",
+      "methods": [
+        "GET"
+      ],
+      "name": "get_ionosphere_status"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/gnss/satellites/tle",
+      "methods": [
+        "GET"
+      ],
+      "name": "get_satellites_tle"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/gnss/satellites/summary",
+      "methods": [
+        "GET"
+      ],
+      "name": "get_satellites_summary"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/integrations/stations",
       "methods": [
         "GET"
@@ -509,6 +565,14 @@
         "GET"
       ],
       "name": "get_public_network_summary"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/public/reference-network-status",
+      "methods": [
+        "GET"
+      ],
+      "name": "reference_network_status"
     },
     {
       "type": "APIRoute",
@@ -629,6 +693,14 @@
         "GET"
       ],
       "name": "get_active_rtcm_stations"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/auth/heartbeat",
+      "methods": [
+        "POST"
+      ],
+      "name": "session_heartbeat"
     },
     {
       "type": "APIRoute",
@@ -1105,6 +1177,14 @@
         "GET"
       ],
       "name": "get_caster_config"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/public/map-config",
+      "methods": [
+        "GET"
+      ],
+      "name": "get_public_map_config"
     },
     {
       "type": "APIRoute",

@@ -733,7 +733,10 @@
     }
 
     .ops-zalo-page .zalo-binding-actions .btn {
-        flex: 0 0 44px;
+        flex: 0 0 auto;
+        min-width: 44px;
+        width: auto;
+        white-space: nowrap;
         margin: 0 !important;
     }
 
@@ -778,6 +781,8 @@
 .zalo-delivery-card:active { background: var(--ops-surface-3); }
 .zalo-delivery-grid input:checked + label { border-color: var(--ops-primary); background: rgba(14, 165, 233, .1); box-shadow: inset 0 0 0 1px var(--ops-primary); }
 .zalo-delivery-grid input:focus-visible + label { outline: 2px solid var(--ops-primary); outline-offset: 3px; }
+.ops-zalo-page #binding-bot-filter { min-height: 44px; max-width: 100%; }
+.ops-zalo-page .zalo-bot-summary h2 { overflow-wrap: anywhere; }
 .zalo-delivery-grid input:disabled + label { opacity: .5; cursor: not-allowed; }
 .zalo-cors-settings, .zalo-delivery-preview { padding: 16px; background: var(--ops-surface-2); border: 1px solid var(--ops-border-soft); border-radius: 10px; }
 .zalo-delivery-preview { color: var(--ops-muted); font-size: .85rem; line-height: 1.6; }

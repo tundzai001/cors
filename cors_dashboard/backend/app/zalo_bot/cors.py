@@ -85,6 +85,8 @@ class CorsMixin:
         from ..zalo_cors_report import status_change_text
         message = None
         for target in targets:
+            if not self.owns_chat(target["chat_id"]):
+                continue
             try:
                 async with zalo_repository.cors_transition(target["id"], status) as delivery:
                     if delivery["send"]:

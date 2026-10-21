@@ -265,8 +265,8 @@ async def lifespan(app: FastAPI):
             tasks.append(asyncio.create_task(nginx_security_loop()))
 
         # --- ZALO BOT INTEGRATION ---
-        if settings.ENABLE_ZALO_BOT:
-            from .zalo_bot_service import zalo_bot_service
+        def _configure_zalo_bots():
+            from .zalo_bot_service import zalo_bot_services
 
             async def _zalo_get_devices():
                 from .database import device_session_scope, auth_session_scope
@@ -1405,13 +1405,17 @@ async def lifespan(app: FastAPI):
                             scopes[int(binding.id)] = values
                 return scopes
 
-            zalo_bot_service.set_callbacks(
-                get_devices=_zalo_get_devices,
-                get_alerts=_zalo_get_alerts,
-                admin_action=_zalo_admin_action,
-                get_binding_scopes=_zalo_get_binding_scopes,
-            )
-            tasks.append(asyncio.create_task(zalo_bot_service.start()))
+            for service in zalo_bot_services.values():
+                service.set_callbacks(
+                    get_devices=_zalo_get_devices,
+                    get_alerts=_zalo_get_alerts,
+                    admin_action=_zalo_admin_action,
+                    get_binding_scopes=_zalo_get_binding_scopes,
+                )
+        _configure_zalo_bots()
+        if settings.ENABLE_ZALO_BOT:
+            from .zalo_bot_service import start_zalo_bots
+            tasks.append(asyncio.create_task(start_zalo_bots()))
             logger.info("✓ Zalo Bot service started")
 
         yield
@@ -1421,8 +1425,8 @@ async def lifespan(app: FastAPI):
 
         if settings.ENABLE_ZALO_BOT:
             try:
-                from .zalo_bot_service import zalo_bot_service
-                await zalo_bot_service.stop()
+                from .zalo_bot_service import stop_zalo_bots
+                await stop_zalo_bots()
             except Exception as e:
                 logger.error(f"Error stopping Zalo Bot: {e}")
 

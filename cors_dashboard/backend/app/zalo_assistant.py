@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import auth, models
 from .database import auth_session_scope, settings
+from .zalo_bot_identity import BOT_IDENTITIES, chat_bot_key, raw_chat_id
 
 
 LINK_ALPHABET = string.digits
@@ -568,7 +569,10 @@ class ZaloAssistantRepository:
     def binding_dict(binding: models.ZaloChatBinding) -> dict[str, Any]:
         return {
             "id": binding.id,
-            "chat_id": binding.chat_id,
+            "chat_id": raw_chat_id(binding.chat_id),
+            "bot_key": chat_bot_key(binding.chat_id),
+            "bot_name": BOT_IDENTITIES[chat_bot_key(binding.chat_id)]["name"],
+            "bot_owner": BOT_IDENTITIES[chat_bot_key(binding.chat_id)]["owner"],
             "chat_type": binding.chat_type,
             "binding_type": binding.binding_type,
             "display_name": binding.display_name,
@@ -861,6 +865,7 @@ class ZaloAssistantRepository:
         severity: str,
         subjects: set[str],
         binding_scopes: Optional[dict[int, set[str]]] = None,
+        bot_key: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """Select eligible chats and atomically reserve one delivery per event/chat."""
         normalized_subjects = {
@@ -878,6 +883,8 @@ class ZaloAssistantRepository:
                 .where(models.ZaloChatBinding.is_active.is_(True))
             )
             for binding, pref in rs.all():
+                if bot_key is not None and chat_bot_key(binding.chat_id) != bot_key:
+                    continue
                 if self.delivery_mode(binding, pref) == "cors_only":
                     continue
                 override = None

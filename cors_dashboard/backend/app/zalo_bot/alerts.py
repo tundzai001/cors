@@ -108,6 +108,7 @@ class AlertsMixin:
                     )
                     targets = await zalo_repository.reserve_notification_targets(
                         event_key, severity, subjects, binding_scopes=binding_scopes,
+                        bot_key=self.bot_key,
                     )
                     for target in targets:
                         chat_id = target["chat_id"]
