@@ -103,6 +103,35 @@ height is never fabricated as zero. Multiple points use additional rows of
 fields, not whitespace-delimited text. Swapping a computed result preserves its
 datum, representation and height options.
 
+## Copying to GNSS configuration
+
+**Sao chép cho GNSS** copies one selected result point as a named JSON clipboard
+packet. Before copying, VN-2000, projected, or geocentric output is converted to
+WGS 84 geographic 3D. If the result is H, its previously supplied target N is
+used to recover ellipsoidal height before conversion. A 2D result cannot be
+copied for GNSS; the converter does not invent an altitude of zero.
+
+```json
+{
+  "type": "aitogy/gnss-fixed-position",
+  "version": 1,
+  "crs": "EPSG:4979",
+  "height_type": "ellipsoidal",
+  "coords": {"lat": 20.845, "lon": 106.688, "alt": 30}
+}
+```
+
+The shared `coordinate-clipboard.js` validates the packet. Pasting into any
+coordinate field of the Fixed LLA GNSS form fills all three React state values,
+using explicit latitude/longitude/altitude keys rather than guessing order from
+unlabelled text. Unsupported frames, height types, versions, incomplete points
+and non-finite values are rejected without partial field updates. A normal
+single-value paste retains the existing input behavior.
+
+Pasting does not send configuration commands. Measurement accuracy and other
+GNSS settings are preserved; the user reviews and submits the form normally.
+CSV export remains available separately for copying multiple result points.
+
 ## Development and validation
 
 Install backend requirements, including `pyproj==3.7.2`, before starting the app.
@@ -111,6 +140,8 @@ Build frontend assets from the repository root:
 ```sh
 node scripts/build_frontend_assets.mjs
 node scripts/coordinate_navigation_selftest.js
+node scripts/coordinate_gnss_paste_selftest.js
+node scripts/base_accuracy_units_selftest.js
 cd cors_dashboard/backend
 python -m unittest tests.test_coordinates
 ```

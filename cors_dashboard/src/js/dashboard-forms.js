@@ -275,6 +275,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [latitude, setLatitude] = useState('');
     const [longitude, setLongitude] = useState('');
     const [altitude, setAltitude] = useState('');
+    const [coordinatePasteNotice, setCoordinatePasteNotice] = useState(null);
     const [fixedAccuracyCm, setFixedAccuracyCm] = useState('1'); // Centimeters in the form; API and stored accuracy use meters.
 
     // CORS connection for Auto Base (kept in this form only; never read from .env)
@@ -311,6 +312,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setLatitude('');
         setLongitude('');
         setAltitude('');
+        setCoordinatePasteNotice(null);
         setFixedAccuracyCm('1');
         setCorsHost('');
         setCorsPort('2101');
@@ -383,6 +385,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         // Cho phép nhập số thập phân âm/dương
         if (/^-?[0-9]*\.?[0-9]*$/.test(value)) {
             setter(value);
+            setCoordinatePasteNotice(null);
         }
     };
 
@@ -396,6 +399,22 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         if (val === null || val === undefined || val === '') return '';
         const num = parseFloat(val);
         return Number.isFinite(num) ? num.toFixed(4) : String(val);
+    };
+
+    const handleCoordinatePaste = (event) => {
+        if (disabled || isSubmitting) return;
+        try {
+            const coords = window.CorsCoordinateClipboard?.parse(event.clipboardData?.getData('text/plain') || '');
+            if (!coords) return; // A normal numeric paste still belongs to the focused field.
+            event.preventDefault();
+            setLatitude(formatCoord10(coords.lat));
+            setLongitude(formatCoord10(coords.lon));
+            setAltitude(formatAlt4(coords.alt));
+            setCoordinatePasteNotice({ error: false, message: 'Đã điền vĩ độ, kinh độ WGS 84 và độ cao h. Kiểm tra tọa độ rồi bấm áp dụng.' });
+        } catch (error) {
+            event.preventDefault();
+            setCoordinatePasteNotice({ error: true, message: error.message });
+        }
     };
 
     const handleCorsFieldChange = (setter) => (e) => {
@@ -936,27 +955,40 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         <div className="col-12 text-muted small fst-italic mb-2">
                             * Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).
                         </div>
+                        <div id={`base-coordinate-paste-help-${device.serial}`} className="col-12 small text-info">
+                            Dùng “Sao chép cho GNSS” trong <a href="/coordinates" target="_blank" rel="noopener">công cụ chuyển tọa độ</a>, rồi dán vào một trong ba ô bên dưới để tự điền đủ tọa độ.
+                        </div>
+                        {coordinatePasteNotice && <div className={`col-12 small ${coordinatePasteNotice.error ? 'text-danger' : 'text-success'}`} role="status" aria-live="polite">{coordinatePasteNotice.message}</div>}
                         <div className="col-md-6">
-                            <label className="form-label">Vĩ độ</label>
+                            <label htmlFor={`base-latitude-${device.serial}`} className="form-label">Vĩ độ (WGS 84)</label>
                             <input
+                                id={`base-latitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
                                 value={latitude} onChange={handleDecimalInputChange(setLatitude)}
+                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}`}
+                                disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 21.028511"
                             />
                         </div>
                         <div className="col-md-6">
-                            <label className="form-label">Kinh độ</label>
+                            <label htmlFor={`base-longitude-${device.serial}`} className="form-label">Kinh độ (WGS 84)</label>
                             <input
+                                id={`base-longitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
                                 value={longitude} onChange={handleDecimalInputChange(setLongitude)}
+                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}`}
+                                disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 105.854167"
                             />
                         </div>
                         <div className="col-md-6">
-                            <label className="form-label">Độ cao (mét)</label>
+                            <label htmlFor={`base-altitude-${device.serial}`} className="form-label">Độ cao h ellipsoid (mét)</label>
                             <input
+                                id={`base-altitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
                                 value={altitude} onChange={handleDecimalInputChange(setAltitude)}
+                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}`}
+                                disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 15.5"
                             />
                         </div>

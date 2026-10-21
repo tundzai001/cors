@@ -166,7 +166,10 @@
             [index + 1, ...values].forEach(value => { const td = document.createElement('td'); td.textContent = value === '' ? '—' : String(value); row.append(td); });
             return row;
         }));
-        result = { data, labels: names };
+        result = { data, labels: names, heightType: $('target-height').value,
+            geoid: $('target-height').value === 'orthometric' ? Number($('target-geoid').value) : null };
+        options($('copy-point'), data.points.map((_, i) => [String(i), `Điểm ${i + 1}`]));
+        $('copy-point-field').hidden = data.points.length === 1;
         $('result-summary').textContent = `${data.points.length} điểm · ${$('source-datum').selectedOptions[0].textContent} sang ${$('target-datum').selectedOptions[0].textContent} · ${data.dimensions === 3 ? 'Có chuyển độ cao' : 'Chỉ tọa độ ngang'}`;
         $('accuracy').textContent = `${data.accuracy_m == null ? '' : `Sai số công bố của phép đổi datum: ${data.accuracy_m} m; không phải độ chính xác điểm đo. `}${data.note}`;
         $('result').hidden = false; status(`Đã chuyển đổi ${data.points.length} điểm.`);
@@ -237,8 +240,33 @@
     });
     $('copy').addEventListener('click', async () => {
         if (!result) return;
-        try { await navigator.clipboard.writeText([result.labels.join('\t'), ...exportedRows.map(p => p.join('\t'))].join('\n')); status('Đã sao chép kết quả.'); }
-        catch (_) { status('Không sao chép được. Hãy tải CSV.', true); }
+        const snapshot = result, index = $('copy-point').value;
+        const point = snapshot.data.points[Number(index)];
+        if (!point || point.length !== 3) {
+            status('Cần nhập cả độ cao h hoặc H rồi chuyển đổi để sao chép cho GNSS.', true);
+            return;
+        }
+        $('copy').disabled = true; $('copy').setAttribute('aria-busy', 'true');
+        $('copy').textContent = 'Đang chuẩn bị…';
+        try {
+            let wgs = point;
+            if (snapshot.data.target !== 'EPSG:4326' || snapshot.heightType !== 'ellipsoidal') {
+                const converted = await request('/api/coordinates/convert', {
+                    source: snapshot.data.target, target: 'EPSG:4326', points: [point],
+                    source_height: snapshot.heightType, source_geoid: snapshot.geoid,
+                    target_height: 'ellipsoidal'
+                });
+                wgs = converted.points[0];
+            }
+            if (snapshot !== result || index !== $('copy-point').value) throw new Error('Kết quả hoặc điểm đã thay đổi. Hãy sao chép lại.');
+            await navigator.clipboard.writeText(window.CorsCoordinateClipboard.encode({ lat: wgs[0], lon: wgs[1], alt: wgs[2] }));
+            status(`Đã sao chép điểm ${Number(index) + 1} theo WGS 84 và độ cao h. Dán vào một ô tọa độ trong form GNSS.`);
+        } catch (error) {
+            status(error.name === 'NotAllowedError' ? 'Trình duyệt chưa cho phép sao chép. Hãy cho phép clipboard và thử lại.' : error.message || 'Không sao chép được. Thử lại.', true);
+        } finally {
+            $('copy').disabled = false; $('copy').removeAttribute('aria-busy');
+            $('copy').textContent = 'Sao chép cho GNSS';
+        }
     });
     $('download').addEventListener('click', () => {
         if (!result) return;
