@@ -2251,10 +2251,10 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                 )
             ),
             React.createElement('div', { className: 'landing-nav-actions' },
-                React.createElement('a', { href: '/coordinates', className: 'landing-nav-link' }, 'Đổi tọa độ'),
                 React.createElement('a', { href: '/network', className: 'landing-nav-link' }, 'Mạng lưới'),
                 React.createElement('a', { href: '/blog', className: 'landing-nav-link' }, 'Bài viết'),
                 React.createElement('a', { href: '/api/docs', className: 'landing-nav-link' }, 'Tài liệu API'),
+                React.createElement('a', { href: '/coordinates', className: 'landing-nav-link' }, 'Công cụ'),
                 React.createElement('button', {
                     className: 'btn-login-nav',
                     onClick: () => {

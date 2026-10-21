@@ -1,12 +1,14 @@
-"""Public, horizontal coordinate conversion. No user data is persisted."""
+"""Public 2D/3D coordinate conversion. No user data is persisted."""
 import json
 import math
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, FiniteFloat
+from pydantic import BaseModel, Field, FiniteFloat, model_validator
 from pyproj import CRS, Transformer
+from pyproj.crs import GeocentricCRS
 from pyproj.aoi import AreaOfInterest
 from pyproj.exceptions import ProjError
 
@@ -17,7 +19,13 @@ TM3 = dict(zip(
     [103, 104, 104.5, 104.75, 105, 105.5, 105.75, 106, 106.25, 106.5, 107, 107.25, 107.5, 107.75, 108, 108.25, 108.5],
     [9205, 9206, 9207, 9208, 5897, 9209, 9210, 9211, 9212, 9213, 9214, 9215, 9216, 5899, 5898, 9217, 9218],
 ))
-EPSGS = [4326, 4756, 32648, 32649, 3405, 3406, 3857, *TM3.values()]
+EPSGS = [4326, 4756, 32648, 32649, 3405, 3406, 3857, 4978, *TM3.values()]
+
+
+def get_crs(identifier):
+    if identifier == "VN2000:ECEF":
+        return GeocentricCRS(name="VN-2000 geocentric", datum=CRS(4756).datum)
+    return CRS(identifier)
 
 
 @lru_cache(maxsize=1)
@@ -25,9 +33,11 @@ def catalog():
     provinces = json.loads((DATA / "vietnam_units.json").read_text(encoding="utf-8"))
     legacy = json.loads((DATA / "coordinate_provinces.json").read_text(encoding="utf-8"))
     systems = []
-    for code in EPSGS:
-        crs = CRS(code)
-        item = dict(id=f"EPSG:{code}", name=crs.name, geographic=crs.is_geographic,
+    for identifier in [*(f"EPSG:{code}" for code in EPSGS), "VN2000:ECEF"]:
+        crs = get_crs(identifier)
+        code = int(identifier.split(":")[1]) if identifier.startswith("EPSG:") else None
+        item = dict(id=identifier, name=crs.name, geographic=crs.is_geographic,
+                    geocentric=crs.is_geocentric,
                     projection=None)
         if code in TM3.values() or code in (32648, 32649, 3405, 3406):
             params = {p.name: p.value for p in crs.coordinate_operation.params}
@@ -54,13 +64,34 @@ def get_catalog():
 class ConversionRequest(BaseModel):
     source: str = Field(max_length=16)
     target: str = Field(max_length=16)
-    # Geographic: latitude, longitude. Projected: northing, easting.
-    points: list[tuple[FiniteFloat, FiniteFloat]] = Field(min_length=1, max_length=1000)
+    # Geographic: latitude, longitude[, h]. Projected: northing, easting[, h].
+    # Geocentric: X, Y, Z. Keep the previous 2D endpoint contract intact.
+    points: list[tuple[FiniteFloat, FiniteFloat] | tuple[FiniteFloat, FiniteFloat, FiniteFloat]] = Field(min_length=1, max_length=1000)
+    source_height: Literal["ellipsoidal", "orthometric"] = "ellipsoidal"
+    target_height: Literal["ellipsoidal", "orthometric"] = "ellipsoidal"
+    source_geoid: FiniteFloat | None = None
+    target_geoid: FiniteFloat | None = None
+
+    @model_validator(mode="after")
+    def validate_dimensions(self):
+        dimensions = {len(point) for point in self.points}
+        if len(dimensions) != 1:
+            raise ValueError("Không trộn điểm có độ cao và điểm không có độ cao.")
+        for side in ("source", "target"):
+            if getattr(self, f"{side}_height") == "orthometric":
+                if dimensions != {3} or getattr(self, f"{side}_geoid") is None:
+                    raise ValueError("Độ cao H cần điểm 3D và độ lệch geoid N của hệ tương ứng.")
+        return self
 
 
 @lru_cache(maxsize=128)
-def transformer(source, target):
-    return Transformer.from_crs(source, target, always_xy=True, allow_ballpark=False,
+def transformer(source, target, dimensions=2):
+    source_crs, target_crs = get_crs(source), get_crs(target)
+    if dimensions == 3:
+        # Like land_slide_web's LLH -> ECEF -> Helmert -> LLH -> NEh flow,
+        # promoting BOTH CRS makes PROJ transform h instead of passing it through.
+        source_crs, target_crs = source_crs.to_3d(), target_crs.to_3d()
+    return Transformer.from_crs(source_crs, target_crs, always_xy=True, allow_ballpark=False,
                                 area_of_interest=AreaOfInterest(102, 8, 110, 24))
 
 
@@ -69,15 +100,27 @@ def convert(request: ConversionRequest):
     allowed = {s["id"] for s in catalog()["systems"]}
     if request.source not in allowed or request.target not in allowed:
         raise HTTPException(422, "Hệ tọa độ không được hỗ trợ.")
-    source, target = CRS(request.source), CRS(request.target)
-    if source.is_geographic and any(abs(a) > 90 or abs(b) > 180 for a, b in request.points):
+    source, target = get_crs(request.source), get_crs(request.target)
+    dimensions = len(request.points[0])
+    if source.is_geocentric or target.is_geocentric:
+        if dimensions != 3 or request.source_height != "ellipsoidal" or request.target_height != "ellipsoidal":
+            raise HTTPException(422, "XYZ địa tâm cần đủ ba tọa độ; tùy chọn độ cao H không áp dụng cho XYZ.")
+    if source.is_geographic and any(abs(p[0]) > 90 or abs(p[1]) > 180 for p in request.points):
         raise HTTPException(422, "Vĩ độ phải trong ±90°, kinh độ trong ±180°.")
     try:
-        operation = transformer(request.source, request.target)
-        # UI uses latitude/longitude and X North/Y East; PROJ always_xy uses reverse order.
-        east, north = operation.transform([p[1] for p in request.points],
-                                           [p[0] for p in request.points], errcheck=True)
-        points = list(zip(north, east))
+        operation = transformer(request.source, request.target, dimensions)
+        first = [p[0 if source.is_geocentric else 1] for p in request.points]
+        second = [p[1 if source.is_geocentric else 0] for p in request.points]
+        coordinates = [first, second]
+        if dimensions == 3:
+            coordinates.append([p[2] + (request.source_geoid if request.source_height == "orthometric" else 0)
+                                for p in request.points])
+        transformed = list(operation.transform(*coordinates, errcheck=True))
+        if not target.is_geocentric:
+            transformed[0], transformed[1] = transformed[1], transformed[0]
+        if dimensions == 3 and request.target_height == "orthometric":
+            transformed[2] = [h - request.target_geoid for h in transformed[2]]
+        points = list(zip(*transformed))
         if not all(math.isfinite(v) for point in points for v in point):
             raise ValueError("Non-finite result")
         used = operation
@@ -88,6 +131,9 @@ def convert(request: ConversionRequest):
         return {"points": points, "source": request.source, "target": request.target,
                 "operation": used.description,
                 "accuracy_m": used.accuracy if used.accuracy >= 0 else None,
-                "note": "Chỉ chuyển tọa độ ngang. Không chuyển độ cao. Với VN-2000, chọn đúng vùng đo và kinh tuyến trên hồ sơ; kết quả không thay thế hiệu chỉnh địa phương."}
+                "dimensions": dimensions,
+                "note": ("Đã chuyển tọa độ 3D, gồm độ cao ellipsoid qua phép đổi datum. H chỉ được tính theo N bạn cung cấp; không tự áp mô hình geoid."
+                         if dimensions == 3 else "Không nhập độ cao: chỉ chuyển tọa độ ngang.")
+                        + " Chọn đúng vùng đo và kinh tuyến theo hồ sơ; kết quả không thay thế hiệu chỉnh địa phương."}
     except (ProjError, ValueError) as exc:
         raise HTTPException(422, "Không thể chuyển đổi. Kiểm tra hệ tọa độ, thứ tự trục và phạm vi tọa độ.") from exc

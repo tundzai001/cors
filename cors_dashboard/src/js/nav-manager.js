@@ -2,7 +2,7 @@
 const NavigationManager = {
     currentUser: null,
     currentPage: '',
-    publicRoutes: ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'],
+    publicRoutes: ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs', '/coordinates'],
 
     isPublicRoute(pathname = window.location.pathname) {
         return this.publicRoutes.some(route => route === '/' ? pathname === '/' : pathname.startsWith(route));
@@ -10,8 +10,10 @@ const NavigationManager = {
 
     async init() {
         try {
+            this.detectCurrentPage();
             if (!window.ApiClient?.hasToken?.()) {
                 if (!this.isPublicRoute()) this.forceLogout('missing_token');
+                if (this.currentPage === 'coordinates') this.renderNavigation();
                 return;
             }
 
@@ -51,6 +53,7 @@ const NavigationManager = {
         else if (path.includes('security')) this.currentPage = 'security';
         else if (path.includes('rovers-global')) this.currentPage = 'rovers';
         else if (path.includes('zalo')) this.currentPage = 'zalo';
+        else if (path.includes('coordinates')) this.currentPage = 'coordinates';
         else this.currentPage = 'dashboard';
     },
 
@@ -59,8 +62,16 @@ const NavigationManager = {
         if (!navContainer) return;
         navContainer.innerHTML = '';
 
+        if (!this.currentUser) {
+            this.addNavItem(navContainer, { id: 'home', icon: 'bi-house', text: 'Trang chủ', href: '/' });
+            this.addNavItem(navContainer, { id: 'network', icon: 'bi-map', text: 'Mạng lưới', href: '/network-status' });
+            this.addNavItem(navContainer, { id: 'blog', icon: 'bi-journal-text', text: 'Bài viết', href: '/blog' });
+            this.addTools(navContainer);
+            window.AppI18n?.apply?.(navContainer);
+            return;
+        }
+
         this.addGroup(navContainer, 'Operate');
-        this.addNavItem(navContainer, { id: 'coordinates', icon: 'bi-crosshair', text: 'Đổi tọa độ', href: '/coordinates', active: this.currentPage === 'coordinates' });
         this.addNavItem(navContainer, { id: 'dashboard', icon: 'bi-grid-1x2-fill', text: 'Dashboard', href: '/', active: this.currentPage === 'dashboard' });
         this.addNavItem(navContainer, { id: 'map', icon: 'bi-map-fill', text: 'Station Map', href: '/?view=map', active: this.currentPage === 'map' });
         this.addNavItem(navContainer, { id: 'zalo', icon: 'bi-chat-dots-fill', text: 'Zalo Bot', href: '/zalo.html', active: this.currentPage === 'zalo' });
@@ -84,7 +95,13 @@ const NavigationManager = {
             this.addNavItem(navContainer, { id: 'rovers', icon: 'bi-hdd-network-fill', text: 'Rover & Caster', href: '/rovers-global.html', active: this.currentPage === 'rovers' });
         }
 
+        this.addTools(navContainer);
         window.AppI18n?.apply?.(navContainer);
+    },
+
+    addTools(container) {
+        this.addGroup(container, 'Công cụ');
+        this.addNavItem(container, { id: 'coordinates', icon: 'bi-crosshair', text: 'Chuyển tọa độ', href: '/coordinates', active: this.currentPage === 'coordinates' });
     },
 
     addGroup(container, label) {
@@ -119,6 +136,8 @@ const NavigationManager = {
     },
 
     setupTopbar() {
+        document.getElementById('coordinates-login')?.classList.toggle('d-none', !!this.currentUser);
+        if (this.currentUser) document.getElementById('logout-btn')?.classList.remove('d-none');
         const userInfo = document.getElementById('user-info');
         if (userInfo && this.currentUser) {
             userInfo.textContent = `${this.currentUser.full_name || this.currentUser.username} (${String(this.currentUser.role || '').toUpperCase()})`;

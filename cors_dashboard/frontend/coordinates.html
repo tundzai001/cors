@@ -1,26 +1,48 @@
 <!doctype html>
-<html lang="vi">
+<html lang="vi" data-bs-theme="dark">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Chuyển đổi tọa độ | Aitogy</title>
-<link rel="icon" href="/assets/img/aitogy.png">
-<link rel="stylesheet" href="/assets/css/dist/coordinates.min.css?v=1">
-<script defer src="/assets/js/dist/coordinates.min.js?v=2"></script>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <title>Chuyển đổi tọa độ · Công cụ | Aitogy</title>
+    <link rel="icon" href="/assets/img/aitogy.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css?v=20261017-session-scroll-v1">
+    <link rel="stylesheet" href="/assets/css/dist/coordinates.min.css?v=20261021-structured-v3">
 </head>
-<body>
-<header><a href="/" class="brand">AITOGY <span>/ Công cụ đo đạc</span></a><a href="/">Về trang chủ</a></header>
-<main>
-<div class="intro"><p class="eyebrow">HỆ QUY CHIẾU & TỌA ĐỘ</p><h1>Chuyển đổi tọa độ</h1><p>VN-2000, WGS 84, UTM và Web Mercator. Đổi một điểm hoặc cả danh sách.</p></div>
-<form id="converter" aria-busy="true">
-<div class="toolbar"><label for="edition">Danh mục tỉnh thành</label><select id="edition"><option value="63">63 tỉnh thành trước sáp nhập</option><option value="34">34 tỉnh thành hiện tại</option></select><button type="button" id="swap" disabled>Đảo chiều</button></div>
-<div class="systems">
-<section class="card" aria-labelledby="source-title"><p class="eyebrow">01 / ĐẦU VÀO</p><h2 id="source-title">Hệ tọa độ nguồn</h2><label for="source">Hệ quy chiếu / phép chiếu</label><select id="source" aria-describedby="source-meridian" required disabled></select><div id="source-location" class="location" hidden><label for="source-province">Tỉnh thành</label><select id="source-province"></select><label for="source-region">Vùng đo theo tỉnh cũ</label><select id="source-region"></select></div><p class="hint" id="source-meridian" aria-live="polite"></p><p class="axis" id="source-axis"></p></section>
-<section class="card" aria-labelledby="target-title"><p class="eyebrow">02 / ĐẦU RA</p><h2 id="target-title">Hệ tọa độ đích</h2><label for="target">Hệ quy chiếu / phép chiếu</label><select id="target" aria-describedby="target-meridian" required disabled></select><div id="target-location" class="location" hidden><label for="target-province">Tỉnh thành</label><select id="target-province"></select><label for="target-region">Vùng đo theo tỉnh cũ</label><select id="target-region"></select></div><p class="hint" id="target-meridian" aria-live="polite"></p><p class="axis" id="target-axis"></p></section>
-</div>
-<section class="card input-card"><div class="section-head"><h2>Danh sách tọa độ</h2><button type="button" id="example" disabled>Dùng ví dụ</button></div><label for="points" id="points-label">Mỗi dòng một điểm</label><textarea id="points" rows="6" spellcheck="false" required aria-describedby="input-help" placeholder="21.0285 105.8542"></textarea><p id="input-help" class="hint">Hai giá trị cách nhau bằng khoảng trắng, dấu phẩy hoặc dấu chấm phẩy. Dùng dấu chấm thập phân. Tối đa 1.000 điểm.</p><div class="actions"><button class="primary" id="convert" type="submit" disabled>Chuyển đổi tọa độ</button><p id="status" role="status" aria-live="polite">Đang tải danh mục hệ tọa độ…</p></div></section>
-</form>
-<section class="card result" id="result" hidden aria-labelledby="result-title"><div class="section-head"><h2 id="result-title">Kết quả</h2><div><button type="button" id="copy">Sao chép</button> <button type="button" id="download">Tải CSV</button></div></div><p id="result-summary"></p><div class="table-wrap"><table><thead><tr><th scope="col">Điểm</th><th scope="col" id="first-heading"></th><th scope="col" id="second-heading"></th></tr></thead><tbody id="result-body"></tbody></table></div><p class="hint" id="accuracy"></p></section>
-<aside><strong>Chọn theo hồ sơ đo đạc</strong><p>Tỉnh sau sáp nhập có thể chứa nhiều vùng chiếu cũ. Danh mục 34 tỉnh giúp tra cứu vùng đo, không tự gán kinh tuyến mới cho toàn tỉnh. Chỉ đổi tọa độ ngang; không chuyển độ cao. Sai số phép đổi datum có thể ở mức mét, không thay thế hiệu chỉnh địa phương.</p><details><summary>Nguồn và quy ước</summary><p>VN-2000 TM-3: múi 3°, k₀ = 0,9999; X là tọa độ Bắc, Y là tọa độ Đông. Các hệ UTM dùng múi 6°, k₀ = 0,9996. Tọa độ địa lý dùng độ thập phân theo thứ tự vĩ độ, kinh độ.</p><p>Kinh tuyến tỉnh cũ: Phụ lục 01, <a href="https://dlrpd.monre.gov.vn/noidung/Lists/VBQPPL/Attachments/186/26-2024-tt-btnmt_Signed.pdf" target="_blank" rel="noopener">Thông tư 26/2024/TT-BTNMT</a>. Phép chuyển từ cơ sở dữ liệu EPSG trong PROJ, gồm <a href="https://epsg.io/6960" target="_blank" rel="noopener">VN-2000 sang WGS 84 (2)</a>. Danh mục 34 tỉnh dùng dữ liệu hành chính hiện có của hệ thống.</p></details></aside>
-</main><footer>Aitogy · Công cụ chuyển đổi tọa độ ngang</footer>
-</body></html>
+<body class="ops-admin-page coordinates-page">
+<nav class="navbar navbar-expand-lg sticky-top ops-admin-nav" aria-label="Điều hướng chính">
+    <div class="container-fluid">
+        <a class="navbar-brand fw-bold text-light" href="/"><i class="bi bi-activity me-2" aria-hidden="true"></i>Base Control Center</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Mở menu"><span class="navbar-toggler-icon"></span></button>
+        <div class="collapse navbar-collapse" id="navbarNav"><ul id="main-nav" class="navbar-nav me-auto mb-2 mb-lg-0"></ul></div>
+        <div class="d-flex align-items-center"><span id="user-info" class="navbar-text me-3 d-none d-md-inline"></span><a href="/" id="coordinates-login" class="btn btn-sm btn-outline-info">Đăng nhập</a><button id="logout-btn" class="btn btn-sm btn-outline-danger d-none"><i class="bi bi-box-arrow-right" aria-hidden="true"></i><span class="ms-1">Đăng xuất</span></button></div>
+    </div>
+</nav>
+<main class="coordinate-tool">
+    <div class="tool-heading"><div><p class="tool-breadcrumb">Công cụ / Chuyển đổi tọa độ</p><h1>Chuyển đổi tọa độ</h1><p class="tool-subtitle">Chọn hệ nguồn, hệ đích và nhập từng giá trị. Độ cao được chuyển khi có dữ liệu.</p></div></div>
+    <form id="converter" aria-busy="true">
+        <div class="tool-toolbar"><div><label for="edition">Tra cứu tỉnh thành</label><select id="edition" disabled><option value="63">63 tỉnh thành trước sáp nhập</option><option value="34">34 tỉnh thành hiện tại</option></select></div><button type="button" id="swap" disabled><i class="bi bi-arrow-left-right" aria-hidden="true"></i> Đảo chiều</button></div>
+        <div class="tool-systems" id="system-panels"></div>
+        <section class="tool-card tool-input" aria-labelledby="input-title">
+            <div class="tool-section-head"><h2 id="input-title">Tọa độ đầu vào</h2><button type="button" id="example" disabled>Dùng ví dụ</button></div>
+            <div id="point-rows"></div>
+            <button type="button" id="add-point" class="tool-add" disabled><i class="bi bi-plus-lg" aria-hidden="true"></i> Thêm điểm</button>
+            <details id="height-options" class="tool-details"><summary>Tùy chọn hệ độ cao</summary><p class="tool-hint">Mặc định dùng h ellipsoid như dữ liệu GNSS. Nếu nhập cao độ H, cần cung cấp độ lệch geoid N tại điểm đo theo quan hệ h = H + N.</p><div class="tool-two-columns" id="height-fields"></div><p class="tool-hint">N do bạn cung cấp, áp dụng cho các điểm trong lần chuyển này. Chưa tự tra mô hình geoid hay hệ độ cao Hòn Dấu.</p></details>
+            <p class="tool-hint" id="height-help">Bỏ trống độ cao nếu chỉ đổi tọa độ ngang. Đơn vị độ cao là mét.</p>
+            <div class="tool-actions"><button id="convert" class="tool-primary" type="submit" disabled>Chuyển đổi</button><p id="status" role="status" aria-live="polite">Đang tải danh mục…</p><button id="retry" type="button" hidden>Thử lại</button></div>
+        </section>
+    </form>
+    <section class="tool-card tool-result" id="result" hidden aria-labelledby="result-title"><div class="tool-section-head"><h2 id="result-title">Kết quả</h2><div class="tool-result-actions"><button type="button" id="copy">Sao chép</button><button type="button" id="download">Tải CSV</button></div></div><p id="result-summary" class="tool-hint"></p><div class="tool-table-wrap"><table><thead><tr><th scope="col">Điểm</th><th scope="col" id="first-heading"></th><th scope="col" id="second-heading"></th><th scope="col" id="third-heading"></th></tr></thead><tbody id="result-body"></tbody></table></div><p class="tool-hint" id="accuracy"></p></section>
+    <details class="tool-details tool-notes"><summary>Quy ước và nguồn thông số</summary><p>WGS 84 và VN-2000 là hai hệ quy chiếu. Có thể biểu diễn bằng kinh độ/vĩ độ, tọa độ phẳng Bắc/Đông hoặc XYZ địa tâm. X/Y phẳng tương ứng Bắc/Đông; XYZ địa tâm là ba tọa độ không gian.</p><p>Danh mục 34 tỉnh vẫn giữ từng vùng đo cũ. Chọn kinh tuyến theo hồ sơ; không tự gán một kinh tuyến chung cho tỉnh sau sáp nhập.</p><p>Kinh tuyến địa chính 63 tỉnh cũ và múi 3°: Phụ lục 01, Điều 3 của <a href="https://files.thuvienphapluat.vn/uploads/DOC2HTM/VB_637676.htm" target="_blank" rel="noopener">Thông tư 26/2024/TT-BTNMT</a>. Phép đổi datum lấy từ EPSG/PROJ. Độ cao h được đổi qua XYZ địa tâm và Helmert 7 tham số; không đồng nghĩa với cao độ H quốc gia.</p></details>
+</main>
+<div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index:1100"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/assets/js/dist/api-routes.min.js?v=20261014-sessions-v3"></script>
+<script src="/assets/js/dist/api-client.min.js?v=20261018-nginx-bans-v1"></script>
+<script src="/assets/js/dist/ops-ui.min.js?v=20261014-sessions-v3"></script>
+<script src="/assets/js/dist/i18n.min.js?v=20261017-base-brand-v1"></script>
+<script src="/assets/js/dist/nav-manager.min.js?v=20261021-coordinate-tools-v3"></script>
+<script src="/assets/js/dist/coordinates.min.js?v=20261021-structured-v3"></script>
+</body>
+</html>

@@ -55,6 +55,8 @@ class CoordinateTests(unittest.TestCase):
     def test_batch_roundtrip_every_system(self):
         points = [[21.0285, 105.8542], [10.776, 106.7]]
         for system in self.client.get('/api/coordinates/catalog').json()['systems']:
+            if system['geocentric']:
+                continue
             with self.subTest(system=system['id']):
                 converted = self.convert('EPSG:4326', system['id'], points)
                 self.assertEqual(converted.status_code, 200)
@@ -65,11 +67,52 @@ class CoordinateTests(unittest.TestCase):
                         self.assertAlmostEqual(a, b, places=7)
 
     def test_invalid_inputs(self):
-        for points in ([], [[91, 105]], [[21, 181]], [[21]], [[21, 105, 3]], [[21, 105]] * 1001):
+        for points in ([], [[91, 105]], [[21, 181]], [[21]], [[21, 105, 3, 4]], [[21, 105]] * 1001, [[21, 105], [21, 105, 30]]):
             self.assertEqual(self.convert('EPSG:4326', 'EPSG:5897', points).status_code, 422)
         self.assertEqual(self.convert('+proj=tmerc', 'EPSG:4326', [[1, 2]]).status_code, 422)
         response = self.client.post('/api/coordinates/convert', content='{"source":"EPSG:4326","target":"EPSG:5897","points":[["NaN",105]]}', headers={'content-type': 'application/json'})
         self.assertEqual(response.status_code, 422)
+
+    def test_3d_matches_land_slide_reference_and_inverse(self):
+        # Independent fixture from land_slide_web/backend/processors/geodetic.py:
+        # DatumParams(l0_deg=105.75), WGS84 LLH(20.845,106.688,30).
+        source = [[20.845, 106.688, 30]]
+        data = self.convert('EPSG:4326', 'EPSG:9210', source).json()
+        self.assertEqual(data['dimensions'], 3)
+        for actual, expected in zip(data['points'][0], [2306078.7833471284, 597421.9707657371, 51.73330244515091]):
+            self.assertAlmostEqual(actual, expected, places=3)
+        restored = self.convert('EPSG:9210', 'EPSG:4326', data['points']).json()['points'][0]
+        for actual, expected in zip(restored, source[0]):
+            self.assertAlmostEqual(actual, expected, places=5)
+        # Height must affect the actual 3D transformation, not just be echoed.
+        high = self.convert('EPSG:4326', 'EPSG:9210', [[20.845, 106.688, 1000]]).json()['points'][0]
+        self.assertGreater(abs(high[0] - data['points'][0][0]), .001)
+
+    def test_3d_roundtrip_geocentric_and_projected(self):
+        source = [[20.845, 106.688, 30], [10.776, 106.7, 100]]
+        for target in ['EPSG:4978', 'VN2000:ECEF', 'EPSG:4756', 'EPSG:3405', 'EPSG:32649']:
+            with self.subTest(target=target):
+                converted = self.convert('EPSG:4326', target, source)
+                self.assertEqual(converted.status_code, 200)
+                restored = self.convert(target, 'EPSG:4326', converted.json()['points'])
+                self.assertEqual(restored.status_code, 200)
+                for before, after in zip(source, restored.json()['points']):
+                    for a, b in zip(before, after):
+                        self.assertAlmostEqual(a, b, places=5)
+        self.assertEqual(self.convert('EPSG:4326', 'EPSG:4978', [[20, 106]]).status_code, 422)
+
+    def test_explicit_geoid_height_conversion(self):
+        payload = dict(source='EPSG:4326', target='EPSG:9210', points=[[20.845, 106.688, 10]],
+                       source_height='orthometric', source_geoid=20,
+                       target_height='orthometric', target_geoid=25)
+        response = self.client.post('/api/coordinates/convert', json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertAlmostEqual(response.json()['points'][0][2], 26.7332876, places=4)
+        del payload['source_geoid']
+        self.assertEqual(self.client.post('/api/coordinates/convert', json=payload).status_code, 422)
+        payload['source_geoid'] = 20
+        payload['points'] = [[20.845, 106.688]]
+        self.assertEqual(self.client.post('/api/coordinates/convert', json=payload).status_code, 422)
 
 
 if __name__ == '__main__':
