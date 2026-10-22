@@ -2,6 +2,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+// These immutable URLs were already cached before prefix-7 support shipped.
+const html = fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/index.html'), 'utf8');
+const cachedVersions = {
+  shared: '20261009-device-lock-v2', list: '20261018-base-types-version-v2',
+  live: '20261017-base-brand-v1', detail: '20261018-base-types-version-v2',
+};
+for (const [name, previous] of Object.entries(cachedVersions)) {
+  const url = html.match(new RegExp(`dashboard-${name}\\.min\\.js\\?v=([^"&]+)`));
+  assert.ok(url, `Dashboard ${name} must have a versioned URL`);
+  assert.notEqual(url[1], previous, `Dashboard ${name} must invalidate pre-4G browser cache`);
+}
 const window = {};
 const React = {
   memo: fn => fn, useState: value => [typeof value === 'function' ? value() : value, () => {}],
