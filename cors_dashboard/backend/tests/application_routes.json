@@ -576,6 +576,22 @@
     },
     {
       "type": "APIRoute",
+      "path": "/api/admin/reference-network-settings",
+      "methods": [
+        "GET"
+      ],
+      "name": "reference_network_settings"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/admin/reference-network-settings",
+      "methods": [
+        "PUT"
+      ],
+      "name": "update_reference_network_settings"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/caster/clienttable",
       "methods": [
         "GET"

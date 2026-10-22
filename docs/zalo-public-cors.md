@@ -2,7 +2,7 @@
 
 `/cors` and `/cors cục đang thế nào` work in private chats and groups without
 sign-in, linking or OTP. Mention the bot before the command when required by
-Zalo. The command uses the same cached website-health probe as the map and
+Zalo. The command uses the same cached CORS health checks as the map and
 reports online, a service error, or unknown with a Vietnam-local check time.
 It does not attest that individual stations are broadcasting RTCM.
 
@@ -41,7 +41,7 @@ and shared sender enforce CORS-only mode; internal base/rover alerts are exclude
 Public callers still require linking before they can select dashboard behavior.
 
 **Tự báo khi Cục đổi Online / Báo lỗi** subscribes only the selected chat to
-website-health changes. A separate bot task checks every 30 seconds, regardless
+CORS status changes. A separate bot task reads the shared status every 30 seconds, regardless
 of the internal operational-alert toggle. The first successful observation sets
 a baseline silently; later online/error transitions send one status message.
 Unknown probe results do not trigger a false outage alert. Per-chat state survives
@@ -49,9 +49,11 @@ restarts. A row lock serializes delivery across workers; suppressed or failed
 sends do not advance the saved state. Paused chats are excluded and the sender
 rechecks current policy before delivery.
 
-A loaded page without the login form counts as an error. Network/TLS failures
-remain unknown because the page could not be inspected. This same rule drives
-map status, `/cors` replies and automatic CORS alerts. No live Zalo delivery was
+When RTCM checking is disabled, a loaded page without the login form counts as
+an error and network/TLS failures remain unknown. When enabled, the cached RTCM
+probe determines status even if the login page is healthy. Authentication errors
+remain unknown. The map, `/cors` replies and automatic alerts use the same shared
+status and configured upstream cooldowns; see [CORS status](cors-cuc-status.md). No live Zalo delivery was
 performed during development validation.
 
 

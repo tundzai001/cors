@@ -188,6 +188,10 @@ vm.runInNewContext(mapSource.slice(mapSource.indexOf('    function referenceNetw
 assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000}).label, 'Online');
 assert.equal(helpers.referenceNetworkMeta({status: 'offline', checked_at: Date.now()/1000}).label, 'Đang báo lỗi');
 assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 76}).label, 'Chưa xác định', 'Old website health must not stay green');
+assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 600, valid_until: Date.now()/1000 + 300}).label, 'Online', 'RTCM cache stays valid for its configured interval');
+assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 600, valid_until: Date.now()/1000 - 1}).label, 'Chưa xác định', 'Expired RTCM evidence must not stay green');
+assert.equal(helpers.referenceCheckLabel({rtcm_check_enabled:true, rtcm_check_interval_seconds:900}), 'Dữ liệu RTCM · kiểm tra mỗi 15 phút');
+assert.equal(helpers.referenceCheckLabel({rtcm_check_enabled:false, web_check_interval_seconds:45}), 'Trang dịch vụ · kiểm tra mỗi 45 giây');
 const referencePopup = helpers.referenceStationPopup({code: 'TEST', lat: 21, lon: 105, serviceHealth: {status: 'offline', checked_at: Date.now()/1000, reason: '<error>'}});
 assert(!referencePopup.includes('error'), 'Public popup does not disclose probe details');
 assert(referencePopup.includes('Đang báo lỗi'), 'Public status stays visible');

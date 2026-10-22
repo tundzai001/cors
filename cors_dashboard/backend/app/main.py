@@ -722,6 +722,8 @@ app.include_router(get_public_network_summary_router)
 
 from .reference_network import router as reference_network_router
 app.include_router(reference_network_router)
+from .reference_network_admin import router as reference_network_admin_router
+app.include_router(reference_network_admin_router)
 
 
 from .caster_routes import router as caster_router

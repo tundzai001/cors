@@ -152,11 +152,20 @@
     }
 
     function referenceNetworkMeta(health) {
-        const fresh = health?.checked_at && Date.now() / 1000 - health.checked_at < 75;
+        const now = Date.now() / 1000;
+        const expires = Number.isFinite(health?.valid_until) ? health.valid_until : (health?.checked_at || 0) + 75;
+        const fresh = health?.checked_at && now >= health.checked_at - 5 && now < expires;
         const status = fresh ? health.status : 'unknown';
         return status === 'online' ? {label: 'Online', color: '#22c55e'}
             : status === 'offline' ? {label: 'Đang báo lỗi', color: '#ef4444'}
             : {label: 'Chưa xác định', color: '#94a3b8'};
+    }
+
+    function referenceCheckLabel(health) {
+        const rtcm = health?.rtcm_check_enabled === true;
+        const seconds = Number(rtcm ? health.rtcm_check_interval_seconds : health?.web_check_interval_seconds) || (rtcm ? 900 : 30);
+        const interval = seconds % 60 === 0 ? `${seconds / 60} phút` : `${seconds} giây`;
+        return `${rtcm ? 'Dữ liệu RTCM' : 'Trang dịch vụ'} · kiểm tra mỗi ${interval}`;
     }
 
     function referenceStationPopup(station) {
@@ -224,6 +233,9 @@
         const [showStations, setShowStations] = useState(true);
         const [showVngeonet, setShowVngeonet] = useState(true);
         const [vngeonetHealth, setVngeonetHealth] = useState(null);
+        const [rtcmSaving, setRtcmSaving] = useState(false);
+        const [rtcmSaveError, setRtcmSaveError] = useState('');
+        const [referenceRefresh, setReferenceRefresh] = useState(0);
         const [showRovers, setShowRovers] = useState(true);
         const [showProvinces, setShowProvinces] = useState(true);
         const [showVietnamMask, setShowVietnamMask] = useState(false);
@@ -337,7 +349,7 @@
             const interval = setInterval(refresh, 30000);
             document.addEventListener('visibilitychange', refresh);
             return () => { active = false; controller?.abort(); clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
-        }, []);
+        }, [referenceRefresh]);
 
         const referenceStations = useMemo(() => {
             const term = search.trim().toLowerCase();
@@ -346,6 +358,26 @@
                 .map(station => ({...station, serviceHealth: vngeonetHealth, serviceColor: referenceNetworkMeta(vngeonetHealth).color})) : [];
         }, [showVngeonet, search, vngeonetHealth]);
         const referenceMeta = referenceNetworkMeta(vngeonetHealth);
+
+        async function toggleRtcmCheck(enabled) {
+            if (role !== 'admin' || rtcmSaving) return;
+            setRtcmSaving(true);
+            setRtcmSaveError('');
+            try {
+                const response = await window.ApiClient.apiFetch('/api/admin/reference-network-settings', {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({rtcm_check_enabled: enabled}),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Chưa lưu được cài đặt');
+                setVngeonetHealth(previous => ({...previous, ...data, status: 'unknown', checked_at: 0}));
+                setReferenceRefresh(value => value + 1);
+            } catch (error) {
+                setRtcmSaveError(error.message || 'Chưa lưu được cài đặt');
+            } finally {
+                setRtcmSaving(false);
+            }
+        }
         const ownOnlineCount = devices.filter(device => !['offline', 'lost'].includes(
             window.CorsDashboardShared?.getMapEffectiveStatus?.(device) || String(device?.status || 'offline').toLowerCase()
         )).length;
@@ -1225,9 +1257,22 @@
                                 disabled={!window.VngeonetStations?.length} aria-describedby="vngeonet-help" />
                             <label className="form-check-label" htmlFor="vngeonet-toggle">CORS Cục · VNGEONET ({window.VngeonetStations?.length || 0})</label>
                             <div className="form-text" id="vngeonet-help">
-                                {window.VngeonetStations?.length ? `Trang dịch vụ: ${referenceMeta.label} · kiểm tra mỗi 30 giây` : 'Không tải được danh sách VNGEONET'}
+                                {window.VngeonetStations?.length ? `${referenceMeta.label} · ${referenceCheckLabel(vngeonetHealth)}` : 'Không tải được danh sách VNGEONET'}
                             </div>
                         </div>
+                        {role === 'admin' && <div className="mb-2">
+                            <div className="form-check form-switch d-flex align-items-center gap-2" style={{minHeight: '44px'}}>
+                                <input className="form-check-input mt-0" type="checkbox" id="cors-cuc-rtcm-check"
+                                    checked={vngeonetHealth?.rtcm_check_enabled === true}
+                                    disabled={rtcmSaving || typeof vngeonetHealth?.rtcm_check_enabled !== 'boolean'}
+                                    onChange={event => toggleRtcmCheck(event.target.checked)} aria-describedby="cors-cuc-rtcm-help" />
+                                <label className="form-check-label" htmlFor="cors-cuc-rtcm-check">Kiểm tra dữ liệu RTCM Cục</label>
+                            </div>
+                            <div className="form-text" id="cors-cuc-rtcm-help" role="status" aria-live="polite">
+                                {rtcmSaving ? 'Đang lưu…' : vngeonetHealth?.rtcm_check_enabled ? 'Đang bật · có dữ liệu mới báo hoạt động.' : 'Đang tắt · kiểm tra form đăng nhập như cũ.'}
+                            </div>
+                            {rtcmSaveError && <div className="small text-danger mt-1" role="alert">{rtcmSaveError}</div>}
+                        </div>}
                         <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={coverage} onChange={e => setCoverage(e.target.checked)} id="coverage-toggle" />
                             <label className="form-check-label" htmlFor="coverage-toggle">Vùng phủ 20 km</label>
