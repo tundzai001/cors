@@ -1,5 +1,6 @@
 # backend/app/schemas.py
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, model_validator, TypeAdapter
+import re
 from typing import Any, List, Optional
 
 
@@ -28,10 +29,23 @@ def redact_config_secrets(value: Any) -> Any:
 SERVICE_PASSWORD_FIELDS = ("password1", "password2", "rtcmpassword1", "command_pass")
 
 
+def service_server_ids(config: dict) -> list[int]:
+    ids = {1, 2}
+    for key in config:
+        match = re.fullmatch(r"server([1-9][0-9]*)_enabled|serverhost([1-9][0-9]*)", key)
+        if match:
+            ids.add(int(match.group(1) or match.group(2)))
+    return sorted(ids)
+
+
+def service_password_fields(config: dict):
+    return set(SERVICE_PASSWORD_FIELDS) | {key for key in config if re.fullmatch(r"password[1-9][0-9]*", key)}
+
+
 def preserve_service_passwords(current: dict, incoming: dict) -> dict:
     """A missing or blank password means keep the stored credential."""
     merged = dict(incoming)
-    for key in SERVICE_PASSWORD_FIELDS:
+    for key in service_password_fields({**current, **incoming}):
         if merged.get(key) in (None, ""):
             if current.get(key) not in (None, ""):
                 merged[key] = current[key]
@@ -52,7 +66,7 @@ def service_config_deployment_payload(agent_version, saved_config: dict, changes
             or any(saved_config.get(f"{field}{server}") and not reported_config.get(f"{field}{server}")
                    for field in ("serverhost", "port", "mountpoint"))
         )
-        for server in (1, 2)
+        for server in service_server_ids(saved_config)
     )
     if changes and len(version) == 3 and version >= (2, 2, 6) and not needs_restore:
         return dict(changes)
@@ -184,6 +198,28 @@ class StationHostLockRequest(BaseModel):
 
 
 class ServiceConfig(BaseModel):
+    class Config:
+        extra = "allow"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_numbered_casters(cls, value):
+        value = dict(value)
+        for key in list(value):
+            if key in cls.model_fields:
+                continue
+            match = re.fullmatch(r"(server)([1-9][0-9]*)(_enabled|_stream_on_demand|_stream_active)|(ntrip_version|username|serverhost|port|mountpoint|password)([1-9][0-9]*)", key)
+            if not match:
+                value.pop(key)
+                continue
+            template = f"server1{match.group(3)}" if match.group(1) else f"{match.group(4)}1"
+            value[key] = TypeAdapter(cls.model_fields[template].annotation).validate_python(value[key])
+            if template == "port1" and value[key] is not None and not 1 <= value[key] <= 65535:
+                raise ValueError(f"Invalid caster port: {key}")
+            if template == "ntrip_version1" and value[key] not in (1, 2):
+                raise ValueError(f"Invalid NTRIP version: {key}")
+        return value
+
     ncomport: str | None = Field(None, description="Định danh trạm hoặc ID cổng COM")
     reconnectioninterval: int = 10
     stream_on_demand: bool = False

@@ -12,6 +12,7 @@ from . import crud, models
 from .database import auth_session_scope, device_session_scope, settings
 from .runtime_config import _read_caster_config_from_env, ROVER_FIXED_POINT_INTERVAL_SECONDS
 from .ntrip_control import RTCM_KEEPALIVE_DEBUG
+from .caster_source_store import sync_caster_sources
 from .caster_cache import _get_caster_cache, _set_caster_cache, global_caster_cache_lock
 
 logger = logging.getLogger("app.main")
@@ -86,9 +87,10 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
             users = await caster.get_users()
             return users, int(time.time())
 
-        (users, users_sampled_at), clients = await asyncio.gather(
+        (users, users_sampled_at), clients, source_sync = await asyncio.gather(
             fetch_users_snapshot(),
-            caster.get_clienttable(mountpoint="all")
+            caster.get_clienttable(mountpoint="all"),
+            sync_caster_sources(host, port, user, password),
         )
 
         scan_timestamp = int(time.time())
@@ -96,6 +98,8 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
             await _set_caster_cache(key, {
                 "last_update": scan_timestamp,
                 "users_last_update": users_sampled_at,
+                "sources_last_update": source_sync["synced_at"],
+                "sources_error": source_sync["error"],
                 "users": users or [],
                 "clients": clients if clients is not None else [],
                 "error": None if clients is not None else "clienttable query failed",

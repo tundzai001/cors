@@ -15,6 +15,7 @@ from .database import get_auth_db, get_db, auth_session_scope, device_session_sc
 from .caster_cache import _get_all_caster_cache, global_caster_cache_lock
 from .runtime_config import _read_caster_config_from_env
 from .caster_helpers import validate_caster_hosts
+from .caster_source_store import inventory_response, sync_configured_sources, lock_source_host, save_sources
 
 logger = logging.getLogger("app.main")
 router = APIRouter()
@@ -228,65 +229,34 @@ async def get_caster_users(
 
 @router.get("/api/admin/caster-sources")
 async def get_admin_caster_sources(
+    db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
-    """
-    ✅ ADMIN ONLY: Fetch all available mountpoints/sources from NTRIP Caster(s).
-    Separated by domain (aitogy.com.vn, aitogy.click, etc.).
-    """
+    """Read the durable inventory without querying caster sockets."""
     if current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ ADMIN mới có quyền xem toàn bộ mountpoints từ Caster")
+    result = await db.execute(select(models.CasterSource).order_by(models.CasterSource.host, models.CasterSource.mountpoint))
+    hosts, _ = _read_caster_config_from_env()
+    return inventory_response(result.scalars().all(), hosts)
 
-    from app.caster_client import CasterClient
 
-    hosts, env_cfg = _read_caster_config_from_env()
+@router.post("/api/admin/caster-sources/sync")
+async def sync_admin_caster_sources(
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ ADMIN mới có quyền đồng bộ mountpoint")
+    hosts, config = _read_caster_config_from_env()
     if not hosts:
-        raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
-
-    port = env_cfg.get("port") or 2101
-    sources_by_host = {}
-    all_sources = []
-
-    for host in hosts:
-        try:
-            caster = CasterClient(host, port)
-            sources = await caster.get_sources()
-
-            if sources:
-                # Tag each source with its host for UI filtering
-                for src in sources:
-                    src["host"] = host
-                    src["domain"] = _extract_domain(host)  # aitogy.com.vn or aitogy.click
-
-                sources_by_host[host] = sources
-                all_sources.extend(sources)
-                logger.info(f"[CASTER] Fetched {len(sources)} sources from {host}")
-            else:
-                sources_by_host[host] = []
-                logger.warning(f"[CASTER] No sources fetched from {host}")
-        except Exception as e:
-            logger.error(f"[CASTER] Failed to fetch sources from {host}: {e}")
-            sources_by_host[host] = []
-
-    # Group by domain for frontend
-    grouped_by_domain = {}
-    for src in all_sources:
-        domain = src.get("domain", "unknown")
-        if domain not in grouped_by_domain:
-            grouped_by_domain[domain] = []
-        grouped_by_domain[domain].append(src)
-
-    return {
-        "total": len(all_sources),
-        "by_host": sources_by_host,
-        "by_domain": grouped_by_domain,
-        "all": all_sources,
-    }
+        raise HTTPException(status_code=400, detail="Chưa cấu hình Caster Server trong hệ thống")
+    results = await sync_configured_sources(hosts, config)
+    return {'results': results, 'synced_hosts': sum(result['error'] is None for result in results)}
 
 
 @router.post("/api/admin/caster-sources")
 async def create_admin_caster_source(
     req: schemas.CasterSourceCreateRequest,
+    db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
     if current_user.role != auth.Role.ADMIN:
@@ -304,6 +274,7 @@ async def create_admin_caster_source(
         raise HTTPException(status_code=403, detail=str(exc)) from None
 
     port = env_cfg.get("port") or int(settings.CASTER_PORT or 2101)
+    await lock_source_host(db, target_host, port)
     caster = CasterClient(target_host, port)
     ok = await caster.create_source(
         req.identifier,
@@ -323,12 +294,16 @@ async def create_admin_caster_source(
     if not ok:
         raise HTTPException(status_code=502, detail=f"Không thể tạo mountpoint '{req.mountpoint}' trên caster {target_host}")
 
+    await save_sources(db, target_host, port, [req.model_dump(exclude={'host'})], int(time.time()))
+    await db.commit()
+
     return {"status": "ok", "host": target_host, "mountpoint": req.mountpoint, "identifier": req.identifier}
 
 
 @router.delete("/api/admin/caster-sources")
 async def delete_admin_caster_source(
     req: schemas.CasterSourceDeleteRequest,
+    db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
     if current_user.role != auth.Role.ADMIN:
@@ -346,30 +321,23 @@ async def delete_admin_caster_source(
         raise HTTPException(status_code=403, detail=str(exc)) from None
 
     port = env_cfg.get("port") or int(settings.CASTER_PORT or 2101)
+    await lock_source_host(db, target_host, port)
     caster = CasterClient(target_host, port)
     ok = await caster.delete_source(req.identifier, req.mountpoint)
     if not ok:
-        raise HTTPException(status_code=502, detail=f"Không thể xóa mountpoint '{req.mountpoint}' trên caster {target_host}")
+        # Retrying after a partial delete is safe once absence is confirmed.
+        sources = await caster.get_sources()
+        if sources is None or any(str(source.get('mountpoint') or '').strip() == req.mountpoint.strip() for source in sources):
+            raise HTTPException(status_code=502, detail=f"Không thể xóa mountpoint '{req.mountpoint}' trên caster {target_host}")
+
+    await db.execute(delete(models.CasterSource).where(
+        models.CasterSource.host == target_host.lower(),
+        models.CasterSource.port == int(port),
+        models.CasterSource.mountpoint == req.mountpoint.strip(),
+    ))
+    await db.commit()
 
     return {"status": "ok", "host": target_host, "mountpoint": req.mountpoint, "identifier": req.identifier}
-
-
-def _extract_domain(host: str) -> str:
-    """Extract domain from hostname (e.g., 'aitogy.com.vn' from 'caster.aitogy.com.vn')"""
-    h = str(host or "").strip().lower()
-
-    # Match known domains
-    if "aitogy.com.vn" in h:
-        return "aitogy.com.vn"
-    if "aitogy.click" in h:
-        return "aitogy.click"
-    if "localhost" in h or "127.0.0.1" in h:
-        return "localhost"
-    if "localhost" in h or h.startswith("127."):
-        return "localhost"
-
-    # Return as-is for unknown domains
-    return h
 
 
 @router.post("/api/caster/block-user")

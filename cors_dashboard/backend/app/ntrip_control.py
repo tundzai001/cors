@@ -13,6 +13,7 @@ from sqlalchemy import update, delete
 from fastapi.responses import PlainTextResponse
 
 from . import crud, models
+from .schemas import service_server_ids
 from .database import auth_session_scope, device_session_scope, settings
 from .database import DatabaseBusyError
 from .command_dispatcher import send_command_to_pi
@@ -117,10 +118,9 @@ def _sanitize_ttl(ttl_seconds: int) -> int:
 def _extract_station_mountpoints(device: models.Device) -> List[str]:
     cfg = _device_service_config(device)
     result: List[str] = []
-    if cfg.get("server1_enabled") and cfg.get("mountpoint1"):
-        result.append(str(cfg.get("mountpoint1")))
-    if cfg.get("server2_enabled") and cfg.get("mountpoint2"):
-        result.append(str(cfg.get("mountpoint2")))
+    for sid in service_server_ids(cfg):
+        if cfg.get(f"server{sid}_enabled") and cfg.get(f"mountpoint{sid}"):
+            result.append(str(cfg[f"mountpoint{sid}"]))
     return result
 
 
@@ -134,7 +134,7 @@ def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[
         return None
 
     candidates: List[int] = []
-    for sid in (1, 2):
+    for sid in service_server_ids(cfg):
         # Route selection should still identify ownership even if enabled flag is stale.
         # Worker start is gated elsewhere by server{sid}_enabled.
         sid_mp_norm = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
@@ -268,11 +268,11 @@ async def _set_station_stream(
         target_server_id = int(server_id) if server_id is not None else None
     except (TypeError, ValueError):
         target_server_id = None
-    if target_server_id not in (1, 2):
+    if target_server_id is not None and target_server_id <= 0:
         target_server_id = None
 
     if target_server_id is None and requested_mp_norm and (bool(active) or requested_address):
-        # Tự động phân giải server_idx (1 hoặc 2) dựa vào cấu hình trạm
+        # Tự động phân giải server_idx dựa vào cấu hình trạm
         try:
             async with device_session_scope() as db:
                 device = await crud.get_device_by_serial(db, serial)
@@ -584,9 +584,9 @@ def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bo
         return False
 
     cfg = _device_service_config(device)
-    s1_ok = bool(cfg.get("server1_enabled")) and _normalize_mountpoint(cfg.get("mountpoint1")) == requested
-    s2_ok = bool(cfg.get("server2_enabled")) and _normalize_mountpoint(cfg.get("mountpoint2")) == requested
-    return s1_ok or s2_ok
+    return any(bool(cfg.get(f"server{sid}_enabled")) and
+               _normalize_mountpoint(cfg.get(f"mountpoint{sid}")) == requested
+               for sid in service_server_ids(cfg))
 
 
 async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: str) -> str:
@@ -620,7 +620,7 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
                 else:
                     cfg = {}
 
-                for sid in (1, 2):
+                for sid in service_server_ids(cfg):
                     mp = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
                     if mp:
                         if mp not in new_cache:
@@ -1070,7 +1070,7 @@ async def _rtcm_session_reaper_loop():
                         if remaining > 0:
                             continue
 
-                    server_label = f" S{server_id}" if server_id in (1, 2) else ""
+                    server_label = f" S{server_id}" if server_id is not None else ""
                     device_label = f"{serial}@{mountpoint_norm}{server_label}"
                     logger.info(f"[RTCM REAPER] Sending deactivation command to station {device_label}")
                     await _set_station_stream(
@@ -1168,7 +1168,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                 cfg = {}
             selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
             selected_server_host = ""
-            if selected_server_id in (1, 2):
+            if selected_server_id in service_server_ids(cfg):
                 selected_server_host = str(cfg.get(f"serverhost{selected_server_id}", "") or "").strip()
 
             wake_result = await _ntrip_mqtt_start(
@@ -1194,7 +1194,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
             else:
                 wake_note = "đã xử lý yêu cầu wake"
 
-            if selected_server_id in (1, 2):
+            if selected_server_id in service_server_ids(cfg):
                 logger.info(
                     f"[NTRIP Wake] route serial={serial} mountpoint={mountpoint} "
                     f"server_id={selected_server_id} host={selected_server_host or 'unknown'}"
@@ -1239,7 +1239,7 @@ async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, r
                 cfg = {}
 
             selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
-            if selected_server_id in (1, 2):
+            if selected_server_id in service_server_ids(cfg):
                 selected_server_host = str(cfg.get(f"serverhost{selected_server_id}", "") or "").strip()
 
             target_host = selected_server_host or requested_address

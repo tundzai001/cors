@@ -9,6 +9,19 @@ from app.rtcm_stream_state import (
 
 
 class RTCMStreamStateTests(unittest.TestCase):
+    def test_third_caster_wake_sleep_and_reaper_are_independent(self):
+        config = {'server1_enabled': True, 'server1_stream_on_demand': False,
+                  'server3_enabled': True, 'server3_stream_on_demand': True,
+                  'server3_stream_active': False, 'mountpoint3': 'THIRD'}
+        awake = apply_stream_control_state(config, True, 'THIRD', server_id=3)
+        self.assertTrue(get_server_stream_state(awake, 3).can_push)
+        self.assertEqual(collect_reapable_server_streams(awake), ((3, 'third'),))
+        asleep = apply_stream_control_state(awake, False, 'THIRD', server_id=3)
+        self.assertFalse(get_server_stream_state(asleep, 3).can_push)
+        self.assertTrue(get_server_stream_state(asleep, 1).can_push)
+        self.assertEqual(collect_reapable_server_streams(asleep), ())
+        self.assertEqual(build_stream_control_payload(True, server_id=3)['server_idx'], 3)
+
     def test_mixed_sleeping_s1_and_always_on_s2_has_no_reaper_target(self):
         config = {
             "stream_on_demand": True,
@@ -155,7 +168,7 @@ class RTCMStreamStateTests(unittest.TestCase):
         self.assertFalse(payload["active"])
 
     def test_invalid_server_id_is_omitted(self):
-        payload = build_stream_control_payload(active=True, server_id=9)
+        payload = build_stream_control_payload(active=True, server_id=0)
 
         self.assertNotIn("server_id", payload)
         self.assertNotIn("server_idx", payload)

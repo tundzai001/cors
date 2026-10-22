@@ -1,5 +1,6 @@
 """Regression checks for redacted telemetry and blank dashboard passwords."""
 import ast
+import re
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -9,15 +10,15 @@ APP = Path(__file__).resolve().parents[1] / "app"
 tree = ast.parse((APP / "schemas.py").read_text())
 nodes = [node for node in tree.body if
          isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "SERVICE_PASSWORD_FIELDS" for t in node.targets)
-         or isinstance(node, ast.FunctionDef) and node.name in ("preserve_service_passwords", "service_config_deployment_payload")]
-scope = {}
+         or isinstance(node, ast.FunctionDef) and node.name in ("preserve_service_passwords", "service_config_deployment_payload", "service_password_fields", "service_server_ids")]
+scope = {'re': re}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "schemas.py", "exec"), scope)
 preserve = scope["preserve_service_passwords"]
 
 
 class ServicePasswordPreservationTests(unittest.TestCase):
     def test_blank_missing_and_null_keep_all_stored_passwords(self):
-        stored = {key: "stored-" + key for key in scope["SERVICE_PASSWORD_FIELDS"]}
+        stored = {key: "stored-" + key for key in (*scope["SERVICE_PASSWORD_FIELDS"], "password3", "password12")}
         for blank in ({}, dict.fromkeys(stored), dict.fromkeys(stored, "")):
             with self.subTest(blank=blank):
                 self.assertEqual(preserve(stored, blank), stored)
@@ -81,15 +82,15 @@ class ServicePasswordPreservationTests(unittest.TestCase):
         incoming = assignment("incoming_config")
         blank_filter = next(node for node in endpoint.body if isinstance(node, ast.For))
         mode_assignments = [assignment(name) for name in (
-            "old_on_demand", "new_on_demand", "old_s1_on_demand", "old_s2_on_demand",
-            "new_s1_on_demand", "new_s2_on_demand", "station_mode_changed")]
+            "old_on_demand", "new_on_demand", "station_mode_changed")]
         stored = {"password1": "caster-secret", "username1": "source", "stream_on_demand": True,
                   "server1_stream_on_demand": True, "server1_enabled": True}
         for patch in ({"mountpoint1": "TV869", "password1": ""},
                       {"mountpoint1": "TV869", "password1": "replacement"}):
             context = {"serial": "LP_TEST", "old_service_cfg": stored,
                        "payload": SimpleNamespace(model_dump=lambda **kw: dict(patch) if kw.get("exclude_unset") else self.fail("Defaults must not become edits")),
-                       "schemas": SimpleNamespace(SERVICE_PASSWORD_FIELDS=scope["SERVICE_PASSWORD_FIELDS"],
+                       "schemas": SimpleNamespace(service_password_fields=scope["service_password_fields"],
+                                                   service_server_ids=scope["service_server_ids"],
                                                    service_config_deployment_payload=scope["service_config_deployment_payload"]),
                        "device_in_db": SimpleNamespace(version="V2.2.6"),
                        "mqtt_handler": SimpleNamespace(device_sync_cache={}),

@@ -3259,21 +3259,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             const sources = data.all || [];
             const hostOptions = Object.keys(data.by_host || {}).sort();
 
-            if (sources.length === 0) {
-                container.innerHTML = '<div class="alert alert-warning text-center mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Không có mountpoint nào</div>';
-                return;
-            }
-
             let html = `
                 <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
-                    <div class="d-flex gap-2">
+                    <div class="d-flex flex-wrap align-items-center gap-2">
                         <button type="button" class="btn btn-premium-primary btn-sm px-3" data-bs-toggle="modal" data-bs-target="#createMountpointModal">
                             <i class="bi bi-plus-circle me-1"></i> Tạo mountpoint
                         </button>
+                        <button type="button" class="btn btn-outline-info btn-sm px-3" id="sync-mountpoints-btn">
+                            <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i> Đồng bộ caster
+                        </button>
+                        <span class="text-muted small" role="status">${data.last_synced_at ? `Cập nhật: ${escapeHtml(new Date(data.last_synced_at * 1000).toLocaleString('vi-VN'))}` : 'Chưa có dữ liệu đồng bộ'}</span>
                     </div>
                     <div class="search-input-wrapper" style="max-width: 400px;">
                         <i class="bi bi-search"></i>
-                        <input type="text" class="form-control premium-input" id="mountpoints-search" placeholder="Tìm tên, identifier, host...">
+                        <input type="text" class="form-control premium-input" id="mountpoints-search" aria-label="Tìm mountpoint, identifier hoặc host" placeholder="Tìm tên, identifier, host...">
                     </div>
                 </div>
 
@@ -3291,6 +3290,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </div>
 
                 <div class="premium-table-card">
+                    <div class="table-responsive">
                     <table class="premium-table table-hover">
                         <thead>
                             <tr>
@@ -3305,7 +3305,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             </tr>
                         </thead>
                         <tbody id="mountpoints-table-body">
-                            ${sources.map((src, idx) => {
+                            ${sources.length ? sources.map((src, idx) => {
                                 const domain = escapeHtml(src.domain || src.host || '');
                                 const mountpoint = escapeHtml(src.mountpoint || '--');
                                 const rawMountpoint = escapeHtml(src.mountpoint || '');
@@ -3360,9 +3360,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     </td>
                                 </tr>
                             `;
-                            }).join('')}
+                            }).join('') : '<tr><td colspan="8" class="text-center text-muted py-4">Chưa có mountpoint đã lưu. Nhấn Đồng bộ caster để lấy danh sách hiện có.</td></tr>'}
                         </tbody>
                     </table>
+                    </div>
                 </div>
 
                 <div class="mt-4 p-3 bg-dark-subtle rounded border border-secondary border-opacity-25 small">
@@ -3379,6 +3380,31 @@ document.addEventListener('DOMContentLoaded', async () => {
             `;
 
             container.innerHTML = html;
+
+            const syncButton = document.getElementById('sync-mountpoints-btn');
+            syncButton?.addEventListener('click', async () => {
+                syncButton.disabled = true;
+                syncButton.setAttribute('aria-busy', 'true');
+                const previousLabel = syncButton.innerHTML;
+                syncButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span> Đang đồng bộ…';
+                try {
+                    const response = await apiFetchRaw('/api/admin/caster-sources/sync', { method: 'POST', headers: API_HEADERS });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.detail || 'Không thể đồng bộ caster');
+                    const results = result.results || [];
+                    const failed = results.filter(item => item.error).map(item => item.host);
+                    showToast(failed.length ? `Đã đồng bộ ${result.synced_hosts}/${results.length} caster. Chưa đồng bộ được: ${failed.join(', ')}. Danh sách đã lưu vẫn được giữ.` : 'Đã đồng bộ danh sách mountpoint', failed.length ? 'warning' : 'success');
+                    casterSourcesCache = null;
+                    await loadAndRenderMountpoints();
+                    document.getElementById('sync-mountpoints-btn')?.focus();
+                } catch (error) {
+                    showToast(error.message, 'danger');
+                } finally {
+                    syncButton.disabled = false;
+                    syncButton.removeAttribute('aria-busy');
+                    syncButton.innerHTML = previousLabel;
+                }
+            });
 
             // --- Modal Host Population ---
             const modalHostSelect = document.getElementById('create-mp-host');

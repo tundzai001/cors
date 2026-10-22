@@ -14,7 +14,8 @@ def load_method(filename, name, scope, last=False):
     tree = ast.parse((ROOT / filename).read_text())
     methods = [node for cls in tree.body if isinstance(cls, ast.ClassDef)
                for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name]
-    exec(compile(ast.Module(body=[methods[-1 if last else 0]], type_ignores=[]), filename, 'exec'), scope)
+    helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_get_ntrip_server_ids']
+    exec(compile(ast.Module(body=[*helpers, methods[-1 if last else 0]], type_ignores=[]), filename, 'exec'), scope)
     return scope[name]
 
 
@@ -24,17 +25,17 @@ class ServiceConfigPatchTests(unittest.TestCase):
                  '_compute_any_server_can_push': lambda cfg, **kw: cfg['server1_stream_active']}
         apply = load_method('agent_universal.py', 'update_service_config', scope)
         stored = {'password1': 'secret', 'password2': 'backup', 'rtcmpassword1': 'rtcm',
-                  'command_pass': 'command', 'username1': 'source', 'port1': 2101,
+                  'command_pass': 'command', 'server3_enabled': True, 'password3': 'third', 'username1': 'source', 'port1': 2101,
                   'stream_on_demand': True, 'server1_stream_on_demand': True,
                   'server1_stream_active': False}
         agent = SimpleNamespace(config={'services': dict(stored)}, save_config=Mock())
-        patch = {'mountpoint1': 'NEW', 'password1': '', 'password2': None}
+        patch = {'mountpoint1': 'NEW', 'password1': '', 'password2': None, 'password3': ''}
         apply(agent, patch)
         cfg = agent.config['services']
         for key, value in stored.items():
             self.assertEqual(cfg[key], value, key)
         self.assertEqual(cfg['mountpoint1'], 'NEW')
-        self.assertEqual(patch, {'mountpoint1': 'NEW', 'password1': '', 'password2': None})
+        self.assertEqual(patch, {'mountpoint1': 'NEW', 'password1': '', 'password2': None, 'password3': ''})
         apply(agent, {'password1': 'replacement', 'server1_stream_active': True})
         self.assertEqual(agent.config['services']['password1'], 'replacement')
         self.assertEqual(agent.config['services']['username1'], 'source')

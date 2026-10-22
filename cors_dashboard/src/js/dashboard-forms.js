@@ -1197,6 +1197,19 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         command_pass: '',
         command_mp: ''
     });
+    const casterIds = config => [...new Set([1, 2, ...Object.keys(config).map(key => {
+        const match = key.match(/^server(\d+)_enabled$|^serverhost(\d+)$/);
+        return match ? Number(match[1] || match[2]) : 0;
+    }).filter(id => Number.isSafeInteger(id) && id > 0)])].sort((a, b) => a - b);
+    const serverIds = casterIds(formState);
+    const addCaster = () => {
+        const sid = Math.max(...serverIds) + 1;
+        setIsFormDirty(true);
+        setFormState(prev => ({ ...prev, [`server${sid}_enabled`]: false,
+            [`server${sid}_stream_on_demand`]: true, [`server${sid}_stream_active`]: false,
+            [`ntrip_version${sid}`]: 1, [`serverhost${sid}`]: '', [`port${sid}`]: '',
+            [`username${sid}`]: '', [`password${sid}`]: '', [`mountpoint${sid}`]: '' }));
+    };
     const [visiblePasswords, setVisiblePasswords] = useState({});
     const isAdmin = currentUser?.role === 'admin';
     const hostPolicy = device.server_config_lock || {};
@@ -1290,8 +1303,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             };
 
             // Read legacy fallbacks from the received config, before defaults.
-            for (const server of [1, 2]) {
+            for (const server of casterIds(merged)) {
                 const key = `server${server}`;
+                merged[`password${server}`] = isAdmin ? (device.service_config[`password${server}`] ?? (isSerialChanged ? '' : hydratedConfigRef.current[`password${server}`]) ?? '') : '';
+
                 merged[`${key}_enabled`] = toBool(device.service_config[`${key}_enabled`], false);
                 merged[`${key}_stream_on_demand`] = toBool(device.service_config[`${key}_stream_on_demand`], toBool(device.service_config.stream_on_demand, true));
                 merged[`${key}_stream_active`] = toBool(device.service_config[`${key}_stream_active`], toBool(device.service_config.stream_active, false));
@@ -1404,6 +1419,15 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 next.server2_stream_active = !checked;
             }
 
+            const streamMatch = name.match(/^server(\d+)_stream_on_demand$/);
+            if (streamMatch) next[`server${streamMatch[1]}_stream_active`] = !checked;
+            if (name === 'stream_on_demand') {
+                for (const sid of serverIds) {
+                    next[`server${sid}_stream_on_demand`] = !!checked;
+                    next[`server${sid}_stream_active`] = !checked;
+                }
+            }
+
             if (name === 'server1_stream_on_demand') {
                 next.server1_stream_active = !checked;
             }
@@ -1421,22 +1445,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         setIsSubmitting(true);
 
         try {
-            const s1Enabled = toBool(formState.server1_enabled, false);
-            const s2Enabled = toBool(formState.server2_enabled, false);
-
-            const s1CanPush = !formState.server1_stream_on_demand || !!formState.server1_stream_active;
-            const s2CanPush = !formState.server2_stream_on_demand || !!formState.server2_stream_active;
-
-            // Derive global compatibility flags from enabled servers only.
-            const derivedGlobalOnDemand =
-                (s1Enabled && !!formState.server1_stream_on_demand)
-                ||
-                (s2Enabled && !!formState.server2_stream_on_demand);
-
-            const derivedGlobalActive =
-                (s1Enabled && s1CanPush)
-                ||
-                (s2Enabled && s2CanPush);
+            const derivedGlobalOnDemand = serverIds.some(sid => toBool(formState[`server${sid}_enabled`]) && toBool(formState[`server${sid}_stream_on_demand`]));
+            const derivedGlobalActive = serverIds.some(sid => toBool(formState[`server${sid}_enabled`]) &&
+                (!toBool(formState[`server${sid}_stream_on_demand`]) || toBool(formState[`server${sid}_stream_active`])));
 
             const payload = {
                 ...formState,
@@ -1451,6 +1462,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 rtcmport1: formState.rtcmport1 ? parseInt(formState.rtcmport1, 10) : null,
                 reconnectioninterval: parseInt(formState.reconnectioninterval, 10)
             };
+            for (const sid of serverIds) {
+                payload[`ntrip_version${sid}`] = parseInt(formState[`ntrip_version${sid}`] || 1, 10);
+                payload[`port${sid}`] = formState[`port${sid}`] ? parseInt(formState[`port${sid}`], 10) : null;
+            }
             if (isLteStation) {
                 delete payload.command_host;
                 delete payload.command_port;
@@ -1466,13 +1481,13 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 });
             }
 
-            for (const key of ['password1', 'password2', 'rtcmpassword1', 'command_pass']) {
+            for (const key of [...serverIds.map(sid => `password${sid}`), 'rtcmpassword1', 'command_pass']) {
                 if (!payload[key]) delete payload[key];
             }
 
             if (hostsLocked && !isAdmin) {
                 for (const key of Object.keys(hostPolicy)) delete payload[key];
-                for (const sid of [1, 2]) {
+                for (const sid of serverIds) {
                     delete payload[`server${sid}_stream_on_demand`];
                     delete payload[`server${sid}_stream_active`];
                     if (blockedServer(sid)) {
@@ -1482,11 +1497,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 delete payload.stream_on_demand; delete payload.stream_active;
             }
 
-            const streamSettingsChanged = ['server1_enabled', 'server2_enabled',
-                'server1_stream_on_demand', 'server2_stream_on_demand',
-                'server1_stream_active', 'server2_stream_active'].some(key =>
-                String(formState[key] ?? '') !== String(hydratedConfigRef.current[key] ?? '')
-            );
+            const streamSettingsChanged = serverIds.some(sid => ['enabled', 'stream_on_demand', 'stream_active'].some(suffix => {
+                const key = `server${sid}_${suffix}`;
+                return String(formState[key] ?? '') !== String(hydratedConfigRef.current[key] ?? '');
+            }));
             if (!streamSettingsChanged) {
                 delete payload.stream_on_demand;
                 delete payload.stream_active;
@@ -2012,6 +2026,58 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                         </div>
                     </div>
                 </div>
+
+                {serverIds.filter(sid => sid > 2).map(sid => (
+                    <div className="accordion-item" key={sid}>
+                        <h2 className="accordion-header">
+                            <button type="button" className="accordion-button" data-bs-toggle="collapse"
+                                data-bs-target={`#caster-${sid}`} aria-controls={`caster-${sid}`} aria-expanded="true">
+                                <span className="d-flex flex-wrap align-items-center gap-2">NTRIP Caster Server {sid}{renderCasterStatus(sid)}</span>
+                            </button>
+                        </h2>
+                        <div id={`caster-${sid}`} className="accordion-collapse collapse show">
+                            <div className="accordion-body">
+                                <fieldset disabled={disabled || isSubmitting || (!isAdmin && blockedServer(sid))}>
+                                    <div className="form-check form-switch mb-3">
+                                        <input type="checkbox" className="form-check-input" role="switch" id={`server${sid}_enabled`}
+                                            name={`server${sid}_enabled`} disabled={lockedInput(`server${sid}_enabled`)} checked={toBool(formState[`server${sid}_enabled`])} onChange={handleChange} />
+                                        <label className="form-check-label" htmlFor={`server${sid}_enabled`}>Kích hoạt Server {sid}</label>
+                                    </div>
+                                    <div className="row g-3">
+                                        <div className="col-md-6">
+                                            <label className="form-label" htmlFor={`ntrip_version${sid}`}>Phiên bản NTRIP</label>
+                                            <select className="form-select" id={`ntrip_version${sid}`} name={`ntrip_version${sid}`}
+                                                value={formState[`ntrip_version${sid}`] || 1} onChange={handleChange}>
+                                                <option value="1">NTRIP 1.0 (SOURCE)</option><option value="2">NTRIP 2.0 (HTTP POST)</option>
+                                            </select>
+                                        </div>
+                                        {['serverhost', 'port', 'username', 'mountpoint'].map((prefix, index) => (
+                                            <div className={prefix === 'serverhost' ? 'col-md-8' : prefix === 'port' ? 'col-md-4' : 'col-md-6'} key={prefix}>
+                                                <label className="form-label" htmlFor={`${prefix}${sid}`}>{['Host / IP', 'Port', 'Username', 'Mountpoint'][index]}{['serverhost', 'port', 'mountpoint'].includes(prefix) && toBool(formState[`server${sid}_enabled`]) ? ' *' : ''}</label>
+                                                <input className="form-control" id={`${prefix}${sid}`} name={`${prefix}${sid}`}
+                                                    disabled={lockedInput(`${prefix}${sid}`)} type={prefix === 'port' ? 'number' : 'text'} min={prefix === 'port' ? 1 : undefined} max={prefix === 'port' ? 65535 : undefined}
+                                                    required={['serverhost', 'port', 'mountpoint'].includes(prefix) && toBool(formState[`server${sid}_enabled`])}
+                                                    value={formState[`${prefix}${sid}`] ?? ''} onChange={handleChange} />
+                                            </div>
+                                        ))}
+                                        <div className="col-md-6"><label className="form-label">Password</label>{renderPasswordInput(`password${sid}`, `Mật khẩu Caster ${sid}`)}</div>
+                                    </div>
+                                    <div className="form-check form-switch mt-3">
+                                        <input type="checkbox" className="form-check-input" role="switch" id={`server${sid}_stream_on_demand`}
+                                            name={`server${sid}_stream_on_demand`} disabled={!canManageStationMode}
+                                            checked={toBool(formState[`server${sid}_stream_on_demand`], true)} onChange={handleChange} />
+                                        <label className="form-check-label" htmlFor={`server${sid}_stream_on_demand`}>Ngủ khi không có rover</label>
+                                    </div>
+                                </fieldset>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+                {!isLteStation && <div className="p-3">
+                    <button type="button" className="btn btn-outline-primary" disabled={disabled || isSubmitting || (!isAdmin && hostsLocked)} onClick={addCaster}>
+                        <i className="bi bi-plus-lg me-2" aria-hidden="true"></i>Thêm NTRIP caster
+                    </button>
+                </div>}
 
                 {/* ==================== RTCM CLIENT ==================== */}
                 <div className="accordion-item">

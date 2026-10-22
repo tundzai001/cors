@@ -58,6 +58,23 @@ class RoverAccount(AuthBase):
     auto_save_fixed_points = Column(Boolean, default=False, server_default="false", nullable=False)
 
 
+class CasterSource(AuthBase):
+    __tablename__ = "caster_sources"
+
+    id = Column(Integer, primary_key=True)
+    host = Column(String, nullable=False)
+    port = Column(Integer, nullable=False)
+    mountpoint = Column(String, nullable=False)
+    password = Column(String, nullable=True)
+    source_data = Column(JSONB, nullable=False)
+    created_at = Column(BigInteger, nullable=False)
+    last_seen_at = Column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('host', 'port', 'mountpoint', name='uq_caster_sources_target'),
+    )
+
+
 class RoverSessionHistory(AuthBase):
     __tablename__ = "rover_session_history"
 

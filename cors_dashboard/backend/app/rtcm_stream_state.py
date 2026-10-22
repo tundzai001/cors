@@ -8,6 +8,8 @@ must be made from the per-server fields instead.
 
 from __future__ import annotations
 
+from .schemas import service_server_ids
+
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -39,7 +41,7 @@ def has_per_server_stream_state(config: Mapping[str, Any] | None) -> bool:
     cfg = config if isinstance(config, Mapping) else {}
     return any(
         cfg.get(f"server{sid}_{field}") is not None
-        for sid in (1, 2)
+        for sid in service_server_ids(cfg)
         for field in ("stream_on_demand", "stream_active")
     )
 
@@ -58,8 +60,8 @@ class ServerStreamState:
 
 
 def get_server_stream_state(config: Mapping[str, Any] | None, server_id: int) -> ServerStreamState:
-    if server_id not in (1, 2):
-        raise ValueError("server_id must be 1 or 2")
+    if type(server_id) is not int or server_id <= 0:
+        raise ValueError("server_id must be a positive integer")
 
     cfg = config if isinstance(config, Mapping) else {}
     global_on_demand = _as_bool(cfg.get("stream_on_demand"), False)
@@ -93,7 +95,7 @@ def active_on_demand_server_streams(
     RTCM session reaper even though they keep the aggregate stream active.
     """
 
-    states = (get_server_stream_state(config, 1), get_server_stream_state(config, 2))
+    states = (get_server_stream_state(config, sid) for sid in service_server_ids(config or {}))
     return tuple(
         state
         for state in states
@@ -129,7 +131,7 @@ def collect_reapable_server_streams(
         return ()
 
     resolved_server_id: Optional[int] = None
-    for server_id in (1, 2):
+    for server_id in service_server_ids(cfg):
         if normalize_mountpoint(cfg.get(f"mountpoint{server_id}")) == active_mountpoint:
             resolved_server_id = server_id
             break
@@ -151,7 +153,7 @@ def apply_stream_control_state(
         parsed_server_id = int(server_id) if server_id is not None else None
     except (TypeError, ValueError):
         parsed_server_id = None
-    if parsed_server_id not in (1, 2):
+    if parsed_server_id not in service_server_ids(cfg):
         parsed_server_id = None
 
     if parsed_server_id is not None:
@@ -159,11 +161,11 @@ def apply_stream_control_state(
     elif mountpoint_norm:
         target_server_ids = tuple(
             sid
-            for sid in (1, 2)
+            for sid in service_server_ids(cfg)
             if normalize_mountpoint(cfg.get(f"mountpoint{sid}")) == mountpoint_norm
         )
     elif not bool(active):
-        target_server_ids = (1, 2)
+        target_server_ids = service_server_ids(cfg)
     else:
         target_server_ids = ()
 
@@ -183,7 +185,7 @@ def apply_stream_control_state(
     if bool(active) and mountpoint_norm:
         cfg["active_mountpoint"] = str(mountpoint).strip()
 
-    server_states = tuple(get_server_stream_state(cfg, sid) for sid in (1, 2))
+    server_states = tuple(get_server_stream_state(cfg, sid) for sid in service_server_ids(cfg))
     cfg["stream_on_demand"] = any(state.enabled and state.on_demand for state in server_states)
     cfg["stream_active"] = any(state.can_push for state in server_states)
 
@@ -220,7 +222,7 @@ def build_stream_control_payload(
         parsed_server_id = int(server_id) if server_id is not None else None
     except (TypeError, ValueError):
         parsed_server_id = None
-    if parsed_server_id in (1, 2):
+    if parsed_server_id is not None and parsed_server_id > 0:
         payload["server_id"] = parsed_server_id
         payload["server_idx"] = parsed_server_id
 

@@ -89,6 +89,7 @@ class MonitorSnapshotTests(unittest.IsolatedAsyncioTestCase):
             global_caster_cache_lock=asyncio.Lock(), _set_caster_cache=save,
             _get_caster_cache=AsyncMock(return_value=None),
             _record_rover_session_snapshots=history, RTCM_KEEPALIVE_DEBUG=False,
+            sync_caster_sources=AsyncMock(return_value={"synced_at": 100, "error": None}),
         ))
         with patch.dict(sys.modules, {'app.caster_client': fake_module}):
             await scope['_sync_single_caster']('caster', 2101)

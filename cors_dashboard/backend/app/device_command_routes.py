@@ -249,21 +249,16 @@ async def configure_service_endpoint(
     # 2. Kiểm tra MANAGE_STATION_MODE (Nếu thay đổi mode sleep/always-on toàn cục hoặc theo server)
     old_service_cfg = _device_service_config(device_in_db)
     incoming_config = payload.model_dump(exclude_unset=True)
-    for key in schemas.SERVICE_PASSWORD_FIELDS:
+    for key in schemas.service_password_fields(incoming_config):
         if incoming_config.get(key) in (None, ""):
             incoming_config.pop(key, None)
     check_host_lock(device_in_db, incoming_config, is_admin=current_user.role == auth.Role.ADMIN)
     old_on_demand = old_service_cfg.get("stream_on_demand", False)
     new_on_demand = incoming_config.get("stream_on_demand", old_on_demand)
-    old_s1_on_demand = old_service_cfg.get("server1_stream_on_demand")
-    old_s2_on_demand = old_service_cfg.get("server2_stream_on_demand")
-    new_s1_on_demand = incoming_config.get("server1_stream_on_demand", old_s1_on_demand)
-    new_s2_on_demand = incoming_config.get("server2_stream_on_demand", old_s2_on_demand)
-
-    station_mode_changed = (
-        old_on_demand != new_on_demand
-        or old_s1_on_demand != new_s1_on_demand
-        or old_s2_on_demand != new_s2_on_demand
+    station_mode_changed = old_on_demand != new_on_demand or any(
+        old_service_cfg.get(f"server{sid}_stream_on_demand") != incoming_config.get(
+            f"server{sid}_stream_on_demand", old_service_cfg.get(f"server{sid}_stream_on_demand"))
+        for sid in schemas.service_server_ids({**old_service_cfg, **incoming_config})
     )
 
     if station_mode_changed:

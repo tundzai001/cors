@@ -697,7 +697,7 @@ async def configure_integration_station(
     if not device:
         raise HTTPException(404, "Device not found")
     changes = payload.model_dump(exclude_unset=True)
-    for field in schemas.SERVICE_PASSWORD_FIELDS:
+    for field in schemas.service_password_fields(changes):
         if changes.get(field) in (None, ""):
             changes.pop(field, None)
     check_host_lock(device, changes)

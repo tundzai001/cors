@@ -59,6 +59,18 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
                        ui_manager=SimpleNamespace(broadcast=AsyncMock()), _ops_visible_devices=AsyncMock(return_value=[self.device]))
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), self.ns)
 
+    async def test_additional_caster_respects_existing_host_policy(self):
+        self.device.service_config = {**self.config, 'server3_enabled': True,
+                                      'serverhost3': 'third.test', 'port3': 2101}
+        await self.lock_s2()
+        self.assertEqual(self.device.server_config_lock['serverhost3'], 'third.test')
+        for patch in ({'serverhost3': 'changed.test'}, {'server4_enabled': True},
+                      {'server3_stream_on_demand': True}):
+            with self.subTest(patch=patch), self.assertRaises(HTTPException):
+                check_host_lock(self.device, patch)
+        check_host_lock(self.device, {'mountpoint3': 'NEW'})
+        check_host_lock(self.device, {'server4_enabled': True}, is_admin=True)
+
     async def lock_s2(self):
         return await self.ns['lock_device']('TEST', self.db, self.admin, schemas.StationHostLockRequest(locked_servers=[2]))
 
