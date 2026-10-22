@@ -27,7 +27,7 @@
         section.setAttribute('aria-labelledby', side + '-title');
         section.innerHTML = `<div class="tool-card-title"><span aria-hidden="true">0${index + 1}</span><h2 id="${side}-title">${title}</h2></div>
             <label for="${side}-datum">Hệ quy chiếu</label><select id="${side}-datum" disabled><option value="WGS84">WGS 84</option><option value="VN2000">VN-2000</option></select>
-            <label for="${side}-format">Dạng tọa độ</label><select id="${side}-format" disabled><option value="geographic">Kinh độ, vĩ độ, độ cao (BLh)</option><option value="projected">Tọa độ phẳng X, Y, độ cao (NEh)</option><option value="geocentric">XYZ địa tâm</option></select>
+            <details class="tool-details" id="${side}-formats"><summary>Dạng tọa độ nâng cao</summary><label for="${side}-format">Dạng tọa độ</label><select id="${side}-format" disabled><option value="geographic">Kinh độ, vĩ độ, độ cao (BLh)</option><option value="projected">Tọa độ phẳng X, Y, độ cao (NEh)</option><option value="geocentric">XYZ địa tâm</option></select></details>
             <div id="${side}-location" hidden><label for="${side}-province">Tỉnh thành theo hồ sơ đo</label><select id="${side}-province" disabled></select><div id="${side}-region-field" hidden><label for="${side}-region">Vùng đo trước sáp nhập (bắt buộc)</label><select id="${side}-region" disabled></select></div></div>
             <p class="tool-projection-summary" id="${side}-summary" aria-live="polite"></p>
             <details class="tool-details" id="${side}-projection" hidden><summary>Thông số phép chiếu</summary><label for="${side}-width">Múi chiếu</label><select id="${side}-width" disabled><option value="3">3° — TM-3 địa chính</option><option value="6">6° — UTM</option></select><div id="${side}-meridian-field"><label for="${side}-meridian">Kinh tuyến trục</label><select id="${side}-meridian" disabled></select></div><div id="${side}-zone-field" hidden><label for="${side}-zone">Múi UTM</label><select id="${side}-zone" disabled><option value="48">48N — kinh tuyến 105°</option><option value="49">49N — kinh tuyến 111°</option></select></div></details>
@@ -80,7 +80,8 @@
         const projection = selected?.projection;
         $(side + '-summary').textContent = projected
             ? projection ? `Kinh tuyến ${degrees(projection.central_meridian)} · múi ${projection.zone_width}° · k₀ = ${String(projection.scale_factor).replace('.', ',')}` : 'Chọn vùng đo cũ để xác định kinh tuyến trục.'
-            : format(side) === 'geographic' ? 'Kinh độ, vĩ độ theo độ thập phân.' : 'Ba tọa độ không gian, đơn vị mét.';
+            : format(side) === 'geographic' ? 'Kinh độ, vĩ độ theo độ thập phân.' : 'XYZ địa tâm · Ba tọa độ không gian, đơn vị mét.';
+        $(side + '-formats').open = format(side) !== (vn ? 'projected' : 'geographic');
         const ecef = sides.some(s => format(s) === 'geocentric');
         $('height-options').hidden = ecef;
         if (ecef) sides.forEach(s => { $(s + '-height').value = 'ellipsoidal'; $(s + '-geoid-field').hidden = true; });

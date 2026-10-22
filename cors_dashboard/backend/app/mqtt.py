@@ -1067,9 +1067,18 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             should_write_db = False
             reported_device_lock = (data.get('system_info') or {}).get('device_lock')
             device_lock_changed = reported_device_lock != metadata.get('device_lock')
+            # Detection can finish between heartbeats without changing online status.
+            # Persist it immediately so offline enrichment cannot restore an old chip.
+            reported_chip = data.get('detected_chip_type')
+            chip_type_changed = (
+                new_status != 'offline'
+                and bool(reported_chip)
+                and reported_chip != 'UNKNOWN'
+                and reported_chip != metadata.get('detected_chip_type')
+            )
             
             # Điều kiện 1: Trạng thái Online/Offline thay đổi
-            if command_source_changed or device_lock_changed:
+            if command_source_changed or device_lock_changed or chip_type_changed:
                 should_write_db = True
             elif token_pending_state_changed:
                 should_write_db = True
@@ -1129,6 +1138,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                             still_needs_write = bool(
                                 command_source_changed
                                 or device_lock_changed
+                                or chip_type_changed
                                 or token_pending_state_changed
                                 or (new_status and new_status != latest_known_status)
                                 or (now - latest_write_time) > DB_WRITE_INTERVAL
