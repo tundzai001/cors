@@ -82,4 +82,44 @@ vm.runInContext(source.slice(source.indexOf('    async function generateGroupOtp
     assert.equal(field('group-otp-action').classList.hidden, false);
     assert.equal(field('group-otp-scope-field').classList.hidden, true);
     console.log('PASS: public CORS bypasses OTP; Base scopes remain explicit; stale OTP is hidden');
+
+    const calls = [];
+    const controlState = {isAdmin:true, corsCheck:{loaded:false, loading:false, rtcm_check_enabled:false, error:''}};
+    const controlScope = {state:controlState, document:{getElementById:field},
+        window:{ApiRoutes:{admin:{referenceNetworkSettings:'/api/admin/reference-network-settings'}}},
+        apiJson:async (url, options) => {
+            calls.push({url, options});
+            return {rtcm_check_enabled:options.method === 'PUT' ? JSON.parse(options.body).rtcm_check_enabled : true,
+                web_check_interval_seconds:30, rtcm_check_interval_seconds:900};
+        }};
+    vm.createContext(controlScope);
+    vm.runInContext(source.slice(source.indexOf('    function syncCorsCheckControls'), source.indexOf('    async function loadSystemState')), controlScope);
+    await controlScope.updateCorsCheck();
+    assert.equal(field('cors-check-toggle').checked, true);
+    assert.equal(field('cors-check-toggle').disabled, false);
+    assert.equal(field('cors-check-interval').textContent, 'Web: 30 giây · RTCM: 15 phút');
+    await controlScope.updateCorsCheck(false);
+    assert.equal(field('cors-check-toggle').checked, false);
+    assert(field('cors-check-note').textContent.includes('form đăng nhập như cũ'));
+    assert.equal(calls.at(-1).url, '/api/admin/reference-network-settings');
+    assert.equal(calls.at(-1).options.method, 'PUT');
+    let resolve;
+    controlScope.apiJson = () => new Promise(done => {resolve = done;});
+    const pending = controlScope.updateCorsCheck(true);
+    assert.equal(field('cors-check-toggle').disabled, true);
+    assert(field('cors-check-note').textContent.includes('Đang cập nhật'));
+    await controlScope.updateCorsCheck(true);
+    resolve({rtcm_check_enabled:true, web_check_interval_seconds:30, rtcm_check_interval_seconds:900});
+    await pending;
+    assert.equal(field('cors-check-toggle').checked, true);
+    controlScope.apiJson = async () => {throw new Error('Lưu thất bại');};
+    await controlScope.updateCorsCheck(false);
+    assert.equal(field('cors-check-toggle').checked, true, 'Failed save restores persisted switch state');
+    assert.equal(field('cors-check-error').textContent, 'Lưu thất bại');
+    assert.equal(field('cors-check-error').classList.hidden, false);
+    controlState.isAdmin = false;
+    controlScope.apiJson = async () => {throw new Error('Non-admin must not send a request');};
+    await controlScope.updateCorsCheck(false);
+    assert.equal(controlState.corsCheck.error, 'Lưu thất bại');
+    console.log('PASS: Zalo RTCM switch loads shared settings, saves, blocks duplicate writes, handles errors, and requires admin');
 })().catch(error => { console.error(error); process.exitCode = 1; });

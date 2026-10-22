@@ -95,7 +95,8 @@
             revokeAllOtherSessions: '/api/admin/security/sessions/revoke-all-others',
             casterConfig: '/api/admin/caster-config',
             casterSources: '/api/admin/caster-sources',
-            zaloSystem: '/api/admin/zalo/system'
+            zaloSystem: '/api/admin/zalo/system',
+            referenceNetworkSettings: '/api/admin/reference-network-settings'
         },
         license: {
             pi: '/api/license/pi'

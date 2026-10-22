@@ -43,7 +43,9 @@ Hanoi and checks `VRS.105M3`. It closes the socket immediately after the first
 CRC24Q-valid RTCM3 frame, or on failure; the entire probe is bounded to six
 seconds and 64 KiB. HTTP/ICY success alone does not count as valid data.
 
-Admins have a **Kiểm tra dữ liệu RTCM Cục** switch in the station-map filters.
+Admins have a **Kiểm tra CORS Cục** section immediately below the Zalo system
+controls on `/zalo`, as well as a **Kiểm tra dữ liệu RTCM Cục** switch in the
+station-map filters. Both control the same setting independently of bot power.
 `GET/PUT /api/admin/reference-network-settings` requires an authenticated admin;
 PUT saves only `rtcm_check_enabled` to the same `.env`. It neither triggers a
 probe directly nor bypasses the cooldown. Viewers and anonymous users cannot

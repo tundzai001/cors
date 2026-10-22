@@ -11,6 +11,7 @@
         currentCode: '', currentUser: null,
         groupOtpExpiresAt: 0, groupOtpTimer: null,
         system: { enabled: false, running: false, available: false, loading: false },
+        corsCheck: { loaded: false, loading: false, rtcm_check_enabled: false, error: '' },
     };
 
     const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, ch => ({
@@ -76,6 +77,7 @@
         document.getElementById('group-stat-column').classList.toggle('d-none', !state.isAdmin);
         document.getElementById('group-otp-section').classList.toggle('d-none', !state.isAdmin);
         document.getElementById('zalo-system-section').classList.toggle('d-none', !state.isAdmin);
+        document.getElementById('cors-check-section').classList.toggle('d-none', !state.isAdmin);
         document.querySelectorAll('.zalo-stat-column').forEach(column => {
             column.classList.toggle('col-md-3', state.isAdmin);
             column.classList.toggle('col-md-4', !state.isAdmin);
@@ -156,6 +158,46 @@
         const otpStatus = document.getElementById('otp-status-text');
         if (otpStatus && !state.otpStreaming) {
             otpStatus.textContent = enabled ? 'Sẵn sàng' : 'Hệ thống đã tắt';
+        }
+    }
+
+    function syncCorsCheckControls() {
+        const control = state.corsCheck;
+        const toggle = document.getElementById('cors-check-toggle');
+        toggle.checked = control.rtcm_check_enabled;
+        toggle.disabled = control.loading || !control.loaded;
+        document.getElementById('cors-check-refresh').disabled = control.loading;
+        document.getElementById('cors-check-label').textContent = control.rtcm_check_enabled ? 'RTCM đang bật' : 'RTCM đang tắt';
+        const badge = document.getElementById('cors-check-badge');
+        badge.textContent = control.loading ? 'Đang lưu / tải…' : !control.loaded ? 'Chưa tải được' : control.rtcm_check_enabled ? 'Đang bật' : 'Đã tắt';
+        badge.className = `badge ${control.loaded && control.rtcm_check_enabled ? 'bg-success' : 'bg-secondary'}`;
+        document.getElementById('cors-check-note').textContent = control.loading ? 'Đang cập nhật cài đặt…'
+            : !control.loaded ? 'Chưa tải được cài đặt. Nhấn Làm mới để thử lại.'
+            : control.rtcm_check_enabled ? 'Đang bật: có RTCM hợp lệ mới báo hoạt động. Nhận dữ liệu là đóng kết nối ngay.'
+            : 'Đang tắt: chỉ kiểm tra form đăng nhập như cũ, không kết nối NTRIP tự động.';
+        if (control.loaded) {
+            const interval = seconds => seconds % 60 === 0 ? `${seconds / 60} phút` : `${seconds} giây`;
+            document.getElementById('cors-check-interval').textContent = `Web: ${interval(control.web_check_interval_seconds)} · RTCM: ${interval(control.rtcm_check_interval_seconds)}`;
+        }
+        const error = document.getElementById('cors-check-error');
+        error.textContent = control.error;
+        error.classList.toggle('d-none', !control.error);
+    }
+
+    async function updateCorsCheck(enabled) {
+        if (!state.isAdmin || state.corsCheck.loading) return;
+        state.corsCheck.loading = true;
+        state.corsCheck.error = '';
+        syncCorsCheckControls();
+        try {
+            const options = typeof enabled === 'boolean' ? {method: 'PUT', body: JSON.stringify({rtcm_check_enabled: enabled})} : {};
+            const data = await apiJson(window.ApiRoutes.admin.referenceNetworkSettings, options);
+            Object.assign(state.corsCheck, data, {loaded: true});
+        } catch (error) {
+            state.corsCheck.error = error.message || 'Chưa cập nhật được cài đặt';
+        } finally {
+            state.corsCheck.loading = false;
+            syncCorsCheckControls();
         }
     }
 
@@ -695,12 +737,14 @@
             setSystemEnabled(event.target.checked);
         });
         document.getElementById('zalo-system-refresh').addEventListener('click', () => loadSystemState());
+        document.getElementById('cors-check-toggle').addEventListener('change', event => updateCorsCheck(event.target.checked));
+        document.getElementById('cors-check-refresh').addEventListener('click', () => updateCorsCheck());
 
         // Tab visibility
         document.addEventListener('visibilitychange', handleVisibility);
 
         await loadBindings();
-        await loadSystemState();
+        await Promise.all([loadSystemState(), updateCorsCheck()]);
         if (state.system.enabled) {
             startOtpStream();
         } else {
