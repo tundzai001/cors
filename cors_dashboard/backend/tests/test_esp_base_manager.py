@@ -11,10 +11,45 @@ from app.esp_base_manager import (
     sync_esp_base_rovers,
     OFFLINE_DELETE_THRESHOLD_SECONDS,
     DEFAULT_ROVER_PASSWORD,
+    notify_decoder_worker,
+    MQTT_DECODER_TOPIC,
 )
 
 
 class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_decoder_start_stop_use_shared_mqtt_client(self):
+        client = MagicMock()
+        client.is_connected.return_value = True
+        client.publish.return_value.rc = 0
+        with patch("app.mqtt.mqtt_client", client):
+            for action in ("start", "stop"):
+                client.publish.reset_mock()
+                await notify_decoder_worker(action, "esp_test", "TEST", "rover", "test-password", lat=21.0, lon=105.0, alt=12.0)
+                client.publish.assert_called_once()
+                args, kwargs = client.publish.call_args
+                self.assertEqual(args[0], MQTT_DECODER_TOPIC)
+                payload = json.loads(args[1])
+                self.assertEqual(payload["action"], action)
+                self.assertEqual(payload["serial"], "esp_test")
+                self.assertEqual(payload["mountpoint"], "TEST")
+                self.assertEqual(payload["rover_user"], "rover")
+                self.assertEqual(payload["rover_pass"], "test-password")
+                self.assertEqual((payload["lat"], payload["lon"], payload["alt"]), (21.0, 105.0, 12.0))
+                self.assertEqual(kwargs["qos"], 1)
+            client.publish.reset_mock()
+            client.is_connected.return_value = False
+            await notify_decoder_worker("start", "esp_test", "TEST", "rover", "test-password")
+            client.publish.assert_not_called()
+
+    async def test_decoder_publish_failure_does_not_report_sent(self):
+        client = MagicMock()
+        client.is_connected.return_value = True
+        client.publish.return_value.rc = 4
+        with patch("app.mqtt.mqtt_client", client), self.assertLogs("app.esp_base_manager", level="INFO") as logs:
+            await notify_decoder_worker("start", "esp_test", "TEST", "rover", "test-password")
+        self.assertTrue(any("Failed to publish" in line for line in logs.output))
+        self.assertFalse(any("Sent start" in line for line in logs.output))
 
     def test_extract_esp_mountpoint(self):
         dev = models.Device(serial="esp_1234567890AB")

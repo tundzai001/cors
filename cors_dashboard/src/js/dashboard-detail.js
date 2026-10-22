@@ -769,13 +769,15 @@ const DetailsPanel = memo(function DetailsPanel({
     onLock,
     onUnlock
 }) {
-    const isAdmin = currentUser?.role === 'admin';
+    const isReadonly4g = window.CorsDashboardShared?.isReadonly4gBase?.(device) === true;
+    const isAdmin = !isReadonly4g && currentUser?.role === 'admin';
     const tokenConfirmed = window.CorsDashboardShared?.isAccessTokenSynced?.(device) === true;
-    const reportedLifecycle = String(device?.status || 'offline').toLowerCase();
+    const rawLifecycle = String(device?.status || 'offline').toLowerCase();
+    const reportedLifecycle = isReadonly4g && ['awaiting_license', 'unprovisioned', 'locked'].includes(rawLifecycle) ? 'offline' : rawLifecycle;
     const lifecycleStatus = tokenConfirmed && reportedLifecycle === 'awaiting_license'
         ? (window.CorsDashboardShared?.getMapEffectiveStatus?.(device) || 'awaiting_agent')
         : reportedLifecycle;
-    const isDeviceRebooting = ['rebooting', 'rebooting_for_reset'].includes(lifecycleStatus);
+    const isDeviceRebooting = !isReadonly4g && ['rebooting', 'rebooting_for_reset'].includes(lifecycleStatus);
     const isDeviceAwaitingLicense = lifecycleStatus === 'awaiting_license';
     const isDeviceUnprovisioned = lifecycleStatus === 'unprovisioned';
     const isRelayLikeStation = String(device?.serial || '').toUpperCase().startsWith('MONITOR_');
@@ -797,7 +799,7 @@ const DetailsPanel = memo(function DetailsPanel({
     const authStatus = device?.system_info?.auth_status || {};
     const staleOffline = isDeviceStaleOffline(device, offlineClockNow);
     const offlineInfo = window.CorsDashboardShared?.getOfflineInfo?.(device, offlineClockNow) || null;
-    const licenseBypass = authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true;
+    const licenseBypass = isReadonly4g || authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true;
     const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
         ? authStatus.server_token_present
         : authStatus.token_required;
@@ -810,7 +812,7 @@ const DetailsPanel = memo(function DetailsPanel({
         'needs_token_deploy',
         'token_deployment_pending'
     ].some(key => Object.prototype.hasOwnProperty.call(authStatus, key));
-    const hasAccessTokenGap =
+    const hasAccessTokenGap = !isReadonly4g && (
         tokenConfirmed ? false : authStatus.token_deployment_pending === true
             ? true
             : staleOffline
@@ -820,7 +822,7 @@ const DetailsPanel = memo(function DetailsPanel({
                 serverTokenPresent === false ||
                 (tokenCheckAvailable && authStatus.agent_token_present === false) ||
                 (tokenCheckAvailable && authStatus.token_synced === false)
-            );
+            ));
 
     useEffect(() => {
         if (!device?.serial) return undefined;
@@ -844,10 +846,10 @@ const DetailsPanel = memo(function DetailsPanel({
             hasAccessTokenGap ||
             isDeviceAwaitingLicense
         );
-    const showLicenseTab = shouldShowLicenseTab || (licenseBypass && hasAuthTokenState && hasAccessTokenGap);
-    const showConfigTabs = !isDeviceRebooting && (!isDeviceAwaitingLicense || licenseBypass || stationHasConfiguration);
+    const showLicenseTab = !isReadonly4g && (shouldShowLicenseTab || (licenseBypass && hasAuthTokenState && hasAccessTokenGap));
+    const showConfigTabs = !isReadonly4g && !isDeviceRebooting && (!isDeviceAwaitingLicense || licenseBypass || stationHasConfiguration);
     const showServiceAndDashboardTabs = showConfigTabs && (!isDeviceUnprovisioned || isRelayLikeStation);
-    const showOverviewTab = showServiceAndDashboardTabs;
+    const showOverviewTab = isReadonly4g || showServiceAndDashboardTabs;
 
     const isTabVisible = (tabName) => {
         if (tabName === 'license') return showLicenseTab;
@@ -868,6 +870,11 @@ const DetailsPanel = memo(function DetailsPanel({
 
         let newActiveTab = '';
 
+        if (isReadonly4g) {
+            setActiveTab('dashboard');
+            setIsEditingName(false);
+            return;
+        }
         if (shouldShowLicenseTab) {
             if (!isDeviceSwitched && activeTab === 'license') {
                 return;
@@ -954,8 +961,8 @@ const DetailsPanel = memo(function DetailsPanel({
     }
 
     const role = String(currentUser?.role || '').toLowerCase();
-    const canEdit = role === 'admin' ||
-        (role === 'coordinator' && device.user_id === currentUser?.id);
+    const canEdit = !isReadonly4g && (role === 'admin' ||
+        (role === 'coordinator' && device.user_id === currentUser?.id));
     const canEditService = canEdit;
     // REBOOTING STATE
     if (isDeviceRebooting) {
@@ -990,7 +997,7 @@ const DetailsPanel = memo(function DetailsPanel({
             </div>
         );
 
-        switch (activeTab) {
+        switch (isReadonly4g ? 'dashboard' : activeTab) {
             case 'license':
                 if (!LicenseForm) return missingPanel('LicenseForm');
                 return <LicenseForm {...commonProps} onDeployLicense={onDeployLicense} />;
@@ -1053,7 +1060,7 @@ const DetailsPanel = memo(function DetailsPanel({
     };
 
     const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_view_rovers && currentUser?.can_create_rovers));
-    const showStationOperationsTab = !isDeviceRebooting && (isAdmin || canEditService);
+    const showStationOperationsTab = !isReadonly4g && !isDeviceRebooting && (isAdmin || canEditService);
 
     const lockedServers = window.CorsDashboardShared.getLockedServers(device);
     const lockApplied = window.CorsDashboardShared.isDeviceLockApplied(device);
@@ -1129,9 +1136,9 @@ const DetailsPanel = memo(function DetailsPanel({
 
                     {/* Các Badge trạng thái */}
                     <div className="d-flex align-items-center">
-                        {device.is_lte && (
+                        {(isReadonly4g || device.is_lte) && (
                             <span className="badge bg-primary me-2" title="Trạm kết nối qua 4G/LTE">
-                                <i className="bi bi-reception-4 me-1"></i>LTE
+                                <i className="bi bi-reception-4 me-1"></i>{isReadonly4g ? 'Base 4G · Chỉ xem' : 'LTE'}
                             </span>
                         )}
                         {!device.is_synced && canEdit && (
@@ -1181,7 +1188,7 @@ const DetailsPanel = memo(function DetailsPanel({
                     </div>
                 </div>
 
-                <ConfiguredRelayPowerControl device={device} currentUser={currentUser} />
+                {!isReadonly4g && <ConfiguredRelayPowerControl device={device} currentUser={currentUser} />}
 
                 {/* Nút Reset */}
                 {canEdit && !isEditingName && (
@@ -1284,6 +1291,11 @@ const DetailsPanel = memo(function DetailsPanel({
                     </div>
                 )}
 
+                {isReadonly4g && device.system_info?.decoder_status === 'missing_rover_credentials' && (
+                    <div className="alert alert-warning small" role="status">
+                        Chưa có tài khoản Rover hợp lệ trùng mountpoint. Kiểm tra tài khoản trong trang Rover.
+                    </div>
+                )}
                 <ul className="nav nav-tabs dashboard-tabs mb-3" role="tablist">
                     {showLicenseTab && (
                         <li className="nav-item">

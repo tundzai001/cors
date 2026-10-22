@@ -20,7 +20,9 @@ import time
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Devices"])
+from ..mobile_base import require_editable_base
+
+router = APIRouter(dependencies=[Depends(require_editable_base)], tags=["Devices"])
 
 
 def _normalize_auto_cors_config(payload: dict) -> dict:

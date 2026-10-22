@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_BLOCK_MINUTES: int = 30
     RATE_LIMIT_PERMANENT_THRESHOLD: int = 20
     
-    APP_VERSION: str = "V2.3.1"
+    APP_VERSION: str = "V2.3.2"
     
     class Config:
         env_file = ".env"

@@ -86,6 +86,7 @@ function getDeviceOpsFlags(device) {
 }
 
 function hasAccessTokenGap(device) {
+    if (window.CorsDashboardShared?.isReadonly4gBase?.(device)) return false;
     if (window.CorsDashboardShared?.isAccessTokenSynced?.(device)) return false;
     const authStatus = device?.system_info?.auth_status || {};
     const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
@@ -131,8 +132,8 @@ const STATUS_CLASS_MAP = {
 
 const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelected, onSelect, onDelete, currentUser, offlineNow = null }) {
     const isAdmin = currentUser?.role === 'admin';
-    const canDelete = currentUser?.role === 'admin' ||
-        (currentUser?.role === 'coordinator' && device.user_id === currentUser?.id);
+    const canDelete = !window.CorsDashboardShared?.isReadonly4gBase?.(device) && (currentUser?.role === 'admin' ||
+        (currentUser?.role === 'coordinator' && device.user_id === currentUser?.id));
 
     // ============================================================
     // STATE MANAGEMENT
@@ -360,12 +361,12 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
         ['unsynced', 'Unsynced'], ['no_stream', 'No stream']
     ];
     const typeCounts = React.useMemo(() => devices.reduce((result, device) => {
-        result[isMobileBase(device.serial) ? 'mobile' : 'fixed'] += 1;
+        result[(isMobileBase(device.serial) || window.CorsDashboardShared?.isReadonly4gBase?.(device) === true) ? 'mobile' : 'fixed'] += 1;
         return result;
     }, { fixed: 0, mobile: 0 }), [devices]);
     const canViewMobile = isAdmin || Boolean(currentUser?.can_view_mobile_bases) || typeCounts.mobile > 0;
     const typeDevices = React.useMemo(() => devices.filter(device =>
-        isMobileBase(device.serial) === (stationType === 'mobile')
+        (isMobileBase(device.serial) || window.CorsDashboardShared?.isReadonly4gBase?.(device) === true) === (stationType === 'mobile')
     ), [devices, stationType]);
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
     const getListStatus = React.useCallback((device) => {

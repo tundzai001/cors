@@ -2,15 +2,20 @@ import json
 import logging
 import secrets
 import time
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 
 from . import mqtt as mqtt_handler
 from .mqtt import mqtt_client
 from .pi_websocket import pi_manager
+from .mobile_base import is_readonly_base
 
 
 async def send_command_to_pi(serial: str, command: dict) -> dict:
+    metadata = await mqtt_handler.get_device_metadata(serial)
+    if is_readonly_base(SimpleNamespace(serial=serial, service_config=metadata.get('service_config'))):
+        raise HTTPException(status_code=403, detail='Base 4G chỉ xem Overview')
     command = dict(command)
     issued_at = int(time.time())
     command.update({

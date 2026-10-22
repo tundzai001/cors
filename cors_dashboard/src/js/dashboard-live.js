@@ -8,7 +8,7 @@ function getLeaflet() {
 }
 // === MAP COMPONENT ===
 // ==================== MAP COMPONENT (FIXED HTTPS) ====================
-const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
+const BaseLocationMap = memo(function BaseLocationMap({ coords, rtcmOnly = false }) {
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const markerRef = useRef(null);
@@ -72,7 +72,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
                 <div className="text-center">
                     <i className="bi bi-geo-alt-slash display-4 mb-2"></i>
                     <p className="mb-0">❌ Chưa có tọa độ Base</p>
-                    <small>Debug: lat={coords?.lat || 'null'}, lon={coords?.lon || 'null'}</small>
+                    {rtcmOnly ? <small>Chờ bản tin RTCM 1005/1006 từ trạm.</small> : <small>Debug: lat={coords?.lat || 'null'}, lon={coords?.lon || 'null'}</small>}
                 </div>
             </div>
         );
@@ -91,7 +91,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         <div>
             <div className="d-flex justify-content-between align-items-center mb-2">
                 <div className="d-flex align-items-center">
-                    <h6 className="mb-0 me-3">Vị trí trạm Base (Lưu cứng)</h6>
+                    <h6 className="mb-0 me-3">{rtcmOnly ? 'Vị trí từ RTCM' : 'Vị trí trạm Base (Lưu cứng)'}</h6>
                 </div>
                 <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lon}`} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-outline-primary">
                     <i className="bi bi-box-arrow-up-right me-1"></i>Google Maps
@@ -207,6 +207,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         return () => clearInterval(interval);
     }, [device?.serial]);
     const liveDataAvailable = !isDeviceStaleOffline(device, offlineClockNow);
+    const isReadonly4g = window.CorsDashboardShared?.isReadonly4gBase?.(device) === true;
     const rtk_status = liveDataAvailable ? (device.rtk_fix_status || 'NO_FIX') : 'NO_FIX';
 
     let fixInfo = liveDataAvailable
@@ -215,7 +216,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
     const isAutoSetupStatus = liveDataAvailable && (device.status || '').startsWith('auto_setup');
 
-    if (isAutoSetupStatus) {
+    if (isReadonly4g) {
+        fixInfo = liveDataAvailable && Number(device.bps || device.ntrip_stats?.server1_bps || 0) > 0
+            ? { label: 'RTCM LIVE', color: '#00ff88', icon: '📡' }
+            : { label: liveDataAvailable ? 'CHỜ RTCM' : 'OFFLINE', color: '#6c757d', icon: '⏸️' };
+    } else if (isAutoSetupStatus) {
         const AUTO_SETUP_STEPS = {
             'auto_setup_rover': { label: 'Bước 1: Đặt chế độ ROVER', color: '#17a2b8', icon: '🔄', step: 1 },
             'auto_setup_wait_fix': { label: 'Bước 2: Chờ RTK Fix...', color: '#ffc107', icon: '📡', step: 2 },
@@ -297,7 +302,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const SATELLITE_TIMEOUT = 5000;
     const FADE_DURATION = 2000;
     const safeNmeaData = liveDataAvailable
-        ? (nmeaData || { gga: null, gsa: null, satellites: {} })
+        ? { ...(nmeaData || { gga: null, gsa: null, satellites: {} }), base_coords: nmeaData?.base_coords || device.base_config?.coords }
         : { gga: null, gsa: null, satellites: {} };
     const safeNmeaDataRef = useRef(safeNmeaData);
     useEffect(() => {
@@ -653,7 +658,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
         const animate = () => {
             const now = Date.now();
-            const { gga, gsa, satellites } = safeNmeaDataRef.current;
+            const { gga, gsa, satellites, base_coords } = safeNmeaDataRef.current;
 
             // Text Stats Updates
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
@@ -666,16 +671,16 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 const dopEl = document.getElementById('db-dop');
                 if (dopEl) {
-                    const hText = gsa?.hdop >= 99 ? 'N/A' : (gsa?.hdop?.toFixed(2) || '0.0');
-                    const pText = gsa?.pdop >= 99 ? 'N/A' : (gsa?.pdop?.toFixed(2) || '0.0');
+                    const hText = gsa?.hdop >= 99 ? 'N/A' : (gsa?.hdop?.toFixed(2) || (isReadonly4g ? 'N/A' : '0.0'));
+                    const pText = gsa?.pdop >= 99 ? 'N/A' : (gsa?.pdop?.toFixed(2) || (isReadonly4g ? 'N/A' : '0.0'));
                     dopEl.textContent = `${hText} / ${pText}`;
                 }
 
                 const latEl = document.getElementById('db-lat');
-                if (latEl) latEl.textContent = gga?.latitude?.toFixed(8) || '0.0';
+                if (latEl) latEl.textContent = (gga?.latitude ?? (isReadonly4g ? base_coords?.lat : undefined))?.toFixed(8) || (isReadonly4g ? '—' : '0.0');
 
                 const lonEl = document.getElementById('db-lon');
-                if (lonEl) lonEl.textContent = gga?.longitude?.toFixed(8) || '0.0';
+                if (lonEl) lonEl.textContent = (gga?.longitude ?? (isReadonly4g ? base_coords?.lon : undefined))?.toFixed(8) || (isReadonly4g ? '—' : '0.0');
 
                 lastStatsUpdate.current = now;
             }
@@ -773,7 +778,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <div className="stat-item">
                     <div className="stat-icon" style={{ fontSize: '2rem' }}>{fixInfo.icon}</div>
                     <div className="stat-content">
-                        <div className="stat-label">Fix Status</div>
+                        <div className="stat-label">{isReadonly4g ? 'Trạng thái RTCM' : 'Fix Status'}</div>
                         <div
                             className="stat-value"
                             style={{
@@ -805,7 +810,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
             {/* MAP */}
             <div className="map-section">
-                <BaseLocationMap coords={baseCoords} />
+                <BaseLocationMap coords={baseCoords} rtcmOnly={isReadonly4g} />
             </div>
 
             {/* RTCM & ANTENNA ASSESSMENT - REDESIGNED */}
@@ -910,7 +915,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         <div className="text-muted small mb-2 text-uppercase">Antenna Quality Diagnostics</div>
                         {(() => {
                             const avgSnr = Number(metrics.signalStrength.value) || 0;
-                            const sats = metrics.satellites.value;
+                            const sats = isReadonly4g ? Number(device.satellite_count || 0) : metrics.satellites.value;
                             const hasCoords = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => k === "1005" || k === "1006");
                             
                             const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
@@ -998,7 +1003,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             </div>
 
             {/* HARDWARE & ECO SAVINGS PANEL */}
-            {device.system_info && (
+            {!isReadonly4g && device.system_info && (
                 <div className="card mb-3 border-0" style={{ background: 'linear-gradient(135deg, rgba(13,110,253,0.08), rgba(32,201,151,0.08))', border: '1px solid rgba(13,110,253,0.25)' }}>
                     <div className="card-header d-flex align-items-center border-0" style={{ background: 'transparent' }}>
                         <i className="bi bi-cpu-fill me-2" style={{ color: '#0dcaf0' }}></i>

@@ -650,11 +650,17 @@ async def batch_sync_checker():
                     
                     is_relay_like = serial.startswith(("RELAY_", "MONITOR_"))
                     
+                    # Base 4G reports decoded observations, not editable target settings.
+                    from .mobile_base import is_readonly_base
+                    readonly_4g = is_readonly_base(device)
                     # So sánh
                     base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
                     srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service", is_relay=is_relay_like)
                     
-                    if device.server_config_lock:
+                    if readonly_4g:
+                        base_ok, srv_ok, base_errs, srv_errs = True, True, [], []
+
+                    if device.server_config_lock and not readonly_4g:
                         desired = locked_server_ids(device.server_config_lock)
                         report = (device.system_info or {}).get("device_lock") or {}
                         applied = report.get("locked_servers")
@@ -683,7 +689,7 @@ async def batch_sync_checker():
                     version_ok = _version_matches(device.version)
                     version_errs = [] if version_ok else [f"[Version] Agent={device.version or '??'} vs Server={settings.APP_VERSION}"]
                     report = (device.system_info or {}).get("device_lock") or {}
-                    lock_ok = not device.server_config_lock or (report.get("locked_servers") == locked_server_ids(device.server_config_lock) and not report.get("all"))
+                    lock_ok = readonly_4g or not device.server_config_lock or (report.get("locked_servers") == locked_server_ids(device.server_config_lock) and not report.get("all"))
                     if not lock_ok:
                         version_errs.append("Khoá server chưa được agent xác nhận")
                     is_synced = base_ok and srv_ok and version_ok and lock_ok

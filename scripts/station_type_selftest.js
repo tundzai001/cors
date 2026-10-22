@@ -31,10 +31,13 @@ const window = {CorsDashboardShared: {
     getMapEffectiveStatus: device => device.status,
 }};
 const context = vm.createContext({React, window, console, setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout});
+const statusOverrides = window.CorsDashboardShared;
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/dashboard-shared.min.js'), 'utf8'), context);
+Object.assign(window.CorsDashboardShared, statusOverrides);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/dashboard-list.min.js'), 'utf8'), context);
 const station = (serial, status = 'online') => ({serial, name: serial, status, is_synced: true});
 let props = {devices: [station('1000000037a7201b'), station('LP_00E04C0CFB9E'), station('RELAY_ATG_DT'),
-    station('esp_9896E5124B00'), station('ESP_000000000001', 'offline')],
+    station('esp_9896E5124B00'), station('ESP_000000000001', 'offline'), station('MONITOR_70001')],
     selectedDeviceSerial: 'esp_9896E5124B00', searchTerm: '', currentUser: {id: 1, role: 'admin'}, onSearch() {}};
 function render() {
     let tree, rounds = 0;
@@ -58,7 +61,7 @@ let tree = render();
 assert.deepEqual(cards(tree), ['1000000037a7201b', 'LP_00E04C0CFB9E', 'RELAY_ATG_DT']);
 assert.equal(typeButton(tree, 'fixed').props['aria-pressed'], true);
 typeButton(tree, 'mobile').props.onClick(); tree = render();
-assert.deepEqual(cards(tree), ['esp_9896E5124B00', 'ESP_000000000001']);
+assert.deepEqual(cards(tree), ['esp_9896E5124B00', 'ESP_000000000001', 'MONITOR_70001']);
 const toggle = nodes(tree).find(node => node.props['aria-controls'] === 'dashboard-station-filters');
 toggle.props.onClick(); tree = render();
 nodes(tree).find(node => node.type === 'button' && node.props.key === 'offline').props.onClick();

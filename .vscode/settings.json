@@ -1,0 +1,29 @@
+{
+    "platformio-ide.activateProjectOnTextEditorChange": true,
+    "platformio-ide.autoCloseSerialMonitor": true,
+    "platformio-ide.showEditorTitleShortcuts": true,
+    "platformio-ide.toolbar": [
+        {
+            "text": "$(check) Build",
+            "tooltip": "PlatformIO: Build ESP32 firmware",
+            "commands": "platformio-ide.build"
+        },
+        {
+            "text": "$(arrow-right) Upload",
+            "tooltip": "PlatformIO: Upload ESP32 firmware",
+            "commands": "platformio-ide.upload"
+        },
+        {
+            "text": "$(plug) Monitor",
+            "tooltip": "PlatformIO: Serial Monitor",
+            "commands": "platformio-ide.serialMonitor"
+        },
+        {
+            "text": "$(run-all) Upload + Monitor",
+            "tooltip": "PlatformIO: Upload and open Serial Monitor",
+            "commands": "platformio-ide.uploadAndMonitor"
+        }
+    ],
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",
+    "C_Cpp.default.cppStandard": "gnu++17"
+}

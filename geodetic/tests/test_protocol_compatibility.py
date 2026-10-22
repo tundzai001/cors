@@ -69,12 +69,13 @@ class ProtocolCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self, status_code, detail):
                 self.status_code = status_code
         mqtt = SimpleNamespace(is_connected=lambda: True)
-        handler = SimpleNamespace(publish_message=Mock())
+        handler = SimpleNamespace(publish_message=Mock(), get_device_metadata=AsyncMock(return_value={}))
         manager = SimpleNamespace(send_personal_message=AsyncMock(return_value=False))
         scope = load_functions(ROOT / 'cors_dashboard/backend/app/command_dispatcher.py', {'send_command_to_pi'},
                                dict(json=json, logging=logging, secrets=secrets,
                                     time=SimpleNamespace(time=lambda: 1000), mqtt_client=mqtt,
-                                    mqtt_handler=handler, pi_manager=manager, HTTPException=HTTPException))
+                                    mqtt_handler=handler, pi_manager=manager, HTTPException=HTTPException,
+                                    SimpleNamespace=SimpleNamespace, is_readonly_base=Mock(return_value=False)))
         original = {'command': 'PROVISION_DEVICE', 'payload': {'name': 'New name'}}
         result = await scope['send_command_to_pi']('test-device', original)
         self.assertEqual(result['channel'], 'mqtt')

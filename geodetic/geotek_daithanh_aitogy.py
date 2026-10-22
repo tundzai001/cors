@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V2.3.1"
+RELAY_VERSION = "V2.3.2"
 
 import json
 import logging
@@ -2175,6 +2175,10 @@ class MonitorWorker(threading.Thread):
     def __init__(self, station_config, mqtt_client):
         super().__init__()
         self.cfg = station_config
+        self.is_prefix7 = str(self.cfg.get('mountpoint') or '').startswith('7')
+        self.host = self.cfg.get('host') or TARGET_HOST
+        self.port = int(self.cfg.get('port') or TARGET_PORT)
+        self.retry_seconds = max(RECONNECT_INTERVAL, 60) if self.is_prefix7 else RECONNECT_INTERVAL
         self.mqtt_client = mqtt_client
         self.daemon = True
         self.stop_event = threading.Event()
@@ -2184,8 +2188,15 @@ class MonitorWorker(threading.Thread):
             self.serial = configured_serial
         elif str(self.cfg.get('mountpoint', '')).lower().startswith('esp_'):
             self.serial = self.cfg['mountpoint']
+        elif self.is_prefix7:
+            self.serial = f"MONITOR_{self.cfg['mountpoint']}"
         else:
             self.serial = f"MONITOR_{self.cfg['mountpoint'].replace('.', '_')}"
+        if self.is_prefix7:
+            decoder = globals().get('rtcm_signal_decoder')
+            if decoder:
+                for cache_name in ('_buffers', '_base_positions', '_ephemeris_data', '_azel_cache', '_stats_by_serial'):
+                    getattr(decoder, cache_name, {}).pop(self.serial, None)
         self.topic_status = f"pi/devices/{self.serial}/status"
         self.satellites = {}
         
@@ -2229,7 +2240,7 @@ class MonitorWorker(threading.Thread):
     
     def publish_status(self):
         if not self.mqtt_client or not self.mqtt_client.is_connected():
-            pass
+            return
 
         if self.is_connected:
             current_status = "online" if self.current_bps > 0 else "sleep"
@@ -2246,21 +2257,23 @@ class MonitorWorker(threading.Thread):
         decoder = globals().get("rtcm_signal_decoder")
         rtcm_stats = decoder.get_stats(self.serial) if decoder else {}
         
+        decoded_coords = decoder.get_base_coordinates(self.serial) if decoder else None
+        coords = dict(zip(('lat', 'lon', 'alt'), decoded_coords)) if decoded_coords else {
+            'lat': self.cfg.get('lat', 0.0), 'lon': self.cfg.get('lon', 0.0), 'alt': self.cfg.get('alt', 0.0)
+        }
+        if self.is_prefix7 and not decoded_coords:
+            coords = {}  # GGA positions are not decoded RTCM observations.
         status = {
             "serial": self.serial,
             "rtcm_stats": rtcm_stats,
             "name": self.cfg.get('name') or self.cfg['mountpoint'],
             "status": current_status,
             "version": RELAY_VERSION,
-            "agent_token_fingerprint": get_license_fingerprint(self.serial),
+            "agent_token_fingerprint": None if self.is_prefix7 else get_license_fingerprint(self.serial),
             "timestamp": round(now, 3),
             "base_config": {
                 "base_setup_method": "FIXED_LLA",
-                "coords": {
-                    "lat": self.cfg.get('lat', 0.0),
-                    "lon": self.cfg.get('lon', 0.0),
-                    "alt": self.cfg.get('alt', 0.0)
-                }
+                "coords": coords
             },
             "ntrip_connected": self.is_connected,
             "ntrip_stats": {"server1_bps": self.current_bps},
@@ -2268,24 +2281,21 @@ class MonitorWorker(threading.Thread):
             "service_config": {
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['mountpoint'],
-                "serverhost1": TARGET_HOST,
+                "serverhost1": self.host,
+                "port1": self.port,
                 "stream_on_demand": True,
                 "stream_active": bool(self.is_connected and self.current_bps > 0),
                 "active_mountpoint": self.cfg['mountpoint']
             },
             "source_mountpoint": self.cfg['mountpoint'],
-            "rtk_fix_status": "FIXED" if satellite_count > 0 else "NO_FIX",
-            "detected_chip_type": "Ublox",
-            "is_provisioned": has_license(self.serial),
+            "rtk_fix_status": "NO_FIX" if self.is_prefix7 else ("FIXED" if satellite_count > 0 else "NO_FIX"),
+            "detected_chip_type": "UNKNOWN" if self.is_prefix7 else "Ublox",
+            "is_provisioned": self.is_prefix7 or has_license(self.serial),
             "nmea_data": {
                 "gga": None,
                 "gsa": None,
                 "satellites": satellites,
-                "base_coords": {
-                    "lat": self.cfg.get('lat', 0.0),
-                    "lon": self.cfg.get('lon', 0.0),
-                    "alt": self.cfg.get('alt', 0.0)
-                }
+                "base_coords": coords or None
             },
             "gnss_stats": {
                 "satellites": satellite_count
@@ -2323,21 +2333,55 @@ class MonitorWorker(threading.Thread):
                     pass
                 self._sock = None
     
+    @staticmethod
+    def _read_ntrip_response(sock):
+        """Validate HTTP/ICY success and preserve coalesced binary stream bytes."""
+        response = bytearray()
+        while b'\r\n' not in response:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError('Caster closed before NTRIP response')
+            response.extend(chunk)
+            if len(response) > 16384:
+                raise ConnectionError('NTRIP response headers too large')
+        line = bytes(response).split(b'\r\n', 1)[0]
+        fields = line.split()
+        if len(fields) < 2 or fields[1] != b'200' or not (fields[0] == b'ICY' or fields[0].startswith(b'HTTP/')):
+            raise ConnectionError('Caster rejected NTRIP stream')
+        if fields[0] == b'ICY':
+            body = bytes(response).split(b'\r\n', 1)[1]
+            return body[2:] if body.startswith(b'\r\n') else body
+        while b'\r\n\r\n' not in response:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError('Incomplete NTRIP headers')
+            response.extend(chunk)
+            if len(response) > 16384:
+                raise ConnectionError('NTRIP response headers too large')
+        header, body = bytes(response).split(b'\r\n\r\n', 1)
+        if b'transfer-encoding: chunked' in header.lower():
+            raise ConnectionError('Chunked NTRIP stream unsupported')
+        return body
+
     def run(self):
         while not self.stop_event.is_set():
             sock = None
             try:
-                self.log("INFO", f"Connecting MONITOR: {TARGET_HOST}:{TARGET_PORT}/{self.cfg['mountpoint']}")
-                sock = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
+                self.log("INFO", f"Connecting MONITOR: {self.host}:{self.port}/{self.cfg['mountpoint']}")
+                sock = socket.create_connection((self.host, self.port), timeout=10)
                 with self.socket_lock:
                     self._sock = sock
                 
                 # Cấu trúc y hệt chuẩn thiết bị Rover Ntrip 1.0 cổ điển:
                 r_user = self.cfg.get('rover_user') or self.cfg['mountpoint']
-                r_pass = self.cfg.get('rover_pass') or "12345"
+                r_pass = self.cfg.get('rover_pass')
+                if self.is_prefix7 and not r_pass:
+                    raise ValueError('Base 4G requires the saved Rover password')
+                r_pass = r_pass or "12345"
                 auth = base64.b64encode(f"{r_user}:{r_pass}".encode()).decode()
                 request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP NtripClient/1.0\r\nAuthorization: Basic {auth}\r\n\r\n"
                 sock.sendall(request.encode())
+                pending_data = self._read_ntrip_response(sock) if self.is_prefix7 else b''
                 
                 try:
                     self._send_rover_gga(sock)
@@ -2356,14 +2400,17 @@ class MonitorWorker(threading.Thread):
                 rtcm_buffer = bytearray()
                 while not self.stop_event.is_set():
                     try:
-                        data = sock.recv(4096)
+                        data = pending_data or sock.recv(4096)
+                        pending_data = b''
                         if not data:
                             self.log("WARNING", "Monitor EOF (Server tu choi hoac Mountpoint khong ton tai)")
                             break
                         
-                        self.bytes_received += len(data)
+                        if not self.is_prefix7:
+                            self.bytes_received += len(data)
                         now = time.time()
-                        self.last_data_received_at = now
+                        if not self.is_prefix7:
+                            self.last_data_received_at = now
 
                         if now - self.last_gga_send_time >= self.gga_send_interval:
                             try:
@@ -2374,6 +2421,11 @@ class MonitorWorker(threading.Thread):
 
                         rtcm_buffer.extend(data)
                         frames = extract_rtcm3_frames(rtcm_buffer)
+                        if self.is_prefix7 and frames:
+                            self.bytes_received += sum(len(frame) for frame in frames)
+                            self.last_data_received_at = now
+                        if self.is_prefix7 and now - self.last_data_received_at >= self.max_no_data_seconds:
+                            break
                         decoder = globals().get("rtcm_signal_decoder")
                         if decoder and frames:
                             for frame in frames:
@@ -2415,12 +2467,20 @@ class MonitorWorker(threading.Thread):
                         self.log("WARNING", f"Data error: {e}")
                         break
                         
-                self.log("INFO", f"Monitor disconnected, reconnecting in {RECONNECT_INTERVAL}s...")
-                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                self.log("INFO", f"Monitor disconnected, reconnecting in {self.retry_seconds}s...")
+                self._close_live_socket()
+                self.is_connected = False
+                self.current_bps = 0
+                self.publish_status()
+                self.wakeup_event.wait(self.retry_seconds)
                 self.wakeup_event.clear()
             except Exception as e:
                 self.log("WARNING", f"Connection error: {e}")
-                self.wakeup_event.wait(RECONNECT_INTERVAL)
+                self._close_live_socket()
+                self.is_connected = False
+                self.current_bps = 0
+                self.publish_status()
+                self.wakeup_event.wait(self.retry_seconds)
                 self.wakeup_event.clear()
             finally:
                 self.is_connected = False
@@ -3499,6 +3559,8 @@ def setup_mqtt(worker_map):
 
     def on_message(c, userdata, msg):
         if msg.topic == "pi/decoder/esp_base":
+            if bool(getattr(msg, "retain", False)):
+                return
             try:
                 payload = json.loads((msg.payload or b"{}").decode("utf-8"))
                 action = payload.get("action")
@@ -3508,25 +3570,31 @@ def setup_mqtt(worker_map):
                     return
                 with WORKER_MAP_LOCK:
                     if action == "start":
-                        existing = worker_map.get(serial)
-                        if existing and existing.is_alive() and getattr(existing, "cfg", {}).get("mountpoint") == mp:
+                        prefix7 = mp.startswith('7')
+                        if prefix7 and (not payload.get('rover_pass') or payload.get('rover_user') != mp):
+                            logging.warning('Rejected Base 4G decoder start without Rover credentials')
                             return
-                        if existing:
-                            if hasattr(existing, "stop"):
-                                existing.stop()
-                            try:
-                                existing.join(timeout=2)
-                            except Exception:
-                                pass
                         cfg = {
-                            "serial": serial,
-                            "mountpoint": mp,
+                            "serial": serial, "mountpoint": mp,
                             "rover_user": payload.get("rover_user") or mp,
                             "rover_pass": payload.get("rover_pass") or "12345",
-                            "lat": payload.get("lat", 0.0),
-                            "lon": payload.get("lon", 0.0),
+                            "host": payload.get("host") or TARGET_HOST,
+                            "port": int(payload.get("port") or TARGET_PORT),
+                            "lat": payload.get("lat", 0.0), "lon": payload.get("lon", 0.0),
                             "alt": payload.get("alt", 0.0),
                         }
+                        existing = worker_map.get(serial)
+                        connection_keys = ('mountpoint', 'rover_user', 'rover_pass', 'host', 'port')
+                        if existing and existing.is_alive() and all(
+                            getattr(existing, 'cfg', {}).get(key) == cfg[key] for key in connection_keys
+                        ):
+                            return
+                        if existing:
+                            existing.stop()
+                            existing.join(timeout=12)
+                            if existing.is_alive():
+                                logging.warning('Previous decoder still stopping; deferring replacement')
+                                return
                         worker = MonitorWorker(cfg, c)
                         worker_map[serial] = worker
                         worker.start()
@@ -3597,6 +3665,10 @@ def setup_mqtt(worker_map):
                 if old_expiry < now:
                     seen_command_ids.pop(old_id, None)
 
+        worker = worker_map.get(serial)
+        if serial.upper().startswith('MONITOR_7') or (isinstance(worker, MonitorWorker) and worker.is_prefix7):
+            logging.warning('Rejected device command for read-only Base 4G')
+            return
         command = str(payload.get("command", "")).strip().upper()
         if command != "SET_RTCM_STREAM_ACTIVE" or serial in worker_map:
             logging.info(f"Control MQTT received topic={msg.topic} command={command}")
@@ -3798,6 +3870,9 @@ if __name__ == "__main__":
             time.sleep(1)
         
         for cfg in monitor_list:
+            if str(cfg.get('mountpoint') or '').startswith('7'):
+                # Backend owns these workers and supplies current Rover credentials.
+                continue
             worker = MonitorWorker(cfg, mqtt_client)
             ACTIVE_WORKERS[worker.serial] = worker
             worker.start()

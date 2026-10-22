@@ -8,6 +8,14 @@ venv/
 .venv/
 .pytest_cache/
 
+# PlatformIO build output and generated compilation database
+.pio/
+compile_commands.json
+/.vscode/c_cpp_properties.json
+/.vscode/launch.json
+/.vscode/.browse.c_cpp.db*
+/.vscode/ipch/
+
 # Local test dependency snapshot and runtime logs
 .ublox-test-deps/
 *.log

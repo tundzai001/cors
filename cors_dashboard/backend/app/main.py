@@ -77,6 +77,7 @@ from .database import get_db, get_auth_db, settings, DatabaseBusyError
 from .websocket import manager as ui_manager, visitor_manager
 from . import mqtt as mqtt_handler
 from .command_dispatcher import send_command_to_pi as dispatch_command_to_pi
+from .mobile_base import require_editable_base
 from . import license_manager
 from .caster_helpers import is_configured_caster_peer
 from .security import rate_limiter
@@ -685,7 +686,7 @@ async def get_integration_stations(
     return api_keys.project_station_items(items, key, configs)
 
 
-@app.post("/api/integrations/stations/{serial}/configure-service")
+@app.post("/api/integrations/stations/{serial}/configure-service", dependencies=[Depends(require_editable_base)])
 async def configure_integration_station(
     serial: str,
     payload: schemas.ServiceConfig,
@@ -705,7 +706,7 @@ async def configure_integration_station(
     return await configure_service_endpoint(serial, payload, db, api_user)
 
 
-@app.post("/api/integrations/stations/{serial}/configure-chip")
+@app.post("/api/integrations/stations/{serial}/configure-chip", dependencies=[Depends(require_editable_base)])
 async def configure_integration_station_chip(
     serial: str,
     payload: schemas.Command,
@@ -1508,7 +1509,7 @@ async def revoke_all_other_sessions(
 
 
 # === LICENSE ===
-@app.post("/api/license/pi", response_model=schemas.LicenseResponse)
+@app.post("/api/license/pi", response_model=schemas.LicenseResponse, dependencies=[Depends(require_editable_base)])
 async def generate_pi_license(
     request: schemas.LicenseRequest,
     db: AsyncSession = Depends(get_db),

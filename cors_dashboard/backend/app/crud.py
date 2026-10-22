@@ -571,7 +571,9 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         should_update = True
 
     # ✅ KIỂM TRA BẢO VỆ CẤU HÌNH KHI OUT OF SYNC
-    is_out_of_sync = existing_device.is_synced is False
+    from .mobile_base import is_readonly_base
+    readonly_4g = is_readonly_base(existing_device)
+    is_out_of_sync = existing_device.is_synced is False and not readonly_4g
 
     # ✅ KIỂM TRA BASE CONFIG
     # 🔥 FIX: Nếu đang OUT OF SYNC, không cho phép status từ device ghi đè Target Config trong DB
@@ -594,7 +596,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
             if "gnss_options" not in new_base_config and old_config.get("gnss_options"):
                 new_base_config["gnss_options"] = old_config["gnss_options"]
             update_values["base_config"] = new_base_config
-            update_values["is_synced"] = False
+            update_values["is_synced"] = new_is_synced if readonly_4g else False
             should_update = True
 
     # ✅ KIỂM TRA SERVICE CONFIG
@@ -928,7 +930,7 @@ def _json_string_set(value, *, lowercase: bool = False) -> set[str]:
     return {item.lower() for item in result} if lowercase else result
 
 def is_mobile_base(serial: str) -> bool:
-    return str(serial or "").strip().lower().startswith("esp_")
+    return str(serial or "").strip().lower().startswith(("esp_", "monitor_7"))
 
 def get_allowed_base_serials(user: models.User) -> set[str]:
     serials = {serial.upper() for serial in _json_string_set(getattr(user, "allowed_bases", None))}

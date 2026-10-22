@@ -12,14 +12,16 @@ When an ESP32 Base 4G station streams RTCM to NTRIP Caster at mountpoint 'mp':
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 
 from . import crud, models
 from .database import device_session_scope, auth_session_scope, settings
 from .runtime_config import _read_caster_config_from_env
 from .caster_client import CasterClient
+from .mobile_base import is_4g_mountpoint, is_readonly_base
 
 logger = logging.getLogger("app.esp_base_manager")
 
@@ -201,11 +203,12 @@ def _extract_device_coords(device: models.Device | None) -> tuple[float, float, 
 async def notify_decoder_worker(
     action: str, serial: str, mountpoint: str, rover_user: str, rover_pass: str,
     lat: float = 0.0, lon: float = 0.0, alt: float = 0.0,
+    host: str | None = None, port: int | None = None,
 ) -> None:
     """Publish MQTT control message to geotek_daithanh_aitogy decoder worker."""
     try:
         from . import mqtt as mqtt_module
-        if mqtt_module.client and mqtt_module.client.is_connected():
+        if mqtt_module.mqtt_client and mqtt_module.mqtt_client.is_connected():
             payload = json.dumps({
                 "action": action,
                 "serial": serial,
@@ -215,9 +218,11 @@ async def notify_decoder_worker(
                 "lat": lat,
                 "lon": lon,
                 "alt": alt,
+                "host": host,
+                "port": port,
                 "timestamp": int(time.time()),
             })
-            mqtt_module.client.publish(MQTT_DECODER_TOPIC, payload, qos=1)
+            mqtt_module.publish_message(MQTT_DECODER_TOPIC, payload, qos=1)
             logger.info(f"[ESP DECODER MQTT] Sent {action} for serial={serial}, mp={mountpoint}")
     except Exception as e:
         logger.error(f"[ESP DECODER MQTT] Failed to publish {action} to {MQTT_DECODER_TOPIC}: {e}")
@@ -236,7 +241,7 @@ async def sync_esp_base_rovers() -> None:
 
         esp_devices = [
             d for d in all_devices
-            if crud.is_mobile_base(d.serial) or str(d.serial or "").lower().startswith("esp_")
+            if not is_readonly_base(d) and crud.is_mobile_base(d.serial)
         ]
 
     if not esp_devices:
@@ -295,11 +300,90 @@ async def sync_esp_base_rovers() -> None:
                             rover_map.pop(rover_user_key, None)
 
 
+async def sync_prefix7_bases() -> None:
+    """Reuse Caster inventory and Rover credentials; never create/delete Rover users."""
+    from .mqtt import cache_device_metadata
+    now = int(time.time())
+    casters = {(host, port) for host, port, *_ in await _get_configured_casters()}
+    async with auth_session_scope() as auth_db:
+        sources = (await auth_db.execute(select(models.CasterSource))).scalars().all()
+        rovers = (await auth_db.execute(select(models.RoverAccount))).scalars().all()
+        rover_map = {r.username: r for r in rovers}
+    sources = sorted((s for s in sources if is_4g_mountpoint(s.mountpoint)
+                      and (s.host, s.port) in casters),
+                     key=lambda s: (s.host, s.port, s.mountpoint))
+    notifications = []
+    async with device_session_scope() as db:
+        # Multiple backend processes share one inventory and one device identity.
+        await db.execute(select(func.pg_advisory_xact_lock(713204701)))
+        devices = (await db.execute(select(models.Device))).scalars().all()
+        by_mp = {}
+        for device in devices:
+            mp = _extract_esp_mountpoint(device)
+            if mp:
+                by_mp.setdefault(mp, device)
+        seen = set()
+        for source in sources:
+            mp = source.mountpoint
+            if mp in seen or any(c in mp for c in '/+#\r\n'):
+                continue
+            rover = rover_map.get(mp)
+            allowed_hosts = {h.strip() for h in (rover.target_casters or '').split(';')} if rover else set()
+            if rover and rover.target_casters and source.host not in allowed_hosts:
+                continue
+            seen.add(mp)
+            device = by_mp.get(mp)
+            if not device:
+                serial = f'MONITOR_{mp}'
+                device = next((d for d in devices if d.serial == serial), None)
+                if not device:
+                    device = models.Device(serial=serial, name=mp, status='offline', timestamp=0,
+                                           service_config={}, base_config={}, bps=0)
+                    db.add(device)
+                    devices.append(device)
+                by_mp[mp] = device
+            device.service_config = {**crud.normalize_service_config(device.service_config), 'mountpoint1': mp,
+                                     'serverhost1': source.host, 'port1': source.port,
+                                     'server1_enabled': True}
+            allowed_mps = set(re.split(r'[;,\s]+', rover.mountpoints or '')) if rover else set()
+            valid = bool(rover and rover.is_active and rover.password
+                         and (not rover.mountpoints or '*' in allowed_mps or mp in allowed_mps)
+                         and (not rover.expires_at or rover.expires_at > now))
+            device.system_info = {**(device.system_info or {}), 'auth_license_bypass': True,
+                                  'base_type': '4g', 'read_only': True,
+                                  'decoder_status': 'ready' if valid else 'missing_rover_credentials'}
+            if device.status in ('awaiting_license', 'unprovisioned', 'locked'):
+                device.status = 'offline'
+                device.bps = 0
+                device.ntrip_connected = False
+                device.offline_since = device.offline_since or now
+            device.is_provisioned = True
+            device.device_token = None
+            device.is_locked = False
+            device.server_config_lock = None
+            # No token/license is generated; bypass is owned by the backend.
+            notifications.append((device, mp, source, rover if valid else None))
+        # Accounts disabled/deleted and removed inventory must stop existing decoders.
+        for device in devices:
+            if is_readonly_base(device) and _extract_esp_mountpoint(device) not in seen:
+                notifications.append((device, _extract_esp_mountpoint(device) or '', None, None))
+        await db.commit()
+        for device, *_ in notifications:
+            await cache_device_metadata(device)
+    for device, mp, source, rover in notifications:
+        lat, lon, alt = _extract_device_coords(device)
+        await notify_decoder_worker('start' if rover else 'stop', device.serial, mp,
+                                    mp, rover.password if rover else '', lat=lat, lon=lon, alt=alt,
+                                    host=source.host if source else None,
+                                    port=source.port if source else None)
+
+
 async def esp_base_manager_task() -> None:
     """Background loop running every 15s."""
     logger.info("[ESP BASE MANAGER] Started background supervisor task")
     while True:
         try:
+            await sync_prefix7_bases()
             await sync_esp_base_rovers()
         except Exception as e:
             logger.error(f"[ESP BASE MANAGER] Error in sync loop: {e}", exc_info=True)

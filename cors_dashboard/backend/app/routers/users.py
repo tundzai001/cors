@@ -5,6 +5,7 @@ from ..database import get_auth_db, get_db
 from .. import crud, models, schemas, auth
 from .. import mqtt as mqtt_handler
 from ..command_dispatcher import send_command_to_pi
+from ..mobile_base import require_editable_base
 from ..websocket import manager as ui_manager
 import logging
 
@@ -92,7 +93,7 @@ async def get_user_details(user_id: int, db: AsyncSession = Depends(get_auth_db)
     user_response.permissions = permissions
     return user_response
 
-@router.put("/api/devices/{serial}/name")
+@router.put("/api/devices/{serial}/name", dependencies=[Depends(require_editable_base)])
 async def rename_device(
     serial: str,
     request: schemas.DeviceRename, 
@@ -135,7 +136,7 @@ async def rename_device(
     
     return {"status": "success", "name": device.name}
 
-@router.put("/api/devices/{serial}/serial")
+@router.put("/api/devices/{serial}/serial", dependencies=[Depends(require_editable_base)])
 async def rename_device_serial(
     serial: str,
     request: schemas.DeviceRenameSerial, 

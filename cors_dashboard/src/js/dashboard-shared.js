@@ -177,6 +177,13 @@ const getOfflineInfo = (device, nowMs = Date.now()) => {
     return { sinceSeconds, sinceText, elapsedSeconds, durationText, unknown: false };
 };
 
+const isReadonly4gBase = (device) => {
+    const config = device?.service_config || {};
+    return /^MONITOR_7/i.test(String(device?.serial || '')) ||
+        ['mountpoint1', 'active_mountpoint', 'mountpoint', 'source_mountpoint', 'mountpoint2']
+            .some(key => String(config[key] || '').trim().replace(/^\//, '').startsWith('7'));
+};
+
 const isAccessTokenSynced = (device) => {
     const auth = device?.system_info?.auth_status || {};
     return auth.token_synced === true && auth.token_deployment_pending !== true &&
@@ -191,6 +198,7 @@ const getMapEffectiveStatus = (device) => {
     const authStatus = device?.system_info?.auth_status || {};
     const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
     const rawStatus = String(device?.status || '').toLowerCase();
+    if (isReadonly4gBase(device) && ['awaiting_license', 'unprovisioned', 'locked'].includes(rawStatus)) return 'offline';
     if (rawStatus === 'awaiting_license' && isAccessTokenSynced(device) &&
         !['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)) {
         return 'awaiting_agent';
@@ -231,5 +239,5 @@ const isDeviceLockApplied = device => {
     const reported = device?.system_info?.device_lock?.locked_servers;
     return !device?.system_info?.device_lock?.all && Array.isArray(reported) && JSON.stringify([...reported].sort()) === JSON.stringify(desired);
 };
-window.CorsDashboardShared = { getLockedServers, isDeviceLockApplied, getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, isDeviceStaleOffline, getMapEffectiveStatus, isAccessTokenSynced };
+window.CorsDashboardShared = { isReadonly4gBase, getLockedServers, isDeviceLockApplied, getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, isDeviceStaleOffline, getMapEffectiveStatus, isAccessTokenSynced };
 })();

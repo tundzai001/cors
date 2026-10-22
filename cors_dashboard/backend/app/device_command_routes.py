@@ -38,8 +38,10 @@ from .station_runtime import (
 )
 
 logger = logging.getLogger("app.main")
-router = APIRouter()
-tools_router = APIRouter()
+from .mobile_base import require_editable_base
+
+router = APIRouter(dependencies=[Depends(require_editable_base)])
+tools_router = APIRouter(dependencies=[Depends(require_editable_base)])
 
 
 @router.post("/api/devices/{serial}/configure-chip")
