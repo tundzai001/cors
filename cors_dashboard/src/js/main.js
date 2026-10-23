@@ -661,9 +661,16 @@ document.addEventListener('click', (e) => {
     }
 });
 
-function updateGlobalDevices(newDeviceData) {
+function updateGlobalDevices(newDeviceData, replace = false) {
+    const devicesToAddOrUpdate = (Array.isArray(newDeviceData) ? newDeviceData : [newDeviceData])
+        .filter(device => device && !/^PI_/i.test(String(device.serial || '').trim()));
+    const incomingSerials = new Set(devicesToAddOrUpdate.map(device => device.serial));
+    for (const device of [...globalState.devices]) {
+        if (/^PI_/i.test(String(device.serial || '').trim()) || (replace && !incomingSerials.has(device.serial))) {
+            removeDeviceFromList(device.serial);
+        }
+    }
     const deviceMap = new Map(globalState.devices.map(d => [d.serial, d]));
-    const devicesToAddOrUpdate = Array.isArray(newDeviceData) ? newDeviceData : [newDeviceData];
     const hasData = (obj) => !!(obj && typeof obj === 'object' && Object.keys(obj).length > 0);
     const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
 
@@ -970,6 +977,19 @@ async function handleRenameSerial(oldSerial, newSerial) {
 }
 window.handleRenameSerial = handleRenameSerial;
 
+function removeDeviceFromList(serial) {
+    pendingStatusUpdates.delete(serial);
+    lastStatusMetaBySerial.delete(serial);
+    globalState.devices = globalState.devices.filter(device => device.serial !== serial);
+    if (globalState.selectedDeviceSerial === serial) globalState.selectedDeviceSerial = null;
+    globalState.stateVersion++;
+    lastSearchTerm = '';
+    deviceListNeedsUpdate = true;
+    detailsPanelNeedsUpdate = true;
+    mapNeedsUpdate = true;
+    scheduleRender('high');
+}
+
 async function handleDeleteDevice(serial, name) {
     const confirmMsg = `⚠️ XÓA KHỎI DANH SÁCH\n\nBạn có chắc muốn xóa trạm '${name}' khỏi giao diện quản lý không?\n\nLưu ý: Hành động này không reset Pi.`;
     const ok = await window.CorsUI.confirmAction({
@@ -981,23 +1001,13 @@ async function handleDeleteDevice(serial, name) {
     if (!ok) return;
 
     try {
-        const response = await apiFetch(`/api/devices/${serial}`, { method: 'DELETE' });
+        const response = await apiFetch(`/api/devices/${encodeURIComponent(serial)}`, { method: 'DELETE' });
 
-        if (response.ok) {
-            const initialLength = globalState.devices.length;
-            globalState.devices = globalState.devices.filter(d => d.serial !== serial);
-
-            if (globalState.selectedDeviceSerial === serial) {
-                globalState.selectedDeviceSerial = null;
-            }
-
-            if (globalState.devices.length < initialLength) {
-                lastSearchTerm = ''; // Invalidate cache
-                deviceListNeedsUpdate = true;
-                detailsPanelNeedsUpdate = true;
-                scheduleRender('high');
-                showSuccess(`Đã xóa trạm '${name}' khỏi danh sách`);
-            }
+        if (response.ok || response.status === 404) {
+            removeDeviceFromList(serial);
+            showSuccess(response.status === 404
+                ? 'Trạm không còn trên máy chủ. Đã cập nhật danh sách.'
+                : `Đã xóa trạm '${name || serial}' khỏi danh sách`);
         } else {
             const error = await response.json();
             throw new Error(error.detail || 'Xóa thất bại');
@@ -1118,7 +1128,10 @@ async function handleConfigureService(serial, payload) {
         // The endpoint saves before sending. Keep its saved intent in the form,
         // including when delivery fails, so old telemetry cannot undo the edit.
         const current = globalState.devices.find(device => device.serial === serial);
-        const savedConfig = result.service_config || { ...(current?.service_config || {}), ...payload };
+        const savedConfig = result.service_config || window.CorsDashboardShared.removeServiceServers(
+            { ...(current?.service_config || {}), ...payload }, payload.removed_servers || []);
+        delete savedConfig.removed_servers;
+        if (current) current.service_config = savedConfig;
         const currentPolicy = current?.server_config_lock;
         const serverLock = result.server_config_lock || (currentPolicy && Object.keys(currentPolicy).length
             ? Object.fromEntries(Object.keys(currentPolicy).map(key => [key, key === "locked_servers" ? currentPolicy[key] : savedConfig[key]])) : currentPolicy);
@@ -1412,18 +1425,9 @@ function handleWebSocketMessage(message) {
     }
 
     if (type === 'device_deleted') {
-        const initialLength = globalState.devices.length;
-        globalState.devices = globalState.devices.filter(d => d.serial !== serial);
-
-        if (globalState.selectedDeviceSerial === serial) {
-            globalState.selectedDeviceSerial = null;
-        }
-
-        if (globalState.devices.length < initialLength) {
-            lastSearchTerm = '';
-            deviceListNeedsUpdate = true;
-            detailsPanelNeedsUpdate = true;
-            scheduleRender('high');
+        const existed = globalState.devices.some(device => device.serial === serial);
+        removeDeviceFromList(serial);
+        if (existed) {
             showSuccess('Một trạm đã được xóa khỏi danh sách.');
         }
     }
@@ -1703,7 +1707,7 @@ async function loadInitialDevices() {
             }));
         }
 
-        updateGlobalDevices(devicesFromApi);
+        updateGlobalDevices(devicesFromApi, true);
     } catch (error) {
         if (error.message !== 'Unauthorized') {
             showError('Không thể tải danh sách trạm');

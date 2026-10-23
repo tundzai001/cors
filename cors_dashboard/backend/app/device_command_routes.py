@@ -278,6 +278,8 @@ async def configure_service_endpoint(
     service_config_payload = _preserve_relay_config_metadata(
         serial, old_service_cfg, {**old_service_cfg, **incoming_config}
     )
+    service_config_payload.pop('removed_servers', None)
+    service_config_payload = schemas.remove_service_servers(service_config_payload, incoming_config.get('removed_servers', []))
     try:
         refresh_host_lock(device_in_db, service_config_payload)
         device_in_db.service_config = service_config_payload

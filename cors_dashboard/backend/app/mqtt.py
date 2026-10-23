@@ -740,6 +740,8 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
         
         message_type = topic_parts[-1]
         serial = topic_parts[2]
+        if crud.is_blocked_device_serial(serial):
+            return
         
         # ==================== 1. XỬ LÝ NMEA DATA ====================
         if message_type == "raw_data":
@@ -851,16 +853,11 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
             return
 
         if message_type in ["status", "status_update"]:
-            serial_upper = str(serial or "").upper()
-            is_relay_like = (
-                serial_upper.startswith("RELAY_")
-                or serial_upper.startswith("MONITOR_")
-            )
             metadata = None
 
-            # MQTT retained snapshots from old publishers can resurrect phantom relay rows.
-            # Ignore retained relay-like status if the device does not exist in DB.
-            if is_retained and is_relay_like:
+            # A retained snapshot cannot register a station that no longer exists.
+            # Live heartbeats still allow discovery of valid device identities.
+            if is_retained:
                 try:
                     metadata = await get_device_metadata(serial)
                     if not metadata.get("exists"):
@@ -1047,7 +1044,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 "data": data,
                 # Main's coalescing boundary rechecks this after taking its
                 # queue lock, closing the delete-vs-retained-broadcast race.
-                "_drop_if_device_missing": bool(is_retained and is_relay_like),
+                "_drop_if_device_missing": bool(is_retained),
             }
             if status_broadcast_handler:
                 await status_broadcast_handler(status_message)
@@ -1133,11 +1130,11 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     try:
                         # Single-writer section: avoids pool exhaustion under reconnect storms.
                         async with mqtt_db_write_lock:
-                            if is_retained and is_relay_like:
+                            if is_retained:
                                 current_metadata = device_metadata_cache.get(serial) or {}
                                 if current_metadata.get("exists") is False:
                                     logging.info(
-                                        "Skipping retained relay write after deletion: %s",
+                                        "Skipping retained status write after deletion: %s",
                                         serial,
                                     )
                                     return

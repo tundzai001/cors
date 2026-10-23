@@ -4259,6 +4259,11 @@ class AgentManager:
         # Missing/redacted credentials mean keep the locally saved password.
         current = self.config.get('services') or {}
         cfg = {**current, **cfg}
+        removed_servers = set(cfg.pop('removed_servers', []))
+        for key in list(cfg):
+            match = re.fullmatch(r'server(\d+)_\w+|(?:ntrip_version|username|serverhost|port|mountpoint|password)(\d+)', key)
+            if match and int(match.group(1) or match.group(2)) >= 3 and int(match.group(1) or match.group(2)) in removed_servers:
+                cfg.pop(key)
         for key in [*(f'password{sid}' for sid in _get_ntrip_server_ids(cfg)), 'rtcmpassword1', 'command_pass']:
             if cfg.get(key) in (None, ''):
                 if current.get(key) not in (None, ''):

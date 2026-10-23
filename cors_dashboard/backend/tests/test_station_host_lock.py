@@ -14,6 +14,7 @@ from app import auth, crud, models, schemas, mqtt
 from app.routers import api_keys
 from app.station_host_lock import check_host_lock, host_lock_snapshot, refresh_host_lock, locked_server_ids, supports_server_device_lock
 from app.schema_compat import DEVICE_SCHEMA_STATEMENTS
+from app.mobile_base import require_editable_base
 
 
 class StationHostLockMigrationTests(unittest.TestCase):
@@ -51,6 +52,7 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
         self.ns = dict(app=FastAPI(), router=FastAPI(), tools_router=FastAPI(), AsyncSession=object, get_db=lambda: None, get_auth_db=lambda: None,
                        Depends=Depends, HTTPException=HTTPException, Optional=Optional, auth=auth, models=models,
                        schemas=schemas, crud=self.crud, api_keys=api_keys, logging=logging,
+                       require_editable_base=require_editable_base,
                        check_host_lock=check_host_lock, host_lock_snapshot=host_lock_snapshot, refresh_host_lock=refresh_host_lock,
                        locked_server_ids=locked_server_ids, supports_server_device_lock=supports_server_device_lock,
                        send_command_to_pi=self.command, _device_service_config=lambda d: d.service_config or {},
@@ -65,11 +67,27 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
         await self.lock_s2()
         self.assertEqual(self.device.server_config_lock['serverhost3'], 'third.test')
         for patch in ({'serverhost3': 'changed.test'}, {'server4_enabled': True},
-                      {'server3_stream_on_demand': True}):
+                      {'server3_stream_on_demand': True}, {'removed_servers': [3]}):
             with self.subTest(patch=patch), self.assertRaises(HTTPException):
                 check_host_lock(self.device, patch)
         check_host_lock(self.device, {'mountpoint3': 'NEW'})
         check_host_lock(self.device, {'server4_enabled': True}, is_admin=True)
+
+    async def test_remove_added_caster_saves_and_deploys_without_affecting_other_hosts(self):
+        self.device.service_config = {**self.config, 'server3_enabled': True,
+                                      'serverhost3': 'third.test', 'password3': 'secret', 'port3': 2101,
+                                      'mountpoint3': 'THIRD', 'server3_stream_active': True,
+                                      'server4_enabled': True, 'serverhost4': 'fourth.test'}
+        result = await self.ns['configure_service_endpoint']('TEST', schemas.ServiceConfig(removed_servers=[3]), self.db, self.admin)
+        saved = result['service_config']
+        self.assertNotIn('serverhost3', saved)
+        self.assertNotIn('password3', saved)
+        self.assertNotIn('server3_enabled', saved)
+        self.assertNotIn('removed_servers', saved)
+        self.assertEqual(saved['serverhost1'], 'host-one.test')
+        self.assertEqual(saved['serverhost4'], 'fourth.test')
+        self.assertEqual(self.command.await_args.args[1]['payload']['removed_servers'], [3])
+        self.db.commit.assert_awaited_once()
 
     async def lock_s2(self):
         return await self.ns['lock_device']('TEST', self.db, self.admin, schemas.StationHostLockRequest(locked_servers=[2]))

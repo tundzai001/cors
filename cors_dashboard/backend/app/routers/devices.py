@@ -68,6 +68,7 @@ def _with_runtime_sync_flags(devices: list[models.Device]) -> list[models.Device
 
 
 def _device_response_list(devices: list[models.Device], current_user: models.User) -> list:
+    devices = [d for d in devices if not crud.is_blocked_device_serial(d.serial)]
     devices = _with_runtime_sync_flags(devices)
     if current_user.role not in (auth.Role.VIEWER, auth.Role.COORDINATOR):
         return devices
@@ -870,6 +871,8 @@ async def auto_deploy_device_token(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_LICENSE))
 ):
+    if crud.is_blocked_device_serial(serial):
+        raise HTTPException(status_code=400, detail="Blocked device serial")
     normalized_serial = str(serial).strip().upper()
     result = await db.execute(
         select(models.Device).where(func.upper(models.Device.serial) == normalized_serial)

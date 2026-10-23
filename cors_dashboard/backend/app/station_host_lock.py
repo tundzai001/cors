@@ -28,6 +28,8 @@ def check_host_lock(device, changes: dict, *, is_admin: bool = False) -> None:
     policy = getattr(device, 'server_config_lock', None) or {}
     if not locked_server_ids(policy) or is_admin:
         return
+    if changes.get('removed_servers'):
+        raise HTTPException(403, 'Chỉ admin được xóa caster khi khóa host.')
     current = device.service_config if isinstance(device.service_config, dict) else {}
     if set(service_server_ids(changes)) - set(service_server_ids(current)):
         raise HTTPException(403, 'Chỉ admin được thêm caster khi khóa host.')

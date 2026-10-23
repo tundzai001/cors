@@ -1518,6 +1518,8 @@ async def generate_pi_license(
     serial = request.serial
     if not serial:
         raise HTTPException(status_code=400, detail="Serial number required.")
+    if crud.is_blocked_device_serial(serial):
+        raise HTTPException(status_code=400, detail="Blocked device serial")
 
     try:
         device = await crud.get_device_by_serial(db, serial)

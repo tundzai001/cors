@@ -10,7 +10,7 @@ from app import crud, license_manager, mqtt
 
 class DiscoveredDeviceAuthTests(unittest.IsolatedAsyncioTestCase):
     async def receive(self, metadata, fingerprint, expected_status):
-        serial = 'PI_0bd46c72e7be'
+        serial = 'LP_001122334455'
         payload = {
             'serial': serial, 'status': 'online', 'timestamp': time.time(),
             'agent_token_fingerprint': fingerprint,

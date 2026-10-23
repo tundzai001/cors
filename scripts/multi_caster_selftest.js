@@ -20,7 +20,8 @@ const React = {
   },
   createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
 };
-const window = {};
+let confirmRemoval = true;
+const window = { CorsUI: { confirmAction: async () => confirmRemoval } };
 const context = vm.createContext({ React, window, console });
 const dist = path.join(__dirname, '../cors_dashboard/frontend/js/dist');
 for (const name of ['dashboard-shared', 'dashboard-forms']) vm.runInContext(fs.readFileSync(path.join(dist, `${name}.min.js`), 'utf8'), context);
@@ -50,6 +51,7 @@ function input(tree, name) { return nodes(tree).find(node => node.type === 'inpu
   assert(input(tree, 'serverhost3'));
   addButton(tree).props.onClick(); tree = render();
   assert(input(tree, 'serverhost4'));
+  assert.equal(input(tree, 'ntrip_version3').props.type, 'radio', 'Extra host must use the same protocol controls as host 1/2');
   const change = (name, value, type = 'text') => {
     input(tree, name).props.onChange({ target: { name, type, value, checked: value } }); tree = render();
   };
@@ -89,5 +91,22 @@ function input(tree, name) { return nodes(tree).find(node => node.type === 'inpu
     const bootstrap = process.argv[3] ? fs.readFileSync(process.argv[3], 'utf8') : '';
     fs.writeFileSync(process.argv[2], `<!doctype html><html lang="vi" data-bs-theme="dark"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${bootstrap}\n${css}</style><body class="p-3"><main style="max-width:1100px;margin:auto">${html(tree)}</main></body></html>`);
   }
+  props = { ...props, currentUser: { role: 'admin' } }; tree = render();
+  const remove = () => nodes(tree).find(node => node.props['aria-label'] === 'Xoá Host 3');
+  confirmRemoval = false;
+  await remove().props.onClick(); tree = render();
+  assert(input(tree, 'serverhost3'), 'Cancel must preserve host');
+  confirmRemoval = true;
+  await remove().props.onClick(); tree = render();
+  assert(!input(tree, 'serverhost3'), 'Removed host must leave the form');
+  assert(input(tree, 'serverhost4'), 'Other hosts must remain');
+  await tree.props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(Array.from(sent.removed_servers), [3]);
+  assert(!('password3' in sent));
+  const saved = window.CorsDashboardShared.removeServiceServers(props.device.service_config, sent.removed_servers);
+  props = { ...props, device: { ...props.device, service_config: saved } }; tree = render();
+  assert(!input(tree, 'serverhost3'), 'Reload must not restore removed host');
+  assert(input(tree, 'serverhost4'));
   console.log('PASS: default 2 slots, add caster 3/4, save typed port, independent stream mode, reload, live bitrate, blank/password redaction');
+  console.log('PASS: matching protocol layout, cancel/remove host, removal payload and reload without resurrection');
 })().catch(error => { console.error(error); process.exitCode = 1; });

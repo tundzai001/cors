@@ -650,6 +650,9 @@ pi_websocket_endpoint_router = APIRouter()
 
 @pi_websocket_endpoint_router.websocket("/ws/pi/{serial}")
 async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = Query(None)):
+    if crud.is_blocked_device_serial(serial):
+        await _safe_ws_close(websocket, code=1008, reason="Blocked device serial")
+        return
     # Never leave an unaccepted socket queued behind a saturated DB pool.  The
     # short-lived metadata cache removes the per-reconnect SELECT in steady state.
     try:

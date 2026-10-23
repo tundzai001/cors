@@ -1,5 +1,6 @@
 """Deploy patches without erasing credentials or unrelated stream settings."""
 import ast
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -21,7 +22,7 @@ def load_method(filename, name, scope, last=False):
 
 class ServiceConfigPatchTests(unittest.TestCase):
     def test_pi_patch_preserves_passwords_and_unrelated_settings(self):
-        scope = {'_to_bool': lambda value, default: bool(value),
+        scope = {'re': re, '_to_bool': lambda value, default: bool(value),
                  '_compute_any_server_can_push': lambda cfg, **kw: cfg['server1_stream_active']}
         apply = load_method('agent_universal.py', 'update_service_config', scope)
         stored = {'password1': 'secret', 'password2': 'backup', 'rtcmpassword1': 'rtcm',
@@ -40,6 +41,16 @@ class ServiceConfigPatchTests(unittest.TestCase):
         self.assertEqual(agent.config['services']['password1'], 'replacement')
         self.assertEqual(agent.config['services']['username1'], 'source')
         self.assertTrue(agent.rtcm_stream_active)
+        agent.config['services'].update({'serverhost3': 'third', 'port3': 2101,
+                                         'server4_enabled': True, 'password4': 'keep4'})
+        apply(agent, {'removed_servers': [3]})
+        self.assertNotIn('server3_enabled', agent.config['services'])
+        self.assertNotIn('password3', agent.config['services'])
+        self.assertNotIn('serverhost3', agent.config['services'])
+        self.assertNotIn('port3', agent.config['services'])
+        self.assertNotIn('removed_servers', agent.config['services'])
+        self.assertEqual(agent.config['services']['password4'], 'keep4')
+        self.assertEqual(agent.config['services']['password1'], 'replacement')
 
     def test_lte_patch_preserves_password_and_stream_mode(self):
         tree = ast.parse((ROOT / 'geotek_daithanh_aitogy.py').read_text())

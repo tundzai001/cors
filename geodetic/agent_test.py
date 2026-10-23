@@ -2551,6 +2551,8 @@ class AgentManager:
         return False
     
     def update_service_config(self, cfg: dict):
+        cfg = dict(cfg)
+        cfg.pop('removed_servers', None)
         # Respect user settings from dashboard deployment
         
         # Core logic: derive stream_active from stream_on_demand

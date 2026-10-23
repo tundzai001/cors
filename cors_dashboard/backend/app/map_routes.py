@@ -43,6 +43,7 @@ async def _get_map_station_items(
         public_map_cache = [
             {key: value for key, value in item.items() if key != "service_config"}
             for item in public_map_cache
+            if not crud.is_blocked_device_serial(item.get("serial"))
         ]
         response.headers["X-Data-Cache"] = "HIT"
         return [normalize_station_snapshot(item) for item in public_map_cache]
@@ -50,7 +51,7 @@ async def _get_map_station_items(
     try:
         # Lấy tất cả thiết bị
         result = await db.execute(select(models.Device))
-        devices = result.scalars().all()
+        devices = [d for d in result.scalars().all() if not crud.is_blocked_device_serial(d.serial)]
 
         def _dict_or_empty(value: Any) -> dict:
             return value if isinstance(value, dict) else {}
@@ -582,7 +583,7 @@ get_public_network_summary_router = APIRouter()
 async def get_public_network_summary(db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(select(models.Device))
-        devices = result.scalars().all()
+        devices = [d for d in result.scalars().all() if not crud.is_blocked_device_serial(d.serial)]
         active_statuses = {"online", "sleep", "streaming", "starting"}
         return {
             "total_stations": len(devices),

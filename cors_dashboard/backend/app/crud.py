@@ -387,6 +387,10 @@ async def delete_device(db: AsyncSession, serial: str) -> bool:
 # VALIDATION FUNCTION: Chặn Ghost Devices
 # ==============================================================================
 
+def is_blocked_device_serial(serial: str) -> bool:
+    return str(serial or "").strip().upper().startswith("PI_")
+
+
 def is_valid_serial(serial: str) -> bool:
     """
     Kiểm tra serial có hợp lệ không.
@@ -394,7 +398,6 @@ def is_valid_serial(serial: str) -> bool:
     CÁC ĐỊNH DẠNG HỢP LỆ:
     - Ublox: 10000000xxxxxxxx (16 ký tự hex)
     - LP win Pi: LP_xxxxxxxxxxxx (MAC address)
-    - Pi agent: PI_xxxxxxxxxxxx (12 ký tự hex)
     - Mobile ESP32 base: esp_xxxxxxxxxxxx (12 ký tự hex từ MAC)
     - Relay: RELAY_xxxxxxx
     - Monitor: MONITOR_xxxxxxx
@@ -404,7 +407,7 @@ def is_valid_serial(serial: str) -> bool:
     - Garbled text
     - Empty/None
     """
-    if not serial:
+    if not serial or is_blocked_device_serial(serial):
         return False
     serial = str(serial).strip()
     if len(serial) < 8:
@@ -420,10 +423,6 @@ def is_valid_serial(serial: str) -> bool:
     
     # Pattern 2: LoRa Pi (LP_MAC)
     if re.match(r'^LP_[0-9A-F]{12}$', serial, re.IGNORECASE):
-        return True
-
-    # Pi agent fallback serial: PI_ + 12 hex chars from uuid4.
-    if re.fullmatch(r'PI_[0-9A-F]{12}', serial, re.IGNORECASE):
         return True
 
     # ESP32 base firmware derives a stable device serial from its eFuse MAC.

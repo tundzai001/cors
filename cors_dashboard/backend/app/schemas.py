@@ -1,7 +1,7 @@
 # backend/app/schemas.py
 from pydantic import BaseModel, Field, validator, model_validator, TypeAdapter
 import re
-from typing import Any, List, Optional
+from typing import Annotated, Any, List, Optional
 
 
 def redact_config_secrets(value: Any) -> Any:
@@ -42,6 +42,14 @@ def service_password_fields(config: dict):
     return set(SERVICE_PASSWORD_FIELDS) | {key for key in config if re.fullmatch(r"password[1-9][0-9]*", key)}
 
 
+def remove_service_servers(config: dict, removed_servers: list[int]) -> dict:
+    removed = set(removed_servers)
+    def keep(key):
+        match = re.fullmatch(r"server(\d+)_\w+|(?:ntrip_version|username|serverhost|port|mountpoint|password)(\d+)", key)
+        return not match or int(match.group(1) or match.group(2)) not in removed
+    return {key: value for key, value in config.items() if keep(key)}
+
+
 def preserve_service_passwords(current: dict, incoming: dict) -> dict:
     """A missing or blank password means keep the stored credential."""
     merged = dict(incoming)
@@ -69,8 +77,16 @@ def service_config_deployment_payload(agent_version, saved_config: dict, changes
         for server in service_server_ids(saved_config)
     )
     if changes and len(version) == 3 and version >= (2, 2, 6) and not needs_restore:
-        return dict(changes)
-    return dict(saved_config)
+        result = dict(changes)
+    else:
+        result = dict(saved_config)
+    if changes.get('removed_servers'):
+        result['removed_servers'] = changes['removed_servers']
+        # Older merging agents still stop the output before they support removal.
+        for sid in changes['removed_servers']:
+            result[f'server{sid}_enabled'] = False
+            result[f'server{sid}_stream_active'] = False
+    return result
 
 
 def strip_status_config_secrets(value: Any) -> Any:
@@ -200,6 +216,8 @@ class StationHostLockRequest(BaseModel):
 class ServiceConfig(BaseModel):
     class Config:
         extra = "allow"
+
+    removed_servers: list[Annotated[int, Field(ge=3)]] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod

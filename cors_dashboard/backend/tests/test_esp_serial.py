@@ -18,6 +18,13 @@ class EspSerialTests(unittest.TestCase):
 
     def test_fixed_station_formats_remain_accepted(self):
         for serial in ('1000000037a7201b', 'LP_00E04C0CFB9E', 'RELAY_ATG_DT',
-                       'PI_0bd46c72e7be', '860549070087338', 'MONITOR_TEST'):
+                       '860549070087338', 'MONITOR_TEST'):
             with self.subTest(serial=serial):
                 self.assertTrue(crud.is_valid_serial(serial))
+
+    def test_pi_prefix_is_blocked_in_all_cases(self):
+        for serial in ('PI_0bd46c72e7be', 'PI_8893150dff03', 'PI_b5ca1be152f8',
+                       'pi_112233445566', ' Pi_ABCDEF123456 ', 'PI_anything'):
+            with self.subTest(serial=serial):
+                self.assertTrue(crud.is_blocked_device_serial(serial))
+                self.assertFalse(crud.is_valid_serial(serial))

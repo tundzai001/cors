@@ -13,7 +13,7 @@ from app import crud, license_manager, models, mqtt
 
 class TokenOnboardingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.serial = 'PI_0bd46c72e7be'
+        self.serial = 'LP_001122334455'
         self.db = SimpleNamespace(execute=AsyncMock(), add=Mock(), commit=AsyncMock(),
                                   refresh=AsyncMock(), rollback=AsyncMock())
         source = Path(__file__).parents[1] / 'app/routers/devices.py'
@@ -26,6 +26,7 @@ class TokenOnboardingTests(unittest.IsolatedAsyncioTestCase):
             auth=SimpleNamespace(require_permission=lambda permission: None,
                                  Permission=SimpleNamespace(MANAGE_LICENSE='manage:license')),
             models=models, crud=SimpleNamespace(is_valid_serial=crud.is_valid_serial,
+                                               is_blocked_device_serial=crud.is_blocked_device_serial,
                                                log_system_event=AsyncMock()),
             select=select, func=func, HTTPException=HTTPException, IntegrityError=IntegrityError,
             license_manager=license_manager,
@@ -85,8 +86,27 @@ class TokenOnboardingTests(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_not_awaited()
         self.dispatch.assert_not_awaited()
 
+    async def test_blocked_pi_cannot_be_registered_or_relicensed(self):
+        for device in (None, models.Device(serial='PI_0bd46c72e7be')):
+            self.lookup_returns(device)
+            with self.assertRaises(HTTPException) as error:
+                await self.scope['auto_deploy_device_token']('PI_0bd46c72e7be', self.db, self.admin)
+            self.assertEqual(error.exception.status_code, 400)
+        self.db.execute.assert_not_awaited()
+        self.db.add.assert_not_called()
+        self.dispatch.assert_not_awaited()
+
 
 class LicenseFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_direct_license_route_rejects_blocked_pi(self):
+        from app import main, schemas
+        db = SimpleNamespace(add=Mock(), commit=AsyncMock())
+        with self.assertRaises(HTTPException) as raised:
+            await main.generate_pi_license(schemas.LicenseRequest(serial='PI_0bd46c72e7be'), db,
+                                           SimpleNamespace(id=1, role='admin'))
+        self.assertEqual(raised.exception.status_code, 400)
+        db.add.assert_not_called()
+        db.commit.assert_not_awaited()
     async def test_token_conflicts_and_database_failures_rollback_cleanly(self):
         from app import main, schemas
         device = models.Device(serial='10000000e44764d2', device_token='existing')

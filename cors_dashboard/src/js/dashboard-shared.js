@@ -242,5 +242,11 @@ const isDeviceLockApplied = device => {
     const reported = device?.system_info?.device_lock?.locked_servers;
     return !device?.system_info?.device_lock?.all && Array.isArray(reported) && JSON.stringify([...reported].sort()) === JSON.stringify(desired);
 };
-window.CorsDashboardShared = { isReadonly4gBase, getLockedServers, isDeviceLockApplied, getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, isDeviceStaleOffline, getMapEffectiveStatus, isAccessTokenSynced };
+const removeServiceServers = (config, removedServers) => Object.fromEntries(
+    Object.entries(config).filter(([key]) => {
+        const match = key.match(/^server(\d+)_\w+$|^(?:ntrip_version|username|serverhost|port|mountpoint|password)(\d+)$/);
+        return !match || !removedServers.includes(Number(match[1] || match[2]));
+    })
+);
+window.CorsDashboardShared = { removeServiceServers, isReadonly4gBase, getLockedServers, isDeviceLockApplied, getLeaflet, createMarkerClusterGroup, STATUS_TEXT_MAP, STATUS_CLASS_MAP, getStatusColor, parseBoolCompat, isServerConfiguredCompat, PREFERRED_DOMAINS, isPreferredHost, getPreferredOutputServerId, getServerTelemetry, getOfflineInfo, isDeviceStaleOffline, getMapEffectiveStatus, isAccessTokenSynced };
 })();

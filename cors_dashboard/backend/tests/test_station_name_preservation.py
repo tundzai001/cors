@@ -66,7 +66,7 @@ class StationNamePreservationTests(unittest.IsolatedAsyncioTestCase):
         dispatch.assert_not_awaited()
 
     async def test_discovered_pi_registers_before_provisioning(self):
-        self.serial = 'PI_0bd46c72e7be'
+        self.serial = 'LP_001122334455'
         self.device.serial = self.serial
         calls = []
 

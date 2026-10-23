@@ -1226,8 +1226,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         return match ? Number(match[1] || match[2]) : 0;
     }).filter(id => Number.isSafeInteger(id) && id > 0)])].sort((a, b) => a - b);
     const serverIds = casterIds(formState);
+    const [removedServers, setRemovedServers] = useState([]);
     const addCaster = () => {
-        const sid = Math.max(...serverIds) + 1;
+        const sid = Math.max(...serverIds, ...removedServers) + 1;
         setIsFormDirty(true);
         setFormState(prev => ({ ...prev, [`server${sid}_enabled`]: false,
             [`server${sid}_stream_on_demand`]: true, [`server${sid}_stream_active`]: false,
@@ -1252,6 +1253,18 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         currentUser?.permissions?.includes('manage:station_mode') ||
         currentUser?.permissions?.includes('MANAGE_STATION_MODE')) || isAdmin;
     const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
+    const removeCaster = async sid => {
+        if (sid <= 2 || disabled || isSubmitting || (!isAdmin && hostsLocked)) return;
+        const confirmed = await window.CorsUI.confirmAction({
+            title: `Xoá Host ${sid}`,
+            message: `Xoá cấu hình Host ${sid}? Bấm Áp dụng để lưu và ngừng gửi dữ liệu tới host này.`,
+            confirmText: 'Xoá host', tone: 'danger'
+        });
+        if (!confirmed) return;
+        setFormState(prev => window.CorsDashboardShared.removeServiceServers(prev, [sid]));
+        setRemovedServers(prev => [...new Set([...prev, sid])]);
+        setIsFormDirty(true);
+    };
 
     const toBool = (value, defaultValue = false) => {
         if (value === null || value === undefined) return defaultValue;
@@ -1271,7 +1284,10 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
     useEffect(() => {
         const isSerialChanged = lastHydratedSerialRef.current !== device.serial;
-        if (isSerialChanged) setVisiblePasswords({});
+        if (isSerialChanged) {
+            setVisiblePasswords({});
+            setRemovedServers([]);
+        }
 
         // Hydrate only when the source config changes. Clearing dirty after save
         // must not reload the pre-save props and flip the mode back.
@@ -1536,8 +1552,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                     delete payload[key];
                 }
             }
-            await onConfigureService(device.serial, payload);
-            hydratedConfigRef.current = { ...hydratedConfigRef.current, ...payload };
+            if (removedServers.length) payload.removed_servers = removedServers;
+            const result = await onConfigureService(device.serial, payload);
+            hydratedConfigRef.current = window.CorsDashboardShared.removeServiceServers(
+                { ...hydratedConfigRef.current, ...payload }, removedServers);
+            delete hydratedConfigRef.current.removed_servers;
+            if (result?.delivered !== false) setRemovedServers([]);
             setIsFormDirty(false);
         } finally {
             setIsSubmitting(false);
@@ -2053,38 +2073,77 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
                 {serverIds.filter(sid => sid > 2).map(sid => (
                     <div className="accordion-item" key={sid}>
-                        <h2 className="accordion-header">
-                            <button type="button" className="accordion-button" data-bs-toggle="collapse"
+                        <h2 className="accordion-header d-flex align-items-center">
+                            <button type="button" className="accordion-button flex-grow-1" data-bs-toggle="collapse"
                                 data-bs-target={`#caster-${sid}`} aria-controls={`caster-${sid}`} aria-expanded="true">
-                                <span className="d-flex flex-wrap align-items-center gap-2">NTRIP Caster Server {sid}{renderCasterStatus(sid)}</span>
+                                <span className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2 flex-grow-1">
+                                    <span><i className="bi bi-box-arrow-up me-2 text-info" aria-hidden="true"></i>NTRIP Caster Server {sid}</span>
+                                    {renderCasterStatus(sid)}
+                                </span>
+                            </button>
+                            <button type="button" className="btn btn-outline-danger m-2 px-3 flex-shrink-0"
+                                style={{ minHeight: '44px' }}
+                                aria-label={`Xoá Host ${sid}`} title={`Xoá Host ${sid}`}
+                                disabled={disabled || isSubmitting || (!isAdmin && hostsLocked)} onClick={() => removeCaster(sid)}>
+                                <i className="bi bi-trash me-2" aria-hidden="true"></i>Xoá host
                             </button>
                         </h2>
-                        <div id={`caster-${sid}`} className="accordion-collapse collapse show">
+                        <div id={`caster-${sid}`} className="accordion-collapse collapse show" data-bs-parent="#service-config-accordion">
                             <div className="accordion-body">
                                 <fieldset disabled={disabled || isSubmitting || (!isAdmin && blockedServer(sid))}>
-                                    <div className="form-check form-switch mb-3">
+                                    <div className="form-check form-switch form-switch-lg mb-3">
                                         <input type="checkbox" className="form-check-input" role="switch" id={`server${sid}_enabled`}
                                             name={`server${sid}_enabled`} disabled={lockedInput(`server${sid}_enabled`)} checked={toBool(formState[`server${sid}_enabled`])} onChange={handleChange} />
                                         <label className="form-check-label" htmlFor={`server${sid}_enabled`}>Kích hoạt Server {sid}</label>
                                     </div>
-                                    <div className="row g-3">
-                                        <div className="col-md-6">
-                                            <label className="form-label" htmlFor={`ntrip_version${sid}`}>Phiên bản NTRIP</label>
-                                            <select className="form-select" id={`ntrip_version${sid}`} name={`ntrip_version${sid}`}
-                                                value={formState[`ntrip_version${sid}`] || 1} onChange={handleChange}>
-                                                <option value="1">NTRIP 1.0 (SOURCE)</option><option value="2">NTRIP 2.0 (HTTP POST)</option>
-                                            </select>
+                                    <div className="mb-3 p-3 bg-dark rounded border border-secondary">
+                                        <div className="form-label fw-bold text-info" id={`protocol-label-${sid}`}>
+                                            <i className="bi bi-gear-fill me-2" aria-hidden="true"></i>NTRIP Protocol Version
                                         </div>
-                                        {['serverhost', 'port', 'username', 'mountpoint'].map((prefix, index) => (
-                                            <div className={prefix === 'serverhost' ? 'col-md-8' : prefix === 'port' ? 'col-md-4' : 'col-md-6'} key={prefix}>
-                                                <label className="form-label" htmlFor={`${prefix}${sid}`}>{['Host / IP', 'Port', 'Username', 'Mountpoint'][index]}{['serverhost', 'port', 'mountpoint'].includes(prefix) && toBool(formState[`server${sid}_enabled`]) ? ' *' : ''}</label>
-                                                <input className="form-control" id={`${prefix}${sid}`} name={`${prefix}${sid}`}
-                                                    disabled={lockedInput(`${prefix}${sid}`)} type={prefix === 'port' ? 'number' : 'text'} min={prefix === 'port' ? 1 : undefined} max={prefix === 'port' ? 65535 : undefined}
-                                                    required={['serverhost', 'port', 'mountpoint'].includes(prefix) && toBool(formState[`server${sid}_enabled`])}
-                                                    value={formState[`${prefix}${sid}`] ?? ''} onChange={handleChange} />
-                                            </div>
-                                        ))}
-                                        <div className="col-md-6"><label className="form-label">Password</label>{renderPasswordInput(`password${sid}`, `Mật khẩu Caster ${sid}`)}</div>
+                                        <div className="d-flex flex-wrap gap-4" role="radiogroup" aria-labelledby={`protocol-label-${sid}`}>
+                                            {[1, 2].map(version => <div className="form-check" key={version}>
+                                                <input type="radio" className="form-check-input" name={`ntrip_version${sid}`}
+                                                    id={`ntrip_v${sid}_${version}`} value={version}
+                                                    checked={parseInt(formState[`ntrip_version${sid}`] || 1, 10) === version} onChange={handleChange} />
+                                                <label className="form-check-label" htmlFor={`ntrip_v${sid}_${version}`}>
+                                                    <strong>Version {version}.0</strong><br />
+                                                    <small className="text-muted">{version === 1 ? 'SOURCE command (Legacy)' : 'HTTP POST (Modern)'}</small>
+                                                </label>
+                                            </div>)}
+                                        </div>
+                                        <div className="alert alert-secondary small mt-2 mb-0">
+                                            <i className="bi bi-info-circle me-1" aria-hidden="true"></i>
+                                            <strong>Ghi chú:</strong> Nếu caster từ chối kết nối với v2.0, hãy thử lại với v1.0
+                                        </div>
+                                    </div>
+                                    <div className="row g-3">
+                                        <div className="col-md-8">
+                                            <label className="form-label d-flex flex-wrap align-items-center" htmlFor={`serverhost${sid}`}>Host / IP {renderCasterStatus(sid)}</label>
+                                            <input type="text" className="form-control" id={`serverhost${sid}`} name={`serverhost${sid}`}
+                                                disabled={lockedInput(`serverhost${sid}`)} value={formState[`serverhost${sid}`] ?? ''}
+                                                onChange={handleChange} placeholder="Ví dụ: backup.caster.com" required={toBool(formState[`server${sid}_enabled`])} />
+                                        </div>
+                                        <div className="col-md-4">
+                                            <label className="form-label" htmlFor={`port${sid}`}>Port</label>
+                                            <input type="number" className="form-control" id={`port${sid}`} name={`port${sid}`}
+                                                disabled={lockedInput(`port${sid}`)} value={formState[`port${sid}`] ?? ''} onChange={handleChange}
+                                                min="1" max="65535" placeholder="2101" required={toBool(formState[`server${sid}_enabled`])} />
+                                        </div>
+                                        <div className="col-md-6">
+                                            <label className="form-label" htmlFor={`username${sid}`}>Username <small className="text-muted ms-1">(NTRIP Source Account)</small></label>
+                                            <input type="text" className="form-control" id={`username${sid}`} name={`username${sid}`}
+                                                value={formState[`username${sid}`] ?? ''} onChange={handleChange} placeholder="source hoặc username riêng" />
+                                            <small className="text-muted">Mặc định: "source" (NTRIP v1). Caster hiện đại có thể yêu cầu username riêng.</small>
+                                        </div>
+                                        <div className="col-md-6">
+                                            <label className="form-label">Password</label>{renderPasswordInput(`password${sid}`, `Mật khẩu Caster ${sid}`)}
+                                        </div>
+                                        <div className="col-12">
+                                            <label className="form-label" htmlFor={`mountpoint${sid}`}>Mountpoint</label>
+                                            <input type="text" className="form-control" id={`mountpoint${sid}`} name={`mountpoint${sid}`}
+                                                value={formState[`mountpoint${sid}`] ?? ''} onChange={handleChange} placeholder={`MY_BASE_0${sid}`}
+                                                required={toBool(formState[`server${sid}_enabled`])} />
+                                        </div>
                                     </div>
                                     <div className="form-check form-switch mt-3">
                                         <input type="checkbox" className="form-check-input" role="switch" id={`server${sid}_stream_on_demand`}
