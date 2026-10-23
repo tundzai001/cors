@@ -28,6 +28,17 @@ def relay_scope():
 
 
 class BaseHeightTests(unittest.TestCase):
+    def test_lte_keeps_fixed_coordinate_strings_on_wire_and_after_restart(self):
+        coords = {'lat': '20.1234567890', 'lon': '106.9876543210', 'alt': '-30.1234567890'}
+        expected = b'mode base 20.1234567890 106.9876543210 -30.1234567890\r\n'
+        make = relay_scope()['build_geotek_lte_unicore_commands']
+        payload = {'method': 'FIXED_LLA', 'params': {'coords': coords}}
+        self.assertIn(expected, make(payload, {}))
+        self.assertIn(expected, make(None, {'setup_method': 'FIXED_LLA', **coords}))
+        for bad in ('NaN', '20\r\nreboot', '91'):
+            with self.assertRaises(ValueError):
+                make({'method': 'FIXED_LLA', 'params': {'coords': {**coords, 'lat': bad}}}, {})
+
     def assert_ellipsoid(self, commands):
         commands = [c.lower() for c in commands]
         undulation = commands.index(b'config undulation 0.0\r\n')

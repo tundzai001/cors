@@ -1,5 +1,6 @@
 import logging
 import math
+from decimal import Decimal, InvalidOperation
 
 UBLOX_SAVE_CONFIG = b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab'
 
@@ -248,6 +249,16 @@ def _bounded_finite_number(value, name: str, minimum: float, maximum: float) -> 
     return number
 
 
+def _coordinate_decimal(value, name: str, minimum: int, maximum: int) -> Decimal:
+    try:
+        number = Decimal(str(value).strip().replace(',', '.'))
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"{name} must be numeric") from None
+    if not number.is_finite() or not minimum <= number <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return number
+
+
 def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: float, gnss_options: dict | None = None) -> list[bytes]:
     commands = []
     duration_value = _bounded_finite_number(duration, "Survey duration", 1, 604800)
@@ -310,9 +321,9 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
     commands = []
     if altitude_reference not in (None, 'LEGACY', 'ELLIPSOID'):
         raise ValueError('Unsupported altitude reference')
-    lat = _bounded_finite_number(lat, "Latitude", -90, 90)
-    lon = _bounded_finite_number(lon, "Longitude", -180, 180)
-    alt = _bounded_finite_number(alt, "Altitude", -12000, 100000)
+    lat = _coordinate_decimal(lat, "Latitude", -90, 90)
+    lon = _coordinate_decimal(lon, "Longitude", -180, 180)
+    alt = _coordinate_decimal(alt, "Altitude", -12000, 100000)
     accuracy = _bounded_finite_number(accuracy, "Fixed position accuracy", 0.001, 10000)
     
     if sensor_type == 'Ublox':
@@ -323,7 +334,7 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         # Byte 9: LLA mode = 1
         message[9] = 1
         
-        # Ép kiểu float cho tọa độ (đề phòng trường hợp đầu vào là string để giữ precision)
+        # Keep decimal input exact until quantizing to UBX's integer/HP fields.
         f_lat = lat
         f_lon = lon
         f_alt = alt
@@ -333,19 +344,19 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         
         # === XỬ LÝ LATITUDE ===
         XOrLat_int = int(f_lat * multiplier)
-        XOrLat_hp_value = int((f_lat * multiplier - XOrLat_int) * 100)
+        XOrLat_hp_value = int(f_lat * multiplier * 100) - XOrLat_int * 100
         XOrLat_hp_bytes = XOrLat_hp_value.to_bytes(1, byteorder='little', signed=True)
         XOrLat_bytes = XOrLat_int.to_bytes(4, byteorder='little', signed=True)
         
         # === XỬ LÝ LONGITUDE ===
         YOrLon_int = int(f_lon * multiplier)
-        YOrLon_hp_value = int((f_lon * multiplier - YOrLon_int) * 100)
+        YOrLon_hp_value = int(f_lon * multiplier * 100) - YOrLon_int * 100
         YOrLon_hp_bytes = YOrLon_hp_value.to_bytes(1, byteorder='little', signed=True)
         YOrLon_bytes = YOrLon_int.to_bytes(4, byteorder='little', signed=True)
         
         # === XỬ LÝ ALTITUDE ===
         ZOrAlt_int = int(f_alt * 100)
-        ZOrAlt_hp_value = int((f_alt * 100 - ZOrAlt_int) * 100)
+        ZOrAlt_hp_value = int(f_alt * 10000) - ZOrAlt_int * 100
         ZOrAlt_hp_bytes = ZOrAlt_hp_value.to_bytes(1, byteorder='little', signed=True)
         ZOrAlt_bytes = ZOrAlt_int.to_bytes(4, byteorder='little', signed=True)
         
@@ -384,9 +395,9 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         commands.append(b'$DELAY_1000$')
         
         # BƯỚC 2: Set fixed position - GIỮ NGUYÊN FORMAT NGƯỜI DÙNG NHẬP
-        lat_str = str(lat)
-        lon_str = str(lon)
-        alt_str = str(alt)
+        lat_str = format(lat, 'f')
+        lon_str = format(lon, 'f')
+        alt_str = format(alt, 'f')
 
         # MODE BASE otherwise interprets altitude using the receiver's undulation.
         # Missing metadata preserves legacy configurations instead of reinterpreting them.

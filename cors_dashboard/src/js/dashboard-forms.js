@@ -399,10 +399,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         return Number.isFinite(num) ? num.toFixed(10) : String(val);
     };
 
-    const formatAlt4 = (val) => {
+    const formatAlt10 = (val) => {
         if (val === null || val === undefined || val === '') return '';
         const num = parseFloat(val);
-        return Number.isFinite(num) ? num.toFixed(4) : String(val);
+        return Number.isFinite(num) ? num.toFixed(10) : String(val);
     };
 
     const handleCoordinatePaste = (event) => {
@@ -411,9 +411,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             const coords = window.CorsCoordinateClipboard?.parse(event.clipboardData?.getData('text/plain') || '');
             if (!coords) return; // A normal numeric paste still belongs to the focused field.
             event.preventDefault();
-            setLatitude(formatCoord10(coords.lat));
-            setLongitude(formatCoord10(coords.lon));
-            setAltitude(formatAlt4(coords.alt));
+            setLatitude(coords.lat);
+            setLongitude(coords.lon);
+            setAltitude(coords.alt);
             setAltitudeReference('ELLIPSOID');
             setCoordinatePasteNotice({ error: false, message: 'Đã điền vĩ độ, kinh độ WGS 84 và độ cao h. Kiểm tra tọa độ rồi bấm áp dụng.' });
         } catch (error) {
@@ -951,7 +951,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </div>
                                 <div className="col-md-4">
                                     <label className="form-label small fw-bold">Alt (Tự động)</label>
-                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatAlt4(altitude)} readOnly />
+                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatAlt10(altitude)} readOnly />
                                 </div>
                             </>
                         )}

@@ -1548,9 +1548,13 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
         60,
     ), 60)
 
-    lat = _as_float(_first_value(coords.get("lat"), params.get("lat"), runtime_cfg.get("lat"), 0.0), 0.0)
-    lon = _as_float(_first_value(coords.get("lon"), params.get("lon"), runtime_cfg.get("lon"), 0.0), 0.0)
-    alt = _as_float(_first_value(coords.get("alt"), params.get("alt"), runtime_cfg.get("alt"), 0.0), 0.0)
+    position = []
+    for key, lower, upper in (('lat', -90, 90), ('lon', -180, 180), ('alt', -12000, 100000)):
+        text = str(_first_value(coords.get(key), params.get(key), runtime_cfg.get(key), 0.0)).strip().replace(',', '.')
+        if method == 'FIXED_LLA' and (not re.fullmatch(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', text) or not lower <= float(text) <= upper):
+            raise ValueError(f'Invalid fixed position {key}')
+        position.append(text)
+    lat, lon, alt = position
 
     rtcm_port = str(_first_value(runtime_cfg.get("rtcm_port"), runtime_cfg.get("sensor_port"), "com2")).strip() or "com2"
     if not re.fullmatch(r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)", rtcm_port, flags=re.IGNORECASE):
