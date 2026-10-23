@@ -108,6 +108,8 @@ function paste(name, text) {
     disabled = false;
     device.serial = 'UNICORE_LEGACY'; device.detected_chip_type = 'Unicorecomm'; render();
     assert(!find(tree, node => node.props.id === 'base-ublox-precision-UNICORE_LEGACY'));
+    assert(find(tree, node => node.props.id === 'base-unicore-precision-UNICORE_LEGACY'));
+    assert(field('latitude').props['aria-describedby'].includes('base-unicore-precision-'));
     field('latitude').props.onChange({target:{value:'20.1234567890'}}); render();
     assert.equal(field('latitude').props.value, '20.1234567890', 'Unicore still accepts ten digits');
     assert.equal(field('altitude-reference').props.value, 'LEGACY');

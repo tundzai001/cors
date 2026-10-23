@@ -986,7 +986,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 id={`base-latitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
                                 value={latitude} onChange={handleDecimalInputChange(setLatitude, activeChip === 'Ublox' ? 9 : undefined)}
-                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : ''}`}
+                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : ''}`}
                                 disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 21.028511"
                             />
@@ -997,13 +997,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 id={`base-longitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
                                 value={longitude} onChange={handleDecimalInputChange(setLongitude, activeChip === 'Ublox' ? 9 : undefined)}
-                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : ''}`}
+                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : ''}`}
                                 disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 105.854167"
                             />
                         </div>
                         {activeChip === 'Ublox' && <div id={`base-ublox-precision-${device.serial}`} className="col-12 form-text mt-1">
                             Ublox: vĩ độ và kinh độ tối đa 9 chữ số sau dấu . hoặc , — không nhận chữ số thứ 10.
+                        </div>}
+                        {activeChip === 'Unicorecomm' && <div id={`base-unicore-precision-${device.serial}`} className="col-12 form-text mt-1">
+                            Unicorecomm: dùng 10 chữ số sau dấu . hoặc , cho vĩ độ và kinh độ; giữ nguyên chữ số khi gửi xuống chip.
                         </div>}
                         <div className="col-md-6">
                             <label htmlFor={`base-altitude-${device.serial}`} className="form-label">{activeChip === 'Ublox' || altitudeReference === 'ELLIPSOID' ? 'Độ cao h ellipsoid (mét)' : 'Độ cao theo cấu hình chip (mét)'}</label>
