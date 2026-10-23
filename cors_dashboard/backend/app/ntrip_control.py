@@ -1183,6 +1183,14 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
             if not device:
                 return PlainTextResponse(f"WAKE_STATUS: error\nERROR: Trạm {serial} không tồn tại")
 
+            # The system Rover (username=MP) only observes an ESP source already
+            # pushing to the caster. It must not wake or gate its own source on
+            # a delayed agent heartbeat/DB status.
+            if str(serial).lower().startswith("esp_") and _normalize_mountpoint(client_id) == _normalize_mountpoint(mountpoint):
+                return PlainTextResponse(
+                    f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK"
+                )
+
             # Kiểm tra trạng thái trạm
             if str(getattr(device, 'status', '')).lower() == 'offline':
                 logger.warning(f"[NTRIP Wake] Station '{serial}' is OFFLINE. Cannot wake up.")
@@ -1263,6 +1271,9 @@ async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, r
             device = await crud.get_device_by_serial(db, serial)
             if not device:
                 return PlainTextResponse(f"STOP_STATUS: error\nERROR: Trạm {serial} không tồn tại")
+
+            if not force and str(serial).lower().startswith("esp_") and _normalize_mountpoint(client_id) == _normalize_mountpoint(mountpoint):
+                return PlainTextResponse(f"STOP_STATUS: ok\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
 
             # 🔥 Phân giải caster_host từ service_config của thiết bị nếu requested_address khớp một phần
             selected_server_host = ""

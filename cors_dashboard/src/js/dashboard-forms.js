@@ -1031,7 +1031,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             </>}
                         </div>
                         <div className="col-md-6">
-                            <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác 3D của tọa độ Base (m)</label>
+                            <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác tọa độ Base (3D)</label>
+                            <div className="input-group">
                             <input
                                 id={`base-accuracy-${device.serial}`}
                                 type="number" className="form-control" min="0.0001" max="10000" step="0.0001"
@@ -1039,7 +1040,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 value={fixedAccuracyM} onChange={(e) => setFixedAccuracyM(e.target.value)}
                                 required placeholder="Ví dụ: 0.05"
                             />
-                            <div id={`base-accuracy-help-${device.serial}`} className="form-text">Theo độ chính xác của tọa độ gốc từ kết quả đo/mốc chuẩn. Nhập theo mét như u-center. Ví dụ: sai số 5 cm thì nhập 0.05 m. Giảm giá trị không làm tọa độ chính xác hơn.</div>
+                            <span className="input-group-text">m</span>
+                            </div>
+                            <div id={`base-accuracy-help-${device.serial}`} className="form-text">Chỉ nhập số: 5 = 5 m. Sai số 3D khai báo của tọa độ gốc; không phải độ chính xác đo được từ RTCM.</div>
                         </div>
                     </div>
                 ) : (

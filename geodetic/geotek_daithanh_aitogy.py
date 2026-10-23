@@ -2523,7 +2523,8 @@ class MonitorWorker(threading.Thread):
                         self.is_connected = True
                         self.publish_status()
                     except Exception as e:
-                        self.log("WARNING", f"Data error: {e}")
+                        if not self.stop_event.is_set():
+                            self.log("WARNING", f"Data error: {e}")
                         break
                         
                 self.log("INFO", f"Monitor disconnected, reconnecting in {self.retry_seconds}s...")

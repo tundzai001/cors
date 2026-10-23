@@ -245,8 +245,9 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
             auth_scope.return_value.__aenter__.return_value = auth_db
             dev_db.execute.return_value = rows([device])
             for status, count, age, host, expected in (
-                ('sleep', 50, 0, 'caster.test', 'stop'),
-                ('offline', 50, 0, 'caster.test', 'stop'),
+                ('sleep', 50, 0, 'caster.test', 'start'),
+                ('offline', 50, 0, 'caster.test', 'start'),
+                ('offline', 0, 0, 'caster.test', 'stop'),
                 ('online', 0, 0, 'caster.test', 'stop'),
                 ('online', 50, 120, 'caster.test', 'stop'),
                 ('online', 50, 0, 'other.test', 'stop'),

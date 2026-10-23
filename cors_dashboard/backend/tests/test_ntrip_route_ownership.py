@@ -92,6 +92,26 @@ class RouteOwnershipTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('not enabled', response.body.decode())
         send.assert_not_awaited()
 
+    async def test_esp_decoder_wake_and_stop_do_not_gate_or_control_source(self):
+        device = models.Device(serial='esp_TEST', status='offline',
+                               service_config={'mountpoint1': 'esp_mp', 'server1_enabled': True})
+        with patch.object(control, '_check_rover_blocked', AsyncMock(return_value=None)), \
+             patch.object(control, 'device_session_scope'), \
+             patch.object(control, '_resolve_station_serial_by_mountpoint', AsyncMock(return_value=device.serial)), \
+             patch.object(control.crud, 'get_device_by_serial', AsyncMock(return_value=device)), \
+             patch.object(control, '_ntrip_mqtt_start', AsyncMock()) as start, \
+             patch.object(control, '_set_station_stream', AsyncMock()) as send:
+            response = await control._do_ntrip_wake('esp_mp', 'ESP_MP', 90)
+            self.assertIn('WAKE_STATUS: ok', response.body.decode())
+            self.assertIn('CONTROL_MODE: passive', response.body.decode())
+            response = await control._do_ntrip_stop('esp_mp', 'esp_mp')
+            self.assertIn('CONTROL_MODE: passive', response.body.decode())
+            # Ordinary Rover clients still follow the physical station's offline gate.
+            response = await control._do_ntrip_wake('esp_mp', 'field_rover', 90)
+            self.assertIn('WAKE_STATUS: offline', response.body.decode())
+        start.assert_not_awaited()
+        send.assert_not_awaited()
+
     async def test_relay_source_wake_still_checks_blocklist(self):
         with patch.object(control, '_check_rover_blocked', AsyncMock(return_value='blocked')), \
              patch.object(control, 'device_session_scope') as scope:

@@ -236,8 +236,8 @@ async def notify_decoder_worker(
 
 async def sync_esp_base_rovers() -> None:
     """Main synchronization check:
-    - Online ESP32 bases with fresh Caster data -> ensure RoverAccount and decoder.
-    - Sleeping/offline bases or missing source data -> stop the decoder immediately.
+    - ESP32 sources with fresh Caster data -> ensure RoverAccount and decoder.
+    - Missing source data -> stop the decoder; agent status can lag the caster.
     - Offline >= 5m ESP32 bases -> delete RoverAccount and stop decoder worker.
     """
     now = int(time.time())
@@ -266,7 +266,6 @@ async def sync_esp_base_rovers() -> None:
         status = str(dev.status or "").lower()
         mp = _extract_esp_mountpoint(dev)
 
-        is_online = status in ("online", "streaming", "starting")
         cfg = crud.normalize_service_config(dev.service_config)
         host = cfg.get('serverhost1') or cfg.get('serverhost2')
         port = cfg.get('port1') or cfg.get('port2')
@@ -275,10 +274,10 @@ async def sync_esp_base_rovers() -> None:
             and (not port or str(s.port) == str(port)) and _source_has_data(s, now)
             for s in sources
         )
-        if mp and not (is_online and source_active):
+        if mp and not source_active:
             await notify_decoder_worker("stop", serial, mp, mp, DEFAULT_ROVER_PASSWORD)
 
-        if is_online and mp and source_active:
+        if mp and source_active:
             mp_key = mp.lower()
             rover = rover_map.get(mp_key)
             if not rover:
