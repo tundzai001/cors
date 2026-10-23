@@ -245,7 +245,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
 
         const statusText = STATUS_TEXT_MAP[displayStatusKey] || String(displayStatusKey || 'UNKNOWN').toUpperCase();
         const statusBadgeClass = STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary';
-        const hideStatusBadge = !isReadonly4gBase(device) && !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(effectiveStatus);
+        const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(effectiveStatus);
 
         // Per-server individual color: pushing=green, sleep/input-only=blue, idle=disconnected
         const passive4g = isReadonly4gBase(device) === true;

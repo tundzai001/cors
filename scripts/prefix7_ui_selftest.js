@@ -42,7 +42,8 @@ for (const role of ['admin', 'coordinator', 'viewer']) {
     const card = window.DeviceListItem({device, currentUser: {id: 7, role}});
     assert.ok(!collect(card).some(n => n.props.title === 'Xóa trạm'));
     assert.doesNotMatch(text(card), /CHỜ LICENSE|SLEEP|NGỦ|CHỜ RTCM|ĐANG KHỞI/);
-    assert.match(text(card), status === 'online' ? /ONLINE/ : /OFFLINE/, 'Every mobile card shows an explicit binary status');
+    assert.doesNotMatch(text(card), /ONLINE|OFFLINE/, 'Mobile cards use the same status presentation as fixed stations');
+    assert.ok(!collect(card).some(n => n.props.title === 'Đã đồng bộ'), 'Cards hide the redundant sync icon with the status badge');
   }
 }
 }
