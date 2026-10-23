@@ -324,7 +324,7 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
     lat = _coordinate_decimal(lat, "Latitude", -90, 90)
     lon = _coordinate_decimal(lon, "Longitude", -180, 180)
     alt = _coordinate_decimal(alt, "Altitude", -12000, 100000)
-    accuracy = _bounded_finite_number(accuracy, "Fixed position accuracy", 0.001, 10000)
+    accuracy = _coordinate_decimal(accuracy, "Fixed position accuracy", Decimal("0.001"), 10000)
     
     if sensor_type == 'Ublox':
         message = bytearray(b'\xb5\x62\x06\x71\x28\x00' + b'\x00' * 42)

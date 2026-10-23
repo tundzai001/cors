@@ -61,11 +61,11 @@ function paste(name, text) {
         assert.equal(paste(name, text), true);
         assert.deepEqual(position(), ['20.845000000', '106.688000000', '30.0000']);
         assert.equal(sent.length, 0, 'Paste must not configure the device');
-        assert.equal(field('accuracy').props.value, '5', 'Paste must preserve measurement accuracy');
+        assert.equal(field('accuracy').props.value, '0.05', 'Paste must preserve measurement accuracy');
     }
     await tree.props.onSubmit({ preventDefault() {} }); render();
     assert.deepEqual(JSON.parse(JSON.stringify(sent[0].params.coords)), { lat: '20.845000000', lon: '106.688000000', alt: '30.0000' });
-    assert.equal(sent[0].params.accuracy, 0.05);
+    assert.equal(sent[0].params.accuracy, '0.05');
     assert.equal(sent[0].params.altitude_reference, 'ELLIPSOID');
     const precise = clipboard.encode({lat: '20,123456789099', lon: '106.987654321099', alt: '-30.123456789099'});
     assert.deepEqual(JSON.parse(precise).coords, {lat: '20.1234567890', lon: '106.9876543210', alt: '-30.1234567890'});
@@ -88,6 +88,10 @@ function paste(name, text) {
     assert(find(tree, node => node.props.id === 'base-ublox-precision-PASTE_TEST'));
     await tree.props.onSubmit({preventDefault(){}}); render();
     assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).params.coords)), {lat:'20.999999999',lon:'106.123456789',alt:'-30.9999'});
+    field('accuracy').props.onChange({target:{value:'0.0029'}}); render();
+    await tree.props.onSubmit({preventDefault(){}}); render();
+    assert.equal(sent.at(-1).params.accuracy, '0.0029', 'Accuracy is sent as decimal meters without unit conversion');
+    assert.equal(field('accuracy').props.step, '0.0001');
     const before = position();
     for (const patch of [{ crs: 'EPSG:9210' }, { height_type: 'orthometric' }, { version: 2 },
         { coords: { lat: 91, lon: 106, alt: 30 } }, { coords: { lat: 20, lon: 106 } },

@@ -277,7 +277,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [altitude, setAltitude] = useState('');
     const [coordinatePasteNotice, setCoordinatePasteNotice] = useState(null);
     const [altitudeReference, setAltitudeReference] = useState('ELLIPSOID');
-    const [fixedAccuracyCm, setFixedAccuracyCm] = useState('1'); // Centimeters in the form; API and stored accuracy use meters.
+    const [fixedAccuracyM, setFixedAccuracyM] = useState('0.01'); // Meters, matching the API and receiver configuration.
 
     // CORS connection for Auto Base (kept in this form only; never read from .env)
     const [corsHost, setCorsHost] = useState('');
@@ -315,7 +315,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setAltitude('');
         setCoordinatePasteNotice(null);
         setAltitudeReference('ELLIPSOID');
-        setFixedAccuracyCm('1');
+        setFixedAccuracyM('0.01');
         setCorsHost('');
         setCorsPort('2101');
         setCorsUsername('');
@@ -353,9 +353,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 setAltitudeReference(config.altitude_reference === 'ELLIPSOID' || device.detected_chip_type === 'Ublox'
                     ? 'ELLIPSOID' : 'LEGACY');
             }
-            // Convert stored meters to centimeters without rounding away sub-centimeter values.
+            // Display stored meters directly without unit conversion or rounding.
             if (config.accuracy !== undefined) {
-                setFixedAccuracyCm(String(Number((Number(config.accuracy) * 100).toFixed(2))));
+                setFixedAccuracyM(String(config.accuracy));
             }
 
             // Load Survey-In Params
@@ -516,8 +516,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     setAltitude(params.coords.alt);
                 }
                 params.altitude_reference = finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
-                // Fixed accuracy is entered in centimeters and sent to the API in meters.
-                params.accuracy = parseFloat(fixedAccuracyCm || '1') / 100.0;
+                // Preserve decimal meters through the API and UBX encoding.
+                params.accuracy = String(fixedAccuracyM).trim().replace(',', '.') || '0.01';
             } else if (method === 'SURVEY_IN') {
                 params.survey_in_duration = parseInt(svinDuration);
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
@@ -1031,15 +1031,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             </>}
                         </div>
                         <div className="col-md-6">
-                            <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác 3D của tọa độ Base (cm)</label>
+                            <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác 3D của tọa độ Base (m)</label>
                             <input
                                 id={`base-accuracy-${device.serial}`}
-                                type="number" className="form-control" min="0.1" max="1000000" step="0.01"
+                                type="number" className="form-control" min="0.001" max="10000" step="0.0001"
                                 aria-describedby={`base-accuracy-help-${device.serial}`}
-                                value={fixedAccuracyCm} onChange={(e) => setFixedAccuracyCm(e.target.value)}
-                                required placeholder="Ví dụ: 5"
+                                value={fixedAccuracyM} onChange={(e) => setFixedAccuracyM(e.target.value)}
+                                required placeholder="Ví dụ: 0.05"
                             />
-                            <div id={`base-accuracy-help-${device.serial}`} className="form-text">Theo độ chính xác của tọa độ gốc từ kết quả đo/mốc chuẩn. Ví dụ: sai số 5 cm thì nhập 5. Giảm giá trị không làm tọa độ chính xác hơn.</div>
+                            <div id={`base-accuracy-help-${device.serial}`} className="form-text">Theo độ chính xác của tọa độ gốc từ kết quả đo/mốc chuẩn. Nhập theo mét như u-center. Ví dụ: sai số 5 cm thì nhập 0.05 m. Giảm giá trị không làm tọa độ chính xác hơn.</div>
                         </div>
                     </div>
                 ) : (
