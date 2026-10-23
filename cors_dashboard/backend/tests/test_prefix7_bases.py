@@ -19,16 +19,16 @@ def rows(items):
 
 
 class Prefix7DiscoveryTests(unittest.IsolatedAsyncioTestCase):
-    async def sync(self, rovers, sources=None, devices=None):
+    async def sync(self, rovers, sources=None, devices=None, casters=None):
         source = models.CasterSource(host='caster.test', port=2201, mountpoint='70001',
-                                     last_seen_at=100, source_data={})
+                                     last_seen_at=int(time.time()), source_data={'datacount': 100})
         auth_db, device_db = AsyncMock(), AsyncMock()
         device_db.add = MagicMock()
         auth_db.execute.side_effect = [rows(sources if sources is not None else [source]), rows(rovers)]
         device_db.execute.side_effect = [MagicMock(), rows(devices or [])]
         with patch.object(manager, 'auth_session_scope') as auth_scope, \
              patch.object(manager, 'device_session_scope') as device_scope, \
-             patch.object(manager, '_get_configured_casters', AsyncMock(return_value=[('caster.test', 2201, 'admin', 'secret')])), \
+             patch.object(manager, '_get_configured_casters', AsyncMock(return_value=casters or [('caster.test', 2201, 'admin', 'secret')])), \
              patch.object(manager, 'notify_decoder_worker', AsyncMock()) as notify, \
              patch.object(manager, 'CasterClient') as caster, \
              patch.object(mqtt, 'cache_device_metadata', AsyncMock()) as cache:
@@ -70,7 +70,7 @@ class Prefix7DiscoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_reuses_device_and_deduplicates_sources(self):
         device = models.Device(serial='esp_112233445566', status='awaiting_license',
                                device_token='old-token', service_config={'mountpoint1': '70001'})
-        source = models.CasterSource(host='caster.test', port=2201, mountpoint='70001', last_seen_at=2)
+        source = models.CasterSource(host='caster.test', port=2201, mountpoint='70001', last_seen_at=int(time.time()), source_data={'datacount': 20})
         notify, db, _ = await self.sync([self.rover()], sources=[source, source], devices=[device])
         db.add.assert_not_called()
         self.assertEqual(notify.await_args.args[1], device.serial)
@@ -78,6 +78,46 @@ class Prefix7DiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(device.system_info['auth_license_bypass'])
         self.assertEqual(device.status, 'offline')
         self.assertIsNone(device.device_token)
+
+    async def test_idle_missing_counter_or_stale_snapshot_never_starts_decoder(self):
+        now = int(time.time())
+        for data, observed in (({'datacount': 0}, now), ({}, now),
+                               ({'datacount': 'invalid'}, now), ({'datacount': 100}, now - 3600)):
+            source = models.CasterSource(host='caster.test', port=2201, mountpoint='70001',
+                                         source_data=data, last_seen_at=observed)
+            device = models.Device(serial='MONITOR_70001', status='online', bps=500,
+                                   ntrip_connected=True, service_config={'mountpoint1': '70001'})
+            notify, db, _ = await self.sync([self.rover()], sources=[source], devices=[device])
+            self.assertEqual(notify.await_args.args[0], 'stop')
+            self.assertEqual(device.status, 'offline')
+            self.assertEqual(device.bps, 0)
+            self.assertFalse(device.ntrip_connected)
+            self.assertEqual(device.system_info['decoder_status'], 'source_offline')
+            db.add.assert_not_called()
+
+    async def test_duplicate_mountpoint_prefers_caster_with_data(self):
+        now = int(time.time())
+        idle = models.CasterSource(host='a.test', port=2201, mountpoint='70001',
+                                   last_seen_at=now, source_data={'datacount': 0})
+        active = models.CasterSource(host='z.test', port=2201, mountpoint='70001',
+                                     last_seen_at=now, source_data={'datacount': 30})
+        notify, db, _ = await self.sync([self.rover()], sources=[idle, active],
+                                      casters=[('a.test', 2201, '', ''), ('z.test', 2201, '', '')])
+        self.assertEqual(notify.await_count, 1)
+        self.assertEqual(notify.await_args.args[0], 'start')
+        self.assertEqual(notify.await_args.kwargs['host'], 'z.test')
+        self.assertEqual(db.add.call_count, 1)
+
+    async def test_counter_changes_start_stop_and_resume_same_mountpoint(self):
+        now = int(time.time())
+        source = models.CasterSource(host='caster.test', port=2201, mountpoint='70001',
+                                     source_data={'datacount': 0}, last_seen_at=now)
+        device = models.Device(serial='MONITOR_70001', status='offline', service_config={'mountpoint1': '70001'})
+        for count, action in ((0, 'stop'), (20, 'start'), (0, 'stop'), (50, 'start')):
+            source.source_data = {'datacount': count}
+            notify, _, _ = await self.sync([self.rover()], sources=[source], devices=[device])
+            self.assertEqual(notify.await_args.args[0], action)
+        self.assertEqual(device.serial, 'MONITOR_70001')
 
     async def test_removed_source_stops_decoder(self):
         device = models.Device(serial='MONITOR_70001', service_config={'mountpoint1': '70001'})

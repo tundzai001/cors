@@ -12,6 +12,7 @@ When an ESP32 Base 4G station streams RTCM to NTRIP Caster at mountpoint 'mp':
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import Optional, List, Dict, Any
@@ -223,7 +224,8 @@ async def notify_decoder_worker(
                 "timestamp": int(time.time()),
             })
             mqtt_module.publish_message(MQTT_DECODER_TOPIC, payload, qos=1)
-            logger.info(f"[ESP DECODER MQTT] Sent {action} for serial={serial}, mp={mountpoint}")
+            log = logger.debug if is_4g_mountpoint(mountpoint) else logger.info
+            log(f"[ESP DECODER MQTT] Sent {action} for serial={serial}, mp={mountpoint}")
     except Exception as e:
         logger.error(f"[ESP DECODER MQTT] Failed to publish {action} to {MQTT_DECODER_TOPIC}: {e}")
 
@@ -300,6 +302,18 @@ async def sync_esp_base_rovers() -> None:
                             rover_map.pop(rover_user_key, None)
 
 
+def _source_has_data(source, now: int) -> bool:
+    """Use the existing Caster poll; never open a Rover socket to probe an idle MP."""
+    max_age = max(2 * float(os.getenv('CASTER_MONITOR_INTERVAL', '30')), 2 * SYNC_INTERVAL_SECONDS)
+    data = source.source_data if isinstance(source.source_data, dict) else {}
+    try:
+        count = int(data.get('datacount') or 0)
+        observed_at = int(source.last_seen_at or 0)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return count > 0 and observed_at > 0 and 0 <= now - observed_at <= max_age
+
+
 async def sync_prefix7_bases() -> None:
     """Reuse Caster inventory and Rover credentials; never create/delete Rover users."""
     from .mqtt import cache_device_metadata
@@ -311,7 +325,7 @@ async def sync_prefix7_bases() -> None:
         rover_map = {r.username: r for r in rovers}
     sources = sorted((s for s in sources if is_4g_mountpoint(s.mountpoint)
                       and (s.host, s.port) in casters),
-                     key=lambda s: (s.host, s.port, s.mountpoint))
+                     key=lambda s: (not _source_has_data(s, now), s.host, s.port, s.mountpoint))
     notifications = []
     async with device_session_scope() as db:
         # Multiple backend processes share one inventory and one device identity.
@@ -350,10 +364,12 @@ async def sync_prefix7_bases() -> None:
             valid = bool(rover and rover.is_active and rover.password
                          and (not rover.mountpoints or '*' in allowed_mps or mp in allowed_mps)
                          and (not rover.expires_at or rover.expires_at > now))
+            source_active = _source_has_data(source, now)
+            can_start = valid and source_active
             device.system_info = {**(device.system_info or {}), 'auth_license_bypass': True,
                                   'base_type': '4g', 'read_only': True,
-                                  'decoder_status': 'ready' if valid else 'missing_rover_credentials'}
-            if device.status in ('awaiting_license', 'unprovisioned', 'locked', 'sleep'):
+                                  'decoder_status': ('ready' if source_active else 'source_offline') if valid else 'missing_rover_credentials'}
+            if not can_start or device.status in ('awaiting_license', 'unprovisioned', 'locked', 'sleep'):
                 device.status = 'offline'
                 device.bps = 0
                 device.ntrip_connected = False
@@ -363,7 +379,7 @@ async def sync_prefix7_bases() -> None:
             device.is_locked = False
             device.server_config_lock = None
             # No token/license is generated; bypass is owned by the backend.
-            notifications.append((device, mp, source, rover if valid else None))
+            notifications.append((device, mp, source, rover if can_start else None))
         # Accounts disabled/deleted and removed inventory must stop existing decoders.
         for device in devices:
             if is_readonly_base(device) and _extract_esp_mountpoint(device) not in seen:

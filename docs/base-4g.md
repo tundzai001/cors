@@ -2,7 +2,7 @@
 
 Mountpoint bắt đầu bằng `7` được nhận diện là Base 4G chỉ xem. Trạm chỉ có Overview, không kích hoạt, không token/license, không sửa cấu hình, đổi tên, reset, khóa hoặc xóa qua UI/API.
 
-Backend dùng danh sách mountpoint đã đồng bộ từ các Caster cấu hình sẵn. Trạm mới có serial `MONITOR_<mountpoint>`; nếu đã có thiết bị dùng mountpoint đó thì giữ serial hiện tại. Các bản ghi trùng mountpoint chỉ chạy một decoder, chọn Caster theo thứ tự host/port ổn định để tránh đổi kết nối sau mỗi lần quét.
+Backend dùng danh sách mountpoint đã đồng bộ từ các Caster cấu hình sẵn. Trạm mới có serial `MONITOR_<mountpoint>`; nếu đã có thiết bị dùng mountpoint đó thì giữ serial hiện tại. Các bản ghi trùng mountpoint chỉ chạy một decoder, ưu tiên Caster đang có dữ liệu, rồi chọn theo thứ tự host/port ổn định để tránh đổi kết nối sau mỗi lần quét.
 
 Mỗi 15 giây, backend gửi cấu hình qua MQTT `pi/decoder/esp_base` cho `geodetic/geotek_daithanh_aitogy.py`. Username phải trùng mountpoint; mật khẩu lấy từ RoverAccount. Tài khoản phải đang bật, chưa hết hạn, có quyền mountpoint và Caster tương ứng. Luồng này không tạo, sửa hoặc xóa tài khoản Rover. Thiếu tài khoản hợp lệ thì dừng decoder.
 
@@ -14,7 +14,9 @@ Máy đầu `7` không có sleep/wake hoặc stream On-Demand. Chỉ có `online
 
 Callback wake/stop cho MP đầu `7` chỉ trả kết quả tương thích, không tạo lease, không gửi lệnh tới máy và không chặn dữ liệu theo trạng thái decoder. Blocklist Rover vẫn được kiểm tra. Các lease cũ hết hạn cũng không được bật/tắt luồng của Base đầu `7`.
 
-Trong repo `Aicaster` (không phải `Ai-caster dev`), `PointNav/CASTER/Server/NTRIPServer.cs` bỏ callback wake và hai điều kiện chặn theo status backend cho MP đầu `7`, đồng thời không nhận trạng thái decoder làm trạng thái nguồn. Xác thực, quyền MP, giới hạn kết nối và kiểm tra socket vẫn giữ nguyên. Cần build lại và triển khai Caster để gỡ cả trường hợp nguồn đã bị kẹt status 2 trước lần cập nhật này.
+Không cần sửa hoặc build lại `Aicaster`. Thay đổi Caster trước đó đã được hoàn tác. Backend chỉ dùng sourcetable đã đồng bộ: `datacount > 0` và bản quan sát còn mới thì mới giao decoder đăng nhập. `datacount = 0`, không có bộ đếm hoặc bản quan sát quá cũ thì dừng worker, đóng socket và báo OFFLINE. Giới hạn độ cũ bằng hai chu kỳ `CASTER_MONITOR_INTERVAL` (ít nhất 30 giây). Không mở thêm kết nối Rover để dò từng MP offline.
+
+Tất cả MP đầu `7` vẫn được nhận diện và giữ trong nhóm Base 4G kể cả khi không có dữ liệu. MP có dữ liệu chỉ là điều kiện mở kết nối; ONLINE vẫn phải được xác nhận bằng RTCM đúng CRC thực nhận.
 
 Cần chạy cả backend và decoder mới để sử dụng luồng này. Không cần thay firmware các máy Base 4G đầu `7`.
 
