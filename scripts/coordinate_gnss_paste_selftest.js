@@ -59,20 +59,26 @@ function paste(name, text) {
     const text = clipboard.encode({ lat: 20.845, lon: 106.688, alt: 30 });
     for (const name of ['latitude', 'longitude', 'altitude']) {
         assert.equal(paste(name, text), true);
-        assert.deepEqual(position(), ['20.8450000000', '106.6880000000', '30.0000000000']);
+        assert.deepEqual(position(), ['20.845000000', '106.688000000', '30.0000']);
         assert.equal(sent.length, 0, 'Paste must not configure the device');
         assert.equal(field('accuracy').props.value, '5', 'Paste must preserve measurement accuracy');
     }
     await tree.props.onSubmit({ preventDefault() {} }); render();
-    assert.deepEqual(JSON.parse(JSON.stringify(sent[0].params.coords)), { lat: '20.8450000000', lon: '106.6880000000', alt: '30.0000000000' });
+    assert.deepEqual(JSON.parse(JSON.stringify(sent[0].params.coords)), { lat: '20.845000000', lon: '106.688000000', alt: '30.0000' });
     assert.equal(sent[0].params.accuracy, 0.05);
     assert.equal(sent[0].params.altitude_reference, 'ELLIPSOID');
     const precise = clipboard.encode({lat: '20,123456789099', lon: '106.987654321099', alt: '-30.123456789099'});
     assert.deepEqual(JSON.parse(precise).coords, {lat: '20.1234567890', lon: '106.9876543210', alt: '-30.1234567890'});
     paste('latitude', precise);
     await tree.props.onSubmit({ preventDefault() {} }); render();
-    assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).params.coords)), JSON.parse(precise).coords,
-        'Clipboard decimal strings reach the request unchanged, including trailing zeros');
+    assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).params.coords)), {lat: '20.123456789', lon: '106.987654321', alt: '-30.1234'},
+        'Ublox receives exactly nine decimal LLA digits and four height digits without rounding');
+    assert.deepEqual(position(), ['20.123456789', '106.987654321', '-30.1234']);
+    for (const [name, value] of [['latitude', '20.99999999999'], ['longitude', '106.12345678999'], ['altitude', '-30.999999']]) {
+        field(name).props.onChange({target:{value}}); render();
+    }
+    await tree.props.onSubmit({preventDefault(){}}); render();
+    assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).params.coords)), {lat:'20.999999999',lon:'106.123456789',alt:'-30.9999'});
     const before = position();
     for (const patch of [{ crs: 'EPSG:9210' }, { height_type: 'orthometric' }, { version: 2 },
         { coords: { lat: 91, lon: 106, alt: 30 } }, { coords: { lat: 20, lon: 106 } },
@@ -84,10 +90,10 @@ function paste(name, text) {
     assert.equal(paste('longitude', '107.25'), false, 'Normal single-field paste stays native');
     const zero = clipboard.encode({ lat: 0, lon: 0, alt: 0 });
     assert.equal(paste('altitude', zero), true);
-    assert.deepEqual(position(), ['0.0000000000', '0.0000000000', '0.0000000000']);
+    assert.deepEqual(position(), ['0.000000000', '0.000000000', '0.0000']);
     disabled = true; render();
     assert.equal(paste('latitude', text), false);
-    assert.deepEqual(position(), ['0.0000000000', '0.0000000000', '0.0000000000']);
+    assert.deepEqual(position(), ['0.000000000', '0.000000000', '0.0000']);
     assert(field('latitude').props.disabled);
     assert.throws(() => clipboard.encode({ lat: 20, lon: 106, alt: NaN }));
     disabled = false;

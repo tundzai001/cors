@@ -393,14 +393,23 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         }
     };
 
+    const chipCoordinate = (value, digits) => {
+        const text = String(value).trim().replace(',', '.');
+        if (!/^-?\d+(?:\.\d+)?$/.test(text)) return text;
+        const [whole, fraction = ''] = text.split('.');
+        return `${whole}.${fraction.padEnd(digits, '0').slice(0, digits)}`;
+    };
+
     const formatCoord10 = (val) => {
         if (val === null || val === undefined || val === '') return '';
+        if (activeChip === 'Ublox') return chipCoordinate(val, 9);
         const num = parseFloat(val);
         return Number.isFinite(num) ? num.toFixed(10) : String(val);
     };
 
     const formatAlt10 = (val) => {
         if (val === null || val === undefined || val === '') return '';
+        if (activeChip === 'Ublox') return chipCoordinate(val, 4);
         const num = parseFloat(val);
         return Number.isFinite(num) ? num.toFixed(10) : String(val);
     };
@@ -411,9 +420,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             const coords = window.CorsCoordinateClipboard?.parse(event.clipboardData?.getData('text/plain') || '');
             if (!coords) return; // A normal numeric paste still belongs to the focused field.
             event.preventDefault();
-            setLatitude(coords.lat);
-            setLongitude(coords.lon);
-            setAltitude(coords.alt);
+            setLatitude(activeChip === 'Ublox' ? chipCoordinate(coords.lat, 9) : coords.lat);
+            setLongitude(activeChip === 'Ublox' ? chipCoordinate(coords.lon, 9) : coords.lon);
+            setAltitude(activeChip === 'Ublox' ? chipCoordinate(coords.alt, 4) : coords.alt);
             setAltitudeReference('ELLIPSOID');
             setCoordinatePasteNotice({ error: false, message: 'Đã điền vĩ độ, kinh độ WGS 84 và độ cao h. Kiểm tra tọa độ rồi bấm áp dụng.' });
         } catch (error) {
@@ -496,10 +505,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     return;
                 }
                 params.coords = {
-                    lat: latStr,
-                    lon: lonStr,
-                    alt: String(altitude).trim() || '0'
+                    lat: finalChipType === 'Ublox' ? chipCoordinate(latStr, 9) : latStr,
+                    lon: finalChipType === 'Ublox' ? chipCoordinate(lonStr, 9) : lonStr,
+                    alt: finalChipType === 'Ublox' ? chipCoordinate(String(altitude).trim() || '0', 4) : String(altitude).trim() || '0'
                 };
+                if (finalChipType === 'Ublox') {
+                    setLatitude(params.coords.lat);
+                    setLongitude(params.coords.lon);
+                    setAltitude(params.coords.alt);
+                }
                 params.altitude_reference = finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
                 // Fixed accuracy is entered in centimeters and sent to the API in meters.
                 params.accuracy = parseFloat(fixedAccuracyCm || '1') / 100.0;
