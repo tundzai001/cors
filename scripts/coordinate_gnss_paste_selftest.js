@@ -92,6 +92,10 @@ function paste(name, text) {
     await tree.props.onSubmit({preventDefault(){}}); render();
     assert.equal(sent.at(-1).params.accuracy, '0.0029', 'Accuracy is sent as decimal meters without unit conversion');
     assert.equal(field('accuracy').props.step, '0.0001');
+    assert.equal(field('accuracy').props.min, '0.0001');
+    field('accuracy').props.onChange({target:{value:'0.0001'}}); render();
+    await tree.props.onSubmit({preventDefault(){}}); render();
+    assert.equal(sent.at(-1).params.accuracy, '0.0001', 'u-center minimum is preserved in meters');
     const before = position();
     for (const patch of [{ crs: 'EPSG:9210' }, { height_type: 'orthometric' }, { version: 2 },
         { coords: { lat: 91, lon: 106, alt: 30 } }, { coords: { lat: 20, lon: 106 } },

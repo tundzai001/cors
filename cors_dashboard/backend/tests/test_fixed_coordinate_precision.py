@@ -7,9 +7,14 @@ from app import command_builder as builder, crud
 class FixedCoordinatePrecisionTests(unittest.TestCase):
     def test_fixed_accuracy_is_decimal_meters_without_float_truncation(self):
         for meters, expected in (('0.01', 100), ('0.05', 500), ('0.0029', 29),
-                                 ('0.001', 10), ('0.1234', 1234)):
+                                 ('0.001', 10), ('0.0001', 1), ('0.1234', 1234)):
             packet = builder.build_base_fixed_lla_command('Ublox', 20, 106, 30, meters)[0]
             self.assertEqual(int.from_bytes(packet[26:30], 'little'), expected, meters)
+
+    def test_fixed_accuracy_rejects_values_below_one_wire_unit(self):
+        for accuracy in ('0', '-0.0001', '0.00009'):
+            with self.assertRaises(ValueError):
+                builder.build_base_fixed_lla_command('Ublox', 20, 106, 30, accuracy)
 
     def test_unicore_preserves_all_ten_digits_and_trailing_zeros(self):
         coords = {'lat': '20.1234567890', 'lon': '106.9876543210', 'alt': '-30.1234567890'}

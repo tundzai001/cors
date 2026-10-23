@@ -1034,7 +1034,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác 3D của tọa độ Base (m)</label>
                             <input
                                 id={`base-accuracy-${device.serial}`}
-                                type="number" className="form-control" min="0.001" max="10000" step="0.0001"
+                                type="number" className="form-control" min="0.0001" max="10000" step="0.0001"
                                 aria-describedby={`base-accuracy-help-${device.serial}`}
                                 value={fixedAccuracyM} onChange={(e) => setFixedAccuracyM(e.target.value)}
                                 required placeholder="Ví dụ: 0.05"
