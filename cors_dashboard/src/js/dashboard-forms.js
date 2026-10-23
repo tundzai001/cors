@@ -384,8 +384,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         }
     }, [device.serial]);
 
-    const handleDecimalInputChange = (setter) => (e) => {
-        const value = e.target.value;
+    const handleDecimalInputChange = (setter, maxDecimals) => (e) => {
+        const value = e.target.value.replace(',', '.');
+        if (maxDecimals !== undefined && (value.split('.')[1] || '').length > maxDecimals) return;
         // Cho phép nhập số thập phân âm/dương
         if (/^-?[0-9]*\.?[0-9]*$/.test(value)) {
             setter(value);
@@ -984,8 +985,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <input
                                 id={`base-latitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
-                                value={latitude} onChange={handleDecimalInputChange(setLatitude)}
-                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}`}
+                                value={latitude} onChange={handleDecimalInputChange(setLatitude, activeChip === 'Ublox' ? 9 : undefined)}
+                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : ''}`}
                                 disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 21.028511"
                             />
@@ -995,12 +996,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <input
                                 id={`base-longitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
-                                value={longitude} onChange={handleDecimalInputChange(setLongitude)}
-                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}`}
+                                value={longitude} onChange={handleDecimalInputChange(setLongitude, activeChip === 'Ublox' ? 9 : undefined)}
+                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : ''}`}
                                 disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 105.854167"
                             />
                         </div>
+                        {activeChip === 'Ublox' && <div id={`base-ublox-precision-${device.serial}`} className="col-12 form-text mt-1">
+                            Ublox: vĩ độ và kinh độ tối đa 9 chữ số sau dấu . hoặc , — không nhận chữ số thứ 10.
+                        </div>}
                         <div className="col-md-6">
                             <label htmlFor={`base-altitude-${device.serial}`} className="form-label">{activeChip === 'Ublox' || altitudeReference === 'ELLIPSOID' ? 'Độ cao h ellipsoid (mét)' : 'Độ cao theo cấu hình chip (mét)'}</label>
                             <input

@@ -74,9 +74,18 @@ function paste(name, text) {
     assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).params.coords)), {lat: '20.123456789', lon: '106.987654321', alt: '-30.1234'},
         'Ublox receives exactly nine decimal LLA digits and four height digits without rounding');
     assert.deepEqual(position(), ['20.123456789', '106.987654321', '-30.1234']);
-    for (const [name, value] of [['latitude', '20.99999999999'], ['longitude', '106.12345678999'], ['altitude', '-30.999999']]) {
+    for (const [name, value] of [['latitude', '20.999999999'], ['longitude', '106,123456789'], ['altitude', '-30.999999']]) {
         field(name).props.onChange({target:{value}}); render();
     }
+    for (const name of ['latitude', 'longitude']) {
+        const previous = field(name).props.value;
+        field(name).props.onChange({target:{value:previous+'9'}}); render();
+        assert.equal(field(name).props.value, previous, 'Ublox rejects the tenth decimal digit');
+        field(name).props.onChange({target:{value:previous.replace('.', ',')+'9'}}); render();
+        assert.equal(field(name).props.value, previous, 'Comma input uses the same nine-digit limit');
+        assert(field(name).props['aria-describedby'].includes('base-ublox-precision-'));
+    }
+    assert(find(tree, node => node.props.id === 'base-ublox-precision-PASTE_TEST'));
     await tree.props.onSubmit({preventDefault(){}}); render();
     assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).params.coords)), {lat:'20.999999999',lon:'106.123456789',alt:'-30.9999'});
     const before = position();
@@ -98,6 +107,9 @@ function paste(name, text) {
     assert.throws(() => clipboard.encode({ lat: 20, lon: 106, alt: NaN }));
     disabled = false;
     device.serial = 'UNICORE_LEGACY'; device.detected_chip_type = 'Unicorecomm'; render();
+    assert(!find(tree, node => node.props.id === 'base-ublox-precision-UNICORE_LEGACY'));
+    field('latitude').props.onChange({target:{value:'20.1234567890'}}); render();
+    assert.equal(field('latitude').props.value, '20.1234567890', 'Unicore still accepts ten digits');
     assert.equal(field('altitude-reference').props.value, 'LEGACY');
     await tree.props.onSubmit({ preventDefault() {} }); render();
     assert.equal(sent.at(-1).params.altitude_reference, 'LEGACY');
