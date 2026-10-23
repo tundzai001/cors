@@ -31,6 +31,7 @@ SYNC_INTERVAL_SECONDS = 15.0
 DEFAULT_ROVER_PASSWORD = "12345"
 MQTT_DECODER_TOPIC = "pi/decoder/esp_base"
 MQTT_SYNC_REQUEST_TOPIC = "pi/decoder/esp_base/sync_request"
+_stopped_decoder_serials: set[str] = set()
 
 
 def _extract_esp_mountpoint(device: models.Device) -> Optional[str]:
@@ -214,6 +215,8 @@ async def notify_decoder_worker(
     try:
         from . import mqtt as mqtt_module
         if mqtt_module.mqtt_client and mqtt_module.mqtt_client.is_connected():
+            if action == "stop" and serial in _stopped_decoder_serials:
+                return
             payload = json.dumps({
                 "action": action,
                 "serial": serial,
@@ -228,6 +231,10 @@ async def notify_decoder_worker(
                 "timestamp": int(time.time()),
             })
             mqtt_module.publish_message(MQTT_DECODER_TOPIC, payload, qos=1)
+            if action == "stop":
+                _stopped_decoder_serials.add(serial)
+            elif action == "start":
+                _stopped_decoder_serials.discard(serial)
             log = logger.debug if is_4g_mountpoint(mountpoint) else logger.info
             log(f"[ESP DECODER MQTT] Sent {action} for serial={serial}, mp={mountpoint}")
     except Exception as e:
@@ -409,6 +416,13 @@ async def sync_prefix7_bases() -> None:
                                     mp, rover.password if rover else '', lat=lat, lon=lon, alt=alt,
                                     host=source.host if source else None,
                                     port=source.port if source else None)
+
+
+async def resync_decoder_workers() -> None:
+    """Replay desired state after the decoder reconnects, including offline bases."""
+    _stopped_decoder_serials.clear()
+    await sync_prefix7_bases()
+    await sync_esp_base_rovers()
 
 
 async def esp_base_manager_task() -> None:

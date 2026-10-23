@@ -566,8 +566,8 @@ def on_message(client, userdata, msg):
 
     if msg.topic == "pi/decoder/esp_base/sync_request":
         if main_loop and main_loop.is_running():
-            from .esp_base_manager import sync_esp_base_rovers
-            main_loop.call_soon_threadsafe(lambda: asyncio.create_task(sync_esp_base_rovers()))
+            from .esp_base_manager import resync_decoder_workers
+            main_loop.call_soon_threadsafe(lambda: asyncio.create_task(resync_decoder_workers()))
         return
 
     if msg.topic.startswith("ntrip/rtcm/"):

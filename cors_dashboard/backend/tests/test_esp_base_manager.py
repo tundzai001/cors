@@ -4,6 +4,7 @@ import json
 import time
 
 from app import models
+from app import esp_base_manager as manager
 from app.esp_base_manager import (
     _extract_esp_mountpoint,
     auto_provision_esp_rover_account,
@@ -17,6 +18,48 @@ from app.esp_base_manager import (
 
 
 class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        self.stopped_patch = patch.object(manager, "_stopped_decoder_serials", set())
+        self.stopped_patch.start()
+        self.addCleanup(self.stopped_patch.stop)
+
+    async def test_duplicate_stops_suppressed_until_start_or_decoder_resync(self):
+        client = MagicMock()
+        client.is_connected.return_value = True
+        client.publish.return_value.rc = 0
+        with patch("app.mqtt.mqtt_client", client):
+            for serial, mp in (("esp_112233445566", "test"), ("MONITOR_70001", "70001")):
+                client.publish.reset_mock()
+                await notify_decoder_worker("stop", serial, mp, mp, "")
+                await notify_decoder_worker("stop", serial, mp, mp, "")
+                client.publish.assert_called_once()
+                await notify_decoder_worker("start", serial, mp, mp, "password")
+                await notify_decoder_worker("stop", serial, mp, mp, "")
+                self.assertEqual(client.publish.call_count, 3)
+            with patch.object(manager, "sync_prefix7_bases", new_callable=AsyncMock) as prefix7, \
+                 patch.object(manager, "sync_esp_base_rovers", new_callable=AsyncMock) as esp:
+                await manager.resync_decoder_workers()
+                prefix7.assert_awaited_once()
+                esp.assert_awaited_once()
+            client.publish.reset_mock()
+            await notify_decoder_worker("stop", "esp_112233445566", "test", "test", "")
+            client.publish.assert_called_once()
+
+    async def test_failed_or_disconnected_stop_can_retry(self):
+        client = MagicMock()
+        client.is_connected.return_value = False
+        with patch("app.mqtt.mqtt_client", client):
+            await notify_decoder_worker("stop", "esp_test", "test", "test", "")
+            client.publish.assert_not_called()
+            client.is_connected.return_value = True
+            client.publish.return_value.rc = 4
+            with self.assertLogs("app.esp_base_manager", level="ERROR"):
+                await notify_decoder_worker("stop", "esp_test", "test", "test", "")
+            client.publish.return_value.rc = 0
+            await notify_decoder_worker("stop", "esp_test", "test", "test", "")
+            await notify_decoder_worker("stop", "esp_test", "test", "test", "")
+            self.assertEqual(client.publish.call_count, 2)
 
     async def test_decoder_start_stop_use_shared_mqtt_client(self):
         client = MagicMock()
