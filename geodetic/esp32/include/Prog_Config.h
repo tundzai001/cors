@@ -10,17 +10,17 @@ extern SemaphoreHandle_t gnssSerialMutex;
 
 // ================= CẤU HÌNH CHÂN CẮM VÀ TỐC ĐỘ SERIAL =================
 #if BOARD_2A53N
-inline constexpr int RX_GNSS = 22; // ESP RX: nối T1/TX1 của Unicore
-inline constexpr int TX_GNSS = 23; // ESP TX: nối R1/RX1 của Unicore
+inline constexpr int RX_GNSS = 22; // Nối TXD (Hàng dưới) của UM980
+inline constexpr int TX_GNSS = 23; // Nối RXD (Hàng dưới) của UM980
 inline constexpr int LED_PIN = 2;
 #elif BOARD_TDM_240X
-inline constexpr int RX_GNSS = 18; // ESP RX: nối T1/TX1 của Unicore
-inline constexpr int TX_GNSS = 19; // ESP TX: nối R1/RX1 của Unicore
+inline constexpr int RX_GNSS = 18; // Nối TXD (Hàng dưới) của UM980
+inline constexpr int TX_GNSS = 19; // Nối RXD (Hàng dưới) của UM980
 inline constexpr int LED_PIN = 2;
 #endif
 inline constexpr int GNSS_BAUD = 115200;
 // UART on the Unicore receiver connected to the ESP32 GNSS link.
-inline uint8_t GNSS_UNICORE_PORT = 1; // Loaded from GNSS_PORT; default T1/R1.
+inline constexpr uint8_t GNSS_UNICORE_PORT = 2;
 
 // ================= CẤU HÌNH CÁC TASK =================
 inline constexpr int MUTEX_TIMEOUT_MS = 1500; // Thời gian tối đa để chờ mutex (ms)

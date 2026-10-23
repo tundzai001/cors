@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstdint>
 #include <type_traits>
-inline bool isDigit(char value) { return std::isdigit(static_cast<unsigned char>(value)); }
 
 class String : public std::string {
 public:

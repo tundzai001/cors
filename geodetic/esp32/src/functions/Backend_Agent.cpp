@@ -25,45 +25,15 @@
 #if !defined(NATIVE_BUILD)
 #include <esp_random.h>
 #include <esp_system.h>
-#include <esp_ota_ops.h>
-#include <esp_app_format.h>
 #include <mbedtls/sha256.h>
 #endif
 
 extern Preferences prefs;
 extern PubSubClient mqtt;
 extern SemaphoreHandle_t tcpStreamMutex;
-extern SemaphoreHandle_t gnssSerialMutex;
+extern SemaphoreHandle_t rtcmBufferMutex;
 
 namespace {
-
-uint32_t firmwareImageBytes = 0;
-
-uint32_t readRunningFirmwareSize() {
-#if !defined(NATIVE_BUILD)
-    const esp_partition_t *partition = esp_ota_get_running_partition();
-    esp_image_header_t header{};
-    if (!partition || partition->size < sizeof(header)
-        || esp_partition_read(partition, 0, &header, sizeof(header)) != ESP_OK
-        || header.magic != ESP_IMAGE_HEADER_MAGIC || header.segment_count == 0
-        || header.segment_count > ESP_IMAGE_MAX_SEGMENTS) return 0;
-    size_t offset = sizeof(header);
-    for (uint8_t i = 0; i < header.segment_count; ++i) {
-        esp_image_segment_header_t segment{};
-        if (offset > partition->size - sizeof(segment)
-            || esp_partition_read(partition, offset, &segment, sizeof(segment)) != ESP_OK) return 0;
-        offset += sizeof(segment);
-        if (segment.data_len > partition->size - offset) return 0;
-        offset += segment.data_len;
-    }
-    // Image checksum occupies the last byte of a 16-byte aligned block.
-    offset = (offset + 16U) & ~size_t(15U);
-    if (header.hash_appended) offset += 32U;
-    return offset <= partition->size ? static_cast<uint32_t>(offset) : 0;
-#else
-    return 0;
-#endif
-}
 
 constexpr char BACKEND_PREFS_NAMESPACE[] = "backend";
 constexpr char BACKEND_PREFS_PARTITION[] = "agent_state";
@@ -897,9 +867,8 @@ namespace {
 BackendAgent backendAgent;
 
 void BackendAgent::begin() {
-    // Read size without invoking the bootloader image verifier during status publishing.
-    firmwareImageBytes = readRunningFirmwareSize();
-    if (!firmwareImageBytes) Serial.println("[BACKEND][FLASH] Cannot read running firmware size.");
+    // Image verification uses shared bootloader mappings; do it once before tasks.
+    firmwareSize_ = ESP.getSketchSize();
     loadPreferences();
     ensureDefaultServiceConfig();
 
@@ -1025,6 +994,10 @@ void BackendAgent::ensureDefaultServiceConfig() {
 }
 
 bool BackendAgent::saveStatePreferences() {
+    if (serialNumber_.isEmpty()) {
+        Serial.println("[BACKEND][NVS] Refusing to save state before agent identity is loaded.");
+        return false;
+    }
     // Preferences' error-name table in Arduino 2.x does not cover newer NVS
     // errors. Use the native API and commit this state snapshot once.
     nvs_handle_t handle;
@@ -1067,17 +1040,104 @@ void BackendAgent::setDetectedChipIfUnknown(const String &chipType) {
     }
 }
 
-bool BackendAgent::detectGnssChip(Stream &stream, bool force, bool allFormats) {
-    (void)stream; // Serial1 ownership and autobaud are centralized in the GNSS driver.
-    const auto detected = detectGnssSensorType(force, allFormats);
-    const String actual = detected == UbxCmdBuilder::GnssSensorType::Unicore ? "Unicorecomm"
-        : detected == UbxCmdBuilder::GnssSensorType::Ublox ? "Ublox" : "UNKNOWN";
-    if (sensorType_ != actual) {
-        sensorType_ = actual;
-        saveStatePreferences();
-        markStatusDirty();
+bool BackendAgent::detectGnssChip(Stream &stream, bool force) {
+    if (!force && sensorType_ != "UNKNOWN" && !sensorType_.isEmpty()) {
+        return true;
     }
-    return gnssDetectedBaud() > 0;
+
+    while (stream.available()) stream.read();
+
+    // 1. Active probe: Unicorecomm (UM980, UM982...)
+    stream.print("unlog\r\n");
+    delay(30);
+    while (stream.available()) stream.read();
+
+    stream.print("version\r\n");
+    String response = "";
+    uint32_t startMs = millis();
+    while (millis() - startMs < 500) {
+        while (stream.available()) {
+            char c = static_cast<char>(stream.read());
+            response += c;
+            if (response.length() >= 1024) break;
+        }
+        if (response.indexOf("UM980") >= 0 || response.indexOf("UM982") >= 0 ||
+            response.indexOf("UM9") >= 0 || response.indexOf("Unicore") >= 0 ||
+            response.indexOf("UB4") >= 0 || response.indexOf("#VERSION") >= 0) {
+            break;
+        }
+        // If no data arrives within 150ms, no Unicore chip is replying
+        if (millis() - startMs > 150 && response.isEmpty()) break;
+        delay(10);
+    }
+
+    if (response.indexOf("UM980") >= 0 || response.indexOf("UM982") >= 0 ||
+        response.indexOf("UM9") >= 0 || response.indexOf("Unicore") >= 0 ||
+        response.indexOf("UB4") >= 0 || response.indexOf("#VERSION") >= 0) {
+        sensorType_ = "Unicorecomm";
+        saveStatePreferences();
+        Serial.printf("[GNSS] => Phat hien chip: Unicorecomm (phan hoi: %s)\n",
+                      response.substring(0, min((size_t)80, (size_t)response.length())).c_str());
+        markStatusDirty();
+        return true;
+    }
+
+    // 2. Active probe: U-blox (ZED-F9P, NEO-M8P...) via UBX-MON-VER
+    while (stream.available()) stream.read();
+    const uint8_t ubxMonVer[] = {0xB5, 0x62, 0x0A, 0x04, 0x00, 0x00, 0x0E, 0x34};
+    stream.write(ubxMonVer, sizeof(ubxMonVer));
+
+    startMs = millis();
+    uint8_t ubxMatch = 0;
+    bool foundUblox = false;
+    while (millis() - startMs < 400) {
+        while (stream.available()) {
+            uint8_t b = static_cast<uint8_t>(stream.read());
+            if (ubxMatch == 0 && b == 0xB5) ubxMatch = 1;
+            else if (ubxMatch == 1 && b == 0x62) ubxMatch = 2;
+            else if (ubxMatch == 2 && b == 0x0A) ubxMatch = 3;
+            else if (ubxMatch == 3 && b == 0x04) {
+                foundUblox = true;
+                break;
+            } else {
+                ubxMatch = (b == 0xB5) ? 1 : 0;
+            }
+        }
+        if (foundUblox) break;
+        // If no bytes arrive within 150ms, no Ublox chip is replying
+        if (millis() - startMs > 150 && ubxMatch == 0 && !stream.available()) break;
+        delay(10);
+    }
+
+    if (foundUblox) {
+        sensorType_ = "Ublox";
+        saveStatePreferences();
+        Serial.println("[GNSS] => Phat hien chip: Ublox (ZED-F9P qua UBX-MON-VER)");
+        markStatusDirty();
+        return true;
+    }
+
+    // 3. Passive scan: NMEA
+    startMs = millis();
+    String passiveStr = "";
+    while (millis() - startMs < 300) {
+        while (stream.available()) {
+            uint8_t b = static_cast<uint8_t>(stream.read());
+            if (b >= 32 && b <= 126) passiveStr += static_cast<char>(b);
+            if (passiveStr.length() >= 512) break;
+        }
+        if (passiveStr.indexOf("$PUBX") >= 0) {
+            sensorType_ = "Ublox";
+            saveStatePreferences();
+            Serial.println("[GNSS] => Phat hien chip: Ublox (qua $PUBX NMEA)");
+            markStatusDirty();
+            return true;
+        }
+        if (millis() - startMs > 150 && passiveStr.isEmpty() && !stream.available()) break;
+        delay(10);
+    }
+
+    return false;
 }
 
 void BackendAgent::setAgentState(const String &state) {
@@ -1221,18 +1281,18 @@ bool BackendAgent::stopNtripRoverLocked() {
 }
 
 bool BackendAgent::writeGnssCommands(const UbxCmdBuilder::CommandList &commands) {
-    if (commands.empty() || !gnssDetectedBaud()) return false;
+    if (commands.empty()) return false;
     for (const auto &command : commands) {
         uint32_t delayMs = 0;
         if (delayMarker(command.data(), command.size(), delayMs)) {
             delay(delayMs);
             continue;
         }
-        if (!gnssSerialMutex
-            || xSemaphoreTake(gnssSerialMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) return false;
+        if (!rtcmBufferMutex
+            || xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) return false;
         const size_t written = Serial1.write(command.data(), command.size());
         Serial1.flush();
-        xSemaphoreGive(gnssSerialMutex);
+        xSemaphoreGive(rtcmBufferMutex);
         if (written != command.size()) return false;
         delay(100);
     }
@@ -1247,7 +1307,7 @@ bool BackendAgent::applyRoverMode() {
 }
 
 bool BackendAgent::applyBaseCoordinates(const double latitude, const double longitude,
-                                        const double altitude, UbxCmdBuilder::AltitudeReference altitudeReference) {
+                                        const double altitude) {
     if (!std::isfinite(latitude) || !std::isfinite(longitude) || !std::isfinite(altitude)
         || latitude < -90.0 || latitude > 90.0
         || longitude < -180.0 || longitude > 180.0) {
@@ -1260,7 +1320,7 @@ bool BackendAgent::applyBaseCoordinates(const double latitude, const double long
         latitude, longitude, altitude, 0.01f,
         sensorType_ == "Ublox" ? UbxCmdBuilder::GnssSensorType::Ublox
                                 : UbxCmdBuilder::GnssSensorType::Unicore,
-        options, altitudeReference));
+        options));
 }
 
 void BackendAgent::runWorkflow() {
@@ -1413,13 +1473,13 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
             const bool usable = freshRtkSample(now, snapshot.lastGgaMs, snapshot.fixStatus);
             if (usable && snapshot.lastGgaMs != lastSampleGgaMs
                 && std::isfinite(snapshot.latitude) && std::isfinite(snapshot.longitude)
-                && std::isfinite(snapshot.ellipsoidAltitude)
+                && std::isfinite(snapshot.altitude)
                 && snapshot.latitude >= -90.0 && snapshot.latitude <= 90.0
                 && snapshot.longitude >= -180.0 && snapshot.longitude <= 180.0) {
                 lastSampleGgaMs = snapshot.lastGgaMs;
                 latitudes.push_back(snapshot.latitude);
                 longitudes.push_back(snapshot.longitude);
-                altitudes.push_back(snapshot.ellipsoidAltitude);
+                altitudes.push_back(snapshot.altitude);
             }
             DynamicJsonDocument details(1200);
             details["samples_collected"] = latitudes.size();
@@ -1434,7 +1494,7 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
                 JsonObject latest = details.createNestedObject("latest_coord");
                 latest["lat"] = snapshot.latitude;
                 latest["lon"] = snapshot.longitude;
-                latest["alt"] = snapshot.ellipsoidAltitude;
+                latest["alt"] = snapshot.altitude;
             }
             String serialized;
             serializeJson(details, serialized);
@@ -1604,9 +1664,7 @@ bool BackendAgent::runReferenceCheckWorkflow(JsonObject payload) {
         if (!roverStopped) return false;
         bool baseRestored = true;
         if (std::isfinite(restoreLatitude) && std::isfinite(restoreLongitude) && std::isfinite(restoreAltitude)) {
-            const auto reference = String(storedBaseObject["altitude_reference"] | "") == "ELLIPSOID"
-                ? UbxCmdBuilder::AltitudeReference::Ellipsoid : UbxCmdBuilder::AltitudeReference::Legacy;
-            baseRestored = applyBaseCoordinates(restoreLatitude, restoreLongitude, restoreAltitude, reference);
+            baseRestored = applyBaseCoordinates(restoreLatitude, restoreLongitude, restoreAltitude);
         }
         const bool transportRestored = restartConfiguredNtrip();
         return baseRestored && transportRestored;
@@ -1719,12 +1777,12 @@ bool BackendAgent::runReferenceCheckWorkflow(JsonObject payload) {
             const GnssTelemetrySnapshot snapshot = getGnssTelemetrySnapshot();
             const bool usable = freshRtkSample(now, snapshot.lastGgaMs, snapshot.fixStatus);
             if (usable && std::isfinite(snapshot.latitude) && std::isfinite(snapshot.longitude)
-                && std::isfinite(snapshot.ellipsoidAltitude) && snapshot.latitude >= -90.0
+                && std::isfinite(snapshot.altitude) && snapshot.latitude >= -90.0
                 && snapshot.latitude <= 90.0 && snapshot.longitude >= -180.0
                 && snapshot.longitude <= 180.0) {
                 latitudes.push_back(snapshot.latitude);
                 longitudes.push_back(snapshot.longitude);
-                altitudes.push_back(snapshot.ellipsoidAltitude);
+                altitudes.push_back(snapshot.altitude);
             }
             DynamicJsonDocument details(768);
             details["samples_collected"] = latitudes.size();
@@ -1883,11 +1941,7 @@ String BackendAgent::buildStatusPayload() {
     doc["base_mode_active"] = baseConfig_ != "{}" && baseConfig_.length() > 2;
     doc["detected_chip_type"] = sensorType_;
     doc["detected_chip_port"] = "Serial1";
-    doc["detected_chip_baud"] = gnssDetectedBaud();
-    doc["gnss_uart_rx_pin"] = RX_GNSS;
-    doc["gnss_uart_tx_pin"] = TX_GNSS;
-    doc["gnss_receiver_port"] = GNSS_UNICORE_PORT;
-    doc["gnss_uart_format"] = gnssDetectedFormat();
+    doc["detected_chip_baud"] = Serial1.baudRate();
     doc["is_provisioned"] = provisioned_;
     doc["is_locked"] = stationLock_.all;
     doc["is_synced"] = true;
@@ -1922,7 +1976,7 @@ String BackendAgent::buildStatusPayload() {
 
     JsonObject disk = system.createNestedObject("disk");
     const uint32_t flashTotal = ESP.getFlashChipSize();
-    const uint32_t flashUsed = firmwareImageBytes;
+    const uint32_t flashUsed = firmwareSize_;
     const uint32_t flashFree = (flashTotal > flashUsed) ? (flashTotal - flashUsed) : 0;
     disk["type"] = "Flash";
     disk["total_bytes"] = flashTotal;
@@ -2082,6 +2136,7 @@ String BackendAgent::buildStatusPayload() {
 }
 
 void BackendAgent::publishStatus(bool force) {
+    if (serialNumber_.isEmpty()) return;
     if (statusDirty_) force = true;
     if (!force && millis() - lastStatusMs_ < BACKEND_STATUS_INTERVAL_MS) {
         return;
@@ -2092,7 +2147,13 @@ void BackendAgent::publishStatus(bool force) {
     ++statusSequence_;
     const String payload = buildStatusPayload();
     if (mqttConnected()) {
-        mqtt.publish(statusTopic().c_str(), payload.c_str(), true);
+        const bool sent = mqtt.publish(statusTopic().c_str(), payload.c_str(), true);
+        if (!sent || !statusPublishConfirmed_) {
+            Serial.printf("[BACKEND][MQTT] STATUS %s topic=%s bytes=%u\n",
+                          sent ? "SENT" : "FAILED", statusTopic().c_str(),
+                          static_cast<unsigned>(payload.length()));
+        }
+        statusPublishConfirmed_ = sent;
     }
     if (websocketConnected()) {
         DynamicJsonDocument message(STATUS_DOCUMENT_SIZE + 512);
@@ -2113,6 +2174,7 @@ String BackendAgent::lwtPayload() const {
 
 void BackendAgent::onMqttConnected() {
     mqttConnected_ = true;
+    statusPublishConfirmed_ = false;
     Serial.println("[BACKEND][MQTT] Kenh MQTT san sang nhan lenh.");
     publishStatus(true);
 }
@@ -2268,14 +2330,11 @@ void BackendAgent::loop() {
 
     // If GNSS chip is not yet identified (e.g. user hasn't plugged it in yet at boot),
     // retry probing Serial1 every 8 seconds until detected
-    const auto gnss = getGnssTelemetrySnapshot();
-    const uint32_t lastInput = gnss.hasData ? gnss.lastDataMs : 0;
-    const bool linkQuiet = millis() - lastInput > 30000UL;
-    if (!gnssDetectedBaud() || linkQuiet) {
+    if (sensorType_ == "UNKNOWN" || sensorType_.isEmpty()) {
         const uint32_t now = millis();
         if (now - lastChipProbeMs_ >= 8000UL && !workflowActive()) {
+            lastChipProbeMs_ = now;
             detectGnssChip(Serial1);
-            lastChipProbeMs_ = millis();
         }
     }
 
@@ -2461,14 +2520,6 @@ void BackendAgent::applyServiceStreamCommand(JsonObject payload) {
 }
 
 bool BackendAgent::executeRawCommands(JsonArray commands, String &error, const String &sensorType) {
-    if (!gnssDetectedBaud()) {
-        error = "GNSS UART not verified; wait for autobaud";
-        return false;
-    }
-    if (!sensorType.isEmpty() && sensorType != sensorType_) {
-        error = "selected GNSS chip differs from the receiver detected by autobaud";
-        return false;
-    }
     if (commands.isNull() || commands.size() == 0) {
         error = "missing payload.commands_b64";
         return false;
@@ -2496,15 +2547,10 @@ bool BackendAgent::executeRawCommands(JsonArray commands, String &error, const S
         }
         if (sensorType == "Unicorecomm") routeUnicoreOutput(decoded, length, GNSS_UNICORE_PORT);
         else if (sensorType == "Ublox") UbxCmdBuilder::routeUbloxOutput(decoded, length);
-        if (gnssSerialMutex && xSemaphoreTake(gnssSerialMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-            const size_t written = Serial1.write(decoded, length);
+        if (rtcmBufferMutex && xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+            Serial1.write(decoded, length);
             Serial1.flush();
-            if (written != length) {
-                xSemaphoreGive(gnssSerialMutex);
-                error = "incomplete GNSS UART write";
-                return false;
-            }
-            xSemaphoreGive(gnssSerialMutex);
+            xSemaphoreGive(rtcmBufferMutex);
         } else {
             error = "GNSS serial is busy";
             return false;
@@ -2735,12 +2781,12 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             success = writeGnssCommands({poll});
             if (success) detail = "base status requested from GNSS";
             else error = "GNSS serial is busy";
-        } else if (sensorType_ == "Unicorecomm" && gnssSerialMutex
-            && xSemaphoreTake(gnssSerialMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+        } else if (sensorType_ == "Unicorecomm" && rtcmBufferMutex
+            && xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
             Serial1.print("mode\r\n");
             delay(250);
             Serial1.print("log\r\n");
-            xSemaphoreGive(gnssSerialMutex);
+            xSemaphoreGive(rtcmBufferMutex);
             detail = "base status requested from GNSS";
         } else {
             success = false;
@@ -2865,7 +2911,6 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             coordinates["lat"] = localLatitude;
             coordinates["lon"] = localLongitude;
             coordinates["alt"] = localAltitude;
-            base["altitude_reference"] = "ELLIPSOID";
             base["itrf_vn2000_transform_applied"] = true;
             base["central_meridian_deg"] = centralMeridianDeg;
             base["k0"] = scale;

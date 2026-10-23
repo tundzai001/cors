@@ -5,7 +5,6 @@
 #include "Prog_Config.h"
 #include "WString.h"
 #include <cstdint>
-#include <cmath>
 
 inline constexpr size_t RTCM_SUPPORTED_MESSAGE_TYPE_COUNT = 10;
 
@@ -34,7 +33,6 @@ struct GnssTelemetrySnapshot {
     double latitude = 0.0;
 	double longitude = 0.0;
 	double altitude = 0.0;
-    double ellipsoidAltitude = NAN;
 	float hdop = 0.0F;
     float averageSnr = 0.0F;
     float latestAverageSnr = 0.0F;

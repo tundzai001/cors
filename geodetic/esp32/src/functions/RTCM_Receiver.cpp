@@ -3,10 +3,6 @@
 #include "HardwareSerial.h"
 #include "Prog_Config.h"
 #include "functions/Backend_Agent.h"
-#include "functions/Base_Sample.h"
-#include <cstdlib>
-#include <cstring>
-#include <cmath>
 
 namespace {
 
@@ -112,7 +108,6 @@ void parseNmeaSentence(const String &rawSentence) {
     double latitude = 0.0;
     double longitude = 0.0;
     double altitude = 0.0;
-    double ellipsoidAltitude = NAN;
     float hdop = 0.0F;
     uint8_t satellites = 0;
     float snrSum = 0.0F;
@@ -134,8 +129,6 @@ void parseNmeaSentence(const String &rawSentence) {
             satellites = static_cast<uint8_t>(constrain(atoi(fields[7]), 0, 255));
             hdop = static_cast<float>(atof(fields[8]));
             altitude = atof(fields[9]);
-            if (fieldCount > 12)
-                ggaEllipsoidHeight(fields[9], fields[10], fields[11], fields[12], ellipsoidAltitude);
             updatePosition = true;
         }
     } else if (strcmp(type, "GSA") == 0) {
@@ -177,8 +170,6 @@ void parseNmeaSentence(const String &rawSentence) {
 
     if (updateFix) setFixStatus(telemetry.fixStatus, sizeof(telemetry.fixStatus), fixQuality);
     if (strcmp(type, "GGA") == 0) {
-        // Every GGA replaces the height validity, including incomplete samples.
-        telemetry.ellipsoidAltitude = ellipsoidAltitude;
         strncpy(telemetry.lastGga, sentence.c_str(), sizeof(telemetry.lastGga) - 1);
         telemetry.lastGga[sizeof(telemetry.lastGga) - 1] = '\0';
         telemetry.lastGgaMs = millis();
@@ -304,30 +295,24 @@ String receiveRtcmFromGnss() {
         const size_t bytesToRead = min(bytesAvailable, sizeof(buffer));
         if (bytesToRead == 0) break;
 
-        const size_t bytesRead = Serial1.readBytes(reinterpret_cast<char *>(buffer), bytesToRead);
+        const size_t bytesRead = Serial1.readBytes(
+            reinterpret_cast<char *>(buffer), bytesToRead);
         if (bytesRead == 0) break;
-        noteInputBytes(bytesRead);
-        for (size_t i = 0; i < bytesRead; ++i) consumeByte(buffer[i], rtcmData);
+        for (size_t i = 0; i < bytesRead; ++i) {
+            consumeByte(buffer[i], rtcmData);
+        }
     }
     xSemaphoreGive(gnssSerialMutex);
 
-    if (!rtcmData.isEmpty()) {
-        constexpr uint16_t supportedRtcmTypes[] = {
-            1005, 1074, 1077, 1084, 1087,
-            1094, 1097, 1124, 1127, 1230,
-        };
-        Serial.println("[UM980] Da nhan du lieu RTCM tu mach RTK. So byte: " + String(rtcmData.length()));
-        Serial.println("[UM980] So luong cac loai tin nhan RTCM da nhan: ");
-        RtcmMessageCounts messageCounts = consumeRtcmMessageCounts();
-        for (size_t i = 0; i < RTCM_SUPPORTED_MESSAGE_TYPE_COUNT; ++i) {
-            Serial.println("  - Tin nhan loai " + String(supportedRtcmTypes[i]) + ": " + String(messageCounts.values[i]));
-        }
-        #if PROGRAM_DEBUG
-        Serial.println("[UM980] Du lieu nhan duoc: ");
-        Serial.println(rtcmData);
-        #endif
-    } else {
-        Serial.println("[UM980] Khong co du lieu RTCM hop le.");
+    // Message types are decoded by the backend, not by this UART reader.
+    static uint32_t lastLogMs = 0;
+    static uint32_t receivedBytes = 0;
+    receivedBytes += rtcmData.length();
+    if (millis() - lastLogMs >= 5000UL) {
+        Serial.printf("[RTCM] CRC-valid UART bytes in last interval: %lu\n",
+                      static_cast<unsigned long>(receivedBytes));
+        receivedBytes = 0;
+        lastLogMs = millis();
     }
     return rtcmData;
 }

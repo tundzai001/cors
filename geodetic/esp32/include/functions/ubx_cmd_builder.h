@@ -24,11 +24,6 @@ namespace UbxCmdBuilder
         DiagnosticsRtcm,
         RtcmOnly
     };
-    enum class AltitudeReference
-    {
-        Legacy,
-        Ellipsoid
-    };
     enum class MsmLevel : uint8_t
     {
         Msm4 = 4,
@@ -58,16 +53,14 @@ namespace UbxCmdBuilder
     CommandList buildBaseFixedLlaCommand(double lat, double lon,
                                          double alt, float accuracy,
                                                                                  GnssSensorType sensorType,
-                                         const GnssOptions &options = {},
-                                         AltitudeReference altitudeReference = AltitudeReference::Legacy);
+                                         const GnssOptions &options = {});
     CommandList buildBaseRtcmOutputCommand(const String &message,
                                                                                      const String &port, bool enabled,
                                                                                      GnssSensorType sensorType);
     CommandList buildRoverCommand(GnssSensorType sensorType);
     void routeUbloxOutput(uint8_t *data, size_t length);
     CommandList buildGeotekLteUnicoreConfig(const String &setupMethod, uint32_t duration = 60,
-                                            double lat = 0, double lon = 0, double alt = 0,
-                                            AltitudeReference altitudeReference = AltitudeReference::Legacy);
+                                            double lat = 0, double lon = 0, double alt = 0);
     Command commandListToBytes(const CommandList &commands);
 
     #if PROGRAM_DEBUG

@@ -209,6 +209,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const liveDataAvailable = !isDeviceStaleOffline(device, offlineClockNow);
     const isReadonly4g = window.CorsDashboardShared?.isReadonly4gBase?.(device) === true;
     const rtk_status = liveDataAvailable ? (device.rtk_fix_status || 'NO_FIX') : 'NO_FIX';
+    const rtcmMessageTypes = Object.keys(device.rtcm_stats || {}).filter(
+        type => /^\d{4}$/.test(type) && Number(device.rtcm_stats[type]?.count) > 0
+    );
 
     let fixInfo = liveDataAvailable
         ? { label: 'NO FIX', color: '#ff0000', icon: '❌' }
@@ -820,7 +823,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <h6 className="mb-0">RTCM & Antenna Assessment</h6>
                 </div>
                 <div className="card-body p-3">
-                    {(!device.rtcm_stats || Object.keys(device.rtcm_stats).length === 0) ? (
+                    {(rtcmMessageTypes.length === 0) ? (
                         <div className="text-muted small text-center my-3">
                             <i className="bi bi-hourglass-split me-2"></i>
                             Đang chờ dữ liệu giải mã RTCM từ trạm...
@@ -862,7 +865,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             "aux": { label: "🔧 Hiệu chỉnh & Phụ trợ", color: "#adb5bd" },
                         };
                         const grouped = {};
-                        Object.keys(device.rtcm_stats).sort().forEach(type => {
+                        rtcmMessageTypes.sort().forEach(type => {
                             const info = rtcmDescriptions[type] || { name: `RTCM ${type}`, desc: "Bản tin RTCM khác", category: "aux" };
                             const cat = info.category;
                             if (!grouped[cat]) grouped[cat] = [];
@@ -916,12 +919,12 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         {(() => {
                             const avgSnr = Number(metrics.signalStrength.value) || 0;
                             const sats = isReadonly4g ? Number(device.satellite_count || 0) : metrics.satellites.value;
-                            const hasCoords = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => k === "1005" || k === "1006");
+                            const hasCoords = rtcmMessageTypes.some(k => k === "1005" || k === "1006");
                             
                             const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
                             const hasAgentAssessment = ['OK', 'FAULT'].includes(antennaStatus?.state);
                             const isAntennaFault = antennaStatus?.state === "FAULT";
-                            const hasDecodedData = Object.keys(device.rtcm_stats || {}).length > 0;
+                            const hasDecodedData = rtcmMessageTypes.length > 0;
                             const hasSignalData = Boolean(safeNmeaData.gga) || Object.keys(safeNmeaData.satellites || {}).length > 0;
                             
                             const rtcmInputBps = liveDataAvailable ? Number(
@@ -932,7 +935,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                 0
                             ) : 0;
 
-                            const hasMsm = device.rtcm_stats && Object.keys(device.rtcm_stats).some(k => {
+                            const hasMsm = rtcmMessageTypes.some(k => {
                                 const t = Number(k);
                                 return t >= 1071 && t <= 1127;
                             });

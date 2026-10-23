@@ -17,7 +17,6 @@ for sensor in ("Ublox", "Unicorecomm"):
     for method, commands in (
         ("SURVEY_IN", builder.build_base_survey_in_command(sensor, 300, 1.0)),
         ("FIXED_LLA", builder.build_base_fixed_lla_command(sensor, 10.75, 106.5, 12.5, 0.01)),
-        ("FIXED_ELLIPSOID", builder.build_base_fixed_lla_command(sensor, 10.75, 106.5, 12.5, 0.01, altitude_reference="ELLIPSOID")),
     ):
         # Delay markers are consumed by the executor, not sent to the UART.
         commands = [packet for packet in commands if not packet.startswith(b"$DELAY_")]
@@ -29,10 +28,6 @@ for sensor in ("Ublox", "Unicorecomm"):
         assert len(routed) == len(commands)
         if sensor == "Unicorecomm":
             assert routed == [packet.replace(b" com3 ", b" com2 ") for packet in commands]
-            if method == "FIXED_ELLIPSOID":
-                undulation = routed.index(b"config undulation 0.0\r\n")
-                fixed = next(i for i, command in enumerate(routed) if command.startswith(b"mode base "))
-                assert undulation < fixed
             assert any(b"gga com2 " in packet for packet in routed)
             assert any(b"rtcm1074 com2 " in packet for packet in routed)
         else:

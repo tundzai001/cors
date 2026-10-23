@@ -155,7 +155,7 @@ Chỉ xem được nếu module GNSS đang xuất dữ liệu ra cổng COM USB.
 
 ![Mở view](imgs/ublox/3.jpg)
 
-Packet Console sẽ hiển thị thông tin về các bản tin được sinh ra từ module GNSS, nhưng không phải nội dung bên trong.
+Packet Console sẽ hiển thị thông tin về các bản tin được sinh ra từ module GNSS, nhưng không phải nội dung bên trong. 
 
 ![Packet Console](imgs/ublox/4.jpg)
 

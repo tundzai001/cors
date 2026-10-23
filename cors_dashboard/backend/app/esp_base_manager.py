@@ -140,7 +140,11 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
 
     # 3. Notify Decoder via MQTT
     lat, lon, alt = _extract_device_coords(device)
-    await notify_decoder_worker("start", device.serial, mountpoint, username, password, lat=lat, lon=lon, alt=alt)
+    cfg = crud.normalize_service_config(device.service_config)
+    await notify_decoder_worker("start", device.serial, mountpoint, username, password,
+                                lat=lat, lon=lon, alt=alt,
+                                host=cfg.get("serverhost1") or cfg.get("serverhost2"),
+                                port=cfg.get("port1") or cfg.get("port2"))
     return True
 
 
@@ -284,7 +288,8 @@ async def sync_esp_base_rovers() -> None:
             else:
                 # Account already exists; ensure decoder knows to keep running
                 lat, lon, alt = _extract_device_coords(dev)
-                await notify_decoder_worker("start", serial, mp, mp, DEFAULT_ROVER_PASSWORD, lat=lat, lon=lon, alt=alt)
+                await notify_decoder_worker("start", serial, mp, rover.username, rover.password,
+                                            lat=lat, lon=lon, alt=alt, host=host, port=port)
 
             # Cleanup any stale system rover accounts for this base if its mountpoint changed
             for rover_user_key, rover_obj in list(rover_map.items()):

@@ -1489,6 +1489,17 @@ function handleWebSocketMessage(message) {
         const data = message.data || {};
         const satellites = Array.isArray(data?.satellites) ? data.satellites : [];
         
+        const device = globalState.devices.find(item => item.serial === serial);
+        if (device && data.packets && !Array.isArray(data.packets)) device.rtcm_stats = data.packets;
+        if (data.base_coords) currentNmeaData.base_coords = data.base_coords;
+        currentNmeaData.rtcm = {
+            packets: data.packets || {},
+            errors: data.errors || 0,
+            bufferedBytes: data.bufferedBytes || 0,
+            lastSeen: Date.now()
+        };
+        requestDetailsPanelUpdate('high');
+
         // Keep Agent → Server latency from status_update; RTCM timestamps use the agent's clock.
         
         if (satellites.length) {
@@ -1519,13 +1530,6 @@ function handleWebSocketMessage(message) {
                     };
                 }
             });
-            currentNmeaData.rtcm = {
-                packets: data.packets || [],
-                errors: data.errors || 0,
-                bufferedBytes: data.bufferedBytes || 0,
-                lastSeen: Date.now()
-            };
-            requestDetailsPanelUpdate('high');
         }
     }
     if (type === 'activity_log_event') {

@@ -124,7 +124,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
 
             # Check decoder notified
             mock_notify.assert_awaited_once_with(
-                "start", "esp_1234567890AB", "ESP_TEST", "ESP_TEST", DEFAULT_ROVER_PASSWORD, lat=0.0, lon=0.0, alt=0.0
+                "start", "esp_1234567890AB", "ESP_TEST", "ESP_TEST", DEFAULT_ROVER_PASSWORD, lat=0.0, lon=0.0, alt=0.0, host=None, port=None
             )
 
     @patch("app.esp_base_manager._get_configured_casters")
@@ -229,7 +229,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
         now = int(time.time())
         device = models.Device(serial='esp_TEST', status='online',
                                service_config={'mountpoint1': 'test', 'serverhost1': 'caster.test', 'port1': 2101})
-        rover = models.RoverAccount(username='test', base_serial=device.serial)
+        rover = models.RoverAccount(username='test', password='saved-password', base_serial=device.serial)
         source = models.CasterSource(host='caster.test', port=2101, mountpoint='test',
                                     source_data={'datacount': 50}, last_seen_at=now)
         def rows(items):
@@ -261,6 +261,9 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
                 notify.reset_mock()
                 await sync_esp_base_rovers()
                 self.assertEqual(notify.await_args.args[0], expected, (status, count, age, host))
+            self.assertEqual(notify.await_args.args[4], 'saved-password')
+            self.assertEqual(notify.await_args.kwargs['host'], 'caster.test')
+            self.assertEqual(notify.await_args.kwargs['port'], 2101)
             provision.assert_not_awaited()
 
 

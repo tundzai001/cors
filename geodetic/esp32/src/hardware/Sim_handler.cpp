@@ -10,9 +10,9 @@ TinyGsm        modem(SerialAT);
 #endif
 
 bool startSIM() {
-
+    
     int retrys = 1;
-
+ 
     digitalWrite(LED_PIN, HIGH);
     pinMode(MODEM_DC_PIN, OUTPUT);
     digitalWrite(MODEM_DC_PIN, HIGH);
@@ -23,7 +23,7 @@ bool startSIM() {
     digitalWrite(LED_PIN, LOW);
 
     SerialMon.println("[GSM] Khoi tao modem... So lan thu: " + String(retrys));
-
+    
     #ifndef NATIVE_BUILD
     modem.init();
     #endif
@@ -34,7 +34,7 @@ bool startSIM() {
             SerialMon.println("[GSM] Lay thong tin modem that bai sau nhieu lan thu ! Khoi dong modem that bai !");
             return false;
         }
-        SerialMon.println("[GSM] Lay thong tin modem that bai ! So lan thu: "
+        SerialMon.println("[GSM] Lay thong tin modem that bai ! So lan thu: " 
             + String(retrys));
         delay(1000);
         #ifndef NATIVE_BUILD

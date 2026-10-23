@@ -74,8 +74,6 @@ void setup() {
     }
 
     loadConnectionTypeFromPrefs();
-    GNSS_UNICORE_PORT = prefs.getUChar("GNSS_PORT", 1);
-    if (GNSS_UNICORE_PORT < 1 || GNSS_UNICORE_PORT > 3) GNSS_UNICORE_PORT = 1;
     const int gnssTX = TX_GNSS;
     const int gnssRX = RX_GNSS;
     const int rx2ModemTX = RX_TO_MODEM_TX;
@@ -85,29 +83,24 @@ void setup() {
     (void)restartCount;
     Serial.println("[SETUP] Khoi dong giao tiep UM980: TX=" + String(gnssTX)
                    + ", RX=" + String(gnssRX));
-    gnssSerialMutex = xSemaphoreCreateMutex();
-    while (gnssSerialMutex == nullptr) {
-        Serial.println("[ERROR] Tao mutex gnssSerialMutex that bai! Dang thu lai...");
-        gnssSerialMutex = xSemaphoreCreateMutex();
-    }
-    Serial.println("[SETUP] Tao mutex gnssSerialMutex thanh cong!");
-
-    Serial1.setRxBufferSize(4096);
     Serial1.begin(GNSS_BAUD, SERIAL_8N1, static_cast<uint8_t>(gnssRX), static_cast<uint8_t>(gnssTX));
     Serial1.setTimeout(100);
 
-    // Load persistent activation, license and service state before NTRIP/MQTT.
+    // Restore identity, activation and services before any transport can publish.
     backendAgent.begin();
 
-    backendAgent.detectGnssChip(Serial1, true);
-    const UbxCmdBuilder::GnssSensorType detectedSensorType = gnssDetectedSensorType();
+    const UbxCmdBuilder::GnssSensorType detectedSensorType = detectGnssSensorType();
     const char *detectedSensorTypeName = "INVALID";
     if (detectedSensorType == UbxCmdBuilder::GnssSensorType::Ublox) {
         detectedSensorTypeName = "UBLOX";
+        backendAgent.setDetectedChipIfUnknown("Ublox");
     } else if (detectedSensorType == UbxCmdBuilder::GnssSensorType::Unicore) {
         detectedSensorTypeName = "UNICORE";
+        backendAgent.setDetectedChipIfUnknown("Unicorecomm");
     }
-
+    prefs.begin("myPrefs", false);
+    prefs.putString("GNSS_MDL_TYPE", detectedSensorTypeName);
+    prefs.end();
 
     if (needReset) {
         if (detectedSensorType == UbxCmdBuilder::GnssSensorType::Unicore) {
@@ -185,6 +178,12 @@ void setup() {
     }
     Serial.println("[SETUP] Tao mutex tcpStreamMutex thanh cong!");
 
+    gnssSerialMutex = xSemaphoreCreateMutex();
+    while (gnssSerialMutex == nullptr) {
+        Serial.println("[ERROR] Tao mutex gnssSerialMutex that bai! Dang thu lai...");
+        gnssSerialMutex = xSemaphoreCreateMutex();
+    }
+    Serial.println("[SETUP] Tao mutex gnssSerialMutex thanh cong!");
 
     Serial.println("[SETUP] Task MQTT: Quan ly ket noi MQTT va callback.");
     xTaskCreatePinnedToCore(taskMQTT, "MQTT Task", MQTT_TASK_STACK_BYTES, nullptr, 3, nullptr, 1);
@@ -240,7 +239,7 @@ __attribute__((noreturn)) void taskNtrip([[maybe_unused]] void *parameter) {
             DeviceRuntime::gsmDisconnectCount = 0;
         }
         if (xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
-            // loopNTRIP owns reconnect attempts and its five-second backoff.
+            // loopNTRIP owns reconnect attempts and the per-endpoint backoff.
             loopStatus = loopNTRIP(rtcmRead);
             xSemaphoreGive(tcpStreamMutex);
             ++DeviceRuntime::ntripDisconnectCount;
@@ -268,22 +267,22 @@ __attribute__((noreturn)) void healthCheckTask([[maybe_unused]] void* const para
     uint32_t loopStartTime = 0;
     while (true) {
         const uint32_t loopStartTime = millis();
+        healthPayload = "";
         int32_t signalQualityDbm = -1;
         if (xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)))
         {
-            if (isGsmConnection()) {
-                if (xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
-                    signalQualityDbm = modem.getSignalQuality();
-                    xSemaphoreGive(tcpStreamMutex);
-                }
-            }
             const bool gnssDataOk = rtcmState->hasGnssReception
                 && millis() - rtcmState->lastGnssReceptionMs <= GNSS_DATA_TIMEOUT_MS;
             const RtcmMessageCounts messageCounts = rtcmState->messageCounts;
             rtcmState->messageCounts = {};
-            healthPayload = formDeviceHealthString(signalQualityDbm, gnssDataOk,
-                                                   messageCounts.values);
             xSemaphoreGive(rtcmBufferMutex);
+            // Both modem RSSI and client connected() checks issue AT commands.
+            if (xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
+                if (isGsmConnection()) signalQualityDbm = modem.getSignalQuality();
+                healthPayload = formDeviceHealthString(signalQualityDbm, gnssDataOk,
+                                                       messageCounts.values);
+                xSemaphoreGive(tcpStreamMutex);
+            }
         }
         if (!healthPayload.isEmpty()) publishHealth(healthPayload);
         const uint32_t elapsed = millis() - loopStartTime;

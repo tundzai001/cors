@@ -269,6 +269,8 @@ def _cache_rtcm_signal_snapshot(serial: str, decoded: dict) -> None:
         "updated_at_ms": now_ms,
     }
     live["satellite_count"] = len(fresh_satellites)
+    if isinstance(decoded.get("base_coords"), dict):
+        live["base_coords"] = decoded["base_coords"]
     if decoded.get("packets"):
         live["rtcm_stats"] = decoded["packets"]
     elif decoded.get("rtcm_stats"):
@@ -745,10 +747,10 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 try:
                     data = json.loads(payload.decode('ascii'))
                     if data.get("type") == "rtcm_skyview_calculated":
-                        if _expects_nmea_skyview(serial):
-                            return
-                        # Payload is already fully calculated at the Edge! Just broadcast it.
+                        # Preserve decoded packet statistics even when NMEA owns the skyview.
                         _cache_rtcm_signal_snapshot(serial, data)
+                        if _expects_nmea_skyview(serial):
+                            data = {**data, "satellites": []}
                         await manager.broadcast({
                             "type": "rtcm_signal_update",
                             "serial": serial,

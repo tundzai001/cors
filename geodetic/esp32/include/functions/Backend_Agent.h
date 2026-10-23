@@ -18,7 +18,7 @@ class BackendAgent {
 public:
     void begin();
     void loop();
-    bool detectGnssChip(Stream &gnssStream, bool force = false, bool allFormats = false);
+    bool detectGnssChip(Stream &gnssStream, bool force = false);
     void setDetectedChipIfUnknown(const String &chipType);
     const String &sensorType() const { return sensorType_; }
 
@@ -74,6 +74,8 @@ private:
     volatile bool workflowCancelRequested_ = false;
 
     uint32_t lastStatusMs_ = 0;
+    uint32_t firmwareSize_ = 0;
+    bool statusPublishConfirmed_ = false;
     uint32_t lastChipProbeMs_ = 0;
     uint32_t controlPlaneArmedMs_ = 0;
     uint32_t lastControlCheckMs_ = 0;
@@ -114,8 +116,7 @@ private:
     bool restartConfiguredNtrip();
     int loopNtripRoverLocked();
     bool stopNtripRoverLocked();
-    bool applyBaseCoordinates(double latitude, double longitude, double altitude,
-        UbxCmdBuilder::AltitudeReference altitudeReference = UbxCmdBuilder::AltitudeReference::Ellipsoid);
+    bool applyBaseCoordinates(double latitude, double longitude, double altitude);
     bool transformToVn2000(double latitude, double longitude, double altitude,
                            double centralMeridianDeg, double scale,
                            double &localLatitude, double &localLongitude,

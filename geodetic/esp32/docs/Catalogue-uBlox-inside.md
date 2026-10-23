@@ -113,7 +113,7 @@ inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980_base_001/health";
 // ================= CẤU HÌNH KIỂM TRA SỨC KHOẺ =================
 
 // Chu kỳ gửi thông tin sức khoẻ (ms):
-const unsigned long HEALTH_INTERVAL = 30000;
+const unsigned long HEALTH_INTERVAL = 30000; 
 ```
 
 ## Quá trình hoạt động
@@ -250,7 +250,7 @@ Chỉ xem được nếu module GNSS đang xuất dữ liệu ra cổng COM USB.
 
 ![Mở view](imgs/ublox/3.jpg)
 
-Packet Console sẽ hiển thị thông tin về các bản tin được sinh ra từ module GNSS, nhưng không phải nội dung bên trong.
+Packet Console sẽ hiển thị thông tin về các bản tin được sinh ra từ module GNSS, nhưng không phải nội dung bên trong. 
 
 ![Packet Console](imgs/ublox/4.jpg)
 

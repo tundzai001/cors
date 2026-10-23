@@ -2274,6 +2274,22 @@ class MonitorWorker(threading.Thread):
         }
         if self.is_prefix7 and not decoded_coords:
             coords = {}  # GGA positions are not decoded RTCM observations.
+        # Physical ESP firmware owns presence, configuration and license state.
+        # The pull worker contributes decoded observations only.
+        if self.serial.lower().startswith("esp_") and not self.is_prefix7:
+            observation = {
+                "type": "rtcm_skyview_calculated",
+                "satellites": list(satellites.values()),
+                "packets": rtcm_stats,
+                "timestamp": round(now, 3),
+            }
+            if decoded_coords:
+                observation["base_coords"] = coords
+            if rtcm_stats or satellites or decoded_coords:
+                self.mqtt_client.publish(
+                    f"pi/devices/{self.serial}/raw_data", json.dumps(observation), qos=0
+                )
+            return
         status = {
             "serial": self.serial,
             "rtcm_stats": rtcm_stats,
@@ -2422,7 +2438,7 @@ class MonitorWorker(threading.Thread):
                 auth = base64.b64encode(f"{r_user}:{r_pass}".encode()).decode()
                 request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP NtripClient/1.0\r\nAuthorization: Basic {auth}\r\n\r\n"
                 sock.sendall(request.encode())
-                pending_data = self._read_ntrip_response(sock) if self.is_prefix7 else b''
+                pending_data = self._read_ntrip_response(sock)
                 
                 try:
                     self._send_rover_gga(sock)
@@ -2431,9 +2447,7 @@ class MonitorWorker(threading.Thread):
                 
                 self.is_connected = True
                 self.publish_status()
-                self.log("INFO" if self.is_prefix7 else "SUCCESS",
-                         "NTRIP authenticated; waiting for valid RTCM" if self.is_prefix7
-                         else f"✅ MONITOR ACTIVE: {self.cfg['mountpoint']}")
+                self.log("INFO", "NTRIP authenticated; waiting for valid RTCM")
                 rtcm_confirmed = False
                 
                 self.bytes_received = 0
@@ -2447,14 +2461,10 @@ class MonitorWorker(threading.Thread):
                         data = pending_data or sock.recv(4096)
                         pending_data = b''
                         if not data:
-                            self.log("WARNING", "Monitor EOF (Server tu choi hoac Mountpoint khong ton tai)")
+                            self.log("WARNING", "Caster closed the authenticated stream (EOF)")
                             break
                         
-                        if not self.is_prefix7:
-                            self.bytes_received += len(data)
                         now = time.time()
-                        if not self.is_prefix7:
-                            self.last_data_received_at = now
 
                         if now - self.last_gga_send_time >= self.gga_send_interval:
                             try:
@@ -2465,8 +2475,8 @@ class MonitorWorker(threading.Thread):
 
                         rtcm_buffer.extend(data)
                         frames = extract_rtcm3_frames(rtcm_buffer)
-                        first_rtcm = self.is_prefix7 and bool(frames) and not rtcm_confirmed
-                        if self.is_prefix7 and frames:
+                        first_rtcm = bool(frames) and not rtcm_confirmed
+                        if frames:
                             self.last_rtcm_received_at = now
                             if not rtcm_confirmed:
                                 self.log("INFO", "RTCM confirmed: received CRC-valid frame")

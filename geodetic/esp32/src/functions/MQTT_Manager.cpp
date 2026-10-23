@@ -49,7 +49,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.printf("[MQTT DOWNLINK] Nhan lenh legacy (%u bytes).\n", length);
     String cmd = "";
     for (int i = 0; i < length; i++) cmd += (char)payload[i];
-
+    
     #if PROGRAM_DEBUG
     Serial.print("\n[MQTT DOWNLINK] Lenh: ");
     Serial.println(cmd);
@@ -61,7 +61,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       #endif
       return;
     }
-
+    
     // Đẩy lệnh xuống UM980 qua Serial1
     std::vector<String> cmdWords = splitCommand(cmd);
     cmd_action_t action = handleCommand(cmdWords);
@@ -137,22 +137,15 @@ int connectMQTT() {
 int publishHealth(const String& payload) {
   if (payload.isEmpty()) return -1;
 
-  // The backend-compatible status packet is produced by BackendAgent.  The
-  // old health topic is still published below for backward compatibility.
-  backendAgent.publishStatus(true);
-
-  const uint32_t start = millis();
-  while (!mqtt.connected()) {
-    vTaskDelay(pdMS_TO_TICKS(100));
-    if (millis() - start > 5000) {
-      #if PROGRAM_DEBUG
-      Serial.println("[MQTT] publishHealth: MQTT not connected, aborting publish");
-      #endif
-      return -1;
-    }
-  }
+  // taskMQTT services BackendAgent status under the transport mutex.
+  // This task only publishes the legacy health topic below.
 
   if (tcpStreamMutex != nullptr && xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
+    // TinyGsmClient::connected() can consume modem UART responses too.
+    if (!mqtt.connected()) {
+      xSemaphoreGive(tcpStreamMutex);
+      return -1;
+    }
     prefs.begin("myPrefs", false);
     String topicPubHealth = prefs.getString("TPC_HEALTH", String(TOPIC_PUB_HEALTH));
     prefs.end();

@@ -3,8 +3,6 @@
 #include <Preferences.h>
 #include "Prog_Config.h"
 #include "functions/ubx_cmd_builder.h"
-#include "functions/Backend_Agent.h"
-#include "functions/NTRIP_Handler_IP.h"
 #include <cstring>
 
 extern SemaphoreHandle_t rtcmBufferMutex;
@@ -174,10 +172,6 @@ std::vector<String> splitCommand(const String &command) {
 }
 
 cmd_action_t handleGnssBaseCommand(const std::vector<String> &cmdWords) {
-    if (!gnssDetectedBaud()) {
-        Serial.println("[GNSS] UART not verified; run ATG GNSS AUTOBAUD first.");
-        return CMD_ACTION_NONE;
-    }
     UbxCmdBuilder::GnssOptions options;
     options.ports = {"UART1"};
     UbxCmdBuilder::CommandList commands;
@@ -206,7 +200,7 @@ cmd_action_t handleGnssBaseCommand(const std::vector<String> &cmdWords) {
         }
         uint32_t duration = cmdWords[1].toInt();
         float accuracy = cmdWords[2].toFloat();
-
+        
         commands = UbxCmdBuilder::buildBaseSurveyInCommand(duration, accuracy, sensorType, options);
         cmd_helper::sendGnssCommands(commands);
         Serial.println("[MQTT COMMAND DOWNLINK] Da gui lenh cau hinh GNSS BASE SURVEY_IN.");
@@ -256,18 +250,6 @@ cmd_action_t handleGnssSetCommand(const std::vector<String> &cmdWords) {
         return CMD_ACTION_NONE;
     }
 
-    if (cmdWords[1] == "PORT") {
-        if (cmdWords[2] != "1" && cmdWords[2] != "2" && cmdWords[2] != "3") {
-            Serial.println("[GNSS] PORT must be 1, 2 or 3.");
-            return CMD_ACTION_NONE;
-        }
-        prefs.begin("myPrefs", false);
-        prefs.putUChar("GNSS_PORT", static_cast<uint8_t>(cmdWords[2].toInt()));
-        prefs.end();
-        Serial.printf("[GNSS] Receiver port COM%s saved; ESP RX=%d TX=%d unchanged. Restarting.\n",
-                      cmdWords[2].c_str(), RX_GNSS, TX_GNSS);
-        return CMD_ACTION_ESP_RESTART;
-    }
     if (cmdWords[1] != "CHIP") {
         Serial.println("[MQTT COMMAND DOWNLINK] LOI - Lenh GNSS SET khong kha dung.");
         return CMD_ACTION_NONE;
@@ -275,7 +257,6 @@ cmd_action_t handleGnssSetCommand(const std::vector<String> &cmdWords) {
 
     String sensorType = cmdWords[2];
     sensorType.toUpperCase();
-    if (sensorType == "UNICORECOMM") sensorType = "UNICORE";
     if (sensorType != "UBLOX" && sensorType != "UNICORE") {
         Serial.println("[MQTT COMMAND DOWNLINK] LOI - Chip GNSS phai la UBLOX hoac UNICORE.");
         return CMD_ACTION_NONE;
@@ -344,7 +325,7 @@ cmd_action_t handleEspCommand(const std::vector<String> &cmdWords) {
             return CMD_ACTION_NONE;
         }
     }
-
+    
     Serial.println("[MQTT COMMAND DOWNLINK] This command is not yet implemented.");
     return CMD_ACTION_NONE;
 }
@@ -398,16 +379,6 @@ cmd_action_t handleCommand(std::vector<String> &cmdWords) {
             Serial.println("[MQTT COMMAND DOWNLINK] Error: Incomplete GNSS command.");
             return CMD_ACTION_NONE;
         }
-        if (cmdWords.size() == 3 && cmdWords[2] == "UARTTEST") {
-            gnssUartSelfTest();
-            return CMD_ACTION_NONE;
-        }
-        if ((cmdWords.size() == 3 || (cmdWords.size() == 4 && cmdWords[3] == "ALL")) && cmdWords[2] == "AUTOBAUD") {
-            backendAgent.detectGnssChip(Serial1, true, cmdWords.size() == 4);
-            Serial.printf("[GNSS][STATUS] RX=%d TX=%d COM%u baud=%u chip=%s\n",
-                          RX_GNSS, TX_GNSS, GNSS_UNICORE_PORT, gnssDetectedBaud(), backendAgent.sensorType().c_str());
-            return CMD_ACTION_NONE;
-        }
         if (cmdWords[2] == "BASE") {
             cmdWords.erase(cmdWords.begin(), cmdWords.begin() + 3);
             return handleGnssBaseCommand(cmdWords);
@@ -418,7 +389,7 @@ cmd_action_t handleCommand(std::vector<String> &cmdWords) {
         }
         Serial.println("[MQTT COMMAND DOWNLINK] Error: Unknown GNSS command: " + cmdWords[2]);
         return CMD_ACTION_NONE;
-    }
+    }    
     if (cmdWords[1] == "ESP") {
         cmdWords.erase(cmdWords.begin(), cmdWords.begin() + 2);
         return handleEspCommand(cmdWords);

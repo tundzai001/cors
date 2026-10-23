@@ -113,7 +113,7 @@ inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980_base_001/health";
 // ================= CẤU HÌNH KIỂM TRA SỨC KHOẺ =================
 
 // Chu kỳ gửi thông tin sức khoẻ (ms):
-const unsigned long HEALTH_INTERVAL = 30000;
+const unsigned long HEALTH_INTERVAL = 30000; 
 ```
 
 ## Quá trình hoạt động

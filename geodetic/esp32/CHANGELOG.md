@@ -4,13 +4,6 @@ Tài liệu này ghi lại chi tiết toàn bộ các cập nhật, tối ưu h�
 
 ---
 
-## V2.3.2 — 2026-10-22
-
-- Tăng phiên bản agent ESP32 từ `V2.3.1` lên `V2.3.2`.
-- Gói trạng thái gửi CORS và User-Agent NTRIP tiếp tục dùng chung `AGENT_VERSION`.
-
----
-
 ## 1. Tự động dừng Auto Base khi nạp tọa độ chính xác (`EXECUTE_RAW_COMMANDS`)
 * **Tệp thay đổi**: `src/functions/Backend_Agent.cpp`
 * **Bối cảnh & Vấn đề**:

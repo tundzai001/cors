@@ -73,7 +73,7 @@ namespace UbxCmdBuilder
                port == "USB" || port == "SPI";
     }
 
-    inline bool isValidPort(const String &port) {
+    inline bool isValidPort(const String &port) { 
         return port == "UART1" || port == "UART2" || port == "USB";
     }
 
@@ -192,7 +192,7 @@ namespace UbxCmdBuilder
             return msm7 && o.gal;
         return !strcmp(message, "1230") && o.glo;
     }
-
+    
     void appendUnicoreOutputCommands(CommandList &commands, const String &port, const GnssOptions &options)
     {
         const GnssOptions o = normalizeGnssOptions(options);
@@ -372,7 +372,7 @@ namespace UbxCmdBuilder
             return GnssSensorType::Invalid;
         if (normalized == "UBLOX")
             return GnssSensorType::Ublox;
-        if (normalized == "UNICORE" || normalized == "UNICORECOMM")
+        if (normalized == "UNICORE")
             return GnssSensorType::Unicore;
         return GnssSensorType::Invalid;
     }
@@ -408,8 +408,7 @@ namespace UbxCmdBuilder
     }
 
     CommandList buildBaseFixedLlaCommand(double lat, double lon, double alt, float accuracy,
-                                         GnssSensorType sensorType, const GnssOptions &options,
-                                         AltitudeReference altitudeReference)
+                                         GnssSensorType sensorType, const GnssOptions &options)
     {
         CommandList commands;
         if (sensorType == GnssSensorType::Ublox)
@@ -437,8 +436,6 @@ namespace UbxCmdBuilder
             commands.push_back(asciiCommand("unlogall\r\n"));
             commands.push_back(delayCommand(1000));
             const String cmd = "mode base " + String(lat, 10) + " " + String(lon, 10) + " " + String(alt, 4) + "\r\n";
-            if (altitudeReference == AltitudeReference::Ellipsoid)
-                commands.push_back(asciiCommand("config undulation 0.0\r\n"));
             Serial.printf("Fixed position command: %s", cmd.c_str());
             commands.push_back(asciiCommand(cmd));
             commands.push_back(delayCommand(2000));
@@ -551,21 +548,18 @@ namespace UbxCmdBuilder
         }
     }
 
-    CommandList buildGeotekLteUnicoreConfig(const String &setupMethod, uint32_t duration, double lat, double lon, double alt,
-                                          AltitudeReference altitudeReference)
+    CommandList buildGeotekLteUnicoreConfig(const String &setupMethod, uint32_t duration, double lat, double lon, double alt)
     {
         CommandList commands = {asciiCommand("FRESET\r\n"), asciiCommand("unlogall\r\n")};
         String method = setupMethod;
         method.toUpperCase();
-        if (method != "SURVEY_IN" && altitudeReference == AltitudeReference::Ellipsoid)
-            commands.push_back(asciiCommand("config undulation 0.0\r\n"));
         commands.push_back(method == "SURVEY_IN" ? asciiCommand("mode base time " + String(duration) + "\r\n") : asciiCommand("mode base " + String(lat, 10) + " " + String(lon, 10) + " " + String(alt, 4) + "\r\n"));
         static constexpr std::array<const char *, 17> RTCM = {
             "1006", "1033", "1074", "1124", "1084", "1094", "1114", "1077", "1127",
             "1087", "1097", "1117", "1042", "1019", "1020", "1045", "1044",
         };
         for (const char *message : RTCM)
-            commands.push_back(asciiCommand("rtcm" + String(message) + " com" + String(GNSS_UNICORE_PORT) + " 1\r\n"));
+            commands.push_back(asciiCommand("rtcm" + String(message) + " com2 1\r\n"));
         commands.push_back(asciiCommand("saveconfig\r\n"));
         return commands;
     }

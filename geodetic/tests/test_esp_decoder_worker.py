@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import json
 import sys
 import os
@@ -57,17 +57,9 @@ class EspDecoderWorkerTests(unittest.TestCase):
 
         worker.publish_status()
 
-        # Verify MQTT publish calls
-        self.assertGreaterEqual(mqtt_mock.publish.call_count, 2)
-
-        # Call 1: topic status
-        status_call = [c for c in mqtt_mock.publish.call_args_list if c[0][0] == "pi/devices/esp_AABBCCDDEEFF/status"][0]
-        status_data = json.loads(status_call[0][1])
-        self.assertEqual(status_data["serial"], "esp_AABBCCDDEEFF")
-        self.assertEqual(status_data["status"], "online")
-        self.assertEqual(status_data["satellite_count"], 1)
-        self.assertIn("GPS:1", status_data["nmea_data"]["satellites"])
-        self.assertEqual(status_data["rtk_fix_status"], "FIXED")
+        # A decoder must not replace the physical ESP's presence/config/license.
+        self.assertEqual(mqtt_mock.publish.call_count, 1)
+        self.assertFalse(any(c.args[0].endswith('/status') for c in mqtt_mock.publish.call_args_list))
 
         # Call 2: raw_data skyview
         raw_call = [c for c in mqtt_mock.publish.call_args_list if c[0][0] == "pi/devices/esp_AABBCCDDEEFF/raw_data"][0]
@@ -75,6 +67,26 @@ class EspDecoderWorkerTests(unittest.TestCase):
         self.assertEqual(raw_data["type"], "rtcm_skyview_calculated")
         self.assertEqual(len(raw_data["satellites"]), 1)
         self.assertEqual(raw_data["satellites"][0]["prn"], 1)
+
+    def test_1005_only_is_published_without_presence_or_gga_fallback(self):
+        import geotek_daithanh_aitogy as relay
+        from test_prefix7_decoder import frame1005
+        decoder = relay.RTCMSignalDecoder()
+        worker = MonitorWorker({'mountpoint': 'changed_mp', 'serial': 'esp_TEST',
+                                'lat': 1, 'lon': 2, 'alt': 3}, MagicMock())
+        with patch.object(relay, 'rtcm_signal_decoder', decoder):
+            worker.publish_status()
+            worker.mqtt_client.publish.assert_not_called()
+            decoder.decode_sync(worker.serial, frame1005())
+            worker.publish_status()
+        call = worker.mqtt_client.publish.call_args
+        self.assertEqual(call.args[0], 'pi/devices/esp_TEST/raw_data')
+        data = json.loads(call.args[1])
+        self.assertIn('1005', data['packets'])
+        self.assertAlmostEqual(data['base_coords']['lat'], 21, places=0)
+        self.assertNotIn('status', data)
+        self.assertNotIn('service_config', data)
+        self.assertNotIn('rtk_fix_status', data)
 
     def test_monitor_worker_stop(self):
         mqtt_mock = MagicMock()

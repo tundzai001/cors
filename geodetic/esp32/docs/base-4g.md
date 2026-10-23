@@ -109,27 +109,6 @@ CORS để giữ đúng envelope, command ID và quyền người vận hành.
 
 ## Kiểm tra
 
-### Quy ước độ cao
-
-Auto Base và kiểm tra điểm chuẩn lấy độ cao ellipsoid `h = H + N` từ GGA:
-trường 9 là H, trường 11 là độ lệch geoid N; cả hai phải có đơn vị mét và
-giá trị hữu hạn. Thiếu N không được hiểu là N = 0; mẫu đó không dùng để đặt base.
-Trường telemetry `altitude` vẫn là H như trước; việc lấy mẫu dùng trường h riêng.
-
-Khi áp dụng h cho Unicore, firmware gửi `config undulation 0.0` trước `mode base`
-và `saveconfig`. u-blox nhận h qua TMODE3. Đây là quy ước đầu vào receiver,
-không phải tính cao độ thủy chuẩn Hòn Dấu. Thay đổi undulation cũng ảnh hưởng
-độ cao theo geoid do receiver xuất ra.
-
-Các bộ tạo lệnh C++ có tham số `AltitudeReference::Ellipsoid` để chọn h rõ ràng;
-mặc định `Legacy` giữ hành vi cũ. Lệnh ATG FIXED cũ giữ quy ước đang có trên chip.
-Cấu hình từ CORS truyền nguyên lệnh do backend tạo và lưu `altitude_reference`
-trong cấu hình NVS. Auto Base ghi nhãn ELLIPSOID; khi kết thúc kiểm tra điểm
-chuẩn, firmware khôi phục theo nhãn đã lưu, không tự đổi nghĩa độ cao cũ.
-
-Tham khảo [Unicore FAQ](https://en.unicore.com/faq/) và
-[GGA của Trimble](https://receiverhelp.trimble.com/alloy-gnss/en-us/nmea0183-messages-gga.html).
-
 Chạy kiểm tra host, không cần gắn ESP32:
 
 ```sh
@@ -137,7 +116,7 @@ c++ -std=c++17 -fsanitize=address,undefined -g -Itest/host -Iinclude \
   test/host/base_checks.cpp src/functions/ubx_cmd_builder.cpp \
   -o /tmp/esp32-base-checks
 /tmp/esp32-base-checks
-python3 -B test/host/check_cors.py ../.. /tmp/esp32-base-checks
+python3 -B test/host/check_cors.py ../cors /tmp/esp32-base-checks
 ```
 
 Kiểm tra này chạy bộ tạo lệnh C++ thật, kiểm tra khóa, checksum, routing UART
