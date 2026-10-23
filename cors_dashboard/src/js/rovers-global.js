@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let availableCasters = [];
     let casterSourcesCache = null;
     let syncInProgress = false;
+    let mountpointsRefreshInProgress = false;
     let currentRenderedConnectionKeys = new Set();
     let latestMergedRovers = [];
     let showExpiringSoonOnly = false;
@@ -200,7 +201,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             // Periodic sync (every 5s for smoother status updates)
             setInterval(syncData, 5000);
-            
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) syncData();
+            });
+
             // Live-tick for connection durations (every 1s)
             setInterval(updateLiveClocks, 1000);
             
@@ -229,7 +233,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function syncData() {
-        if (syncInProgress) {
+        if (document.hidden || syncInProgress) {
             return;
         }
 
@@ -243,10 +247,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             if (syncTimeEl) syncTimeEl.textContent = 'Syncing...';
 
-            await Promise.allSettled([
-                fetchRovers({ render: false }),
-                fetchCasterUsers({ render: false })
-            ]);
+            const refreshes = [fetchRovers({ render: false }), fetchCasterUsers({ render: false })];
+            if (currentUser?.role === 'admin' && document.getElementById('tab-mountpoints-content')?.classList.contains('active')) {
+                refreshes.push(loadAndRenderMountpoints({ background: true }));
+            }
+            await Promise.allSettled(refreshes);
             renderTable();
 
             if (syncTimeEl) {
@@ -3244,17 +3249,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // ✅ Load and render mountpoints into tab
-    async function loadAndRenderMountpoints() {
+    async function loadAndRenderMountpoints({ background = false } = {}) {
         const container = document.getElementById('mountpoints-container');
-        if (!container) return;
+        if (!container || mountpointsRefreshInProgress) return;
+        if (background && (document.querySelector('.modal.show') || document.getElementById('sync-mountpoints-btn')?.disabled)) return;
+        mountpointsRefreshInProgress = true;
 
-        container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
+        if (!background) container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
 
         try {
-            const res = await apiFetchRaw('/api/admin/caster-sources', { headers: API_HEADERS });
+            const res = await apiFetchRaw('/api/admin/caster-sources', { headers: API_HEADERS, cache: 'no-store' });
             if (!res.ok) throw new Error('Failed to fetch sources');
             
             const data = await res.json();
+            casterSourcesCache = data;
+            const oldSearch = document.getElementById('mountpoints-search');
+            const view = {
+                search: oldSearch?.value || '',
+                domain: document.querySelector('#domain-filter-pills .nav-link.active')?.getAttribute('data-domain') || 'all',
+                focused: Boolean(oldSearch && document.activeElement === oldSearch),
+                cursor: oldSearch?.selectionStart,
+                selectionEnd: oldSearch?.selectionEnd,
+                scrollTop: container.scrollTop,
+                scrollLeft: container.querySelector('.table-responsive')?.scrollLeft || 0,
+            };
             const domains = Object.keys(data.by_domain || {}).sort();
             const sources = data.all || [];
             const hostOptions = Object.keys(data.by_host || {}).sort();
@@ -3431,6 +3449,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             };
 
+            if (searchInput) searchInput.value = view.search;
+            const pills = Array.from(document.querySelectorAll('#domain-filter-pills .nav-link'));
+            const selectedPill = pills.find(pill => pill.getAttribute('data-domain') === view.domain) || pills[0];
+            pills.forEach(pill => pill.classList.toggle('active', pill === selectedPill));
+            filterRows();
+            container.scrollTop = view.scrollTop;
+            const scroller = container.querySelector('.table-responsive');
+            if (scroller) scroller.scrollLeft = view.scrollLeft;
+            if (view.focused && searchInput) {
+                searchInput.focus({ preventScroll: true });
+                searchInput.setSelectionRange(view.cursor, view.selectionEnd);
+            }
             searchInput?.addEventListener('input', filterRows);
 
             document.querySelectorAll('#domain-filter-pills .nav-link').forEach(pill => {
@@ -3531,7 +3561,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         } catch (e) {
             console.error("[Mountpoints]", e);
-            container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải dữ liệu: ${escapeHtml(e.message)}</div>`;
+            if (!background) container.innerHTML = `<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle me-2"></i>Lỗi tải dữ liệu: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            mountpointsRefreshInProgress = false;
         }
     }
 

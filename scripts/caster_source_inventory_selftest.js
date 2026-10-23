@@ -7,24 +7,24 @@ const events = {}, calls = [], messages = [];
 const button = { disabled: false, innerHTML: 'Đồng bộ caster',
   addEventListener(type, callback) { events[type] = callback; },
   setAttribute(key, value) { this[key] = value; }, removeAttribute(key) { delete this[key]; }, focus() {} };
-const container = { innerHTML: '', querySelectorAll() { return []; } };
+const container = { innerHTML: '', querySelector() { return null; }, querySelectorAll() { return []; } };
 const fields = { 'mountpoints-container': container, 'sync-mountpoints-btn': button,
   'mountpoints-table-body': { querySelectorAll() { return []; } } };
 const snapshot = { total: 1, last_synced_at: 1700000000,
   all: [{ mountpoint: 'SAVED.BASE', identifier: 'Saved station', host: 'caster.test', domain: 'caster.test', datacount: 123 }],
   by_host: { 'caster.test': [{}] }, by_domain: { 'caster.test': [{}] } };
-let inventory = snapshot, releaseSync;
-const context = vm.createContext({ console, Date, Number, API_HEADERS: {}, casterSourcesCache: {},
+let inventory = snapshot, releaseSync, failInventory = false;
+const context = vm.createContext({ console, Date, Number, API_HEADERS: {}, casterSourcesCache: {}, mountpointsRefreshInProgress: false,
   escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
   showToast: (message, type) => messages.push({ message, type }),
-  document: { getElementById: id => fields[id], querySelectorAll: () => [] },
+  document: { getElementById: id => fields[id], querySelector: () => null, querySelectorAll: () => [] },
   apiFetchRaw: async (url, options = {}) => {
     calls.push({ url, method: options.method || 'GET' });
     if (url.endsWith('/sync')) return new Promise(resolve => { releaseSync = result => resolve({ ok: true, json: async () => result }); });
-    return { ok: true, json: async () => inventory };
+    return { ok: !failInventory, json: async () => inventory };
   },
 });
-vm.runInContext(source.slice(source.indexOf('    async function loadAndRenderMountpoints()'), source.indexOf('    function showToast(')), context);
+vm.runInContext(source.slice(source.indexOf('    async function loadAndRenderMountpoints('), source.indexOf('    function showToast(')), context);
 (async () => {
   await context.loadAndRenderMountpoints();
   assert.equal(calls.length, 1);
@@ -44,6 +44,35 @@ vm.runInContext(source.slice(source.indexOf('    async function loadAndRenderMou
   assert(!('aria-busy' in button));
   assert(container.innerHTML.includes('SAVED.BASE'), 'Failed caster sync keeps saved list visible');
   assert(messages.some(item => item.type === 'warning' && item.message.includes('0/1')));
+  // The Rover poll also refreshes the visible mountpoint tab using GET only.
+  context.syncInProgress = false;
+  context.currentUser = { role: 'admin' };
+  context.fetchRovers = context.fetchCasterUsers = async () => {};
+  context.renderTable = () => {};
+  context.isAnyRoverModalOpen = () => false;
+  fields['tab-mountpoints-content'] = { classList: { contains: () => true } };
+  vm.runInContext(source.slice(source.indexOf('    async function syncData()'),
+    source.indexOf('    async function refreshDataInPlace()')), context);
+  inventory = {...snapshot, all: [{...snapshot.all[0], datacount: 456}], last_synced_at: 1700000100};
+  let before = calls.length;
+  await context.syncData();
+  assert.equal(calls.length, before + 1);
+  assert.equal(calls.at(-1).method, 'GET', 'Automatic refresh must not force Caster POST polling');
+  assert(container.innerHTML.includes('456'), 'Data counters update without clicking sync');
+  context.document.hidden = true;
+  before = calls.length;
+  await context.syncData();
+  assert.equal(calls.length, before, 'Hidden browser tabs do not poll');
+  context.document.hidden = false;
+  fields['tab-mountpoints-content'].classList.contains = () => false;
+  await context.syncData();
+  assert.equal(calls.length, before, 'Other page tabs do not fetch mountpoints');
+  fields['tab-mountpoints-content'].classList.contains = () => true;
+  const saved = container.innerHTML;
+  failInventory = true;
+  await context.syncData();
+  assert.equal(container.innerHTML, saved, 'Background failure preserves the visible saved table');
+  failInventory = false;
   if (process.argv[2]) {
     const bootstrap = fs.readFileSync(process.argv[3], 'utf8');
     const styles = fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/css/dist/rovers-global.min.css'), 'utf8');
@@ -54,5 +83,5 @@ vm.runInContext(source.slice(source.indexOf('    async function loadAndRenderMou
   assert(container.innerHTML.includes('Chưa có mountpoint đã lưu'));
   assert(container.innerHTML.includes('Tạo mountpoint'));
   assert(container.innerHTML.includes('Đồng bộ caster'));
-  console.log('PASS: saved list, explicit sync POST, loading/disabled state, partial outage feedback, empty-state controls');
+  console.log('PASS: saved list, manual sync, automatic GET refresh, hidden/inactive guards, background failure preservation, empty state');
 })().catch(error => { console.error(error); process.exitCode = 1; });
