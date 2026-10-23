@@ -217,9 +217,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const isAutoSetupStatus = liveDataAvailable && (device.status || '').startsWith('auto_setup');
 
     if (isReadonly4g) {
-        fixInfo = liveDataAvailable && Number(device.bps || device.ntrip_stats?.server1_bps || 0) > 0
-            ? { label: 'RTCM LIVE', color: '#00ff88', icon: '📡' }
-            : { label: liveDataAvailable ? 'CHỜ RTCM' : 'OFFLINE', color: '#6c757d', icon: '⏸️' };
+        fixInfo = liveDataAvailable && window.CorsDashboardShared?.getMapEffectiveStatus?.(device) === 'online'
+            ? { label: 'ONLINE', color: '#00ff88', icon: '📡' }
+            : { label: 'OFFLINE', color: '#ff0000', icon: '❌' };
     } else if (isAutoSetupStatus) {
         const AUTO_SETUP_STEPS = {
             'auto_setup_rover': { label: 'Bước 1: Đặt chế độ ROVER', color: '#17a2b8', icon: '🔄', step: 1 },

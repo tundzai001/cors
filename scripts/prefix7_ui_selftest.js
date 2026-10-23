@@ -30,7 +30,7 @@ const text = node => Array.isArray(node) ? node.map(text).join('') :
 const station = {serial: 'MONITOR_70001', name: '70001', status: 'online', timestamp: Date.now() / 1000,
   is_synced: true, bps: 512, base_config: {}, service_config: {mountpoint1: '70001'},
   system_info: {auth_status: {server_token_present: false, token_synced: false, agent_token_present: false}}};
-for (const status of ['online', 'sleep', 'offline', 'awaiting_license', 'unprovisioned']) {
+for (const status of ['online', 'sleep', 'starting', 'offline', 'awaiting_license', 'unprovisioned']) {
 for (const role of ['admin', 'coordinator', 'viewer']) {
   for (const serial of ['MONITOR_70001', 'esp_112233445566']) {
     const device = {...station, serial, status, user_id: 7};
@@ -38,13 +38,20 @@ for (const role of ['admin', 'coordinator', 'viewer']) {
     const buttons = collect(tree).filter(n => n.type === 'button');
     assert.deepEqual(buttons.map(text), ['Overview'], `${role}: Overview is the only control`);
     assert.match(text(tree), /Base 4G · Chỉ xem/);
-    assert.doesNotMatch(text(tree), /CHỜ LICENSE|Kích hoạt|Khởi động lại|Admin Control/);
+    assert.doesNotMatch(text(tree), /CHỜ LICENSE|Kích hoạt|Khởi động lại|Admin Control|SLEEP|NGỦ|CHỜ RTCM|ĐANG KHỞI/);
     const card = window.DeviceListItem({device, currentUser: {id: 7, role}});
     assert.ok(!collect(card).some(n => n.props.title === 'Xóa trạm'));
-    assert.doesNotMatch(text(card), /CHỜ LICENSE/);
+    assert.doesNotMatch(text(card), /CHỜ LICENSE|SLEEP|NGỦ|CHỜ RTCM|ĐANG KHỞI/);
+    assert.match(text(card), status === 'online' ? /ONLINE/ : /OFFLINE/, 'Every mobile card shows an explicit binary status');
   }
 }
 }
+const readonlyHelper = window.CorsDashboardShared.isReadonly4gBase;
+delete window.CorsDashboardShared.isReadonly4gBase;
+const resumedCard = window.DeviceListItem({device:{...station,service_config:undefined},currentUser:{role:'admin'}});
+assert.doesNotMatch(text(resumedCard), /CHỜ LICENSE|SLEEP|NGỦ|CHỜ RTCM/);
+assert.ok(!collect(resumedCard).some(n => n.props.title === 'Xóa trạm'));
+window.CorsDashboardShared.isReadonly4gBase = readonlyHelper;
 assert.equal(window.CorsDashboardShared.isReadonly4gBase({serial:'MONITOR_HANOI',service_config:{mountpoint1:'HANOI'}}), false);
 assert.equal(window.CorsDashboardShared.isReadonly4gBase({serial:'esp_112233445566',service_config:{mountpoint1:'ESP_TEST'}}), false);
 console.log('PASS: prefix-7 devices have only Overview for all roles, no editing/license/deletion; legacy stations preserved');

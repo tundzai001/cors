@@ -1,6 +1,10 @@
 // ====================== Core dashboard list components ======================
 (() => {
 const { useState, useEffect, memo, useRef } = React;
+// A resumed snapshot can omit config and coexist with an older shared bundle.
+const isReadonly4gBase = device => /^MONITOR_7/i.test(String(device?.serial || '').trim()) ||
+    window.CorsDashboardShared?.isReadonly4gBase?.(device) === true;
+
 
 const STATUS_TEXT_MAP = {
     'online': 'ONLINE',
@@ -86,7 +90,7 @@ function getDeviceOpsFlags(device) {
 }
 
 function hasAccessTokenGap(device) {
-    if (window.CorsDashboardShared?.isReadonly4gBase?.(device)) return false;
+    if (isReadonly4gBase(device)) return false;
     if (window.CorsDashboardShared?.isAccessTokenSynced?.(device)) return false;
     const authStatus = device?.system_info?.auth_status || {};
     const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
@@ -132,7 +136,7 @@ const STATUS_CLASS_MAP = {
 
 const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelected, onSelect, onDelete, currentUser, offlineNow = null }) {
     const isAdmin = currentUser?.role === 'admin';
-    const canDelete = !window.CorsDashboardShared?.isReadonly4gBase?.(device) && (currentUser?.role === 'admin' ||
+    const canDelete = !isReadonly4gBase(device) && (currentUser?.role === 'admin' ||
         (currentUser?.role === 'coordinator' && device.user_id === currentUser?.id));
 
     // ============================================================
@@ -241,11 +245,12 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
 
         const statusText = STATUS_TEXT_MAP[displayStatusKey] || String(displayStatusKey || 'UNKNOWN').toUpperCase();
         const statusBadgeClass = STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary';
-        const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(effectiveStatus);
+        const hideStatusBadge = !isReadonly4gBase(device) && !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(effectiveStatus);
 
         // Per-server individual color: pushing=green, sleep/input-only=blue, idle=disconnected
-        const s1StatusClass = sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1.sleep === true || s1SleepMode ? 'sleep' : (s1.connected ? 'online' : (primaryServerId === 1 && effectiveStatus === 'sleep' ? 'sleep' : 'disconnected'))));
-        const s2StatusClass = sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2.sleep === true || s2SleepMode ? 'sleep' : (s2.connected ? 'online' : (primaryServerId === 2 && effectiveStatus === 'sleep' ? 'sleep' : 'disconnected'))));
+        const passive4g = isReadonly4gBase(device) === true;
+        const s1StatusClass = passive4g ? (effectiveStatus === 'online' ? 'online' : 'disconnected') : sourceOffline ? 'disconnected' : (s1.bps > 0 ? 'online' : (s1.sleep === true || s1SleepMode ? 'sleep' : (s1.connected ? 'online' : (primaryServerId === 1 && effectiveStatus === 'sleep' ? 'sleep' : 'disconnected'))));
+        const s2StatusClass = passive4g ? (effectiveStatus === 'online' ? 'online' : 'disconnected') : sourceOffline ? 'disconnected' : (s2.bps > 0 ? 'online' : (s2.sleep === true || s2SleepMode ? 'sleep' : (s2.connected ? 'online' : (primaryServerId === 2 && effectiveStatus === 'sleep' ? 'sleep' : 'disconnected'))));
 
         return {
             s1Enabled, s1SleepMode, s1UseRtcmSleepUi, s1Speed: formatSpeed(sourceOffline ? 0 : (s1UseRtcmSleepUi ? rtcmInputBps : s1.bps)),
@@ -345,7 +350,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
 
 window.DeviceListItem = DeviceListItem;
 
-const isMobileBase = serial => /^esp_/i.test(String(serial || '').trim());
+const isMobileBase = serial => /^(?:esp_|MONITOR_7)/i.test(String(serial || '').trim());
 
 const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onSelect, onDelete, searchTerm, onSearch, currentUser }) {
     const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
@@ -361,12 +366,12 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
         ['unsynced', 'Unsynced'], ['no_stream', 'No stream']
     ];
     const typeCounts = React.useMemo(() => devices.reduce((result, device) => {
-        result[(isMobileBase(device.serial) || window.CorsDashboardShared?.isReadonly4gBase?.(device) === true) ? 'mobile' : 'fixed'] += 1;
+        result[(isMobileBase(device.serial) || isReadonly4gBase(device) === true) ? 'mobile' : 'fixed'] += 1;
         return result;
     }, { fixed: 0, mobile: 0 }), [devices]);
     const canViewMobile = isAdmin || Boolean(currentUser?.can_view_mobile_bases) || typeCounts.mobile > 0;
     const typeDevices = React.useMemo(() => devices.filter(device =>
-        (isMobileBase(device.serial) || window.CorsDashboardShared?.isReadonly4gBase?.(device) === true) === (stationType === 'mobile')
+        (isMobileBase(device.serial) || isReadonly4gBase(device) === true) === (stationType === 'mobile')
     ), [devices, stationType]);
     const getEffectiveStatus = window.CorsDashboardShared?.getMapEffectiveStatus || ((device) => String(device?.status || 'offline').toLowerCase());
     const getListStatus = React.useCallback((device) => {

@@ -344,7 +344,8 @@ async def sync_prefix7_bases() -> None:
                 by_mp[mp] = device
             device.service_config = {**crud.normalize_service_config(device.service_config), 'mountpoint1': mp,
                                      'serverhost1': source.host, 'port1': source.port,
-                                     'server1_enabled': True}
+                                     'server1_enabled': True, 'stream_on_demand': False,
+                                     'server1_stream_on_demand': False}
             allowed_mps = set(re.split(r'[;,\s]+', rover.mountpoints or '')) if rover else set()
             valid = bool(rover and rover.is_active and rover.password
                          and (not rover.mountpoints or '*' in allowed_mps or mp in allowed_mps)
@@ -352,7 +353,7 @@ async def sync_prefix7_bases() -> None:
             device.system_info = {**(device.system_info or {}), 'auth_license_bypass': True,
                                   'base_type': '4g', 'read_only': True,
                                   'decoder_status': 'ready' if valid else 'missing_rover_credentials'}
-            if device.status in ('awaiting_license', 'unprovisioned', 'locked'):
+            if device.status in ('awaiting_license', 'unprovisioned', 'locked', 'sleep'):
                 device.status = 'offline'
                 device.bps = 0
                 device.ntrip_connected = False

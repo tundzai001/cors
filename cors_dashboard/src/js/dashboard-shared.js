@@ -198,7 +198,10 @@ const getMapEffectiveStatus = (device) => {
     const authStatus = device?.system_info?.auth_status || {};
     const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
     const rawStatus = String(device?.status || '').toLowerCase();
-    if (isReadonly4gBase(device) && ['awaiting_license', 'unprovisioned', 'locked'].includes(rawStatus)) return 'offline';
+    if (isReadonly4gBase(device)) {
+        if (rawStatus === 'offline' || ['awaiting_license', 'unprovisioned', 'locked'].includes(rawStatus)) return 'offline';
+        return ['online', 'streaming'].includes(rawStatus) ? 'online' : 'offline';
+    }
     if (rawStatus === 'awaiting_license' && isAccessTokenSynced(device) &&
         !['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)) {
         return 'awaiting_agent';

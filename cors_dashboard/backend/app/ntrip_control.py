@@ -13,6 +13,7 @@ from sqlalchemy import update, delete
 from fastapi.responses import PlainTextResponse
 
 from . import crud, models
+from .mobile_base import is_4g_mountpoint
 from .schemas import service_server_ids
 from .database import auth_session_scope, device_session_scope, settings
 from .database import DatabaseBusyError
@@ -263,6 +264,8 @@ async def _set_station_stream(
     requested_address: Optional[str] = None,
     server_id: Optional[int] = None,
 ) -> None:
+    if is_4g_mountpoint(mountpoint) or str(serial or '').upper().startswith('MONITOR_7'):
+        return  # Includes old leases still waiting for expiry after the upgrade.
     requested_mp_norm = _normalize_mountpoint(mountpoint) if mountpoint else None
     try:
         target_server_id = int(server_id) if server_id is not None else None
@@ -1141,6 +1144,13 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
         logger.debug(f"[NTRIP Wake] Bypassing wake for command/test mountpoint '{mountpoint}'")
         return PlainTextResponse(f"WAKE_STATUS: ok\nSTREAM_HINT: streaming\nMOUNTPOINT: {mountpoint}\nOK")
 
+    if is_4g_mountpoint(mountpoint):
+        # Caster owns this source; decoder telemetry must never gate its input.
+        # Pending keeps legacy casters accepting bytes without claiming RTCM exists.
+        return PlainTextResponse(
+            f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK"
+        )
+
     # 2. Bật trạm nếu hợp lệ
     try:
         async with device_session_scope() as db:
@@ -1219,6 +1229,8 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
 async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, requested_address: Optional[str] = None):
     """Xử lý ngắt/dừng trạm, trả về PlainTextResponse."""
     logger.info(f"[NTRIP Stop] mountpoint={mountpoint}, client_id={client_id}, force={force}, address={requested_address or 'not-provided'}")
+    if is_4g_mountpoint(mountpoint):
+        return PlainTextResponse(f"STOP_STATUS: ok\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
     try:
         async with device_session_scope() as db:
             serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)

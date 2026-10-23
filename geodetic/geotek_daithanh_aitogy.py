@@ -28,6 +28,9 @@ WORKER_MAP_LOCK = threading.RLock()
 # Healthy connections only hold this gate for the TCP handshake (normally a few
 # milliseconds); a slow caster can no longer make every worker retry together.
 SOURCE_CONNECT_LIMIT = threading.BoundedSemaphore(3)
+MONITOR_CONNECT_LOCK = threading.Lock()
+MONITOR_LAST_CONNECT_AT = 0.0
+MONITOR_CONNECT_INTERVAL = 1.0
 
 if os.name == 'nt':
     try:
@@ -2174,8 +2177,9 @@ class RelayWorker(threading.Thread):
 class MonitorWorker(threading.Thread):
     def __init__(self, station_config, mqtt_client):
         super().__init__()
-        self.cfg = station_config
-        self.is_prefix7 = str(self.cfg.get('mountpoint') or '').startswith('7')
+        self.cfg = dict(station_config)
+        self.cfg['mountpoint'] = str(self.cfg.get('mountpoint') or '').strip().lstrip('/')
+        self.is_prefix7 = self.cfg['mountpoint'].startswith('7')
         self.host = self.cfg.get('host') or TARGET_HOST
         self.port = int(self.cfg.get('port') or TARGET_PORT)
         self.retry_seconds = max(RECONNECT_INTERVAL, 60) if self.is_prefix7 else RECONNECT_INTERVAL
@@ -2204,6 +2208,7 @@ class MonitorWorker(threading.Thread):
         self.bytes_received = 0
         self.last_stat_update = time.time()
         self.last_data_received_at = 0.0
+        self.last_rtcm_received_at = 0.0
         self.max_no_data_seconds = 12.0
         self.current_bps = 0
         self.last_gga_send_time = 0.0
@@ -2242,12 +2247,14 @@ class MonitorWorker(threading.Thread):
         if not self.mqtt_client or not self.mqtt_client.is_connected():
             return
 
-        if self.is_connected:
+        now = time.time()
+        if self.is_prefix7:
+            recent_rtcm = self.last_rtcm_received_at > 0 and 0 <= now - self.last_rtcm_received_at < self.max_no_data_seconds
+            current_status = "online" if self.is_connected and recent_rtcm else "offline"
+        elif self.is_connected:
             current_status = "online" if self.current_bps > 0 else "sleep"
         else:
             current_status = "offline"
-
-        now = time.time()
         satellites = {
             key: sat for key, sat in self.satellites.items()
             if now - float(sat.get("last_seen", 0)) <= 30
@@ -2283,7 +2290,8 @@ class MonitorWorker(threading.Thread):
                 "mountpoint1": self.cfg['mountpoint'],
                 "serverhost1": self.host,
                 "port1": self.port,
-                "stream_on_demand": True,
+                "stream_on_demand": not self.is_prefix7,
+                "server1_stream_on_demand": not self.is_prefix7,
                 "stream_active": bool(self.is_connected and self.current_bps > 0),
                 "active_mountpoint": self.cfg['mountpoint']
             },
@@ -2363,15 +2371,43 @@ class MonitorWorker(threading.Thread):
             raise ConnectionError('Chunked NTRIP stream unsupported')
         return body
 
+    def _connect_socket(self):
+        global MONITOR_LAST_CONNECT_AT
+        while not self.stop_event.is_set():
+            if not SOURCE_CONNECT_LIMIT.acquire(timeout=0.2):
+                continue
+            try:
+                if self.is_prefix7:
+                    # Pace actual TCP starts even when the shared connect gate is busy.
+                    while not self.stop_event.is_set():
+                        with MONITOR_CONNECT_LOCK:
+                            delay = MONITOR_CONNECT_INTERVAL - (time.monotonic() - MONITOR_LAST_CONNECT_AT)
+                            if delay <= 0:
+                                MONITOR_LAST_CONNECT_AT = time.monotonic()
+                                break
+                        if self.stop_event.wait(delay):
+                            return None
+                if self.stop_event.is_set():
+                    return None
+                self.log('INFO', f"Connecting MONITOR: {self.host}:{self.port}/{self.cfg['mountpoint']}")
+                return socket.create_connection((self.host, self.port), timeout=10)
+            finally:
+                SOURCE_CONNECT_LIMIT.release()
+        return None
+
     def run(self):
         while not self.stop_event.is_set():
             sock = None
+            self.last_rtcm_received_at = 0.0
             try:
-                self.log("INFO", f"Connecting MONITOR: {self.host}:{self.port}/{self.cfg['mountpoint']}")
-                sock = socket.create_connection((self.host, self.port), timeout=10)
+                sock = self._connect_socket()
+                if sock is None:
+                    break
                 with self.socket_lock:
                     self._sock = sock
-                
+                if self.stop_event.is_set():
+                    break
+
                 # Cấu trúc y hệt chuẩn thiết bị Rover Ntrip 1.0 cổ điển:
                 r_user = self.cfg.get('rover_user') or self.cfg['mountpoint']
                 r_pass = self.cfg.get('rover_pass')
@@ -2390,7 +2426,10 @@ class MonitorWorker(threading.Thread):
                 
                 self.is_connected = True
                 self.publish_status()
-                self.log("SUCCESS", f"✅ MONITOR ACTIVE: {self.cfg['mountpoint']}")
+                self.log("INFO" if self.is_prefix7 else "SUCCESS",
+                         "NTRIP authenticated; waiting for valid RTCM" if self.is_prefix7
+                         else f"✅ MONITOR ACTIVE: {self.cfg['mountpoint']}")
+                rtcm_confirmed = False
                 
                 self.bytes_received = 0
                 self.last_stat_update = time.time()
@@ -2421,7 +2460,12 @@ class MonitorWorker(threading.Thread):
 
                         rtcm_buffer.extend(data)
                         frames = extract_rtcm3_frames(rtcm_buffer)
+                        first_rtcm = self.is_prefix7 and bool(frames) and not rtcm_confirmed
                         if self.is_prefix7 and frames:
+                            self.last_rtcm_received_at = now
+                            if not rtcm_confirmed:
+                                self.log("INFO", "RTCM confirmed: received CRC-valid frame")
+                                rtcm_confirmed = True
                             self.bytes_received += sum(len(frame) for frame in frames)
                             self.last_data_received_at = now
                         if self.is_prefix7 and now - self.last_data_received_at >= self.max_no_data_seconds:
@@ -2438,8 +2482,8 @@ class MonitorWorker(threading.Thread):
                                     existing["last_seen"] = now
                                     self.satellites[sat_key] = existing
 
-                        if now - self.last_stat_update >= 1.0:
-                            self.current_bps = int(self.bytes_received / (now - self.last_stat_update))
+                        if first_rtcm or now - self.last_stat_update >= 1.0:
+                            self.current_bps = int(self.bytes_received / max(1.0, now - self.last_stat_update))
                             self.bytes_received = 0
                             self.last_stat_update = now
                             self.is_connected = True
@@ -3564,8 +3608,8 @@ def setup_mqtt(worker_map):
             try:
                 payload = json.loads((msg.payload or b"{}").decode("utf-8"))
                 action = payload.get("action")
-                serial = payload.get("serial")
-                mp = payload.get("mountpoint")
+                serial = str(payload.get("serial") or '').strip()
+                mp = str(payload.get("mountpoint") or '').strip().lstrip('/')
                 if not serial or not mp:
                     return
                 with WORKER_MAP_LOCK:
@@ -3578,7 +3622,7 @@ def setup_mqtt(worker_map):
                             "serial": serial, "mountpoint": mp,
                             "rover_user": payload.get("rover_user") or mp,
                             "rover_pass": payload.get("rover_pass") or "12345",
-                            "host": payload.get("host") or TARGET_HOST,
+                            "host": str(payload.get("host") or TARGET_HOST).strip().lower(),
                             "port": int(payload.get("port") or TARGET_PORT),
                             "lat": payload.get("lat", 0.0), "lon": payload.get("lon", 0.0),
                             "alt": payload.get("alt", 0.0),
@@ -3590,6 +3634,8 @@ def setup_mqtt(worker_map):
                         ):
                             return
                         if existing:
+                            changed = [key for key in connection_keys if existing.cfg.get(key) != cfg[key]]
+                            logging.info('Decoder configuration changed for %s: %s', serial, ', '.join(changed) or 'worker stopped')
                             existing.stop()
                             existing.join(timeout=12)
                             if existing.is_alive():
@@ -3870,7 +3916,7 @@ if __name__ == "__main__":
             time.sleep(1)
         
         for cfg in monitor_list:
-            if str(cfg.get('mountpoint') or '').startswith('7'):
+            if str(cfg.get('mountpoint') or '').strip().lstrip('/').startswith('7'):
                 # Backend owns these workers and supplies current Rover credentials.
                 continue
             worker = MonitorWorker(cfg, mqtt_client)

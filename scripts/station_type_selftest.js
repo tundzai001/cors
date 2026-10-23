@@ -72,6 +72,19 @@ props.selectedDeviceSerial = 'ESP_000000000001'; tree = render();
 assert.equal(typeButton(tree, 'fixed').props['aria-pressed'], true, 'Selection does not override the fixed default or manual group');
 typeButton(tree, 'mobile').props.onClick();
 
+// Returning from a background tab replaces the snapshot, sometimes without
+// service_config. Serial-based stations must survive an older shared helper too.
+const readonlyHelper = window.CorsDashboardShared.isReadonly4gBase;
+delete window.CorsDashboardShared.isReadonly4gBase;
+props = {...props, devices: props.devices.map(({service_config, ...device}) => ({...device, status: 'offline'}))};
+tree = render();
+assert.deepEqual(cards(tree), ['esp_9896E5124B00', 'ESP_000000000001', 'MONITOR_70001'],
+    'Fresh resume snapshot cannot move MONITOR_7 into fixed when helper/config is absent');
+typeButton(tree, 'fixed').props.onClick(); tree = render();
+assert.deepEqual(cards(tree), ['1000000037a7201b', 'LP_00E04C0CFB9E', 'RELAY_ATG_DT']);
+typeButton(tree, 'mobile').props.onClick();
+window.CorsDashboardShared.isReadonly4gBase = readonlyHelper;
+
 // The list receives only the authenticated API scope; it must never fetch or
 // synthesize unassigned stations for coordinators.
 props = {...props, currentUser: {id: 7, role: 'coordinator'}, devices: [station('esp_9896E5124B00')]};

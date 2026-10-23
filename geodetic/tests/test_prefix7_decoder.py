@@ -29,6 +29,55 @@ class Prefix7DecoderTests(unittest.TestCase):
                                     'host': 'caster.test', 'port': 2201,
                                     'rover_user': '70001', 'rover_pass': 'saved-password'}, mqtt)
 
+    def test_mobile_has_no_sleep_or_on_demand_state(self):
+        worker = self.worker()
+        worker.is_connected = True
+        worker.current_bps = 0
+        worker.publish_status()
+        status = json.loads(worker.mqtt_client.publish.call_args_list[0].args[1])
+        self.assertEqual(status['status'], 'offline')
+        self.assertFalse(status['service_config']['stream_on_demand'])
+        self.assertFalse(status['service_config']['server1_stream_on_demand'])
+
+    def test_online_requires_recent_crc_valid_rtcm_and_disconnect_is_offline(self):
+        worker = self.worker()
+        worker.is_connected = True
+        worker.current_bps = 500
+        def reported():
+            worker.mqtt_client.publish.reset_mock()
+            worker.publish_status()
+            return json.loads(worker.mqtt_client.publish.call_args_list[0].args[1])['status']
+        with patch.object(relay.time, 'time', return_value=1000):
+            self.assertEqual(reported(), 'offline')
+            worker.last_rtcm_received_at = 999
+            worker.current_bps = 0
+            self.assertEqual(reported(), 'online')
+            worker.last_rtcm_received_at = 988
+            self.assertEqual(reported(), 'offline')
+            worker.last_rtcm_received_at = 999
+            worker.is_connected = False
+            self.assertEqual(reported(), 'offline')
+
+    def test_mobile_logins_are_paced_and_waiting_stop_opens_no_socket(self):
+        worker1, worker2, worker3 = self.worker(), self.worker(), self.worker()
+        now = [100.0]
+        starts = []
+        def advance(seconds):
+            now[0] += seconds
+            return False
+        worker2.stop_event.wait = advance
+        worker3.stop_event.wait = lambda seconds: worker3.stop_event.set() or True
+        def connect(*args, **kwargs):
+            starts.append(now[0])
+            return MagicMock()
+        with patch.object(relay, 'MONITOR_LAST_CONNECT_AT', 99.0), \
+             patch.object(relay.time, 'monotonic', side_effect=lambda: now[0]), \
+             patch.object(relay.socket, 'create_connection', side_effect=connect):
+            self.assertIsNotNone(worker1._connect_socket())
+            self.assertIsNotNone(worker2._connect_socket())
+            self.assertIsNone(worker3._connect_socket())
+        self.assertEqual(starts, [100.0, 101.0])
+
     def test_response_parser_fragmentation_and_coalesced_rtcm(self):
         frame = frame1005()
         for chunks in ([b'ICY 200 OK\r\n' + frame],
@@ -51,6 +100,7 @@ class Prefix7DecoderTests(unittest.TestCase):
         decoder.decode_sync(worker.serial, frames[0])
         worker.is_connected = True
         worker.current_bps = len(valid)
+        worker.last_rtcm_received_at = relay.time.time()
         worker.satellites = {'GPS:1': {'system': 'GPS', 'prn': 1, 'snr': 42, 'last_seen': 9999999999}}
         with patch.object(relay, 'rtcm_signal_decoder', decoder), \
              patch.object(relay, 'has_license') as license_check, \
@@ -86,6 +136,11 @@ class Prefix7DecoderTests(unittest.TestCase):
         self.assertIn(b'GET /70001 HTTP/1.0', request)
         self.assertIn(base64.b64encode(b'70001:saved-password'), request)
         self.assertFalse(worker.is_connected)
+        statuses = [json.loads(call.args[1])['status'] for call in worker.mqtt_client.publish.call_args_list
+                    if call.args[0] == worker.topic_status]
+        self.assertEqual(statuses[0], 'offline')
+        self.assertIn('online', statuses, 'First validated frame must publish online without waiting for the rate window')
+        self.assertTrue(set(statuses) <= {'online', 'offline'})
 
     def test_sync_is_idempotent_and_password_rotation_restarts_worker(self):
         client = MagicMock()
@@ -104,6 +159,8 @@ class Prefix7DecoderTests(unittest.TestCase):
              patch.object(relay, 'MonitorWorker', side_effect=create) as factory:
             relay.setup_mqtt(workers)
             send()
+            payload['mountpoint'] = ' /70001 '
+            payload['host'] = ' CASTER.TEST '
             send()
             self.assertEqual(factory.call_count, 1)
             worker.is_alive.side_effect = [True, False]
