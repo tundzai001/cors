@@ -85,7 +85,7 @@ RTCM_KEEPALIVE_DEBUG = str(
 # Global to track last activation command time per station to prevent "command storms" (debounce)
 last_station_activation_ts: Dict[str, float] = {}
 
-mountpoint_serial_cache: Dict[str, str] = {}
+mountpoint_serial_cache: Dict[str, Optional[str]] = {}
 command_mountpoints_cache: Set[str] = set()
 mountpoint_cache_last_updated: float = 0
 mountpoint_cache_lock = asyncio.Lock()
@@ -502,6 +502,9 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
             raise ValueError(f"Station '{serial}' not found")
 
         mountpoints = _extract_station_mountpoints(device)
+        if _normalize_mountpoint(mountpoint) not in {_normalize_mountpoint(mp) for mp in mountpoints}:
+            logger.warning('[NTRIP ROUTE] Rejected serial=%s requested=%s enabled_mountpoints=%s',
+                           serial, mountpoint, mountpoints)
         selected_mountpoint = _resolve_requested_mountpoint(mountpoints, mountpoint)
 
         session_id = uuid.uuid4().hex
@@ -592,7 +595,7 @@ def _device_has_enabled_mountpoint(device: models.Device, mountpoint: str) -> bo
                for sid in service_server_ids(cfg))
 
 
-async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: str) -> str:
+async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: str, *, force_refresh: bool = False) -> Optional[str]:
     global mountpoint_serial_cache, command_mountpoints_cache, mountpoint_cache_last_updated
     requested = _normalize_mountpoint(mountpoint)
     if not requested:
@@ -601,16 +604,17 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
     now = time.time()
     # Nếu cache còn hạn (60 giây), dùng luôn để phản hồi SIÊU TỐC
     async with mountpoint_cache_lock:
-        if requested in mountpoint_serial_cache and (now - mountpoint_cache_last_updated) < 60:
+        if not force_refresh and requested in mountpoint_serial_cache and (now - mountpoint_cache_last_updated) < 60:
             return mountpoint_serial_cache[requested]
 
         # Cache hết hạn hoặc không có -> Quét DB 1 lần duy nhất để rebuild toàn bộ cache
-        if (now - mountpoint_cache_last_updated) >= 60:
+        if force_refresh or (now - mountpoint_cache_last_updated) >= 60:
             logger.info("[CACHE] Rebuilding Mountpoint-to-Serial cache & Command Mountpoints cache...")
             new_cache = {}
+            owner_priority = {}
             new_cmd_cache = set()
             rs = await db.execute(select(models.Device.serial, models.Device.service_config, models.Device.system_info))
-            for row in rs.all():
+            for row in sorted(rs.all(), key=lambda row: str(row[0])):
                 serial = str(row[0])
 
                 # 🔥 FIX: Xử lý an toàn service_config
@@ -626,8 +630,18 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
                 for sid in service_server_ids(cfg):
                     mp = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
                     if mp:
-                        if mp not in new_cache:
+                        priority = 2 if cfg.get(f"server{sid}_enabled") else 1
+                        if priority > owner_priority.get(mp, 0):
                             new_cache[mp] = serial
+                            owner_priority[mp] = priority
+
+                # A relay input is supplied by the Caster, not controlled by this relay.
+                # None marks a known passive input; actual output owners take precedence.
+                source = cfg.get('relay_source')
+                if serial.upper().startswith('RELAY_') and isinstance(source, dict):
+                    source_mp = _normalize_mountpoint(source.get('mountpoint'))
+                    if source_mp:
+                        new_cache.setdefault(source_mp, None)
 
                 # Quét system_info để lấy command_mp động
                 raw_sys = row[2]
@@ -789,6 +803,8 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
 
             async with device_session_scope() as db:
                 resolved_serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+            if resolved_serial is None:
+                return
 
             ttl_seconds = int(data.get("ttl_seconds", 90))
             await _ntrip_mqtt_start(
@@ -1155,7 +1171,15 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
     try:
         async with device_session_scope() as db:
             serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+            if serial is None:
+                return PlainTextResponse(f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
             device = await crud.get_device_by_serial(db, serial)
+            if device and not _device_has_enabled_mountpoint(device, mountpoint):
+                # A config edit or duplicate disabled row can invalidate a cached owner.
+                serial = await _resolve_station_serial_by_mountpoint(db, mountpoint, force_refresh=True)
+                if serial is None:
+                    return PlainTextResponse(f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
+                device = await crud.get_device_by_serial(db, serial)
             if not device:
                 return PlainTextResponse(f"WAKE_STATUS: error\nERROR: Trạm {serial} không tồn tại")
 
@@ -1234,6 +1258,8 @@ async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, r
     try:
         async with device_session_scope() as db:
             serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+            if serial is None:
+                return PlainTextResponse(f"STOP_STATUS: ok\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
             device = await crud.get_device_by_serial(db, serial)
             if not device:
                 return PlainTextResponse(f"STOP_STATUS: error\nERROR: Trạm {serial} không tồn tại")
