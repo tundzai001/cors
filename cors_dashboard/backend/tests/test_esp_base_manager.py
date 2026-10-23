@@ -213,12 +213,55 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
         auth_rs.scalars.return_value.all.return_value = [rover_old]
         mock_auth_session.execute.return_value = auth_rs
 
+        source_rs = MagicMock()
+        source_rs.scalars.return_value.all.return_value = [models.CasterSource(
+            host='caster.test', port=2101, mountpoint='ONLINE_MP',
+            source_data={'datacount': 50}, last_seen_at=now)]
+        mock_auth_session.execute.side_effect = [auth_rs, source_rs]
         await sync_esp_base_rovers()
 
         # dev_online has no rover -> auto_provision called
         mock_prov.assert_awaited_once_with(dev_online, "ONLINE_MP")
         # dev_old_offline has been offline for 350s >= 300s -> auto_deprovision called
         mock_deprov.assert_awaited_once_with("esp_OFFLINE_OLD", "OLD_MP")
+
+    async def test_esp_decoder_stops_without_live_source_and_resumes_with_data(self):
+        now = int(time.time())
+        device = models.Device(serial='esp_TEST', status='online',
+                               service_config={'mountpoint1': 'test', 'serverhost1': 'caster.test', 'port1': 2101})
+        rover = models.RoverAccount(username='test', base_serial=device.serial)
+        source = models.CasterSource(host='caster.test', port=2101, mountpoint='test',
+                                    source_data={'datacount': 50}, last_seen_at=now)
+        def rows(items):
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = items
+            return result
+        with patch('app.esp_base_manager.device_session_scope') as dev_scope, \
+             patch('app.esp_base_manager.auth_session_scope') as auth_scope, \
+             patch('app.esp_base_manager.notify_decoder_worker', new_callable=AsyncMock) as notify, \
+             patch('app.esp_base_manager.auto_provision_esp_rover_account', new_callable=AsyncMock) as provision:
+            dev_db, auth_db = AsyncMock(), AsyncMock()
+            dev_scope.return_value.__aenter__.return_value = dev_db
+            auth_scope.return_value.__aenter__.return_value = auth_db
+            dev_db.execute.return_value = rows([device])
+            for status, count, age, host, expected in (
+                ('sleep', 50, 0, 'caster.test', 'stop'),
+                ('offline', 50, 0, 'caster.test', 'stop'),
+                ('online', 0, 0, 'caster.test', 'stop'),
+                ('online', 50, 120, 'caster.test', 'stop'),
+                ('online', 50, 0, 'other.test', 'stop'),
+                ('online', 50, 0, 'caster.test', 'start'),
+            ):
+                device.status = status
+                device.offline_since = now
+                source.source_data = {'datacount': count}
+                source.last_seen_at = now - age
+                source.host = host
+                auth_db.execute.side_effect = [rows([rover]), rows([source])]
+                notify.reset_mock()
+                await sync_esp_base_rovers()
+                self.assertEqual(notify.await_args.args[0], expected, (status, count, age, host))
+            provision.assert_not_awaited()
 
 
 if __name__ == "__main__":

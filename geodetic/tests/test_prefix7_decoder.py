@@ -22,6 +22,17 @@ def frame1005():
 
 
 class Prefix7DecoderTests(unittest.TestCase):
+    def test_sleep_control_closes_esp_monitor_but_does_not_control_prefix7(self):
+        esp = relay.MonitorWorker({'mountpoint': 'test', 'serial': 'esp_TEST'}, MagicMock())
+        sock = MagicMock()
+        esp._sock = sock
+        esp.set_stream_active(False)
+        self.assertTrue(esp.stop_event.is_set())
+        sock.close.assert_called_once()
+        mobile = self.worker()
+        mobile.set_stream_active(False)
+        self.assertFalse(mobile.stop_event.is_set())
+
     def worker(self):
         mqtt = MagicMock()
         mqtt.is_connected.return_value = True

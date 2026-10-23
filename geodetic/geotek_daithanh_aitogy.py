@@ -2325,8 +2325,9 @@ class MonitorWorker(threading.Thread):
             pass
 
     def set_stream_active(self, active: bool):
-        # Ignore for MonitorWorker, it always runs
-        pass
+        # Prefix-7 bases are passive; ESP monitors must stop pulling a sleeping source.
+        if not self.is_prefix7 and not active:
+            self.stop()
 
     def _close_live_socket(self):
         with self.socket_lock:
