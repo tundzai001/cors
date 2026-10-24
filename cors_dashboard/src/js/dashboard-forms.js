@@ -970,7 +970,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
                                 <i className="bi bi-robot me-2"></i>
                                 {autoFixedResult ? (
-                                    <span>Hệ thống đã tự động cấu hình tọa độ cho trạm từ Base liên kết thành công!</span>
+                                    <span>Chip đã tự chuyển về BASE và áp dụng tọa độ trung bình RTK Fixed. Không cần bấm áp dụng lần nữa.</span>
                                 ) : (
                                     <span>Hệ thống sẽ tự động ghép nối với máy chủ Base và tính trung bình tọa độ (10 số thập phân) để thiết lập trạm phát Base hoàn toàn tự động!</span>
                                 )}
@@ -987,7 +987,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatCoord10(longitude)} readOnly />
                                 </div>
                                 <div className="col-md-4">
-                                    <label className="form-label small fw-bold">Alt (Tự động)</label>
+                                    <label className="form-label small fw-bold">Alt h ellipsoid (Tự động)</label>
                                     <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatAlt10(altitude)} readOnly />
                                 </div>
                             </>
@@ -1198,7 +1198,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         ) : (
                             <>
                                 <i className="bi bi-lightning-charge-fill me-2"></i>
-                                {method === 'AUTO_CORS' ? 'Bắt đầu chạy Auto Base từ Base' : 'Áp dụng cấu hình BASE'}
+                                {method === 'AUTO_CORS'
+                                    ? (autoFixedResult ? 'Chạy lại Auto Base từ Base' : 'Bắt đầu chạy Auto Base từ Base')
+                                    : 'Áp dụng cấu hình BASE'}
                             </>
                         )}
                     </button>

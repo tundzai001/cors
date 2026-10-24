@@ -2,6 +2,13 @@
 (() => {
 const { useState, useEffect, memo, useRef } = React;
 
+function formatTelemetryNumber(value, digits, fallback) {
+    if (typeof value !== 'number' && typeof value !== 'string') return fallback;
+    if (typeof value === 'string' && !value.trim()) return fallback;
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(digits) : fallback;
+}
+
 function getLeaflet() {
     const leaflet = window.Leaflet || window.L;
     return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
@@ -674,16 +681,16 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 const dopEl = document.getElementById('db-dop');
                 if (dopEl) {
-                    const hText = gsa?.hdop >= 99 ? 'N/A' : (gsa?.hdop?.toFixed(2) || (isReadonly4g ? 'N/A' : '0.0'));
-                    const pText = gsa?.pdop >= 99 ? 'N/A' : (gsa?.pdop?.toFixed(2) || (isReadonly4g ? 'N/A' : '0.0'));
+                    const hText = gsa?.hdop >= 99 ? 'N/A' : formatTelemetryNumber(gsa?.hdop, 2, isReadonly4g ? 'N/A' : '0.0');
+                    const pText = gsa?.pdop >= 99 ? 'N/A' : formatTelemetryNumber(gsa?.pdop, 2, isReadonly4g ? 'N/A' : '0.0');
                     dopEl.textContent = `${hText} / ${pText}`;
                 }
 
                 const latEl = document.getElementById('db-lat');
-                if (latEl) latEl.textContent = (gga?.latitude ?? (isReadonly4g ? base_coords?.lat : undefined))?.toFixed(8) || (isReadonly4g ? '—' : '0.0');
+                if (latEl) latEl.textContent = formatTelemetryNumber(gga?.latitude ?? (isReadonly4g ? base_coords?.lat : undefined), 8, isReadonly4g ? '—' : '0.0');
 
                 const lonEl = document.getElementById('db-lon');
-                if (lonEl) lonEl.textContent = (gga?.longitude ?? (isReadonly4g ? base_coords?.lon : undefined))?.toFixed(8) || (isReadonly4g ? '—' : '0.0');
+                if (lonEl) lonEl.textContent = formatTelemetryNumber(gga?.longitude ?? (isReadonly4g ? base_coords?.lon : undefined), 8, isReadonly4g ? '—' : '0.0');
 
                 lastStatsUpdate.current = now;
             }
