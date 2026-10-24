@@ -496,19 +496,28 @@ namespace UbxCmdBuilder
                     asciiCommand("gpgst " + port + " 1\r\n"),
                     asciiCommand("saveconfig\r\n")};
         }
-        // Same UART1 protocol gates and TMODE disable as the Python agent.
-        Command input = ubxCfgValsetU1({{0x10730001, true}, {0x10730004, true},
-                                      {0x10740001, true}, {0x10740002, true},
-                                      {0x20110001, false}});
+        // The GNSS link can be wired to either UART. Match the Python rover
+        // setup so corrections and GGA use the port actually connected.
         Command mode = buildTmode3Message();
         finishTmode3Checksum(mode);
         GnssOptions options;
-        options.ports = {"UART1"};
-        return {input, mode,
-                ubxCfgMsg(0xF0, 0x00, options.ports, 1),
-                ubxCfgMsg(0xF0, 0x07, options.ports, 1),
-                ubxCfgMsg(0xF5, 0x05, {}, 0),
-                Command(std::begin(UBLOX_SAVE_CONFIG), std::end(UBLOX_SAVE_CONFIG))};
+        options.ports = {"UART1", "UART2", "USB"};
+        // UART2 UBX keys are unsupported by older F9P firmware. Keep each
+        // port separate so its NAK cannot discard UART1 or TMODE settings.
+        CommandList commands = {ubxCfgValsetU1({{0x20030001, false}}), mode};
+        for (uint32_t port = 0; port < 3; ++port) {
+            const uint32_t input = 0x10730000U + port * 0x20000U;
+            const uint32_t output = input + 0x10000U;
+            commands.push_back(ubxCfgValsetU1({{input | 1U, true}, {input | 4U, true},
+                {output | 1U, true}, {output | 2U, true}}));
+            commands.push_back(ubxCfgValsetU1({{0x209100BBU + port, true},
+                                             {0x209100D4U + port, true}}));
+        }
+        commands.push_back(ubxCfgMsg(0xF0, 0x00, options.ports, 1));
+        commands.push_back(ubxCfgMsg(0xF0, 0x07, options.ports, 1));
+        commands.push_back(ubxCfgMsg(0xF5, 0x05, {}, 0));
+        commands.emplace_back(std::begin(UBLOX_SAVE_CONFIG), std::end(UBLOX_SAVE_CONFIG));
+        return commands;
     }
 
     void routeUbloxOutput(uint8_t *data, size_t length)

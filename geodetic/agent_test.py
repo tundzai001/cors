@@ -3597,7 +3597,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         with serial_port_lock, serial.Serial(port, baudrate, timeout=2) as ser:
             if chip_type == "Ublox":
                 # Enhanced Ublox ROVER mode: Send UBX-CFG-VALSET for CFG-TMODE-MODE=0 (Rover/Disabled)
-                # Key: 0x20110001
+                # Key: 0x20030001
                 def send_valset(key_id, value_byte):
                     v_msg = bytearray(b'\xb5\x62\x06\x8a\x09\x00\x00\x07\x00\x00')
                     v_msg.extend(key_id.to_bytes(4, 'little'))
@@ -3612,7 +3612,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
                     ser.write(v_msg)
 
                 # Set TMODE to 0 (Disabled/Rover)
-                send_valset(0x20110001, 0)
+                send_valset(0x20030001, 0)
                 
                 # Optional: Send legacy CFG-TMODE3 Disabled just in case
                 msg = bytearray(b'\xb5\x62\x06\x71\x28\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')

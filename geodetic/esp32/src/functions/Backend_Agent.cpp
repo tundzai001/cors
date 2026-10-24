@@ -7,6 +7,7 @@
 #include "functions/Unicore_Output.h"
 #include "functions/Base_Sample.h"
 #include "functions/Device_Token.h"
+#include "functions/Ubx_Reply.h"
 #include "hardware/Connection_type.h"
 #include "hardware/Sim_handler.h"
 #include "hardware/Wifi_handler.h"
@@ -1301,9 +1302,66 @@ bool BackendAgent::writeGnssCommands(const UbxCmdBuilder::CommandList &commands)
 
 bool BackendAgent::applyRoverMode() {
     if (sensorType_ != "Ublox" && sensorType_ != "Unicorecomm") return false;
-    return writeGnssCommands(UbxCmdBuilder::buildRoverCommand(
-        sensorType_ == "Ublox" ? UbxCmdBuilder::GnssSensorType::Ublox
-                                : UbxCmdBuilder::GnssSensorType::Unicore));
+    Serial.printf("[AUTO BASE] Gui lenh Rover + GGA UART cho chip %s\n", sensorType_.c_str());
+    if (sensorType_ == "Unicorecomm") {
+        return writeGnssCommands(UbxCmdBuilder::buildRoverCommand(UbxCmdBuilder::GnssSensorType::Unicore));
+    }
+    if (!rtcmBufferMutex || xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) return false;
+    if (!gnssSerialMutex || xSemaphoreTake(gnssSerialMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        xSemaphoreGive(rtcmBufferMutex);
+        return false;
+    }
+    // Own both directions until ACK/readback completes; the stream task must
+    // not consume the replies before the workflow can inspect them.
+    auto exchange = [](const UbxCmdBuilder::Command &command, bool poll) {
+        while (Serial1.available()) Serial1.read();
+        if (Serial1.write(command.data(), command.size()) != command.size()) return false;
+        Serial1.flush();
+        UbxReply reply;
+        const uint32_t started = millis();
+        while (millis() - started < 1500UL) {
+            while (Serial1.available()) {
+                if (!reply.feed(static_cast<uint8_t>(Serial1.read()))) continue;
+                if (poll && reply.frame[2] == 0x06 && reply.frame[3] == 0x71 && reply.length == 48) {
+                    const uint8_t mode = reply.frame[8];
+                    Serial.printf("[AUTO BASE] UBX-CFG-TMODE3 readback mode=%u (0=Rover)\n", mode);
+                    return mode == 0;
+                }
+                if (!poll && reply.length == 10 && reply.frame[2] == 0x05
+                    && (reply.frame[3] == 0x00 || reply.frame[3] == 0x01)
+                    && reply.frame[6] == command[2] && reply.frame[7] == command[3]) {
+                    Serial.printf("[AUTO BASE] UBX %02X/%02X: %s\n", command[2], command[3],
+                                  reply.frame[3] == 1 ? "ACK" : "NAK (chip tu choi lenh)");
+                    return reply.frame[3] == 1;
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        Serial.printf("[AUTO BASE] UBX %02X/%02X: khong co %s tu chip\n", command[2], command[3], poll ? "readback" : "ACK");
+        return false;
+    };
+    for (const auto &command : UbxCmdBuilder::buildRoverCommand(UbxCmdBuilder::GnssSensorType::Ublox)) {
+        // Unsupported optional port keys must not block legacy CFG commands.
+        exchange(command, false);
+    }
+    const bool roverConfirmed = exchange({0xB5, 0x62, 0x06, 0x71, 0, 0, 0x77, 0x6B}, true);
+    xSemaphoreGive(gnssSerialMutex);
+    xSemaphoreGive(rtcmBufferMutex);
+    if (!roverConfirmed) {
+        Serial.println("[AUTO BASE][ERROR] Chua xac nhan chip o Rover; dung truoc khi ket noi caster");
+        return false;
+    }
+    const uint32_t waiting = millis();
+    while (millis() - waiting < 10000UL && !workflowCancelRequested_) {
+        const auto snapshot = getGnssTelemetrySnapshot();
+        if (snapshot.lastGgaMs != 0 && static_cast<int32_t>(snapshot.lastGgaMs - waiting) > 0) {
+            Serial.printf("[AUTO BASE] Rover da xac nhan, GGA UART: %s\n", snapshot.lastGga);
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    Serial.println("[AUTO BASE][ERROR] Chip o Rover nhung khong co GGA moi trong 10s");
+    return false;
 }
 
 bool BackendAgent::applyBaseCoordinates(const double latitude, const double longitude,
@@ -1371,6 +1429,8 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
         setWorkflowProgress(
             success ? "completed" : (cancelled ? "stopped" : "failed"),
             success ? 4 : 2, 4, serialized);
+        Serial.printf("[AUTO BASE] KET QUA: %s; %s\n",
+                      success ? "THANH CONG" : (cancelled ? "DA DUNG" : "THAT BAI"), reason.c_str());
         saveStatePreferences();
     };
 
@@ -1594,6 +1654,7 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     baseConfig["altitude_reference"] = "ELLIPSOID";
     baseConfig["base_setup_method"] = "AUTO_CORS";
     baseConfig["auto_configured"] = true;
+    baseConfig["fixed_samples_only"] = true;
     baseConfig["itrf_vn2000_transform_applied"] = transformed;
     baseConfig["central_meridian_deg"] = centralMeridianDeg;
     baseConfig["k0"] = scale;
@@ -1620,6 +1681,7 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     completed["raw_itrf_coord"]["lon"] = rawLongitude;
     completed["raw_itrf_coord"]["alt"] = rawAltitude;
     completed["sample_count"] = latitudes.size();
+    completed["fixed_samples_only"] = true;
     completed["transform_applied"] = transformed;
     completed["configured_ntrip_restarted"] = transportRestored;
     completed["projection_source"] = requestedProvince.isEmpty() ? "lon_fallback" : "manual_province";
@@ -1630,6 +1692,8 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     String completedJson;
     serializeJson(completed, completedJson);
     setWorkflowProgress("completed", 4, 4, completedJson);
+    Serial.printf("[AUTO BASE] KET QUA: THANH CONG; samples=%u; lat=%.10f; lon=%.10f; alt=%.4f\n",
+                  static_cast<unsigned>(latitudes.size()), finalLatitude, finalLongitude, finalAltitude);
     saveStatePreferences();
     return true;
 }
@@ -1938,6 +2002,10 @@ String BackendAgent::buildStatusPayload() {
     doc["status_boot_id"] = statusBootId_;
     doc["status_sequence"] = statusSequence_;
     doc["rtk_fix_status"] = gnss.fixStatus;
+    doc["last_raw_gga"] = gnss.lastGga;
+    doc["last_gga_fix_status"] = gnss.fixStatus;
+    if (gnss.lastGgaMs != 0) doc["last_raw_gga_age"] = (nowMs - gnss.lastGgaMs) / 1000.0;
+    else doc["last_raw_gga_age"] = nullptr;
     doc["base_mode_active"] = baseConfig_ != "{}" && baseConfig_.length() > 2;
     doc["detected_chip_type"] = sensorType_;
     doc["detected_chip_port"] = "Serial1";
@@ -1953,6 +2021,22 @@ String BackendAgent::buildStatusPayload() {
     copyJsonObject(doc, "base_config", baseConfig_);
     copyJsonObject(doc, "service_config", serviceConfig_);
     copyJsonObject(doc, "auto_base_progress", autoBaseProgress_);
+    JsonObject progress = doc["auto_base_progress"].as<JsonObject>();
+    if (!progress.isNull() && progress.size() > 0) {
+        if (progress["phase"] == "completed" && !(progress["fixed_samples_only"] | false)) {
+            progress["phase"] = "unverified";
+            progress["reason"] = "Ket qua cu chua duoc xac nhan RTK Fixed; can chay lai Auto Base";
+        }
+        progress["last_raw_gga"] = gnss.lastGga;
+        progress["gga_fix_status"] = gnss.fixStatus;
+        progress["gga_age_seconds"] = doc["last_raw_gga_age"];
+        progress["rtcm_bytes"] = ntripRoverBytesReceived();
+        progress["rtcm_pkts"] = ntripRoverPacketsReceived();
+        JsonObject current = progress.createNestedObject("current_coord");
+        current["lat"] = gnss.latitude;
+        current["lon"] = gnss.longitude;
+        current["alt"] = gnss.altitude;
+    }
 
     JsonObject system = doc.createNestedObject("system_info");
     JsonObject cpu = system.createNestedObject("cpu");

@@ -60,6 +60,7 @@ void setup() {
     Serial.println("\n=========================================");
     Serial.println("     ESP32 GNSS GATEWAY KHOI DONG        ");
     Serial.println("=========================================");
+    Serial.printf("[FIRMWARE] %s | build %s %s\n", AGENT_VERSION, __DATE__, __TIME__);
 
     // Release Bluetooth DRAM since BLE/BT is not used, returning ~30-40KB to FreeRTOS heap
     esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
@@ -81,8 +82,11 @@ void setup() {
     prefs.end();
 
     (void)restartCount;
-    Serial.println("[SETUP] Khoi dong giao tiep UM980: TX=" + String(gnssTX)
+    Serial.println("[SETUP] Khoi dong UART GNSS: TX=" + String(gnssTX)
                    + ", RX=" + String(gnssRX));
+    // RTCM/NMEA arrive in bursts while network tasks can wait on sockets.
+    // The default 256-byte RX ring can overflow before the next UART read.
+    Serial1.setRxBufferSize(8192);
     Serial1.begin(GNSS_BAUD, SERIAL_8N1, static_cast<uint8_t>(gnssRX), static_cast<uint8_t>(gnssTX));
     Serial1.setTimeout(100);
 

@@ -120,6 +120,8 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
         for key in (0x10730004, 0x10750004, 0x10770004, 0x10780002, 0x209100BD):
             self.assertEqual(keys[key], 1)
         self.assertEqual(keys[0x209102C0], 0)
+        self.assertEqual(keys[0x20030001], 0)  # CFG-TMODE-MODE, not navigation settings.
+        self.assertNotIn(0x20110001, keys)
         self.assertTrue(any(p[2:4] == b'\x06\x01' and p[6:8] == b'\xf5\x05' for p in receiver.writes))
         self.reader.resume.assert_called_once()
 

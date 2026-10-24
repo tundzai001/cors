@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include "Prog_Config.h"
 #include "functions/ubx_cmd_builder.h"
+#include "functions/Backend_Agent.h"
 #include <cstring>
 
 extern SemaphoreHandle_t rtcmBufferMutex;
@@ -377,6 +378,16 @@ cmd_action_t handleCommand(std::vector<String> &cmdWords) {
     if (cmdWords[1] == "GNSS") {
         if (cmdWords.size() < 3) {
             Serial.println("[MQTT COMMAND DOWNLINK] Error: Incomplete GNSS command.");
+            return CMD_ACTION_NONE;
+        }
+        if (cmdWords.size() == 3 && cmdWords[2] == "ROVER") {
+            if (backendAgent.workflowActive()) {
+                Serial.println("[GNSS ROVER][ERROR] Dung workflow hien tai truoc khi thu lai");
+            } else {
+                const bool confirmed = backendAgent.applyRoverMode();
+                Serial.println(confirmed ? "[GNSS ROVER] Rover va GGA da xac nhan"
+                                         : "[GNSS ROVER][ERROR] Chua xac nhan Rover/GGA");
+            }
             return CMD_ACTION_NONE;
         }
         if (cmdWords[2] == "BASE") {

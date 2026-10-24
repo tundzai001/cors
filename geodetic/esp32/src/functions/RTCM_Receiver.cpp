@@ -13,6 +13,9 @@ String nmeaBuffer;
 uint8_t rtcmFrame[MAX_RTCM_FRAME_LENGTH] = {};
 size_t rtcmLength = 0;
 size_t rtcmExpectedLength = 0;
+uint8_t ubxHeader[6] = {};
+size_t ubxHeaderLength = 0;
+size_t ubxBytesRemaining = 0;
 
 GnssTelemetrySnapshot telemetry;
 portMUX_TYPE telemetryMux = portMUX_INITIALIZER_UNLOCKED;
@@ -220,7 +223,32 @@ void resetRtcmParser() {
 }
 
 void consumeByte(uint8_t value, String &rtcmOutput) {
+    // UBX payload is binary and may contain '$', LF or 0xD3. Skip the whole
+    // frame before looking for NMEA/RTCM, including across UART read chunks.
+    if (ubxBytesRemaining > 0) {
+        --ubxBytesRemaining;
+        return;
+    }
+    if (ubxHeaderLength > 0) {
+        if (ubxHeaderLength == 1 && value != 0x62) {
+            ubxHeaderLength = 0;
+            // Reconsider this byte as a possible NMEA/RTCM/UBX start.
+        } else {
+            ubxHeader[ubxHeaderLength++] = value;
+            if (ubxHeaderLength == sizeof(ubxHeader)) {
+                const size_t payloadLength = size_t(ubxHeader[4]) | (size_t(ubxHeader[5]) << 8);
+                ubxHeaderLength = 0;
+                if (payloadLength <= 8192) ubxBytesRemaining = payloadLength + 2;
+            }
+            return;
+        }
+    }
     if (rtcmLength > 0) {
+        if (rtcmLength == 1 && (value & 0xFCU) != 0) {
+            resetRtcmParser();
+            consumeByte(value, rtcmOutput);
+            return;
+        }
         if (rtcmLength >= sizeof(rtcmFrame)) {
             resetRtcmParser();
         } else {
@@ -257,6 +285,9 @@ void consumeByte(uint8_t value, String &rtcmOutput) {
             // A malformed/incomplete line should not swallow the next valid
             // sentence when the GNSS stream recovers.
             nmeaBuffer = "$";
+        } else if ((value < 0x20 && value != '\r') || value > 0x7E) {
+            nmeaBuffer = "";
+            consumeByte(value, rtcmOutput);
         } else if (nmeaBuffer.length() < MAX_NMEA_LENGTH - 1) {
             nmeaBuffer += static_cast<char>(value);
         } else {
@@ -265,7 +296,10 @@ void consumeByte(uint8_t value, String &rtcmOutput) {
         return;
     }
 
-    if (value == 0xD3) {
+    if (value == 0xB5) {
+        ubxHeader[0] = value;
+        ubxHeaderLength = 1;
+    } else if (value == 0xD3) {
         rtcmFrame[0] = value;
         rtcmLength = 1;
         rtcmExpectedLength = 0;
@@ -298,6 +332,7 @@ String receiveRtcmFromGnss() {
         const size_t bytesRead = Serial1.readBytes(
             reinterpret_cast<char *>(buffer), bytesToRead);
         if (bytesRead == 0) break;
+        noteInputBytes(bytesRead);
         for (size_t i = 0; i < bytesRead; ++i) {
             consumeByte(buffer[i], rtcmData);
         }
@@ -309,8 +344,13 @@ String receiveRtcmFromGnss() {
     static uint32_t receivedBytes = 0;
     receivedBytes += rtcmData.length();
     if (millis() - lastLogMs >= 5000UL) {
-        Serial.printf("[RTCM] CRC-valid UART bytes in last interval: %lu\n",
+        Serial.printf("[RTCM] Framed UART bytes in last interval (CRC chua kiem tra): %lu\n",
                       static_cast<unsigned long>(receivedBytes));
+        const auto snapshot = getGnssTelemetrySnapshot();
+        Serial.printf("[GNSS UART] GGA total=%lu; last_age_ms=%lu; RX bytes=%llu\n",
+                      static_cast<unsigned long>(snapshot.ggaCount),
+                      static_cast<unsigned long>(snapshot.lastGgaMs == 0 ? UINT32_MAX : millis() - snapshot.lastGgaMs),
+                      static_cast<unsigned long long>(snapshot.bytesRead));
         receivedBytes = 0;
         lastLogMs = millis();
     }

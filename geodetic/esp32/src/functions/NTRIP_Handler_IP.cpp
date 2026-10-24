@@ -198,6 +198,8 @@ TinyGsmClient gsmNtripClient2(modem, 2);
 bool roverSessionActive = false;
 bool roverSessionAuthenticated = false;
 uint32_t roverLastGgaMs = 0;
+uint32_t roverBytesReceived = 0;
+uint32_t roverPacketsReceived = 0;
 
 Client &clientFor(uint8_t index) {
     if (index == 0) {
@@ -337,8 +339,20 @@ void sendRoverGgaIfAvailable(Client &client, const bool force = false) {
     if (!force && millis() - roverLastGgaMs < 5000UL) return;
     const GnssTelemetrySnapshot snapshot = getGnssTelemetrySnapshot();
     if (snapshot.lastGga[0] == '\0' || snapshot.lastGgaMs == 0
-        || millis() - snapshot.lastGgaMs > 3000UL) return;
-    client.print(String(snapshot.lastGga) + "\r\n");
+        || millis() - snapshot.lastGgaMs > 3000UL) {
+        if (force || millis() - roverLastGgaMs >= 5000UL) {
+            Serial.println("[NTRIP ROVER] Chua co GGA moi tu UART GNSS; chua gui GGA len caster");
+            roverLastGgaMs = millis();
+        }
+        return;
+    }
+    const String outbound = String(snapshot.lastGga) + "\r\n";
+    if (client.print(outbound) != outbound.length()) {
+        Serial.println("[NTRIP ROVER] Loi ghi GGA len socket caster");
+        roverLastGgaMs = millis();
+        return;
+    }
+    Serial.printf("[NTRIP ROVER] GGA -> caster: %s\n", snapshot.lastGga);
     roverLastGgaMs = millis();
 }
 
@@ -764,6 +778,8 @@ bool startNtripRover(const String &host, const uint16_t port, const String &user
     // Source server 1 uses mux 0. All source sockets are stopped before this
     // function is called, so reusing that mux avoids requiring a fifth modem
     // socket while MQTT (1), source 2 (2), and WebSocket (3) stay available.
+    roverBytesReceived = 0;
+    roverPacketsReceived = 0;
     roverSessionActive = true;
     roverSessionAuthenticated = false;
     roverLastGgaMs = 0;
@@ -826,7 +842,11 @@ int loopNtripRover() {
     const int available = client.available();
     const size_t bytesToRead = min(static_cast<size_t>(available), sizeof(buffer));
     const int bytesRead = client.read(buffer, bytesToRead);
-    if (bytesRead > 0) Serial1.write(buffer, static_cast<size_t>(bytesRead));
+    if (bytesRead > 0) {
+        Serial1.write(buffer, static_cast<size_t>(bytesRead));
+        roverBytesReceived += static_cast<uint32_t>(bytesRead);
+        ++roverPacketsReceived;
+    }
     xSemaphoreGive(rtcmBufferMutex);
     return bytesRead > 0 ? bytesRead : 200;
 }
@@ -841,3 +861,6 @@ void stopNtripRover() {
 bool ntripRoverActive() {
     return roverSessionActive && roverSessionAuthenticated;
 }
+
+uint32_t ntripRoverBytesReceived() { return roverBytesReceived; }
+uint32_t ntripRoverPacketsReceived() { return roverPacketsReceived; }

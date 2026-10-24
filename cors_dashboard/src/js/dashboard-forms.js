@@ -252,7 +252,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const activeChip = needsManualSelection ? manualChip : device.detected_chip_type;
     const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
 
-    const ACTIVE_AUTO_BASE_PHASES = ['starting', 'set_rover', 'wait_fix', 'averaging', 'set_base'];
+    const ACTIVE_AUTO_BASE_PHASES = ['queued', 'starting', 'set_rover', 'wait_fix', 'averaging', 'set_base'];
     const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
     const autoProgress = device?.auto_base_progress || {};
     const isAutoSetupActive = isAutoSetupStatus || ACTIVE_AUTO_BASE_PHASES.includes(autoProgress.phase);
@@ -265,11 +265,19 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const ggaAge = autoProgress.gga_age_seconds !== undefined && autoProgress.gga_age_seconds !== null
         ? autoProgress.gga_age_seconds
         : (device?.last_raw_gga_age !== undefined ? device.last_raw_gga_age : null);
-    const ggaFix = autoProgress.gga_fix_status || device?.last_gga_fix_status || 'NO_FIX';
+    const ggaFix = autoProgress.gga_fix_status || device?.last_gga_fix_status || device?.rtk_fix_status || 'NO_FIX';
     const rtcmBytesReceived = autoProgress.rtcm_bytes || 0;
     const rtcmPktsReceived = autoProgress.rtcm_pkts || 0;
     const fixedStreak = autoProgress.fixed_streak || 0;
     const fixedStreakReq = autoProgress.fixed_streak_required || 5;
+    const autoFixedResult = autoProgress.phase === 'completed' && autoProgress.fixed_samples_only === true;
+    const autoResultText = autoFixedResult
+        ? `Auto Base hoàn tất: ${autoProgress.sample_count || 0} mẫu RTK Fixed.`
+        : ['completed', 'unverified'].includes(autoProgress.phase)
+        ? 'Kết quả cũ chưa được xác nhận RTK Fixed. Cần chạy lại Auto Base.'
+        : autoProgress.phase === 'failed'
+        ? `Auto Base thất bại: ${autoProgress.reason || 'Không đủ dữ liệu RTK Fixed.'}`
+        : autoProgress.phase === 'stopped' ? 'Auto Base đã dừng.' : '';
 
     // Tọa độ Fixed
     const [latitude, setLatitude] = useState('');
@@ -305,6 +313,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+
+    useEffect(() => {
+        if (!autoFixedResult) return;
+        const coords = autoProgress.averaged_coord || device.base_config?.coords;
+        if (!coords) return;
+        setLatitude(coords.lat ?? '');
+        setLongitude(coords.lon ?? '');
+        setAltitude(coords.alt ?? '');
+    }, [device.serial, autoProgress.updated_at, autoFixedResult]);
 
     useEffect(() => {
         // 1. Reset về giá trị mặc định khi đổi thiết bị
@@ -691,6 +708,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             </div>
                         </div>
                         <div className="card-body p-3">
+                            {autoResultText && (
+                                <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-warning'} py-2`} role="status" aria-atomic="true">
+                                    {autoResultText}
+                                </div>
+                            )}
                             {/* Sample Collection Progress Bar */}
                             {autoSamplesTarget > 0 && (
                                 <div className="mb-3">
@@ -945,16 +967,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             </div>
                         </div>
                         <div className="col-12">
-                            <div className="alert alert-success small mb-2">
+                            <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
                                 <i className="bi bi-robot me-2"></i>
-                                {latitude && longitude ? (
+                                {autoFixedResult ? (
                                     <span>Hệ thống đã tự động cấu hình tọa độ cho trạm từ Base liên kết thành công!</span>
                                 ) : (
                                     <span>Hệ thống sẽ tự động ghép nối với máy chủ Base và tính trung bình tọa độ (10 số thập phân) để thiết lập trạm phát Base hoàn toàn tự động!</span>
                                 )}
                             </div>
                         </div>
-                        {latitude && longitude && (
+                        {Boolean(autoFixedResult && latitude !== '' && longitude !== '') && (
                             <>
                                 <div className="col-md-4">
                                     <label className="form-label small fw-bold">Lat (Tự động - 10 số thập phân)</label>

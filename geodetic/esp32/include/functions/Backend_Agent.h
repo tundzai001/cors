@@ -19,6 +19,7 @@ public:
     void begin();
     void loop();
     bool detectGnssChip(Stream &gnssStream, bool force = false);
+    bool applyRoverMode();
     void setDetectedChipIfUnknown(const String &chipType);
     const String &sensorType() const { return sensorType_; }
 
@@ -107,7 +108,6 @@ private:
     void runWorkflow();
     static void workflowTaskThunk(void *parameter);
     void requestWorkflowStop();
-    bool applyRoverMode();
     bool writeGnssCommands(const UbxCmdBuilder::CommandList &commands);
     void setWorkflowProgress(const String &phase, uint8_t step, uint8_t total,
                              const String &details = String());
