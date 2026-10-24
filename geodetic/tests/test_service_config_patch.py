@@ -56,7 +56,7 @@ class ServiceConfigPatchTests(unittest.TestCase):
         tree = ast.parse((ROOT / 'geotek_daithanh_aitogy.py').read_text())
         helpers = [node for node in tree.body if
                    isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'MQTT_SOURCE_CONFIG_FIELDS' for t in node.targets)
-                   or isinstance(node, ast.FunctionDef) and node.name == '_mqtt_source_persistable_config']
+                   or isinstance(node, ast.FunctionDef) and node.name in {'_mqtt_source_persistable_config', 'normalize_lte_gnss_options'}]
         stored = {'target_pass': 'secret', 'password1': 'secret', 'password2': 'backup',
                   'server1_enabled': True, 'stream_on_demand': True, 'server1_stream_active': True,
                   'target_host': 'caster', 'target_port': 2101, 'username1': 'source'}
@@ -86,6 +86,16 @@ class ServiceConfigPatchTests(unittest.TestCase):
         saved = config.update_mqtt_source_config.call_args.args[1]
         self.assertEqual(saved['altitude_reference'], 'LEGACY')
         self.assertEqual(saved['alt'], 5)
+        options = {'output_mode': 'diagnostics_rtcm', 'msm_level': 7,
+                   'constellations': {'qzss': False}}
+        apply(agent, {'payload': {'method': 'FIXED_LLA', 'params': {
+            'coords': {'lat': 20, 'lon': 106, 'alt': 5}, 'gnss_options': options}}})
+        saved = config.update_mqtt_source_config.call_args.args[1]
+        self.assertEqual(saved['gnss_options']['output_mode'], 'diagnostics_rtcm')
+        self.assertEqual(saved['gnss_options']['msm_level'], 7)
+        self.assertFalse(saved['gnss_options']['constellations']['qzss'])
+        apply(agent, {'payload': {'service_config': {'mountpoint2': 'OTHER'}}})
+        self.assertEqual(agent.cfg['gnss_options'], saved['gnss_options'])
 
 
 if __name__ == '__main__':

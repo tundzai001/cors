@@ -301,7 +301,7 @@ def save_license(serial, token):
 
 MQTT_SOURCE_CONFIG_FIELDS = {
     "name", "display_name",
-    "setup_method", "duration", "lat", "lon", "alt", "accuracy", "altitude_reference",
+    "setup_method", "duration", "lat", "lon", "alt", "accuracy", "altitude_reference", "gnss_options",
     "base_setup_method", "survey_in_duration", "survey_in_accuracy",
     "target_host", "target_port", "target_pass", "target_mp",
     "stream_on_demand", "stream_active",
@@ -1522,13 +1522,30 @@ def _extract_remote_payload(original_config):
         params = {}
     return payload, params
 
-def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
+def normalize_lte_gnss_options(options=None):
+    raw = options if isinstance(options, dict) else {}
+    mode = str(raw.get("output_mode") or "rtcm_only").strip().lower()
+    if mode not in ("rtcm_only", "diagnostics_rtcm"):
+        raise ValueError("Unsupported LTE output mode")
+    level = str(raw.get("msm_level", "both")).strip().lower()
+    if level not in ("4", "7", "both"):
+        raise ValueError("Unsupported LTE MSM level")
+    selected = raw.get("constellations") or {}
+    constellations = {key: bool(selected.get(key, True))
+                      for key in ("gps", "glo", "gal", "bds", "qzss", "sbas")}
+    if not any(constellations[key] for key in ("gps", "glo", "gal", "bds", "qzss")):
+        constellations["gps"] = True
+    return {"output_mode": mode, "msm_level": "both" if level == "both" else int(level),
+            "constellations": constellations}
+
+
+def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
     """
     Local command builder for every JSON-configured Geotek LTE source.
 
     The dashboard can still send encoded commands, but this relay is the device
     boundary for geotek_config.json sources. Rebuild the command list here so all
-    LTE units use the same tested COM2 profile regardless of their serial.
+    LTE units use their configured receiver port and requested output profile.
     """
     runtime_cfg = runtime_cfg if isinstance(runtime_cfg, dict) else {}
     payload, params = _extract_remote_payload(original_config)
@@ -1586,15 +1603,35 @@ def build_geotek_lte_unicore_commands(original_config=None, runtime_cfg=None):
             b"$DELAY_2000$",
         ])
 
-    # LTE bridge is RTCM-only. Keep this profile aligned with
-    # command_builder.build_geotek_lte_unicore_config().
-    # 1114/1117 = QZSS MSM4/MSM7; 1044 = QZSS ephemeris.
-    for msg_id in (
-        "1006", "1033",
-        "1074", "1124", "1084", "1094", "1114",
-        "1077", "1127", "1087", "1097", "1117",
-        "1042", "1019", "1020", "1045", "1044",
+    options = normalize_lte_gnss_options(_first_value(
+        params.get("gnss_options"), payload.get("gnss_options"), runtime_cfg.get("gnss_options")))
+    selected = options["constellations"]
+    if options["output_mode"] == "diagnostics_rtcm":
+        nmea_port = str(runtime_cfg.get("nmea_port") or rtcm_port).strip()
+        if not re.fullmatch(r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)", nmea_port, flags=re.IGNORECASE):
+            raise ValueError("Invalid Unicore NMEA port")
+        for system, messages in {
+            "gps": ("gpgga", "gpgsa", "gpgsv", "gpgst"),
+            "glo": ("glgga", "glgsa", "glgsv"),
+            "gal": ("gagga", "gagsa", "gagsv"),
+            "bds": ("bdgga", "bdgsa", "bdgsv"),
+        }.items():
+            if selected[system]:
+                for message in messages:
+                    commands.extend([f"{message} {nmea_port} 1\r\n".encode("ascii"), b"$DELAY_200$"])
+    messages = ["1006", "1033"]
+    for system, msm4, msm7, ephemeris in (
+        ("gps", "1074", "1077", "1019"), ("glo", "1084", "1087", "1020"),
+        ("gal", "1094", "1097", "1045"), ("bds", "1124", "1127", "1042"),
+        ("qzss", "1114", "1117", "1044"),
     ):
+        if selected[system]:
+            if options["msm_level"] in (4, "both"):
+                messages.append(msm4)
+            if options["msm_level"] in (7, "both"):
+                messages.append(msm7)
+            messages.append(ephemeris)
+    for msg_id in messages:
         commands.append(f"rtcm{msg_id} {rtcm_port} 1\r\n".encode("ascii"))
         commands.append(b"$DELAY_200$")
 
@@ -2700,6 +2737,10 @@ class MqttSourceWorker(threading.Thread):
             "accuracy": self.cfg.get("accuracy"),
             "coords": base_coords,
         }
+        if base_config["base_setup_method"] == "FIXED_LLA":
+            # Older configurations retain the receiver's existing geoid semantics.
+            base_config["altitude_reference"] = self.cfg.get("altitude_reference") or "LEGACY"
+        base_config["gnss_options"] = normalize_lte_gnss_options(self.cfg.get("gnss_options"))
         service_config = {
             "ncomport": self.cfg.get("ncomport") or "",
             "reconnectioninterval": int(self.cfg.get("reconnectioninterval", 10) or 10),
@@ -3052,6 +3093,9 @@ class MqttSourceWorker(threading.Thread):
         if service_config:
             runtime.update(_mqtt_source_persistable_config(service_config))
 
+        if "gnss_options" in params:
+            runtime["gnss_options"] = normalize_lte_gnss_options(params["gnss_options"])
+
         if method:
             runtime["setup_method"] = method
             runtime["base_setup_method"] = method
@@ -3128,11 +3172,12 @@ class MqttSourceWorker(threading.Thread):
             
             self._persist_remote_config(original_config)
 
-            decoded_commands = build_geotek_lte_unicore_commands(original_config, self.cfg)
+            decoded_commands = build_lte_unicore_commands(original_config, self.cfg)
             self.log(
                 "INFO",
                 "Using local Geotek LTE command builder for JSON source "
-                f"(RTCM-only on {self.cfg.get('rtcm_port') or self.cfg.get('sensor_port') or 'com2'}; MSM4+MSM7)"
+                f"(port={self.cfg.get('rtcm_port') or self.cfg.get('sensor_port') or 'com2'}; "
+                f"profile={self.cfg.get('gnss_options') or 'legacy RTCM-only MSM4+MSM7'})"
             )
 
             if not decoded_commands:

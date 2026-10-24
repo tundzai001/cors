@@ -131,9 +131,6 @@ def normalize_gnss_options(options: dict | None) -> dict:
         msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
     if msm_level not in {4, 7, "both"}:
         msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
-    if output_mode != "rtcm_only" and msm_level == "both":
-        msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
-
     raw_ports = raw.get("ports") or DEFAULT_GNSS_OPTIONS["ports"]
     if isinstance(raw_ports, str):
         raw_ports = [raw_ports]
@@ -416,11 +413,11 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
     return commands
 
 
-def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: float = 0, lon: float = 0, alt: float = 0, *, altitude_reference: str | None = None) -> list[bytes]:
+def build_lte_unicore_config(setup_method: str, duration: int = 60, lat: float = 0, lon: float = 0, alt: float = 0, *, altitude_reference: str | None = None, gnss_options: dict | None = None) -> list[bytes]:
     """
     Hàm chuyên biệt dành riêng cho chip Unicorecomm LTE.
     Sử dụng mặc định cổng COM2 và chuỗi lệnh tối ưu theo yêu cầu người dùng.
-    Trình tự: FRESET -> unlogall -> mode base -> RTCM-only -> saveconfig
+    Trình tự: FRESET -> unlogall -> mode base -> output profile -> saveconfig
     """
     if altitude_reference not in (None, 'LEGACY', 'ELLIPSOID'):
         raise ValueError('Unsupported altitude reference')
@@ -440,17 +437,16 @@ def build_geotek_lte_unicore_config(setup_method: str, duration: int = 60, lat: 
             commands.append(b'config undulation 0.0\r\n')
         commands.append(f'mode base {lat} {lon} {alt}\r\n'.encode('ascii'))
     
-    # 3. LTE bridge is RTCM-only. Do not enable NMEA on the chip output port.
-        
-    # 4. Bật các bản tin RTCM cần thiết trên COM2 (bật CẢ MSM4 và MSM7)
-    rtcm_msgs = [
-        '1006', '1033',
-        '1074', '1124', '1084', '1094', '1114',
-        '1077', '1127', '1087', '1097', '1117',
-        '1042', '1019', '1020', '1045', '1044',
-    ]
-    for msg in rtcm_msgs:
-        commands.append(f'rtcm{msg} {port} 1\r\n'.encode('ascii'))
+    # Preserve the old profile when an installation has no saved options.
+    raw = gnss_options if isinstance(gnss_options, dict) else {}
+    options = {"output_mode": "rtcm_only", "msm_level": "both", **raw}
+    options["constellations"] = {
+        **dict.fromkeys(("gps", "glo", "gal", "bds", "qzss", "sbas"), True),
+        **(raw.get("constellations") or {}),
+    }
+    if not any(options["constellations"][key] for key in ("gps", "glo", "gal", "bds", "qzss")):
+        options["constellations"]["gps"] = True
+    _append_unicore_output_commands(commands, port, options)
     
     # 5. Lưu cấu hình
     commands.append(b'saveconfig\r\n')

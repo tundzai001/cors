@@ -18,6 +18,8 @@ class MqttSourceStatusTests(unittest.TestCase):
                           status_mgr=self.manager, get_license_fingerprint=lambda serial: None,
                           has_license=lambda serial: True, _status_safe_config=lambda cfg: cfg,
                           rtcm_signal_decoder=SimpleNamespace(get_stats=lambda serial: {'1006': {'last_seen': 995}, '1077': {'last_seen': 995}}))
+        methods += [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == 'normalize_lte_gnss_options']
         exec(compile(ast.Module(body=methods, type_ignores=[]), 'lte-status.py', 'exec'), self.scope)
         self.worker = SimpleNamespace(serial='LTE', name='HT.VuQuang', topic_status='test/status',
             cfg=dict(topic='source', server1_enabled=True, target_host='caster', target_port=2101,
@@ -77,6 +79,30 @@ class MqttSourceStatusTests(unittest.TestCase):
 
     def test_no_data_does_not_invent_antenna_assessment(self):
         self.assertNotIn('antenna_status', self.publish())
+
+    def test_fixed_base_reports_height_reference_without_changing_coordinates(self):
+        coords = {'lat': '18.3863077210', 'lon': '105.5089184600', 'alt': '49.920000000'}
+        self.worker.cfg.update(setup_method='FIXED_LLA', **coords)
+        for reference in (None, 'LEGACY', 'ELLIPSOID'):
+            with self.subTest(reference=reference):
+                if reference is None:
+                    self.worker.cfg.pop('altitude_reference', None)
+                else:
+                    self.worker.cfg['altitude_reference'] = reference
+                config = self.publish()['base_config']
+                self.assertEqual(config['altitude_reference'], reference or 'LEGACY')
+                self.assertEqual(config['coords'], coords)
+        self.worker.cfg['setup_method'] = 'SURVEY_IN'
+        self.assertNotIn('altitude_reference', self.publish()['base_config'])
+
+    def test_reported_gnss_profile_matches_saved_options(self):
+        self.assertEqual(self.publish()['base_config']['gnss_options']['msm_level'], 'both')
+        self.worker.cfg['gnss_options'] = {'output_mode': 'diagnostics_rtcm', 'msm_level': 7,
+                                          'constellations': {'gps': False}}
+        options = self.publish()['base_config']['gnss_options']
+        self.assertEqual(options['output_mode'], 'diagnostics_rtcm')
+        self.assertEqual(options['msm_level'], 7)
+        self.assertFalse(options['constellations']['gps'])
 
 
 if __name__ == '__main__':

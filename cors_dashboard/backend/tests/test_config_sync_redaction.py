@@ -36,6 +36,21 @@ class ConfigSyncRedactionTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(errors, ['[Service.nested.port] Agent=None'])
 
+    def test_missing_legacy_height_reference_does_not_claim_ellipsoid(self):
+        agent = {'base_setup_method': 'FIXED_LLA', 'coords': {'alt': '49.920000000'}}
+        target = {**agent, 'altitude_reference': 'LEGACY'}
+        self.assertEqual(compare(agent, target, 'Base'), (True, []))
+        target['altitude_reference'] = 'ELLIPSOID'
+        self.assertEqual(compare(agent, target, 'Base'),
+                         (False, ['[Base.altitude_reference] Agent=None']))
+        agent['altitude_reference'] = 'LEGACY'
+        self.assertEqual(compare(agent, target, 'Base'),
+                         (False, ['[Base.altitude_reference] DB=ELLIPSOID vs Agent=LEGACY']))
+        agent['altitude_reference'] = 'ELLIPSOID'
+        self.assertEqual(compare(agent, target, 'Base'), (True, []))
+        agent['coords'] = {'alt': '50.0'}
+        self.assertFalse(compare(agent, target, 'Base')[0])
+
 
 if __name__ == '__main__':
     unittest.main()

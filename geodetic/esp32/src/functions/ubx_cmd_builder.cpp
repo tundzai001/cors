@@ -557,7 +557,7 @@ namespace UbxCmdBuilder
         }
     }
 
-    CommandList buildGeotekLteUnicoreConfig(const String &setupMethod, uint32_t duration, double lat, double lon, double alt)
+    CommandList buildLteUnicoreConfig(const String &setupMethod, uint32_t duration, double lat, double lon, double alt)
     {
         CommandList commands = {asciiCommand("FRESET\r\n"), asciiCommand("unlogall\r\n")};
         String method = setupMethod;

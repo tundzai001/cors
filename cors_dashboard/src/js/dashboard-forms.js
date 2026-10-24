@@ -301,8 +301,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [svinDuration, setSvinDuration] = useState('300'); // Giây
     const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
 
-    const [outputMode, setOutputMode] = useState('diagnostics_rtcm');
-    const [msmLevel, setMsmLevel] = useState('4');
+    const [outputMode, setOutputMode] = useState(isLteStation ? 'rtcm_only' : 'diagnostics_rtcm');
+    const [msmLevel, setMsmLevel] = useState(isLteStation ? 'both' : '4');
     const [constellations, setConstellations] = useState({
         gps: true,
         glo: true,
@@ -342,8 +342,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setCorsLookupError('');
         setSvinDuration('300');
         setSvinAccuracyM('3.00');
-        setOutputMode('diagnostics_rtcm');
-        setMsmLevel('4');
+        setOutputMode(isLteStation ? 'rtcm_only' : 'diagnostics_rtcm');
+        setMsmLevel(isLteStation ? 'both' : '4');
         setConstellations({ gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true });
 
         // 2. Load config từ DB (nếu có)
@@ -552,42 +552,44 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     return;
                 }
             }
-            if (!isLteStation) {
-                const existingGnss = (device.base_config && typeof device.base_config.gnss_options === 'object')
-                    ? device.base_config.gnss_options
-                    : null;
+            if (isLteStation && !['gps', 'glo', 'gal', 'bds', 'qzss'].some(key => constellations[key])) {
+                window.showError('Chọn ít nhất một hệ vệ tinh đầu ra.');
+                return;
+            }
+            const existingGnss = (device.base_config && typeof device.base_config.gnss_options === 'object')
+                ? device.base_config.gnss_options
+                : null;
 
-                if (isAdmin) {
-                    params.gnss_options = {
-                        output_mode: outputMode,
-                        msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel),
-                        constellations: constellations || {
-                            gps: true,
-                            glo: true,
-                            gal: true,
-                            bds: true,
-                            qzss: true,
-                            sbas: true
-                        },
-                        ports: ['USB']
-                    };
-                } else if (existingGnss) {
-                    params.gnss_options = { ...existingGnss };
-                } else {
-                    params.gnss_options = {
-                        output_mode: outputMode || 'diagnostics_rtcm',
-                        msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel || 4),
-                        constellations: constellations || {
-                            gps: true,
-                            glo: true,
-                            gal: true,
-                            bds: true,
-                            qzss: true,
-                            sbas: true
-                        },
-                        ports: ['USB']
-                    };
-                }
+            if (isAdmin) {
+                params.gnss_options = {
+                    output_mode: outputMode,
+                    msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel),
+                    constellations: constellations || {
+                        gps: true,
+                        glo: true,
+                        gal: true,
+                        bds: true,
+                        qzss: true,
+                        sbas: true
+                    },
+                    ...(!isLteStation ? { ports: ['USB'] } : {})
+                };
+            } else if (existingGnss) {
+                params.gnss_options = { ...existingGnss };
+            } else {
+                params.gnss_options = {
+                    output_mode: outputMode || 'diagnostics_rtcm',
+                    msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel || 4),
+                    constellations: constellations || {
+                        gps: true,
+                        glo: true,
+                        gal: true,
+                        bds: true,
+                        qzss: true,
+                        sbas: true
+                    },
+                    ...(!isLteStation ? { ports: ['USB'] } : {})
+                };
             }
 
             const payload = {
@@ -1093,68 +1095,78 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     </div>
                 )}
 
-                {(isAdmin || !isLteStation) && (
+                {(
                     <div className="gnss-output-policy mt-4">
                         <div className="gnss-output-policy__header">
                             <div className="gnss-output-policy__title">
                                 <i className="bi bi-broadcast-pin me-2"></i>GNSS Output Policy
                             </div>
-                            <span className="gnss-output-policy__admin">{isLteStation ? 'LTE bỏ qua' : (isAdmin ? 'Admin' : 'Cài đặt bởi Admin')}</span>
+                            <span className="gnss-output-policy__admin">{isAdmin ? 'Admin' : 'Cài đặt bởi Admin'}</span>
                         </div>
                         {isLteStation && (
                             <div className="alert alert-info small mb-3">
                                 <i className="bi bi-reception-4 me-2"></i>
-                                <strong>Trạm LTE:</strong> mục NMEA + RTCM và bật/tắt hệ vệ tinh không được set từ UI.
-                                Bridge LTE luôn giữ profile ổn định: lấy dữ liệu từ MQTT, mở SOURCE command khi cần cấu hình,
-                                chỉ phát RTCM (MSM4 + MSM7) trên COM2. Các lựa chọn bên dưới chỉ để tham khảo và sẽ không được gửi xuống trạm LTE.
+                                <strong>Trạm LTE:</strong> chọn bản tin NMEA/RTCM và mức MSM, rồi bấm Áp dụng cấu hình BASE để lưu xuống chip.
                             </div>
                         )}
                         <div className="gnss-output-policy__grid">
                             <div className="gnss-output-policy__field">
-                                <label className="gnss-output-policy__label">Output mode</label>
+                                <label htmlFor={`gnss-output-mode-${device.serial}`} className="gnss-output-policy__label">Output mode</label>
                                 <select
+                                    id={`gnss-output-mode-${device.serial}`}
                                     className="form-select form-select-sm gnss-output-policy__select"
                                     value={outputMode}
                                     onChange={(e) => {
                                         const nextMode = e.target.value;
                                         setOutputMode(nextMode);
-                                        if (nextMode !== 'rtcm_only' && msmLevel === 'both') setMsmLevel('4');
                                     }}
-                                    disabled={isLteStation || !isAdmin}
+                                    disabled={!isAdmin || isSubmitting}
                                 >
                                     <option value="diagnostics_rtcm">NMEA + RTCM</option>
                                     <option value="rtcm_only">RTCM only</option>
                                 </select>
                             </div>
                             <div className="gnss-output-policy__field">
-                                <label className="gnss-output-policy__label">RTCM MSM level</label>
+                                <label htmlFor={`gnss-msm-level-${device.serial}`} className="gnss-output-policy__label">RTCM MSM level</label>
                                 <select
+                                    id={`gnss-msm-level-${device.serial}`}
                                     className="form-select form-select-sm gnss-output-policy__select"
                                     value={msmLevel}
                                     onChange={(e) => setMsmLevel(e.target.value)}
-                                    disabled={isLteStation || !isAdmin}
+                                    disabled={!isAdmin || isSubmitting}
                                 >
                                     <option value="4">MSM4</option>
                                     <option value="7">MSM7</option>
-                                    <option value="both" disabled={outputMode !== 'rtcm_only'}>MSM4 + MSM7 (RTCM only)</option>
+                                    <option value="both">MSM4 + MSM7</option>
                                 </select>
                             </div>
-                            <div className="gnss-output-policy__summary">
+                            <div className="gnss-output-policy__summary" style={isLteStation ? {gridColumn: '1 / -1'} : undefined}>
                                 <label className="gnss-output-policy__label gnss-output-policy__label--accent">
                                     <i className="bi bi-info-circle me-1"></i>Thông tin Hệ vệ tinh & Bản tin RTCM
                                 </label>
-                                <div className="gnss-output-policy__info">
+                                <div className="gnss-output-policy__info" style={isLteStation ? {height: 'auto'} : undefined}>
                                     <div>
                                         <div className="gnss-output-policy__section-title">
-                                            Hệ vệ tinh hỗ trợ (Mặc định bật toàn bộ):
+                                            {isLteStation ? 'Bản tin hệ vệ tinh đầu ra:' : 'Hệ vệ tinh hỗ trợ (Mặc định bật toàn bộ):'}
                                         </div>
                                         <div className="gnss-output-policy__chips">
-                                            <span className="gnss-output-policy__chip">GPS</span>
-                                            <span className="gnss-output-policy__chip">GLONASS</span>
-                                            <span className="gnss-output-policy__chip">Galileo</span>
-                                            <span className="gnss-output-policy__chip">BeiDou</span>
-                                            <span className="gnss-output-policy__chip">QZSS</span>
-                                            <span className="gnss-output-policy__chip gnss-output-policy__chip--muted">SBAS</span>
+                                            {isLteStation ? [['gps', 'GPS'], ['glo', 'GLONASS'], ['gal', 'Galileo'], ['bds', 'BeiDou'], ['qzss', 'QZSS']].map(([key, label]) => (
+                                                <label key={key} className="gnss-output-policy__chip"
+                                                    style={{minHeight: '44px', cursor: isAdmin ? 'pointer' : 'default'}}>
+                                                    <input type="checkbox" className="form-check-input mt-0 me-1"
+                                                        aria-label={`Bản tin ${label}`} checked={!!constellations[key]}
+                                                        disabled={!isAdmin || isSubmitting}
+                                                        onChange={event => setConstellations(previous => ({...previous, [key]: event.target.checked}))} />
+                                                    {label}
+                                                </label>
+                                            )) : <>
+                                                <span className="gnss-output-policy__chip">GPS</span>
+                                                <span className="gnss-output-policy__chip">GLONASS</span>
+                                                <span className="gnss-output-policy__chip">Galileo</span>
+                                                <span className="gnss-output-policy__chip">BeiDou</span>
+                                                <span className="gnss-output-policy__chip">QZSS</span>
+                                                <span className="gnss-output-policy__chip gnss-output-policy__chip--muted">SBAS</span>
+                                            </>}
                                         </div>
                                     </div>
                                     <div className="gnss-output-policy__divider"></div>
@@ -1166,6 +1178,19 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                             {activeChip === 'Ublox' ? (
                                                 <span>
                                                     <strong>1005</strong> (Tọa độ Base), <strong>{msmLevel === 'both' ? '1074+1077' : (msmLevel === '7' ? '1077' : '1074')}</strong> (GPS), <strong>{msmLevel === 'both' ? '1084+1087' : (msmLevel === '7' ? '1087' : '1084')}</strong> (GLONASS), <strong>{msmLevel === 'both' ? '1094+1097' : (msmLevel === '7' ? '1097' : '1094')}</strong> (Galileo), <strong>{msmLevel === 'both' ? '1124+1127' : (msmLevel === '7' ? '1127' : '1124')}</strong> (BeiDou), <strong>1230</strong> (GLONASS Bias).
+                                                </span>
+                                            ) : activeChip === 'Unicorecomm' && isLteStation ? (
+                                                <span>
+                                                    <strong>1006</strong> (Tọa độ Base), <strong>1033</strong> (antenna/receiver).{' '}
+                                                    {[
+                                                        ['gps', 'GPS', '1074', '1077', '1019'],
+                                                        ['glo', 'GLONASS', '1084', '1087', '1020'],
+                                                        ['gal', 'Galileo', '1094', '1097', '1045'],
+                                                        ['bds', 'BeiDou', '1124', '1127', '1042'],
+                                                        ['qzss', 'QZSS', '1114', '1117', '1044']
+                                                    ].filter(([key]) => constellations[key]).map(([, label, msm4, msm7, ephemeris]) =>
+                                                        `${msmLevel === 'both' ? `${msm4}+${msm7}` : msmLevel === '7' ? msm7 : msm4}, ${ephemeris} (${label})`
+                                                    ).join('; ')}.
                                                 </span>
                                             ) : activeChip === 'Unicorecomm' ? (
                                                 <span>

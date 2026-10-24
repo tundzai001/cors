@@ -1226,6 +1226,13 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
             
         agent_val = config1.get(key)
         current_path = f"{prefix}.{key}" if prefix else key
+
+        # Legacy fixed-position commands omitted this field and preserved the
+        # receiver's geoid configuration. Missing metadata never proves ELLIPSOID.
+        if (key == 'altitude_reference' and agent_val is None
+                and config1.get('base_setup_method') == 'FIXED_LLA'
+                and normalize_val(db_val) == 'legacy'):
+            agent_val = 'LEGACY'
         
         if agent_val is None and db_val is not None:
             if is_relay:

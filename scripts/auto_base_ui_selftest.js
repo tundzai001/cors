@@ -27,10 +27,12 @@ let device = {serial: 'ESP_TEST', detected_chip_type: 'Ublox', status: 'auto_set
     base_config: {base_setup_method: 'AUTO_CORS'}, last_raw_gga: '$GNGGA,live,5*00',
     last_raw_gga_age: 0.5, last_gga_fix_status: 'RTK_FLOAT',
     auto_base_progress: {phase: 'wait_fix', fixed_streak: 0}};
+let role = 'admin', configured;
 function render() {
     do {
         index = 0; changed = false;
-        tree = context.window.BaseConfigForm({device, currentUser: {role: 'admin'}});
+        tree = context.window.BaseConfigForm({device, currentUser: {role},
+            onConfigureChip: async (serial, payload) => { configured = {serial, payload}; }});
         effects.splice(0).forEach(effect => effect());
     } while (changed);
 }
@@ -59,3 +61,40 @@ assert(text(tree).includes('Auto Base hoàn tất: 60 mẫu RTK Fixed.'));
 assert(find(tree, node => node.type === 'input' && node.props.readOnly && String(node.props.value).startsWith('21.123456789')));
 assert(find(tree, node => node.props.role === 'status' && text(node).includes('Auto Base hoàn tất')));
 console.log('PASS: live GGA/Float, reject unverified success, update completed coordinates, accessible result');
+
+(async () => {
+    device = {serial: 'LTE_TEST', detected_chip_type: 'Unicorecomm', is_lte: true, status: 'sleep',
+        base_config: {base_setup_method: 'FIXED_LLA', coords: {lat: '18.3863077210', lon: '105.5089184600', alt: '49.92'}}};
+    render();
+    const mode = () => find(tree, node => node.props.id === `gnss-output-mode-${device.serial}`);
+    const msm = () => find(tree, node => node.props.id === `gnss-msm-level-${device.serial}`);
+    assert.equal(mode().props.disabled, false);
+    assert.equal(msm().props.disabled, false);
+    assert.equal(mode().props.value, 'rtcm_only');
+    assert.equal(msm().props.value, 'both');
+    mode().props.onChange({target: {value: 'diagnostics_rtcm'}});
+    render();
+    assert.equal(msm().props.value, 'both', 'enabling NMEA must preserve the chosen MSM level');
+    assert(!find(msm(), node => node.type === 'option' && node.props.value === 'both').props.disabled);
+    msm().props.onChange({target: {value: '7'}});
+    render();
+    find(tree, node => node.props['aria-label'] === 'Bản tin GPS').props.onChange({target: {checked: false}});
+    render();
+    await find(tree, node => node.type === 'form').props.onSubmit({preventDefault() {}});
+    assert.equal(configured.serial, 'LTE_TEST');
+    const options = configured.payload.params.gnss_options;
+    assert.equal(options.output_mode, 'diagnostics_rtcm');
+    assert.equal(options.msm_level, 7);
+    assert.equal(options.constellations.gps, false);
+    assert.equal(configured.payload.params.coords.alt, '49.92');
+    assert(!('ports' in options), 'receiver port remains owned by the LTE source config');
+    device = {...device, serial: 'LTE_RELOAD', base_config: {...device.base_config, gnss_options: options}};
+    render();
+    assert.equal(mode().props.value, 'diagnostics_rtcm');
+    assert.equal(msm().props.value, '7');
+    assert.equal(find(tree, node => node.props['aria-label'] === 'Bản tin GPS').props.checked, false);
+    role = 'coordinator'; render();
+    assert.equal(mode().props.disabled, true);
+    assert.equal(msm().props.disabled, true);
+    console.log('PASS: LTE admin controls enabled, NMEA/MSM/satellite selection submitted and restored; non-admin read only');
+})().catch(error => { console.error(error); process.exitCode = 1; });
