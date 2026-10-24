@@ -307,7 +307,7 @@ DEFAULT_MQTT_USERNAME = "mqttUser"
 DEFAULT_MQTT_PASSWORD = "MqttPassword123$%^"
 
 BACKEND_HOST = DEFAULT_BACKEND_HOST
-BACKEND_WS_HOST = os.getenv("BACKEND_WS_HOST", "cors.aitogy.com").strip()
+BACKEND_WS_HOST = os.getenv("BACKEND_WS_HOST", "base.aitogy.com").strip()
 BACKEND_WS_SCHEME = os.getenv("BACKEND_WS_SCHEME", "wss").strip().lower()
 BACKEND_WS_PORT = int(os.getenv("BACKEND_WS_PORT", "443" if BACKEND_WS_SCHEME == "wss" else "8000"))
 ALLOW_INSECURE_AGENT_WS = os.getenv("ALLOW_INSECURE_AGENT_WS", "false").strip().lower() in {"1", "true", "yes"}

@@ -25,7 +25,7 @@ def patch_config(source, prefix='C:/nginx-1.28.0'):
     pattern = r'(server_name\s+(?:cors\.aitogy\.com|base\.aitogy\.com)(?:\s+(?:cors\.aitogy\.com|base\.aitogy\.com))*\s*;)(?!\s*# BASE SECURITY DROP)'
     source, count = re.subn(pattern, r'\1\n        # BASE SECURITY DROP\n        if ($cors_blocked_ip) { return 444; }', source)
     if not count and '# BASE SECURITY DROP' not in source:
-        raise ValueError('cors.aitogy.com virtual host not found')
+        raise ValueError('Base virtual host not found')
     return source
 
 

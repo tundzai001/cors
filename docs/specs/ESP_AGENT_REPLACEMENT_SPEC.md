@@ -58,7 +58,7 @@ Tất cả địa chỉ phải cấu hình được, không hard-code trong sour
 
 | Thành phần | Giá trị hiện tại | Yêu cầu agent |
 |---|---|---|
-| Dashboard/public API | `https://cors.aitogy.com` | Chỉ dùng cho người dùng/dashboard; agent không đăng nhập bằng JWT dashboard |
+| Dashboard/public API | `https://base.aitogy.com` | Chỉ dùng cho người dùng/dashboard; agent không đăng nhập bằng JWT dashboard |
 | Backend host hiện tại | `aitogy.click` | Dùng làm host mặc định nếu không có config |
 | WebSocket hiện tại | `ws://aitogy.click:8000/ws/pi/{serial}?token={license_key}` | Hỗ trợ `wss://` và URL tùy cấu hình cho production |
 | MQTT broker hiện tại | `45.117.179.134:1883` | Host/port/username/password/TLS phải lấy từ config hoặc secret của deployment |
@@ -249,7 +249,7 @@ ws://{BACKEND_HOST}:8000/ws/pi/{MACHINE_SERIAL}?token={url-encoded-license-key}
 Production ưu tiên:
 
 ```text
-wss://cors.aitogy.com/ws/pi/{MACHINE_SERIAL}?token={url-encoded-license-key}
+wss://base.aitogy.com/ws/pi/{MACHINE_SERIAL}?token={url-encoded-license-key}
 ```
 
 Không nối token raw vào log. Token phải URL-encode. Khi server đóng với code `1008`, coi là lỗi auth/policy; không retry vô hạn với cùng token mà phải chờ license/config mới. Khi code `1013`, retry sau backoff.

@@ -20,7 +20,7 @@ Public map (`/api/public/map-stations`) vẫn phục vụ bản đồ khách the
 
 1. Trong `cors_dashboard/backend`, chạy `alembic -c alembic_auth.ini upgrade head` để áp dụng revision `20261008_api_keys` trước khi chạy backend mới.
 2. Tạo key cho `land_slide_web`, cấp đúng trạm. Phần bản đồ cần `name`, `status`, `lat`, `lon`, `alt`, `mountpoint`, `ntrip_connected`, `bps` và `streams`. Luồng GNSS cần thêm `service_config`; bật `edit_config` nếu tích hợp điều khiển trạm.
-3. Đặt `CORS_BASE_STATIONS_URL=https://cors.aitogy.com/api/integrations/stations` và `CORS_BASE_STATIONS_TOKEN=<key>` trong môi trường server `land_slide_web`. Không đặt key trong JavaScript trình duyệt.
+3. Đặt `CORS_BASE_STATIONS_URL=https://base.aitogy.com/api/integrations/stations` và `CORS_BASE_STATIONS_TOKEN=<key>` trong môi trường server `land_slide_web`. Không đặt key trong JavaScript trình duyệt.
 4. Đặt `WEB_CORS_API_TOKEN=<key>` nếu Round Robin cũng dùng key này; lệnh đọc và sửa dịch vụ sẽ đi qua API tích hợp, theo cùng policy. Nếu tiếp tục dùng `WEB_CORS_API_USERNAME`/`WEB_CORS_API_PASSWORD`, Round Robin dùng JWT và `/api/map/stations` cho lệnh đọc.
 
 Rollback code: giữ bảng `api_keys` và policy trong DB, trả ứng dụng về phiên bản cũ. Chỉ chạy Alembic downgrade khi đã chắc không còn tích hợp dùng key; downgrade sẽ xóa toàn bộ key.

@@ -38,7 +38,7 @@ node scripts/build_frontend_assets.mjs
 
 On production, zoom from Earth to street level and back, toggle globe/Mercator repeatedly, switch base styles, select a real station, enable TEC and GNSS, and cancel tracking. Enter and leave GNSS orbit view. Verify camera/data continuity and one active surface renderer. Separately test an empty/invalid token and confirm Google fallback, its filters and tools. Restore the valid token and remount the map to return to Mapbox.
 
-The provided token successfully serves Mapbox tiles when the Referer is `https://cors.aitogy.com/`; localhost receives 403 because of URL restrictions. Rendering and camera smoothness with live tiles must therefore be verified on the allowed production origin.
+Before deploying the domain change, add `https://base.aitogy.com/*` to the token's allowed URLs in Mapbox. Verify tile requests on the new production origin; the previous origin's successful requests do not validate this new hostname. Rendering and camera smoothness with live tiles must be verified after this change.
 
 ## Map controls and current satellite identity
 

@@ -1225,7 +1225,7 @@ function connectWebSocket() {
 
     // 🔥 Force correct domain if hitting via legacy/monitoring host
     if (host.includes('monitoring.')) {
-        host = 'cors.aitogy.com';
+        host = 'base.aitogy.com';
     }
 
     if (window.ApiClient?.createAuthenticatedWebSocket) {

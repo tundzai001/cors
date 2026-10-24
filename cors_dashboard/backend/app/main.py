@@ -1911,7 +1911,7 @@ app.add_middleware(MonitoringMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://cors.aitogy.com",
+        "https://base.aitogy.com",
         "http://118.70.171.179:8000",
         "http://127.0.0.1:8000",
         "http://localhost:8000",

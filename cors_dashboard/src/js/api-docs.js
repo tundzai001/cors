@@ -73,7 +73,7 @@ const ApiDocs = () => {
                         </ol>
                         <hr className="border-secondary opacity-25" />
                         <h6 className="small text-uppercase text-muted mb-2">Base URL</h6>
-                        <code>https://cors.aitogy.com</code>
+                        <code>https://base.aitogy.com</code>
                         <h6 className="small text-uppercase text-muted mt-4 mb-2">Auth</h6>
                         <code>Authorization: Bearer &lt;token&gt;</code>
                     </aside>

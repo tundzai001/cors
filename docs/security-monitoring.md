@@ -56,7 +56,7 @@ python scripts/configure_nginx_security.py --prefix "C:/nginx-1.28.0" --backend 
 
 The installer backs up `conf/nginx.conf`, provisions the generated IP include,
 adds the geo lookup in `http` and a 444 guard only to the HTTP/HTTPS
-`cors.aitogy.com` servers, tests the configuration and requests a reload. Other
+`base.aitogy.com` servers, tests the configuration and requests a reload. Other
 virtual hosts retain their configuration. On test/reload failure the original
 configuration is restored. It sets `NGINX_SECURITY_PREFIX` and
 `BACKEND_HOST=127.0.0.1` in the deployed backend's `.env`; restart `server.py`.
@@ -64,8 +64,8 @@ Loopback binding prevents clients bypassing Nginx through public port 8000.
 Devices must connect through the public Nginx HTTPS/WSS routes rather than 8000.
 
 AiCaster on a separate server must also use the public proxy. Its wake endpoints
-are `https://cors.aitogy.com/api/ntrip/wake-station` and
-`https://cors.aitogy.com/api/ntrip/wake-listen`. Rebuild and deploy AiCaster after
+are `https://base.aitogy.com/api/ntrip/wake-station` and
+`https://base.aitogy.com/api/ntrip/wake-listen`. Rebuild and deploy AiCaster after
 updating these endpoints; restarting the Python backend does not update the
 caster executable. Keep `BACKEND_HOST=127.0.0.1` on the backend server.
 

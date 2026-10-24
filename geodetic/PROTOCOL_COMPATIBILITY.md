@@ -1,11 +1,11 @@
 # Agent and backend compatibility
 
 The default device WebSocket endpoint is
-`wss://cors.aitogy.com/ws/pi/{serial}`. Its certificate covers
-`cors.aitogy.com`, not the legacy MQTT hostname `aitogy.click`.
+`wss://base.aitogy.com/ws/pi/{serial}`. Deploy a valid certificate for
+`base.aitogy.com` before switching agents; the MQTT hostname is `aitogy.click`.
 MQTT configuration remains independent. Certificate and hostname checks remain
-enabled. If an installation sets `BACKEND_WS_HOST=aitogy.click`, change that
-override to `cors.aitogy.com`; the new default cannot override an environment
+enabled. If an installation sets an older `BACKEND_WS_HOST`, change that
+override to `base.aitogy.com`; the new default cannot override an environment
 setting.
 
 ## Rollout

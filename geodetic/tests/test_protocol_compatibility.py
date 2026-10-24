@@ -61,7 +61,7 @@ class ProtocolCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         scope = {'os': SimpleNamespace(getenv=lambda key, default=None: default), 'DEFAULT_BACKEND_HOST': 'aitogy.click'}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(AGENT), 'exec'), scope)
         self.assertEqual((scope['BACKEND_WS_HOST'], scope['BACKEND_WS_SCHEME'], scope['BACKEND_WS_PORT']),
-                         ('cors.aitogy.com', 'wss', 443))
+                         ('base.aitogy.com', 'wss', 443))
         self.assertEqual(scope['BACKEND_HOST'], 'aitogy.click')
 
     async def test_dispatch_envelope_fallback_and_freshness(self):

@@ -6,4 +6,4 @@ Allow: /js/
 Disallow: /api/
 Disallow: /admin/
 
-Sitemap: https://cors.aitogy.com/sitemap.xml
+Sitemap: https://base.aitogy.com/sitemap.xml

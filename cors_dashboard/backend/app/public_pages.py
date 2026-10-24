@@ -84,7 +84,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
                     "@type": "Organization",
                     "name": "AITOGY .,JSC",
                     "legalName": "Aitogy Infrastructure Technology Joint Stock Company",
-                    "url": "https://cors.aitogy.com"
+                    "url": "https://base.aitogy.com"
                 }
             }
             json_ld_json = json.dumps(json_ld, ensure_ascii=False)
@@ -116,7 +116,7 @@ async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_d
     Generates a dynamic XML sitemap listing the homepage and all active Base stations.
     This ensures Google always has an up-to-date list of every station page.
     """
-    base_url = "https://cors.aitogy.com"
+    base_url = "https://base.aitogy.com"
 
     def _station_slug(value: str) -> str:
         normalized = unicodedata.normalize("NFKD", value or "")
@@ -187,8 +187,8 @@ async def get_blog_post_seo(slug: str, request: Request):
             "headline": meta['title'],
             "description": meta['desc'],
             "author": {"@type": "Organization", "name": "Aitogy"},
-            "publisher": {"@type": "Organization", "name": "Aitogy", "logo": "https://cors.aitogy.com/img/aitogy.png"},
-            "mainEntityOfPage": {"@type": "WebPage", "@id": f"https://cors.aitogy.com/blog/{slug}"}
+            "publisher": {"@type": "Organization", "name": "Aitogy", "logo": "https://base.aitogy.com/img/aitogy.png"},
+            "mainEntityOfPage": {"@type": "WebPage", "@id": f"https://base.aitogy.com/blog/{slug}"}
         }
         html_content = html_content.replace("</head>", f'<script type="application/ld+json">{json.dumps(article_schema)}</script>\n</head>')
 

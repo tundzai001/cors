@@ -19,7 +19,7 @@ const context = vm.createContext({
   WebSocket: Socket, console: { warn() {}, error() {} },
   Date: { now: () => now }, Map,
   window: {
-    location: { protocol: 'https:', host: 'cors.aitogy.com' },
+    location: { protocol: 'https:', host: 'base.aitogy.com' },
     ApiClient: { hasToken: () => token, isSessionInvalidated: () => invalidated,
       createAuthenticatedWebSocket: () => new Socket(), isAuthWebSocketClose: () => false },
     addEventListener: (name, callback) => { windowEvents[name] = callback; },

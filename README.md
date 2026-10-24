@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://cors.aitogy.com/">
+  <a href="https://base.aitogy.com/">
     <img src="docs/assets/cors-satellite-banner.png" width="100%" alt="Vệ tinh GNSS truyền tín hiệu tới mạng lưới trạm CORS trên Trái Đất" />
   </a>
 </p>
@@ -12,14 +12,14 @@
 </p>
 
 <p align="center">
-  <a href="https://cors.aitogy.com/"><img src="https://img.shields.io/badge/WEBSITE-cors.aitogy.com-0EA5E9?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Website Aitogy CORS" /></a>
-  <a href="https://cors.aitogy.com/network-status"><img src="https://img.shields.io/badge/M%E1%BA%A0NG_L%C6%AF%E1%BB%9AI-tr%E1%BA%A1ng_th%C3%A1i-7C3AED?style=for-the-badge&amp;logo=signal&amp;logoColor=white" alt="Trạng thái mạng lưới" /></a>
-  <a href="https://cors.aitogy.com/coverage"><img src="https://img.shields.io/badge/B%E1%BA%A2N_%C4%90%E1%BB%92-v%C3%B9ng_ph%E1%BB%A7-06B6D4?style=for-the-badge&amp;logo=googlemaps&amp;logoColor=white" alt="Bản đồ vùng phủ" /></a>
-  <a href="https://cors.aitogy.com/api/docs"><img src="https://img.shields.io/badge/API-t%C3%A0i_li%E1%BB%87u-22C55E?style=for-the-badge&amp;logo=fastapi&amp;logoColor=white" alt="Tài liệu API" /></a>
+  <a href="https://base.aitogy.com/"><img src="https://img.shields.io/badge/WEBSITE-base.aitogy.com-0EA5E9?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Website Aitogy CORS" /></a>
+  <a href="https://base.aitogy.com/network-status"><img src="https://img.shields.io/badge/M%E1%BA%A0NG_L%C6%AF%E1%BB%9AI-tr%E1%BA%A1ng_th%C3%A1i-7C3AED?style=for-the-badge&amp;logo=signal&amp;logoColor=white" alt="Trạng thái mạng lưới" /></a>
+  <a href="https://base.aitogy.com/coverage"><img src="https://img.shields.io/badge/B%E1%BA%A2N_%C4%90%E1%BB%92-v%C3%B9ng_ph%E1%BB%A7-06B6D4?style=for-the-badge&amp;logo=googlemaps&amp;logoColor=white" alt="Bản đồ vùng phủ" /></a>
+  <a href="https://base.aitogy.com/api/docs"><img src="https://img.shields.io/badge/API-t%C3%A0i_li%E1%BB%87u-22C55E?style=for-the-badge&amp;logo=fastapi&amp;logoColor=white" alt="Tài liệu API" /></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/website?url=https%3A%2F%2Fcors.aitogy.com%2F&amp;style=flat-square&amp;label=LIVE%20WEBSITE" alt="Trạng thái website" />
+  <img src="https://img.shields.io/website?url=https%3A%2F%2Fbase.aitogy.com%2F&amp;style=flat-square&amp;label=LIVE%20WEBSITE" alt="Trạng thái website" />
   <img src="https://img.shields.io/github/last-commit/tundzai001/cors?style=flat-square&amp;color=F59E0B&amp;label=updated" alt="Lần cập nhật gần nhất" />
   <img src="https://img.shields.io/github/stars/tundzai001/cors?style=flat-square&amp;color=FBBF24&amp;logo=github" alt="GitHub stars" />
 </p>
@@ -84,10 +84,10 @@ flowchart LR
 Tài liệu chính: [đặc tả agent](docs/specs/ESP_AGENT_REPLACEMENT_SPEC.md) · [báo cáo security scan](reports/security-scan/report.md).
 
 <p align="center">
-  <a href="https://cors.aitogy.com/">🌐 Mở website</a> &nbsp;·&nbsp;
-  <a href="https://cors.aitogy.com/network-status">📡 Xem trạng thái</a> &nbsp;·&nbsp;
-  <a href="https://cors.aitogy.com/coverage">🗺️ Khám phá vùng phủ</a> &nbsp;·&nbsp;
-  <a href="https://cors.aitogy.com/api/docs">🔌 Đọc API</a>
+  <a href="https://base.aitogy.com/">🌐 Mở website</a> &nbsp;·&nbsp;
+  <a href="https://base.aitogy.com/network-status">📡 Xem trạng thái</a> &nbsp;·&nbsp;
+  <a href="https://base.aitogy.com/coverage">🗺️ Khám phá vùng phủ</a> &nbsp;·&nbsp;
+  <a href="https://base.aitogy.com/api/docs">🔌 Đọc API</a>
 </p>
 
 <p align="center">
