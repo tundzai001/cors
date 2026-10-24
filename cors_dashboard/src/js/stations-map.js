@@ -354,7 +354,7 @@
 
         const referenceStations = useMemo(() => {
             const term = search.trim().toLowerCase();
-            return showVngeonet ? (window.VngeonetStations || []).filter(station =>
+            return vngeonetHealth?.map_status_enabled === true && showVngeonet ? (window.VngeonetStations || []).filter(station =>
                 !term || `cors cục vngeonet ${station.code}`.toLowerCase().includes(term))
                 .map(station => ({...station, serviceHealth: vngeonetHealth, serviceColor: referenceNetworkMeta(vngeonetHealth).color})) : [];
         }, [showVngeonet, search, vngeonetHealth]);
@@ -1252,7 +1252,7 @@
                             <input className="form-check-input" type="checkbox" checked={showStations} onChange={(e) => setShowStations(e.target.checked)} id="station-toggle" />
                             <label className="form-check-label" htmlFor="station-toggle">Base của mình ({devices.length})</label>
                         </div>
-                        <div className="form-check form-switch mb-2">
+                        {vngeonetHealth?.map_status_enabled === true && <div className="form-check form-switch mb-2">
                             <input className="form-check-input" type="checkbox" checked={showVngeonet}
                                 onChange={e => setShowVngeonet(e.target.checked)} id="vngeonet-toggle"
                                 disabled={!window.VngeonetStations?.length} aria-describedby="vngeonet-help" />
@@ -1260,8 +1260,8 @@
                             <div className="form-text" id="vngeonet-help">
                                 {window.VngeonetStations?.length ? (vngeonetHealth?.map_status_enabled === true ? `${referenceMeta.label} · ${referenceCheckLabel(vngeonetHealth)}` : '') : 'Không tải được danh sách VNGEONET'}
                             </div>
-                        </div>
-                        {role === 'admin' && <div className="mb-2">
+                        </div>}
+                        {role === 'admin' && vngeonetHealth?.map_status_enabled === true && <div className="mb-2">
                             <div className="form-check form-switch d-flex align-items-center gap-2" style={{minHeight: '44px'}}>
                                 <input className="form-check-input mt-0" type="checkbox" id="cors-cuc-rtcm-check"
                                     checked={vngeonetHealth?.rtcm_check_enabled === true}
