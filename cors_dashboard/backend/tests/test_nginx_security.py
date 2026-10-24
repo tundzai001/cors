@@ -27,6 +27,13 @@ class NginxSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('server_name other.example; }', result)
         self.assertEqual(installer.patch_config(result), result)
 
+    def test_security_patch_supports_shared_base_and_cors_virtual_host(self):
+        source = 'events {}\nhttp {\nserver { server_name other.example; }\nserver { server_name cors.aitogy.com base.aitogy.com; }\nserver { server_name base.aitogy.com cors.aitogy.com; }\n}'
+        result = installer.patch_config(source)
+        self.assertEqual(result.count('if ($cors_blocked_ip) { return 444; }'), 2)
+        self.assertIn('server_name other.example; }', result)
+        self.assertEqual(installer.patch_config(result), result)
+
     async def test_sync_test_reload_remove_and_no_repeated_reload(self):
         with tempfile.TemporaryDirectory() as folder:
             prefix = Path(folder)
