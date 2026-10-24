@@ -57,7 +57,7 @@ inline constexpr char MQTT_PASS[] = "MqttPassword123$%^";
 
 // Version/topic defaults used by cors/geodetic/agent_universal.py and the
 // cors_dashboard backend.  Values can still be overridden from Preferences.
-inline constexpr char AGENT_VERSION[] = "V2.3.2";
+inline constexpr char AGENT_VERSION[] = "V2.3.5";
 inline constexpr char BACKEND_HOST[] = "base.aitogy.com";
 inline constexpr uint16_t BACKEND_WEBSOCKET_PORT = 8000;
 inline constexpr uint32_t BACKEND_STATUS_INTERVAL_MS = 5000;
