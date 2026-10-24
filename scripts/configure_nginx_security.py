@@ -22,7 +22,7 @@ def patch_config(source, prefix='C:/nginx-1.28.0'):
         if not count:
             raise ValueError('Nginx http block not found')
     # Apply only to this product, in both HTTP and HTTPS servers, before any proxy location.
-    pattern = r'(server_name\s+(?:cors\.aitogy\.com|base\.aitogy\.com)(?:\s+(?:cors\.aitogy\.com|base\.aitogy\.com))*\s*;)(?!\s*# BASE SECURITY DROP)'
+    pattern = r'(server_name\s+base\.aitogy\.com\s*;)(?!\s*# BASE SECURITY DROP)'
     source, count = re.subn(pattern, r'\1\n        # BASE SECURITY DROP\n        if ($cors_blocked_ip) { return 444; }', source)
     if not count and '# BASE SECURITY DROP' not in source:
         raise ValueError('Base virtual host not found')

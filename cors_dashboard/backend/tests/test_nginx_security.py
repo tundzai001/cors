@@ -19,18 +19,11 @@ class NginxSecurityTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 blocklist_text([value])
 
-    def test_config_patch_scopes_to_both_cors_servers_and_is_idempotent(self):
-        source = 'events {}\nhttp {\nserver { server_name other.example; }\nserver { server_name cors.aitogy.com; }\nserver { server_name cors.aitogy.com; }\n}'
+    def test_config_patch_scopes_to_both_base_servers_and_is_idempotent(self):
+        source = 'events {}\nhttp {\nserver { server_name other.example; }\nserver { server_name base.aitogy.com; }\nserver { server_name base.aitogy.com; }\n}'
         result = installer.patch_config(source)
         self.assertEqual(result.count('if ($cors_blocked_ip) { return 444; }'), 2)
         self.assertEqual(result.count('geo $cors_blocked_ip'), 1)
-        self.assertIn('server_name other.example; }', result)
-        self.assertEqual(installer.patch_config(result), result)
-
-    def test_security_patch_supports_shared_base_and_cors_virtual_host(self):
-        source = 'events {}\nhttp {\nserver { server_name other.example; }\nserver { server_name cors.aitogy.com base.aitogy.com; }\nserver { server_name base.aitogy.com cors.aitogy.com; }\n}'
-        result = installer.patch_config(source)
-        self.assertEqual(result.count('if ($cors_blocked_ip) { return 444; }'), 2)
         self.assertIn('server_name other.example; }', result)
         self.assertEqual(installer.patch_config(result), result)
 
@@ -41,7 +34,7 @@ class NginxSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(installer.patch_config(result), result)
         deployed = (ROOT / 'deploy/nginx/nginx.conf').read_text()
         self.assertEqual(deployed.count('server_name base.aitogy.com;'), 2)
-        self.assertNotIn('cors.aitogy.com', deployed)
+        self.assertNotIn('server_name base.aitogy.com ', deployed)
         self.assertIn('C:/Certbot/live/base.aitogy.com/fullchain.pem', deployed)
         self.assertIn('proxy_pass http://127.0.0.1:8000;', deployed)
 
