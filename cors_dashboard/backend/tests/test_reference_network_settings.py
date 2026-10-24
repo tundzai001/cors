@@ -43,7 +43,7 @@ class ReferenceNetworkSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers['cache-control'], 'no-store')
         self.assertFalse(settings.get_check_settings()['rtcm_check_enabled'])
         result = (await self.client.get(url)).json()
-        self.assertEqual(result, {'rtcm_check_enabled': False, 'web_check_interval_seconds': 45, 'rtcm_check_interval_seconds': 1200})
+        self.assertEqual(result, {'map_status_enabled': False, 'rtcm_check_enabled': False, 'web_check_interval_seconds': 45, 'rtcm_check_interval_seconds': 1200})
         self.assertNotIn('PASSWORD', str(result))
         response = await self.client.put(url, json={'rtcm_check_enabled': True})
         self.assertTrue(response.json()['rtcm_check_enabled'])
@@ -59,12 +59,17 @@ class ReferenceNetworkSettingsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_interval_edits_are_live_and_invalid_intervals_use_defaults(self):
         self.env.write_text('CORS_CUC_RTCM_CHECK_ENABLED=false\nCORS_CUC_WEB_CHECK_INTERVAL_SECONDS=60\nCORS_CUC_RTCM_CHECK_INTERVAL_SECONDS=1800\n')
-        self.assertEqual(settings.get_check_settings(), {'rtcm_check_enabled': False, 'web_check_interval_seconds': 60, 'rtcm_check_interval_seconds': 1800})
+        self.assertEqual(settings.get_check_settings(), {'map_status_enabled': False, 'rtcm_check_enabled': False, 'web_check_interval_seconds': 60, 'rtcm_check_interval_seconds': 1800})
         for value in ('0', '-5', 'oops'):
             self.env.write_text(f'CORS_CUC_WEB_CHECK_INTERVAL_SECONDS={value}\nCORS_CUC_RTCM_CHECK_INTERVAL_SECONDS={value}\n')
             result = settings.get_check_settings()
             self.assertEqual(result['web_check_interval_seconds'], 30)
             self.assertEqual(result['rtcm_check_interval_seconds'], 900)
+
+    async def test_map_status_switch_reads_live_boolean_from_env(self):
+        for value, expected in [('false', False), ('true', True), ('false', False)]:
+            self.env.write_text(f'CORS_CUC_MAP_STATUS_ENABLED={value}\n')
+            self.assertEqual(settings.get_check_settings()['map_status_enabled'], expected)
 
 
 if __name__ == '__main__':

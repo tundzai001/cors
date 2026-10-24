@@ -255,4 +255,4 @@ async def get_network_status():
 @router.get("/api/public/reference-network-status")
 async def reference_network_status(response: Response):
     response.headers["Cache-Control"] = "no-store"
-    return await get_network_status()
+    return {**await get_network_status(), "map_status_enabled": get_check_settings().get("map_status_enabled", False)}

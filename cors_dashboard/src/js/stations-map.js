@@ -152,6 +152,7 @@
     }
 
     function referenceNetworkMeta(health) {
+        if (health?.map_status_enabled !== true) return {label: '', color: '#94a3b8'};
         const now = Date.now() / 1000;
         const expires = Number.isFinite(health?.valid_until) ? health.valid_until : (health?.checked_at || 0) + 75;
         const fresh = health?.checked_at && now >= health.checked_at - 5 && now < expires;
@@ -182,8 +183,8 @@
                 <span class="station-map-popup-label">Độ cao (m)</span>
                 <span class="station-map-popup-value">${Number.isFinite(station.heightM) ? station.heightM.toFixed(3) : '—'}</span>
             </div>
-            <div class="small mt-2">Hệ thống Cục: <strong style="color:${meta.color}">${meta.label}</strong></div>
-            <div class="small mt-1">Trạng thái RTCM từng trạm: chưa công bố.</div>
+            ${health?.map_status_enabled === true ? `<div class="small mt-2">Hệ thống Cục: <strong style="color:${meta.color}">${meta.label}</strong></div>
+            <div class="small mt-1">Trạng thái RTCM từng trạm: chưa công bố.</div>` : ''}
             <div class="small mt-2">Nguồn: <a href="https://vngeonet.vn/User/SiteMap/SiteMapPublic" target="_blank" rel="noopener noreferrer">VNGEONET</a> · 17/10/2026</div>
             <div class="small mt-1">Chưa xác định hệ quy chiếu và loại độ cao.</div>
         </div>`;
@@ -1257,7 +1258,7 @@
                                 disabled={!window.VngeonetStations?.length} aria-describedby="vngeonet-help" />
                             <label className="form-check-label" htmlFor="vngeonet-toggle">CORS Cục · VNGEONET ({window.VngeonetStations?.length || 0})</label>
                             <div className="form-text" id="vngeonet-help">
-                                {window.VngeonetStations?.length ? `${referenceMeta.label} · ${referenceCheckLabel(vngeonetHealth)}` : 'Không tải được danh sách VNGEONET'}
+                                {window.VngeonetStations?.length ? (vngeonetHealth?.map_status_enabled === true ? `${referenceMeta.label} · ${referenceCheckLabel(vngeonetHealth)}` : '') : 'Không tải được danh sách VNGEONET'}
                             </div>
                         </div>
                         {role === 'admin' && <div className="mb-2">
@@ -1364,12 +1365,12 @@
                         <div className="station-map-legend-row"><span className="station-map-dot offline"></span>Offline</div>
                         <div className="station-map-legend-row"><span className="station-map-dot locked"></span>Locked</div>
                         <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
-                        <div className="station-map-network" role="status" aria-atomic="true">
+                        {vngeonetHealth?.map_status_enabled === true && <div className="station-map-network" role="status" aria-atomic="true">
                             <div className="station-map-legend-row fw-bold"><span className="station-map-dot reference"></span>CORS Cục · VNGEONET</div>
                             <div style={{color: referenceMeta.color}}>Hệ thống Cục: {referenceMeta.label}</div>
                             <div className="text-muted" >Kiểm tra {vngeonetHealth?.checked_at ? new Date(vngeonetHealth.checked_at * 1000).toLocaleTimeString('vi-VN') : '…'}</div>
                             {showVngeonet && <div className="text-muted">{referenceStations.length} trạm · RTCM chưa xác định</div>}
-                        </div>
+                        </div>}
                     </div>
                 )}
 

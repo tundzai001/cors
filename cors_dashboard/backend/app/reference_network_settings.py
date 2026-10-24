@@ -25,6 +25,7 @@ def get_check_settings():
         return default
 
     return {
+        "map_status_enabled": value("CORS_CUC_MAP_STATUS_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
         "rtcm_check_enabled": value("CORS_CUC_RTCM_CHECK_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
         "web_check_interval_seconds": seconds("CORS_CUC_WEB_CHECK_INTERVAL_SECONDS", 30),
         "rtcm_check_interval_seconds": seconds("CORS_CUC_RTCM_CHECK_INTERVAL_SECONDS", 900),
