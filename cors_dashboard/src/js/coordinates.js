@@ -1,8 +1,9 @@
 (() => {
     'use strict';
     const $ = id => document.getElementById(id);
+    const angles = window.CorsCoordinateAngles;
     const sides = ['source', 'target'];
-    let catalog, result = null, exportedRows = [], nextPoint = 0;
+    let catalog, result = null, exportedRows = [], nextPoint = 0, angleMode = 'dd';
     const status = (text, error = false) => {
         $('status').textContent = text;
         $('status').classList.toggle('tool-error', error);
@@ -41,7 +42,8 @@
     function labels(side) {
         if (format(side) === 'geocentric') return ['X địa tâm (m)', 'Y địa tâm (m)', 'Z địa tâm (m)'];
         const height = $(side + '-height').value === 'orthometric' ? 'Cao độ H (m)' : 'Độ cao h (m)';
-        return format(side) === 'geographic' ? ['Kinh độ (°)', 'Vĩ độ (°)', height] : ['X / Bắc (m)', 'Y / Đông (m)', height];
+        const angularUnit = side === 'source' && angleMode !== 'dd' ? angleMode === 'dms' ? 'DMS' : 'ddmmss.s' : '°';
+        return format(side) === 'geographic' ? [`Kinh độ (${angularUnit})`, `Vĩ độ (${angularUnit})`, height] : ['X / Bắc (m)', 'Y / Đông (m)', height];
     }
     function crs(side) {
         const vn = $(side + '-datum').value === 'VN2000';
@@ -59,7 +61,15 @@
                 input.required = column < 2 || needsThird;
                 input.min = ''; input.max = '';
                 if (format('source') === 'geographic' && column < 2) {
+                    input.type = 'text'; input.inputMode = angleMode === 'dms' ? 'text' : 'decimal';
+                    input.setAttribute('aria-describedby', 'angle-help');
+                    input.placeholder = angleMode === 'dms'
+                        ? column === 0 ? '105°53′25.8″E' : '22°20′40.1″N'
+                        : angleMode === 'packed_dms' ? column === 0 ? '1055325.8' : '222040.1' : '';
                     input.min = column === 0 ? '-180' : '-90'; input.max = column === 0 ? '180' : '90';
+                } else {
+                    input.type = 'number'; input.inputMode = 'decimal'; input.placeholder = '';
+                    input.removeAttribute('aria-describedby');
                 }
             });
             row.querySelector('.remove-point').setAttribute('aria-label', `Xóa điểm ${i + 1}`);
@@ -80,12 +90,20 @@
         const projection = selected?.projection;
         $(side + '-summary').textContent = projected
             ? projection ? `Kinh tuyến ${degrees(projection.central_meridian)} · múi ${projection.zone_width}° · k₀ = ${String(projection.scale_factor).replace('.', ',')}` : 'Chọn vùng đo cũ để xác định kinh tuyến trục.'
-            : format(side) === 'geographic' ? 'Kinh độ, vĩ độ theo độ thập phân.' : 'XYZ địa tâm · Ba tọa độ không gian, đơn vị mét.';
+            : format(side) === 'geographic'
+            ? side === 'source' && angleMode !== 'dd' ? 'Kinh độ, vĩ độ theo độ – phút – giây; chuẩn hóa sang độ thập phân khi chuyển đổi.' : 'Kinh độ, vĩ độ theo độ thập phân.'
+            : 'XYZ địa tâm · Ba tọa độ không gian, đơn vị mét.';
         $(side + '-formats').open = format(side) !== (vn ? 'projected' : 'geographic');
         const ecef = sides.some(s => format(s) === 'geocentric');
         $('height-options').hidden = ecef;
         if (ecef) sides.forEach(s => { $(s + '-height').value = 'ellipsoidal'; $(s + '-geoid-field').hidden = true; });
         $('height-help').textContent = ecef ? 'XYZ địa tâm cần đủ ba tọa độ. Khi đổi từ kinh độ/vĩ độ sang XYZ, cần nhập cả độ cao h.' : 'Bỏ trống độ cao nếu chỉ đổi tọa độ ngang. Đơn vị độ cao là mét.';
+        $('angle-input').hidden = $('angle-help').hidden = format('source') !== 'geographic';
+        $('angle-help').textContent = angleMode === 'dms'
+            ? 'Nhập từng góc hoặc dán cả cặp: 22°20′40.1″N 105°53′25.8″E. N/S là vĩ độ, E/W là kinh độ.'
+            : angleMode === 'packed_dms'
+            ? 'DMS gộp: 222040.1 = 22°20′40.1″; 1055325.8 = 105°53′25.8″. Phút và giây nhỏ hơn 60.'
+            : 'Độ thập phân, ví dụ 105.890500 và 22.344472. Có thể dán cả cặp DMS có hướng N/S, E/W vào một ô.';
         pointLabels();
     }
     function applyRegion(side) {
@@ -117,8 +135,22 @@
         row.className = 'tool-point-row';
         ['first', 'second', 'height'].forEach((name, i) => {
             const field = document.createElement('div'), label = document.createElement('label'), input = document.createElement('input');
-            input.id = `point-${id}-${name}`; input.type = 'number'; input.step = 'any'; input.inputMode = 'decimal';
+            input.id = `point-${id}-${name}`; input.type = i < 2 && format('source') === 'geographic' ? 'text' : 'number'; input.step = 'any'; input.inputMode = 'decimal';
             input.value = values[i] ?? ''; label.htmlFor = input.id;
+            if (i < 2) input.addEventListener('paste', event => {
+                if (format('source') !== 'geographic') return;
+                try {
+                    const pair = angles.parsePair(event.clipboardData?.getData('text/plain') || '');
+                    if (!pair) return;
+                    event.preventDefault();
+                    const fields = row.querySelectorAll('input');
+                    fields[0].value = angles.format(pair.lon, 'lon', angleMode);
+                    fields[1].value = angles.format(pair.lat, 'lat', angleMode);
+                    fields[0].removeAttribute('aria-invalid'); fields[1].removeAttribute('aria-invalid');
+                    invalidate();
+                    status(`Đã nhận DMS: vĩ độ ${pair.lat.toFixed(6)}, kinh độ ${pair.lon.toFixed(6)}.`);
+                } catch (error) { event.preventDefault(); status(error.message, true); }
+            });
             field.append(label, input); row.append(field);
         });
         const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'remove-point';
@@ -138,11 +170,22 @@
             const inputs = [...row.querySelectorAll('input')];
             const values = inputs.map(input => input.value.trim());
             const point = values[2] === '' ? values.slice(0, 2) : values;
-            if (point.some(v => v === '' || !Number.isFinite(Number(v)))) throw new Error(`Điểm ${index + 1}: nhập đủ tọa độ hợp lệ.`);
+            if (point.some(v => v === '')) throw new Error(`Điểm ${index + 1}: nhập đủ tọa độ hợp lệ.`);
             if (sides.some(s => format(s) === 'geocentric') && point.length !== 3) throw new Error('Chuyển XYZ địa tâm cần đủ tọa độ và độ cao h.');
             if (dimensions && dimensions !== point.length) throw new Error('Nhập độ cao cho tất cả các điểm, hoặc bỏ trống độ cao cho tất cả.');
             dimensions = point.length;
-            const numeric = point.map(Number);
+            const numeric = point.map((value, column) => {
+                inputs[column].removeAttribute('aria-invalid');
+                try {
+                    if (format('source') === 'geographic' && column < 2) return angles.parse(value, column === 0 ? 'lon' : 'lat', angleMode);
+                    const number = Number(value);
+                    if (!Number.isFinite(number)) throw new Error('Nhập giá trị số hợp lệ.');
+                    return number;
+                } catch (error) {
+                    inputs[column].setAttribute('aria-invalid', 'true'); inputs[column].focus();
+                    throw new Error(`Điểm ${index + 1} · ${labels('source')[column]}: ${error.message}`);
+                }
+            });
             return format('source') === 'geographic' ? [numeric[1], numeric[0], ...numeric.slice(2)] : numeric;
         });
     }
@@ -171,11 +214,13 @@
             geoid: $('target-height').value === 'orthometric' ? Number($('target-geoid').value) : null };
         options($('copy-point'), data.points.map((_, i) => [String(i), `Điểm ${i + 1}`]));
         $('copy-point-field').hidden = data.points.length === 1;
-        $('result-summary').textContent = `${data.points.length} điểm · ${$('source-datum').selectedOptions[0].textContent} sang ${$('target-datum').selectedOptions[0].textContent} · ${data.dimensions === 3 ? 'Có chuyển độ cao' : 'Chỉ tọa độ ngang'}`;
+        const pair = geographic && data.points.length === 1
+            ? ` · Vĩ độ, kinh độ: ${data.points[0][0].toFixed(6)}, ${data.points[0][1].toFixed(6)}` : '';
+        $('result-summary').textContent = `${data.points.length} điểm · ${$('source-datum').selectedOptions[0].textContent} sang ${$('target-datum').selectedOptions[0].textContent} · ${data.dimensions === 3 ? 'Có chuyển độ cao' : 'Chỉ tọa độ ngang'}${pair}`;
         $('accuracy').textContent = `${data.accuracy_m == null ? '' : `Sai số công bố của phép đổi datum: ${data.accuracy_m} m; không phải độ chính xác điểm đo. `}${data.note}`;
         $('result').hidden = false; status(`Đã chuyển đổi ${data.points.length} điểm.`);
     }
-    $('converter').addEventListener('input', invalidate);
+    $('converter').addEventListener('input', event => { event.target.removeAttribute('aria-invalid'); invalidate(); });
     $('converter').addEventListener('submit', async event => {
         event.preventDefault(); invalidate();
         try {
@@ -214,6 +259,29 @@
         });
     });
     $('edition').addEventListener('change', () => { provinces(); invalidate(); });
+    function setAngleMode(next) {
+        const changes = [...$('point-rows').children].flatMap(row => [...row.querySelectorAll('input')].slice(0, 2).map((input, column) => ({
+            input, value: input.value.trim() ? angles.format(angles.parse(input.value, column === 0 ? 'lon' : 'lat', angleMode), column === 0 ? 'lon' : 'lat', next) : ''
+        })));
+        angleMode = next; $('angle-format').value = next; pointLabels();
+        changes.forEach(({input, value}) => { input.value = value; });
+        update('source'); invalidate();
+    }
+    $('angle-format').addEventListener('change', () => {
+        try { setAngleMode($('angle-format').value); }
+        catch (error) { $('angle-format').value = angleMode; status(error.message, true); }
+    });
+    $('dms-to-decimal').addEventListener('click', () => {
+        try {
+            setAngleMode('dms');
+            sides.forEach(side => {
+                $(side + '-datum').value = 'WGS84'; $(side + '-format').value = 'geographic';
+                $(side + '-height').value = 'ellipsoidal'; $(side + '-geoid-field').hidden = true; update(side);
+            });
+            invalidate(); status('Dán cặp DMS vào một ô kinh độ hoặc vĩ độ, rồi bấm Chuyển đổi.');
+            $('point-rows').querySelector('input').focus();
+        } catch (error) { status(error.message, true); }
+    });
     $('add-point').addEventListener('click', () => { addPoint(); invalidate(); $('point-rows').lastElementChild.querySelector('input').focus(); });
     $('swap').addEventListener('click', () => {
         const previous = result?.data.points;
@@ -227,11 +295,13 @@
         });
         if (previous) {
             $('point-rows').replaceChildren();
-            previous.forEach(p => addPoint(format('source') === 'geographic' ? [p[1], p[0], ...p.slice(2)] : p));
+            previous.forEach(p => addPoint(format('source') === 'geographic'
+                ? [angles.format(p[1], 'lon', angleMode), angles.format(p[0], 'lat', angleMode), ...p.slice(2)] : p));
         }
         pointLabels(); invalidate();
     });
     $('example').addEventListener('click', () => {
+        angleMode = 'dd'; $('angle-format').value = 'dd';
         $('source-datum').value = 'WGS84'; $('source-format').value = 'geographic';
         $('target-datum').value = 'VN2000'; $('target-format').value = 'projected'; $('target-width').value = '3';
         sides.forEach(side => { $(side + '-height').value = 'ellipsoidal'; $(side + '-geoid-field').hidden = true; });

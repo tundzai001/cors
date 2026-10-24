@@ -32,7 +32,11 @@ for (const user of [null, { role: 'viewer' }, { role: 'admin' }, { role: 'coordi
     else assert(!records.some(item => item.id === 'security'));
 }
 const html = fs.readFileSync(path.join(root, 'cors_dashboard/frontend/coordinates.html'), 'utf8');
-assert(html.includes('id="main-nav"'));
+const view = fs.readFileSync(path.join(root, 'cors_dashboard/src/js/coordinate-view.js'), 'utf8');
+assert(view.includes('id="main-nav"'));
+assert(html.includes('id="coordinate-root"'));
+assert(html.indexOf('coordinate-view.min.js') < html.indexOf('nav-manager.min.js'));
+assert(!html.includes('<form'), 'Coordinate UI is rendered by JS');
 assert(html.includes('nav-manager.min.js'));
 assert(!html.includes('<textarea'));
 assert(!html.includes('<option value="EPSG:'));
