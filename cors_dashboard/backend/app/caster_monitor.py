@@ -93,6 +93,22 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
             sync_caster_sources(host, port, user, password),
         )
 
+        # A decoder can share credentials with a real rover; filter by connection identity.
+        if clients is not None:
+            decoder_counts = {}
+            rover_clients = []
+            for client in clients:
+                if any(str(client.get(key) or '').strip().upper().startswith('AITOGY_DECODER_')
+                       for key in ('receiver_id', 'client_id')):
+                    username = str(client.get('username') or '').strip().casefold()
+                    decoder_counts[username] = decoder_counts.get(username, 0) + 1
+                else:
+                    rover_clients.append(client)
+            clients = rover_clients
+            users = [{**account, 'nclient': max(0, int(account.get('nclient') or 0) -
+                     decoder_counts.get(str(account.get('username') or '').strip().casefold(), 0))}
+                     for account in (users or [])]
+
         scan_timestamp = int(time.time())
         async with global_caster_cache_lock:
             await _set_caster_cache(key, {

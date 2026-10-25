@@ -146,12 +146,34 @@ class Prefix7DecoderTests(unittest.TestCase):
         request = sock.sendall.call_args_list[0].args[0]
         self.assertIn(b'GET /70001 HTTP/1.0', request)
         self.assertIn(base64.b64encode(b'70001:saved-password'), request)
+        self.assertIn(b'User-Agent: NTRIP AitogyDecoder/AITOGY_DECODER_MONITOR_70001\r\n', request)
+        self.assertEqual(sock.sendall.call_count, 1, 'Fixed-base decoder must not publish a synthetic rover GGA')
         self.assertFalse(worker.is_connected)
         statuses = [json.loads(call.args[1])['status'] for call in worker.mqtt_client.publish.call_args_list
                     if call.args[0] == worker.topic_status]
         self.assertEqual(statuses[0], 'offline')
         self.assertIn('online', statuses, 'First validated frame must publish online without waiting for the rate window')
         self.assertTrue(set(statuses) <= {'online', 'offline'})
+
+    def test_esp_decoder_uses_internal_identity_without_rover_position(self):
+        worker = relay.MonitorWorker({'mountpoint': 'CUSTOM_BASE', 'serial': 'esp_test',
+                                     'lat': 21, 'lon': 105, 'alt': 10}, MagicMock())
+        sock = MagicMock()
+        sock.recv.side_effect = [b'ICY 200 OK\r\n' + frame1005(), b'']
+        worker.wakeup_event.wait = lambda seconds: worker.stop_event.set()
+        with patch.object(relay.socket, 'create_connection', return_value=sock), \
+             patch.object(worker, 'publish_status'):
+            worker.run()
+        self.assertEqual(sock.sendall.call_count, 1)
+        self.assertIn(b'User-Agent: NTRIP AitogyDecoder/AITOGY_DECODER_esp_test\r\n',
+                      sock.sendall.call_args.args[0])
+
+    def test_other_monitor_keeps_gga_for_its_existing_stream(self):
+        worker = relay.MonitorWorker({'mountpoint': 'OTHER', 'serial': 'MONITOR_OTHER',
+                                     'lat': 21, 'lon': 105, 'alt': 10}, MagicMock())
+        sock = MagicMock()
+        worker._send_rover_gga(sock)
+        self.assertTrue(sock.sendall.call_args.args[0].startswith(b'$GPGGA,'))
 
     def test_sync_is_idempotent_and_password_rotation_restarts_worker(self):
         client = MagicMock()

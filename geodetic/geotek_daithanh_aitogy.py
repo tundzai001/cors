@@ -2265,6 +2265,8 @@ class MonitorWorker(threading.Thread):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['mountpoint']}] {msg}")
 
     def _send_rover_gga(self, sock: socket.socket) -> None:
+        if self.is_prefix7 or self.serial.lower().startswith('esp_'):
+            return  # Fixed-base decoding must not advertise a synthetic rover position.
         decoder = globals().get("rtcm_signal_decoder")
         base_coords = decoder.get_base_coordinates(self.serial) if decoder else None
         if base_coords:
@@ -2473,7 +2475,9 @@ class MonitorWorker(threading.Thread):
                     raise ValueError('Base 4G requires the saved Rover password')
                 r_pass = r_pass or "12345"
                 auth = base64.b64encode(f"{r_user}:{r_pass}".encode()).decode()
-                request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP NtripClient/1.0\r\nAuthorization: Basic {auth}\r\n\r\n"
+                # Caster exposes the final User-Agent segment as receiver_id/client_id.
+                decoder_id = 'AITOGY_DECODER_' + re.sub(r'[^A-Za-z0-9_.-]', '_', self.serial)
+                request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP AitogyDecoder/{decoder_id}\r\nAuthorization: Basic {auth}\r\n\r\n"
                 sock.sendall(request.encode())
                 pending_data = self._read_ntrip_response(sock)
                 

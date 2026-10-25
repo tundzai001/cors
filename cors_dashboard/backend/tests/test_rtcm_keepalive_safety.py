@@ -103,6 +103,35 @@ class MonitorSnapshotTests(unittest.IsolatedAsyncioTestCase):
 
 
 class KeepaliveWorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_decoder_is_excluded_but_same_account_rover_is_preserved(self):
+        fake_module = ModuleType('app.caster_client')
+        rover = dict(username='70845', mountpoint='70845', receiver_id='70845', client_id='measuring')
+        decoder = dict(username='70845', mountpoint='70845', receiver_id='AITOGY_DECODER_MONITOR_70845')
+        other_decoder = dict(username='70845', mountpoint='70845', client_id='aitogy_decoder_esp_test')
+        esp_rover = dict(username='esp_test', mountpoint='CUSTOM_BASE', receiver_id='esp_test')
+        esp_decoder = dict(username='esp_test', mountpoint='CUSTOM_BASE', receiver_id='AITOGY_DECODER_esp_test')
+        caster = SimpleNamespace(get_users=AsyncMock(return_value=[dict(username='70845', nclient=3),
+                                                                  dict(username='esp_test', nclient=2)]),
+                                 get_clienttable=AsyncMock(return_value=[decoder, rover, other_decoder,
+                                                                         esp_decoder, esp_rover]))
+        fake_module.CasterClient = lambda *args, **kwargs: caster
+        save, history = AsyncMock(), AsyncMock()
+        import time
+        scope = load_functions('caster_monitor.py', {'_sync_single_caster'}, dict(
+            asyncio=asyncio, time=time, logger=logging.getLogger('test'),
+            global_caster_cache_lock=asyncio.Lock(), _set_caster_cache=save,
+            _get_caster_cache=AsyncMock(return_value=None),
+            _record_rover_session_snapshots=history, RTCM_KEEPALIVE_DEBUG=False,
+            sync_caster_sources=AsyncMock(return_value={'synced_at': 100, 'error': None}),
+        ))
+        with patch.dict(sys.modules, {'app.caster_client': fake_module}):
+            await scope['_sync_single_caster']('caster', 2101)
+        snapshot = save.call_args.args[1]
+        self.assertEqual(snapshot['clients'], [rover, esp_rover], 'Map and rover list share the filtered cache')
+        self.assertEqual(snapshot['users'][0]['nclient'], 1)
+        self.assertEqual(snapshot['users'][1]['nclient'], 1)
+        self.assertEqual(history.await_args.args[1], [rover, esp_rover], 'Decoder cannot create a rover history session')
+
     async def test_pending_miss_renews_lease_and_found_rover_clears_misses(self):
         class Expression:
             def __gt__(self, other): return self

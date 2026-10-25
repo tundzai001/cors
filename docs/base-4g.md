@@ -10,6 +10,12 @@ Decoder giữ nguyên kết nối khi cấu hình không đổi. Đổi mật kh
 
 Decoder kiểm tra phản hồi HTTP/ICY và chỉ tính lưu lượng từ khung RTCM3 đúng CRC24Q. Tọa độ lấy từ 1005/1006, vệ tinh/SNR dùng bộ giải mã MSM hiện có. ONLINE xác nhận có RTCM, không đồng nghĩa RTK Fixed. Chưa giải mã tọa độ thì Overview hiển thị trạng thái chờ; không dùng vị trí GGA gửi đi làm tọa độ quan sát.
 
+Kết nối monitor dùng User-Agent `NTRIP AitogyDecoder/AITOGY_DECODER_<serial>` để Caster báo định danh decoder riêng trong clienttable. Backend loại các kết nối này khỏi cache rover, số kết nối người đo và các phiên lịch sử mới; người đo dùng cùng username vẫn được giữ. Decoder Base đầu `7` và decoder có serial `esp_*` không gửi GGA giả, kể cả khi ESP dùng mountpoint tùy chỉnh. Không lọc theo username hoặc khoảng cách tới Base vì có thể ẩn nhầm người đo thật.
+
+Khi triển khai thay đổi định danh, cập nhật và restart backend trước, rồi restart tiến trình `geotek_daithanh_aitogy.py` để thay các kết nối monitor cũ chưa có định danh riêng. Lượt quét Caster tiếp theo cập nhật danh sách/map. Lịch sử cũ không bị xóa tự động vì không đủ dữ liệu để phân biệt chắc chắn các kết nối cũ.
+
+Riêng ESP, tài khoản decode tạm dùng username bằng mountpoint đang cấu hình, password `12345`, tắt hiển thị vị trí, lưu phiên/điểm, chu kỳ RTCM và chia sẻ tài khoản. Khi trạm được xác nhận offline và không còn nguồn Caster hoạt động, lượt đồng bộ tiếp theo dừng decoder và xóa tài khoản hệ thống gắn đúng serial ESP, không chờ thêm 5 phút. Chu kỳ đồng bộ là 15 giây; độ trễ phát hiện offline còn phụ thuộc telemetry và lượt quét Caster. Tài khoản người dùng tạo không bị xóa theo luồng này. Quy tắc xóa tạm của ESP không áp dụng cho tài khoản Rover của Base đầu `7`.
+
 Máy đầu `7` không có sleep/wake hoặc stream On-Demand. Chỉ có `online` hoặc `offline`. Đã xác thực nhưng chưa có RTCM vẫn là `offline`; sau khung RTCM hợp lệ đầu tiên là `online`; mất kết nối hoặc không có khung hợp lệ trong 12 giây trở lại `offline`. Log xác thực thành công không được xem là bằng chứng có RTCM.
 
 Callback wake/stop cho MP đầu `7` chỉ trả kết quả tương thích, không tạo lease, không gửi lệnh tới máy và không chặn dữ liệu theo trạng thái decoder. Blocklist Rover vẫn được kiểm tra. Các lease cũ hết hạn cũng không được bật/tắt luồng của Base đầu `7`.

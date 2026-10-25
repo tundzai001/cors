@@ -5,7 +5,7 @@ When an ESP32 Base 4G station streams RTCM to NTRIP Caster at mountpoint 'mp':
    show_position=False on Caster and in DB.
 2. Backend signals the decoder service (geotek_daithanh_aitogy) via MQTT topic `pi/decoder/esp_base`
    to pull the stream and decode satellites/RTCM for the ESP station's UI.
-3. When the ESP32 station is disconnected/offline for >= 5 minutes (300s),
+3. When the ESP32 station is confirmed offline,
    the Rover account is automatically deleted from Caster and DB, and the decoder worker is stopped.
 """
 
@@ -26,7 +26,6 @@ from .mobile_base import is_4g_mountpoint, is_readonly_base
 
 logger = logging.getLogger("app.esp_base_manager")
 
-OFFLINE_DELETE_THRESHOLD_SECONDS = 300  # 5 minutes
 SYNC_INTERVAL_SECONDS = 15.0
 DEFAULT_ROVER_PASSWORD = "12345"
 MQTT_DECODER_TOPIC = "pi/decoder/esp_base"
@@ -150,8 +149,22 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
 
 
 async def auto_deprovision_esp_rover_account(device_serial: str, username: str) -> bool:
-    """Delete the temporary rover account from Caster & DB when ESP32 Base is offline >= 5m."""
+    """Delete the temporary rover account from Caster & DB when ESP32 Base is confirmed offline."""
     logger.info(f"[ESP ROVER] Deprovisioning temporary rover '{username}' for offline base {device_serial}")
+
+    # Verify ownership before deleting a Caster login, which may be manually managed.
+    async with auth_session_scope() as auth_db:
+        rs = await auth_db.execute(
+            select(models.RoverAccount).where(
+                models.RoverAccount.username == username,
+                models.RoverAccount.base_serial == device_serial,
+                models.RoverAccount.created_by_user_id.is_(None),
+            )
+        )
+        if not rs.scalars().all():
+            return False
+
+    await notify_decoder_worker("stop", device_serial, username, username, DEFAULT_ROVER_PASSWORD)
 
     # 1. Delete on all configured Casters
     casters = await _get_configured_casters()
@@ -179,8 +192,6 @@ async def auto_deprovision_esp_rover_account(device_serial: str, username: str) 
             await auth_db.commit()
             logger.info(f"[ESP ROVER] Removed {len(rovers)} RoverAccount rows for '{username}' from DB")
 
-    # 3. Notify Decoder via MQTT to stop
-    await notify_decoder_worker("stop", device_serial, username, username, DEFAULT_ROVER_PASSWORD)
     return True
 
 
@@ -245,7 +256,7 @@ async def sync_esp_base_rovers() -> None:
     """Main synchronization check:
     - ESP32 sources with fresh Caster data -> ensure RoverAccount and decoder.
     - Missing source data -> stop the decoder; agent status can lag the caster.
-    - Offline >= 5m ESP32 bases -> delete RoverAccount and stop decoder worker.
+    - Confirmed offline ESP32 bases -> delete system RoverAccount and stop decoder worker.
     """
     now = int(time.time())
 
@@ -306,23 +317,13 @@ async def sync_esp_base_rovers() -> None:
                         rover_map.pop(rover_user_key, None)
 
         elif status == "offline":
-            # Check offline duration
-            offline_since = dev.offline_since
-            if not offline_since:
-                offline_since = int(dev.timestamp or now)
-
-            offline_duration = now - offline_since
-            if offline_duration >= OFFLINE_DELETE_THRESHOLD_SECONDS:
-                # Find any system-created rover account for this serial
-                for rover_user_key, rover_obj in list(rover_map.items()):
-                    if isinstance(rover_obj, models.RoverAccount):
-                        if rover_obj.base_serial == serial and rover_obj.created_by_user_id is None:
-                            logger.info(
-                                f"[ESP ROVER] Base {serial} has been offline for {offline_duration}s "
-                                f"(>= {OFFLINE_DELETE_THRESHOLD_SECONDS}s) -> deleting rover '{rover_obj.username}'"
-                            )
-                            await auto_deprovision_esp_rover_account(serial, rover_obj.username)
-                            rover_map.pop(rover_user_key, None)
+            # Remove only this base's system account on the first offline sync.
+            for rover_user_key, rover_obj in list(rover_map.items()):
+                if isinstance(rover_obj, models.RoverAccount):
+                    if rover_obj.base_serial == serial and rover_obj.created_by_user_id is None:
+                        logger.info(f"[ESP ROVER] Base {serial} is offline -> deleting rover '{rover_obj.username}'")
+                        await auto_deprovision_esp_rover_account(serial, rover_obj.username)
+                        rover_map.pop(rover_user_key, None)
 
 
 def _source_has_data(source, now: int) -> bool:

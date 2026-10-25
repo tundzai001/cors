@@ -10,7 +10,6 @@ from app.esp_base_manager import (
     auto_provision_esp_rover_account,
     auto_deprovision_esp_rover_account,
     sync_esp_base_rovers,
-    OFFLINE_DELETE_THRESHOLD_SECONDS,
     DEFAULT_ROVER_PASSWORD,
     notify_decoder_worker,
     MQTT_DECODER_TOPIC,
@@ -206,11 +205,25 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
                 "stop", "esp_1234567890AB", "ESP_TEST", "ESP_TEST", DEFAULT_ROVER_PASSWORD
             )
 
+    async def test_deprovision_without_owned_system_account_never_deletes_caster_user(self):
+        with patch('app.esp_base_manager.auth_session_scope') as auth_scope, \
+             patch('app.esp_base_manager._get_configured_casters', new_callable=AsyncMock) as casters, \
+             patch('app.esp_base_manager.notify_decoder_worker', new_callable=AsyncMock) as notify:
+            db = AsyncMock()
+            auth_scope.return_value.__aenter__.return_value = db
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = []
+            db.execute.return_value = result
+            self.assertFalse(await auto_deprovision_esp_rover_account('esp_test', 'MANUAL'))
+            casters.assert_not_awaited()
+            db.delete.assert_not_awaited()
+            notify.assert_not_awaited()
+
     @patch("app.esp_base_manager.auto_deprovision_esp_rover_account", new_callable=AsyncMock)
     @patch("app.esp_base_manager.auto_provision_esp_rover_account", new_callable=AsyncMock)
     @patch("app.esp_base_manager.auth_session_scope")
     @patch("app.esp_base_manager.device_session_scope")
-    async def test_sync_esp_base_rovers_offline_threshold(
+    async def test_sync_esp_base_rovers_deletes_system_accounts_on_first_offline_sync(
         self, mock_dev_scope, mock_auth_scope, mock_prov, mock_deprov
     ):
         now = int(time.time())
@@ -220,12 +233,12 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
             status="online",
             service_config={"mountpoint1": "ONLINE_MP"},
         )
-        # Base 2: offline for 100s (< 300s) -> should NOT deprovision
+        # Base 2: newly offline -> deprovision without a five-minute delay.
         dev_recent_offline = models.Device(
             serial="esp_OFFLINE_REC",
             status="offline",
-            timestamp=now - 100,
-            offline_since=now - 100,
+            timestamp=now,
+            offline_since=now,
             service_config={"mountpoint1": "REC_MP"},
         )
         # Base 3: offline for 350s (>= 300s) -> should deprovision
@@ -250,10 +263,14 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
             base_serial="esp_OFFLINE_OLD",
             created_by_user_id=None,
         )
+        rover_recent = models.RoverAccount(username='REC_MP', base_serial='esp_OFFLINE_REC',
+                                          created_by_user_id=None)
+        manual_rover = models.RoverAccount(username='MANUAL', base_serial='esp_OFFLINE_REC',
+                                          created_by_user_id=1)
         mock_auth_session = AsyncMock()
         mock_auth_scope.return_value.__aenter__.return_value = mock_auth_session
         auth_rs = MagicMock()
-        auth_rs.scalars.return_value.all.return_value = [rover_old]
+        auth_rs.scalars.return_value.all.return_value = [rover_old, rover_recent, manual_rover]
         mock_auth_session.execute.return_value = auth_rs
 
         source_rs = MagicMock()
@@ -265,8 +282,9 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
 
         # dev_online has no rover -> auto_provision called
         mock_prov.assert_awaited_once_with(dev_online, "ONLINE_MP")
-        # dev_old_offline has been offline for 350s >= 300s -> auto_deprovision called
-        mock_deprov.assert_awaited_once_with("esp_OFFLINE_OLD", "OLD_MP")
+        self.assertEqual(mock_deprov.await_count, 2)
+        mock_deprov.assert_any_await('esp_OFFLINE_REC', 'REC_MP')
+        mock_deprov.assert_any_await('esp_OFFLINE_OLD', 'OLD_MP')
 
     async def test_esp_decoder_stops_without_live_source_and_resumes_with_data(self):
         now = int(time.time())
@@ -282,6 +300,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
         with patch('app.esp_base_manager.device_session_scope') as dev_scope, \
              patch('app.esp_base_manager.auth_session_scope') as auth_scope, \
              patch('app.esp_base_manager.notify_decoder_worker', new_callable=AsyncMock) as notify, \
+             patch('app.esp_base_manager.auto_deprovision_esp_rover_account', new_callable=AsyncMock), \
              patch('app.esp_base_manager.auto_provision_esp_rover_account', new_callable=AsyncMock) as provision:
             dev_db, auth_db = AsyncMock(), AsyncMock()
             dev_scope.return_value.__aenter__.return_value = dev_db
