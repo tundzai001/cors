@@ -74,6 +74,13 @@ vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname, '../cors
     assert.equal(map.options.projection, 'globe');
     map.emit('style.load'); map.emit('load');
     assert.equal(map.getSource('cors-stations').data.features[0].properties.serial, 'PI_real', 'real station data reaches Mapbox');
+    assert.equal(map.getLayer('cors-4g-pins').type, 'symbol', '4G bases use square icons');
+    assert.equal(map.getLayer('cors-4g-pins').layout['icon-image'], 'cors-base-4g');
+    assert(map.hasImage('cors-base-4g'), 'square 4G image is installed');
+    view.updateStations([...stations, {device: {serial: 'MONITOR_7001'}, coords: {lat: 21, lon: 105}, status: 'online', is4g: true}]);
+    assert.equal(map.getSource('cors-stations').data.features[1].properties.is4g, true);
+    assert.equal(map.getSource('cors-stations').data.features[0].properties.is4g, false);
+    view.updateStations(stations);
     view.updateLayers({ referenceStations });
     assert.equal(map.getSource('cors-vngeonet').data.features.length, 65);
     const hanoi = map.getSource('cors-vngeonet').data.features.find(feature => feature.properties.code === 'HNOI');

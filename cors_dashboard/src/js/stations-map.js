@@ -99,6 +99,11 @@
         return window.CorsDashboardShared?.getMapEffectiveStatus?.(device) || String(device?.status || 'offline').toLowerCase();
     }
 
+    function is4gBase(device) {
+        return /^(?:esp_|MONITOR_7)/i.test(String(device?.serial || '').trim()) ||
+            window.CorsDashboardShared?.isReadonly4gBase?.(device) === true;
+    }
+
     function getPreferredServer(device) {
         const cfg = device?.service_config || {};
         const servers = [1, 2].map((idx) => ({
@@ -321,8 +326,9 @@
         const stations = useMemo(() => {
             const term = search.trim().toLowerCase();
             return devices
-                .map(device => ({ device, coords: getCoords(device), status: effectiveStatus(device), traffic: getPreferredServer(device) }))
+                .map(device => ({ device, coords: getCoords(device), status: effectiveStatus(device), traffic: getPreferredServer(device), is4g: is4gBase(device) }))
                 .filter(item => item.coords)
+                .filter(item => !item.is4g || ['online', 'streaming'].includes(item.status))
                 .filter(() => showStations)
                 .filter(item => statusFilters[item.status === 'streaming' ? 'online' : item.status] !== false)
                 .filter(item => !term || `${item.device.name || ''} ${item.device.serial || ''} ${item.traffic.mountpoint || ''}`.toLowerCase().includes(term));
@@ -996,9 +1002,16 @@
             coverageRef.current.clearLayers();
 
             const bounds = [];
-            stations.forEach(({ device, coords, status, traffic }) => {
+            stations.forEach(({ device, coords, status, traffic, is4g }) => {
                 const meta = window.CorsUI.getStatusMeta(status);
-                const marker = L.circleMarker([coords.lat, coords.lon], {
+                const marker = is4g ? L.marker([coords.lat, coords.lon], {
+                    icon: L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="16" height="16" fill="${meta.color}" stroke="#fff" stroke-width="2"/></svg>`,
+                        iconSize: [18, 18], iconAnchor: [9, 9]
+                    }),
+                    title: `${device.name || device.serial} · Base 4G`
+                }) : L.circleMarker([coords.lat, coords.lon], {
                     radius: 8,
                     color: '#ffffff',
                     weight: 2,
@@ -1364,6 +1377,7 @@
                         <div className="station-map-legend-row"><span className="station-map-dot sleep"></span>Sleep</div>
                         <div className="station-map-legend-row"><span className="station-map-dot offline"></span>Offline</div>
                         <div className="station-map-legend-row"><span className="station-map-dot locked"></span>Locked</div>
+                        <div className="station-map-legend-row"><span className="station-map-dot online" style={{borderRadius: 0}}></span>Base 4G · Online</div>
                         <div className="station-map-legend-row"><span className="station-map-dot rover"></span>Rover ({visibleRovers.length})</div>
                         {vngeonetHealth?.map_status_enabled === true && <div className="station-map-network" role="status" aria-atomic="true">
                             <div className="station-map-legend-row fw-bold"><span className="station-map-dot reference"></span>CORS Cục · VNGEONET</div>

@@ -93,14 +93,14 @@
                         filter: ['==', ['get', 'serial'], this.selectedStation?.serial || ''],
                         paint: { 'circle-radius': 13, 'circle-color': '#38bdf8', 'circle-opacity': 0.2,
                             'circle-stroke-color': '#7dd3fc', 'circle-stroke-width': 1.5 } });
-                    map.addLayer({ id: 'cors-station-pins', type: 'circle', source: 'cors-stations', paint: {
+                    map.addLayer({ id: 'cors-station-pins', type: 'circle', source: 'cors-stations', filter: ['!=', ['get', 'is4g'], true], paint: {
                         'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 4, 8, 7],
                         'circle-color': ['match', ['get', 'status'], 'online', '#22c55e', 'streaming', '#22c55e', 'sleep', '#38bdf8', 'offline', '#ef4444', 'lost', '#ef4444', '#94a3b8'],
                         'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2,
                     } });
                     this._installLayers();
                 });
-                map.on('click', 'cors-station-pins', event => {
+                for (const layerId of ['cors-station-pins', 'cors-4g-pins']) map.on('click', layerId, event => {
                     const serial = event.features?.[0]?.properties?.serial;
                     const station = this.stations.find(item => item.device.serial === serial);
                     if (station) this._openStation(station);
@@ -118,8 +118,8 @@
                     map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = this.measureEnabled ? 'crosshair' : 'pointer'; });
                     map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = this.measureEnabled ? 'crosshair' : ''; });
                 }
-                map.on('mouseenter', 'cors-station-pins', () => { map.getCanvas().style.cursor = 'pointer'; });
-                map.on('mouseleave', 'cors-station-pins', () => { map.getCanvas().style.cursor = ''; });
+                for (const layerId of ['cors-station-pins', 'cors-4g-pins']) map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer'; });
+                for (const layerId of ['cors-station-pins', 'cors-4g-pins']) map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = ''; });
                 map.on('load', () => {
                     if (this.map !== map || this.failed) return;
                     this.ready = true; this._clearStatus();
@@ -249,8 +249,8 @@
         _stationData() {
             return { type: 'FeatureCollection', features: this.stations
                 .filter(item => Number.isFinite(item.coords?.lat) && Number.isFinite(item.coords?.lon))
-                .map(({ device, coords, status }) => ({ type: 'Feature', properties: {
-                    serial: String(device.serial || ''), name: String(device.name || device.serial || ''), status,
+                .map(({ device, coords, status, is4g }) => ({ type: 'Feature', properties: {
+                    serial: String(device.serial || ''), name: String(device.name || device.serial || ''), status, is4g: Boolean(is4g),
                 }, geometry: { type: 'Point', coordinates: [coords.lon, coords.lat] } })) };
         }
         updateStations(stations, selectedStation) {
@@ -356,6 +356,7 @@
                 layout: { 'text-field': ['concat', 'Cục · ', ['get', 'code']], 'text-size': 12, 'text-offset': [0, 1.3] },
                 paint: { 'text-color': '#ddd6fe', 'text-halo-color': '#0f172a', 'text-halo-width': 2 } });
             this._installMarkerImages();
+            map.addLayer({ id: 'cors-4g-pins', type: 'symbol', source: 'cors-stations', filter: ['==', ['get', 'is4g'], true], layout: { 'icon-image': 'cors-base-4g', 'icon-size': ['interpolate', ['linear'], ['zoom'], 1, 0.6, 8, 0.9], 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
             map.addLayer({ id: 'cors-gnss-ipp', type: 'symbol', source: 'cors-gnss', filter: ['==', ['get', 'kind'], 'ipp'], layout: { 'icon-image': 'cors-ipp', 'icon-size': 0.6, 'icon-allow-overlap': true } });
             map.addLayer({ id: 'cors-rover-pins', type: 'symbol', source: 'cors-rovers', layout: { 'icon-image': ['match', ['get', 'color'], '#22c55e', 'cors-rover-fixed', '#38bdf8', 'cors-rover-float', '#ef4444', 'cors-rover-3d', 'cors-rover-unknown'], 'icon-size': 1, 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
             this.updateLayers(this.layerState);
@@ -363,14 +364,15 @@
             this.setProjection(this.projection);
         }
         _installMarkerImages() {
-            for (const [name, color] of [['fixed', '#22c55e'], ['float', '#38bdf8'], ['3d', '#ef4444'], ['unknown', '#a3a3a3'], ['ipp', '#38bdf8']]) {
-                const id = name === 'ipp' ? 'cors-ipp' : `cors-rover-${name}`;
+            for (const [name, color] of [['fixed', '#22c55e'], ['float', '#38bdf8'], ['3d', '#ef4444'], ['unknown', '#a3a3a3'], ['ipp', '#38bdf8'], ['base-4g', '#22c55e']]) {
+                const id = name === 'base-4g' ? 'cors-base-4g' : name === 'ipp' ? 'cors-ipp' : `cors-rover-${name}`;
                 if (this.map.hasImage(id)) continue;
                 const canvas = document.createElement('canvas'); canvas.width = 56; canvas.height = 56;
                 const ctx = canvas.getContext('2d');
                 ctx.scale(2, 2); ctx.translate(2, 2);
                 ctx.beginPath();
-                if (name === 'ipp') { ctx.moveTo(12, 3); ctx.lineTo(21, 12); ctx.lineTo(12, 21); ctx.lineTo(3, 12); }
+                if (name === 'base-4g') { ctx.moveTo(3, 3); ctx.lineTo(21, 3); ctx.lineTo(21, 21); ctx.lineTo(3, 21); }
+                else if (name === 'ipp') { ctx.moveTo(12, 3); ctx.lineTo(21, 12); ctx.lineTo(12, 21); ctx.lineTo(3, 12); }
                 else { ctx.moveTo(12, 2); ctx.lineTo(22, 20); ctx.lineTo(2, 20); }
                 ctx.closePath();
                 ctx.fillStyle = color; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
@@ -501,10 +503,10 @@
             if (this.map) this.map.getCanvas().style.cursor = enabled ? 'crosshair' : '';
         }
         _hasPointFeature(event) {
-            return this.map.queryRenderedFeatures(event.point, { layers: ['cors-vngeonet-pins', 'cors-vngeonet-labels', 'cors-station-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length > 0;
+            return this.map.queryRenderedFeatures(event.point, { layers: ['cors-vngeonet-pins', 'cors-vngeonet-labels', 'cors-station-pins', 'cors-4g-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length > 0;
         }
         _mapClick(event) {
-            if (!this.measureEnabled && this.map.queryRenderedFeatures(event.point, { layers: ['cors-vngeonet-pins', 'cors-vngeonet-labels', 'cors-station-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-provinces-fill', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length) return;
+            if (!this.measureEnabled && this.map.queryRenderedFeatures(event.point, { layers: ['cors-vngeonet-pins', 'cors-vngeonet-labels', 'cors-station-pins', 'cors-4g-pins', 'cors-rover-pins', 'cors-gnss-points', 'cors-gnss-ipp', 'cors-provinces-fill', 'cors-island-labels'].filter(id => this.map.getLayer(id)) }).length) return;
             if (this.measureEnabled) {
                 const point = [event.lngLat.lng, event.lngLat.lat];
                 this.measurePoints.push(point);
