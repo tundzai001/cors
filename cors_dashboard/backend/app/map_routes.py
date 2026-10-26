@@ -10,6 +10,7 @@ import httpx
 import json
 import os
 import time
+from .administrative_catalog import name_matches_query, search_catalog, catalog
 
 from . import auth, crud, models, schemas
 from .database import get_auth_db, get_db
@@ -195,6 +196,10 @@ _GEOCODE_CACHE_TTL = 3600.0  # 1 hour
 _GEOCODE_CACHE_MAX_SIZE = 1000
 
 
+def _geocode_matches_query(query: str, display_name: str) -> bool:
+    return name_matches_query(query, display_name)
+
+
 async def _fetch_geocode(query: str) -> list[dict[str, Any]]:
     cleaned = str(query or "").strip()
     if not cleaned:
@@ -206,10 +211,15 @@ async def _fetch_geocode(query: str) -> list[dict[str, Any]]:
     if cached and (now - cached[0] < _GEOCODE_CACHE_TTL):
         return cached[1]
 
+    known_places = search_catalog(cleaned, limit=1)
+    # Restore a historical ward's district/province context before asking a geocoder.
+    lookup_query = known_places[0]['display_name'] if known_places else cleaned
     results: list[dict[str, Any]] = []
     seen_coords: set[tuple[float, float]] = set()
 
     def _add_result(lat: float, lon: float, display_name: str, name: str, source: str, score: float = 100.0):
+        if not _geocode_matches_query(cleaned, display_name):
+            return
         # Round coordinates to ~11 meters to deduplicate near-identical hits
         coord_key = (round(lat, 4), round(lon, 4))
         if coord_key in seen_coords:
@@ -231,7 +241,7 @@ async def _fetch_geocode(query: str) -> list[dict[str, Any]]:
                 "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates",
                 params={
                     "f": "json",
-                    "singleLine": cleaned,
+                    "singleLine": lookup_query,
                     "countryCode": "VNM",
                     "maxLocations": 5,
                     "outFields": "Match_addr,PlaceName,Type",
@@ -256,7 +266,7 @@ async def _fetch_geocode(query: str) -> list[dict[str, Any]]:
             async with httpx.AsyncClient(timeout=4.0) as client:
                 resp = await client.get(
                     "https://photon.komoot.io/api/",
-                    params={"q": cleaned, "limit": 4},
+                    params={"q": lookup_query, "limit": 4},
                     headers={"User-Agent": "Aitogy-CORS-System/1.0 (contact@aitogy.com)"},
                 )
                 if resp.status_code == 200:
@@ -299,7 +309,7 @@ async def _fetch_geocode(query: str) -> list[dict[str, Any]]:
     if not results:
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                query_vn = cleaned if ("viet nam" in cleaned.lower() or "vn" in cleaned.lower()) else f"{cleaned}, Viet Nam"
+                query_vn = f"{lookup_query}, Viet Nam"
                 resp = await client.get(
                     "https://nominatim.openstreetmap.org/search",
                     params={
@@ -424,99 +434,88 @@ async def get_world_countries_geojson():
 
 
 @get_public_map_stations_router.get("/api/public/vietnam-provinces")
-async def get_vietnam_provinces(db: AsyncSession = Depends(get_db)):
-    """Return list of Vietnam provinces from database with fallback to bundled summary."""
-    try:
-        res = await db.execute(select(models.Province).order_by(models.Province.name))
-        db_provinces = res.scalars().all()
-        if db_provinces:
-            return [
-                {
-                    "code": p.code,
-                    "name": p.name,
-                    "fullName": p.full_name,
-                    "nameEn": p.name_en,
-                    "codeName": p.code_name,
-                    "postalCodePrefix": p.postal_code_prefix,
-                    "lat": p.latitude,
-                    "lon": p.longitude,
-                }
-                for p in db_provinces
-            ]
-    except Exception as exc:
-        logger.debug("Database query for provinces failed, using bundled fallback: %s", exc)
-    return _get_provinces_summary()
+async def get_vietnam_provinces(
+    dataset: str = Query('current', pattern='^(current|legacy)$'),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read the upstream SQL columns; historical codes stay in a separate catalogue."""
+    if dataset == 'legacy':
+        from .province_db_service import list_legacy_units
+        rows = await list_legacy_units(db, 'province')
+    else:
+        try:
+            result = await db.execute(select(
+                models.Province.code, models.Province.name, models.Province.full_name,
+                models.Province.name_en, models.Province.code_name, models.Province.postal_code_prefix,
+            ).order_by(models.Province.name))
+            rows = [dict(r) for r in result.mappings().all()]
+        except Exception as exc:
+            logger.debug("Province SQL read unavailable: %s", exc)
+            rows = []
+        if not rows:
+            return _get_provinces_summary()
+    return [dict(code=r['code'], name=r['name'], fullName=r['full_name'],
+                 nameEn=r.get('name_en'), codeName=r.get('code_name'),
+                 postalCodePrefix=r.get('postal_code_prefix'),
+                 lat=None, lon=None, dataset=dataset) for r in rows]
 
 
 @get_public_map_stations_router.get("/api/public/vietnam-districts")
 async def get_vietnam_districts(
-    province_code: str = Query(..., min_length=1, max_length=20, description="Mã tỉnh/thành"),
+    province_code: str = Query(..., min_length=1, max_length=20),
+    dataset: str = Query('current', pattern='^(current|legacy)$'),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return list of districts for a specific province from database."""
-    try:
-        res = await db.execute(
-            select(models.District)
-            .where(models.District.province_code == province_code)
-            .order_by(models.District.name)
-        )
-        districts = res.scalars().all()
-        return [
-            {
-                "code": d.code,
-                "name": d.name,
-                "fullName": d.full_name,
-                "provinceCode": d.province_code,
-                "lat": d.latitude,
-                "lon": d.longitude,
-            }
-            for d in districts
-        ]
-    except Exception as exc:
-        logger.debug("Database query for districts failed: %s", exc)
+    """The current two-tier model has no districts; expose historical districts explicitly."""
+    if dataset != 'legacy':
         return []
+    from .province_db_service import list_legacy_units
+    rows = await list_legacy_units(db, 'district', province_code=province_code)
+    return [dict(code=r['code'], name=r['name'], fullName=r['full_name'],
+                 provinceCode=r['province_code'], lat=None, lon=None, dataset='legacy')
+            for r in rows]
 
 
 @get_public_map_stations_router.get("/api/public/vietnam-wards")
 async def get_vietnam_wards(
-    province_code: Optional[str] = Query(None, min_length=1, max_length=20, description="Mã tỉnh/thành"),
-    district_code: Optional[str] = Query(None, min_length=1, max_length=20, description="Mã quận/huyện"),
+    province_code: Optional[str] = Query(None, min_length=1, max_length=20),
+    district_code: Optional[str] = Query(None, min_length=1, max_length=20),
+    dataset: str = Query('current', pattern='^(current|legacy)$'),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return list of wards for a specific district or province from database."""
-    try:
-        stmt = select(models.Ward)
-        if district_code:
-            stmt = stmt.where(models.Ward.district_code == district_code)
-        elif province_code:
-            stmt = stmt.where(models.Ward.province_code == province_code)
-        res = await db.execute(stmt.order_by(models.Ward.name))
-        wards = res.scalars().all()
-        return [
-            {
-                "code": w.code,
-                "name": w.name,
-                "fullName": w.full_name,
-                "districtCode": w.district_code,
-                "provinceCode": w.province_code,
-                "lat": w.latitude,
-                "lon": w.longitude,
-            }
-            for w in wards
-        ]
-    except Exception as exc:
-        logger.debug("Database query for wards failed: %s", exc)
-        return []
+    """Read wards without assuming optional GIS columns exist in the SQL import."""
+    rows = []
+    if dataset == 'legacy':
+        from .province_db_service import list_legacy_units
+        rows = await list_legacy_units(db, 'ward', province_code, district_code)
+    if dataset == 'current' and not district_code:
+        try:
+            statement = select(models.Ward.code, models.Ward.name, models.Ward.full_name,
+                               models.Ward.province_code)
+            if province_code:
+                statement = statement.where(models.Ward.province_code == province_code)
+            result = await db.execute(statement.order_by(models.Ward.name))
+            rows = [dict(r) for r in result.mappings().all()]
+        except Exception as exc:
+            logger.debug("Ward SQL read unavailable: %s", exc)
+    if not rows:
+        rows = [r for r in catalog(dataset) if r['type'] == 'ward'
+                and (not province_code or r['province_code'] == province_code)
+                and (not district_code or r['district_code'] == district_code)]
+    return [dict(code=r['code'], name=r['name'], fullName=r['full_name'],
+                 districtCode=r.get('district_code'), provinceCode=r['province_code'],
+                 lat=None, lon=None, dataset=dataset) for r in rows]
 
 
 @get_public_map_stations_router.get("/api/public/search-administrative-units")
 async def search_admin_units(
     q: str = Query(..., min_length=1, max_length=100, description="Tên xã, phường, quận, huyện hoặc tỉnh thành"),
+    dataset: str = Query("all", pattern="^(all|current|legacy)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Search provinces, districts, and wards in database by name with exact coordinates."""
     from .province_db_service import search_administrative_units
-    return await search_administrative_units(db, q)
+    return await search_administrative_units(db, q, dataset=dataset)
 
 
 @get_public_map_stations_router.post("/api/admin/seed-vietnam-units")

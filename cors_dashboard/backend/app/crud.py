@@ -703,12 +703,15 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         
         old_cpu = old_cpu_dict.get('usage_percent', 0)
         new_cpu = new_cpu_dict.get('usage_percent', 0)
+        old_receiver_readback = _ensure_dict(old_info.get("receiver_base_readback"))
+        new_receiver_readback = _ensure_dict(new_system_info.get("receiver_base_readback"))
         
         # Chỉ update nếu CPU thay đổi > 5% hoặc chưa có info
         if (
             not old_info
             or abs(float(old_cpu or 0) - float(new_cpu or 0)) > 5
             or old_auth_status != new_auth_status
+            or old_receiver_readback != new_receiver_readback
         ):
             # Merge to preserve backend-managed flags (e.g. auth_license_bypass)
             merged_info = old_info.copy()

@@ -61,6 +61,7 @@ private:
     String autoBaseProgress_ = "{}";
     String baseConfig_ = "{}";
     String serviceConfig_ = "{}";
+    String receiverBaseReadback_ = "{\"state\":\"not_read\",\"chip\":\"Unicorecomm\",\"mode_kind\":\"unknown\"}";
     String licenseToken_;
     String sensorType_ = "UNKNOWN";
 
@@ -86,6 +87,8 @@ private:
     int32_t lastWebsocketAckSequence_ = -1;
     int32_t statusSequence_ = 0;
     int32_t failOpenEntrySequence_ = -1;
+    uint32_t receiverBaseReadbackMs_ = 0;
+    uint32_t receiverBaseReadbackRevision_ = 0;
     String statusBootId_;
 
     QueueHandle_t nmeaQueue_ = nullptr;

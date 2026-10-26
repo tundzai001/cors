@@ -86,6 +86,29 @@ class MapGeocodeProxyTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(res2), len(res1))
             self.assertEqual(mock_get.call_count, initial_calls)
 
+    async def test_specific_ward_rejects_city_and_scattered_name_matches(self):
+        async def response(url, **kwargs):
+            if 'arcgis' in url:
+                data = {'candidates': [{'address': 'Thành phố Ninh Bình', 'score': 100,
+                                       'location': {'x': 105.975, 'y': 20.251}}]}
+                self.assertIn('Hoa Lư', kwargs['params']['singleLine'])
+            elif 'photon' in url:
+                data = {'features': [{'geometry': {'coordinates': [105.89, 20.57]},
+                                      'properties': {'name': 'Đường Đồng Văn', 'district': 'Phù Vân',
+                                                     'state': 'Ninh Bình', 'country': 'Vietnam'}}]}
+            elif 'open-meteo' in url:
+                data = {'results': []}
+            else:
+                data = [{'name': 'Ninh Vân', 'display_name': 'Ninh Vân, Hoa Lư, Ninh Bình',
+                         'lat': '20.15', 'lon': '105.98'}]
+            return Mock(status_code=200, json=Mock(return_value=data))
+
+        with patch('httpx.AsyncClient.get', side_effect=response):
+            results = await _fetch_geocode('Ninh Vân, Ninh Bình')
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['source'], 'nominatim')
+        self.assertIn('Ninh Vân', results[0]['display_name'])
+
     async def test_fetch_geocode_handles_network_failure_gracefully(self):
         # When external service connection is refused or errors
         with patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=httpx.ConnectError("Connection refused")):

@@ -3,7 +3,7 @@
     const VIETNAM_VIEWBOX = '102,24,110,8';
     const AVAILABLE_STATUSES = new Set(['online', 'streaming', 'sleep']);
     const SEARCH_STOP_WORDS = new Set([
-        'viet', 'nam', 'vietnam', 'vn', 'dia', 'diem', 'tim', 'kiem',
+        'vietnam', 'vn', 'dia', 'diem', 'tim', 'kiem',
         'o', 'tai', 'gan', 'khu', 'vuc', 'gi', 'day', 'nay', 'kia', 'cho'
     ]);
     const LOCAL_FALLBACKS = [
@@ -163,12 +163,14 @@
     }
 
     function getLocalFallback(query) {
-        const normalized = normalizeSearchText(query);
+        const normalized = normalizeSearchText(query)
+            .replace(/^(?:thanh pho|thi xa|thi tran|tinh|tp|tx)\s+/, '')
+            .replace(/\s+(?:viet nam|vietnam|vn)$/, '');
         let bestItem = null;
         let longestMatchLen = 0;
         for (const candidate of LOCAL_FALLBACKS) {
             for (const pattern of candidate.match) {
-                if (normalized.includes(pattern) && pattern.length > longestMatchLen) {
+                if (normalized === pattern && pattern.length > longestMatchLen) {
                     bestItem = candidate;
                     longestMatchLen = pattern.length;
                 }
@@ -183,20 +185,24 @@
             .filter(token => token.length >= 2 && !SEARCH_STOP_WORDS.has(token));
     }
 
-    function isRelevantNominatimResult(query, item) {
+    function isRelevantLocationResult(query, item) {
         const countryCode = String(item?.address?.country_code || '').toLowerCase();
         if (countryCode && countryCode !== 'vn') return false;
 
-        const queryTokens = [...new Set(meaningfulTokens(query))];
+        const normalized = String(query || '').split(/[,;]/)
+            .map(part => normalizeSearchText(part)
+                .replace(/^(?:thanh pho|thi xa|thi tran|dac khu|tinh|huyen|quan|phuong|xa|tp|tx)\s+/, ''))
+            .filter(part => !['viet nam', 'vietnam', 'vn'].includes(part)).join(' ');
+        const queryTokens = meaningfulTokens(normalized);
         if (!queryTokens.length) return false;
 
         const names = Object.values(item?.namedetails || {}).join(' ');
-        const resultTokens = new Set(meaningfulTokens(`${item?.display_name || ''} ${names}`));
-        const matches = queryTokens.filter(token => resultTokens.has(token)).length;
-        const minimumMatches = queryTokens.length === 1
-            ? 1
-            : Math.min(2, Math.ceil(queryTokens.length / 2));
-        return matches >= minimumMatches;
+        const resultText = normalizeSearchText(`${item?.display_name || ''} ${item?.name || ''} ${names}`);
+        const resultTokens = new Set(resultText.split(' '));
+        // Keep the specific place name together; sharing province words is insufficient.
+        const placeName = queryTokens.slice(0, 2).join(' ');
+        return (` ${resultText} `).includes(` ${placeName} `)
+            && queryTokens.every(token => resultTokens.has(token));
     }
 
     async function queryDatabaseAdministrativeUnits(query) {
@@ -209,6 +215,7 @@
             const data = await response.json();
             if (!Array.isArray(data) || !data.length) return null;
             for (const item of data) {
+                if (item.lat == null || item.lon == null || !isRelevantLocationResult(query, item)) continue;
                 const lat = Number(item.lat);
                 const lon = Number(item.lon);
                 if (Number.isFinite(lat) && Number.isFinite(lon)) {
@@ -232,6 +239,7 @@
             const data = await response.json();
             if (!Array.isArray(data) || !data.length) return null;
             for (const item of data) {
+                if (item.lat == null || item.lon == null || !isRelevantLocationResult(query, item)) continue;
                 const lat = Number(item.lat);
                 const lon = Number(item.lon);
                 const result = buildResult(lat, lon, item.display_name || item.name || query, item.source || 'proxy');
@@ -266,7 +274,7 @@
             if (proxyRes) return proxyRes;
         }
 
-        throw new Error('Không tìm thấy tọa độ cho địa điểm này trong CSDL hành chính Việt Nam. Bạn có thể nhập tọa độ lat,lon.');
+        throw new Error('Chưa tìm thấy đúng địa điểm. Hãy thêm xã/huyện/tỉnh hoặc nhập tọa độ lat,lon.');
     }
 
     function openGoogleMapsSearch(query) {

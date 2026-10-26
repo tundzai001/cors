@@ -2,11 +2,13 @@
 import json
 import logging
 import os
+import re
 import unicodedata
 from typing import Any, Optional
-from sqlalchemy import select, func, or_, delete
+from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from . import models
+from .administrative_catalog import PREFIX, normalize, query_parts, matches_place, search_catalog
 
 logger = logging.getLogger("app.main")
 
@@ -16,7 +18,7 @@ UNITS_JSON_PATH = os.path.join(DATA_DIR, "vietnam_units.json")
 if not os.path.exists(UNITS_JSON_PATH) and os.path.exists(os.path.join(SRC_GIS_DIR, "vietnam_units.json")):
     UNITS_JSON_PATH = os.path.join(SRC_GIS_DIR, "vietnam_units.json")
 
-# Tọa độ trung tâm hành chính chuẩn cho các tỉnh, thành phố và địa danh trọng yếu
+# Điểm đại diện của địa danh đã biết; không dùng làm tọa độ cho đơn vị con.
 KNOWN_COORDINATES = {
     # Miền Trung & Quảng Nam - Đà Nẵng
     "tam ky": (15.564, 108.481),
@@ -190,24 +192,23 @@ def lookup_coords(name: str, code_name: Optional[str] = None) -> tuple[Optional[
         clean_code = code_name.replace("_", " ").strip()
         if clean_code in KNOWN_COORDINATES:
             return KNOWN_COORDINATES[clean_code]
-    for key, coords in KNOWN_COORDINATES.items():
-        if key in clean or clean in key:
-            return coords
+    clean = re.sub(PREFIX, '', clean)
+    if clean in KNOWN_COORDINATES:
+        return KNOWN_COORDINATES[clean]
     return (None, None)
 
 
 async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[str, Any]:
-    """Seed all 63 provinces, 696 districts, and 10,035 wards into database."""
+    """Seed the bundled current two-tier dataset; legacy names stay versioned separately."""
     try:
         # Check existing count
         res = await db.execute(select(func.count(models.Province.code)))
         prov_count = res.scalar() or 0
         if prov_count >= 34 and not force:
-            res_d = await db.execute(select(func.count(models.District.code)))
             res_w = await db.execute(select(func.count(models.Ward.code)))
             return {
                 "provinces": prov_count,
-                "districts": res_d.scalar() or 0,
+                "districts": 0,
                 "wards": res_w.scalar() or 0,
                 "already_seeded": True
             }
@@ -291,8 +292,6 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
                     continue
                 w_name = w.get("Name", "")
                 w_lat, w_lon = lookup_coords(w_name, w.get("CodeName"))
-                if w_lat is None:
-                    w_lat, w_lon = p_lat, p_lon
                 ward_objs.append(models.Ward(
                     code=w_code,
                     name=w_name,
@@ -313,8 +312,6 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
                     continue
                 d_name = d.get("Name", "")
                 d_lat, d_lon = lookup_coords(d_name, d.get("CodeName"))
-                if d_lat is None:
-                    d_lat, d_lon = p_lat, p_lon
                 district_objs.append(models.District(
                     code=d_code,
                     name=d_name,
@@ -340,8 +337,8 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
                         code_name=w.get("CodeName"),
                         district_code=d_code,
                         province_code=p_code,
-                        latitude=d_lat,
-                        longitude=d_lon,
+                        latitude=None,
+                        longitude=None,
                     ))
 
         db.add_all(prov_objs)
@@ -358,8 +355,8 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
             await db.flush()
 
         db.add(models.VNProvincesMetadata(
-            dataset_version="v2.4.0-full",
-            latest_decree="Official 63 Provinces & Municipalities",
+            dataset_version="v5.2.0",
+            latest_decree="388/NQ-UBTVQH16",
             generated_at="2026-10-14T16:00:00Z"
         ))
         await db.commit()
@@ -377,185 +374,112 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
         return {"error": str(exc)}
 
 
-async def search_administrative_units(db: Optional[AsyncSession], query: str, limit: int = 15) -> list[dict[str, Any]]:
-    """Search provinces, districts, and wards, returning exact coordinates and administrative names."""
-    cleaned = str(query or "").strip()
-    if not cleaned:
+async def list_legacy_units(db, kind, province_code=None, district_code=None):
+    """Read historical SQL tables without mixing their keys with the current schema."""
+    queries = {
+        'province': "SELECT p.code,p.name,p.full_name,p.name_en,p.code_name,p.code AS province_code,NULL AS district_code FROM vn_admin_legacy.provinces p",
+        'district': "SELECT d.code,d.name,d.full_name,d.province_code,NULL AS district_code FROM vn_admin_legacy.districts d",
+        'ward': "SELECT w.code,w.name,w.full_name,d.province_code,w.district_code FROM vn_admin_legacy.wards w JOIN vn_admin_legacy.districts d ON d.code=w.district_code",
+    }
+    conditions, params = [], {}
+    for key, value in [('province_code', province_code), ('district_code', district_code)]:
+        if value:
+            conditions.append(key + '=:' + key)
+            params[key] = value
+    statement = 'SELECT * FROM (' + queries[kind] + ') units'
+    if conditions:
+        statement += ' WHERE ' + ' AND '.join(conditions)
+    try:
+        async with db.begin_nested():
+            rows = (await db.execute(text(statement + ' ORDER BY name'), params)).mappings().all()
+        return [dict(row) for row in rows]
+    except Exception as exc:
+        logger.debug('Historical SQL lookup unavailable; using bundled names: %s', exc)
+        from .administrative_catalog import catalog
+        return [r for r in catalog('legacy') if r['type'] == kind
+                and (not province_code or r['province_code'] == province_code)
+                and (not district_code or r['district_code'] == district_code)]
+
+
+async def search_administrative_units(db: Optional[AsyncSession], query: str, limit: int = 15,
+                                      dataset: str = "all") -> list[dict[str, Any]]:
+    """Search current SQL names and a separately versioned pre-merger catalogue."""
+    if not str(query or "").strip():
         return []
-
-    norm_query = remove_accents(cleaned)
-    pattern = f"%{cleaned}%"
     results = []
-    seen = set()
-
-    # 1. Database search if session provided
     if db is not None:
-        try:
-            # 1a. Search Districts (Thành phố thuộc tỉnh, Quận, Huyện)
-            res_d = await db.execute(
-                select(models.District, models.Province.full_name.label("province_name"))
-                .join(models.Province, models.District.province_code == models.Province.code, isouter=True)
-                .where(or_(
-                    models.District.name.ilike(pattern),
-                    models.District.full_name.ilike(pattern),
-                    models.District.code_name.ilike(f"%{norm_query}%"),
-                ))
-                .limit(limit)
-            )
-            for d, prov_name in res_d.all():
-                key = f"district_{d.code}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                lat, lon = d.latitude, d.longitude
-                if lat is None:
-                    lat, lon = lookup_coords(d.name, d.code_name)
-                results.append({
-                    "type": "district",
-                    "code": d.code,
-                    "name": d.name,
-                    "full_name": d.full_name,
-                    "province_name": prov_name,
-                    "display_name": f"{d.full_name}, {prov_name}" if prov_name else d.full_name,
-                    "lat": lat,
-                    "lon": lon,
-                    "source": "Cơ sở dữ liệu hành chính Việt Nam"
-                })
-
-            # 1b. Search Provinces (Tỉnh / Thành phố trực thuộc trung ương)
-            res_p = await db.execute(
-                select(models.Province)
-                .where(or_(
-                    models.Province.name.ilike(pattern),
-                    models.Province.full_name.ilike(pattern),
-                    models.Province.code_name.ilike(f"%{norm_query}%"),
-                ))
-                .limit(5)
-            )
-            for p in res_p.scalars().all():
-                key = f"province_{p.code}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                lat, lon = p.latitude, p.longitude
-                if lat is None:
-                    lat, lon = lookup_coords(p.name, p.code_name)
-                results.append({
-                    "type": "province",
-                    "code": p.code,
-                    "name": p.name,
-                    "full_name": p.full_name,
-                    "province_name": p.full_name,
-                    "display_name": p.full_name,
-                    "lat": lat,
-                    "lon": lon,
-                    "source": "Cơ sở dữ liệu hành chính Việt Nam"
-                })
-
-            # 1c. Search Wards (Xã / Phường / Thị trấn)
-            if len(results) < limit:
-                res_w = await db.execute(
-                    select(
-                        models.Ward,
-                        models.District.full_name.label("district_name"),
-                        models.Province.full_name.label("province_name"),
-                        models.District.latitude.label("district_lat"),
-                        models.District.longitude.label("district_lon"),
-                    )
-                    .join(models.District, models.Ward.district_code == models.District.code, isouter=True)
-                    .join(models.Province, models.Ward.province_code == models.Province.code, isouter=True)
-                    .where(or_(
-                        models.Ward.name.ilike(pattern),
-                        models.Ward.full_name.ilike(pattern),
-                        models.Ward.code_name.ilike(f"%{norm_query}%"),
-                    ))
-                    .limit(limit - len(results))
-                )
-                for w, dist_name, prov_name, d_lat, d_lon in res_w.all():
-                    key = f"ward_{w.code}"
-                    if key in seen:
+        tokens = ' '.join(query_parts(query)).split()
+        versions = ('current', 'legacy') if dataset == 'all' else (dataset,)
+        for version in versions if tokens else ():
+            params = {f'token{i}': '%' + token + '%' for i, token in enumerate(tokens)}
+            params['limit'] = limit * 4
+            predicates = ' AND '.join(f"search_name LIKE :token{i}" for i in range(len(tokens)))
+            if version == 'legacy':
+                units_sql = """
+                    SELECT 'ward' AS type, w.code, w.name, w.full_name,
+                           p.code AS province_code, p.full_name AS province_name,
+                           d.code AS district_code, d.full_name AS district_name,
+                           lower(replace(w.code_name || ' ' || d.code_name || ' ' || p.code_name, '_', ' ')) AS search_name
+                    FROM vn_admin_legacy.wards w
+                    JOIN vn_admin_legacy.districts d ON d.code = w.district_code
+                    JOIN vn_admin_legacy.provinces p ON p.code = d.province_code
+                    UNION ALL
+                    SELECT 'district', d.code, d.name, d.full_name, p.code, p.full_name,
+                           NULL, NULL, lower(replace(d.code_name || ' ' || p.code_name, '_', ' '))
+                    FROM vn_admin_legacy.districts d JOIN vn_admin_legacy.provinces p ON p.code = d.province_code
+                    UNION ALL
+                    SELECT 'province', p.code, p.name, p.full_name, p.code, p.full_name,
+                           NULL, NULL, lower(replace(p.code_name, '_', ' '))
+                    FROM vn_admin_legacy.provinces p
+                """
+            else:
+                units_sql = """
+                    SELECT 'ward' AS type, w.code, w.name, w.full_name,
+                           w.province_code, p.full_name AS province_name,
+                           NULL AS district_code, NULL AS district_name,
+                           lower(replace(coalesce(w.code_name, '') || ' ' || coalesce(p.code_name, ''), '_', ' ')) AS search_name
+                    FROM wards w JOIN provinces p ON p.code = w.province_code
+                    UNION ALL
+                    SELECT 'province', p.code, p.name, p.full_name,
+                           p.code, p.full_name, NULL, NULL,
+                           lower(replace(coalesce(p.code_name, ''), '_', ' '))
+                    FROM provinces p
+                """
+            statement = text('SELECT * FROM (' + units_sql + ') units WHERE ' + predicates + ' LIMIT :limit')
+            try:
+                async with db.begin_nested():
+                    found = (await db.execute(statement, params)).mappings().all()
+                for row in found:
+                    item = dict(row)
+                    item.pop('search_name', None)
+                    item['display_name'] = ', '.join(filter(None, [
+                        item['full_name'] or item['name'], item['district_name'],
+                        item['province_name'] if item['type'] != 'province' else None]))
+                    if not matches_place(query, item['name'], item['display_name']):
                         continue
-                    seen.add(key)
-                    lat = w.latitude or d_lat
-                    lon = w.longitude or d_lon
-                    if lat is None and dist_name:
-                        lat, lon = lookup_coords(dist_name)
-                    disp_parts = [w.full_name]
-                    if dist_name:
-                        disp_parts.append(dist_name)
-                    if prov_name:
-                        disp_parts.append(prov_name)
-                    results.append({
-                        "type": "ward",
-                        "code": w.code,
-                        "name": w.name,
-                        "full_name": w.full_name,
-                        "district_name": dist_name,
-                        "province_name": prov_name,
-                        "display_name": ", ".join(disp_parts),
-                        "lat": lat,
-                        "lon": lon,
-                        "source": "Cơ sở dữ liệu hành chính Việt Nam"
-                    })
-        except Exception as exc:
-            logger.debug("Database administrative search failed, using fallback: %s", exc)
+                    item.update(dataset=version, dataset_version='v2.4.1' if version == 'legacy' else 'v5.2.0',
+                                lat=None, lon=None, coordinate_source=None,
+                                source='Cơ sở dữ liệu hành chính Việt Nam', storage='postgresql')
+                    results.append(item)
+            except Exception as exc:
+                logger.debug("Administrative SQL lookup unavailable (%s); using versioned catalogue: %s", version, exc)
 
-    # 2. In-memory fallback if database returned no results or is unavailable
-    if not results and os.path.exists(UNITS_JSON_PATH):
-        try:
-            with open(UNITS_JSON_PATH, "r", encoding="utf-8") as f:
-                units = json.load(f)
-
-            for p in units:
-                p_name = p.get("Name", "")
-                p_full = p.get("FullName", "")
-                p_norm = remove_accents(p_name)
-                p_lat, p_lon = lookup_coords(p_name, p.get("CodeName"))
-
-                # Direct ward matches (34-province model)
-                for w in (p.get("Wards") or p.get("Ward") or []):
-                    w_name = w.get("Name", "")
-                    w_full = w.get("FullName", "")
-                    w_norm = remove_accents(w_name)
-                    if norm_query in w_norm or norm_query in remove_accents(w_full):
-                        w_lat, w_lon = lookup_coords(w_name, w.get("CodeName"))
-                        if w_lat is None:
-                            w_lat, w_lon = p_lat, p_lon
-                        results.append({
-                            "type": "ward",
-                            "code": w.get("Code"),
-                            "name": w_name,
-                            "full_name": w_full,
-                            "province_name": p_full,
-                            "display_name": f"{w_full}, {p_full}",
-                            "lat": w_lat,
-                            "lon": w_lon,
-                            "source": "Cơ sở dữ liệu hành chính Việt Nam"
-                        })
-                        if len(results) >= limit:
-                            break
-                if len(results) >= limit:
-                    break
-
-                # Province match
-                if norm_query in p_norm or norm_query in remove_accents(p_full):
-                    results.append({
-                        "type": "province",
-                        "code": p.get("Code"),
-                        "name": p_name,
-                        "full_name": p_full,
-                        "province_name": p_full,
-                        "display_name": p_full,
-                        "lat": p_lat,
-                        "lon": p_lon,
-                        "source": "Cơ sở dữ liệu hành chính Việt Nam"
-                    })
-                if len(results) >= limit:
-                    break
-        except Exception as exc:
-            logger.debug("In-memory administrative search failed: %s", exc)
-
-    return results
+    seen = {(r['dataset'], r['type'], r['code']) for r in results}
+    for item in search_catalog(query, limit=limit, dataset=dataset):
+        key = (item['dataset'], item['type'], item['code'])
+        if key not in seen:
+            results.append(item)
+            seen.add(key)
+    first = (query_parts(query) or [''])[0]
+    results.sort(key=lambda r: (normalize(r['name']) != first,
+                                r['dataset'] != 'current', len(normalize(r['name'])), r['display_name']))
+    for item in results:
+        # A known provincial point is never inherited by a ward or district.
+        if item['type'] == 'province':
+            item['lat'], item['lon'] = lookup_coords(item['name'])
+            if item['lat'] is not None:
+                item['coordinate_source'] = 'known_province_point'
+    return results[:limit]
 
 
 if __name__ == "__main__":
@@ -580,7 +504,7 @@ if __name__ == "__main__":
         print("1. Khởi tạo cấu trúc bảng (provinces, districts, wards)...")
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("2. Nạp dữ liệu 63 tỉnh/thành, 696 quận/huyện, 10.035 xã/phường...")
+        print("2. Nạp dữ liệu hành chính hiện hành...")
         async with device_session_scope() as session:
             res = await seed_vietnam_provinces(session, force=True)
             if res.get("already_seeded"):

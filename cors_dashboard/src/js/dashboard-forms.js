@@ -243,7 +243,7 @@ const ProvisionForm = memo(function ProvisionForm({ device, currentUser = {}, on
     );
 });
 
-const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, onStopAutoBase, disabled }) {
+const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, onStopAutoBase, onReadBaseStatus, disabled }) {
     const knownChips = ['Ublox', 'Unicorecomm'];
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
 
@@ -312,7 +312,63 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         sbas: true
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isReadingReceiver, setIsReadingReceiver] = useState(false);
+    const [pendingReadbackRevision, setPendingReadbackRevision] = useState(null);
+    const readbackTimeoutRef = useRef(null);
+    const pendingReadbackRevisionRef = useRef(null);
     const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+    const receiverReadback = device.system_info?.receiver_base_readback || {};
+    const receiverPosition = receiverReadback.bestpos || {};
+    const savedMethod = String(device.base_config?.base_setup_method || '').toUpperCase();
+    const expectedReceiverMode = savedMethod === 'SURVEY_IN'
+        ? 'survey_in'
+        : ['FIXED_LLA', 'AUTO_CORS'].includes(savedMethod) ? 'base' : '';
+    const receiverReadbackIsFresh = receiverReadback.state === 'ok'
+        && Number(receiverReadback.age_seconds) <= 60
+        && device.status !== 'offline';
+    const receiverModeMismatch = receiverReadbackIsFresh && expectedReceiverMode
+        && ['survey_in', 'base', 'rover'].includes(receiverReadback.mode_kind)
+        && receiverReadback.mode_kind !== expectedReceiverMode;
+    const savedMethodLabel = ({
+        FIXED_LLA: 'Fixed LLA', SURVEY_IN: 'Survey-In', AUTO_CORS: 'Auto Base'
+    })[savedMethod] || 'Chưa có cấu hình Base đã lưu';
+
+    const handleReadReceiver = async () => {
+        if (!onReadBaseStatus || isReadingReceiver) return;
+        const startingRevision = Number(receiverReadback.revision || 0);
+        setIsReadingReceiver(true);
+        pendingReadbackRevisionRef.current = startingRevision;
+        setPendingReadbackRevision(startingRevision);
+        try {
+            await onReadBaseStatus(device.serial);
+            if (readbackTimeoutRef.current) window.clearTimeout(readbackTimeoutRef.current);
+            readbackTimeoutRef.current = window.setTimeout(() => {
+                if (pendingReadbackRevisionRef.current !== startingRevision) return;
+                pendingReadbackRevisionRef.current = null;
+                setPendingReadbackRevision(null);
+                setIsReadingReceiver(false);
+            }, 15000);
+        } catch (error) {
+            pendingReadbackRevisionRef.current = null;
+            setPendingReadbackRevision(null);
+            setIsReadingReceiver(false);
+            window.showError(`Không đọc được trạng thái UM: ${error.message}`);
+        }
+    };
+
+    useEffect(() => {
+        if (pendingReadbackRevisionRef.current === null
+            || Number(receiverReadback.revision || 0) === pendingReadbackRevisionRef.current) return;
+        pendingReadbackRevisionRef.current = null;
+        if (readbackTimeoutRef.current) window.clearTimeout(readbackTimeoutRef.current);
+        setPendingReadbackRevision(null);
+        setIsReadingReceiver(false);
+    }, [receiverReadback.revision]);
+
+    useEffect(() => () => {
+        pendingReadbackRevisionRef.current = null;
+        if (readbackTimeoutRef.current) window.clearTimeout(readbackTimeoutRef.current);
+    }, []);
 
     useEffect(() => {
         if (!autoFixedResult) return;
@@ -808,6 +864,73 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     Trạm đang trong tiến trình Auto Base (Rover). Bạn có thể bấm <strong>"Dừng Auto Base"</strong> ở trên hoặc điền tọa độ và bấm <strong>"Áp dụng cấu hình BASE"</strong> bên dưới để dừng Auto Base và lưu tọa độ cố định.
                 </div>
             )}
+
+            <div className="card bg-dark border-secondary mb-3">
+                <div className="card-body p-3">
+                    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                        <div>
+                            <div className="fw-bold">Đọc mode thực tế từ receiver</div>
+                            <div className="small text-muted">Web lưu: {savedMethodLabel}</div>
+                        </div>
+                        <button
+                            type="button"
+                            className="btn btn-outline-info"
+                            style={{ minHeight: '44px' }}
+                            disabled={disabled || isReadingReceiver || device.detected_chip_type !== 'Unicorecomm'}
+                            onClick={handleReadReceiver}
+                            aria-label="Đọc lại mode và tọa độ hiện tại từ receiver Unicore"
+                        >
+                            {isReadingReceiver ? (
+                                <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Đang chờ UM...</>
+                            ) : (
+                                <><i className="bi bi-arrow-repeat me-2" aria-hidden="true"></i>Đọc từ UM</>
+                            )}
+                        </button>
+                    </div>
+                    {device.detected_chip_type !== 'Unicorecomm' ? (
+                        <div className="small text-muted" role="status">Đọc mode trực tiếp hiện hỗ trợ receiver Unicore (UM).</div>
+                    ) : receiverReadback.state === 'ok' ? (
+                        <>
+                            <div className="small" role="status" aria-live="polite">
+                                UM báo <code>{receiverReadback.mode_raw}</code>
+                                {receiverModeMismatch && <span className="badge bg-danger ms-2">LỆCH MODE</span>}
+                                {receiverReadbackIsFresh && !receiverModeMismatch && expectedReceiverMode && (
+                                    <span className="badge bg-success ms-2">MODE KHỚP</span>
+                                )}
+                            </div>
+                            {receiverPosition.state === 'ok' && (
+                                <div className="small text-muted mt-1">
+                                    BESTPOS hiện tại: <code>{Number(receiverPosition.latitude).toFixed(10)}, {Number(receiverPosition.longitude).toFixed(10)}</code>
+                                    {' · '}{Number(receiverPosition.height_msl).toFixed(4)} m MSL
+                                    {receiverPosition.position_type ? ` · ${receiverPosition.position_type}` : ''}
+                                </div>
+                            )}
+                            {receiverModeMismatch && (
+                                <div className="alert alert-danger small py-2 mt-2 mb-0" role="alert">
+                                    Web đang lưu {savedMethodLabel}, nhưng UM báo {receiverReadback.mode_raw}. Hai mode không khớp.
+                                </div>
+                            )}
+                            {!receiverModeMismatch && receiverReadback.mode_kind === 'base' && savedMethod === 'FIXED_LLA' && (
+                                <div className="small text-warning mt-2">Mode BASE khớp. Tọa độ fixed lưu trong UM chưa được đối chiếu với LLA trên web.</div>
+                            )}
+                            {receiverReadbackIsFresh ? (
+                                <div className="small text-muted mt-1">Đọc cách đây {Number(receiverReadback.age_seconds) || 0} giây.</div>
+                            ) : (
+                                <div className="small text-warning mt-1">Readback đã cũ hoặc thiết bị offline. Bấm “Đọc từ UM” để cập nhật.</div>
+                            )}
+                        </>
+                    ) : receiverReadback.state === 'error' ? (
+                        <div className="small text-danger" role="status" aria-live="polite">
+                            Không đọc được mode từ UM: {receiverReadback.error || 'Không có phản hồi.'}
+                        </div>
+                    ) : (
+                        <div className="small text-muted" role="status">Chưa đọc mode trực tiếp từ receiver.</div>
+                    )}
+                    {pendingReadbackRevision !== null && (
+                        <div className="small text-info mt-1" role="status" aria-live="polite">Đang chờ firmware trả kết quả đọc mới...</div>
+                    )}
+                </div>
+            </div>
 
             <div className="mb-3">
                 <label className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>

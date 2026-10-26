@@ -27,8 +27,8 @@ inline constexpr int MUTEX_TIMEOUT_MS = 1500; // Thời gian tối đa để ch�
 
 // ================= CẤU HÌNH KẾT NỐI =================
 
-inline constexpr char WIFI_SSID[] = "AITOGY-VP";
-inline constexpr char WIFI_PASSWORD[] = "123456789";
+inline constexpr char WIFI_SSID[] = "AITOGY";
+inline constexpr char WIFI_PASSWORD[] = "aitogy@aitogy";
 
 
 inline constexpr uint8_t TX_TO_MODEM_RX = 17;
@@ -45,7 +45,7 @@ inline constexpr char GPRS_PASS[] = "";
 inline constexpr int NTRIP_MODE = 1;
 inline constexpr char NTRIP_CASTER_ADDRESS[] = "aitogy.com.vn";
 inline constexpr uint16_t NTRIP_CASTER_PORT = 2101;
-inline constexpr char NTRIP_MOUNTPOINT[] = "/test";
+inline constexpr char NTRIP_MOUNTPOINT[] = "test_esp";
 inline constexpr char NTRIP_AUTH_BASE_STATION[] = "12345";
 
 // ================ CẤU HÌNH MQTT =================

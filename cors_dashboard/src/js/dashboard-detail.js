@@ -764,6 +764,7 @@ const DetailsPanel = memo(function DetailsPanel({
     onProvision,
     onConfigureChip,
     onStopAutoBase,
+    onReadBaseStatus,
     onDeployLicense,
     onConfigureService,
     onLock,
@@ -1007,7 +1008,7 @@ const DetailsPanel = memo(function DetailsPanel({
                     return <ProvisionForm {...commonProps} onProvision={onProvision} />;
                 }
                 if (!BaseConfigForm) return missingPanel('BaseConfigForm');
-                return <BaseConfigForm {...commonProps} onConfigureChip={onConfigureChip} onStopAutoBase={onStopAutoBase} />;
+                return <BaseConfigForm {...commonProps} onConfigureChip={onConfigureChip} onStopAutoBase={onStopAutoBase} onReadBaseStatus={onReadBaseStatus} />;
             case 'service':
                 if (!ServiceConfigForm) return missingPanel('ServiceConfigForm');
                 return <ServiceConfigForm {...commonProps} disabled={!canEditService} onConfigureService={onConfigureService} />;

@@ -398,6 +398,7 @@ function renderDashboard() {
                     onProvision: handleProvisionDevice,
                     onConfigureChip: handleConfigureChip,
                     onStopAutoBase: handleStopAutoBase,
+                    onReadBaseStatus: handleReadBaseStatus,
                     onApplyAutoProvince: handleApplyAutoProvince,
                     onConfigureService: handleConfigureService,
                     onLock: handleLockDevice,
@@ -1100,6 +1101,16 @@ async function handleStopAutoBase(serial) {
         showError(`Lỗi dừng Auto Base: ${e.message}`);
         throw e;
     }
+}
+
+async function handleReadBaseStatus(serial) {
+    const response = await apiFetch(`/api/devices/${serial}/command`, {
+        method: 'POST',
+        body: JSON.stringify({ command: 'CHECK_BASE_STATUS', payload: {} })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.detail || 'Không gửi được yêu cầu đọc receiver.');
+    showSuccess('Đã gửi lệnh đọc; đang chờ UM phản hồi.');
 }
 
 async function handleApplyAutoProvince(serial, provinceCode) {

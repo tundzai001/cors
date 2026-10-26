@@ -20,6 +20,7 @@
 #include <time.h>
 #include <vector>
 #include <ctype.h>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -143,6 +144,172 @@ String epochString() {
     }
     // Before clock synchronization, report uptime seconds rather than Unix time.
     return String(static_cast<unsigned long>(millis() / 1000UL));
+}
+
+bool validUnicoreModeChecksum(const String &line) {
+    const int star = line.lastIndexOf('*');
+    if (star < 0) return true;
+    if (line.length() != static_cast<unsigned int>(star + 3)) return false;
+    const auto hexValue = [](char value) {
+        if (value >= '0' && value <= '9') return value - '0';
+        if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+        if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+        return -1;
+    };
+    const int high = hexValue(line[star + 1]);
+    const int low = hexValue(line[star + 2]);
+    if (high < 0 || low < 0) return false;
+    uint8_t checksum = 0;
+    for (int i = 0; i < star; ++i) checksum ^= static_cast<uint8_t>(line[i]);
+    return checksum == static_cast<uint8_t>((high << 4) | low);
+}
+
+bool queryUnicoreLine(const char *query, const char *prefix, String &response, String &error) {
+    if (!rtcmBufferMutex
+        || xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        error = "GNSS command port is busy";
+        return false;
+    }
+    if (!gnssSerialMutex
+        || xSemaphoreTake(gnssSerialMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        xSemaphoreGive(rtcmBufferMutex);
+        error = "GNSS reader is busy";
+        return false;
+    }
+
+    while (Serial1.available() > 0) Serial1.read();
+    String command(query);
+    command += "\r\n";
+    const bool written = Serial1.write(
+        reinterpret_cast<const uint8_t *>(command.c_str()), command.length()) == command.length();
+    Serial1.flush();
+    String candidate;
+    candidate.reserve(160);
+    const uint32_t started = millis();
+    while (written && millis() - started < 3000UL && response.isEmpty()) {
+        while (Serial1.available() > 0) {
+            const char value = static_cast<char>(Serial1.read());
+            if (value == '#') {
+                candidate = "#";
+            } else if (value == '\r' || value == '\n') {
+                if (candidate.startsWith(prefix)) {
+                    response = candidate;
+                    break;
+                }
+                candidate = "";
+            } else if (!candidate.isEmpty() && candidate.length() < 383) {
+                candidate += value;
+            } else if (candidate.length() >= 383) {
+                candidate = "";
+            }
+        }
+        if (response.isEmpty()) vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    xSemaphoreGive(gnssSerialMutex);
+    xSemaphoreGive(rtcmBufferMutex);
+
+    if (!written) {
+        error = String("Unicore ") + query + " query write failed";
+        return false;
+    }
+    if (response.isEmpty()) {
+        error = String("Unicore ") + query + " readback timeout";
+        return false;
+    }
+    return true;
+}
+
+bool readUnicoreMode(String &mode, String &error) {
+    String response;
+    if (!queryUnicoreLine("mode", "#MODE,", response, error)) return false;
+    if (!validUnicoreModeChecksum(response)) {
+        error = "Unicore MODE checksum mismatch";
+        return false;
+    }
+    const int separator = response.indexOf(';');
+    if (separator < 0) {
+        error = "Unicore MODE response is malformed";
+        return false;
+    }
+    mode = response.substring(separator + 1);
+    const int checksum = mode.indexOf('*');
+    if (checksum >= 0) mode.remove(checksum);
+    mode.trim();
+    if (mode.endsWith(",")) mode.remove(mode.length() - 1);
+    mode.toUpperCase();
+    if (!mode.startsWith("MODE ")) {
+        error = "Unicore MODE response has no operating mode";
+        mode = "";
+        return false;
+    }
+    return true;
+}
+
+bool readUnicoreBestPosition(JsonObject position, String &error) {
+    String response;
+    if (!queryUnicoreLine("bestpos", "#BESTPOS", response, error)) return false;
+    position["raw"] = response;
+    const int separator = response.indexOf(';');
+    if (separator < 0) {
+        error = "Unicore BESTPOS response is malformed";
+        return false;
+    }
+    String payload = response.substring(separator + 1);
+    const int checksum = payload.indexOf('*');
+    if (checksum >= 0) payload.remove(checksum);
+    String fields[5];
+    int start = 0;
+    for (size_t index = 0; index < 5; ++index) {
+        const int comma = payload.indexOf(',', start);
+        if (index < 4 && comma < 0) {
+            error = "Unicore BESTPOS response is incomplete";
+            return false;
+        }
+        const int end = comma < 0 ? payload.length() : comma;
+        fields[index] = payload.substring(start, end);
+        start = end + 1;
+    }
+    for (String &field : fields) field.trim();
+    position["solution_status"] = fields[0];
+    position["position_type"] = fields[1];
+    if (!fields[0].equalsIgnoreCase("SOL_COMPUTED") || fields[2].isEmpty()
+        || fields[3].isEmpty() || fields[4].isEmpty()) {
+        error = String("Unicore BESTPOS has no computed position: ") + fields[0];
+        return false;
+    }
+    char *end = nullptr;
+    const double latitude = std::strtod(fields[2].c_str(), &end);
+    if (end == fields[2].c_str() || *end != '\0') {
+        error = "Unicore BESTPOS latitude is invalid";
+        return false;
+    }
+    const double longitude = std::strtod(fields[3].c_str(), &end);
+    if (end == fields[3].c_str() || *end != '\0') {
+        error = "Unicore BESTPOS longitude is invalid";
+        return false;
+    }
+    const double height = std::strtod(fields[4].c_str(), &end);
+    if (end == fields[4].c_str() || *end != '\0') {
+        error = "Unicore BESTPOS height is invalid";
+        return false;
+    }
+    if (!std::isfinite(latitude) || !std::isfinite(longitude) || !std::isfinite(height)
+        || latitude < -90.0 || latitude > 90.0 || longitude < -180.0 || longitude > 180.0) {
+        error = "Unicore BESTPOS coordinates are invalid";
+        return false;
+    }
+    position["state"] = "ok";
+    position["latitude"] = latitude;
+    position["longitude"] = longitude;
+    position["height_msl"] = height;
+    return true;
+}
+
+const char *unicoreModeKind(const String &mode) {
+    if (mode.startsWith("MODE BASE TIME")) return "survey_in";
+    if (mode.startsWith("MODE BASE")) return "base";
+    if (mode.startsWith("MODE ROVER")) return "rover";
+    return "unknown";
 }
 
 bool jsonBool(JsonObjectConst object, const String &key, bool fallback) {
@@ -2072,6 +2239,17 @@ String BackendAgent::buildStatusPayload() {
     }
 
     JsonObject system = doc.createNestedObject("system_info");
+    if (receiverBaseReadback_.length() > 2) {
+        DynamicJsonDocument readbackDoc(1024);
+        if (deserializeJson(readbackDoc, receiverBaseReadback_) == DeserializationError::Ok
+            && readbackDoc.is<JsonObject>()) {
+            JsonObject readback = system.createNestedObject("receiver_base_readback");
+            readback.set(readbackDoc.as<JsonObjectConst>());
+            readback["age_seconds"] = receiverBaseReadbackMs_ > 0
+                ? static_cast<uint32_t>(millis() - receiverBaseReadbackMs_) / 1000UL
+                : 0;
+        }
+    }
     JsonObject cpu = system.createNestedObject("cpu");
     cpu["usage_percent"] = 0.0;
     cpu["frequency_mhz"] = ESP.getCpuFreqMHz();
@@ -2822,8 +3000,32 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             error = "missing service config payload";
         } else {
             DynamicJsonDocument serviceDoc(CONFIG_DOCUMENT_SIZE);
-            serviceDoc.set(payload);
+            if (deserializeJson(serviceDoc, serviceConfig_) != DeserializationError::Ok
+                || !serviceDoc.is<JsonObject>()) {
+                serviceDoc.clear();
+                serviceDoc.to<JsonObject>();
+            }
             JsonObject service = serviceDoc.as<JsonObject>();
+            for (JsonPair entry : payload) {
+                service[entry.key()] = entry.value();
+            }
+            const JsonArrayConst removedServers = payload["removed_servers"].as<JsonArrayConst>();
+            for (JsonVariantConst removed : removedServers) {
+                if (!removed.is<int>()) continue;
+                const int serverId = removed.as<int>();
+                if (serverId <= 2) continue;
+                const String suffix = String(serverId);
+                service.remove((String("server") + suffix + "_enabled").c_str());
+                service.remove((String("server") + suffix + "_stream_on_demand").c_str());
+                service.remove((String("server") + suffix + "_stream_active").c_str());
+                service.remove((String("serverhost") + suffix).c_str());
+                service.remove((String("port") + suffix).c_str());
+                service.remove((String("mountpoint") + suffix).c_str());
+                service.remove((String("username") + suffix).c_str());
+                service.remove((String("password") + suffix).c_str());
+                service.remove((String("ntrip_version") + suffix).c_str());
+            }
+            service.remove("removed_servers");
             const bool onDemand = jsonBool(service, "stream_on_demand", false);
             if (!onDemand) service["stream_active"] = true;
             else if (service["stream_active"].isNull()) service["stream_active"] = false;
@@ -2901,13 +3103,30 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             success = writeGnssCommands({poll});
             if (success) detail = "base status requested from GNSS";
             else error = "GNSS serial is busy";
-        } else if (sensorType_ == "Unicorecomm" && rtcmBufferMutex
-            && xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-            Serial1.print("mode\r\n");
-            delay(250);
-            Serial1.print("log\r\n");
-            xSemaphoreGive(rtcmBufferMutex);
-            detail = "base status requested from GNSS";
+        } else if (sensorType_ == "Unicorecomm") {
+            String mode;
+            success = readUnicoreMode(mode, error);
+            DynamicJsonDocument readbackDoc(1024);
+            readbackDoc["state"] = success ? "ok" : "error";
+            readbackDoc["chip"] = "Unicorecomm";
+            readbackDoc["revision"] = ++receiverBaseReadbackRevision_;
+            readbackDoc["mode_raw"] = mode;
+            readbackDoc["mode_kind"] = success ? unicoreModeKind(mode) : "unknown";
+            readbackDoc["query"] = "MODE";
+            if (success) {
+                JsonObject bestPosition = readbackDoc.createNestedObject("bestpos");
+                String positionError;
+                if (!readUnicoreBestPosition(bestPosition, positionError)) {
+                    bestPosition["state"] = "unavailable";
+                    bestPosition["error"] = positionError;
+                }
+                detail = String("receiver mode read back: ") + mode;
+            } else {
+                readbackDoc["error"] = error;
+            }
+            receiverBaseReadback_.clear();
+            serializeJson(readbackDoc, receiverBaseReadback_);
+            receiverBaseReadbackMs_ = millis();
         } else {
             success = false;
             error = "GNSS serial is busy";
