@@ -259,6 +259,7 @@ int main(int argc, char **argv) {
         120, 10.0, GnssSensorType::Unicore, diagnostics);
     const auto diagnosticText = commandListToBytes(diagnosticSurvey);
     const std::string diagnosticOutput(diagnosticText.begin(), diagnosticText.end());
+    assert(diagnosticOutput.find("config undulation 0.0\r\n") < diagnosticOutput.find("mode base time "));
     assert(diagnosticOutput.find("gpgga 1\r\n") != std::string::npos);
     assert(diagnosticOutput.find("rtcm1074 1\r\n") != std::string::npos);
 

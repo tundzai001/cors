@@ -1200,6 +1200,11 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
         # Runtime wake/sleep changes independently of the saved service config.
         'stream_active', 'server1_stream_active', 'server2_stream_active'
     }
+    if (prefix == 'Base' and config1.get('base_setup_method') == 'SURVEY_IN'
+            and config2.get('base_setup_method') == 'SURVEY_IN'):
+        # Fixed LLA fields may remain in the DB after switching to Survey-In.
+        # Survey targets are survey_in_duration and survey_in_accuracy instead.
+        ignore_fields.update({'coords', 'accuracy'})
 
     def is_secret_field(key: object) -> bool:
         normalized = str(key or "").strip().lower().replace("-", "_")

@@ -14,6 +14,21 @@ compare = scope['_compare_configs']
 
 
 class ConfigSyncRedactionTests(unittest.TestCase):
+    def test_survey_ignores_retained_fixed_coordinates_and_accuracy(self):
+        agent = {'base_setup_method': 'SURVEY_IN', 'survey_in_duration': 120,
+                 'survey_in_accuracy': 5, 'gnss_options': {'output_mode': 'rtcm_only'}}
+        target = {**agent, 'coords': {'lat': 21, 'lon': 105, 'alt': 10}, 'accuracy': 0.01}
+        self.assertEqual(compare(agent, target, 'Base'), (True, []))
+        for key, value in [('survey_in_duration', 300), ('survey_in_accuracy', 1),
+                           ('gnss_options', {'output_mode': 'diagnostics_rtcm'}),
+                           ('base_setup_method', 'FIXED_LLA')]:
+            with self.subTest(key=key):
+                self.assertFalse(compare(agent, {**target, key: value}, 'Base')[0])
+        self.assertFalse(compare(agent, target, 'Service')[0])
+        fixed = {**agent, 'base_setup_method': 'FIXED_LLA'}
+        self.assertEqual(compare(fixed, {**target, 'base_setup_method': 'FIXED_LLA'}, 'Base'),
+                         (False, ['[Base.coords] Agent=None', '[Base.accuracy] Agent=None']))
+
     def test_redacted_secrets_and_runtime_switches_are_not_config_errors(self):
         db = {'password1': 'private', 'password2': 'private', 'rtcmpassword1': 'private',
               'stream_active': False, 'server1_stream_active': False,

@@ -138,6 +138,7 @@ using namespace GnssCmdBuilder;
         CommandList commands;
         commands.push_back(asciiCommand("unlogall\r\n"));
         commands.push_back(delayCommand(1000));
+        commands.push_back(asciiCommand("config undulation 0.0\r\n"));
         const String cmd = "mode base time " + String(duration) + "\r\n";
         Serial.printf("Survey-In command: %s", cmd.c_str());
         commands.push_back(asciiCommand(cmd));

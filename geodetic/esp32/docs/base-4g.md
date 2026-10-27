@@ -26,6 +26,9 @@ UBX-CFG-TMODE3, như ZED-F9P. Nhánh Unicore dùng bộ lệnh UM980/UM982 trong
 Survey-In Unicore xuất theo cấu hình UI: `RTCM only` gửi `unlogall` để tắt
 output cũ, rồi bật bộ RTCM MSM4/MSM7 đã chọn và lưu cấu hình. Firmware
 không tự hỏi GGA/GSA/GSV/GST định kỳ.
+Trước khi bắt đầu Survey-In, luồng Unicore đặt `config undulation 0.0` để
+receiver báo trực tiếp độ cao ellipsoid WGS 84. UI vẫn tính h bằng độ cao
+chip báo cộng undulation của từng BESTNAV, nên đọc được cả cấu hình cũ.
 Firmware tự đọc `MODE` và `BESTNAVA` mỗi 30 giây, kể cả sau reboot, để cập nhật UI.
 `BESTNAV: FIXEDPOS` xác nhận UM đang giữ tọa độ Base; đây không phải phần trăm
 hay số giây lấy mẫu hợp lệ bên trong UM. Kết quả Survey-In gần nhất lưu NVS,
