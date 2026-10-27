@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
-const slots = [], effects = [], sent = [];
+const slots = [], effects = [], sent = [], copied = [];
 let index = 0, changed = false, tree, disabled = false;
 const React = {
     memo: component => component,
@@ -17,6 +17,11 @@ const React = {
             if (next !== slots[slot]) { slots[slot] = next; changed = true; }
         }];
     },
+    useRef(initial) {
+        const slot = index++;
+        if (!(slot in slots)) slots[slot] = { current: initial };
+        return slots[slot];
+    },
     useEffect(effect, dependencies) {
         const slot = index++;
         if (!slots[slot] || dependencies.some((value, i) => value !== slots[slot][i])) {
@@ -24,8 +29,11 @@ const React = {
         }
     },
 };
-const context = vm.createContext({ React, console, window: { showError(message) { throw Error(message); } } });
-for (const asset of ['coordinate-clipboard', 'dashboard-forms']) {
+const context = vm.createContext({ React, console,
+    navigator: { clipboard: { writeText: async text => copied.push(text) } },
+    document: { getElementById: () => ({ focus() {} }) },
+    window: { requestAnimationFrame: callback => callback(), showError(message) { throw Error(message); } } });
+for (const asset of ['coordinate-clipboard', 'receiver-coordinates', 'dashboard-forms']) {
     vm.runInContext(fs.readFileSync(path.join(root, `cors_dashboard/frontend/js/dist/${asset}.min.js`), 'utf8'), context);
 }
 const clipboard = context.window.CorsCoordinateClipboard;
@@ -132,5 +140,43 @@ function paste(name, text) {
     assert.equal(sent.at(-1).params.coords.alt, '30.0000000000');
     device.serial = 'UNICORE_NEW'; device.base_config = {}; render();
     assert.equal(field('altitude-reference').props.value, 'ELLIPSOID');
+
+    const bestpos = { state: 'ok', position_type: 'FIXEDPOS', latitude: 21.08496722, longitude: 105.7866644,
+        raw: '#BESTNAVA,97,GPS,FINE;SOL_COMPUTED,FIXEDPOS,21.08496721936,105.78666444748,12.3269,-28.2571,WGS84,0,0,0*12345678' };
+    assert.equal(context.window.CorsReceiverCoordinates.fromUnicore({ ...bestpos,
+        raw: bestpos.raw.replace('-28.2571', '0.0000') }).alt, '12.3269',
+        'CONFIG UNDULATION 0 makes the reported height ellipsoidal; do not apply any default geoid');
+    device.serial = 'UNICORE_SURVEY_RESULT'; device.status = 'online';
+    device.base_config = { base_setup_method: 'SURVEY_IN' };
+    device.system_info = { receiver_base_readback: { state: 'ok', revision: 1, age_seconds: 2,
+        mode_kind: 'survey_in', mode_raw: 'MODE BASE TIME 120 0 0', bestpos }, survey_in_status: { state: 'base_ready' } };
+    const receiverButton = label => find(tree, node => node.type === 'button' && node.children.includes(label));
+    render();
+    assert(receiverButton('Điền vào Fixed LLA'));
+    const sentBeforeFill = sent.length;
+    await receiverButton('Sao chép tọa độ').props.onClick(); render();
+    assert.deepEqual(JSON.parse(copied.at(-1)).coords, { lat: '21.0849672193', lon: '105.7866644474', alt: '-15.9302000000' });
+    receiverButton('Điền vào Fixed LLA').props.onClick(); render();
+    assert.deepEqual(position(), ['21.0849672193', '105.7866644474', '-15.9302'], 'Use raw LLA precision and convert MSL + geoid to ellipsoid');
+    assert.equal(field('altitude-reference').props.value, 'ELLIPSOID');
+    assert.equal(sent.length, sentBeforeFill, 'Filling/copying must not send commands to UM');
+    field('latitude').props.onChange({ target: { value: '21.0849670000' } }); render();
+    await tree.props.onSubmit({ preventDefault() {} }); render();
+    assert.equal(sent.at(-1).params.coords.lat, '21.0849670000', 'User can correct the survey coordinate before applying');
+    assert.equal(sent.at(-1).params.coords.alt, '-15.9302');
+    assert.equal(sent.at(-1).params.altitude_reference, 'ELLIPSOID');
+    for (const patch of [{ position_type: 'SINGLE' }, { raw: bestpos.raw.replace('-28.2571', 'NaN') },
+        { raw: bestpos.raw.replace('WGS84', 'OTHER') }, { raw: bestpos.raw.replace('21.08496721936', '91') }]) {
+        assert.equal(context.window.CorsReceiverCoordinates.fromUnicore({ ...bestpos, ...patch }), null);
+    }
+    for (const status of ['stale', 'offline', 'disabled']) {
+        device.system_info.receiver_base_readback.age_seconds = status === 'stale' ? 61 : 2;
+        device.status = status === 'offline' ? 'offline' : 'online';
+        disabled = status === 'disabled'; render();
+        assert.equal(receiverButton('Điền vào Fixed LLA').props.disabled, true);
+        const previous = position(); receiverButton('Điền vào Fixed LLA').props.onClick(); render();
+        assert.deepEqual(position(), previous, 'Blocked receiver coordinates must not overwrite the form');
+    }
     console.log('PASS: shipped GNSS form fills all fields from any coordinate input, validates frame/height, preserves accuracy, blocks partial writes, and configures only on submit');
+    console.log('PASS: survey coordinates preserve raw precision, convert geoid height, copy/prefill without commands, allow correction, and reject stale/offline/invalid results');
 })().catch(error => { console.error(error); process.exitCode = 1; });

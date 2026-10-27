@@ -330,6 +330,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const receiverReadbackIsFresh = receiverReadback.state === 'ok'
         && Number(receiverReadback.age_seconds) <= 60
         && !receiverOffline;
+    const receiverCoordinates = window.CorsReceiverCoordinates?.fromUnicore(receiverPosition);
+    const canUseReceiverCoordinates = !!receiverCoordinates && receiverReadbackIsFresh
+        && !isReadingReceiver;
+    const [receiverCopyNotice, setReceiverCopyNotice] = useState('');
+    useEffect(() => setReceiverCopyNotice(''), [device.serial, receiverReadback.revision]);
     const receiverModeMismatch = receiverReadbackIsFresh && expectedReceiverMode
         && ['survey_in', 'base', 'rover'].includes(receiverReadback.mode_kind)
         && receiverReadback.mode_kind !== expectedReceiverMode;
@@ -506,6 +511,29 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         } catch (error) {
             event.preventDefault();
             setCoordinatePasteNotice({ error: true, message: error.message });
+        }
+    };
+
+    const handleUseReceiverCoordinates = () => {
+        if (!canUseReceiverCoordinates || disabled || isSubmitting) return;
+        setMethod('FIXED_LLA');
+        setLatitude(chipCoordinate(receiverCoordinates.lat, 10));
+        setLongitude(chipCoordinate(receiverCoordinates.lon, 10));
+        setAltitude(receiverCoordinates.alt);
+        setAltitudeReference('ELLIPSOID');
+        setCoordinatePasteNotice({ error: false,
+            message: 'Đã điền tọa độ Base từ UM. Kiểm tra, hiệu chỉnh tọa độ và sai số trước khi bấm áp dụng.' });
+        window.requestAnimationFrame(() => document.getElementById(`base-latitude-${device.serial}`)?.focus());
+    };
+
+    const handleCopyReceiverCoordinates = async () => {
+        if (!canUseReceiverCoordinates) return;
+        setReceiverCopyNotice('');
+        try {
+            await navigator.clipboard.writeText(window.CorsCoordinateClipboard.encode(receiverCoordinates));
+            setReceiverCopyNotice('Đã sao chép WGS 84 và độ cao h; có thể dán vào công cụ kiểm tra hoặc Fixed LLA.');
+        } catch (_) {
+            setReceiverCopyNotice('Không sao chép được. Hãy chọn và sao chép các giá trị bên trên.');
         }
     };
 
@@ -902,7 +930,27 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     <span className="badge bg-success ms-2">MODE KHỚP</span>
                                 )}
                             </div>
-                            {receiverPosition.state === 'ok' && (
+                            {receiverCoordinates ? (
+                                <div className="border rounded p-3 mt-3">
+                                    <div className="fw-bold small mb-2">{savedMethod === 'SURVEY_IN' ? 'Tọa độ Base sau Survey-In' : 'Tọa độ Base đang giữ'}</div>
+                                    <dl className="row g-2 small mb-2">
+                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Vĩ độ WGS 84</dt><dd className="font-monospace text-break mb-0">{receiverCoordinates.lat}</dd></div>
+                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Kinh độ WGS 84</dt><dd className="font-monospace text-break mb-0">{receiverCoordinates.lon}</dd></div>
+                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Độ cao h ellipsoid (m)</dt><dd className="font-monospace mb-0">{receiverCoordinates.alt}</dd></div>
+                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Độ cao chip báo (m)</dt><dd className="font-monospace mb-0">{receiverCoordinates.heightMsl}</dd></div>
+                                    </dl>
+                                    <div className="small text-muted mb-2">Undulation chip báo: {receiverCoordinates.undulation} m. h = độ cao chip báo + undulation; undulation = 0 thì giữ nguyên độ cao. Đây không phải geoid địa phương đã hiệu chỉnh.</div>
+                                    <div className="small text-muted mb-2">UM đã giữ tọa độ Base. Đối chiếu mốc hoặc hiệu chỉnh trước khi dùng làm Fixed LLA.</div>
+                                    <div className="d-flex flex-wrap gap-2">
+                                        <button type="button" className="btn btn-outline-info btn-sm" style={{ minHeight: '44px' }}
+                                            disabled={!canUseReceiverCoordinates} onClick={handleCopyReceiverCoordinates}>Sao chép tọa độ</button>
+                                        <button type="button" className="btn btn-outline-primary btn-sm" style={{ minHeight: '44px' }}
+                                            disabled={!canUseReceiverCoordinates || disabled || isSubmitting}
+                                            onClick={handleUseReceiverCoordinates}>Điền vào Fixed LLA</button>
+                                    </div>
+                                    {receiverCopyNotice && <div className="small text-info mt-2" role="status" aria-live="polite">{receiverCopyNotice}</div>}
+                                </div>
+                            ) : receiverPosition.state === 'ok' && (
                                 <div className="small text-muted mt-1">
                                     {receiverPosition.message || 'BESTPOS'} hiện tại: <code>{Number(receiverPosition.latitude).toFixed(10)}, {Number(receiverPosition.longitude).toFixed(10)}</code>
                                     {' · '}{Number(receiverPosition.height_msl).toFixed(4)} m MSL

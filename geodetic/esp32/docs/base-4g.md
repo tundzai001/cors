@@ -30,6 +30,25 @@ phải phần trăm hay số giây lấy mẫu hợp lệ bên trong UM; quá th
 phải chờ phản hồi Base cố định. Sau reboot, bấm **Đọc từ UM** để xác nhận mode và
 tiếp tục theo dõi; thời gian bắt đầu cũ không được tự tạo lại.
 
+Truy vấn đọc UM được xử lý trong `Unicore_Readback.cpp`. Firmware gửi CRLF trước
+`MODE`/`BESTNAVA` để kết thúc dòng đầu vào còn dang dở; thao tác này không đổi
+mode hoặc chạy lại Survey-In. Log `[GNSS][READBACK]` ghi lệnh gửi, ACK và số byte
+nhận để phân biệt timeout với lỗi phản hồi/checksum.
+
+Khi BESTNAV báo `SOL_COMPUTED,FIXEDPOS`, UI hiển thị tọa độ Base đang giữ và cho
+sao chép hoặc điền vào Fixed LLA để người dùng kiểm tra/hiệu chỉnh trước khi áp
+dụng. Vĩ độ, kinh độ lấy từ chuỗi BESTNAV gốc để giữ số lẻ. Độ cao h ellipsoid
+được tính từ độ cao báo trong BESTNAV cộng undulation trong **cùng bản tin**;
+undulation bằng 0 thì giữ nguyên độ cao. Giá trị này phụ thuộc cấu hình undulation
+của chip, không phải geoid địa phương đã hiệu chỉnh. Khi áp dụng Fixed LLA với
+`altitude_reference=ELLIPSOID`, backend hiện có đặt `config undulation 0.0` trước
+`mode base`. Sao chép/điền form không gửi lệnh cấu hình xuống chip.
+
+`Backend_Agent.cpp` giữ khởi tạo, kết nối và vòng lặp điều phối. Xử lý lệnh nằm
+trong `Backend_Agent_Commands.cpp`, payload trạng thái trong `Backend_Agent_Status.cpp`,
+workflow Auto Base/đối chiếu trong `Backend_Agent_Workflows.cpp`, phép chiếu tọa độ
+trong `Backend_Agent_Projection.cpp`. Các phần này dùng chung lớp `BackendAgent`.
+
 ## Kết nối phần cứng
 
 - ESP32 TDM240x: RX GNSS GPIO18, TX GNSS GPIO19; UART GNSS 115200 baud.

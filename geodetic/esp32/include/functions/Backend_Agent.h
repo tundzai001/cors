@@ -109,6 +109,7 @@ private:
     void ensureDefaultServiceConfig();
     String normalAgentState() const;
     void setupWebsocket();
+    void refreshWebsocket();
     void loopWebsocket();
     void drainDataQueues();
     void evaluateControlPlaneFailover();
