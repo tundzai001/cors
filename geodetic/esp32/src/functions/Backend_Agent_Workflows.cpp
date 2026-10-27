@@ -152,6 +152,7 @@ bool BackendAgent::writeUnicoreCommand(const uint8_t *data, size_t length, Strin
                 && target > 0;
             surveyInStartedMs_ = surveyInMonitoring_ ? millis() : 0;
             surveyInTargetSeconds_ = surveyInMonitoring_ ? target : 0;
+            if (surveyInMonitoring_) surveyInResultPending_ = true;
             surveyInBaselineGgaCount_ = getGnssTelemetrySnapshot().ggaCount;
             lastSurveyGgaPollMs_ = 0;
             lastSurveyLoggedState_ = "";

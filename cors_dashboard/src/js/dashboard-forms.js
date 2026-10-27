@@ -903,6 +903,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         <div>
                             <div className="fw-bold">Đọc mode thực tế từ receiver</div>
                             <div className="small text-muted">Web lưu: {savedMethodLabel}</div>
+                            <div className="small text-muted">Thiết bị tự cập nhật mỗi 30 giây.</div>
                         </div>
                         <button
                             type="button"
@@ -915,7 +916,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             {isReadingReceiver ? (
                                 <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Đang chờ UM...</>
                             ) : (
-                                <><i className="bi bi-arrow-repeat me-2" aria-hidden="true"></i>Đọc từ UM</>
+                                <><i className="bi bi-arrow-repeat me-2" aria-hidden="true"></i>Cập nhật ngay</>
                             )}
                         </button>
                     </div>
@@ -976,7 +977,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             Không đọc được mode từ UM: {receiverReadback.error || 'Không có phản hồi.'}
                         </div>
                     ) : (
-                        <div className="small text-muted" role="status">Chưa đọc mode trực tiếp từ receiver.</div>
+                        <div className="small text-muted" role="status">Đang chờ thiết bị tự cập nhật mode và tọa độ.</div>
                     )}
                     {pendingReadbackRevision !== null && (
                         <div className="small text-info mt-1" role="status" aria-live="polite">Đang chờ firmware trả kết quả đọc mới...</div>
@@ -988,11 +989,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <div className={`small mt-1 ${surveyState === 'base_ready' ? 'text-success' : 'text-warning'}`}
                                  role="status" aria-atomic="true">
                                 {({
-                                    base_ready: 'UM đã giữ tọa độ Base (GGA quality 7).',
+                                    base_ready: surveyStatus.source === 'BESTNAV' ? 'UM đã giữ tọa độ Base (BESTNAV: FIXEDPOS).' : 'UM đã giữ tọa độ Base (GGA quality 7).',
                                     waiting_base: 'UM chưa báo tọa độ Base cố định.',
                                     awaiting_gga: 'Đang chờ GGA mới từ UM để xác định trạng thái.',
+                                    awaiting_readback: 'Đang chờ thiết bị đọc lại trạng thái Base từ UM.',
                                     offline: 'Thiết bị offline; cần kết nối lại để đọc trạng thái mới.'
-                                })[surveyState] || 'Chưa xác nhận phiên Survey-In. Bấm “Đọc từ UM” để kiểm tra.'}
+                                })[surveyState] || 'Đang chờ thiết bị tự xác nhận trạng thái Survey-In.'}
                             </div>
                             {surveyStatus.state && surveyStatus.state !== 'not_monitoring' && (
                                 <>
@@ -1005,8 +1007,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     </div>
                                     {['base_ready', 'waiting_base'].includes(surveyState) && (
                                         <div className="small text-muted mt-1">
-                                            {Number(surveyStatus.satellites) || 0} vệ tinh · HDOP {Number(surveyStatus.hdop || 0).toFixed(2)}
-                                            {' · '}GGA cách đây {Number(surveyStatus.gga_age_seconds) || 0} giây
+                                            {surveyStatus.source === 'BESTNAV'
+                                                ? `Đọc từ UM cách đây ${Number(surveyStatus.readback_age_seconds) || 0} giây`
+                                                : `${Number(surveyStatus.satellites) || 0} vệ tinh · HDOP ${Number(surveyStatus.hdop || 0).toFixed(2)} · GGA cách đây ${Number(surveyStatus.gga_age_seconds) || 0} giây`}
                                         </div>
                                     )}
                                     <div className="small text-muted mt-1">Hết thời gian yêu cầu chưa đủ để kết luận khảo sát xong; cần UM xác nhận tọa độ Base.</div>
@@ -1018,6 +1021,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             </div>
 
             <div className="mb-3">
+                {device.system_info?.survey_in_result?.bestpos && savedMethod !== 'SURVEY_IN' && (() => {
+                    const saved = window.CorsReceiverCoordinates?.fromUnicore(device.system_info.survey_in_result.bestpos);
+                    if (!saved) return null;
+                    return <details className="border rounded p-3 mb-3">
+                        <summary className="small fw-bold py-2">Kết quả Survey-In đã lưu</summary>
+                        <div className="small text-muted mt-1">Kết quả trước khi chuyển cấu hình, dùng để đối chiếu với Fixed LLA hiện tại.</div>
+                        <div className="small font-monospace text-break mt-2">WGS 84: {saved.lat}, {saved.lon} · h {saved.alt} m</div>
+                    </details>;
+                })()}
                 <label className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>
                 <select
                     className="form-select border-primary"
@@ -1652,6 +1664,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             toBool(telemetry.onDemand, toBool(saved[`${key}_stream_on_demand`], toBool(saved.stream_on_demand))) &&
             !toBool(telemetry.active, toBool(saved[`${key}_stream_active`], toBool(saved.stream_active)))
         );
+        const casterError = device.ntrip_status?.[key]?.error;
         return (
             <span className="d-inline-flex flex-wrap align-items-center gap-2 ms-2 small" role="status" aria-live="polite">
                 <span className={`badge text-bg-${enabled ? 'primary' : 'secondary'}`}>
@@ -1666,6 +1679,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                         <i className={`bi ${sleeping ? 'bi-moon-stars' : 'bi-broadcast'} me-1`} aria-hidden="true"></i>
                         {sleeping ? 'Ngủ · chờ rover' : telemetry.bps > 0 ? `Đang gửi RTCM · ${telemetry.bps} B/s` : 'Chưa gửi RTCM'}
                     </span>
+                )}
+                {enabled && !pending && !offline && !telemetry.connected && !sleeping && casterError && (
+                    <span className="text-danger text-break w-100" role="status">Caster: {casterError}</span>
                 )}
             </span>
         );

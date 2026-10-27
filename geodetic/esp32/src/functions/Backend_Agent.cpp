@@ -714,6 +714,7 @@ void BackendAgent::loadPreferences() {
     licenseToken_ = statePrefs.getString("LICENSE_KEY", "");
     lastCommandResult_ = statePrefs.getString("CMD_RESULT", "{}");
     autoBaseProgress_ = statePrefs.getString("PROGRESS_JSON", "{}");
+    surveyInResult_ = statePrefs.isKey("SURVEY_RESULT") ? statePrefs.getString("SURVEY_RESULT") : "{}";
     statePrefs.end();
     prefs.begin("myPrefs", true);
     const uint32_t bootCounter = static_cast<uint32_t>(prefs.getInt("RSTRT_COUNT", 0));
@@ -809,6 +810,7 @@ bool BackendAgent::saveStatePreferences() {
     check("LICENSE_KEY", nvs_set_str(handle, "LICENSE_KEY", licenseToken_.c_str()));
     check("CMD_RESULT", nvs_set_str(handle, "CMD_RESULT", lastCommandResult_.c_str()));
     check("PROGRESS_JSON", nvs_set_str(handle, "PROGRESS_JSON", autoBaseProgress_.c_str()));
+    check("SURVEY_RESULT", nvs_set_str(handle, "SURVEY_RESULT", surveyInResult_.c_str()));
     check("commit", nvs_commit(handle));
     nvs_close(handle);
     return saved;
@@ -1180,28 +1182,7 @@ void BackendAgent::loop() {
         }
     }
 
-    // One-shot GGA keeps survey visibility even with RTCM-only output. The normal
-    // stream reader parses it; no persistent log setting or RTCM RX draining here.
-    if (surveyInMonitoring_ && !workflowActive() && millis() - lastSurveyGgaPollMs_ >= 5000UL) {
-        const GnssTelemetrySnapshot gnss = getGnssTelemetrySnapshot();
-        if (rtcmBufferMutex && xSemaphoreTake(rtcmBufferMutex, 0) == pdTRUE) {
-            if (gnss.ggaCount == surveyInBaselineGgaCount_ || millis() - gnss.lastGgaMs >= 4000UL) {
-                Serial1.print("GPGGA\r\n");
-                Serial1.flush();
-            }
-            xSemaphoreGive(rtcmBufferMutex);
-            lastSurveyGgaPollMs_ = millis();
-            const char *state = unicoreSurveyState(millis(), gnss.lastGgaMs, gnss.ggaCount,
-                                                   surveyInBaselineGgaCount_, gnss.fixStatus);
-            if (std::strcmp(state, lastSurveyLoggedState_) != 0) {
-                lastSurveyLoggedState_ = state;
-                Serial.printf("[GNSS][SURVEY] state=%s; since_ACK_s=%lu; target_s=%lu; sats=%u; fix=%s\n",
-                              state,
-                              surveyInStartedMs_ ? static_cast<unsigned long>((millis() - surveyInStartedMs_) / 1000UL) : 0UL,
-                              static_cast<unsigned long>(surveyInTargetSeconds_), gnss.satellites, gnss.fixStatus);
-            }
-        }
-    }
+    pollGnssStatus();
     publishStatus(false);
 }
 

@@ -23,17 +23,24 @@ Boot chờ 2 giây rồi dò receiver bằng UBX-MON-VER hoặc VERSIONA trên c
 `UNKNOWN` có thể xuất hiện trước khi nhận diện hoặc khi chưa có phản hồi. Nhánh u-blox yêu cầu receiver hỗ trợ
 UBX-CFG-TMODE3, như ZED-F9P. Nhánh Unicore dùng bộ lệnh UM980/UM982 trong CORS.
 
-Với Survey-In Unicore, sau ACK `mode base time`, firmware hỏi GPGGA một lần mỗi
-5 giây ngay cả khi profile chỉ xuất RTCM. UI hiển thị thời gian từ ACK, thời gian
-yêu cầu, vệ tinh/HDOP và xác nhận Base sẵn sàng khi GGA báo quality 7. Đây không
-phải phần trăm hay số giây lấy mẫu hợp lệ bên trong UM; quá thời gian yêu cầu vẫn
-phải chờ phản hồi Base cố định. Sau reboot, bấm **Đọc từ UM** để xác nhận mode và
-tiếp tục theo dõi; thời gian bắt đầu cũ không được tự tạo lại.
+Survey-In Unicore xuất theo cấu hình UI: `RTCM only` gửi `unlogall` để tắt
+output cũ, rồi bật bộ RTCM MSM4/MSM7 đã chọn và lưu cấu hình. Firmware
+không tự hỏi GGA/GSA/GSV/GST định kỳ.
+Firmware tự đọc `MODE` và `BESTNAVA` mỗi 30 giây, kể cả sau reboot, để cập nhật UI.
+`BESTNAV: FIXEDPOS` xác nhận UM đang giữ tọa độ Base; đây không phải phần trăm
+hay số giây lấy mẫu hợp lệ bên trong UM. Kết quả Survey-In gần nhất lưu NVS,
+vẫn có thể đối chiếu sau khi chuyển Fixed LLA hoặc khởi động lại ESP32.
+Thông tin vệ tinh trên dashboard dùng decoder RTCM; backend chỉ ưu tiên NMEA
+khi thực sự có GSV mới, không ẩn dữ liệu RTCM theo cấu hình NMEA đã lưu cũ.
 
 Truy vấn đọc UM được xử lý trong `Unicore_Readback.cpp`. Firmware gửi CRLF trước
 `MODE`/`BESTNAVA` để kết thúc dòng đầu vào còn dang dở; thao tác này không đổi
 mode hoặc chạy lại Survey-In. Log `[GNSS][READBACK]` ghi lệnh gửi, ACK và số byte
 nhận để phân biệt timeout với lỗi phản hồi/checksum.
+Các byte RTCM/NMEA đi qua trong lúc truy vấn vẫn được đưa qua bộ đọc UART và
+giữ frame RTCM để luồng NTRIP gửi tiếp. NTRIP ghi nguyên dòng phản hồi lỗi caster
+vào Serial và `ntrip_status.serverN.error`; tốc độ nhận từ chip và tốc độ gửi
+lên caster là hai số riêng.
 
 Khi BESTNAV báo `SOL_COMPUTED,FIXEDPOS`, UI hiển thị tọa độ Base đang giữ và cho
 sao chép hoặc điền vào Fixed LLA để người dùng kiểm tra/hiệu chỉnh trước khi áp

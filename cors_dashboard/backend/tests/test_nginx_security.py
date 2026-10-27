@@ -73,6 +73,28 @@ class NginxSecurityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sync.status['state'], 'error')
                 self.assertEqual(sync.requested_ips, set())
 
+    async def test_failed_config_backs_off_and_recovers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            prefix = Path(folder)
+            (prefix/'conf').mkdir()
+            path = prefix/'conf/cors-blocked-ips.conf'
+            path.write_text('# previous\n')
+            sync = NginxSecuritySync(folder)
+            with patch.object(sync, '_run', side_effect=RuntimeError('cannot load certificate')) as run:
+                await sync.sync({'192.0.2.1'})
+                await sync.sync({'192.0.2.1'})
+                self.assertEqual(run.call_count, 1)
+                self.assertIn('cannot load certificate', sync.status['error'])
+                self.assertEqual(path.read_text(), '# previous\n')
+                await sync.sync({'192.0.2.2'})
+                self.assertEqual(run.call_count, 2)
+            sync._retry_at = 0
+            with patch.object(sync, '_run', Mock()):
+                await sync.sync({'192.0.2.2'})
+            self.assertEqual(sync.status['state'], 'reload_requested')
+            self.assertIsNone(sync.status['error'])
+            self.assertEqual(sync.requested_ips, {'192.0.2.2'})
+
     async def test_startup_restores_gate_but_periodic_sync_cannot_resurrect_unblocked_ip(self):
         from contextlib import asynccontextmanager
         from types import SimpleNamespace

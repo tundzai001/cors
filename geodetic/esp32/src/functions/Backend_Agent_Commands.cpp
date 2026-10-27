@@ -412,6 +412,7 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             if (configuringBase) {
                 sensorType_ = sensorType;
                 autoBaseProgress_.clear();
+                lastReceiverPollMs_ = 0;
                 setAgentState(normalAgentState());
             }
             if (!originalConfig.isNull() && originalConfig.containsKey("params")) {
@@ -432,41 +433,8 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             if (success) detail = "base status requested from GNSS";
             else error = "GNSS serial is busy";
         } else if (sensorType_ == "Unicorecomm") {
-            String mode;
-            success = UnicoreReadback::readMode(mode, error);
-            DynamicJsonDocument readbackDoc(1024);
-            readbackDoc["state"] = success ? "ok" : "error";
-            readbackDoc["chip"] = "Unicorecomm";
-            readbackDoc["revision"] = ++receiverBaseReadbackRevision_;
-            readbackDoc["mode_raw"] = mode;
-            readbackDoc["mode_kind"] = success ? UnicoreReadback::modeKind(mode) : "unknown";
-            readbackDoc["query"] = "MODE";
-            if (success) {
-                if (String(UnicoreReadback::modeKind(mode)) == "survey_in") {
-                    if (!surveyInMonitoring_) {
-                        surveyInMonitoring_ = true;
-                        surveyInStartedMs_ = 0;
-                        surveyInTargetSeconds_ = 0;
-                        surveyInBaselineGgaCount_ = getGnssTelemetrySnapshot().ggaCount;
-                        lastSurveyGgaPollMs_ = 0;
-                        lastSurveyLoggedState_ = "";
-                    }
-                } else {
-                    surveyInMonitoring_ = false;
-                }
-                JsonObject bestPosition = readbackDoc.createNestedObject("bestpos");
-                String positionError;
-                if (!UnicoreReadback::readBestPosition(bestPosition, positionError)) {
-                    bestPosition["state"] = "unavailable";
-                    bestPosition["error"] = positionError;
-                }
-                detail = String("receiver mode read back: ") + mode;
-            } else {
-                readbackDoc["error"] = error;
-            }
-            receiverBaseReadback_.clear();
-            serializeJson(readbackDoc, receiverBaseReadback_);
-            receiverBaseReadbackMs_ = millis();
+            success = refreshReceiverReadback(error);
+            if (success) detail = "receiver mode and position read back";
         } else {
             success = false;
             error = "GNSS serial is busy";

@@ -153,6 +153,11 @@ function paste(name, text) {
     const receiverButton = label => find(tree, node => node.type === 'button' && node.children.includes(label));
     render();
     assert(receiverButton('Điền vào Fixed LLA'));
+    const surveyOutput = find(tree, node => node.props.id === `gnss-output-mode-${device.serial}`);
+    assert.equal(surveyOutput.props.disabled, false);
+    surveyOutput.props.onChange({ target: { value: 'rtcm_only' } }); render();
+    await tree.props.onSubmit({ preventDefault() {} }); render();
+    assert.equal(sent.at(-1).params.gnss_options.output_mode, 'rtcm_only');
     const sentBeforeFill = sent.length;
     await receiverButton('Sao chép tọa độ').props.onClick(); render();
     assert.deepEqual(JSON.parse(copied.at(-1)).coords, { lat: '21.0849672193', lon: '105.7866644474', alt: '-15.9302000000' });
@@ -177,6 +182,14 @@ function paste(name, text) {
         const previous = position(); receiverButton('Điền vào Fixed LLA').props.onClick(); render();
         assert.deepEqual(position(), previous, 'Blocked receiver coordinates must not overwrite the form');
     }
+    disabled = false;
+    device.status = 'online';
+    device.base_config = { base_setup_method: 'FIXED_LLA' };
+    device.system_info.survey_in_status = { state: 'not_monitoring' };
+    device.system_info.survey_in_result = { bestpos };
+    render();
+    assert(find(tree, node => node.type === 'summary' && node.children.includes('Kết quả Survey-In đã lưu')),
+        'The saved survey result remains available after switching to Fixed LLA');
     console.log('PASS: shipped GNSS form fills all fields from any coordinate input, validates frame/height, preserves accuracy, blocks partial writes, and configures only on submit');
     console.log('PASS: survey coordinates preserve raw precision, convert geoid height, copy/prefill without commands, allow correction, and reject stale/offline/invalid results');
 })().catch(error => { console.error(error); process.exitCode = 1; });

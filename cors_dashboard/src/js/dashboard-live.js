@@ -1122,6 +1122,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             )}
 
             {/* SKYPLOT & SIGNALS */}
+            {device.detected_chip_type === 'Unicorecomm' && Object.keys(safeNmeaData.satellites || {}).length === 0 && (
+                <div className="alert alert-info small" role="status">
+                    Đang chờ dữ liệu vệ tinh từ decoder RTCM. Có danh sách bản tin chưa đồng nghĩa đã đủ dữ liệu vị trí quỹ đạo để vẽ biểu đồ.
+                </div>
+            )}
             <div className="sky-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>

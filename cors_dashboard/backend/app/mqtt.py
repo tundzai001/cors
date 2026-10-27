@@ -286,7 +286,9 @@ def _expects_nmea_skyview(serial: str) -> bool:
             return False
         gnss_options = base_config.get("gnss_options") or {}
         output_mode = str(gnss_options.get("output_mode") or "diagnostics_rtcm").strip().lower()
-        return output_mode != "rtcm_only"
+        nmea = live.get("nmea_data") or {}
+        last_gsv = float(nmea.get("last_gsv_ts") or 0)
+        return output_mode != "rtcm_only" and bool(nmea.get("satellites")) and time.time() - last_gsv < 15
     except Exception:
         return False
 

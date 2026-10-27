@@ -713,6 +713,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
             or old_auth_status != new_auth_status
             or old_receiver_readback != new_receiver_readback
             or old_info.get("survey_in_status") != new_system_info.get("survey_in_status")
+            or old_info.get("survey_in_result") != new_system_info.get("survey_in_result")
         ):
             # Merge to preserve backend-managed flags (e.g. auth_license_bypass)
             merged_info = old_info.copy()

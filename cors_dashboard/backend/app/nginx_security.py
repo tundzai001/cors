@@ -38,6 +38,10 @@ class NginxSecuritySync:
         self.status = {'enabled': self.enabled, 'state': 'pending' if self.enabled else 'disabled', 'updated_at': None}
         self.requested_ips = set()
         self._last_content = None
+        self._failed_content = None
+        self._retry_at = 0.0
+        self._last_error = None
+        self._last_error_logged_at = 0.0
         self._lock = asyncio.Lock()
 
     def _run(self, *args):
@@ -51,9 +55,12 @@ class NginxSecuritySync:
         if not self.enabled:
             return
         async with self._lock:
+            content = None
             try:
                 content = blocklist_text(ips)
                 if content == self._last_content:
+                    return
+                if content == self._failed_content and time.monotonic() < self._retry_at:
                     return
                 path = self.prefix / 'conf/cors-blocked-ips.conf'
                 # Installer must have provisioned the include; never silently invent a deployment.
@@ -66,12 +73,22 @@ class NginxSecuritySync:
                     atomic_write(path, previous)
                     raise
                 self._last_content = content
+                self._failed_content = None
+                self._retry_at = 0.0
+                self._last_error = None
                 self.requested_ips = set(ips)
                 # A successful signal is not proof that remote traffic is being dropped.
-                self.status.update(state='reload_requested', updated_at=int(time.time()))
+                self.status.update(state='reload_requested', updated_at=int(time.time()), error=None, next_retry_at=None)
             except Exception as exc:
-                self.status.update(state='error')
-                logger.error('Nginx security synchronization failed: %s', exc)
+                error = str(exc)
+                now = time.monotonic()
+                self._failed_content = content
+                self._retry_at = now + 60
+                self.status.update(state='error', error=error, next_retry_at=int(time.time()) + 60)
+                if error != self._last_error or now - self._last_error_logged_at >= 300:
+                    logger.error('Nginx security synchronization failed (retry in 60s): %s', error)
+                    self._last_error_logged_at = now
+                self._last_error = error
 
 
 nginx_security = NginxSecuritySync()

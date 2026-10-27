@@ -105,21 +105,26 @@ String BackendAgent::buildStatusPayload() {
     }
 
     JsonObject system = doc.createNestedObject("system_info");
+    if (surveyInResult_.length() > 2) {
+        DynamicJsonDocument savedSurvey(1024);
+        if (deserializeJson(savedSurvey, surveyInResult_) == DeserializationError::Ok)
+            system["survey_in_result"].set(savedSurvey.as<JsonObjectConst>());
+    }
     JsonObject survey = system.createNestedObject("survey_in_status");
     survey["state"] = surveyInMonitoring_
-        ? unicoreSurveyState(nowMs, gnss.lastGgaMs, gnss.ggaCount,
-                             surveyInBaselineGgaCount_, gnss.fixStatus)
+        ? (receiverBaseReadbackMs_ > 0 && nowMs - receiverBaseReadbackMs_ <= 45000UL
+           && surveyInReadbackHasPosition_
+            ? (surveyInReadbackReady_ ? "base_ready" : "waiting_base") : "awaiting_readback")
         : "not_monitoring";
     if (surveyInMonitoring_) {
         if (surveyInStartedMs_ > 0)
             survey["elapsed_since_ack_seconds"] = static_cast<uint32_t>(nowMs - surveyInStartedMs_) / 1000UL;
         else survey["elapsed_since_ack_seconds"] = nullptr;
         survey["target_seconds"] = surveyInTargetSeconds_;
-        survey["fix_status"] = gnss.fixStatus;
-        survey["satellites"] = gnss.satellites;
-        survey["hdop"] = gnss.hdop;
-        survey["gga_age_seconds"] = gnss.lastGgaMs > 0
-            ? static_cast<uint32_t>(nowMs - gnss.lastGgaMs) / 1000UL : UINT32_MAX;
+        survey["fix_status"] = surveyInReadbackReady_ ? "FIXEDPOS" : "UNVERIFIED";
+        survey["source"] = "BESTNAV";
+        survey["readback_age_seconds"] = receiverBaseReadbackMs_ > 0
+            ? static_cast<uint32_t>(nowMs - receiverBaseReadbackMs_) / 1000UL : UINT32_MAX;
     }
     if (receiverBaseReadback_.length() > 2) {
         DynamicJsonDocument readbackDoc(1024);
@@ -233,10 +238,12 @@ String BackendAgent::buildStatusPayload() {
     JsonObject ntripStatus = doc.createNestedObject("ntrip_status");
     JsonObject server1 = ntripStatus.createNestedObject("server1");
     server1["connected"] = ntripServerConnected(1);
+    server1["error"] = ntripServerError(1);
     server1["bps"] = ntripServerBps(1);
     server1["active"] = server1Active;
     JsonObject server2 = ntripStatus.createNestedObject("server2");
     server2["connected"] = ntripServerConnected(2);
+    server2["error"] = ntripServerError(2);
     server2["bps"] = ntripServerBps(2);
     server2["active"] = server2Active;
     ntripStatus["rtcm_input_bps"] = getRtcmInputBps();

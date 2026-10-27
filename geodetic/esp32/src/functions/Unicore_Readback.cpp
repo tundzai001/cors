@@ -1,6 +1,7 @@
 #include "functions/Unicore_Readback.h"
 #include "functions/Unicore_Reply.h"
 #include "functions/Unicore_Log.h"
+#include "functions/RTCM_Receiver.h"
 #include "Prog_Config.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -26,7 +27,7 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
         return false;
     }
 
-    while (Serial1.available() > 0) Serial1.read();
+    while (Serial1.available() > 0) bufferGnssQueryByte(static_cast<uint8_t>(Serial1.read()));
     String command(query);
     command += "\r\n";
     UnicoreReply reply(reinterpret_cast<const uint8_t *>(command.c_str()), command.length());
@@ -44,6 +45,7 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
     while (written && millis() - started < 3000UL && response.isEmpty() && error.isEmpty()) {
         while (Serial1.available() > 0) {
             const char value = static_cast<char>(Serial1.read());
+            bufferGnssQueryByte(static_cast<uint8_t>(value));
             ++receivedBytes;
             if (reply.feed(static_cast<uint8_t>(value))) {
                 Serial.printf("[GNSS][READBACK][ACK] %s\n", reply.line);
