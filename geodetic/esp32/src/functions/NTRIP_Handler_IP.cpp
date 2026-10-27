@@ -6,6 +6,7 @@
 #include "functions/Backend_Agent.h"
 #include "functions/RTCM_Receiver.h"
 #include "functions/unicore_commands.h"
+#include "functions/Unicore_Identification.h"
 #include "hardware/Sim_handler.h"
 #include "hardware/Wifi_handler.h"
 
@@ -107,26 +108,19 @@ namespace {
 
   bool receiveUnicoreIdentification(uint32_t timeoutMs)
   {
-    String response;
-    response.reserve(512);
+    UnicoreIdentification identity;
     const uint32_t start = millis();
     while (millis() - start < timeoutMs) {
       while (Serial1.available() > 0) {
-        response += static_cast<char>(Serial1.read());
+        if (identity.feed(static_cast<uint8_t>(Serial1.read()))) {
+          Serial.printf("[GNSS][UNICORE RESPONSE] %s\n", identity.line);
+          return true;
+        }
       }
       delay(2);
     }
 
-    response.toUpperCase();
-    const bool identified = response.indexOf("$COMMAND,VERSION") >= 0 ||
-           response.indexOf("#VERSION") >= 0 ||
-           response.indexOf("VERSION") >= 0 ||
-           response.indexOf("UNICORE") >= 0 ||
-           response.indexOf("UM980") >= 0 ||
-           response.indexOf("UM982") >= 0 ||
-           response.indexOf("UM98") >= 0;
-    if (identified) Serial.println("[GNSS][UNICORE RESPONSE] " + response.substring(0, 160));
-    return identified;
+    return false;
   }
 } // namespace
 
@@ -658,6 +652,8 @@ int bootstrapUblox() {
 }
 
 GnssCmdBuilder::GnssSensorType detectGnssSensorType() {
+  Serial.println("[GNSS] Cho receiver khoi dong 2000 ms truoc khi probe.");
+  delay(2000);
   const uint32_t baudRates[] = {GNSS_BAUD, 38400, 9600, 19200, 57600, 230400, 460800};
   for (const uint32_t baud : baudRates) {
     Serial1.updateBaudRate(baud);
@@ -672,16 +668,23 @@ GnssCmdBuilder::GnssSensorType detectGnssSensorType() {
     }
 
     clearGnssInput();
-    Serial1.print("VERSION\r\n");
+    Serial1.print("VERSIONA\r\n");
     Serial1.flush();
     delay(50);
     if (receiveUnicoreIdentification(1000)) {
-      Serial.printf("[GNSS] Da nhan dien Unicore qua lenh VERSION, baud=%lu.\n", static_cast<unsigned long>(baud));
+      Serial.printf("[GNSS] Da nhan dien Unicore qua lenh VERSIONA, baud=%lu.\n", static_cast<unsigned long>(baud));
       return GnssCmdBuilder::GnssSensorType::Unicore;
     }
   }
 
   Serial1.updateBaudRate(GNSS_BAUD);
+  delay(30);
+  clearGnssInput();
+  Serial.printf("[GNSS] Thu lai VERSIONA tai baud=%lu sau khi receiver da khoi dong.\n",
+                static_cast<unsigned long>(GNSS_BAUD));
+  Serial1.print("VERSIONA\r\n");
+  Serial1.flush();
+  if (receiveUnicoreIdentification(1500)) return GnssCmdBuilder::GnssSensorType::Unicore;
   Serial.println("[GNSS][ERROR] Khong the nhan dien chip GNSS.");
   return GnssCmdBuilder::GnssSensorType::Invalid;
 }

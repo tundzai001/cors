@@ -89,6 +89,12 @@ private:
     int32_t failOpenEntrySequence_ = -1;
     uint32_t receiverBaseReadbackMs_ = 0;
     uint32_t receiverBaseReadbackRevision_ = 0;
+    bool surveyInMonitoring_ = false;
+    uint32_t surveyInStartedMs_ = 0;
+    uint32_t surveyInTargetSeconds_ = 0;
+    uint32_t surveyInBaselineGgaCount_ = 0;
+    uint32_t lastSurveyGgaPollMs_ = 0;
+    const char *lastSurveyLoggedState_ = "";
     String statusBootId_;
 
     QueueHandle_t nmeaQueue_ = nullptr;

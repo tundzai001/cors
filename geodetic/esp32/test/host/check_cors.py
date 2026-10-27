@@ -27,9 +27,9 @@ for sensor in ("Ublox", "Unicorecomm"):
         routed = [bytes.fromhex(line) for line in result.stdout.splitlines()]
         assert len(routed) == len(commands)
         if sensor == "Unicorecomm":
-            assert routed == [packet.replace(b" com3 ", b" com2 ") for packet in commands]
-            assert any(b"gga com2 " in packet for packet in routed)
-            assert any(b"rtcm1074 com2 " in packet for packet in routed)
+            assert routed == [packet.replace(b" com3 ", b" ") for packet in commands]
+            assert any(b"gga 1" in packet for packet in routed)
+            assert any(b"rtcm1074 1" in packet for packet in routed)
         else:
             # Coordinate/survey TMODE3 and SAVE stay byte-for-byte intact.
             assert routed[0] == commands[0] and routed[-1] == commands[-1]

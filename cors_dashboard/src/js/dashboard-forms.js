@@ -319,13 +319,17 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
     const receiverReadback = device.system_info?.receiver_base_readback || {};
     const receiverPosition = receiverReadback.bestpos || {};
+    const receiverOffline = device.status === 'offline'
+        || !!window.CorsDashboardShared?.isDeviceStaleOffline?.(device);
+    const surveyStatus = device.system_info?.survey_in_status || {};
+    const surveyState = receiverOffline ? 'offline' : surveyStatus.state;
     const savedMethod = String(device.base_config?.base_setup_method || '').toUpperCase();
     const expectedReceiverMode = savedMethod === 'SURVEY_IN'
         ? 'survey_in'
         : ['FIXED_LLA', 'AUTO_CORS'].includes(savedMethod) ? 'base' : '';
     const receiverReadbackIsFresh = receiverReadback.state === 'ok'
         && Number(receiverReadback.age_seconds) <= 60
-        && device.status !== 'offline';
+        && !receiverOffline;
     const receiverModeMismatch = receiverReadbackIsFresh && expectedReceiverMode
         && ['survey_in', 'base', 'rover'].includes(receiverReadback.mode_kind)
         && receiverReadback.mode_kind !== expectedReceiverMode;
@@ -900,7 +904,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             </div>
                             {receiverPosition.state === 'ok' && (
                                 <div className="small text-muted mt-1">
-                                    BESTPOS hiện tại: <code>{Number(receiverPosition.latitude).toFixed(10)}, {Number(receiverPosition.longitude).toFixed(10)}</code>
+                                    {receiverPosition.message || 'BESTPOS'} hiện tại: <code>{Number(receiverPosition.latitude).toFixed(10)}, {Number(receiverPosition.longitude).toFixed(10)}</code>
                                     {' · '}{Number(receiverPosition.height_msl).toFixed(4)} m MSL
                                     {receiverPosition.position_type ? ` · ${receiverPosition.position_type}` : ''}
                                 </div>
@@ -910,7 +914,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     Web đang lưu {savedMethodLabel}, nhưng UM báo {receiverReadback.mode_raw}. Hai mode không khớp.
                                 </div>
                             )}
-                            {!receiverModeMismatch && receiverReadback.mode_kind === 'base' && savedMethod === 'FIXED_LLA' && (
+                            {receiverReadbackIsFresh && !receiverModeMismatch && receiverReadback.mode_kind === 'base' && savedMethod === 'FIXED_LLA' && (
                                 <div className="small text-warning mt-2">Mode BASE khớp. Tọa độ fixed lưu trong UM chưa được đối chiếu với LLA trên web.</div>
                             )}
                             {receiverReadbackIsFresh ? (
@@ -928,6 +932,39 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     )}
                     {pendingReadbackRevision !== null && (
                         <div className="small text-info mt-1" role="status" aria-live="polite">Đang chờ firmware trả kết quả đọc mới...</div>
+                    )}
+                    {device.detected_chip_type === 'Unicorecomm'
+                        && (savedMethod === 'SURVEY_IN' || (surveyStatus.state && surveyStatus.state !== 'not_monitoring')) && (
+                        <div className="border-top border-secondary pt-2 mt-3">
+                            <div className="fw-bold small">Theo dõi Survey-In</div>
+                            <div className={`small mt-1 ${surveyState === 'base_ready' ? 'text-success' : 'text-warning'}`}
+                                 role="status" aria-atomic="true">
+                                {({
+                                    base_ready: 'UM đã giữ tọa độ Base (GGA quality 7).',
+                                    waiting_base: 'UM chưa báo tọa độ Base cố định.',
+                                    awaiting_gga: 'Đang chờ GGA mới từ UM để xác định trạng thái.',
+                                    offline: 'Thiết bị offline; cần kết nối lại để đọc trạng thái mới.'
+                                })[surveyState] || 'Chưa xác nhận phiên Survey-In. Bấm “Đọc từ UM” để kiểm tra.'}
+                            </div>
+                            {surveyStatus.state && surveyStatus.state !== 'not_monitoring' && (
+                                <>
+                                    <div className="small text-muted mt-1">
+                                        {surveyStatus.elapsed_since_ack_seconds != null
+                                            ? `Đã qua ${Number(surveyStatus.elapsed_since_ack_seconds)} giây từ ACK của UM.`
+                                            : 'Không có mốc bắt đầu khảo sát của phiên này.'}
+                                        {Number(surveyStatus.target_seconds) > 0
+                                            ? ` Thời gian khảo sát yêu cầu: ${Number(surveyStatus.target_seconds)} giây.` : ''}
+                                    </div>
+                                    {['base_ready', 'waiting_base'].includes(surveyState) && (
+                                        <div className="small text-muted mt-1">
+                                            {Number(surveyStatus.satellites) || 0} vệ tinh · HDOP {Number(surveyStatus.hdop || 0).toFixed(2)}
+                                            {' · '}GGA cách đây {Number(surveyStatus.gga_age_seconds) || 0} giây
+                                        </div>
+                                    )}
+                                    <div className="small text-muted mt-1">Hết thời gian yêu cầu chưa đủ để kết luận khảo sát xong; cần UM xác nhận tọa độ Base.</div>
+                                </>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>

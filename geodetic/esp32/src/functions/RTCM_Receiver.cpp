@@ -69,6 +69,7 @@ void setFixStatus(char *target, size_t capacity, int quality) {
         case 2: status = "DGPS"; break;
         case 4: status = "RTK_FIXED"; break;
         case 5: status = "RTK_FLOAT"; break;
+        case 7: status = "BASE_FIXED"; break;
         default: status = "NO_FIX"; break;
     }
     strncpy(target, status, capacity - 1);

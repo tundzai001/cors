@@ -9,6 +9,8 @@
 #include "functions/Device_Token.h"
 #include "functions/Ubx_Reply.h"
 #include "functions/Unicore_Reply.h"
+#include "functions/Unicore_Identification.h"
+#include "functions/Unicore_Log.h"
 #include "hardware/Connection_type.h"
 #include "hardware/Sim_handler.h"
 #include "hardware/Wifi_handler.h"
@@ -146,24 +148,6 @@ String epochString() {
     return String(static_cast<unsigned long>(millis() / 1000UL));
 }
 
-bool validUnicoreModeChecksum(const String &line) {
-    const int star = line.lastIndexOf('*');
-    if (star < 0) return true;
-    if (line.length() != static_cast<unsigned int>(star + 3)) return false;
-    const auto hexValue = [](char value) {
-        if (value >= '0' && value <= '9') return value - '0';
-        if (value >= 'A' && value <= 'F') return value - 'A' + 10;
-        if (value >= 'a' && value <= 'f') return value - 'a' + 10;
-        return -1;
-    };
-    const int high = hexValue(line[star + 1]);
-    const int low = hexValue(line[star + 2]);
-    if (high < 0 || low < 0) return false;
-    uint8_t checksum = 0;
-    for (int i = 0; i < star; ++i) checksum ^= static_cast<uint8_t>(line[i]);
-    return checksum == static_cast<uint8_t>((high << 4) | low);
-}
-
 bool queryUnicoreLine(const char *query, const char *prefix, String &response, String &error) {
     if (!rtcmBufferMutex
         || xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) {
@@ -180,15 +164,20 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
     while (Serial1.available() > 0) Serial1.read();
     String command(query);
     command += "\r\n";
+    UnicoreReply reply(reinterpret_cast<const uint8_t *>(command.c_str()), command.length());
     const bool written = Serial1.write(
         reinterpret_cast<const uint8_t *>(command.c_str()), command.length()) == command.length();
     Serial1.flush();
     String candidate;
     candidate.reserve(160);
     const uint32_t started = millis();
-    while (written && millis() - started < 3000UL && response.isEmpty()) {
+    while (written && millis() - started < 3000UL && response.isEmpty() && error.isEmpty()) {
         while (Serial1.available() > 0) {
             const char value = static_cast<char>(Serial1.read());
+            if (reply.feed(static_cast<uint8_t>(value)) && reply.state == UnicoreReply::State::Error) {
+                error = String("Unicore rejected query: ") + reply.line;
+                break;
+            }
             if (value == '#') {
                 candidate = "#";
             } else if (value == '\r' || value == '\n') {
@@ -208,6 +197,7 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
     xSemaphoreGive(gnssSerialMutex);
     xSemaphoreGive(rtcmBufferMutex);
 
+    if (!error.isEmpty()) return false;
     if (!written) {
         error = String("Unicore ") + query + " query write failed";
         return false;
@@ -221,9 +211,14 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
 
 bool readUnicoreMode(String &mode, String &error) {
     String response;
-    if (!queryUnicoreLine("mode", "#MODE,", response, error)) return false;
-    if (!validUnicoreModeChecksum(response)) {
+    if (!queryUnicoreLine("MODE", "#MODE", response, error)) {
+        Serial.printf("[GNSS][READBACK][ERROR] %s\n", error.c_str());
+        return false;
+    }
+    Serial.printf("[GNSS][READBACK] %s\n", response.c_str());
+    if (!validUnicoreLogChecksum(response.c_str(), response.length())) {
         error = "Unicore MODE checksum mismatch";
+        Serial.printf("[GNSS][READBACK][ERROR] %s\n", error.c_str());
         return false;
     }
     const int separator = response.indexOf(';');
@@ -247,11 +242,16 @@ bool readUnicoreMode(String &mode, String &error) {
 
 bool readUnicoreBestPosition(JsonObject position, String &error) {
     String response;
-    if (!queryUnicoreLine("bestpos", "#BESTPOS", response, error)) return false;
+    if (!queryUnicoreLine("BESTNAVA", "#BESTNAVA,", response, error)) return false;
+    if (!validUnicoreLogChecksum(response.c_str(), response.length())) {
+        error = "Unicore BESTNAV checksum mismatch";
+        return false;
+    }
+    position["message"] = "BESTNAV";
     position["raw"] = response;
     const int separator = response.indexOf(';');
     if (separator < 0) {
-        error = "Unicore BESTPOS response is malformed";
+        error = "Unicore BESTNAV response is malformed";
         return false;
     }
     String payload = response.substring(separator + 1);
@@ -262,7 +262,7 @@ bool readUnicoreBestPosition(JsonObject position, String &error) {
     for (size_t index = 0; index < 5; ++index) {
         const int comma = payload.indexOf(',', start);
         if (index < 4 && comma < 0) {
-            error = "Unicore BESTPOS response is incomplete";
+            error = "Unicore BESTNAV response is incomplete";
             return false;
         }
         const int end = comma < 0 ? payload.length() : comma;
@@ -274,28 +274,28 @@ bool readUnicoreBestPosition(JsonObject position, String &error) {
     position["position_type"] = fields[1];
     if (!fields[0].equalsIgnoreCase("SOL_COMPUTED") || fields[2].isEmpty()
         || fields[3].isEmpty() || fields[4].isEmpty()) {
-        error = String("Unicore BESTPOS has no computed position: ") + fields[0];
+        error = String("Unicore BESTNAV has no computed position: ") + fields[0];
         return false;
     }
     char *end = nullptr;
     const double latitude = std::strtod(fields[2].c_str(), &end);
     if (end == fields[2].c_str() || *end != '\0') {
-        error = "Unicore BESTPOS latitude is invalid";
+        error = "Unicore BESTNAV latitude is invalid";
         return false;
     }
     const double longitude = std::strtod(fields[3].c_str(), &end);
     if (end == fields[3].c_str() || *end != '\0') {
-        error = "Unicore BESTPOS longitude is invalid";
+        error = "Unicore BESTNAV longitude is invalid";
         return false;
     }
     const double height = std::strtod(fields[4].c_str(), &end);
     if (end == fields[4].c_str() || *end != '\0') {
-        error = "Unicore BESTPOS height is invalid";
+        error = "Unicore BESTNAV height is invalid";
         return false;
     }
     if (!std::isfinite(latitude) || !std::isfinite(longitude) || !std::isfinite(height)
         || latitude < -90.0 || latitude > 90.0 || longitude < -180.0 || longitude > 180.0) {
-        error = "Unicore BESTPOS coordinates are invalid";
+        error = "Unicore BESTNAV coordinates are invalid";
         return false;
     }
     position["state"] = "ok";
@@ -1204,37 +1204,26 @@ bool BackendAgent::detectGnssChip(Stream &stream, bool force) {
 
     while (stream.available()) stream.read();
 
-    // 1. Active probe: Unicorecomm (UM980, UM982...)
-    stream.print("unlog\r\n");
-    delay(30);
-    while (stream.available()) stream.read();
-
-    stream.print("version\r\n");
-    String response = "";
+    // Probe identity without changing the receiver's output configuration.
+    stream.print("VERSIONA\r\n");
+    UnicoreIdentification identity;
     uint32_t startMs = millis();
-    while (millis() - startMs < 500) {
+    bool foundUnicore = false;
+    while (millis() - startMs < 1000 && !foundUnicore) {
         while (stream.available()) {
-            char c = static_cast<char>(stream.read());
-            response += c;
-            if (response.length() >= 1024) break;
+            if (identity.feed(static_cast<uint8_t>(stream.read()))) {
+                foundUnicore = true;
+                break;
+            }
         }
-        if (response.indexOf("UM980") >= 0 || response.indexOf("UM982") >= 0 ||
-            response.indexOf("UM9") >= 0 || response.indexOf("Unicore") >= 0 ||
-            response.indexOf("UB4") >= 0 || response.indexOf("#VERSION") >= 0) {
-            break;
-        }
-        // Stop a silent probe early after 150 ms; silence does not identify the chip.
-        if (millis() - startMs > 150 && response.isEmpty()) break;
         delay(10);
     }
 
-    if (response.indexOf("UM980") >= 0 || response.indexOf("UM982") >= 0 ||
-        response.indexOf("UM9") >= 0 || response.indexOf("Unicore") >= 0 ||
-        response.indexOf("UB4") >= 0 || response.indexOf("#VERSION") >= 0) {
+    if (foundUnicore) {
         sensorType_ = "Unicorecomm";
         saveStatePreferences();
         Serial.printf("[GNSS] => Phat hien chip: Unicorecomm (phan hoi: %s)\n",
-                      response.substring(0, min((size_t)80, (size_t)response.length())).c_str());
+                      identity.line);
         markStatusDirty();
         return true;
     }
@@ -1468,6 +1457,21 @@ bool BackendAgent::writeUnicoreCommand(const uint8_t *data, size_t length, Strin
     else if (reply.state != UnicoreReply::State::Ok) error = String("Unicore rejected command: ") + reply.line;
     else {
         Serial.printf("[GNSS][UNICORE] ACK OK: %s\n", reply.line);
+        if (!std::strcmp(reply.key, "mode")) {
+            String command;
+            command.reserve(length);
+            for (size_t i = 0; i < length; ++i) command += static_cast<char>(data[i]);
+            command.trim();
+            command.toLowerCase();
+            unsigned long target = 0;
+            surveyInMonitoring_ = std::sscanf(command.c_str(), "mode base time %lu", &target) == 1
+                && target > 0;
+            surveyInStartedMs_ = surveyInMonitoring_ ? millis() : 0;
+            surveyInTargetSeconds_ = surveyInMonitoring_ ? target : 0;
+            surveyInBaselineGgaCount_ = getGnssTelemetrySnapshot().ggaCount;
+            lastSurveyGgaPollMs_ = 0;
+            lastSurveyLoggedState_ = "";
+        }
         // A reset can ACK before the receiver actually reboots. Never retry it blindly.
         if (!std::strcmp(reply.key, "freset") || !std::strcmp(reply.key, "reset")) delay(2000);
         return true;
@@ -2239,6 +2243,22 @@ String BackendAgent::buildStatusPayload() {
     }
 
     JsonObject system = doc.createNestedObject("system_info");
+    JsonObject survey = system.createNestedObject("survey_in_status");
+    survey["state"] = surveyInMonitoring_
+        ? unicoreSurveyState(nowMs, gnss.lastGgaMs, gnss.ggaCount,
+                             surveyInBaselineGgaCount_, gnss.fixStatus)
+        : "not_monitoring";
+    if (surveyInMonitoring_) {
+        if (surveyInStartedMs_ > 0)
+            survey["elapsed_since_ack_seconds"] = static_cast<uint32_t>(nowMs - surveyInStartedMs_) / 1000UL;
+        else survey["elapsed_since_ack_seconds"] = nullptr;
+        survey["target_seconds"] = surveyInTargetSeconds_;
+        survey["fix_status"] = gnss.fixStatus;
+        survey["satellites"] = gnss.satellites;
+        survey["hdop"] = gnss.hdop;
+        survey["gga_age_seconds"] = gnss.lastGgaMs > 0
+            ? static_cast<uint32_t>(nowMs - gnss.lastGgaMs) / 1000UL : UINT32_MAX;
+    }
     if (receiverBaseReadback_.length() > 2) {
         DynamicJsonDocument readbackDoc(1024);
         if (deserializeJson(readbackDoc, receiverBaseReadback_) == DeserializationError::Ok
@@ -2628,10 +2648,38 @@ void BackendAgent::loop() {
         const uint32_t now = millis();
         if (now - lastChipProbeMs_ >= 8000UL && !workflowActive()) {
             lastChipProbeMs_ = now;
-            detectGnssChip(Serial1);
+            if (rtcmBufferMutex && xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+                if (gnssSerialMutex && xSemaphoreTake(gnssSerialMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+                    detectGnssChip(Serial1);
+                    xSemaphoreGive(gnssSerialMutex);
+                }
+                xSemaphoreGive(rtcmBufferMutex);
+            }
         }
     }
 
+    // One-shot GGA keeps survey visibility even with RTCM-only output. The normal
+    // stream reader parses it; no persistent log setting or RTCM RX draining here.
+    if (surveyInMonitoring_ && !workflowActive() && millis() - lastSurveyGgaPollMs_ >= 5000UL) {
+        const GnssTelemetrySnapshot gnss = getGnssTelemetrySnapshot();
+        if (rtcmBufferMutex && xSemaphoreTake(rtcmBufferMutex, 0) == pdTRUE) {
+            if (gnss.ggaCount == surveyInBaselineGgaCount_ || millis() - gnss.lastGgaMs >= 4000UL) {
+                Serial1.print("GPGGA\r\n");
+                Serial1.flush();
+            }
+            xSemaphoreGive(rtcmBufferMutex);
+            lastSurveyGgaPollMs_ = millis();
+            const char *state = unicoreSurveyState(millis(), gnss.lastGgaMs, gnss.ggaCount,
+                                                   surveyInBaselineGgaCount_, gnss.fixStatus);
+            if (std::strcmp(state, lastSurveyLoggedState_) != 0) {
+                lastSurveyLoggedState_ = state;
+                Serial.printf("[GNSS][SURVEY] state=%s; since_ACK_s=%lu; target_s=%lu; sats=%u; fix=%s\n",
+                              state,
+                              surveyInStartedMs_ ? static_cast<unsigned long>((millis() - surveyInStartedMs_) / 1000UL) : 0UL,
+                              static_cast<unsigned long>(surveyInTargetSeconds_), gnss.satellites, gnss.fixStatus);
+            }
+        }
+    }
     publishStatus(false);
 }
 
@@ -2828,7 +2876,7 @@ bool BackendAgent::executeRawCommands(JsonArray commands, String &error, const S
             error = "invalid raw command item";
             return false;
         }
-        const size_t length = decodeBase64(encoded, decoded, sizeof(decoded));
+        size_t length = decodeBase64(encoded, decoded, sizeof(decoded));
         if (length == 0) {
             error = "raw command is not valid base64";
             return false;
@@ -2838,7 +2886,7 @@ bool BackendAgent::executeRawCommands(JsonArray commands, String &error, const S
             delay(delayMs);
             continue;
         }
-        if (sensorType == "Unicorecomm") routeUnicoreOutput(decoded, length, GNSS_UNICORE_PORT);
+        if (sensorType == "Unicorecomm") length = routeUnicoreOutput(decoded, length, GNSS_UNICORE_PORT);
         else if (sensorType == "Ublox") GnssCmdBuilder::routeUbloxOutput(decoded, length);
         const bool unicore = sensorType == "Unicorecomm" || (sensorType.isEmpty() && sensorType_ == "Unicorecomm");
         if (unicore) {
@@ -3114,6 +3162,18 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             readbackDoc["mode_kind"] = success ? unicoreModeKind(mode) : "unknown";
             readbackDoc["query"] = "MODE";
             if (success) {
+                if (String(unicoreModeKind(mode)) == "survey_in") {
+                    if (!surveyInMonitoring_) {
+                        surveyInMonitoring_ = true;
+                        surveyInStartedMs_ = 0;
+                        surveyInTargetSeconds_ = 0;
+                        surveyInBaselineGgaCount_ = getGnssTelemetrySnapshot().ggaCount;
+                        lastSurveyGgaPollMs_ = 0;
+                        lastSurveyLoggedState_ = "";
+                    }
+                } else {
+                    surveyInMonitoring_ = false;
+                }
                 JsonObject bestPosition = readbackDoc.createNestedObject("bestpos");
                 String positionError;
                 if (!readUnicoreBestPosition(bestPosition, positionError)) {
