@@ -94,6 +94,16 @@ async def analytics_report(response: Response, days: int = Query(28, ge=1, le=90
     count = func.count()
     visitors = func.count(distinct(view.visitor_id))
     total = (await db.execute(select(count, visitors).where(view.created_at >= since))).one()
+    traffic_started_at = (await db.execute(select(func.min(view.created_at)))).scalar_one()
+    session = models.UserSession
+    login_total, login_accounts = (await db.execute(select(
+        func.count(), func.count(distinct(session.user_id))
+    ).where(session.created_at >= since))).one()
+    login_started_at = (await db.execute(select(func.min(session.created_at)))).scalar_one()
+    login_day = func.floor((session.created_at + 25200) / 86400)
+    login_rows = (await db.execute(select(login_day, func.count())
+        .where(session.created_at >= since).group_by(login_day))).all()
+    login_map = {int(row[0]): row[1] for row in login_rows}
     first = select(func.min(view.created_at).label('first_seen')).group_by(view.visitor_id).subquery()
     new_visitors = (await db.execute(select(func.count()).select_from(first).where(first.c.first_seen >= since))).scalar_one()
     active = (await db.execute(select(visitors).where(view.last_seen_at >= now - 1800))).scalar_one()
@@ -105,7 +115,11 @@ async def analytics_report(response: Response, days: int = Query(28, ge=1, le=90
         date = start_date + timedelta(days=i)
         key = (date - datetime(1970, 1, 1).date()).days
         views, unique = daily_map.get(key, (0, 0))
-        daily.append({'date': date.isoformat(), 'views': views, 'visitors': unique})
+        traffic_known = traffic_started_at is not None and key >= (traffic_started_at + 25200) // 86400
+        logins_known = login_started_at is not None and key >= (login_started_at + 25200) // 86400
+        daily.append({'date': date.isoformat(), 'views': views if traffic_known else None,
+            'visitors': unique if traffic_known else None,
+            'logins': login_map.get(key, 0) if logins_known else None})
     breakdown = {}
     for dimension in ('path', 'device', 'os', 'browser'):
         column = getattr(view, dimension)
@@ -117,5 +131,7 @@ async def analytics_report(response: Response, days: int = Query(28, ge=1, le=90
     minute_map = {int(row[0]): row[1] for row in rows}
     return {'days': days, 'timezone': 'Asia/Ho_Chi_Minh', 'updated_at': now,
         'totals': {'views': total[0], 'visitors': total[1], 'new_visitors': new_visitors, 'active': active},
+        'traffic_started_at': traffic_started_at,
+        'logins': {'total': login_total, 'accounts': login_accounts, 'started_at': login_started_at},
         'daily': daily, 'breakdown': breakdown,
         'realtime': [{'minute': key * 60, 'visitors': minute_map.get(key, 0)} for key in range(now // 60 - 29, now // 60 + 1)]}

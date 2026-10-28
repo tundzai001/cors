@@ -121,7 +121,7 @@ References: [Nginx 444](https://nginx.org/en/docs/http/request_processing.html),
 Administrators view Analytics inside `/security`, under the traffic overview.
 Legacy `/analytics` links redirect to `/security#traffic`. The 7/28/90-day
 report includes today and uses calendar days in Asia/Ho_Chi_Minh (UTC+7). It shows
-page views, distinct browser visitors, first-seen visitors, daily trends, top 20
+page views, distinct browser visitors, successful login sessions, daily trends, top 20
 pages, browser/device/OS breakdowns, and visitors active in the last 30 minutes.
 Breakdown percentages use page views. The realtime bars bucket each view's most
 recent signal; they are not a historical count of everyone active each minute.
@@ -164,3 +164,22 @@ node scripts/session_device_selftest.js
 node scripts/session_presence_selftest.js
 node scripts/analytics_tracker_selftest.js
 ```
+
+
+### Login history and measurement coverage
+
+The successful-login card reads `user_sessions.created_at` in the selected UTC+7
+calendar window. Each saved session is one login, including sessions later revoked
+or expired. It is not a unique-account count, and neither page views nor heartbeat
+requests increase it. The small caption reports distinct account IDs for those
+logins. Do not add activity-log rows or rotated text-log lines to this count: they
+can represent the same login already stored as a session.
+
+The chart switches between login sessions and page views. Login history predates
+the first-party page tracker. Both series return `null` for days before their first
+recorded event; the chart leaves these intervals blank and the data table shows
+an em dash. A zero represents a measured day with no matching events. The first
+recorded timestamps are displayed above the metrics so a 28-day selector cannot
+imply that page traffic was measured before the tracker existed. An empty store
+has no known daily coverage. The API keeps its original `totals` fields and adds
+separate `logins` metadata to preserve compatibility with cached clients.

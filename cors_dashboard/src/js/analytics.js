@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const date = value => new Date(`${value}T00:00:00+07:00`).toLocaleDateString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',day:'2-digit',month:'2-digit'});
     let pending = false;
     let lastReport;
+    let series = 'logins';
     if (!user || user.role !== 'admin') {
         content.hidden = true;
         error.textContent = 'Chỉ quản trị viên được xem Analytics.';
@@ -24,29 +25,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     function trend(rows) {
         const container = document.getElementById('analytics-trend');
         const width = Math.max(280, container.clientWidth), height = container.clientHeight, left = 44, right = 20, top = 15, bottom = 32;
-        const max = Math.max(4, ...rows.map(row => row.views));
+        const max = Math.max(4, ...rows.map(row => row[series] ?? 0));
         const ceiling = Math.ceil(max / 4) * 4;
         const x = i => left + i * (width - left - right) / Math.max(1, rows.length - 1);
         const y = value => height - bottom - value / ceiling * (height - top - bottom);
-        const points = rows.map((row,i) => `${x(i)},${y(row.views)}`).join(' ');
-        let svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Lượt xem trang theo ngày; số liệu chi tiết trong bảng bên dưới">`;
+        const known = rows.map((row,i) => ({row,i})).filter(({row}) => row[series] != null);
+        const points = known.map(({row,i}) => `${x(i)},${y(row[series])}`).join(' ');
+        const labelName = series === 'logins' ? 'lần đăng nhập' : 'lượt xem';
+        container.dataset.series = series;
+        let svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${series === 'logins' ? 'Đăng nhập' : 'Lượt xem'} theo ngày; khoảng chưa ghi nhận để trống; số liệu chi tiết trong bảng bên dưới">`;
         for (let i=0;i<=4;i++) {
             const value = i * ceiling / 4;
             svg += `<line class="grid" x1="${left}" x2="${width-right}" y1="${y(value)}" y2="${y(value)}"/><text x="${left-10}" y="${y(value)+4}" text-anchor="end">${number(value)}</text>`;
         }
-        svg += `<polygon points="${left},${y(0)} ${points} ${x(rows.length-1)},${y(0)}" fill="var(--analytics-line)" opacity=".08"/><polyline class="line" points="${points}"/>`;
+        if (known.length > 1) svg += `<polygon class="analytics-area" points="${x(known[0].i)},${y(0)} ${points} ${x(known.at(-1).i)},${y(0)}" opacity=".08"/><polyline class="line" points="${points}"/>`;
+        if (!known.length) svg += `<text x="${width/2}" y="${height/2}" text-anchor="middle">Chưa có dữ liệu</text>`;
         rows.forEach((row,i) => {
-            const label = `${date(row.date)}: ${number(row.views)} lượt xem, ${number(row.visitors)} khách`;
-            svg += `<circle tabindex="0" role="img" aria-label="${label}" cx="${x(i)}" cy="${y(row.views)}" r="3"><title>${label}</title></circle>`;
+            const label = `${date(row.date)}: ${number(row[series])} ${labelName}`;
+            if (row[series] != null) svg += `<circle tabindex="0" role="img" aria-label="${label}" cx="${x(i)}" cy="${y(row[series])}" r="3"><title>${label}</title></circle>`;
             if (i===0 || i===rows.length-1 || i===Math.floor(rows.length/2)) {
                 svg += `<text x="${x(i)}" y="${height-4}" text-anchor="${i===0?'start':i===rows.length-1?'end':'middle'}">${date(row.date)}</text>`;
             }
         });
         document.getElementById('analytics-trend').innerHTML = svg + '</svg>';
-        document.getElementById('analytics-daily').innerHTML = rows.map(row => `<tr><th scope="row">${date(row.date)}</th><td>${number(row.views)}</td><td>${number(row.visitors)}</td></tr>`).join('');
+        const measured = value => value == null ? '<span title="Chưa ghi nhận">—</span>' : number(value);
+        document.getElementById('analytics-daily').innerHTML = rows.map(row => `<tr><th scope="row">${date(row.date)}</th><td>${measured(row.views)}</td><td>${measured(row.visitors)}</td><td>${measured(row.logins)}</td></tr>`).join('');
     }
     function render(data) {
-        for (const [key,value] of Object.entries(data.totals)) document.getElementById(`metric-${key}`).textContent = number(value);
+        for (const [key,value] of Object.entries(data.totals)) {
+            const metric = document.getElementById(`metric-${key}`);
+            if (metric) metric.textContent = number(value);
+        }
+        document.getElementById('metric-logins').textContent = data.logins ? number(data.logins.total) : '—';
+        document.getElementById('metric-logins-note').textContent = data.logins
+            ? `${number(data.logins.accounts)} tài khoản · gồm lịch sử trong kỳ`
+            : 'Đang chờ lịch sử đăng nhập';
+        const dateTime = timestamp => new Date(timestamp*1000).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit',year:'numeric'});
+        const coverage = data.traffic_started_at
+            ? `Lượt xem ghi từ ${dateTime(data.traffic_started_at)}. Khoảng trước đó chưa có dữ liệu lượt xem.`
+            : 'Bộ đếm lượt xem chưa nhận được dữ liệu.';
+        const loginCoverage = data.logins?.started_at
+            ? `Lịch sử đăng nhập từ ${dateTime(data.logins.started_at)}; không tính heartbeat.`
+            : 'Chưa có lịch sử đăng nhập.';
+        document.getElementById('analytics-coverage').textContent = `${coverage} ${loginCoverage}`;
         document.getElementById('realtime-total').textContent = number(data.totals.active);
         document.getElementById('analytics-range').textContent = `${date(data.daily[0].date)} – ${date(data.daily.at(-1).date)} · ${data.days} ngày gần nhất`;
         trend(data.daily);
@@ -87,6 +108,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             content.setAttribute('aria-busy','false');
             refresh.innerHTML = '<i class="bi bi-arrow-clockwise" aria-hidden="true"></i><span>Làm mới</span>';
         }
+    }
+    for (const key of ['views','logins']) {
+        document.getElementById(`series-${key}`).addEventListener('click', () => {
+            series = key;
+            for (const name of ['views','logins']) {
+                const button = document.getElementById(`series-${name}`);
+                button.setAttribute('aria-pressed',String(name === series));
+                button.classList.toggle('active',name === series);
+            }
+            if (lastReport) trend(lastReport.daily);
+        });
     }
     window.addEventListener('resize', () => { if (lastReport) trend(lastReport.daily); });
     window.addEventListener('cors:analytics-refresh',load);
