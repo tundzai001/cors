@@ -41,7 +41,7 @@ async def serve_api_keys():
 
 @router.get('/analytics', include_in_schema=False)
 async def serve_analytics():
-    return FileResponse('../frontend/analytics.html')
+    return RedirectResponse('/security#traffic', status_code=307)
 
 @router.get("/security", include_in_schema=False)
 async def serve_security():
@@ -98,7 +98,9 @@ async def serve_robots():
 
 @router.get("/{page_name}.html", include_in_schema=False)
 async def serve_public_html(page_name: str):
-    if page_name not in {"operations", "rovers-global", "security", "users", "zalo", "coordinates", "analytics"}:
+    if page_name == "analytics":
+        return RedirectResponse("/security#traffic", status_code=307)
+    if page_name not in {"operations", "rovers-global", "security", "users", "zalo", "coordinates"}:
         raise HTTPException(status_code=404)
     return FileResponse(f"../frontend/{page_name}.html")
 

@@ -118,7 +118,8 @@ References: [Nginx 444](https://nginx.org/en/docs/http/request_processing.html),
 
 ## First-party Analytics
 
-Administrators can open `/analytics` from the shared navigation. The 7/28/90-day
+Administrators view Analytics inside `/security`, under the traffic overview.
+Legacy `/analytics` links redirect to `/security#traffic`. The 7/28/90-day
 report includes today and uses calendar days in Asia/Ho_Chi_Minh (UTC+7). It shows
 page views, distinct browser visitors, first-seen visitors, daily trends, top 20
 pages, browser/device/OS breakdowns, and visitors active in the last 30 minutes.

@@ -44,4 +44,19 @@ scope.renderActiveSessions([{username:'viewer', role:'viewer', device_name:phone
 assert(sessionsTable.innerHTML.includes('iPhone · iOS · Safari'));
 assert(sessionsTable.innerHTML.includes('bi-phone'), 'iPhone sessions use a phone icon');
 if (process.argv[2]) fs.writeFileSync(process.argv[2], `<html lang="vi" data-bs-theme="dark"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"><style>${fs.readFileSync('cors_dashboard/frontend/css/dist/ops-ui.min.css','utf8')}</style><body class="ops-admin-page" style="padding:32px;background:#0b101a;color:#eef4ff"><main><h1>Security · Lượt chặn gần đây</h1><p>Lượt chặn vẫn hiển thị sau khi hết hạn.</p><div class="table-responsive"><div class="table-responsive"><table class="table ops-table"><thead><tr><th>Lần cuối</th><th>IP</th><th>Nguồn chặn</th><th>Lý do</th><th>Số lượt</th></tr></thead><tbody>${history.innerHTML}</tbody></table></div></div><h2>Đang chặn tạm thời</h2><div class="table-responsive"><table class="table ops-table"><thead><tr><th>IP</th><th>Còn lại</th><th>Lý do</th><th>Thao tác</th></tr></thead><tbody>${table.rows[0].innerHTML}</tbody></table></div><h2>Danh sách IP bị chặn vĩnh viễn</h2><p>Nginx: đã gửi cập nhật danh sách chặn</p><div class="table-responsive"><div class="table-responsive"><table class="table ops-table"><thead><tr><th>IP</th><th>Bắt đầu / thời hạn</th><th>Lý do / tầng chặn</th><th>Thao tác</th></tr></thead><tbody>${blacklist.rows.map(row=>'<tr>'+row.innerHTML+'</tr>').join('')}</tbody></table></div></div><h2>Thiết bị đăng nhập</h2><div class="table-responsive"><table class="table ops-table"><tbody>${sessionsTable.innerHTML}</tbody></table></div></main></body></html>`);
-console.log('PASS: temporary seconds, retained block history, escaped IP/reason rendering');
+
+
+const metrics = new Map();
+scope.document.getElementById = id => {
+    if (!metrics.has(id)) metrics.set(id, {textContent:'',className:''});
+    return metrics.get(id);
+};
+scope.updateThreatLevel = () => {};
+vm.runInContext(source.slice(source.indexOf('    function updateDashboardMetrics'),source.indexOf('    function renderBlacklistTable')),scope);
+scope.updateDashboardMetrics({blocked_ips_count:2,permanent_blacklist_count:17,total_ips_tracked:6,attack_mode:false},{firewall_enabled:true,vpn_detection_enabled:true,pattern_analysis_enabled:true});
+assert.equal(metrics.get('system-status-badge').textContent,'Đang bảo vệ','Historical bans do not imply an active attack');
+assert.equal(metrics.get('permanent-blacklist-count').textContent,17);
+scope.updateDashboardMetrics({blocked_ips_count:0,permanent_blacklist_count:0,total_ips_tracked:1,attack_mode:true},{firewall_enabled:true,vpn_detection_enabled:true,pattern_analysis_enabled:true});
+assert.equal(metrics.get('system-status-badge').className,'badge bg-danger','Active attacks remain visible');
+
+console.log('PASS: block history, escaped rendering, session controls and protection status');

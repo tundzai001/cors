@@ -43,5 +43,20 @@ class ApplicationWiringTests(unittest.TestCase):
         self.assertIs(lifecycle.enqueue_ui_broadcast, station_runtime.enqueue_ui_broadcast)
 
 
+class AnalyticsLocationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_legacy_analytics_links_open_security_overview(self):
+        from fastapi import FastAPI
+        from httpx import AsyncClient, ASGITransport
+        from app.frontend_routes import router
+        frontend = FastAPI()
+        frontend.include_router(router)
+        async with AsyncClient(transport=ASGITransport(app=frontend),base_url='http://test') as client:
+            for path in ('/analytics','/analytics.html'):
+                with self.subTest(path=path):
+                    response = await client.get(path,follow_redirects=False)
+                    self.assertEqual(response.status_code,307)
+                    self.assertEqual(response.headers['location'],'/security#traffic')
+
+
 if __name__ == '__main__':
     unittest.main()

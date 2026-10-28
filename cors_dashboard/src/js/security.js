@@ -70,7 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const requestedPage = historyPage;
         if (isManualReload) {
             refreshBtn.disabled = true;
-            refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> LOADING...';
+            refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Đang tải…';
         }
 
         try {
@@ -92,6 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.securityErrorCount = 0;
             document.getElementById('offline-overlay')?.remove();
             document.querySelectorAll('.ops-card').forEach(card => { card.style.opacity = ''; card.style.filter = ''; });
+            document.getElementById('last-scan-time').textContent = new Date(statsData.timestamp * 1000).toLocaleTimeString('vi-VN');
             document.getElementById('security-updated').textContent = `Cập nhật ${new Date(statsData.timestamp * 1000).toLocaleTimeString('vi-VN')}`;
             // === LOGIC CŨ (Khi không có lỗi) ===
             updateDashboardMetrics(statsData.rate_limiter, settingsData);
@@ -139,7 +140,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             if (isManualReload) {
-                showSuccess('Security data reloaded');
+                showSuccess('Đã cập nhật dữ liệu bảo mật');
             }
             
         } catch (error) {
@@ -173,7 +174,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadingSecurityData = false;
             if (isManualReload) {
                 refreshBtn.disabled = false;
-                refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-2"></i>Refresh';
+                refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise" aria-hidden="true"></i>Làm mới';
                 
                 // Reset error counter khi user manually reload
                 window.securityErrorCount = 0;
@@ -194,6 +195,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 elBar.style.width = `${val}%`;
                 elBar.className = `progress-bar ${getColor(val)}`;
                 elVal.textContent = `${val}%`;
+                elBar.setAttribute('aria-valuenow', String(val));
                 elVal.classList.toggle('ops-text-danger', val > 90);
                 elVal.classList.toggle('ops-text-ok', val <= 90);
             }
@@ -313,85 +315,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function updateDashboardMetrics(stats, settings) {
-        // --- CẬP NHẬT CÁC METRICS CƠ BẢN ---
         document.getElementById('blocked-ips-count').textContent = stats.blocked_ips_count;
         document.getElementById('permanent-blacklist-count').textContent = stats.permanent_blacklist_count;
         document.getElementById('total-ips-tracked').textContent = stats.total_ips_tracked;
-        
-        const totalThreats = stats.blocked_ips_count + stats.permanent_blacklist_count;
-        document.getElementById('threats-count').textContent = totalThreats;
-        
-        updateCircularProgress('circle-blocked-ips', stats.blocked_ips_count, 20);
-        updateCircularProgress('circle-permanent', stats.permanent_blacklist_count, 10);
-        updateCircularProgress('circle-tracked', stats.total_ips_tracked, 100);
-        
-        // --- 🔥 LOGIC TÍNH THREAT LEVEL MỚI (FIXED) ---
-        let threatLevel = 1;
-        let statusText = 'ALL SYSTEMS NOMINAL';
-        let statusClass = 'bg-success';
-        
-        // BƯỚC 1: Kiểm tra trạng thái các module bảo vệ
-        const firewallEnabled = settings.firewall_enabled;
-        const vpnEnabled = settings.vpn_detection_enabled;
-        const patternEnabled = settings.pattern_analysis_enabled;
-        
-        const activeModules = [firewallEnabled, vpnEnabled, patternEnabled].filter(Boolean).length;
-        
-        // BƯỚC 2: Tính threat level dựa trên số IP bị khóa
-        if (totalThreats > 10) threatLevel = 5;
-        else if (totalThreats > 5) threatLevel = 4;
-        else if (totalThreats > 2) threatLevel = 3;
-        else if (totalThreats > 0) threatLevel = 2;
-        
-        // BƯỚC 3: 🔥 LOGIC MỚI - XỬ LÝ MODULE BỊ TẮT
-        if (activeModules === 0) {
-            // ⚠️ TẤT CẢ MODULE TẮT = HỆ THỐNG HOÀN TOÀN VÔ PHÒNG THỦ
-            threatLevel = 5;
-            statusText = 'Critical: all protection disabled';
-            statusClass = 'bg-danger pulse-glow-danger';
-        } else if (activeModules === 1) {
-            // ⚠️ CHỈ 1 MODULE HOẠT ĐỘNG = NGUY HIỂM
-            if (threatLevel < 4) threatLevel = 4;
-            statusText = 'High risk: minimal protection';
-            statusClass = 'bg-danger';
-        } else if (activeModules === 2) {
-            // ⚠️ 2/3 MODULE = CẢNH BÁO
-            if (threatLevel < 3) threatLevel = 3;
-            statusText = 'Warning: degraded protection';
-            statusClass = 'bg-warning text-dark';
-        }
-        // Nếu cả 3 module đều bật, giữ nguyên threatLevel từ số IP bị khóa
-        
-        // BƯỚC 4: Override status text nếu có attack mode
+        document.getElementById('threats-count').textContent = stats.blocked_ips_count + stats.permanent_blacklist_count;
+
+        // Historical bans are a protection result, not evidence of a current attack.
+        const modules = [settings.firewall_enabled, settings.vpn_detection_enabled, settings.pattern_analysis_enabled].filter(Boolean).length;
+        let label = 'Đang bảo vệ', tone = 'bg-success', level = 1;
         if (stats.attack_mode) {
-            threatLevel = 5;
-            statusText = 'DDoS attack in progress';
-            statusClass = 'bg-danger pulse-glow-danger';
+            label = 'Lưu lượng bất thường'; tone = 'bg-danger'; level = 5;
+        } else if (modules === 0) {
+            label = 'Đã tắt bảo vệ'; tone = 'bg-danger'; level = 5;
+        } else if (modules < 3) {
+            label = 'Bảo vệ một phần'; tone = 'bg-warning text-dark'; level = modules === 1 ? 4 : 3;
         }
-        
-        // BƯỚC 5: Áp dụng UI
-        updateThreatLevel(threatLevel);
-        
-        const statusBadge = document.getElementById('system-status-badge');
-        if (statusBadge) {
-            // Override nếu chưa tính toán ở trên
-            if (!statusText.includes('CRITICAL') && !statusText.includes('HIGH RISK') && !stats.attack_mode) {
-                const levels = {
-                    1: { text: 'Nominal', class: 'bg-success' },
-                    2: { text: 'Low threat', class: 'bg-success' },
-                    3: { text: 'Moderate threat', class: 'bg-warning text-dark' },
-                    4: { text: 'High threat', class: 'bg-danger' },
-                    5: { text: 'Critical threat', class: 'bg-danger pulse-glow-danger' }
-                };
-                const level = levels[threatLevel];
-                statusText = level.text;
-                statusClass = level.class;
-            }
-            
-            statusBadge.textContent = statusText;
-            statusBadge.className = `badge ${statusClass}`;
-            statusBadge.style.boxShadow = '';
-        }
+        updateThreatLevel(level);
+        const badge = document.getElementById('system-status-badge');
+        badge.textContent = label;
+        badge.className = `badge ${tone}`;
     }
 
     function renderBlacklistTable(blacklistedIps) {
@@ -554,6 +496,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     function renderBlockedDevices(devices, error = null) {
         const tbody = document.getElementById('blocked-devices-table-body');
         const badge = document.getElementById('blocked-devices-badge');
+        const metric = document.getElementById('blocked-device-metric');
+        if (metric) metric.textContent = error ? '—' : devices.length;
         if (badge) badge.textContent = `${devices.length} máy`;
         if (!tbody) return;
 
@@ -808,7 +752,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         historyPage = Math.max(1, page);
         document.getElementById('sessions-description').textContent = view === 'history'
             ? 'Lịch sử đăng nhập, gồm phiên cũ, hết hạn và đã thu hồi. Mỗi trang 20 phiên.'
-            : 'Chỉ hiển thị phiên có hoạt động trong 45 giây gần nhất. Trang đang xem gửi tín hiệu mỗi 15 giây; phiên mất tín hiệu tự rời danh sách.';
+            : 'Phiên có hoạt động trong 45 giây gần nhất. Tự động cập nhật khi mở trang.';
         for (const name of ['active', 'history']) {
             const button = document.getElementById(`sessions-${name}-tab`);
             button.classList.toggle('btn-primary', name === view);
@@ -825,7 +769,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('sessions-history-tab').addEventListener('click', () => selectSessions('history'));
     document.getElementById('sessions-prev').addEventListener('click', () => selectSessions('history', historyPage - 1));
     document.getElementById('sessions-next').addEventListener('click', () => selectSessions('history', historyPage + 1));
-    refreshBtn.addEventListener('click', () => loadSecurityData(true));
+    const sectionLinks = document.querySelectorAll('.security-section-nav a');
+    function highlightSection(hash) {
+        sectionLinks.forEach(link => {
+            const active = link.hash === (hash || '#traffic');
+            link.classList.toggle('active', active);
+            if (active) link.setAttribute('aria-current', 'location');
+            else link.removeAttribute('aria-current');
+        });
+    }
+    sectionLinks.forEach(link => link.addEventListener('click', () => highlightSection(link.hash)));
+    window.addEventListener('hashchange', () => highlightSection(window.location.hash));
+    highlightSection(window.location.hash);
+    refreshBtn.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('cors:analytics-refresh'));
+        loadSecurityData(true);
+    });
     document.body.addEventListener('click', (e) => {
         if (e.target.closest('.unblock-btn')) {
             handleUnblockIp(e.target.closest('.unblock-btn').dataset.ip);
@@ -884,14 +843,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     function showSuccess(message) { showToast(message, 'success'); }
     function showError(message) { showToast(message, 'danger'); }
 
-    function updateCircularProgress(elementId, value, max = 100) {
-        const circle = document.getElementById(elementId);
-        if (!circle) return;
-        const circumference = 565.48;
-        const percentage = Math.min(100, (value / max) * 100);
-        circle.style.strokeDashoffset = circumference - (percentage / 100) * circumference;
-    }
-    
     function updateThreatLevel(level) {
         const bars = document.querySelectorAll('.threat-bar');
         bars.forEach((bar, index) => {
@@ -939,28 +890,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         const overlay = document.createElement('div');
         overlay.id = 'offline-overlay';
-        overlay.className = 'ops-confirm-backdrop';
-        overlay.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 9999;
-            text-align: center;
-        `;
-        overlay.innerHTML = `
-            <div class="ops-confirm">
-                <div class="ops-confirm-head"><i class="bi bi-wifi-off me-2 text-danger"></i>Connection lost</div>
-                <div class="ops-confirm-body">Cannot reach security monitoring server.</div>
-                <div class="ops-confirm-actions">
-                    <button id="retry-connection-btn" class="btn btn-primary">
-                        <i class="bi bi-arrow-clockwise me-2"></i>Retry
-                    </button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-        
+        overlay.className = 'alert alert-warning security-feed-error';
+        overlay.setAttribute('role', 'alert');
+        overlay.innerHTML = `<div><strong>Mất kết nối giám sát</strong><p class="mb-0">Dữ liệu bảo mật đang giữ ở lần cập nhật cuối.</p></div><button id="retry-connection-btn" class="btn btn-outline-warning">Thử lại</button>`;
+        document.querySelector('.security-access-overview').prepend(overlay);
+
         // Xử lý nút Retry
         document.getElementById('retry-connection-btn').addEventListener('click', () => {
             overlay.remove();
@@ -1047,6 +981,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 lastVisitorCount = count;
                 // Cập nhật số
                 visitorEl.textContent = count;
+                if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
                 
                 visitorEl.style.color = '#ffffff';
                 visitorEl.style.transform = 'scale(1.2)';

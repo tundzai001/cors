@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Operations - Base Control Center</title>
+    <title>Bảo mật & truy cập · Trung tâm điều khiển Base</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css?v=20261028-analytics-v1">
+    <link rel="stylesheet" href="/assets/css/dist/ops-ui.min.css?v=20261028-security-v2">
 </head>
 <body class="ops-admin-page">
     <div class="content-wrapper">
@@ -15,7 +15,7 @@
                 <a class="navbar-brand fw-bold text-light" href="/">
                     <i class="bi bi-shield-lock-fill me-2"></i>Base Control Center
                 </a>
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Mở điều hướng">
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <div class="collapse navbar-collapse" id="navbarNav">
@@ -31,193 +31,53 @@
             </div>
         </nav>
 
-        <main class="container-fluid ops-security-page px-4 py-4">
-            <div class="ops-page-head">
-                <div>
-                    <div class="ops-page-title"><i class="bi bi-shield-lock-fill me-2"></i>Security Operations</div>
-                    <div class="ops-page-subtitle">Realtime access control, suspicious IPs, traffic, and server health.</div>
+        <main class="container-fluid ops-security-page security-workspace">
+            <header class="security-heading">
+                <div><div class="security-eyebrow">QUẢN TRỊ / BẢO MẬT</div><h1>Bảo mật & truy cập</h1><p>Theo dõi truy cập, quản lý phiên đăng nhập và bảo vệ hệ thống.</p></div>
+                <div class="security-heading-actions"><span id="system-status-badge" class="badge bg-secondary" role="status">Đang kiểm tra…</span><button class="btn btn-primary" id="refresh-btn"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i>Làm mới</button></div>
+            </header>
+            <nav class="security-section-nav" aria-label="Các phần của trang Bảo mật"><a href="#traffic" class="active"><i class="bi bi-graph-up" aria-hidden="true"></i>Tổng quan</a><a href="#sessions"><i class="bi bi-people" aria-hidden="true"></i>Phiên đăng nhập</a><a href="#access-control"><i class="bi bi-shield-lock" aria-hidden="true"></i>Kiểm soát chặn</a><a href="#system-health"><i class="bi bi-cpu" aria-hidden="true"></i>Hệ thống</a></nav>
+<section id="traffic" class="analytics-page security-analytics" aria-label="Thống kê truy cập">
+    <div class="analytics-heading"><div><h2>Tổng quan truy cập</h2><p>Khách truy cập và lượt xem trên website</p></div><div class="analytics-controls"><label for="analytics-days" class="visually-hidden">Khoảng thời gian</label><select id="analytics-days" class="form-select"><option value="7">7 ngày gần nhất</option><option value="28" selected>28 ngày gần nhất</option><option value="90">90 ngày gần nhất</option></select><button id="analytics-refresh" class="btn btn-outline-secondary"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i><span>Cập nhật</span></button></div></div>
+    <div class="analytics-status"><span id="analytics-status" role="status" aria-live="polite">Đang tải báo cáo…</span><span>Giờ Việt Nam · UTC+7</span></div>
+    <div id="analytics-error" class="alert alert-danger d-none" role="alert"></div>
+    <div id="analytics-content" aria-busy="true">
+        <section class="analytics-metrics" aria-label="Chỉ số tổng quan">
+            <article class="analytics-metric"><span><i class="bi bi-people" aria-hidden="true"></i>Khách truy cập</span><strong id="metric-visitors">—</strong><small>Trình duyệt riêng biệt trong kỳ</small></article>
+            <article class="analytics-metric"><span><i class="bi bi-eye" aria-hidden="true"></i>Lượt xem trang</span><strong id="metric-views">—</strong><small>Mỗi lần mở hoặc chuyển trang</small></article>
+            <article class="analytics-metric"><span><i class="bi bi-person-plus" aria-hidden="true"></i>Khách mới</span><strong id="metric-new_visitors">—</strong><small>Lần đầu được ghi nhận trong kỳ</small></article>
+            <article class="analytics-metric analytics-metric-live"><span><i class="bi bi-broadcast" aria-hidden="true"></i>Hoạt động gần đây</span><strong id="metric-active">—</strong><small>Khách trong 30 phút gần nhất</small></article>
+        </section>
+        <div class="analytics-main-grid">
+            <section class="analytics-panel"><div class="analytics-panel-head"><div><h2>Xu hướng truy cập</h2><p id="analytics-range">Đang tải khoảng thời gian…</p></div><span class="analytics-legend"><i aria-hidden="true"></i>Lượt xem</span></div><div id="analytics-trend" class="analytics-trend"></div><details class="analytics-data"><summary>Xem số liệu theo ngày</summary><div class="table-responsive"><table class="table"><thead><tr><th scope="col">Ngày</th><th scope="col">Lượt xem</th><th scope="col">Khách</th></tr></thead><tbody id="analytics-daily"></tbody></table></div></details></section>
+            <section class="analytics-panel analytics-realtime"><div class="analytics-panel-head"><div><h2><span class="analytics-live-dot" aria-hidden="true"></span>30 phút gần nhất</h2><p>Khách theo phút hoạt động cuối</p></div></div><strong id="realtime-total">—</strong><p>khách truy cập</p><div id="analytics-realtime" class="analytics-bars" role="img" aria-label="Khách theo phút hoạt động cuối"></div><div class="analytics-axis"><span>30 phút trước</span><span>Hiện tại</span></div><p class="analytics-realtime-note">Tự cập nhật mỗi 30 giây khi mở trang.</p></section>
+        </div>
+        <details class="security-traffic-details"><summary><span><i class="bi bi-bar-chart-line" aria-hidden="true"></i>Trang, trình duyệt & thiết bị</span><span class="security-detail-hint">Xem phân tích chi tiết</span></summary><div class="security-detail-body"><section class="analytics-panel analytics-pages"><div class="analytics-panel-head"><div><h2>Trang được xem nhiều nhất</h2><p>Nơi khách dành sự chú ý trong kỳ</p></div><i class="bi bi-layout-text-window-reverse" aria-hidden="true"></i></div><div class="table-responsive"><table class="table"><thead><tr><th scope="col">Trang</th><th scope="col">Lượt xem</th><th scope="col">Khách</th><th scope="col">Tỷ trọng lượt xem</th></tr></thead><tbody id="breakdown-path"></tbody></table></div></section>
+        <div class="analytics-breakdown-grid">
+            <section class="analytics-panel"><div class="analytics-panel-head"><h2>Trình duyệt</h2><i class="bi bi-browser-chrome" aria-hidden="true"></i></div><div id="breakdown-browser"></div></section>
+            <section class="analytics-panel"><div class="analytics-panel-head"><h2>Thiết bị</h2><i class="bi bi-display" aria-hidden="true"></i></div><div id="breakdown-device"></div></section>
+            <section class="analytics-panel"><div class="analytics-panel-head"><h2>Hệ điều hành</h2><i class="bi bi-laptop" aria-hidden="true"></i></div><div id="breakdown-os"></div></section>
+        </div>
+        </div></details><p class="analytics-footnote">Khách được nhận diện theo trình duyệt. Xóa dữ liệu hoặc đổi trình duyệt có thể tạo khách mới. Số liệu bắt đầu từ khi bật Analytics.</p>
+    </div>
+</section>
+            <section class="security-access-overview" id="sessions" aria-labelledby="security-access-title">
+                <div class="security-section-heading"><div><span class="security-eyebrow">KIỂM SOÁT TRUY CẬP</span><h2 id="security-access-title">Phiên đăng nhập & bảo vệ</h2></div><span id="security-updated" class="ops-card-meta" role="status">Đang cập nhật…</span></div>
+                <div class="security-counters">
+                    <article><span class="security-counter-icon warning"><i class="bi bi-clock-history" aria-hidden="true"></i></span><div><span>IP chặn tạm thời</span><strong id="blocked-ips-count">—</strong></div></article>
+                    <article><span class="security-counter-icon danger"><i class="bi bi-shield-x" aria-hidden="true"></i></span><div><span>IP chặn vĩnh viễn</span><strong id="permanent-blacklist-count">—</strong></div></article>
+                    <article><span class="security-counter-icon info"><i class="bi bi-pc-display" aria-hidden="true"></i></span><div><span>Thiết bị bị chặn</span><strong id="blocked-device-metric">—</strong></div></article>
+                    <article><span class="security-counter-icon primary"><i class="bi bi-globe2" aria-hidden="true"></i></span><div><span>IP trong 5 phút</span><strong id="total-ips-tracked">—</strong></div></article>
                 </div>
-                <button class="btn btn-primary ops-btn" id="refresh-btn">
-                    <i class="bi bi-arrow-clockwise me-2"></i>Refresh
-                </button>
-            </div>
-
-            <div class="row g-4 mb-4">
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-health-card">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="monitor-label"><i class="bi bi-cpu-fill me-2"></i>CPU load</span>
-                            <span class="monitor-value" id="cpu-val">0%</span>
-                        </div>
-                        <div class="progress ops-meter">
-                            <div id="cpu-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-health-card">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="monitor-label"><i class="bi bi-memory me-2"></i>RAM usage</span>
-                            <span class="monitor-value" id="ram-val">0%</span>
-                        </div>
-                        <div class="progress ops-meter">
-                            <div id="ram-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
-                        </div>
-                        <div class="ops-card-meta text-end mt-2">Free: <span id="ram-free">0</span> MB</div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-health-card">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="monitor-label"><i class="bi bi-hdd-fill me-2"></i>Disk space</span>
-                            <span class="monitor-value" id="disk-val">0%</span>
-                        </div>
-                        <div class="progress ops-meter">
-                            <div id="disk-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
-                        </div>
-                        <div class="ops-card-meta text-end mt-2">Free: <span id="disk-free">0</span> GB</div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-health-card d-flex flex-column justify-content-center">
-                        <div class="d-flex justify-content-between mb-1">
-                            <span class="monitor-label">Uptime</span>
-                            <span class="monitor-value text-end" id="uptime-val">00:00:00</span>
-                        </div>
-                        <div class="d-flex justify-content-between">
-                            <span class="monitor-label">Avg latency</span>
-                            <span class="monitor-value text-end" id="latency-val">0ms</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="ops-card ops-security-card mb-4">
-                <div class="ops-section-head">
-                    <div class="ops-section-title"><i class="bi bi-activity me-2"></i>System Status</div>
-                    <span id="system-status-badge" class="badge bg-secondary">Loading status</span>
-                </div>
-                <div class="accordion-body ops-security-switches">
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <div class="ops-switch-row">
-                                <label for="firewall-switch" class="monitor-label">Firewall</label>
-                                <div class="form-check form-switch ops-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="firewall-switch" checked>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="ops-switch-row">
-                                <label for="vpn-switch" class="monitor-label">VPN detection</label>
-                                <div class="form-check form-switch ops-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="vpn-switch" checked>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="ops-switch-row">
-                                <label for="pattern-switch" class="monitor-label">Pattern analysis</label>
-                                <div class="form-check form-switch ops-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="pattern-switch" checked>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="ops-security-scan-row">
-                        <div><span class="monitor-label">Last scan</span><span class="monitor-value ms-2" id="last-scan-time">00:00:00</span></div>
-                        <div><span class="monitor-label">Threats detected</span><span class="monitor-value ms-2" id="threats-count">0</span></div>
-                        <div><span class="monitor-label"><i class="bi bi-eye-fill me-2"></i>Live visitors</span><span class="monitor-value ms-2" id="live-visitors-count">0</span></div>
-                    </div>
-                    <div class="mt-3">
-                        <span class="monitor-label small">Current threat level</span>
-                        <div class="threat-level">
-                            <div class="threat-bar"></div>
-                            <div class="threat-bar"></div>
-                            <div class="threat-bar"></div>
-                            <div class="threat-bar"></div>
-                            <div class="threat-bar"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="ops-card ops-security-card mb-4">
-                <div class="ops-section-head">
-                    <div class="ops-section-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Suspicious Activity</div>
-                </div>
-                <div class="ops-card-body" id="suspicious-ips-container">
-                    <div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No suspicious activity detected</span></div>
-                </div>
-            </div>
-
-            <div class="row g-4 mb-4">
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-security-metric text-center">
-                        <div class="stat-circle-container">
-                            <svg class="stat-circle" viewBox="0 0 200 200">
-                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
-                                <circle class="circle-progress circle-warning" cx="100" cy="100" r="90" stroke-dasharray="565.48" stroke-dashoffset="565" id="circle-blocked-ips"/>
-                            </svg>
-                            <div class="stat-circle-content">
-                                <div class="stat-circle-value ops-text-warn" id="blocked-ips-count">0</div>
-                                <div class="stat-circle-label">Temp blocked</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-security-metric text-center">
-                        <div class="stat-circle-container">
-                            <svg class="stat-circle" viewBox="0 0 200 200">
-                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
-                                <circle class="circle-progress circle-success" cx="100" cy="100" r="90" stroke-dasharray="565.48" stroke-dashoffset="565" id="circle-blocked-users"/>
-                            </svg>
-                            <div class="stat-circle-content">
-                                <div class="stat-circle-value ops-text-ok" id="blocked-users-count">0</div>
-                                <div class="stat-circle-label">User locked</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-security-metric text-center">
-                        <div class="stat-circle-container">
-                            <svg class="stat-circle" viewBox="0 0 200 200">
-                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
-                                <circle class="circle-progress circle-danger" cx="100" cy="100" r="90" stroke-dasharray="565.48" stroke-dashoffset="565" id="circle-permanent"/>
-                            </svg>
-                            <div class="stat-circle-content">
-                                <div class="stat-circle-value ops-text-danger" id="permanent-blacklist-count">0</div>
-                                <div class="stat-circle-label">Blacklisted</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="ops-card ops-security-metric text-center">
-                        <div class="stat-circle-container">
-                            <svg class="stat-circle" viewBox="0 0 200 200">
-                                <circle class="circle-bg" cx="100" cy="100" r="90"/>
-                                <circle class="circle-progress circle-info" cx="100" cy="100" r="90" stroke-dasharray="565.48" stroke-dashoffset="565" id="circle-tracked"/>
-                            </svg>
-                            <div class="stat-circle-content">
-                                <div class="stat-circle-value ops-text-info" id="total-ips-tracked">0</div>
-                                <div class="stat-circle-label">IP · 5 phút</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
+            </section>
             <section class="ops-card ops-security-card mb-4" aria-labelledby="active-sessions-title">
                 <div class="ops-section-head">
                     <div>
                         <h2 id="active-sessions-title" class="ops-section-title mb-1">
-                            <i class="bi bi-people-fill me-2 text-primary"></i>Điều khiển phiên đăng nhập (Active Sessions)
+                            <i class="bi bi-people-fill me-2 text-primary"></i>Phiên đăng nhập
                         </h2>
                         <p class="ops-card-meta mb-0" id="sessions-description">
-                            Chỉ hiển thị phiên có hoạt động trong 45 giây gần nhất. Trang đang xem gửi tín hiệu mỗi 15 giây; phiên mất tín hiệu tự rời danh sách.
+                            Phiên có hoạt động trong 45 giây gần nhất. Tự động cập nhật khi mở trang.
                         </p>
                     </div>
                     <div class="d-flex align-items-center gap-2">
@@ -236,8 +96,8 @@
                         <thead>
                             <tr>
                                 <th>Người dùng</th>
-                                <th>IP mạng (Public)</th>
-                                <th>IP máy chính xác (Local)</th>
+                                <th>IP mạng</th>
+                                <th>IP nội bộ</th>
                                 <th>Thiết bị &amp; Trình duyệt</th>
                                 <th>Đăng nhập lúc</th>
                                 <th>Hoạt động cuối</th>
@@ -255,14 +115,14 @@
                 </nav>
             </section>
 
-            <section class="ops-card ops-security-card mb-4" aria-labelledby="blocked-devices-title">
+            <section id="access-control" class="ops-card ops-security-card mb-4" aria-labelledby="blocked-devices-title">
                 <div class="ops-section-head">
                     <div>
                         <h2 id="blocked-devices-title" class="ops-section-title mb-1">
-                            <i class="bi bi-pc-display-horizontal me-2 text-danger"></i>Danh sách máy tính bị chặn (Blocked Devices)
+                            <i class="bi bi-pc-display-horizontal me-2 text-danger"></i>Thiết bị bị chặn
                         </h2>
                         <p class="ops-card-meta mb-0">
-                            Chặn riêng máy tính theo Device ID / IP máy. Các máy tính khác trong cùng mạng LAN/NAT vẫn sử dụng bình thường.
+                            Quản lý từng thiết bị, không ảnh hưởng các máy khác trong cùng mạng.
                         </p>
                     </div>
                     <span class="badge bg-secondary" id="blocked-devices-badge">0 máy</span>
@@ -289,27 +149,27 @@
             </section>
 
             <section class="ops-card ops-security-card mb-4" aria-labelledby="block-history-title">
-                <div class="ops-section-head"><div><h2 id="block-history-title" class="ops-section-title mb-1">Lượt chặn gần đây</h2><p class="ops-card-meta mb-0">Tối đa 200 sự kiện trong giờ qua của phiên hiện tại. Vẫn hiển thị sau khi hết thời gian chặn.</p></div><span id="security-updated" class="ops-card-meta">Đang cập nhật…</span></div>
+                <div class="ops-section-head"><div><h2 id="block-history-title" class="ops-section-title mb-1">Lượt chặn gần đây</h2><p class="ops-card-meta mb-0">Tối đa 200 sự kiện trong giờ qua của phiên hiện tại. Vẫn hiển thị sau khi hết thời gian chặn.</p></div></div>
                 <div class="table-responsive"><table class="table ops-table"><thead><tr><th>Lần cuối</th><th>IP</th><th>Nguồn chặn</th><th>Lý do</th><th class="text-end">Số lượt</th></tr></thead><tbody id="block-history-body"><tr><td colspan="5">Đang tải…</td></tr></tbody></table></div>
             </section>
             <div class="row g-4">
                 <div class="col-xl-12">
                     <div class="ops-card ops-security-card">
                         <div class="ops-section-head">
-                            <div class="ops-section-title"><i class="bi bi-clock-history me-2"></i>Temporary Blocked IPs</div>
+                            <div class="ops-section-title"><i class="bi bi-clock-history me-2"></i>IP chặn tạm thời</div>
                         </div>
                         <div class="table-responsive">
                             <table class="table ops-table">
                                 <thead>
                                     <tr>
-                                        <th>IP address</th>
-                                        <th>Remaining time</th>
-                                        <th>Reason</th>
-                                        <th class="text-end">Action</th>
+                                        <th>Địa chỉ IP</th>
+                                        <th>Thời gian còn lại</th>
+                                        <th>Lý do</th>
+                                        <th class="text-end">Thao tác</th>
                                     </tr>
                                 </thead>
                                 <tbody id="temp-blocked-table-body">
-                                    <tr><td colspan="4"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No temporary blocks</span></div></td></tr>
+                                    <tr><td colspan="4"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có IP bị chặn tạm thời</span></div></td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -326,14 +186,14 @@
                             <table class="table ops-table">
                                 <thead>
                                     <tr>
-                                        <th>IP address</th>
+                                        <th>Địa chỉ IP</th>
                                         <th>Bắt đầu / thời hạn</th>
                                         <th>Lý do / tầng chặn</th>
-                                        <th class="text-end">Action</th>
+                                        <th class="text-end">Thao tác</th>
                                     </tr>
                                 </thead>
                                 <tbody id="blacklist-table-body">
-                                    <tr><td colspan="4"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No blacklisted IPs</span></div></td></tr>
+                                    <tr><td colspan="4"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Không có IP bị chặn vĩnh viễn</span></div></td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -343,19 +203,19 @@
                 <div class="col-xl-4">
                     <div class="ops-card ops-security-card h-100">
                         <div class="ops-section-head">
-                            <div class="ops-section-title"><i class="bi bi-sign-stop-fill me-2"></i>Manual IP Block</div>
+                            <div class="ops-section-title"><i class="bi bi-sign-stop-fill me-2"></i>Chặn IP thủ công</div>
                         </div>
                         <div class="ops-card-body">
                             <div class="ops-alert ops-alert-danger mb-3">
-                                <i class="bi bi-exclamation-triangle-fill me-2"></i>Permanent block action
+                                <i class="bi bi-exclamation-triangle-fill me-2"></i>IP sẽ bị chặn cho đến khi được mở lại
                             </div>
                             <form id="block-ip-form">
                                 <div class="mb-3">
-                                    <label class="form-label" for="ip-to-block">IP address</label>
+                                    <label class="form-label" for="ip-to-block">Địa chỉ IP</label>
                                     <input type="text" class="form-control ops-input" id="ip-to-block" placeholder="192.168.1.100" required>
                                 </div>
                                 <button type="submit" class="btn btn-danger ops-btn w-100">
-                                    <i class="bi bi-lock-fill me-2"></i>Block IP
+                                    <i class="bi bi-lock-fill me-2"></i>Chặn IP
                                 </button>
                             </form>
                         </div>
@@ -384,45 +244,147 @@
                 <div class="col-xl-4">
                     <div class="ops-card ops-security-card h-100">
                         <div class="ops-section-head">
-                            <div class="ops-section-title"><i class="bi bi-incognito me-2"></i>Identity Intel</div>
+                            <div class="ops-section-title"><i class="bi bi-incognito me-2"></i>Dấu hiệu trùng thiết bị</div>
                         </div>
                         <div class="table-responsive ops-scroll-panel">
                             <table class="table ops-table table-sm">
                                 <thead>
                                     <tr>
-                                        <th>Fingerprint</th>
+                                        <th>Dấu nhận diện</th>
                                         <th class="text-center">IPs</th>
-                                        <th class="text-end">Risk</th>
+                                        <th class="text-end">Mức cảnh báo</th>
                                     </tr>
                                 </thead>
                                 <tbody id="vpn-intel-body">
-                                    <tr><td colspan="3"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>No anomalies</span></div></td></tr>
+                                    <tr><td colspan="3"><div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Chưa có bất thường</span></div></td></tr>
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 </div>
             </div>
-        </main>
+<section id="system-health" class="security-infrastructure"><div class="security-section-heading"><div><span class="security-eyebrow">VẬN HÀNH</span><h2>Sức khỏe hệ thống</h2></div></div>            <div class="row g-4 mb-4">
+                <div class="col-md-6 col-xl-3">
+                    <div class="ops-card ops-health-card">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="monitor-label"><i class="bi bi-cpu-fill me-2"></i>CPU</span>
+                            <span class="monitor-value" id="cpu-val">0%</span>
+                        </div>
+                        <div class="progress ops-meter">
+                            <div id="cpu-bar" class="progress-bar bg-success" role="progressbar" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl-3">
+                    <div class="ops-card ops-health-card">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="monitor-label"><i class="bi bi-memory me-2"></i>Bộ nhớ RAM</span>
+                            <span class="monitor-value" id="ram-val">0%</span>
+                        </div>
+                        <div class="progress ops-meter">
+                            <div id="ram-bar" class="progress-bar bg-success" role="progressbar" aria-label="Bộ nhớ RAM" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width: 0%"></div>
+                        </div>
+                        <div class="ops-card-meta text-end mt-2">Còn trống: <span id="ram-free">0</span> MB</div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl-3">
+                    <div class="ops-card ops-health-card">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="monitor-label"><i class="bi bi-hdd-fill me-2"></i>Ổ đĩa</span>
+                            <span class="monitor-value" id="disk-val">0%</span>
+                        </div>
+                        <div class="progress ops-meter">
+                            <div id="disk-bar" class="progress-bar bg-success" role="progressbar" aria-label="Ổ đĩa" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width: 0%"></div>
+                        </div>
+                        <div class="ops-card-meta text-end mt-2">Còn trống: <span id="disk-free">0</span> GB</div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl-3">
+                    <div class="ops-card ops-health-card d-flex flex-column justify-content-center">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="monitor-label">Thời gian hoạt động</span>
+                            <span class="monitor-value text-end" id="uptime-val">00:00:00</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="monitor-label">Độ trễ trung bình</span>
+                            <span class="monitor-value text-end" id="latency-val">0ms</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+<div class="security-system-grid">            <div class="ops-card ops-security-card mb-4">
+                <div class="ops-section-head">
+                    <div class="ops-section-title"><i class="bi bi-activity me-2"></i>Lớp bảo vệ</div>
+
+                </div>
+                <div class="accordion-body ops-security-switches">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="ops-switch-row">
+                                <label for="firewall-switch" class="monitor-label">Tường lửa</label>
+                                <div class="form-check form-switch ops-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="firewall-switch" checked>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="ops-switch-row">
+                                <label for="vpn-switch" class="monitor-label">Phát hiện VPN</label>
+                                <div class="form-check form-switch ops-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="vpn-switch" checked>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="ops-switch-row">
+                                <label for="pattern-switch" class="monitor-label">Phân tích hành vi</label>
+                                <div class="form-check form-switch ops-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="pattern-switch" checked>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ops-security-scan-row">
+                        <div><span class="monitor-label">Cập nhật gần nhất</span><span class="monitor-value ms-2" id="last-scan-time">00:00:00</span></div>
+                        <div><span class="monitor-label">IP đang bị chặn</span><span class="monitor-value ms-2" id="threats-count">0</span></div>
+                        <div><span class="monitor-label"><i class="bi bi-eye-fill me-2"></i>Kết nối đang mở</span><span class="monitor-value ms-2" id="live-visitors-count">0</span></div>
+                    </div>
+                    <div class="mt-3">
+                        <span class="monitor-label small">Mức cảnh báo</span>
+                        <div class="threat-level">
+                            <div class="threat-bar"></div>
+                            <div class="threat-bar"></div>
+                            <div class="threat-bar"></div>
+                            <div class="threat-bar"></div>
+                            <div class="threat-bar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="ops-card ops-security-card mb-4">
+                <div class="ops-section-head">
+                    <div class="ops-section-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Hoạt động đáng ngờ</div>
+                </div>
+                <div class="ops-card-body" id="suspicious-ips-container">
+                    <div class="ops-empty-state"><i class="bi bi-shield-check"></i><span>Chưa phát hiện hoạt động đáng ngờ</span></div>
+                </div>
+            </div>
+
+</div></section>        </main>
     </div>
 
     <div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1100"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        function updateLastScanTime() {
-            const el = document.getElementById('last-scan-time');
-            if (el) el.textContent = new Date().toTimeString().split(' ')[0];
-        }
-        updateLastScanTime();
-        setInterval(updateLastScanTime, 1000);
-    </script>
     <script src="/assets/js/dist/api-routes.min.js?v=20261014-sessions-v3"></script>
     <script src="/assets/js/dist/api-client.min.js?v=20261028-analytics-v1"></script>
     <script src="/assets/js/dist/analytics-tracker.min.js?v=20261028-analytics-v1" defer></script>
     <script src="/assets/js/dist/ops-ui.min.js?v=20261014-sessions-v3"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261017-base-brand-v1"></script>
-    <script src="/assets/js/dist/nav-manager.min.js?v=20261028-analytics-v1"></script>
-    <script src="/assets/js/dist/security.min.js?v=20261018-nginx-bans-v1"></script>
+    <script src="/assets/js/dist/nav-manager.min.js?v=20261028-security-v2"></script>
+    <script src="/assets/js/dist/analytics.min.js?v=20261028-security-v2"></script>
+    <script src="/assets/js/dist/security.min.js?v=20261028-security-v2"></script>
 </body>
 </html>

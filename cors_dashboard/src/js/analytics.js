@@ -89,6 +89,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
     window.addEventListener('resize', () => { if (lastReport) trend(lastReport.daily); });
+    window.addEventListener('cors:analytics-refresh',load);
     refresh.addEventListener('click',load);
     days.addEventListener('change',load);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)load();});
