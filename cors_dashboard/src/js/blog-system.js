@@ -111,7 +111,7 @@ const BlogSystem = ({ slug }) => {
             <div className="container py-5 blog-shell">
                 <nav aria-label="breadcrumb" className="mb-4 blog-hero">
                     <ol className="breadcrumb">
-                        <li className="breadcrumb-item"><a href="#" onClick={() => window.switchView('blog')} className="text-primary text-decoration-none">Bài viết</a></li>
+                        <li className="breadcrumb-item"><a href="/blog" className="text-primary text-decoration-none">Bài viết</a></li>
                         <li className="breadcrumb-item active text-light">{currentPost.title}</li>
                     </ol>
                 </nav>
@@ -143,11 +143,7 @@ const BlogSystem = ({ slug }) => {
                         <div className="blog-side-card blog-anim-block">
                             <h5 className="mb-2">Bài liên quan</h5>
                             {related.map((post) => (
-                                <a key={post.slug} href={`/blog/${post.slug}`} className="d-block text-decoration-none mb-2" onClick={(e) => {
-                                    e.preventDefault();
-                                    window.history.pushState({}, '', `/blog/${post.slug}`);
-                                    window.renderBlog(post.slug);
-                                }}>
+                                <a key={post.slug} href={`/blog/${post.slug}`} className="d-block text-decoration-none mb-2">
                                     <span className="text-primary">{post.title}</span>
                                 </a>
                             ))}
@@ -161,7 +157,7 @@ const BlogSystem = ({ slug }) => {
     return (
         <div className="container py-5 blog-shell">
             <div className="text-center mb-5 blog-hero">
-                <h1 className="display-4 fw-bold mb-2">Technical Knowledge Base</h1>
+                <h1 className="display-4 fw-bold mb-2">Kiến thức Base Aitogy</h1>
                 <p className="text-muted mb-0">Kiến thức GNSS/RTK thực chiến cho triển khai Base quy mô lớn.</p>
             </div>
 
@@ -170,18 +166,14 @@ const BlogSystem = ({ slug }) => {
                     <div key={post.slug} className="col-lg-6">
                         <div className="blog-card h-100 d-flex flex-column">
                             <div className="d-flex align-items-center justify-content-between mb-3">
-                                <span className="badge bg-primary bg-opacity-10 text-primary">{post.category}</span>
+                                <span className="badge text-bg-primary">{post.category}</span>
                                 <span className="text-muted small">{post.readTime}</span>
                             </div>
-                            <h3 className="fw-bold mb-3">{post.title}</h3>
+                            <h2 className="h3 fw-bold mb-3"><a href={`/blog/${post.slug}`} className="link-light link-underline-opacity-0 link-underline-opacity-100-hover">{post.title}</a></h2>
                             <p className="text-muted flex-grow-1">{post.excerpt}</p>
                             <div className="mt-3 text-muted small">{post.date}</div>
                             <div className="mt-3">
-                                <a href={`/blog/${post.slug}`} className="text-primary text-decoration-none fw-bold" onClick={(e) => {
-                                    e.preventDefault();
-                                    window.history.pushState({}, '', `/blog/${post.slug}`);
-                                    window.renderBlog(post.slug);
-                                }}>
+                                <a href={`/blog/${post.slug}`} className="text-primary text-decoration-none fw-bold">
                                     Đọc tiếp <i className="bi bi-arrow-right ms-1"></i>
                                 </a>
                             </div>

@@ -1,6 +1,6 @@
 """Frontend page responses and restricted public asset serving."""
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from .runtime_config import _get_env_preferring_dotenv
@@ -66,8 +66,6 @@ async def serve_rovers_global():
 @router.get("/network-status", include_in_schema=False)
 @router.get("/coverage", include_in_schema=False)
 @router.get("/blog", include_in_schema=False)
-@router.get("/blog/{rest_of_path:path}", include_in_schema=False)
-@router.get("/station/{rest_of_path:path}", include_in_schema=False)
 @router.get("/api/docs", include_in_schema=False)
 async def serve_spa():
     return FileResponse("../frontend/index.html")
@@ -86,9 +84,14 @@ class PublicAssetFiles(StaticFiles):
 
 
 @router.get("/", include_in_schema=False)
-@router.get("/index.html", include_in_schema=False)
 async def serve_index():
     return FileResponse("../frontend/index.html")
+
+
+@router.get("/index.html", include_in_schema=False)
+async def redirect_index(request: Request):
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(f"/{query}", status_code=308)
 
 
 @router.get("/robots.txt", include_in_schema=False)

@@ -2290,11 +2290,11 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                 React.createElement('h1', { className: 'hero-title', style: { position: 'relative' } },
                     React.createElement('span', {
                         className: 'glitch-hud-title',
-                        'data-text': 'Aitogy Network'
-                    }, 'Aitogy Network'),
+                        'data-text': 'Hệ thống Base'
+                    }, 'Hệ thống Base'),
                     React.createElement('div', { className: 'glitch-hud-scanline' }),
                     React.createElement('br'),
-                    React.createElement('span', { className: 'hero-title-gradient' }, 'Trung tâm điều hành Base')
+                    React.createElement('span', { className: 'hero-title-gradient' }, 'Aitogy')
                 ),
                 React.createElement('p', { className: 'hero-subtitle' },
                     'Hệ thống quản lý và giám sát mạng lưới trạm định vị vệ tinh Base trên toàn lãnh thổ Việt Nam. ',
