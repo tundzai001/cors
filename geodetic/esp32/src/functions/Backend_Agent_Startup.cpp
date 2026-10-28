@@ -10,6 +10,8 @@
 using namespace BackendAgentInternal;
 
 namespace {
+constexpr uint32_t AUTO_SURVEY_IN_SECONDS = 120;
+
 double configNumber(JsonVariantConst value, double fallback) {
     if (value.isNull()) return fallback;
     if (value.is<bool>()) return NAN;
@@ -73,7 +75,7 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     if (action == BaseStartupAction::Blocked) return fail("Unsupported saved Base mode");
     if (!saved) {
         base["base_setup_method"] = "SURVEY_IN";
-        base["survey_in_duration"] = 120;
+        base["survey_in_duration"] = AUTO_SURVEY_IN_SECONDS;
         base["survey_in_accuracy"] = 5;
         base["mode"] = "BASE";
         JsonObject options = base.createNestedObject("gnss_options");
@@ -117,7 +119,7 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
         const CommandList fixed = buildBaseFixedLlaCommand(lat, lon, alt, accuracy, detected, options);
         commands.insert(commands.end(), fixed.begin(), fixed.end());
     } else {
-        const double duration = configNumber(base["survey_in_duration"], 120);
+        const double duration = AUTO_SURVEY_IN_SECONDS;
         const double accuracy = configNumber(base["survey_in_accuracy"], 5.0);
         const double maxDuration = detected == GnssSensorType::Unicore ? 3600 : 604800;
         if (!std::isfinite(duration) || std::floor(duration) != duration || duration < 1 || duration > maxDuration
@@ -130,7 +132,6 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
             commands = buildBaseSurveyInCommand(static_cast<uint32_t>(duration), accuracy, detected, options);
     }
     if (!commands.empty() && !writeGnssCommands(commands)) return fail("Receiver rejected startup configuration");
-    if (action == BaseStartupAction::Survey) surveyInStartedMs_ = millis();
     if (!saved) {
         baseConfig_.clear(); serializeJson(config, baseConfig_);
     }

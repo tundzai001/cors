@@ -326,6 +326,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         || !!window.CorsDashboardShared?.isDeviceStaleOffline?.(device);
     const surveyStatus = device.system_info?.survey_in_status || {};
     const surveyState = receiverOffline ? 'offline' : surveyStatus.state;
+    const surveyElapsedSeconds = surveyStatus.source === 'NAV-SVIN'
+        ? Number(surveyStatus.elapsed_seconds) + Number(surveyStatus.readback_age_seconds ?? receiverReadback.age_seconds ?? 0)
+        : Number(surveyStatus.elapsed_since_ack_seconds);
+    const statusReceivedAt = Number(device.timestamp);
+    const surveyStartedAt = Number.isFinite(statusReceivedAt) && Number.isFinite(surveyElapsedSeconds)
+        && statusReceivedAt > surveyElapsedSeconds
+        ? new Date((statusReceivedAt - surveyElapsedSeconds) * 1000).toLocaleString('vi-VN', {
+            timeZone: 'Asia/Ho_Chi_Minh', hour12: false
+        })
+        : '';
     const savedMethod = String(device.base_config?.base_setup_method || '').toUpperCase();
     const expectedReceiverMode = savedMethod === 'SURVEY_IN'
         ? 'survey_in'
@@ -911,7 +921,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             {receiverOffline ? 'Thiết bị offline; trạng thái bên dưới là lần nhận gần nhất.' : ({
                                 pending: 'Thiết bị đang tự thiết lập Base sau khi bật nguồn…',
                                 awaiting_receiver: 'Đang chờ nhận diện GNSS để tự thiết lập Base…',
-                                survey_started: 'Đã tự bắt đầu Survey-In khi bật nguồn. Trạng thái và tọa độ sẽ tự cập nhật.',
+                                survey_started: 'Tự động Survey-In 120 giây khi bật nguồn. Lệnh áp dụng từ UI dùng thời lượng đã chọn.',
                                 survey_resumed: 'Đã tiếp tục phiên Survey-In đang có trên receiver, không bắt đầu lại.',
                                 fixed_restored: 'Đã khôi phục Fixed LLA đã lưu; không chạy Survey-In.',
                                 configured: 'Đã áp dụng cấu hình Base từ người dùng.',
@@ -1028,10 +1038,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             {surveyStatus.state && surveyStatus.state !== 'not_monitoring' && (
                                 <>
                                     <div className="small text-muted mt-1">
+                                        {surveyStartedAt ? `Bắt đầu ước tính (ICT): ${surveyStartedAt}. ` : ''}
                                         {surveyStatus.source === 'NAV-SVIN'
-                                            ? `Đã khảo sát ${Number(surveyStatus.elapsed_seconds) || 0} giây · ${Number(surveyStatus.observations) || 0} mẫu · Sai số ước tính ${Number(surveyStatus.mean_accuracy_m || 0).toFixed(3)} m`
+                                            ? `Đã khảo sát khoảng ${Math.floor(surveyElapsedSeconds) || 0} giây · ${Number(surveyStatus.observations) || 0} mẫu · Sai số ước tính ${Number(surveyStatus.mean_accuracy_m || 0).toFixed(3)} m`
                                             : surveyStatus.elapsed_since_ack_seconds != null
-                                            ? `Đã qua ${Number(surveyStatus.elapsed_since_ack_seconds)} giây từ ACK của UM.`
+                                            ? `Đã qua ${Math.floor(surveyElapsedSeconds) || 0} giây từ ACK bắt đầu của UM.`
                                             : 'Không có mốc bắt đầu khảo sát của phiên này.'}
                                         {Number(surveyStatus.target_seconds) > 0
                                             ? ` Thời gian khảo sát yêu cầu: ${Number(surveyStatus.target_seconds)} giây.` : ''}

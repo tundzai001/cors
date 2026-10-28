@@ -7,9 +7,13 @@ Mặc định thiết bị dùng 4G; có thể chuyển sang Wi-Fi bằng lệnh
 ## Chức năng
 
 Khi bật nguồn, firmware nhận diện receiver và thiết lập Base trước khi chờ
-Wi-Fi/4G. Thiết bị chưa có cấu hình tự tạo Survey-In 120 giây, RTCM-only,
-MSM4 + MSM7; ngưỡng sai số 5 m dùng cho u-blox. UM đặt undulation bằng 0
-trước khảo sát, không dùng giá trị 5 m làm tham số Distance.
+Wi-Fi/4G. Survey-In tự động lúc bật nguồn luôn chạy 120 giây. Thiết bị chưa
+có cấu hình dùng RTCM-only MSM4 + MSM7 và ngưỡng mặc định 5 m cho u-blox;
+cấu hình đầu ra đã lưu được giữ nguyên. UM đặt undulation bằng 0 trước khảo
+sát, không dùng giá trị 5 m làm tham số Distance.
+
+Thời lượng cấu hình Survey-In từ UI chỉ áp dụng cho lệnh người dùng bấm áp dụng;
+giá trị đó không đổi thời lượng tự động lúc khởi động.
 
 Fixed LLA đã lưu được khôi phục cùng quy ước độ cao và được đối chiếu với
 receiver trước khi cho phép kết nối phát NTRIP. Auto Base đã lưu được giữ
@@ -17,7 +21,7 @@ nguyên. Khóa toàn bộ thiết bị ngăn bước tự cấu hình. Lỗi đ�
 báo qua `system_info.base_startup`; không tự chuyển Fixed LLA lỗi sang Survey-In.
 
 Mỗi lần ESP khởi động trong chế độ Survey-In, firmware gửi lại cấu hình khảo
-sát theo thời gian đã lưu, kể cả receiver vẫn báo MODE Survey-In. MODE không
+sát 120 giây, kể cả receiver vẫn báo MODE Survey-In. MODE không
 chứng minh anten chưa di chuyển; không suy đoán có thể dùng lại tọa độ cũ.
 Kết quả cũ chỉ là lịch sử;
 UI chỉ cho dùng tọa độ có readback mới và trạng thái receiver xác nhận hoàn tất.
