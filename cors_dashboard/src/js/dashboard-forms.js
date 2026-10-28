@@ -319,6 +319,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
     const receiverReadback = device.system_info?.receiver_base_readback || {};
     const receiverPosition = receiverReadback.bestpos || {};
+    const baseStartup = device.system_info?.base_startup || {};
+    const receiverLabel = device.detected_chip_type === 'Ublox' ? 'u-blox' : 'UM';
+    const supportsReceiverReadback = ['Ublox', 'Unicorecomm'].includes(device.detected_chip_type);
     const receiverOffline = device.status === 'offline'
         || !!window.CorsDashboardShared?.isDeviceStaleOffline?.(device);
     const surveyStatus = device.system_info?.survey_in_status || {};
@@ -330,7 +333,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const receiverReadbackIsFresh = receiverReadback.state === 'ok'
         && Number(receiverReadback.age_seconds) <= 60
         && !receiverOffline;
-    const receiverCoordinates = window.CorsReceiverCoordinates?.fromUnicore(receiverPosition);
+    const receiverCoordinates = window.CorsReceiverCoordinates?.fromReceiver(receiverPosition);
+    const receiverInstantCoordinates = window.CorsReceiverCoordinates?.fromReceiver(receiverPosition, true);
     const canUseReceiverCoordinates = !!receiverCoordinates && receiverReadbackIsFresh
         && !isReadingReceiver;
     const [receiverCopyNotice, setReceiverCopyNotice] = useState('');
@@ -361,7 +365,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             pendingReadbackRevisionRef.current = null;
             setPendingReadbackRevision(null);
             setIsReadingReceiver(false);
-            window.showError(`Không đọc được trạng thái UM: ${error.message}`);
+            window.showError(`Không đọc được trạng thái ${receiverLabel}: ${error.message}`);
         }
     };
 
@@ -464,7 +468,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 }
             }
         }
-    }, [device.serial]);
+    }, [device.serial, device.base_config?.base_setup_method, device.system_info?.base_startup?.state]);
 
     const handleDecimalInputChange = (setter, maxDecimals) => (e) => {
         const value = e.target.value.replace(',', '.');
@@ -899,9 +903,27 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
             <div className="card bg-dark border-secondary mb-3">
                 <div className="card-body p-3">
+                    {baseStartup.state && (
+                        <div className={`alert ${baseStartup.state === 'error' ? 'alert-danger' : 'alert-info'} small py-2 mb-3`}
+                             role="status" aria-atomic="true" aria-busy={!receiverOffline && ['pending', 'awaiting_receiver'].includes(baseStartup.state)}>
+                            {!receiverOffline && ['pending', 'awaiting_receiver'].includes(baseStartup.state)
+                                && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>}
+                            {receiverOffline ? 'Thiết bị offline; trạng thái bên dưới là lần nhận gần nhất.' : ({
+                                pending: 'Thiết bị đang tự thiết lập Base sau khi bật nguồn…',
+                                awaiting_receiver: 'Đang chờ nhận diện GNSS để tự thiết lập Base…',
+                                survey_started: 'Đã tự bắt đầu Survey-In khi bật nguồn. Trạng thái và tọa độ sẽ tự cập nhật.',
+                                survey_resumed: 'Đã tiếp tục phiên Survey-In đang có trên receiver, không bắt đầu lại.',
+                                fixed_restored: 'Đã khôi phục Fixed LLA đã lưu; không chạy Survey-In.',
+                                configured: 'Đã áp dụng cấu hình Base từ người dùng.',
+                                preserved: 'Đã giữ cấu hình Auto Base đã lưu.',
+                                locked: 'Thiết bị đang khóa; chưa tự thay đổi cấu hình Base.',
+                                error: `Chưa thiết lập được Base: ${baseStartup.error || 'Chưa có xác nhận từ receiver.'}`
+                            })[baseStartup.state]}
+                        </div>
+                    )}
                     <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
                         <div>
-                            <div className="fw-bold">Đọc mode thực tế từ receiver</div>
+                            <div className="fw-bold">Trạng thái Base thực tế</div>
                             <div className="small text-muted">Web lưu: {savedMethodLabel}</div>
                             <div className="small text-muted">Thiết bị tự cập nhật mỗi 30 giây.</div>
                         </div>
@@ -909,23 +931,23 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             type="button"
                             className="btn btn-outline-info"
                             style={{ minHeight: '44px' }}
-                            disabled={disabled || isReadingReceiver || device.detected_chip_type !== 'Unicorecomm'}
+                            disabled={disabled || isReadingReceiver || !supportsReceiverReadback}
                             onClick={handleReadReceiver}
-                            aria-label="Đọc lại mode và tọa độ hiện tại từ receiver Unicore"
+                            aria-label="Đọc lại mode và tọa độ hiện tại từ receiver"
                         >
                             {isReadingReceiver ? (
-                                <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Đang chờ UM...</>
+                                <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Đang chờ receiver...</>
                             ) : (
                                 <><i className="bi bi-arrow-repeat me-2" aria-hidden="true"></i>Cập nhật ngay</>
                             )}
                         </button>
                     </div>
-                    {device.detected_chip_type !== 'Unicorecomm' ? (
-                        <div className="small text-muted" role="status">Đọc mode trực tiếp hiện hỗ trợ receiver Unicore (UM).</div>
+                    {!supportsReceiverReadback ? (
+                        <div className="small text-muted" role="status">Đang chờ nhận diện receiver GNSS.</div>
                     ) : receiverReadback.state === 'ok' ? (
                         <>
                             <div className="small" role="status" aria-live="polite">
-                                UM báo <code>{receiverReadback.mode_raw}</code>
+                                {receiverLabel} báo <code>{receiverReadback.mode_raw}</code>
                                 {receiverModeMismatch && <span className="badge bg-danger ms-2">LỆCH MODE</span>}
                                 {receiverReadbackIsFresh && !receiverModeMismatch && expectedReceiverMode && (
                                     <span className="badge bg-success ms-2">MODE KHỚP</span>
@@ -940,8 +962,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         <div className="col-sm-6"><dt className="text-muted fw-normal">Độ cao h ellipsoid (m)</dt><dd className="font-monospace mb-0">{receiverCoordinates.alt}</dd></div>
                                         <div className="col-sm-6"><dt className="text-muted fw-normal">Độ cao chip báo (m)</dt><dd className="font-monospace mb-0">{receiverCoordinates.heightMsl}</dd></div>
                                     </dl>
-                                    <div className="small text-muted mb-2">Undulation chip báo: {receiverCoordinates.undulation} m. h = độ cao chip báo + undulation; undulation = 0 thì giữ nguyên độ cao. Đây không phải geoid địa phương đã hiệu chỉnh.</div>
-                                    <div className="small text-muted mb-2">UM đã giữ tọa độ Base. Đối chiếu mốc hoặc hiệu chỉnh trước khi dùng làm Fixed LLA.</div>
+                                    {receiverCoordinates.source === 'UBX'
+                                        ? <div className="small text-muted mb-2">Độ cao ellipsoid WGS 84 từ tọa độ receiver đã xác nhận.</div>
+                                        : <div className="small text-muted mb-2">Undulation chip báo: {receiverCoordinates.undulation} m. h = độ cao chip báo + undulation; undulation = 0 thì giữ nguyên độ cao. Đây không phải geoid địa phương đã hiệu chỉnh.</div>}
+                                    <div className="small text-muted mb-2">Receiver đã giữ tọa độ Base. Đối chiếu mốc hoặc hiệu chỉnh trước khi dùng làm Fixed LLA.</div>
                                     <div className="d-flex flex-wrap gap-2">
                                         <button type="button" className="btn btn-outline-info btn-sm" style={{ minHeight: '44px' }}
                                             disabled={!canUseReceiverCoordinates} onClick={handleCopyReceiverCoordinates}>Sao chép tọa độ</button>
@@ -951,30 +975,35 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     </div>
                                     {receiverCopyNotice && <div className="small text-info mt-2" role="status" aria-live="polite">{receiverCopyNotice}</div>}
                                 </div>
+                            ) : receiverInstantCoordinates ? (
+                                <div className="small text-warning mt-1">
+                                    Vị trí tức thời, chưa chốt Survey-In: <code>{receiverInstantCoordinates.lat}, {receiverInstantCoordinates.lon}</code>
+                                    {' · '}h ellipsoid {receiverInstantCoordinates.alt} m · {receiverPosition.position_type}
+                                </div>
                             ) : receiverPosition.state === 'ok' && (
                                 <div className="small text-muted mt-1">
                                     {receiverPosition.message || 'BESTPOS'} hiện tại: <code>{Number(receiverPosition.latitude).toFixed(10)}, {Number(receiverPosition.longitude).toFixed(10)}</code>
-                                    {' · '}{Number(receiverPosition.height_msl).toFixed(4)} m MSL
+                                    {' · '}độ cao chip báo {Number(receiverPosition.height_msl).toFixed(4)} m
                                     {receiverPosition.position_type ? ` · ${receiverPosition.position_type}` : ''}
                                 </div>
                             )}
                             {receiverModeMismatch && (
                                 <div className="alert alert-danger small py-2 mt-2 mb-0" role="alert">
-                                    Web đang lưu {savedMethodLabel}, nhưng UM báo {receiverReadback.mode_raw}. Hai mode không khớp.
+                                    Web đang lưu {savedMethodLabel}, nhưng {receiverLabel} báo {receiverReadback.mode_raw}. Hai mode không khớp.
                                 </div>
                             )}
                             {receiverReadbackIsFresh && !receiverModeMismatch && receiverReadback.mode_kind === 'base' && savedMethod === 'FIXED_LLA' && (
-                                <div className="small text-warning mt-2">Mode BASE khớp. Tọa độ fixed lưu trong UM chưa được đối chiếu với LLA trên web.</div>
+                                <div className="small text-warning mt-2">Mode BASE khớp. Cần đối chiếu tọa độ receiver với Fixed LLA đã lưu.</div>
                             )}
                             {receiverReadbackIsFresh ? (
                                 <div className="small text-muted mt-1">Đọc cách đây {Number(receiverReadback.age_seconds) || 0} giây.</div>
                             ) : (
-                                <div className="small text-warning mt-1">Readback đã cũ hoặc thiết bị offline. Bấm “Đọc từ UM” để cập nhật.</div>
+                                <div className="small text-warning mt-1">Kết quả đã cũ hoặc thiết bị offline; đang chờ bản cập nhật mới.</div>
                             )}
                         </>
                     ) : receiverReadback.state === 'error' ? (
                         <div className="small text-danger" role="status" aria-live="polite">
-                            Không đọc được mode từ UM: {receiverReadback.error || 'Không có phản hồi.'}
+                            Không đọc được mode từ {receiverLabel}: {receiverReadback.error || 'Không có phản hồi.'}
                         </div>
                     ) : (
                         <div className="small text-muted" role="status">Đang chờ thiết bị tự cập nhật mode và tọa độ.</div>
@@ -982,24 +1011,26 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     {pendingReadbackRevision !== null && (
                         <div className="small text-info mt-1" role="status" aria-live="polite">Đang chờ firmware trả kết quả đọc mới...</div>
                     )}
-                    {device.detected_chip_type === 'Unicorecomm'
+                    {supportsReceiverReadback
                         && (savedMethod === 'SURVEY_IN' || (surveyStatus.state && surveyStatus.state !== 'not_monitoring')) && (
                         <div className="border-top border-secondary pt-2 mt-3">
                             <div className="fw-bold small">Theo dõi Survey-In</div>
                             <div className={`small mt-1 ${surveyState === 'base_ready' ? 'text-success' : 'text-warning'}`}
                                  role="status" aria-atomic="true">
                                 {({
-                                    base_ready: surveyStatus.source === 'BESTNAV' ? 'UM đã giữ tọa độ Base (BESTNAV: FIXEDPOS).' : 'UM đã giữ tọa độ Base (GGA quality 7).',
-                                    waiting_base: 'UM chưa báo tọa độ Base cố định.',
+                                    base_ready: surveyStatus.source === 'NAV-SVIN' ? 'u-blox đã xác nhận khảo sát hoàn tất (NAV-SVIN valid).' : 'UM đã giữ tọa độ Base (BESTNAV: FIXEDPOS).',
+                                    waiting_base: `${receiverLabel} đang khảo sát, chưa xác nhận tọa độ Base.`,
                                     awaiting_gga: 'Đang chờ GGA mới từ UM để xác định trạng thái.',
-                                    awaiting_readback: 'Đang chờ thiết bị đọc lại trạng thái Base từ UM.',
+                                    awaiting_readback: 'Đang chờ trạng thái Base mới từ receiver.',
                                     offline: 'Thiết bị offline; cần kết nối lại để đọc trạng thái mới.'
                                 })[surveyState] || 'Đang chờ thiết bị tự xác nhận trạng thái Survey-In.'}
                             </div>
                             {surveyStatus.state && surveyStatus.state !== 'not_monitoring' && (
                                 <>
                                     <div className="small text-muted mt-1">
-                                        {surveyStatus.elapsed_since_ack_seconds != null
+                                        {surveyStatus.source === 'NAV-SVIN'
+                                            ? `Đã khảo sát ${Number(surveyStatus.elapsed_seconds) || 0} giây · ${Number(surveyStatus.observations) || 0} mẫu · Sai số ước tính ${Number(surveyStatus.mean_accuracy_m || 0).toFixed(3)} m`
+                                            : surveyStatus.elapsed_since_ack_seconds != null
                                             ? `Đã qua ${Number(surveyStatus.elapsed_since_ack_seconds)} giây từ ACK của UM.`
                                             : 'Không có mốc bắt đầu khảo sát của phiên này.'}
                                         {Number(surveyStatus.target_seconds) > 0
@@ -1007,12 +1038,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     </div>
                                     {['base_ready', 'waiting_base'].includes(surveyState) && (
                                         <div className="small text-muted mt-1">
-                                            {surveyStatus.source === 'BESTNAV'
-                                                ? `Đọc từ UM cách đây ${Number(surveyStatus.readback_age_seconds) || 0} giây`
+                                            {['BESTNAV', 'NAV-SVIN'].includes(surveyStatus.source)
+                                                ? `Đọc từ receiver cách đây ${Number(surveyStatus.readback_age_seconds) || 0} giây`
                                                 : `${Number(surveyStatus.satellites) || 0} vệ tinh · HDOP ${Number(surveyStatus.hdop || 0).toFixed(2)} · GGA cách đây ${Number(surveyStatus.gga_age_seconds) || 0} giây`}
                                         </div>
                                     )}
-                                    <div className="small text-muted mt-1">Hết thời gian yêu cầu chưa đủ để kết luận khảo sát xong; cần UM xác nhận tọa độ Base.</div>
+                                    <div className="small text-muted mt-1">Chỉ báo hoàn tất khi receiver xác nhận tọa độ Base.</div>
                                 </>
                             )}
                         </div>
@@ -1022,7 +1053,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
             <div className="mb-3">
                 {device.system_info?.survey_in_result?.bestpos && savedMethod !== 'SURVEY_IN' && (() => {
-                    const saved = window.CorsReceiverCoordinates?.fromUnicore(device.system_info.survey_in_result.bestpos);
+                    const saved = window.CorsReceiverCoordinates?.fromReceiver(device.system_info.survey_in_result.bestpos);
                     if (!saved) return null;
                     return <details className="border rounded p-3 mb-3">
                         <summary className="small fw-bold py-2">Kết quả Survey-In đã lưu</summary>
@@ -1304,6 +1335,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <div className="form-text">Tối thiểu: 60s. Khuyên dùng: &gt; 300s.</div>
                         </div>
                         <div className="col-md-6">
+                            {activeChip === 'Unicorecomm' ? (
+                                <div className="form-text mt-4">UM tự lấy trung bình theo thời gian. Kết quả cần được kiểm tra trước khi dùng làm tọa độ cố định.</div>
+                            ) : <>
                             <label className="form-label fw-bold">Giới hạn sai số (m)</label>
                             <input
                                 type="number" step="0.01" className="form-control"
@@ -1311,6 +1345,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 required placeholder="Ví dụ: 3.0"
                             />
                             <div className="form-text text-danger">Đơn vị: MÉT (Ví dụ nhập 3.0 là 3 mét)</div>
+                            </>}
                         </div>
                     </div>
                 )}

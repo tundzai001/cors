@@ -13,6 +13,7 @@ import logging
 import asyncio
 import re
 import json
+import math
 
 logger = logging.getLogger(__name__)
  
@@ -88,7 +89,7 @@ def _has_usable_value(value) -> bool:
 
 
 def normalize_base_config(base_config: dict | None) -> dict:
-    """Normalize base_config to the canonical nested coords shape.
+    """Accept complete Survey-In settings or canonical fixed coordinates.
 
     Returns an empty dict when the payload does not contain usable coordinates,
     so callers can treat partial/offline payloads as no-ops instead of wiping
@@ -96,6 +97,20 @@ def normalize_base_config(base_config: dict | None) -> dict:
     """
     if not isinstance(base_config, dict):
         return {}
+
+    if base_config.get("base_setup_method") == "SURVEY_IN":
+        if isinstance(base_config.get("survey_in_duration"), bool) or isinstance(base_config.get("survey_in_accuracy"), bool):
+            return {}
+        try:
+            duration = float(base_config.get("survey_in_duration"))
+            accuracy = float(base_config.get("survey_in_accuracy"))
+        except (TypeError, ValueError):
+            return {}
+        if (not math.isfinite(duration) or not duration.is_integer() or not 1 <= duration <= 604800
+                or not math.isfinite(accuracy) or not 0.001 <= accuracy <= 10000):
+            return {}
+        return {key: value for key, value in base_config.items()
+                if key not in {"coords", "lat", "lon", "alt", "accuracy", "altitude_reference"}}
 
     coords = _ensure_dict(base_config.get("coords"))
     lat = coords.get("lat", base_config.get("lat"))
@@ -589,7 +604,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         new_method = new_base_config.get('base_setup_method')
 
         # Nếu DB đã có tọa độ mà status mới không có (nhưng cùng method), giữ nguyên DB
-        if old_coords and not new_coords:
+        if old_coords and not new_coords and new_method != "SURVEY_IN":
             pass
         else:
             if "gnss_options" not in new_base_config and old_config.get("gnss_options"):
@@ -714,6 +729,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
             or old_receiver_readback != new_receiver_readback
             or old_info.get("survey_in_status") != new_system_info.get("survey_in_status")
             or old_info.get("survey_in_result") != new_system_info.get("survey_in_result")
+            or old_info.get("base_startup") != new_system_info.get("base_startup")
         ):
             # Merge to preserve backend-managed flags (e.g. auth_license_bypass)
             merged_info = old_info.copy()

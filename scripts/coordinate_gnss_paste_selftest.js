@@ -190,6 +190,30 @@ function paste(name, text) {
     render();
     assert(find(tree, node => node.type === 'summary' && node.children.includes('Kết quả Survey-In đã lưu')),
         'The saved survey result remains available after switching to Fixed LLA');
+    const ubxPosition = { message: 'UBX', state: 'ok', position_type: 'FIXEDPOS', datum: 'WGS84',
+        altitude_reference: 'ELLIPSOID', lat: '21.08498763643', lon: '105.78671418840', alt: '2.9193' };
+    assert.equal(context.window.CorsReceiverCoordinates.fromReceiver(ubxPosition).alt, '2.9193');
+    assert.equal(context.window.CorsReceiverCoordinates.fromReceiver({ ...ubxPosition, datum: 'UNKNOWN' }), null);
+    assert.equal(context.window.CorsReceiverCoordinates.fromReceiver({ ...ubxPosition, state: 'unavailable' }), null);
+    device.serial = 'UBLOX_BOOT'; device.detected_chip_type = 'Ublox';
+    device.base_config = {}; device.system_info = { base_startup: { state: 'pending' } }; render();
+    device.base_config = { base_setup_method: 'SURVEY_IN', survey_in_duration: 120, survey_in_accuracy: 5 };
+    device.system_info = { base_startup: { state: 'survey_started' },
+        survey_in_status: { state: 'base_ready', source: 'NAV-SVIN', elapsed_seconds: 120, observations: 95 },
+        receiver_base_readback: { state: 'ok', chip: 'Ublox', revision: 1, age_seconds: 2,
+            mode_kind: 'survey_in', mode_raw: 'Survey-In (NAV-SVIN)', bestpos: ubxPosition } };
+    render();
+    assert(find(tree, node => node.children.includes('Đã tự bắt đầu Survey-In khi bật nguồn. Trạng thái và tọa độ sẽ tự cập nhật.')));
+    assert(find(tree, node => node.children.includes('u-blox đã xác nhận khảo sát hoàn tất (NAV-SVIN valid).')));
+    assert(find(tree, node => node.type === 'select' && node.props.value === 'SURVEY_IN'),
+        'A late boot configuration updates the form without switching devices');
+    assert(receiverButton('Điền vào Fixed LLA'));
+    const beforeBootFill = sent.length;
+    receiverButton('Điền vào Fixed LLA').props.onClick(); render();
+    assert.deepEqual(position(), ['21.0849876364', '105.7867141884', '2.9193']);
+    assert.equal(sent.length, beforeBootFill);
+    device.status = 'offline'; render();
+    assert.equal(receiverButton('Điền vào Fixed LLA').props.disabled, true);
     console.log('PASS: shipped GNSS form fills all fields from any coordinate input, validates frame/height, preserves accuracy, blocks partial writes, and configures only on submit');
     console.log('PASS: survey coordinates preserve raw precision, convert geoid height, copy/prefill without commands, allow correction, and reject stale/offline/invalid results');
 })().catch(error => { console.error(error); process.exitCode = 1; });

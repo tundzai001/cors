@@ -30,6 +30,17 @@ from app import command_builder, crud
 
 
 class TestGnssOptionsPreservation(unittest.TestCase):
+    def test_boot_survey_config_is_accepted_without_fixed_coordinates(self):
+        config = {"base_setup_method": "SURVEY_IN", "survey_in_duration": 120,
+                  "survey_in_accuracy": 5, "gnss_options": {"output_mode": "rtcm_only", "msm_level": "both"}}
+        self.assertEqual(crud.normalize_base_config(config), config)
+        self.assertEqual(crud.normalize_base_config({**config, "coords": {"lat": 21, "lon": 105},
+            "accuracy": 0.01, "altitude_reference": "LEGACY"}), config)
+        for changes in ({"survey_in_duration": None}, {"survey_in_duration": "nan"},
+                        {"survey_in_duration": 1.5}, {"survey_in_accuracy": 0}, {"survey_in_accuracy": "inf"}):
+            self.assertEqual(crud.normalize_base_config({**config, **changes}), {})
+        self.assertEqual(crud.normalize_base_config({"base_setup_method": "FIXED_LLA"}), {})
+
     def test_normalize_gnss_options_preserves_admin_rtcm_only_and_both(self):
         admin_opts = {
             "output_mode": "rtcm_only",

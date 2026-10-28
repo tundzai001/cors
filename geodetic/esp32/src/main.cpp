@@ -103,25 +103,30 @@ void setup() {
     prefs.putString("GNSS_MDL_TYPE", detectedSensorTypeName);
     prefs.end();
 
-    if (needReset) {
-        if (detectedSensorType == GnssCmdBuilder::GnssSensorType::Unicore) {
-            Serial.println("[SETUP] Cau hinh UM980 lan dau tien...");
-            bootstrapUM980();
-        }
-        else if (detectedSensorType == GnssCmdBuilder::GnssSensorType::Ublox) {
-            Serial.println("[SETUP] Cau hinh u-blox lan dau tien...");
-            bootstrapUblox();
-        }
-        else {
-            Serial.println("[SETUP][ERROR] Chip GNSS khong hop le, bo qua cau hinh.");
-        }
-        if (detectedSensorType != GnssCmdBuilder::GnssSensorType::Invalid) {
-            Serial.println("[SETUP] Da cau hinh lai tat ca ve mac dinh, khoi dong de ap dung cau hinh.");
-            ESP.restart(); // Khởi động lại để áp dụng cấu hình mới
-        }
-    } else {
-        Serial.println("[SETUP] Da nhan dien chip GNSS: " + String(detectedSensorTypeName));
+    Serial.println("[SETUP] Da nhan dien chip GNSS: " + String(detectedSensorTypeName));
+
+    rtcmBufferMutex = xSemaphoreCreateMutex();
+    while (rtcmBufferMutex == nullptr) {
+        Serial.println("[ERROR] Tao mutex rtcmDataMutex that bai! Dang thu lai...");
+        rtcmBufferMutex = xSemaphoreCreateMutex();
     }
+    Serial.println("[SETUP] Tao mutex rtcmDataMutex thanh cong!");
+
+    tcpStreamMutex = xSemaphoreCreateMutex();
+    while (tcpStreamMutex == nullptr) {
+        Serial.println("[ERROR] Tao mutex tcpStreamMutex that bai! Dang thu lai...");
+        tcpStreamMutex = xSemaphoreCreateMutex();
+    }
+    Serial.println("[SETUP] Tao mutex tcpStreamMutex thanh cong!");
+
+    gnssSerialMutex = xSemaphoreCreateMutex();
+    while (gnssSerialMutex == nullptr) {
+        Serial.println("[ERROR] Tao mutex gnssSerialMutex that bai! Dang thu lai...");
+        gnssSerialMutex = xSemaphoreCreateMutex();
+    }
+    Serial.println("[SETUP] Tao mutex gnssSerialMutex thanh cong!");
+
+    backendAgent.initializeBaseAtBoot(detectedSensorType);
 
     // Keep the local console responsive even if Wi-Fi/GSM cannot connect.
     Serial.println("[SETUP] Starting Serial Command task before network setup.");
@@ -163,27 +168,6 @@ void setup() {
 
     Serial.println("[SETUP] Ket noi mang thanh cong!");
     configTime(0, 0, "pool.ntp.org", "time.google.com");
-
-    rtcmBufferMutex = xSemaphoreCreateMutex();
-    while (rtcmBufferMutex == nullptr) {
-        Serial.println("[ERROR] Tao mutex rtcmDataMutex that bai! Dang thu lai...");
-        rtcmBufferMutex = xSemaphoreCreateMutex();
-    }
-    Serial.println("[SETUP] Tao mutex rtcmDataMutex thanh cong!");
-
-    tcpStreamMutex = xSemaphoreCreateMutex();
-    while (tcpStreamMutex == nullptr) {
-        Serial.println("[ERROR] Tao mutex tcpStreamMutex that bai! Dang thu lai...");
-        tcpStreamMutex = xSemaphoreCreateMutex();
-    }
-    Serial.println("[SETUP] Tao mutex tcpStreamMutex thanh cong!");
-
-    gnssSerialMutex = xSemaphoreCreateMutex();
-    while (gnssSerialMutex == nullptr) {
-        Serial.println("[ERROR] Tao mutex gnssSerialMutex that bai! Dang thu lai...");
-        gnssSerialMutex = xSemaphoreCreateMutex();
-    }
-    Serial.println("[SETUP] Tao mutex gnssSerialMutex thanh cong!");
 
     Serial.println("[SETUP] Task MQTT: Quan ly ket noi MQTT va callback.");
     xTaskCreatePinnedToCore(taskMQTT, "MQTT Task", MQTT_TASK_STACK_BYTES, nullptr, 3, nullptr, 1);

@@ -19,6 +19,7 @@ class ConfigSyncRedactionTests(unittest.TestCase):
                  'survey_in_accuracy': 5, 'gnss_options': {'output_mode': 'rtcm_only'}}
         target = {**agent, 'coords': {'lat': 21, 'lon': 105, 'alt': 10}, 'accuracy': 0.01}
         self.assertEqual(compare(agent, target, 'Base'), (True, []))
+        self.assertEqual(compare(agent, {**target, 'altitude_reference': 'LEGACY'}, 'Base'), (True, []))
         for key, value in [('survey_in_duration', 300), ('survey_in_accuracy', 1),
                            ('gnss_options', {'output_mode': 'diagnostics_rtcm'}),
                            ('base_setup_method', 'FIXED_LLA')]:

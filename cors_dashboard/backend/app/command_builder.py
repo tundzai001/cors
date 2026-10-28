@@ -301,7 +301,7 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         
         # BƯỚC 2: Set base mode (Survey-In)
         commands.append(b'config undulation 0.0\r\n')
-        cmd_str = f'mode base time {duration}\r\n'
+        cmd_str = f'mode base time {duration} 0\r\n'
         logging.info(f"🔍 Survey-In command: {repr(cmd_str)}")
         commands.append(cmd_str.encode('ascii'))
         commands.append(b'$DELAY_2000$')
@@ -432,7 +432,7 @@ def build_lte_unicore_config(setup_method: str, duration: int = 60, lat: float =
     # 2. Cấu hình chế độ Base (Survey-In hoặc Fixed)
     if setup_method.upper() == 'SURVEY_IN':
         commands.append(b'config undulation 0.0\r\n')
-        commands.append(f'mode base time {duration}\r\n'.encode('ascii'))
+        commands.append(f'mode base time {duration} 0\r\n'.encode('ascii'))
     else:
         # Giữ nguyên độ chính xác của tọa độ
         if altitude_reference == 'ELLIPSOID':

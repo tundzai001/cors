@@ -1204,7 +1204,7 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
             and config2.get('base_setup_method') == 'SURVEY_IN'):
         # Fixed LLA fields may remain in the DB after switching to Survey-In.
         # Survey targets are survey_in_duration and survey_in_accuracy instead.
-        ignore_fields.update({'coords', 'accuracy'})
+        ignore_fields.update({'coords', 'accuracy', 'altitude_reference'})
 
     def is_secret_field(key: object) -> bool:
         normalized = str(key or "").strip().lower().replace("-", "_")

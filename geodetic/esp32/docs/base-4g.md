@@ -6,6 +6,26 @@ Mặc định thiết bị dùng 4G; có thể chuyển sang Wi-Fi bằng lệnh
 
 ## Chức năng
 
+Khi bật nguồn, firmware nhận diện receiver và thiết lập Base trước khi chờ
+Wi-Fi/4G. Thiết bị chưa có cấu hình tự tạo Survey-In 120 giây, RTCM-only,
+MSM4 + MSM7; ngưỡng sai số 5 m dùng cho u-blox. UM đặt undulation bằng 0
+trước khảo sát, không dùng giá trị 5 m làm tham số Distance.
+
+Fixed LLA đã lưu được khôi phục cùng quy ước độ cao và được đối chiếu với
+receiver trước khi cho phép kết nối phát NTRIP. Auto Base đã lưu được giữ
+nguyên. Khóa toàn bộ thiết bị ngăn bước tự cấu hình. Lỗi đọc/cấu hình được
+báo qua `system_info.base_startup`; không tự chuyển Fixed LLA lỗi sang Survey-In.
+
+Nếu receiver còn ở Survey-In khi ESP khởi động lại, firmware tiếp tục đọc
+phiên hiện có thay vì gửi lại lệnh bắt đầu. Khi mất nguồn cả receiver, chế độ
+Survey-In đã lưu của receiver tự khảo sát lại. Kết quả cũ chỉ là lịch sử;
+UI chỉ cho dùng tọa độ có readback mới và trạng thái receiver xác nhận hoàn tất.
+Muốn giữ nguyên tọa độ qua các lần mất điện, kiểm tra kết quả rồi lưu Fixed LLA.
+
+u-blox được đọc bằng CFG-TMODE3 và NAV-SVIN, gồm thời gian, số mẫu, sai số ước
+tính và cờ valid/active; chỉ lưu kết quả khi valid=1 và active=0. Tọa độ ECEF
+được đổi sang vĩ độ/kinh độ và h ellipsoid WGS 84, không dùng độ cao MSL của GGA.
+
 | Chọn trên CORS | Lệnh xuống ESP32 | Hoạt động |
 | --- | --- | --- |
 | Tọa độ chính xác (`FIXED_LLA`) | `EXECUTE_RAW_COMMANDS` + `original_config` | Gửi nguyên lệnh tọa độ do backend tạo, lưu cấu hình và loại chip. |
@@ -64,15 +84,14 @@ trong `Backend_Agent_Projection.cpp`. Các phần này dùng chung lớp `Backen
 - ESP32 TDM240x: RX GNSS GPIO18, TX GNSS GPIO19; UART GNSS 115200 baud.
 - Unicore: mặc định `GNSS_UNICORE_PORT = 0`; output sau cấu hình BASE dùng ngay
   cổng receiver đang nhận lệnh từ ESP32, không giả định dây nối COM2. Giá trị 1–3
-  buộc output sang COM1–3 nếu phần cứng cần cổng cụ thể. Nhánh bootstrap lần đầu/reset
-  vẫn cấu hình COM2; phải đối chiếu dây nối trước khi reset mặc định.
+  buộc output sang COM1–3 nếu phần cứng cần cổng cụ thể.
 - u-blox: nối UART1, đặt UART1 115200 baud trước khi dùng. Firmware chuyển
   cấu hình output USB/UART2 do backend tạo sang UART1 và tính lại checksum UBX.
 - Modem: RX ESP32 GPIO16, TX ESP32 GPIO17; APN theo SIM/nhà mạng.
 
-Firmware chỉ chạy bootstrap theo chip nhận diện trong lần đầu/reset mặc định;
-không ghi lại cấu hình UM980 vô điều kiện ở mọi lần boot. Với Unicore, các lệnh log COM3 do backend
-tạo được chuyển sang cổng nối ESP32. Tọa độ và thời gian khảo sát giữ nguyên.
+Luồng bật nguồn dùng cùng command builder với cấu hình Base hiện có, không
+chạy bootstrap COM2 cũ. Với Unicore, các lệnh log COM3 do backend tạo được
+chuyển sang cổng nối ESP32. Tọa độ và thời gian khảo sát đã lưu được giữ nguyên.
 
 Nếu GGA đã báo Base cố định mà UART vẫn không có RTCM, sau khi nạp firmware mới
 có thể thử `ATG GNSS BASE 1006 CURRENT ON` qua Serial Monitor. Lệnh này bật RTCM1006
@@ -160,6 +179,7 @@ c++ -std=c++17 -fsanitize=address,undefined -g -Itest/host -Iinclude \
   -o /tmp/esp32-base-checks
 /tmp/esp32-base-checks
 python3 -B test/host/check_cors.py /path/to/cors /tmp/esp32-base-checks
+python3 -B test/host/check_base_startup.py
 ```
 
 Kiểm tra này chạy bộ tạo lệnh C++ thật, kiểm tra khóa, checksum, routing UART
@@ -191,9 +211,12 @@ dùng kết quả auto base cho đo đạc.
 - `ublox_commands.h/.cpp`: tạo/routing gói UBX nhị phân cho u-blox.
 - `Ubx_Reply.h`: đọc khung UBX, kiểm tra checksum; auto base dùng cho ACK/NAK và readback.
 - `unicore_commands.h/.cpp`: tạo lệnh ASCII cho UM980/UM982.
-- Khởi động UM980 bật thêm ephemeris `1019/1020/1042/1044/1045` trên COM2,
-  chu kỳ 1 giây, trước `saveconfig`. Cấu hình fixed/survey tiếp tục chọn
-  ephemeris theo hệ vệ tinh được bật.
+- `Backend_Agent_Startup.cpp`: chọn cấu hình khởi động từ NVS, đọc receiver trước
+  khi quyết định khôi phục Fixed LLA hoặc tiếp tục Survey-In.
+- `Ublox_Readback.cpp` và `Ubx_Base_Status.h`: đọc CFG-TMODE3/NAV-SVIN, chỉ xác nhận
+  tọa độ Survey-In khi receiver báo hợp lệ và kết thúc khảo sát.
+- Cấu hình fixed/survey chọn ephemeris theo hệ vệ tinh được bật. Survey-In UM
+  gửi `mode base time <giây> 0`, không dùng lại tọa độ cũ qua tham số Distance.
 - `Unicore_Reply.h`: đọc phản hồi ASCII của UM, khớp tên lệnh và kiểm tra `OK` chính xác.
 
 Luồng Unicore từ chối dữ liệu nhị phân và nhiều dòng lệnh trong cùng một gói,

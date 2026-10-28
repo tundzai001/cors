@@ -76,6 +76,15 @@
     }
 
     function getCoords(device) {
+        const readback = device?.system_info?.receiver_base_readback;
+        const online = !['offline', 'lost'].includes(String(device?.status || '').toLowerCase())
+            && !window.CorsDashboardShared?.isDeviceStaleOffline?.(device);
+        if (online && readback?.state === 'ok' && Number(readback.age_seconds) <= 60) {
+            const position = window.CorsReceiverCoordinates?.fromReceiver(readback.bestpos, true);
+            const coords = position && normalizeCoords(position.lat, position.lon);
+            if (coords) return { ...coords, source: position.isBaseFixed
+                ? 'Receiver · tọa độ Base đã chốt' : 'Receiver · vị trí tạm SINGLE, chưa chốt Survey-In' };
+        }
         const cfg = device?.base_config || {};
         const cfgCoords = cfg.coords || {};
         const candidates = [
@@ -89,7 +98,8 @@
         ];
         for (const [latRaw, lonRaw] of candidates) {
             const coords = normalizeCoords(latRaw, lonRaw);
-            if (coords) return coords;
+            if (coords) return { ...coords, source: cfg.base_setup_method === 'SURVEY_IN'
+                ? 'Tọa độ đã lưu · chưa có kết quả Survey-In mới' : 'Tọa độ đã lưu' };
         }
         return null;
     }
@@ -140,6 +150,7 @@
                 </div>
                 <div class="station-map-popup-grid">
                     <span class="station-map-popup-label">Lat/Lon</span><span class="station-map-popup-value">${coords ? `${coords.lat.toFixed(6)}, ${coords.lon.toFixed(6)}` : '--'}</span>
+                    <span class="station-map-popup-label">Nguồn tọa độ</span><span class="station-map-popup-value">${escapeHtml(coords?.source || '--')}</span>
                     <span class="station-map-popup-label">Host</span><span class="station-map-popup-value">${escapeHtml(traffic.host || '--')}</span>
                     <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${escapeHtml(traffic.mountpoint || '--')}</span>
                     <span class="station-map-popup-label">Traffic out</span><span class="station-map-popup-value">${window.CorsUI.formatSpeed(traffic.bps)}</span>

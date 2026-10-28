@@ -1110,7 +1110,7 @@ async function handleReadBaseStatus(serial) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.detail || 'Không gửi được yêu cầu đọc receiver.');
-    showSuccess('Đã gửi lệnh đọc; đang chờ UM phản hồi.');
+    showSuccess('Đã gửi lệnh đọc; đang chờ receiver phản hồi.');
 }
 
 async function handleApplyAutoProvince(serial, provinceCode) {
