@@ -56,22 +56,20 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
         markStatusDirty();
         return true;
     }
-    // Read before writing: an ESP-only reset must not restart a running survey.
-    bool receiverSurvey = false;
+    // A mode readback cannot prove that the antenna has not moved.
+    // Every Survey-In boot sends a fresh survey configuration.
     bool receiverRead = false;
     String queryError;
     if (detected == GnssSensorType::Unicore) {
         String mode;
         receiverRead = UnicoreReadback::readMode(mode, queryError);
-        receiverSurvey = receiverRead && String(UnicoreReadback::modeKind(mode)) == "survey_in";
     } else {
         UbxBaseStatus status;
         receiverRead = UbloxReadback::readBaseStatus(status, queryError);
-        receiverSurvey = receiverRead && status.mode == 1;
     }
     // Do not guess a mode when a receiver cannot be read reliably.
     if (!receiverRead) return fail(queryError.isEmpty() ? String("Receiver mode could not be read") : queryError);
-    const BaseStartupAction action = baseStartupAction(method.c_str(), saved && receiverSurvey, false);
+    const BaseStartupAction action = baseStartupAction(method.c_str(), false);
     if (action == BaseStartupAction::Blocked) return fail("Unsupported saved Base mode");
     if (!saved) {
         base["base_setup_method"] = "SURVEY_IN";
@@ -138,7 +136,7 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     }
     if (!saveStatePreferences()) return fail("Could not save Base configuration");
     baseStartupState_ = action == BaseStartupAction::Fixed ? "fixed_restored"
-        : action == BaseStartupAction::ResumeSurvey ? "survey_resumed" : "survey_started";
+        : "survey_started";
     lastReceiverPollMs_ = 0;
     String error;
     if (!refreshReceiverReadback(error)) return fail(error);

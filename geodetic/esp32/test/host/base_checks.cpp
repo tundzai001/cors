@@ -38,13 +38,12 @@ int main(int argc, char **argv) {
     assert(!baseNumber("nan", savedNumber));
     assert(!baseNumber("inf", savedNumber));
     assert(!baseNumber("", savedNumber));
-    assert(baseStartupAction("", false, false) == BaseStartupAction::Survey);
-    assert(baseStartupAction("SURVEY_IN", true, false) == BaseStartupAction::ResumeSurvey);
-    assert(baseStartupAction("SURVEY_IN", false, false) == BaseStartupAction::Survey);
-    assert(baseStartupAction("FIXED_LLA", true, false) == BaseStartupAction::Fixed);
-    assert(baseStartupAction("AUTO_CORS", false, false) == BaseStartupAction::Preserve);
-    assert(baseStartupAction("FIXED_LLA", false, true) == BaseStartupAction::Blocked);
-    assert(baseStartupAction("UNKNOWN", false, false) == BaseStartupAction::Blocked);
+    assert(baseStartupAction("", false) == BaseStartupAction::Survey);
+    assert(baseStartupAction("SURVEY_IN", false) == BaseStartupAction::Survey);
+    assert(baseStartupAction("FIXED_LLA", false) == BaseStartupAction::Fixed);
+    assert(baseStartupAction("AUTO_CORS", false) == BaseStartupAction::Preserve);
+    assert(baseStartupAction("FIXED_LLA", true) == BaseStartupAction::Blocked);
+    assert(baseStartupAction("UNKNOWN", false) == BaseStartupAction::Blocked);
     uint8_t svin[40] = {};
     const auto put32 = [](uint8_t *p, uint32_t value) {
         for (int i = 0; i < 4; ++i) p[i] = value >> (8*i);

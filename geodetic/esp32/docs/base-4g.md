@@ -16,9 +16,10 @@ receiver trước khi cho phép kết nối phát NTRIP. Auto Base đã lưu đ�
 nguyên. Khóa toàn bộ thiết bị ngăn bước tự cấu hình. Lỗi đọc/cấu hình được
 báo qua `system_info.base_startup`; không tự chuyển Fixed LLA lỗi sang Survey-In.
 
-Nếu receiver còn ở Survey-In khi ESP khởi động lại, firmware tiếp tục đọc
-phiên hiện có thay vì gửi lại lệnh bắt đầu. Khi mất nguồn cả receiver, chế độ
-Survey-In đã lưu của receiver tự khảo sát lại. Kết quả cũ chỉ là lịch sử;
+Mỗi lần ESP khởi động trong chế độ Survey-In, firmware gửi lại cấu hình khảo
+sát theo thời gian đã lưu, kể cả receiver vẫn báo MODE Survey-In. MODE không
+chứng minh anten chưa di chuyển; không suy đoán có thể dùng lại tọa độ cũ.
+Kết quả cũ chỉ là lịch sử;
 UI chỉ cho dùng tọa độ có readback mới và trạng thái receiver xác nhận hoàn tất.
 Muốn giữ nguyên tọa độ qua các lần mất điện, kiểm tra kết quả rồi lưu Fixed LLA.
 

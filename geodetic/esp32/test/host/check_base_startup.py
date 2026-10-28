@@ -94,8 +94,16 @@ int main() {
                && bytes.find("rtcm1077") != std::string::npos);
     }
     BackendAgent resumed; resumed.baseConfig_ = fresh.baseConfig_; receiverMode = "survey_in"; writes = 0;
-    assert(resumed.initializeBaseAtBoot(chip) && writes == 0 && resumed.baseStartupState_ == "survey_resumed");
-    BackendAgent cold; cold.baseConfig_ = fresh.baseConfig_; receiverMode = "rover";
+    assert(resumed.initializeBaseAtBoot(chip) && writes == 1 && resumed.baseStartupState_ == "survey_started");
+    if (chip == GnssSensorType::Unicore) {
+        std::string bytes; for (const auto &c : sent) bytes.append(c.begin(), c.end());
+        assert(bytes.find("mode base time 120 0\r\n") != std::string::npos);
+    } else {
+        bool surveyCommand = false;
+        for (const auto &c : sent) if (c.size() == 48 && c[2] == 6 && c[3] == 0x71 && c[8] == 1) surveyCommand = true;
+        assert(surveyCommand);
+    }
+    BackendAgent cold; cold.baseConfig_ = fresh.baseConfig_; receiverMode = "rover"; writes = 0;
     assert(cold.initializeBaseAtBoot(chip) && writes == 1); // Restore after receiver state loss.
     BackendAgent fixed; receiverMode = "survey_in"; writes = 0;
     fixed.baseConfig_ = R"({"base_setup_method":"FIXED_LLA","coords":{"lat":"21.08498763692","lon":"105.78671418823","alt":"2.9194"},"accuracy":"0.015","altitude_reference":"ELLIPSOID"})";
