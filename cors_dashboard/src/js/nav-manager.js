@@ -50,6 +50,7 @@ const NavigationManager = {
         else if (path.includes('operations')) this.currentPage = 'operations';
         else if (path.includes('users')) this.currentPage = 'users';
         else if (path.includes('api-keys')) this.currentPage = 'api-keys';
+        else if (path.includes('analytics')) this.currentPage = 'analytics';
         else if (path.includes('security')) this.currentPage = 'security';
         else if (path.includes('rovers-global')) this.currentPage = 'rovers';
         else if (path.includes('zalo')) this.currentPage = 'zalo';
@@ -79,6 +80,7 @@ const NavigationManager = {
         if (this.currentUser?.role === 'admin') {
             this.addGroup(navContainer, 'Admin');
             this.addNavItem(navContainer, { id: 'operations', icon: 'bi-activity', text: 'Operations', href: '/operations.html', active: this.currentPage === 'operations' });
+            this.addNavItem(navContainer, { id: 'analytics', icon: 'bi-bar-chart-line', text: 'Analytics', href: '/analytics', active: this.currentPage === 'analytics' });
             this.addNavItem(navContainer, { id: 'security', icon: 'bi-shield-lock-fill', text: 'Security', href: '/security.html', active: this.currentPage === 'security' });
             this.addNavItem(navContainer, { id: 'api-keys', icon: 'bi-key-fill', text: 'API Keys', href: '/api-keys.html', active: this.currentPage === 'api-keys' });
         }

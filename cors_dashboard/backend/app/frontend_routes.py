@@ -39,6 +39,10 @@ async def serve_api_keys():
         "Content-Security-Policy": "frame-ancestors 'none'",
     })
 
+@router.get('/analytics', include_in_schema=False)
+async def serve_analytics():
+    return FileResponse('../frontend/analytics.html')
+
 @router.get("/security", include_in_schema=False)
 async def serve_security():
     return FileResponse("../frontend/security.html")
@@ -94,7 +98,7 @@ async def serve_robots():
 
 @router.get("/{page_name}.html", include_in_schema=False)
 async def serve_public_html(page_name: str):
-    if page_name not in {"operations", "rovers-global", "security", "users", "zalo", "coordinates"}:
+    if page_name not in {"operations", "rovers-global", "security", "users", "zalo", "coordinates", "analytics"}:
         raise HTTPException(status_code=404)
     return FileResponse(f"../frontend/{page_name}.html")
 

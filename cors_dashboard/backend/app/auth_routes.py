@@ -3,6 +3,8 @@
 import logging
 import secrets
 import time
+from urllib.parse import unquote
+from sqlalchemy import update, or_
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,8 +174,21 @@ async def login(
 get_current_user_info_router = APIRouter()
 
 @get_current_user_info_router.post("/api/auth/heartbeat", status_code=204)
-async def session_heartbeat(current_user: models.User = Depends(auth.get_current_user)):
-    """Refresh activity through the shared authenticated-session dependency."""
+async def session_heartbeat(request: Request, current_user: models.User = Depends(auth.get_current_user),
+                            db: AsyncSession = Depends(get_auth_db)):
+    """Refresh presence and display hints on existing sessions after a client update."""
+    hint = unquote(request.headers.get('x-device-name', ''))[:100]
+    if hint:
+        token = request.headers.get('authorization', '').split(' ', 1)[-1]
+        sid = auth.decode_token(token).get('sid')
+        if sid:
+            name = client_device_name(request.headers.get('user-agent', ''), hint)
+            await db.execute(update(models.UserSession).where(
+                models.UserSession.session_id == sid,
+                models.UserSession.user_id == current_user.id,
+                or_(models.UserSession.device_name != name, models.UserSession.device_name.is_(None)),
+            ).values(device_name=name))
+            await db.commit()
     return None
 
 @get_current_user_info_router.get("/api/auth/me", response_model=schemas.UserResponse)

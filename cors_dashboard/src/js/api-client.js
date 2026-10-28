@@ -117,6 +117,7 @@
     }
 
     async function apiFetch(url, options = {}, retries = 3) {
+        if (!browserDetectionComplete) await browserDetection;
         const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -191,6 +192,19 @@
         }
     }
 
+    let isBrave = false;
+    let browserDetectionComplete = false;
+    const browserDetection = (async () => {
+        try {
+            isBrave = navigator.userAgentData?.brands?.some(item => item.brand === 'Brave') ||
+                await Promise.race([
+                    navigator.brave?.isBrave?.() || Promise.resolve(false),
+                    new Promise(resolve => setTimeout(() => resolve(false), 500))
+                ]) === true;
+        } catch (_) { /* Browser privacy settings can hide the signal. */ }
+        finally { browserDetectionComplete = true; }
+    })();
+
     function getDeviceName() {
         try {
             const ua = navigator.userAgent || '';
@@ -207,7 +221,8 @@
             else if (uaLower.includes('linux')) os = 'Linux';
 
             let browser = 'Trình duyệt';
-            if (/edg\/|edgios\/|edga\//i.test(ua)) browser = 'Edge';
+            if (isBrave || /brave\//i.test(ua)) browser = 'Brave';
+            else if (/edg\/|edgios\/|edga\//i.test(ua)) browser = 'Edge';
             else if (/opr\/|opera\/|opios\//i.test(ua)) browser = 'Opera';
             else if (/chrome\/|crios\//i.test(ua)) browser = 'Chrome';
             else if (/firefox\/|fxios\//i.test(ua)) browser = 'Firefox';
@@ -272,6 +287,7 @@
     setTimeout(() => { try { detectLocalIP(1500); } catch (_) {} }, 100);
 
     async function getClientMeta() {
+        if (!browserDetectionComplete) await browserDetection;
         let localIp = cachedLocalIP;
         if (!localIp) {
             try {

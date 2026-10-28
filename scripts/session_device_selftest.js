@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/ap
 const deviceName = source.slice(source.indexOf('    function getDeviceName()'), source.indexOf('    function detectLocalIP'));
 const cases = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/session-devices.json'), 'utf8'));
 for (const item of cases) {
-    const scope = {navigator:{userAgent:item.ua, maxTouchPoints:item.maxTouchPoints || 0}};
+    const scope = {isBrave: item.brave || false, navigator:{userAgent:item.ua, maxTouchPoints:item.maxTouchPoints || 0}};
     vm.createContext(scope);
     vm.runInContext(deviceName, scope);
     assert.equal(scope.getDeviceName(), item.expected, item.ua);

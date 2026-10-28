@@ -25,6 +25,8 @@ def client_device_name(user_agent: str, fallback: str = '') -> str:
         browser = 'Edge'
     elif any(token in ua for token in ('opr/', 'opera/', 'opios/')):
         browser = 'Opera'
+    elif 'brave/' in ua or (('chrome/' in ua or 'crios/' in ua) and (fallback or '').endswith(' · Brave')):
+        browser = 'Brave'
     elif 'crios/' in ua or 'chrome/' in ua:
         browser = 'Chrome'
     elif 'fxios/' in ua or 'firefox/' in ua:

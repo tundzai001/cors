@@ -115,3 +115,51 @@ node scripts/security_dashboard_selftest.js
 
 References: [Nginx 444](https://nginx.org/en/docs/http/request_processing.html),
 [Nginx configuration testing/reload](https://nginx.org/en/docs/switches.html).
+
+## First-party Analytics
+
+Administrators can open `/analytics` from the shared navigation. The 7/28/90-day
+report includes today and uses calendar days in Asia/Ho_Chi_Minh (UTC+7). It shows
+page views, distinct browser visitors, first-seen visitors, daily trends, top 20
+pages, browser/device/OS breakdowns, and visitors active in the last 30 minutes.
+Breakdown percentages use page views. The realtime bars bucket each view's most
+recent signal; they are not a historical count of everyone active each minute.
+
+The tracker runs on the public SPA and shared authenticated pages. It records
+initial loads and URL changes, strips queries and fragments except `/?view=map`,
+and sends a heartbeat every 30 seconds while visible. A UUID stored in localStorage
+identifies a browser profile; it does not identify a person or signed-in account.
+Clearing storage, another browser, private mode, browser privacy controls, bots
+without JavaScript and blocked signals affect counts. Storage unavailable means
+collection is skipped. Known bot User-Agents are excluded, but the public endpoint
+is not a bot-proof source. Analytics does not store IPs, account names, query
+strings or full User-Agents. The API Keys gate is excluded; the authorized document
+records the actual visit. Reloading creates a new view; heartbeats and retries of
+the same view UUID do not. A failed initial write retries on the next signal.
+
+`analytics_page_views` lives in the auth database and survives backend restarts,
+with shared results across workers. The existing startup compatibility check adds
+the table and indexes idempotently. Alembic revision `20261028_analytics` provides
+the same additive upgrade. Deploy backend and built frontend together and restart.
+Existing login/session data is unchanged. To roll back the application, leave this
+additive table in place; the previous application ignores it. Alembic downgrade
+removes analytics data and requires an explicit decision to discard those records.
+No automatic retention/deletion job is installed. Historical Google Analytics
+data is not imported; collection starts with this deployment.
+
+Brave detection uses client hints or `navigator.brave.isBrave()` before login and
+API requests. Its display hint survives backend normalization and a heartbeat
+updates existing sessions after refreshing the page. Detection failure falls back
+to User-Agent; legacy sessions without a Brave signal cannot be corrected by
+guessing. Browser names are display information and never authorization evidence.
+
+Focused checks:
+
+```sh
+# From cors_dashboard/backend:
+python -m unittest tests.test_analytics tests.test_client_device tests.test_session_control tests.test_application_wiring
+# From repository root:
+node scripts/session_device_selftest.js
+node scripts/session_presence_selftest.js
+node scripts/analytics_tracker_selftest.js
+```

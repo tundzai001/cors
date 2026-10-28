@@ -2,6 +2,22 @@
   "routes": [
     {
       "type": "APIRoute",
+      "path": "/api/public/analytics/page",
+      "methods": [
+        "POST"
+      ],
+      "name": "record_page"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/admin/analytics",
+      "methods": [
+        "GET"
+      ],
+      "name": "analytics_report"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/users",
       "methods": [
         "GET"
@@ -520,6 +536,22 @@
     },
     {
       "type": "APIRoute",
+      "path": "/api/coordinates/catalog",
+      "methods": [
+        "GET"
+      ],
+      "name": "get_catalog"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/coordinates/convert",
+      "methods": [
+        "POST"
+      ],
+      "name": "convert"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/gnss/satellites/tle",
       "methods": [
         "GET"
@@ -613,6 +645,14 @@
         "GET"
       ],
       "name": "get_admin_caster_sources"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/admin/caster-sources/sync",
+      "methods": [
+        "POST"
+      ],
+      "name": "sync_admin_caster_sources"
     },
     {
       "type": "APIRoute",
@@ -1244,6 +1284,14 @@
     },
     {
       "type": "APIRoute",
+      "path": "/analytics",
+      "methods": [
+        "GET"
+      ],
+      "name": "serve_analytics"
+    },
+    {
+      "type": "APIRoute",
       "path": "/security",
       "methods": [
         "GET"
@@ -1257,6 +1305,14 @@
         "GET"
       ],
       "name": "serve_operations"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/coordinates",
+      "methods": [
+        "GET"
+      ],
+      "name": "serve_coordinates"
     },
     {
       "type": "APIRoute",

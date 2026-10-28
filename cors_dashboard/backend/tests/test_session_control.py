@@ -296,7 +296,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
                     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
                     with patch("app.crud.get_user_by_username", AsyncMock(return_value=viewer)):
                         authenticated = await auth.get_current_user(credentials=credentials, db=db)
-                        await session_heartbeat(current_user=authenticated)
+                        await session_heartbeat(request=request, current_user=authenticated, db=db)
                     response = await get_admin_sessions(request=request, auth_db=db, current_user=admin)
                     self.assertEqual([s["session_id"] for s in response["active_sessions"]], ["stale"])
                     self.assertEqual(response["active_sessions"][0]["last_active_at"], now + 46)

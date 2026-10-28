@@ -449,3 +449,16 @@ class VNProvincesMetadata(Base):
     dataset_version = Column(String(50), primary_key=True)
     latest_decree = Column(String(100), nullable=True)
     generated_at = Column(String(50), nullable=True)
+
+
+class AnalyticsPageView(AuthBase):
+    __tablename__ = 'analytics_page_views'
+
+    view_id = Column(String(36), primary_key=True)
+    visitor_id = Column(String(36), nullable=False, index=True)
+    path = Column(String(300), nullable=False)
+    device = Column(String(30), nullable=False)
+    os = Column(String(60), nullable=False)
+    browser = Column(String(30), nullable=False)
+    created_at = Column(BigInteger, nullable=False, index=True)
+    last_seen_at = Column(BigInteger, nullable=False, index=True)

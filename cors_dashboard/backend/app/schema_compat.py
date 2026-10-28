@@ -20,7 +20,19 @@ DEVICE_SCHEMA_STATEMENTS = (
 )
 
 
-AUTH_ZALO_SCHEMA_STATEMENTS = (
+ANALYTICS_SCHEMA_STATEMENTS = (
+    """CREATE TABLE IF NOT EXISTS analytics_page_views (
+        view_id VARCHAR(36) PRIMARY KEY, visitor_id VARCHAR(36) NOT NULL,
+        path VARCHAR(300) NOT NULL, device VARCHAR(30) NOT NULL,
+        os VARCHAR(60) NOT NULL, browser VARCHAR(30) NOT NULL,
+        created_at BIGINT NOT NULL, last_seen_at BIGINT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_analytics_page_views_visitor_id ON analytics_page_views(visitor_id)",
+    "CREATE INDEX IF NOT EXISTS ix_analytics_page_views_created_at ON analytics_page_views(created_at)",
+    "CREATE INDEX IF NOT EXISTS ix_analytics_page_views_last_seen_at ON analytics_page_views(last_seen_at)",
+)
+
+AUTH_ZALO_SCHEMA_STATEMENTS = ANALYTICS_SCHEMA_STATEMENTS + (
     "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS token_encrypted TEXT",
     "ALTER TABLE rover_accounts ADD COLUMN IF NOT EXISTS auto_save_sessions BOOLEAN NOT NULL DEFAULT TRUE",
     "ALTER TABLE rover_accounts ALTER COLUMN auto_save_sessions SET DEFAULT TRUE",

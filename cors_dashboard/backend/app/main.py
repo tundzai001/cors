@@ -453,6 +453,8 @@ from .lifecycle import lifespan
 app = FastAPI(title="CORS Geodetic Backend", lifespan=lifespan, version="0.1.0", docs_url=None, openapi_url=None)
 from .station_host_lock import check_host_lock
 from .routers import users, devices, api_keys
+from .analytics_routes import router as analytics_router
+app.include_router(analytics_router)
 app.include_router(users.router)
 app.include_router(devices.router)
 app.include_router(api_keys.router)
