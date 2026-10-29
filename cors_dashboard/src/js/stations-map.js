@@ -83,7 +83,10 @@
             const position = window.CorsReceiverCoordinates?.fromReceiver(readback.bestpos, true);
             const coords = position && normalizeCoords(position.lat, position.lon);
             if (coords) return { ...coords, source: position.isBaseFixed
-                ? 'Receiver · tọa độ Base đã chốt' : 'Receiver · vị trí tạm SINGLE, chưa chốt Survey-In' };
+                ? 'Receiver · tọa độ Base đã chốt'
+                : position.positionType === 'SURVEY-IN-ESTIMATE'
+                    ? 'Receiver · tọa độ Survey-In ước tính'
+                    : 'Receiver · vị trí tạm SINGLE, chưa chốt Survey-In' };
         }
         const cfg = device?.base_config || {};
         const cfgCoords = cfg.coords || {};

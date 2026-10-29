@@ -77,7 +77,7 @@ struct UbxBaseStatus {
         valid = p[36] == 1; active = p[37] == 1;
         duration = u32(p+8); observations = u32(p+32); accuracy = u32(p+28)*0.0001;
         hasPosition = false;
-        if (valid && !active) {
+        if (active || valid) {
             if (hp(p[24]) < -99 || hp(p[24]) > 99 || hp(p[25]) < -99 || hp(p[25]) > 99
                 || hp(p[26]) < -99 || hp(p[26]) > 99) return false;
             hasPosition = ecef(i32(p+12)*0.01 + hp(p[24])*0.0001,

@@ -987,7 +987,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </div>
                             ) : receiverInstantCoordinates ? (
                                 <div className="small text-warning mt-1">
-                                    Vị trí tức thời, chưa chốt Survey-In: <code>{receiverInstantCoordinates.lat}, {receiverInstantCoordinates.lon}</code>
+                                    Tọa độ ước tính đang hội tụ, chưa chốt Survey-In: <code>{receiverInstantCoordinates.lat}, {receiverInstantCoordinates.lon}</code>
                                     {' · '}h ellipsoid {receiverInstantCoordinates.alt} m · {receiverPosition.position_type}
                                 </div>
                             ) : receiverPosition.state === 'ok' && (

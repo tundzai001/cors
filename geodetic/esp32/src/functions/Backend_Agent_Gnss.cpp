@@ -36,7 +36,7 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
         const String mode = status.mode == 1 ? "Survey-In (NAV-SVIN)" : status.mode == 2 ? "Fixed LLA (CFG-TMODE3)" : "Rover (CFG-TMODE3)";
         doc["mode_kind"] = success ? kind : "unknown";
         doc["mode_raw"] = mode;
-        surveyInReadbackHasPosition_ = success && (status.mode == 1 || status.hasPosition);
+        surveyInReadbackHasPosition_ = success && status.hasPosition;
         surveyInReadbackReady_ = success && status.valid && !status.active && status.hasPosition;
         if (success) {
             if (status.mode == 1) {
@@ -57,17 +57,17 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
             doc["mean_accuracy_m"] = status.accuracy;
             doc["active"] = status.active;
             JsonObject position = doc.createNestedObject("bestpos");
-            position["state"] = surveyInReadbackReady_ ? "ok" : "unavailable";
-            if (surveyInReadbackReady_) {
+            position["state"] = status.hasPosition ? "ok" : "unavailable";
+            if (status.hasPosition) {
                 position["message"] = "UBX";
-                position["position_type"] = "FIXEDPOS";
+                position["position_type"] = surveyInReadbackReady_ ? "FIXEDPOS" : "SURVEY-IN-ESTIMATE";
                 position["datum"] = "WGS84";
                 position["altitude_reference"] = "ELLIPSOID";
                 char value[32];
                 snprintf(value, sizeof(value), "%.11f", status.latitude); position["lat"] = value;
                 snprintf(value, sizeof(value), "%.11f", status.longitude); position["lon"] = value;
                 snprintf(value, sizeof(value), "%.4f", status.height); position["alt"] = value;
-                saveSurveyResult(position, mode);
+                if (surveyInReadbackReady_) saveSurveyResult(position, mode);
             }
         } else {
             Serial.printf("[GNSS][READBACK][ERROR] UBX: %s\n", error.c_str());

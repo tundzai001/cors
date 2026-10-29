@@ -4,13 +4,16 @@
     window.CorsReceiverCoordinates = {
         fromReceiver(position, allowUnfixed = false) {
             if (position?.message !== 'UBX') return this.fromUnicore(position, allowUnfixed);
-            if (position.state !== 'ok' || position.position_type !== 'FIXEDPOS'
+            const isBaseFixed = position.position_type === 'FIXEDPOS';
+            const isSurveyEstimate = allowUnfixed && position.position_type === 'SURVEY-IN-ESTIMATE';
+            if (position.state !== 'ok' || (!isBaseFixed && !isSurveyEstimate)
                 || position.datum !== 'WGS84' || position.altitude_reference !== 'ELLIPSOID') return null;
             const { lat, lon, alt } = position;
             if ([lat, lon, alt].some(value => typeof value !== 'string'
                 || !/^-?\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(Number(value)))
                 || Math.abs(Number(lat)) > 90 || Math.abs(Number(lon)) > 180) return null;
-            return { lat, lon, alt, heightMsl: alt, undulation: '0.0000', source: 'UBX', isBaseFixed: true };
+            return { lat, lon, alt, heightMsl: alt, undulation: '0.0000', source: 'UBX',
+                positionType: position.position_type, isBaseFixed };
         },
         fromUnicore(position, allowUnfixed = false) {
             if (position?.state !== 'ok' || (position.position_type !== 'FIXEDPOS'
