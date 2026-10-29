@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -106,6 +107,12 @@ class StatusReconciler:
         boot_id = str(payload.get("status_boot_id") or "").strip() or None
         sequence = _as_sequence(payload.get("status_sequence"))
         agent_timestamp = _as_timestamp(payload.get("agent_timestamp", payload.get("timestamp")))
+        # ESP reports uptime until its clock is synchronized. Uptime resets on
+        # reboot and cannot order different boots or date a retained snapshot.
+        if agent_timestamp is not None and (
+            not math.isfinite(agent_timestamp) or agent_timestamp < 1_000_000_000
+        ):
+            agent_timestamp = None
         status = str(payload.get("status") or "").strip().lower()
         event = str(payload.get("status_event") or "").strip().lower()
         if not status:
@@ -170,8 +177,7 @@ class StatusReconciler:
             normalized["server_received_at"] = now
             normalized["status_revision"] = revision
             normalized["status_source"] = source_name
-            if agent_timestamp is not None:
-                normalized["agent_timestamp"] = agent_timestamp
+            normalized["agent_timestamp"] = agent_timestamp
 
             stored_sequence = sequence
             if previous and boot_id == previous.boot_id and event in {"lwt", "cleanup"}:
