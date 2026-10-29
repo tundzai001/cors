@@ -306,6 +306,10 @@ class CasterSourceCreateRequest(BaseModel):
     storing_data: bool = False
 
 
+class CasterSourceUpdateRequest(CasterSourceCreateRequest):
+    password: Optional[str] = None
+
+
 class CasterSourceDeleteRequest(BaseModel):
     host: Optional[str] = None
     identifier: str

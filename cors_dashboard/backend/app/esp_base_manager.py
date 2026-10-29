@@ -44,6 +44,12 @@ def _extract_esp_mountpoint(device: models.Device) -> Optional[str]:
     if not isinstance(cfg, dict):
         cfg = {}
 
+    for slot in (1, 2):
+        if str(cfg.get(f"server{slot}_enabled", '')).lower() in {'true', '1', 'on', 'yes'}:
+            selected = str(cfg.get(f"mountpoint{slot}") or '').strip().lstrip('/')
+            if selected:
+                return selected
+
     mp = cfg.get("mountpoint1") or cfg.get("active_mountpoint") or cfg.get("mountpoint") or cfg.get("source_mountpoint")
     if not mp and cfg.get("server1_enabled"):
         mp = cfg.get("mountpoint1")
@@ -73,14 +79,47 @@ async def _get_configured_casters() -> List[tuple[str, int]]:
     return casters
 
 
+def _device_source_destinations(device, mountpoint):
+    """Read enabled SOURCE destinations without any global-host fallback."""
+    cfg = crud.normalize_service_config(device.service_config)
+    targets = []
+    for slot in (1, 2):
+        host = str(cfg.get(f"serverhost{slot}") or "").strip()
+        flag = cfg.get(f"server{slot}_enabled")
+        enabled = bool(host) if flag is None else str(flag).lower() in {"true", "1", "yes", "on"}
+        mp = str(cfg.get(f"mountpoint{slot}") or mountpoint).strip().lstrip('/')
+        if not enabled or not host or mp != mountpoint:
+            continue
+        try:
+            port = int(cfg.get(f"port{slot}") or 2101)
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= port <= 65535:
+            continue
+        target = (host.rstrip('.').casefold(), port)
+        if target not in targets:
+            targets.append(target)
+    return targets
+
+
+async def _device_casters(device, mountpoint):
+    configured = await _get_configured_casters()
+    allowed = {host.rstrip('.').casefold(): (host, user, password) for host, _, user, password in configured}
+    return [(allowed[host][0], port, allowed[host][1], allowed[host][2])
+            for host, port in _device_source_destinations(device, mountpoint) if host in allowed]
+
+
 async def auto_provision_esp_rover_account(device: models.Device, mountpoint: str) -> bool:
     """Create a temporary rover account on Caster & DB for an active ESP32 Base."""
     username = mountpoint
     password = DEFAULT_ROVER_PASSWORD
     now = int(time.time())
 
-    # 1. Create on all configured Casters
-    casters = await _get_configured_casters()
+    # Provision only where this device publishes this mountpoint.
+    casters = await _device_casters(device, mountpoint)
+    if not casters:
+        return False
+    successful_hosts = []
     caster_success = False
     for host, port, user, pw in casters:
         try:
@@ -96,11 +135,15 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
             )
             if ok:
                 caster_success = True
+                successful_hosts.append(host)
                 logger.info(f"[ESP ROVER] Created user '{username}' on Caster {host}:{port}")
             else:
                 logger.warning(f"[ESP ROVER] Caster {host}:{port} returned non-success for '{username}'")
         except Exception as e:
             logger.error(f"[ESP ROVER] Error creating user '{username}' on Caster {host}:{port}: {e}")
+
+    if not caster_success:
+        return False
 
     # 2. Persist in Auth DB
     async with auth_session_scope() as auth_db:
@@ -112,6 +155,7 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
                 password=password,
                 base_serial=device.serial,
                 mountpoints=mountpoint,
+                target_casters=";".join(successful_hosts),
                 max_connections=0,  # 0 = không giới hạn kết nối
                 show_position=False,  # TẮT: không hiển thị vị trí trên bản đồ
                 auto_save_sessions=False,  # TẮT: không lưu phiên rover
@@ -130,6 +174,7 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
             # Update base_serial and ensure features remain disabled
             existing.base_serial = device.serial
             existing.mountpoints = mountpoint
+            existing.target_casters = ";".join(successful_hosts)
             existing.max_connections = 0
             existing.show_position = False
             existing.auto_save_sessions = False
@@ -140,11 +185,10 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
 
     # 3. Notify Decoder via MQTT
     lat, lon, alt = _extract_device_coords(device)
-    cfg = crud.normalize_service_config(device.service_config)
     await notify_decoder_worker("start", device.serial, mountpoint, username, password,
                                 lat=lat, lon=lon, alt=alt,
-                                host=cfg.get("serverhost1") or cfg.get("serverhost2"),
-                                port=cfg.get("port1") or cfg.get("port2"))
+                                host=successful_hosts[0],
+                                port=next(port for host, port, *_ in casters if host == successful_hosts[0]))
     return True
 
 
@@ -161,14 +205,19 @@ async def auto_deprovision_esp_rover_account(device_serial: str, username: str) 
                 models.RoverAccount.created_by_user_id.is_(None),
             )
         )
-        if not rs.scalars().all():
+        owned = rs.scalars().all()
+        if not owned:
             return False
+        target_hosts = {host.strip().rstrip('.').casefold() for rover in owned
+                        for host in (rover.target_casters or '').split(';') if host.strip()}
 
     await notify_decoder_worker("stop", device_serial, username, username, DEFAULT_ROVER_PASSWORD)
 
-    # 1. Delete on all configured Casters
+    # Only touch the destinations recorded for this system-owned account.
     casters = await _get_configured_casters()
     for host, port, user, pw in casters:
+        if host.rstrip('.').casefold() not in target_hosts:
+            continue
         try:
             client = CasterClient(host, port, admin_user=user, admin_password=pw)
             await client.delete_user(identifier="system", username=username)
@@ -284,14 +333,13 @@ async def sync_esp_base_rovers() -> None:
         status = str(dev.status or "").lower()
         mp = _extract_esp_mountpoint(dev)
 
-        cfg = crud.normalize_service_config(dev.service_config)
-        host = cfg.get('serverhost1') or cfg.get('serverhost2')
-        port = cfg.get('port1') or cfg.get('port2')
-        source_active = any(
-            s.mountpoint == mp and (not host or s.host == host)
-            and (not port or str(s.port) == str(port)) and _source_has_data(s, now)
-            for s in sources
-        )
+        destinations = _device_source_destinations(dev, mp)
+        active_source = next((s for s in sources if s.mountpoint == mp
+                              and (s.host.rstrip('.').casefold(), int(s.port)) in destinations
+                              and _source_has_data(s, now)), None)
+        source_active = active_source is not None
+        host = active_source.host if active_source else None
+        port = active_source.port if active_source else None
         if mp and not source_active:
             await notify_decoder_worker("stop", serial, mp, mp, DEFAULT_ROVER_PASSWORD)
 

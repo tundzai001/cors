@@ -612,33 +612,35 @@
         <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content bg-dark border-secondary shadow-lg">
                 <div class="modal-header border-secondary">
-                    <h5 class="modal-title text-white">Cấu hình Mountpoint mới</h5>
+                    <h5 class="modal-title text-white" id="mountpoint-modal-title">Cấu hình Mountpoint mới</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
                     <form id="create-mp-form">
+                        <p id="mountpoint-edit-note" class="alert alert-warning small d-none" role="note">Lưu thay đổi có thể ngắt kết nối đang dùng mountpoint này để áp dụng cấu hình mới.</p>
                         <div class="row g-4">
                             <!-- Left: Basic Config -->
                             <div class="col-md-6 border-end border-secondary pe-md-4">
                                 <h6 class="text-primary mb-3 small text-uppercase fw-bold"><i class="bi bi-link-45deg me-2"></i>Caster Connection</h6>
                                 <div class="mb-3">
-                                    <label class="form-label small text-muted fw-bold">Target Caster Host</label>
+                                    <label class="form-label small text-muted fw-bold" for="create-mp-host">Target Caster Host</label>
                                     <select class="form-select bg-dark border-secondary" id="create-mp-host">
                                         <!-- Populate via JS -->
                                     </select>
                                 </div>
                                 <div class="row g-3 mb-3">
                                     <div class="col-7">
-                                        <label class="form-label small text-muted fw-bold">Mountpoint Name</label>
+                                        <label class="form-label small text-muted fw-bold" for="create-mp-name">Mountpoint Name</label>
                                         <input type="text" class="form-control bg-dark border-secondary text-info fw-bold" id="create-mp-name" placeholder="Ví dụ: ATG.Hanoi" required>
                                     </div>
                                     <div class="col-5">
-                                        <label class="form-label small text-muted fw-bold">Password</label>
-                                        <input type="password" class="form-control bg-dark border-secondary" id="create-mp-password" required autocomplete="new-password">
+                                        <label class="form-label small text-muted fw-bold" for="create-mp-password">Password</label>
+                                        <input type="password" class="form-control bg-dark border-secondary" id="create-mp-password" required autocomplete="new-password" aria-describedby="mountpoint-password-help">
+                                        <small id="mountpoint-password-help" class="form-text d-none">Để trống để giữ mật khẩu hiện tại.</small>
                                     </div>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label small text-muted fw-bold">Identifier (Mô tả)</label>
+                                    <label class="form-label small text-muted fw-bold" for="create-mp-identifier">Identifier (Mô tả)</label>
                                     <input type="text" class="form-control bg-dark border-secondary" id="create-mp-identifier" placeholder="Ví dụ: Aitogy GNSS Station">
                                 </div>
                             </div>
@@ -648,11 +650,11 @@
                                 <h6 class="text-primary mb-3 small text-uppercase fw-bold"><i class="bi bi-cpu me-2"></i>Technical Params</h6>
                                 <div class="row g-3 mb-3">
                                     <div class="col-6">
-                                        <label class="form-label small text-muted fw-bold">Latitude</label>
+                                        <label class="form-label small text-muted fw-bold" for="create-mp-lat">Latitude</label>
                                         <input type="number" class="form-control bg-dark border-secondary" id="create-mp-lat" value="21.0717" step="0.000001">
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small text-muted fw-bold">Longitude</label>
+                                        <label class="form-label small text-muted fw-bold" for="create-mp-lon">Longitude</label>
                                         <input type="number" class="form-control bg-dark border-secondary" id="create-mp-lon" value="105.7735" step="0.000001">
                                     </div>
                                 </div>
@@ -660,15 +662,15 @@
                                 <div class="p-3 rounded bg-dark-subtle border border-secondary mb-3">
                                     <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" id="create-mp-auth" checked>
-                                        <label class="form-check-label small text-white">Auth Required</label>
+                                        <label class="form-check-label small text-white" for="create-mp-auth">Auth Required</label>
                                     </div>
                                     <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" id="create-mp-gga">
-                                        <label class="form-check-label small text-white">GGA Required</label>
+                                        <label class="form-check-label small text-white" for="create-mp-gga">GGA Required</label>
                                     </div>
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="create-mp-showpos" checked>
-                                        <label class="form-check-label small text-white">Show Position on Map</label>
+                                        <label class="form-check-label small text-white" for="create-mp-showpos">Show Position on Map</label>
                                     </div>
                                 </div>
                             </div>
@@ -766,6 +768,6 @@
     <script src="/assets/js/dist/ops-ui.min.js?v=20261009-notifications-v1" charset="UTF-8"></script>
     <script src="/assets/js/dist/i18n.min.js?v=20261017-base-brand-v1" charset="UTF-8"></script>
     <script src="/assets/js/dist/nav-manager.min.js?v=20261028-security-v2" charset="UTF-8"></script>
-    <script src="/assets/js/dist/rovers-global.min.js?v=20261029-caster-restore-v1" charset="UTF-8"></script>
+    <script src="/assets/js/dist/rovers-global.min.js?v=20261029-mountpoint-edit-v2" charset="UTF-8"></script>
 </body>
 </html>

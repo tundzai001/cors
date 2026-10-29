@@ -112,6 +112,24 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
         dev.service_config = {}
         self.assertIsNone(_extract_esp_mountpoint(dev))
 
+    async def test_device_caster_scope_obeys_enabled_host_port_and_mountpoint(self):
+        from app.esp_base_manager import _device_casters
+        cfg = {"server1_enabled": True, "serverhost1": "aitogy.com.vn", "port1": 2101,
+               "mountpoint1": "test_esp", "server2_enabled": False,
+               "serverhost2": "aitogy.click", "port2": 2101, "mountpoint2": "test_esp"}
+        device = models.Device(serial="esp_test", service_config=cfg)
+        configured = [("aitogy.com.vn",2101,"admin","secret"),("aitogy.click",2101,"admin","secret")]
+        with patch('app.esp_base_manager._get_configured_casters', AsyncMock(return_value=configured)):
+            self.assertEqual(await _device_casters(device, 'test_esp'), [configured[0]])
+            cfg['server2_enabled'] = True
+            self.assertEqual(await _device_casters(device, 'test_esp'), configured)
+            cfg['server1_enabled'] = False
+            cfg['server2_enabled'] = True
+            self.assertEqual(await _device_casters(device, 'test_esp'), [configured[1]])
+            self.assertEqual(await _device_casters(device, 'other_mp'), [])
+            cfg['server2_enabled'] = False
+            self.assertEqual(await _device_casters(device, 'test_esp'), [])
+
     @patch("app.esp_base_manager._get_configured_casters")
     @patch("app.esp_base_manager.notify_decoder_worker", new_callable=AsyncMock)
     @patch("app.esp_base_manager.auth_session_scope")
@@ -128,7 +146,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
         mock_rs.scalars.return_value.first.return_value = None
         mock_session.execute.return_value = mock_rs
 
-        dev = models.Device(serial="esp_1234567890AB", status="online")
+        dev = models.Device(serial="esp_1234567890AB", status="online", service_config={"server1_enabled": True, "serverhost1": "127.0.0.1", "port1": 2101, "mountpoint1": "ESP_TEST"})
         
         with patch("app.esp_base_manager.CasterClient") as MockCasterClient:
             mock_client_instance = AsyncMock()
@@ -166,7 +184,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
 
             # Check decoder notified
             mock_notify.assert_awaited_once_with(
-                "start", "esp_1234567890AB", "ESP_TEST", "ESP_TEST", DEFAULT_ROVER_PASSWORD, lat=0.0, lon=0.0, alt=0.0, host=None, port=None
+                "start", "esp_1234567890AB", "ESP_TEST", "ESP_TEST", DEFAULT_ROVER_PASSWORD, lat=0.0, lon=0.0, alt=0.0, host="127.0.0.1", port=2101
             )
 
     @patch("app.esp_base_manager._get_configured_casters")
@@ -184,6 +202,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
             username="ESP_TEST",
             base_serial="esp_1234567890AB",
             created_by_user_id=None,
+            target_casters="127.0.0.1",
         )
         mock_rs = MagicMock()
         mock_rs.scalars.return_value.all.return_value = [rover]
@@ -231,7 +250,7 @@ class EspBaseManagerTests(unittest.IsolatedAsyncioTestCase):
         dev_online = models.Device(
             serial="esp_ONLINE1111",
             status="online",
-            service_config={"mountpoint1": "ONLINE_MP"},
+            service_config={"mountpoint1": "ONLINE_MP", "serverhost1": "caster.test", "port1": 2101},
         )
         # Base 2: newly offline -> deprovision without a five-minute delay.
         dev_recent_offline = models.Device(

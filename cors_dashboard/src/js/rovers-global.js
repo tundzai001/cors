@@ -3280,7 +3280,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             let html = `
                 <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
                     <div class="d-flex flex-wrap align-items-center gap-2">
-                        <button type="button" class="btn btn-premium-primary btn-sm px-3" data-bs-toggle="modal" data-bs-target="#createMountpointModal">
+                        <button type="button" class="btn btn-premium-primary btn-sm px-3" id="new-mountpoint-btn">
                             <i class="bi bi-plus-circle me-1"></i> Tạo mountpoint
                         </button>
                         <button type="button" class="btn btn-outline-info btn-sm px-3" id="sync-mountpoints-btn">
@@ -3372,12 +3372,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         </div>
                                     </td>
                                     <td class="text-end">
-                                        <button type="button" class="btn btn-sm btn-outline-info restore-mp me-2" style="min-height:44px;white-space:nowrap" data-host="${host}" data-mountpoint="${rawMountpoint}" title="Khôi phục cấu hình mountpoint lên caster">
-                                            <i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Khôi phục
-                                        </button>
-                                        <button type="button" class="action-btn text-danger delete-mp" data-host="${host}" data-identifier="${escapeHtml(src.identifier || '')}" data-mountpoint="${rawMountpoint}" title="Delete">
-                                            <i class="bi bi-trash3"></i>
-                                        </button>
+                                        <div class="d-flex justify-content-end align-items-center gap-2 flex-nowrap">
+                                        <button type="button" class="btn btn-sm btn-outline-info edit-mp" style="min-height:44px;white-space:nowrap" data-index="${idx}" aria-label="Sửa mountpoint ${rawMountpoint}"><i class="bi bi-pencil-square me-1" aria-hidden="true"></i>Sửa</button>
+                                        ${src.on_caster === false ? `<button type="button" class="btn btn-sm btn-outline-warning restore-mp" style="min-height:44px;white-space:nowrap" data-host="${host}" data-mountpoint="${rawMountpoint}"><i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Khôi phục</button>` : ''}
+                                        <button type="button" class="action-btn text-danger delete-mp" data-host="${host}" data-identifier="${escapeHtml(src.identifier || '')}" data-mountpoint="${rawMountpoint}" title="Xóa mountpoint" aria-label="Xóa mountpoint ${rawMountpoint}"><i class="bi bi-trash3" aria-hidden="true"></i></button>
+                                        </div>
                                     </td>
                                 </tr>
                             `;
@@ -3432,6 +3431,41 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (modalHostSelect) {
                 modalHostSelect.innerHTML = hostOptions.map(h => `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`).join('');
             }
+
+            const openMountpointForm = (source = null) => {
+                const form = document.getElementById('create-mp-form');
+                if (!form) return;
+                form.reset();
+                form.dataset.editing = source ? 'true' : 'false';
+                const host = document.getElementById('create-mp-host');
+                const name = document.getElementById('create-mp-name');
+                const password = document.getElementById('create-mp-password');
+                host.disabled = Boolean(source);
+                name.readOnly = Boolean(source);
+                password.required = !source;
+                password.value = '';
+                password.placeholder = source ? 'Không đổi' : '';
+                document.getElementById('mountpoint-password-help').classList.toggle('d-none', !source);
+                document.getElementById('mountpoint-modal-title').textContent = source ? 'Sửa cấu hình Mountpoint' : 'Cấu hình Mountpoint mới';
+                document.getElementById('mountpoint-edit-note').classList.toggle('d-none', !source);
+                document.getElementById('create-mp-btn').innerHTML = source ? '<i class="bi bi-check-lg me-2" aria-hidden="true"></i>Lưu thay đổi' : '<i class="bi bi-plus-circle me-2" aria-hidden="true"></i>Tạo Mountpoint';
+                if (source) {
+                    host.value = source.host;
+                    name.value = source.mountpoint;
+                    document.getElementById('create-mp-identifier').value = source.identifier || '';
+                    document.getElementById('create-mp-lat').value = source.latitude ?? '';
+                    document.getElementById('create-mp-lon').value = source.longitude ?? '';
+                    const enabled = value => [true, 1, '1', 'true', 'B'].includes(value);
+                    document.getElementById('create-mp-auth').checked = enabled(source.auth_required);
+                    document.getElementById('create-mp-gga').checked = enabled(source.gga_required);
+                    document.getElementById('create-mp-showpos').checked = enabled(source.show_position);
+                }
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('createMountpointModal')).show();
+            };
+            document.getElementById('new-mountpoint-btn')?.addEventListener('click', () => openMountpointForm());
+            container.querySelectorAll('.edit-mp').forEach(btn => {
+                btn.onclick = () => openMountpointForm(sources[Number(btn.dataset.index)]);
+            });
 
             // --- LISTENERS ---
             const searchInput = document.getElementById('mountpoints-search');
@@ -3554,6 +3588,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 createForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const btn = document.getElementById('create-mp-btn');
+                    const editing = createForm.dataset.editing === 'true';
                     const payload = {
                         host: document.getElementById('create-mp-host').value,
                         mountpoint: document.getElementById('create-mp-name').value.trim(),
@@ -3564,21 +3599,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                         auth_required: document.getElementById('create-mp-auth').checked,
                         gga_required: document.getElementById('create-mp-gga').checked,
                         show_position: document.getElementById('create-mp-showpos').checked,
-                        storing_data: true,
-                        overlap_data: false,
-                        re_positioning: false
+                        ...(!editing ? {storing_data: true, overlap_data: false, re_positioning: false} : {})
                     };
 
+                    const label = btn.innerHTML;
                     try {
                         btn.disabled = true;
+                        btn.setAttribute('aria-busy', 'true');
+                        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Đang lưu…';
                         const res = await apiFetchRaw('/api/admin/caster-sources', {
-                            method: 'POST',
+                            method: editing ? 'PUT' : 'POST',
                             headers: API_HEADERS,
                             body: JSON.stringify(payload)
                         });
                         if (!res.ok) throw new Error((await res.json())?.detail || 'Lỗi khi tạo');
                         
-                        showToast('Đã tạo Mountpoint thành công', 'success');
+                        showToast(editing ? 'Đã lưu cấu hình Mountpoint' : 'Đã tạo Mountpoint thành công', 'success');
                         const modalEl = document.getElementById('createMountpointModal');
                         if (modalEl) {
                             const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
@@ -3591,6 +3627,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         showToast(err.message, 'danger');
                     } finally {
                         btn.disabled = false;
+                        btn.removeAttribute('aria-busy');
+                        btn.innerHTML = label;
                     }
                 });
                 createForm.dataset.listenerAttached = "true";

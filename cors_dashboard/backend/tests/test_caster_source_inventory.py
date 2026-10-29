@@ -108,6 +108,41 @@ class CasterSourceInventoryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(error.exception.status_code, 403)
         self.assertEqual(len(await self.rows()), 1)
 
+    async def test_edit_preserves_password_hidden_options_and_rolls_back_rejected_save(self):
+        await store.save_sources(self.db, 'caster.test', 2101, [{**self.source, 'storing_data': True, 'counter': 9}], 100)
+        await self.db.commit()
+        request = schemas.CasterSourceUpdateRequest(host='caster.test', mountpoint='BASE', identifier='Edited', latitude=22)
+        with patch('app.caster_client.CasterClient') as client, \
+             patch.object(caster_routes, 'lock_source_host', AsyncMock()), \
+             patch.object(caster_routes, 'validate_caster_hosts', side_effect=lambda hosts: hosts), \
+             patch.object(caster_routes, '_read_caster_config_from_env', return_value=(['caster.test'], {'port':2101})):
+            caster = client.return_value
+            caster.get_sources = AsyncMock(return_value=[{'mountpoint':'BASE','identifier':'Station'}])
+            caster.delete_source = AsyncMock(return_value=True)
+            caster.create_source = AsyncMock(return_value=True)
+            result = await caster_routes.update_admin_caster_source(request, self.db, self.admin)
+            self.assertEqual(result['status'], 'updated')
+            sent = caster.create_source.await_args.kwargs
+            self.assertEqual((sent['password'], sent['storing_data'], sent['counter']), ('private', True, 9))
+            self.assertEqual(sent['longitude'], 105.7)
+            self.assertEqual((await self.rows())[0].source_data['identifier'], 'Edited')
+            caster.create_source.reset_mock()
+            caster.create_source.side_effect = [False, True]
+            request.identifier = 'Rejected'
+            with self.assertRaises(HTTPException) as error:
+                await caster_routes.update_admin_caster_source(request, self.db, self.admin)
+            self.assertEqual(error.exception.status_code, 502)
+            self.assertEqual(caster.create_source.await_count, 2)
+            self.assertEqual(caster.create_source.await_args.kwargs['identifier'], 'Edited')
+            self.assertEqual((await self.rows())[0].source_data['identifier'], 'Edited')
+
+    async def test_presence_is_unknown_until_a_successful_host_observation(self):
+        await store.save_sources(self.db, 'caster.test', 2101, [self.source], 100)
+        rows = await self.rows()
+        self.assertIsNone(store.inventory_response(rows)['all'][0]['on_caster'])
+        self.assertTrue(store.inventory_response(rows, observations={'caster.test':100})['all'][0]['on_caster'])
+        self.assertFalse(store.inventory_response(rows, observations={'caster.test':101})['all'][0]['on_caster'])
+
     async def test_explicit_sync_reports_partial_failure_and_requires_admin(self):
         results = [{'host': 'one.test', 'error': None}, {'host': 'two.test', 'error': 'offline'}]
         with patch.object(caster_routes, '_read_caster_config_from_env', return_value=(['one.test', 'two.test'], {})), \

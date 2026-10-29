@@ -237,7 +237,12 @@ async def get_admin_caster_sources(
         raise HTTPException(status_code=403, detail="Chỉ ADMIN mới có quyền xem toàn bộ mountpoints từ Caster")
     result = await db.execute(select(models.CasterSource).order_by(models.CasterSource.host, models.CasterSource.mountpoint))
     hosts, _ = _read_caster_config_from_env()
-    return inventory_response(result.scalars().all(), hosts)
+    async with global_caster_cache_lock:
+        observations = {str(item.get('host') or '').lower(): int(item['sources_last_update'])
+                        for item in (await _get_all_caster_cache()).values()
+                        if not item.get('sources_error') and item.get('sources_last_update')
+                        and time.time() - int(item['sources_last_update']) <= 120}
+    return inventory_response(result.scalars().all(), hosts, observations)
 
 
 @router.post("/api/admin/caster-sources/sync")
@@ -297,6 +302,54 @@ async def restore_admin_caster_source(
     if not await caster.create_source(**source.model_dump(exclude={"host"})):
         raise HTTPException(status_code=502, detail="Caster chưa xác nhận khôi phục mountpoint; cấu hình đã lưu được giữ nguyên.")
     return {"status": "restored", "host": host, "mountpoint": saved.mountpoint}
+
+
+@router.put("/api/admin/caster-sources")
+async def update_admin_caster_source(
+    req: schemas.CasterSourceUpdateRequest,
+    db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ ADMIN được sửa mountpoint")
+    try:
+        host = validate_caster_hosts([req.host or ""])[0]
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
+    _, config = _read_caster_config_from_env()
+    port = int(config.get("port") or settings.CASTER_PORT or 2101)
+    await lock_source_host(db, host, port)
+    saved = (await db.execute(select(models.CasterSource).where(
+        models.CasterSource.host == host.lower(), models.CasterSource.port == port,
+        models.CasterSource.mountpoint == req.mountpoint.strip(),
+    ))).scalars().first()
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy mountpoint đã lưu")
+    fields = schemas.CasterSourceCreateRequest.model_fields
+    old = {k: v for k, v in (saved.source_data or {}).items() if k in fields}
+    old.update(mountpoint=saved.mountpoint, password=saved.password,
+               identifier=(saved.source_data or {}).get('identifier') or '')
+    values = {**old, **req.model_dump(exclude_unset=True, exclude={'host', 'mountpoint', 'password'})}
+    values['password'] = req.password or saved.password
+    if not values['password'] or not saved.password:
+        raise HTTPException(status_code=409, detail="Thiếu mật khẩu đã lưu; không thể sửa an toàn. Hãy tạo lại mountpoint với mật khẩu đầy đủ.")
+    desired = schemas.CasterSourceCreateRequest(**values).model_dump(exclude={'host'})
+    from .caster_client import CasterClient
+    caster = CasterClient(host, port)
+    live = await caster.get_sources()
+    if live is None:
+        raise HTTPException(status_code=502, detail="Không đọc được caster; chưa thay đổi cấu hình.")
+    existing = next((item for item in live if item.get('mountpoint') == saved.mountpoint), None)
+    if existing is not None and not await caster.delete_source(existing.get('identifier') or '', saved.mountpoint):
+        raise HTTPException(status_code=502, detail="Caster chưa xác nhận cập nhật; cấu hình đã lưu được giữ nguyên.")
+    if not await caster.create_source(**desired):
+        rollback = schemas.CasterSourceCreateRequest(**old).model_dump(exclude={'host'})
+        restored = await caster.create_source(**rollback)
+        detail = "Lưu thất bại; đã gửi lại cấu hình cũ." if restored else "Lưu thất bại; cấu hình cũ vẫn được giữ. Cần khôi phục mountpoint trên caster."
+        raise HTTPException(status_code=502, detail=detail)
+    await save_sources(db, host, port, [desired], int(time.time()))
+    await db.commit()
+    return {'status': 'updated', 'host': host, 'mountpoint': saved.mountpoint}
 
 
 @router.post("/api/admin/caster-sources")

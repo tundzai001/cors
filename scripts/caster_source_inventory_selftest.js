@@ -13,7 +13,7 @@ const container = { innerHTML: '', querySelector() { return null; }, querySelect
 const fields = { 'mountpoints-container': container, 'sync-mountpoints-btn': button,
   'mountpoints-table-body': { querySelectorAll() { return []; } } };
 const snapshot = { total: 1, last_synced_at: 1700000000,
-  all: [{ mountpoint: 'SAVED.BASE', identifier: 'Saved station', host: 'caster.test', domain: 'caster.test', datacount: 123 }],
+  all: [{ mountpoint: 'SAVED.BASE', identifier: 'Saved station', host: 'caster.test', domain: 'caster.test', datacount: 123, on_caster: false }],
   by_host: { 'caster.test': [{}] }, by_domain: { 'caster.test': [{}] } };
 let inventory = snapshot, releaseSync, failInventory = false;
 const context = vm.createContext({ console, Date, Number, API_HEADERS: {}, casterSourcesCache: {}, mountpointsRefreshInProgress: false,

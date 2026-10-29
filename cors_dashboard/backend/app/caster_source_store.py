@@ -89,13 +89,15 @@ async def sync_configured_sources(hosts, config):
                                                      config.get('user'), config.get('pass')) for host in hosts))
 
 
-def inventory_response(rows, configured_hosts=()):
+def inventory_response(rows, configured_hosts=(), observations=None):
     by_host = {host: [] for host in configured_hosts}
     by_domain = {}
     sources = []
     for row in rows:
         source = {**row.source_data, 'mountpoint': row.mountpoint, 'host': row.host,
                   'port': row.port, 'domain': source_domain(row.host), 'last_seen_at': row.last_seen_at}
+        observation = (observations or {}).get(row.host.lower())
+        source['on_caster'] = (row.last_seen_at >= observation) if observation is not None else None
         # Never include source passwords in list responses.
         source.pop('password', None)
         sources.append(source)
