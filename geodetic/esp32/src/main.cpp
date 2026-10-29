@@ -13,7 +13,6 @@ Preferences prefs;
 extern PubSubClient mqtt;
 
 namespace {
-    constexpr uint8_t CONNECTION_FAIL_LIMIT = 5;
     constexpr uint32_t GNSS_DATA_TIMEOUT_MS = 5000;
 
     // The MQTT task also runs WebSocket and JSON command handling, so it
@@ -44,6 +43,9 @@ SemaphoreHandle_t gnssSerialMutex = nullptr;
 void initPrefs();
 static void serviceMqtt(const bool reconnect);
 static void settleModemBeforeNtrip();
+static bool simInternetAvailable();
+static bool tryWifiFallback(bool protocolsRunning);
+static void checkSimInternetFallback();
 
 __attribute__((noreturn)) void taskNtrip([[maybe_unused]] void *parameter);
 __attribute__((noreturn)) void healthCheckTask([[maybe_unused]] void *parameter);
@@ -149,7 +151,8 @@ void setup() {
         } else {
             Serial.println("[SETUP] Su dung ket noi SIM/GSM");
             DeviceRuntime::gsmDisconnectCount = 0;
-            networkConnected = startSIM() && connectGSM();
+            networkConnected = startSIM() && connectGSM(1) && simInternetAvailable();
+            if (!networkConnected) networkConnected = tryWifiFallback(false);
         }
         if (networkConnected) {
             Serial.println("[SETUP] Ket noi mang thanh cong!");
@@ -206,17 +209,15 @@ __attribute__((noreturn)) void taskNtrip([[maybe_unused]] void *parameter) {
         }
 
         if (isGsmConnection()) {
-            bool gprsConnected = false;
-            if (xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
-                gprsConnected = modem.isGprsConnected();
-                xSemaphoreGive(tcpStreamMutex);
+            if (!xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
             }
+            const bool gprsConnected = modem.isGprsConnected();
+            xSemaphoreGive(tcpStreamMutex);
             if (!gprsConnected) {
-                if (++DeviceRuntime::gsmDisconnectCount >= CONNECTION_FAIL_LIMIT) {
-                    Serial.println("[GSM TASK][ERROR] GPRS mat ket noi qua 5 lan, khoi dong lai ESP32...");
-                    shutdownTcpTransportBeforeRestart();
-                    ESP.restart();
-                }
+                // The network manager retries SIM or switches to Wi-Fi. Keep
+                // GNSS and the local console alive while connectivity recovers.
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
             }
@@ -226,17 +227,8 @@ __attribute__((noreturn)) void taskNtrip([[maybe_unused]] void *parameter) {
             // loopNTRIP owns reconnect attempts and the per-endpoint backoff.
             loopStatus = loopNTRIP(rtcmRead);
             xSemaphoreGive(tcpStreamMutex);
-            ++DeviceRuntime::ntripDisconnectCount;
-            if (
-                (loopStatus == 500 || loopStatus == 504 || !isNtripConnected())
-                && DeviceRuntime::ntripDisconnectCount >= CONNECTION_FAIL_LIMIT
-            ) {
-                    Serial.println("[NTRIP TASK][ERROR] NTRIP mat ket noi qua 5 lan, khoi dong lai ESP32...");
-                    shutdownTcpTransportBeforeRestart();
-                    ESP.restart();
-            } else {
-                DeviceRuntime::ntripDisconnectCount = 0;
-            }
+            // A caster rejection is not a hardware failure. loopNTRIP keeps
+            // its per-endpoint reconnect backoff while MQTT remains available.
             #if PROGRAM_DEBUG
             Serial.println("[NTRIP TASK] loopNTRIP() tra ve: " + String(loopStatus));
             #endif
@@ -303,7 +295,9 @@ void loop() {
 #if RTCM_COMMUNICATION_PROTOCOL == TCP_IP
             stopNtrip();
 #endif
-            if (connectGSM()) {
+            if (tryWifiFallback(true)) {
+                DeviceRuntime::gsmDisconnectCount = 0;
+            } else if (connectGSM(1)) {
                 DeviceRuntime::gsmDisconnectCount = 0;
 #if RTCM_COMMUNICATION_PROTOCOL == TCP_IP
                 setupNTRIP();
@@ -315,6 +309,7 @@ void loop() {
         } else {
             DeviceRuntime::gsmDisconnectCount = 0;
             digitalWrite(LED_PIN, LOW);
+            checkSimInternetFallback();
         }
         xSemaphoreGive(tcpStreamMutex);
     }
@@ -325,6 +320,60 @@ void loop() {
         digitalWrite(LED_PIN, LOW);
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
+}
+
+// Called with the shared modem mutex held once worker tasks are running.
+static bool simInternetAvailable() {
+    static TinyGsmClient probe(modem, 4); // Modem retains this pointer; keep it alive.
+    // S1=0, MQTT=1, S2=2, WebSocket=3.
+    const bool reachable = probe.connect("1.1.1.1", 443, 3);
+    probe.stop(1000);
+    return reachable;
+}
+
+static bool tryWifiFallback(bool protocolsRunning) {
+    Serial.println("[NETWORK] SIM khong co Internet; thu Wi-Fi du phong da luu.");
+    if (!setupWiFi()) return false;
+    WiFiClient probe;
+    const bool reachable = probe.connect(IPAddress(1, 1, 1, 1), 443, 3000);
+    probe.stop();
+    if (!reachable) {
+        Serial.println("[NETWORK] Wi-Fi co ket noi nhung chua truy cap duoc Internet; tiep tuc thu SIM.");
+        WiFi.disconnect();
+        return false;
+    }
+    if (protocolsRunning) {
+        mqtt.disconnect();
+        stopNtrip(); // Close the GSM sockets before changing client selection.
+    }
+    connectionType = ConnectionType::WIFI;
+    backendAgent.onNetworkChanged();
+    if (protocolsRunning) {
+        setupMQTT();
+        setupNTRIP();
+        connectNTRIP();
+    }
+    Serial.println("[NETWORK] Da chuyen sang Wi-Fi du phong; giu nguyen tuy chon SIM da luu.");
+    return true;
+}
+
+static void checkSimInternetFallback() {
+    static uint32_t lastCheckMs = 0;
+    static uint8_t failedChecks = 0;
+    if (!isGsmConnection()) return;
+    if (mqtt.connected() || isNtripConnected()) {
+        failedChecks = 0;
+        return; // Existing working services are stronger evidence than a probe.
+    }
+    const uint32_t now = millis();
+    if (now - lastCheckMs < 15000UL) return;
+    lastCheckMs = now;
+    if (simInternetAvailable()) {
+        failedChecks = 0;
+        return; // Broker/caster failure alone must not force a network switch.
+    }
+    if (failedChecks < 2) ++failedChecks;
+    if (failedChecks >= 2 && tryWifiFallback(true)) failedChecks = 0;
 }
 
 static void settleModemBeforeNtrip() {

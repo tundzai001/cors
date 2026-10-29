@@ -26,6 +26,7 @@ public:
 
     void onMqttConnected();
     void onMqttDisconnected();
+    void onNetworkChanged();
     void onMqttMessage(const char *topic, const uint8_t *payload, size_t length);
 
     void enqueueNmea(const uint8_t *data, size_t length);

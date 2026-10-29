@@ -704,6 +704,12 @@ void BackendAgent::onMqttConnected() {
     publishStatus(true);
 }
 
+void BackendAgent::onNetworkChanged() {
+    onMqttDisconnected();
+    statusDirty_ = true;
+    refreshWebsocket();
+}
+
 void BackendAgent::onMqttDisconnected() {
     mqttConnected_ = false;
 }
