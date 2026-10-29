@@ -1,4 +1,4 @@
-# ESP32 V2.3.6: SIM và Wi-Fi dự phòng
+# ESP32 V2.3.5: SIM và Wi-Fi dự phòng
 
 Nếu lựa chọn đã lưu là 4G, firmware thử SIM trước. Khi khởi động, mỗi lượt kết nối GSM chỉ thử một lần trước khi chuyển sang thử Wi-Fi đã lưu. Khi đang chạy, mất GPRS sẽ kích hoạt thử Wi-Fi; nếu GPRS còn nhưng cả MQTT và NTRIP đều mất kết nối, firmware kiểm tra đường TCP Internet mỗi 15 giây và thử Wi-Fi sau hai lần kiểm tra thất bại. Broker/caster lỗi trong khi Internet vẫn đi được không tự ép chuyển mạng.
 
