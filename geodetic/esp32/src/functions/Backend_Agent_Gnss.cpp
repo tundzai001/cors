@@ -39,6 +39,17 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
         surveyInReadbackHasPosition_ = success && (status.mode == 1 || status.hasPosition);
         surveyInReadbackReady_ = success && status.valid && !status.active && status.hasPosition;
         if (success) {
+            if (status.mode == 1) {
+                Serial.printf("[GNSS][READBACK] UBX Survey-In elapsed=%lus/%lus observations=%lu accuracy=%.3fm active=%u valid=%u\n",
+                              static_cast<unsigned long>(status.duration),
+                              static_cast<unsigned long>(status.targetSeconds),
+                              static_cast<unsigned long>(status.observations), status.accuracy,
+                              static_cast<unsigned int>(status.active), static_cast<unsigned int>(status.valid));
+            } else {
+                Serial.printf("[GNSS][READBACK] UBX mode=%s; position=%s\n",
+                              status.mode == 2 ? "Fixed" : "Rover",
+                              status.hasPosition ? "valid" : "unavailable");
+            }
             surveyInMonitoring_ = status.mode == 1;
             if (surveyInMonitoring_) surveyInTargetSeconds_ = status.targetSeconds;
             doc["elapsed_seconds"] = status.duration;
@@ -58,7 +69,10 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
                 snprintf(value, sizeof(value), "%.4f", status.height); position["alt"] = value;
                 saveSurveyResult(position, mode);
             }
-        } else doc["error"] = error;
+        } else {
+            Serial.printf("[GNSS][READBACK][ERROR] UBX: %s\n", error.c_str());
+            doc["error"] = error;
+        }
         receiverBaseReadback_.clear(); serializeJson(doc, receiverBaseReadback_);
         receiverBaseReadbackMs_ = millis(); markStatusDirty();
         return success;
