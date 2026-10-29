@@ -11,7 +11,7 @@ from . import auth, crud, models, schemas
 from .database import get_auth_db, get_db, settings
 from .station_config import _device_service_config
 from .runtime_config import _read_caster_config_from_env
-from .caster_helpers import validate_caster_hosts
+from .caster_helpers import validate_caster_hosts, saved_rover_duration
 
 logger = logging.getLogger("app.main")
 router = APIRouter()
@@ -226,6 +226,7 @@ async def sync_rover_by_username(
     # 5. ĐỒNG BỘ SANG CASTER (Đồng bộ trên toàn bộ Caster được cấu hình)
     try:
         port = int(config.get("port") or settings.CASTER_PORT or 2101)
+        failed_hosts = []
         for host in target_hosts:
             try:
                 from app.caster_client import CasterClient
@@ -235,9 +236,7 @@ async def sync_rover_by_username(
                 else:
                     duration_seconds = await caster.get_user_remaining_seconds(username)
                     if duration_seconds is None:
-                        if host in (rover.target_casters or "").split(";"):
-                            raise ValueError(f"Không đọc được thời hạn Rover '{username}' trên Caster {host}")
-                        duration_seconds = max(0, int(rover.expires_at - time.time())) if rover.expires_at else 315360000
+                        duration_seconds = saved_rover_duration(rover)
                 created_ok = await caster.create_user(
                     creator=current_user.username,
                     username=username,
@@ -247,10 +246,10 @@ async def sync_rover_by_username(
                     max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
                     show_position=update_req.show_position if update_req.show_position is not None else rover.show_position,
                     rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False) if update_req.rtcm_cycle_enabled is None else update_req.rtcm_cycle_enabled),
-                    rtcm_disconnect_interval_seconds=int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) if update_req.rtcm_disconnect_interval_seconds is None else update_req.rtcm_disconnect_interval_seconds),
+                    rtcm_disconnect_interval_seconds=int((getattr(rover, "rtcm_disconnect_interval_seconds", None) or 300) if update_req.rtcm_disconnect_interval_seconds is None else update_req.rtcm_disconnect_interval_seconds),
                 )
                 if not created_ok:
-                    logger.warning(f"Sync-by-username did not get caster confirmation for '{username}' on host {host}")
+                    raise RuntimeError("Caster did not confirm account restore/update")
 
                 # Sync show_position again specifically to be safe
                 if update_req.show_position is not None:
@@ -269,14 +268,20 @@ async def sync_rover_by_username(
                         logger.warning(f"Sync-by-username could not confirm show_position toggle for '{username}' on host {host}")
             except Exception as host_err:
                 logger.error(f"Failed to sync '{username}' to caster host {host}: {host_err}")
+                failed_hosts.append(host)
+        if failed_hosts:
+            raise HTTPException(status_code=502, detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Có thể thử lại.")
 
         # Cập nhật target_casters trong DB
         if target_hosts:
             db_target_casters = ";".join(target_hosts)
             if db_target_casters != rover.target_casters:
                 rover = await crud.update_rover_account(db, rover.id, {"target_casters": db_target_casters})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Sync Caster Error for '{username}': {e}")
+        raise HTTPException(status_code=502, detail="Chưa thể đồng bộ Rover sang caster; hãy thử lại.") from None
 
     return rover
 

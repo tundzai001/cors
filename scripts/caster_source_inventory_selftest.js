@@ -7,7 +7,9 @@ const events = {}, calls = [], messages = [];
 const button = { disabled: false, innerHTML: 'Đồng bộ caster',
   addEventListener(type, callback) { events[type] = callback; },
   setAttribute(key, value) { this[key] = value; }, removeAttribute(key) { delete this[key]; }, focus() {} };
-const container = { innerHTML: '', querySelector() { return null; }, querySelectorAll() { return []; } };
+let restoreConfirmed = true, restoreFails = false;
+const restoreButton = { innerHTML: 'Khôi phục', disabled: false, dataset: {host:'caster.test',mountpoint:'SAVED.BASE'}, setAttribute(k,v){this[k]=v;}, removeAttribute(k){delete this[k];} };
+const container = { innerHTML: '', querySelector() { return null; }, querySelectorAll(selector) { return selector === '.restore-mp' ? [restoreButton] : []; } };
 const fields = { 'mountpoints-container': container, 'sync-mountpoints-btn': button,
   'mountpoints-table-body': { querySelectorAll() { return []; } } };
 const snapshot = { total: 1, last_synced_at: 1700000000,
@@ -15,11 +17,13 @@ const snapshot = { total: 1, last_synced_at: 1700000000,
   by_host: { 'caster.test': [{}] }, by_domain: { 'caster.test': [{}] } };
 let inventory = snapshot, releaseSync, failInventory = false;
 const context = vm.createContext({ console, Date, Number, API_HEADERS: {}, casterSourcesCache: {}, mountpointsRefreshInProgress: false,
+  window: { CorsUI: { confirmAction: async () => restoreConfirmed } },
   escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
   showToast: (message, type) => messages.push({ message, type }),
   document: { getElementById: id => fields[id], querySelector: () => null, querySelectorAll: () => [] },
   apiFetchRaw: async (url, options = {}) => {
-    calls.push({ url, method: options.method || 'GET' });
+    calls.push({ url, method: options.method || 'GET', body: options.body });
+    if (url.endsWith('/restore')) return { ok: !restoreFails, json: async () => restoreFails ? {detail:'Caster unavailable; retry'} : {status:'restored'} };
     if (url.endsWith('/sync')) return new Promise(resolve => { releaseSync = result => resolve({ ok: true, json: async () => result }); });
     return { ok: !failInventory, json: async () => inventory };
   },
@@ -32,6 +36,23 @@ vm.runInContext(source.slice(source.indexOf('    async function loadAndRenderMou
   assert(container.innerHTML.includes('SAVED.BASE'));
   assert(container.innerHTML.includes('Đồng bộ caster'));
   assert(container.innerHTML.includes('Cập nhật:'));
+  assert(container.innerHTML.includes('restore-mp'));
+  restoreConfirmed = false;
+  await restoreButton.onclick();
+  assert.equal(calls.length, 1, 'Cancel restore makes no request');
+  restoreConfirmed = true;
+  await restoreButton.onclick();
+  assert.equal(calls.at(-1).url, '/api/admin/caster-sources/restore');
+  assert.equal(calls.at(-1).body, JSON.stringify({host:'caster.test',mountpoint:'SAVED.BASE'}));
+  assert.equal(restoreButton.disabled, false);
+  assert(!('aria-busy' in restoreButton));
+  restoreFails = true;
+  await restoreButton.onclick();
+  assert(messages.some(item => item.type === 'danger' && item.message.includes('retry')));
+  assert.equal(restoreButton.innerHTML, 'Khôi phục');
+  restoreFails = false;
+  calls.splice(1);
+
   const pending = events.click();
   assert.equal(button.disabled, true);
   assert.equal(button['aria-busy'], 'true');

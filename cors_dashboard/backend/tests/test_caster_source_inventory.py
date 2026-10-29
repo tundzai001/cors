@@ -76,6 +76,38 @@ class CasterSourceInventoryTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(result['error'])
         self.assertEqual(len(await self.rows()), 1)
 
+    async def test_restore_uses_saved_secret_and_never_overwrites_live_source(self):
+        await store.save_sources(self.db, 'caster.test', 2101, [self.source], 100)
+        await self.db.commit()
+        req = schemas.CasterSourceRestoreRequest(host='caster.test', mountpoint='BASE')
+        with patch('app.caster_client.CasterClient') as client, \
+             patch.object(caster_routes, 'lock_source_host', AsyncMock()), \
+             patch.object(caster_routes, 'validate_caster_hosts', side_effect=lambda hosts: hosts), \
+             patch.object(caster_routes, '_read_caster_config_from_env', return_value=(['caster.test'], {'port': 2101})):
+            caster = client.return_value
+            caster.get_sources = AsyncMock(return_value=[])
+            caster.create_source = AsyncMock(return_value=True)
+            result = await caster_routes.restore_admin_caster_source(req, self.db, self.admin)
+            self.assertEqual(result['status'], 'restored')
+            self.assertNotIn('private', str(result))
+            self.assertEqual(caster.create_source.await_args.kwargs['password'], 'private')
+            self.assertEqual(caster.create_source.await_args.kwargs['latitude'], 21.1)
+            self.assertEqual((await self.rows())[0].last_seen_at, 100)
+            caster.create_source.reset_mock()
+            caster.get_sources.return_value = [{'mountpoint': 'BASE'}]
+            result = await caster_routes.restore_admin_caster_source(req, self.db, self.admin)
+            self.assertEqual(result['status'], 'already_present')
+            caster.create_source.assert_not_awaited()
+            caster.get_sources.return_value = None
+            with self.assertRaises(HTTPException) as error:
+                await caster_routes.restore_admin_caster_source(req, self.db, self.admin)
+            self.assertEqual(error.exception.status_code, 502)
+            caster.create_source.assert_not_awaited()
+            with self.assertRaises(HTTPException) as error:
+                await caster_routes.restore_admin_caster_source(req, self.db, SimpleNamespace(role='viewer'))
+            self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(len(await self.rows()), 1)
+
     async def test_explicit_sync_reports_partial_failure_and_requires_admin(self):
         results = [{'host': 'one.test', 'error': None}, {'host': 'two.test', 'error': 'offline'}]
         with patch.object(caster_routes, '_read_caster_config_from_env', return_value=(['one.test', 'two.test'], {})), \

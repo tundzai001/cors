@@ -8,7 +8,7 @@ from ..database import get_auth_db, get_db
 from .. import crud, models, schemas, auth, license_manager, command_builder
 from .. import mqtt as mqtt_handler
 from ..command_dispatcher import send_command_to_pi
-from ..caster_helpers import _read_caster_config_from_env, get_caster_client, global_caster_cache_lock, validate_caster_hosts
+from ..caster_helpers import _read_caster_config_from_env, get_caster_client, global_caster_cache_lock, validate_caster_hosts, saved_rover_duration
 from ..caster_client import CasterClient
 from ..database import settings
 from ..websocket import manager as ui_manager
@@ -734,11 +734,13 @@ async def update_rover(
             for host in updated_target_hosts:
                 remaining = await CasterClient(host, port).get_user_remaining_seconds(rover.username)
                 if remaining is None:
-                    if host in old_hosts_set or host in live_hosts_set:
-                        raise HTTPException(status_code=502, detail=f"Không đọc được thời hạn Rover '{rover.username}' trên Caster {host}.")
-                    remaining = max(0, int(rover.expires_at - time.time())) if rover.expires_at else 315360000
+                    try:
+                        remaining = saved_rover_duration(rover)
+                    except ValueError as exc:
+                        raise HTTPException(status_code=409, detail=str(exc)) from None
                 durations_by_host[host] = remaining
 
+        failed_hosts = []
         # 4a. Update/Create on selected hosts
         for host in updated_target_hosts:
             try:
@@ -757,7 +759,7 @@ async def update_rover(
                     rtcm_disconnect_duration_seconds=int(target_rtcm_cycle_duration),
                 )
                 if not created_ok:
-                    logger.warning(f"Caster {host} did not confirm create/update for rover '{rover.username}'")
+                    raise RuntimeError("Caster did not confirm account restore/update")
 
                 # Ensure show_position is synced on legacy caster variants.
                 toggle_ok = False
@@ -774,6 +776,9 @@ async def update_rover(
                 results_log.append(host)
             except Exception as e:
                 logger.error(f"Failed to update rover on caster {host}: {e}")
+                failed_hosts.append(host)
+        if failed_hosts:
+            raise HTTPException(status_code=502, detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Cấu hình đã lưu được giữ nguyên; có thể thử lại.")
 
         # 4b. Cleanup removed hosts
         for host in removed_hosts:

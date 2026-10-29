@@ -19,6 +19,18 @@ ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
 global_caster_cache_lock = asyncio.Lock()
 
 
+def saved_rover_duration(rover) -> int:
+    """Restore a missing account without renewing expired/disabled access."""
+    if rover.is_active is False:
+        raise ValueError("Rover đang bị khóa; cần mở khóa trước khi khôi phục.")
+    if rover.expires_at is None:
+        return 315360000
+    remaining = int(rover.expires_at - time.time())
+    if remaining <= 0:
+        raise ValueError("Rover đã hết hạn; chọn thời hạn gia hạn để khôi phục.")
+    return remaining
+
+
 def _read_caster_config_from_env() -> tuple[list[str], dict]:
     env_values = dotenv_values(ENV_FILE_PATH)
     get_value = lambda key: os.getenv(key) or env_values.get(key)

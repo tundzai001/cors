@@ -311,6 +311,11 @@ class CasterSourceDeleteRequest(BaseModel):
     identifier: str
     mountpoint: str
 
+
+class CasterSourceRestoreRequest(BaseModel):
+    host: str = Field(..., min_length=1)
+    mountpoint: str = Field(..., min_length=1)
+
 # --- USER SCHEMAS ---
 class UserBase(BaseModel):
     username: str

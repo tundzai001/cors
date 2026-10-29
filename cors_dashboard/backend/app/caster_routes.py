@@ -253,6 +253,52 @@ async def sync_admin_caster_sources(
     return {'results': results, 'synced_hosts': sum(result['error'] is None for result in results)}
 
 
+@router.post("/api/admin/caster-sources/restore")
+async def restore_admin_caster_source(
+    req: schemas.CasterSourceRestoreRequest,
+    db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
+):
+    """Restore a missing source from saved settings; never overwrite a live source."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ ADMIN được khôi phục mountpoint")
+    try:
+        host = validate_caster_hosts([req.host.strip()])[0]
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
+    _, config = _read_caster_config_from_env()
+    port = int(config.get("port") or settings.CASTER_PORT or 2101)
+    await lock_source_host(db, host, port)
+    result = await db.execute(select(models.CasterSource).where(
+        models.CasterSource.host == host.lower(),
+        models.CasterSource.port == port,
+        models.CasterSource.mountpoint == req.mountpoint.strip(),
+    ))
+    saved = result.scalars().first()
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy cấu hình mountpoint đã lưu")
+    from .caster_client import CasterClient
+    caster = CasterClient(host, port)
+    live = await caster.get_sources()
+    if live is None:
+        raise HTTPException(status_code=502, detail="Không đọc được caster; cấu hình đã lưu được giữ nguyên. Hãy thử lại.")
+    if any(item.get("mountpoint") == saved.mountpoint for item in live):
+        return {"status": "already_present", "host": host, "mountpoint": saved.mountpoint}
+    if not saved.password:
+        raise HTTPException(status_code=409, detail="Thiếu mật khẩu mountpoint đã lưu; cần nhập lại mật khẩu khi tạo mountpoint.")
+    fields = schemas.CasterSourceCreateRequest.model_fields
+    values = {key: value for key, value in (saved.source_data or {}).items()
+              if key in fields and key not in {"host", "mountpoint", "password", "identifier"}}
+    source = schemas.CasterSourceCreateRequest(
+        host=host, mountpoint=saved.mountpoint, password=saved.password,
+        identifier=(saved.source_data or {}).get("identifier") or current_user.username,
+        **values,
+    )
+    if not await caster.create_source(**source.model_dump(exclude={"host"})):
+        raise HTTPException(status_code=502, detail="Caster chưa xác nhận khôi phục mountpoint; cấu hình đã lưu được giữ nguyên.")
+    return {"status": "restored", "host": host, "mountpoint": saved.mountpoint}
+
+
 @router.post("/api/admin/caster-sources")
 async def create_admin_caster_source(
     req: schemas.CasterSourceCreateRequest,

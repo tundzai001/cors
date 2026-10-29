@@ -3372,6 +3372,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         </div>
                                     </td>
                                     <td class="text-end">
+                                        <button type="button" class="btn btn-sm btn-outline-info restore-mp me-2" style="min-height:44px;white-space:nowrap" data-host="${host}" data-mountpoint="${rawMountpoint}" title="Khôi phục cấu hình mountpoint lên caster">
+                                            <i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Khôi phục
+                                        </button>
                                         <button type="button" class="action-btn text-danger delete-mp" data-host="${host}" data-identifier="${escapeHtml(src.identifier || '')}" data-mountpoint="${rawMountpoint}" title="Delete">
                                             <i class="bi bi-trash3"></i>
                                         </button>
@@ -3477,6 +3480,40 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const mp = btn.dataset.mp;
                     navigator.clipboard.writeText(mp);
                     showToast(`Đã copy: ${mp}`, 'success');
+                };
+            });
+
+            // Restore uses saved credentials on the server, never in table markup.
+            container.querySelectorAll('.restore-mp').forEach(btn => {
+                btn.onclick = async () => {
+                    const { host, mountpoint } = btn.dataset;
+                    if (!mountpoint) return;
+                    const confirmed = await window.CorsUI.confirmAction({
+                        title: 'Khôi phục mountpoint',
+                        message: `Khôi phục ${mountpoint} trên ${host} bằng cấu hình đã lưu? Mountpoint đang có trên caster sẽ được giữ nguyên.`,
+                        confirmText: 'Khôi phục',
+                        tone: 'info'
+                    });
+                    if (!confirmed) return;
+                    const label = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.setAttribute('aria-busy', 'true');
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Đang khôi phục…';
+                    try {
+                        const res = await apiFetchRaw('/api/admin/caster-sources/restore', {
+                            method: 'POST', headers: API_HEADERS,
+                            body: JSON.stringify({ host, mountpoint })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.detail || 'Chưa thể khôi phục mountpoint. Hãy thử lại.');
+                        showToast(data.status === 'already_present' ? 'Mountpoint đã có trên caster; giữ nguyên cấu hình.' : 'Caster đã xác nhận khôi phục mountpoint.', 'success');
+                    } catch (err) {
+                        showToast(err.message, 'danger');
+                    } finally {
+                        btn.disabled = false;
+                        btn.removeAttribute('aria-busy');
+                        btn.innerHTML = label;
+                    }
                 };
             });
 

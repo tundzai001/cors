@@ -67,7 +67,7 @@ class RoverFormAndExpiryTests(unittest.IsolatedAsyncioTestCase):
             with patch("app.crud.check_rover_management_permission", AsyncMock(return_value=True)):
                 with patch("app.routers.devices._read_caster_config_from_env", return_value=(["host1"], {"host": "host1"})):
                     with patch("app.routers.devices.validate_caster_hosts", return_value=["host1"]):
-                        with patch("app.routers.devices.CasterClient") as MockCaster:
+                        with patch("app.caster_client.CasterClient") as MockCaster:
                             mock_instance = AsyncMock()
                             MockCaster.return_value = mock_instance
                             # Should execute smoothly without NameError: name 'time' is not defined
