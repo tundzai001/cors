@@ -17,7 +17,6 @@ def function(name):
 
 # Select definitions, not forward declarations.
 functions = '\n'.join(function(name) for name in (
-    'bool simInternetAvailable() {',
     'bool tryWifiFallback(bool protocolsRunning) {',
     'void checkSimInternetFallback() {',
 ))
@@ -29,24 +28,21 @@ harness = r'''
 enum class ConnectionType { GSM, WIFI };
 ConnectionType connectionType = ConnectionType::GSM;
 bool isGsmConnection() { return connectionType == ConnectionType::GSM; }
-bool wifiAssociated = true, wifiInternet = true, simInternet = false, ntripConnected = false;
+bool wifiAssociated = true, wifiInternet = true, ntripConnected = false;
 uint32_t now = 0;
 uint32_t millis() { return now; }
 std::vector<std::string> events;
 struct SerialMock { void println(const char*) {} } Serial;
-struct Ip { Ip(int,int,int,int) {} }; using IPAddress = Ip;
+struct String { String(const char*) {} bool equalsIgnoreCase(const char*) const { return false; } const char* c_str() const { return "broker.test"; } };
+constexpr const char* MQTT_SERVER = "broker.test";
+constexpr uint16_t MQTT_PORT = 1883;
+struct Prefs { void begin(const char*,bool) {} String getString(const char*,String value) { return value; } uint16_t getUShort(const char*,uint16_t value) { return value; } void end() {} } prefs;
 struct WifiMock { void disconnect() { events.push_back("wifi-disconnect"); } } WiFi;
 bool setupWiFi() { events.push_back("wifi-join"); return wifiAssociated; }
 struct Probe {
-    bool connect(IPAddress, int, int) { return wifiInternet; }
+    bool connect(const char*, int, int) { return wifiInternet; }
     void stop() {}
 }; using WiFiClient = Probe;
-int modem;
-struct SimProbe {
-    SimProbe(int&, int mux) { assert(mux == 4); }
-    bool connect(const char*, int, int) { return simInternet; }
-    void stop(int) {}
-}; using TinyGsmClient = SimProbe;
 struct MqttMock {
     bool alive = false;
     bool connected() { return alive; }
@@ -75,10 +71,9 @@ int main() {
     assert(tryWifiFallback(true));
     assert((events == std::vector<std::string>{"wifi-join", "mqtt-stop-old", "ntrip-stop-old", "agent-wifi", "mqtt-wifi", "ntrip-wifi", "ntrip-connect"}));
     connectionType = ConnectionType::GSM; events.clear();
-    now = 15000; simInternet = true;
-    checkSimInternetFallback();
-    assert(isGsmConnection()); // A broker outage is not an Internet outage.
-    simInternet = false; now = 30000;
+    now = 15000;
+    checkSimInternetFallback(); assert(isGsmConnection());
+    now = 30000;
     checkSimInternetFallback(); assert(isGsmConnection());
     now = 45000;
     checkSimInternetFallback(); assert(!isGsmConnection());
@@ -92,4 +87,4 @@ with tempfile.TemporaryDirectory() as folder:
     code.write_text(harness + functions + tests)
     subprocess.run(['c++','-std=c++17','-Wall','-Wextra','-Werror',str(code),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)
-print('PASS: startup/runtime fallback, no Internet association, old socket ordering, debounce, healthy SIM and MQTT guards')
+print('PASS: startup/runtime fallback, no Internet association, old socket ordering, service timeout fallback, healthy MQTT guard')

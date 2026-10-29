@@ -1,10 +1,12 @@
 # ESP32 V2.3.5: SIM và Wi-Fi dự phòng
 
-Nếu lựa chọn đã lưu là 4G, firmware thử SIM trước. Khi khởi động, mỗi lượt kết nối GSM chỉ thử một lần trước khi chuyển sang thử Wi-Fi đã lưu. Khi đang chạy, mất GPRS sẽ kích hoạt thử Wi-Fi; nếu GPRS còn nhưng cả MQTT và NTRIP đều mất kết nối, firmware kiểm tra đường TCP Internet mỗi 15 giây và thử Wi-Fi sau hai lần kiểm tra thất bại. Broker/caster lỗi trong khi Internet vẫn đi được không tự ép chuyển mạng.
+Nếu lựa chọn đã lưu là 4G, firmware thử SIM trước. Khi khởi động, mỗi lượt kết nối GSM chỉ thử một lần trước khi chuyển sang thử Wi-Fi đã lưu nếu không đăng ký được GPRS.
 
-Kiểm tra Internet dùng kết nối TCP tới `1.1.1.1:443`, giới hạn 3 giây. Đây là phép kiểm tra đường đi cụ thể; một mạng chặn riêng đích này có thể không vượt qua phép kiểm tra dù truy cập được đích khác. Wi-Fi phải kết nối thành công và vượt qua kiểm tra trước khi được chọn. Nếu Wi-Fi chưa dùng được, giữ SIM để tiếp tục thử; không khởi động lại ESP chỉ vì mất GPRS hoặc caster từ chối mountpoint.
+GPRS đã kết nối không chứng minh truy cập được dịch vụ. Khi cả MQTT và NTRIP không kết nối được liên tục ít nhất 30 giây, firmware thử Wi-Fi. Kiểm tra này chạy trước/sau lượt kết nối MQTT trong chính task MQTT, cùng với vòng quản lý mạng, để không bị bỏ lỡ do các lượt reconnect đang giữ mutex modem. Thời gian timeout của các lệnh modem có thể làm việc chuyển mạng muộn hơn mốc 30 giây.
 
-Khi chuyển, đóng socket MQTT/NTRIP trên SIM trước khi đổi transport, cấu hình lại MQTT/NTRIP và WebSocket trên Wi-Fi. Dùng chung mutex của modem để tránh lẫn phản hồi AT. Socket kiểm tra SIM dùng mux 4 với đối tượng sống suốt chương trình vì TinyGSM giữ con trỏ tới socket.
+Wi-Fi phải kết nối thành công và mở được TCP tới MQTT broker đã cấu hình trong tối đa 3 giây trước khi được chọn. Nếu Wi-Fi chưa dùng được, giữ SIM và thử lại có khoảng nghỉ. Không dùng socket probe SIM mux 4 hay IP Internet công cộng để quyết định fallback. Thiết bị không khởi động lại chỉ vì mất GPRS hoặc caster từ chối mountpoint.
+
+Khi chuyển, đóng socket MQTT/NTRIP trên SIM trước khi đổi transport, cấu hình lại MQTT/NTRIP và WebSocket trên Wi-Fi. Dùng chung mutex của modem để tránh lẫn phản hồi AT.
 
 Fallback không sửa `CONNECTION_TYPE` trong NVS. Thiết bị tiếp tục dùng Wi-Fi dự phòng khi Wi-Fi ổn định; lần khởi động sau lại đọc lựa chọn SIM đã lưu. Chưa có chức năng chủ động dò SIM để chuyển ngược trong lúc Wi-Fi đang chạy tốt.
 
@@ -23,3 +25,7 @@ platformio run -e tdm240x_dev_general
 Các kiểm tra host giả lập I/O; chưa thay thế thử nghiệm rút SIM/mất Internet trên thiết bị thật. Chưa tự nạp firmware lên ESP trong lần sửa này.
 
 Lỗi `ERROR - Mountpoint already in using` vẫn được caster trả khi nguồn đang được đánh dấu sử dụng. Firmware không bỏ qua xác thực hoặc tự ngắt nguồn khác để chiếm mountpoint.
+
+## IntelliSense cho bài kiểm tra MQTT trên máy tính
+
+Chạy `platformio run -e tdm240x_dev_general -t compiledb` từ thư mục repo. Hook trong `scripts/platformio_host_compiledb.py` bổ sung `mqtt_write_checks.cpp` với compiler C++ của máy tính và include của firmware. PlatformIO tiếp tục tạo các mục firmware bằng toolchain ESP32. `compile_commands.json` là file được sinh tại máy và không commit.

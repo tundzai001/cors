@@ -43,7 +43,6 @@ SemaphoreHandle_t gnssSerialMutex = nullptr;
 void initPrefs();
 static void serviceMqtt(const bool reconnect);
 static void settleModemBeforeNtrip();
-static bool simInternetAvailable();
 static bool tryWifiFallback(bool protocolsRunning);
 static void checkSimInternetFallback();
 
@@ -151,7 +150,7 @@ void setup() {
         } else {
             Serial.println("[SETUP] Su dung ket noi SIM/GSM");
             DeviceRuntime::gsmDisconnectCount = 0;
-            networkConnected = startSIM() && connectGSM(1) && simInternetAvailable();
+            networkConnected = startSIM() && connectGSM(1);
             if (!networkConnected) networkConnected = tryWifiFallback(false);
         }
         if (networkConnected) {
@@ -270,7 +269,9 @@ __attribute__((noreturn)) void taskMQTT([[maybe_unused]] void *parameter) {
     Serial.println("[MQTT TASK] Bat dau task MQTT...");
     while (true) {
         if (tcpStreamMutex && xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
+            checkSimInternetFallback();
             serviceMqtt(true);
+            checkSimInternetFallback();
             backendAgent.loop();
             xSemaphoreGive(tcpStreamMutex);
         }
@@ -323,22 +324,20 @@ void loop() {
 }
 
 // Called with the shared modem mutex held once worker tasks are running.
-static bool simInternetAvailable() {
-    static TinyGsmClient probe(modem, 4); // Modem retains this pointer; keep it alive.
-    // S1=0, MQTT=1, S2=2, WebSocket=3.
-    const bool reachable = probe.connect("1.1.1.1", 443, 3);
-    probe.stop(1000);
-    return reachable;
-}
-
 static bool tryWifiFallback(bool protocolsRunning) {
-    Serial.println("[NETWORK] SIM khong co Internet; thu Wi-Fi du phong da luu.");
+    Serial.println("[NETWORK] SIM khong truy cap duoc dich vu; thu Wi-Fi du phong da luu.");
     if (!setupWiFi()) return false;
+    // Check the actual broker destination over Wi-Fi, not a public probe IP.
+    prefs.begin("myPrefs", true);
+    String host = prefs.getString("MQTT_SERVER", String(MQTT_SERVER));
+    if (host.equalsIgnoreCase("aitogy.asia")) host = MQTT_SERVER;
+    const uint16_t port = prefs.getUShort("MQTT_PORT", MQTT_PORT);
+    prefs.end();
     WiFiClient probe;
-    const bool reachable = probe.connect(IPAddress(1, 1, 1, 1), 443, 3000);
+    const bool reachable = probe.connect(host.c_str(), port, 3000);
     probe.stop();
     if (!reachable) {
-        Serial.println("[NETWORK] Wi-Fi co ket noi nhung chua truy cap duoc Internet; tiep tuc thu SIM.");
+        Serial.println("[NETWORK] Wi-Fi chua truy cap duoc MQTT broker; giu SIM va se thu lai.");
         WiFi.disconnect();
         return false;
     }
@@ -358,22 +357,23 @@ static bool tryWifiFallback(bool protocolsRunning) {
 }
 
 static void checkSimInternetFallback() {
-    static uint32_t lastCheckMs = 0;
-    static uint8_t failedChecks = 0;
+    static uint32_t unavailableSinceMs = 0;
+    static uint32_t lastWifiAttemptMs = 0;
     if (!isGsmConnection()) return;
     if (mqtt.connected() || isNtripConnected()) {
-        failedChecks = 0;
-        return; // Existing working services are stronger evidence than a probe.
+        unavailableSinceMs = 0;
+        return;
     }
     const uint32_t now = millis();
-    if (now - lastCheckMs < 15000UL) return;
-    lastCheckMs = now;
-    if (simInternetAvailable()) {
-        failedChecks = 0;
-        return; // Broker/caster failure alone must not force a network switch.
+    if (unavailableSinceMs == 0) {
+        unavailableSinceMs = now ? now : 1;
+        Serial.println("[NETWORK] GPRS co the van ket noi nhung MQTT/NTRIP chua truy cap duoc; se thu Wi-Fi sau 30s.");
+        return;
     }
-    if (failedChecks < 2) ++failedChecks;
-    if (failedChecks >= 2 && tryWifiFallback(true)) failedChecks = 0;
+    if (now - unavailableSinceMs < 30000UL) return;
+    if (lastWifiAttemptMs != 0 && now - lastWifiAttemptMs < 30000UL) return;
+    lastWifiAttemptMs = now;
+    if (tryWifiFallback(true)) unavailableSinceMs = 0;
 }
 
 static void settleModemBeforeNtrip() {
