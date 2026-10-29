@@ -2,6 +2,7 @@ import asyncio
 import logging
 import math
 import os
+import time
 from pathlib import Path
 from typing import List, Optional
 from dotenv import dotenv_values
@@ -25,6 +26,8 @@ def _get_env_preferring_dotenv(key: str, default: str) -> str:
 CLIENTTABLE_DEBUG = False
 
 class CasterClient:
+    _connection_errors = {}
+
     def __init__(self, host: str, port: int, admin_user: str | None = None, admin_password: str | None = None):
         self.host = host
         self.port = port
@@ -43,10 +46,23 @@ class CasterClient:
                 logger.info(f"--- THỰC HIỆN KẾT NỐI ĐẾN {self.host}:{self.port} ---")
             
             # 1. Mở kết nối TCP
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), 
-                timeout=10.0
-            )
+            # Retry only before sending bytes: replaying a control command could
+            # create/delete an account twice after a response is lost.
+            for attempt in range(3):
+                try:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(self.host, self.port),
+                        timeout=max(0.01, min(10.0, remaining)),
+                    )
+                    if self._connection_errors.pop((self.host, self.port), None):
+                        logger.info("Caster connection restored (%s:%s)", self.host, self.port)
+                    break
+                except (OSError, asyncio.TimeoutError):
+                    delay = attempt + 1
+                    if attempt == 2 or deadline - asyncio.get_running_loop().time() <= delay:
+                        raise
+                    await asyncio.sleep(delay)
             
             # 2. Gửi lệnh
             writer.write(command.encode('ascii', errors='ignore'))
@@ -94,7 +110,16 @@ class CasterClient:
             return b"".join(chunks).decode('utf-8', errors='ignore')
 
         except Exception as e:
-            logger.error("Lỗi gọi Caster (%s:%s): %s", self.host, self.port, type(e).__name__)
+            if isinstance(e, (OSError, asyncio.TimeoutError)):
+                key = (self.host, self.port)
+                now = time.monotonic()
+                last = self._connection_errors.get(key)
+                if last is None or now - last >= 60:
+                    logger.warning("Caster unavailable (%s:%s): %s; automatic polling will retry",
+                                   self.host, self.port, type(e).__name__)
+                    self._connection_errors[key] = now
+            else:
+                logger.error("Lỗi gọi Caster (%s:%s): %s", self.host, self.port, type(e).__name__)
             if chunks and total_bytes <= MAX_RESPONSE_BYTES:
                 return b"".join(chunks).decode('utf-8', errors='ignore')
             return ""
@@ -458,7 +483,9 @@ class CasterClient:
                 if not response or "SOURCETABLE 200 OK" not in response:
                     response = await self._send_command(cmd_standard)
 
-            if not response or "SOURCETABLE 200 OK" not in response:
+            if not response:
+                return None
+            if "SOURCETABLE 200 OK" not in response:
                 logger.warning(f"Invalid sourcetable response from {self.host}:{self.port}")
                 return None
 

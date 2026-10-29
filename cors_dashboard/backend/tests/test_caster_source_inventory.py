@@ -71,7 +71,7 @@ class CasterSourceInventoryTests(unittest.IsolatedAsyncioTestCase):
             result = await store.sync_caster_sources('caster.test', 2101)
             self.assertIsNone(result['error'])
             client.return_value.get_sources.return_value = None
-            with self.assertLogs('app.main', level='ERROR'):
+            with self.assertLogs('app.main', level='WARNING'):
                 result = await store.sync_caster_sources('caster.test', 2101)
             self.assertIsNotNone(result['error'])
         self.assertEqual(len(await self.rows()), 1)

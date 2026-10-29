@@ -72,7 +72,9 @@ async def sync_caster_sources(host: str, port: int, user=None, password=None) ->
             await lock_source_host(db, host, port)
             sources = await CasterClient(host, port, admin_user=user, admin_password=password).get_sources()
             if sources is None:
-                raise RuntimeError('Không nhận được danh sách mountpoint từ caster')
+                logger.warning('[CASTER SOURCES] %s:%s unavailable; keeping saved mountpoints; retry next poll', host, port)
+                return {'host': host, 'count': 0, 'synced_at': None,
+                        'error': 'Không thể đồng bộ caster; giữ danh sách đã lưu.'}
             observed_at = int(time.time())
             await save_sources(db, host, port, sources, observed_at)
             await db.commit()
