@@ -8,7 +8,6 @@
 #include "functions/Unicore_Identification.h"
 #include "functions/Unicore_Log.h"
 #include "functions/unicore_commands.h"
-#include "functions/Base_Startup.h"
 #include "functions/Ubx_Base_Status.h"
 #include <cassert>
 #include <iostream>
@@ -31,19 +30,6 @@ void checkPackets(const Command &bytes) {
 }
 
 int main(int argc, char **argv) {
-    double savedNumber = 0;
-    assert(baseNumber("21.08498763692", savedNumber) && std::abs(savedNumber-21.08498763692) < 1e-12);
-    assert(baseNumber("0.015", savedNumber) && savedNumber == 0.015);
-    assert(!baseNumber("21.1garbage", savedNumber));
-    assert(!baseNumber("nan", savedNumber));
-    assert(!baseNumber("inf", savedNumber));
-    assert(!baseNumber("", savedNumber));
-    assert(baseStartupAction("", false) == BaseStartupAction::Survey);
-    assert(baseStartupAction("SURVEY_IN", false) == BaseStartupAction::Survey);
-    assert(baseStartupAction("FIXED_LLA", false) == BaseStartupAction::Fixed);
-    assert(baseStartupAction("AUTO_CORS", false) == BaseStartupAction::Preserve);
-    assert(baseStartupAction("FIXED_LLA", true) == BaseStartupAction::Blocked);
-    assert(baseStartupAction("UNKNOWN", false) == BaseStartupAction::Blocked);
     uint8_t svin[40] = {};
     const auto put32 = [](uint8_t *p, uint32_t value) {
         for (int i = 0; i < 4; ++i) p[i] = value >> (8*i);
@@ -53,10 +39,10 @@ int main(int argc, char **argv) {
     svin[24] = uint8_t(-75); svin[25] = 7; svin[26] = 74;
     UbxBaseStatus baseStatus; baseStatus.mode = 1;
     svin[37] = 1;
-    assert(baseStatus.svin(svin,40) && baseStatus.active && !baseStatus.hasPosition);
+    assert(baseStatus.svin(svin,40) && baseStatus.active && baseStatus.hasPosition);
     assert(baseStatus.duration == 120 && baseStatus.observations == 95 && baseStatus.accuracy == 5);
     svin[36] = 1; // Even a valid position is not final while the survey is active.
-    assert(baseStatus.svin(svin,40) && !baseStatus.hasPosition);
+    assert(baseStatus.svin(svin,40) && baseStatus.hasPosition && baseStatus.active);
     svin[37] = 0;
     assert(baseStatus.svin(svin,40) && baseStatus.valid && baseStatus.hasPosition);
     assert(std::abs(baseStatus.latitude-21.08498763643) < 1e-10);

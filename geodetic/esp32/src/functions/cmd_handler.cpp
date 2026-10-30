@@ -4,6 +4,7 @@
 #include "Prog_Config.h"
 #include "functions/gnss_cmd_builder.h"
 #include "functions/Backend_Agent.h"
+#include "hardware/Wifi_Profiles.h"
 #include <cstring>
 
 extern SemaphoreHandle_t rtcmBufferMutex;
@@ -99,6 +100,17 @@ namespace cmd_helper {
         prefs.begin("myPrefs", false);
         prefs.putString(key, value);
         prefs.end();
+        return CMD_ACTION_NONE;
+    }
+
+    inline cmd_action_t saveWifiSetting(bool ssidSetting, const String &value) {
+        const WifiProfiles profiles = loadWifiProfiles();
+        const WifiProfile current = profiles.count ? profiles.entries[0] : WifiProfile{WIFI_SSID, WIFI_PASSWORD};
+        const String ssid = ssidSetting ? value : current.ssid;
+        const String password = ssidSetting ? current.password : value;
+        String error;
+        if (!saveWifiProfile(ssid, password, password.isEmpty(), error))
+            Serial.println("[WIFI][ERROR] " + error);
         return CMD_ACTION_NONE;
     }
 
@@ -311,11 +323,11 @@ cmd_action_t handleEspCommand(const std::vector<String> &cmdWords) {
     if (cmdWords[0] == "SET" && cmd_helper::hasExactArgumentCount(cmdWords, 4, "ESP SET")) {
         if (cmdWords[1] == "WIFI" && cmdWords[2] == "SSID") {
             Serial.println("[MQTT COMMAND DOWNLINK] Lenh yeu cau cau hinh WIFI SSID");
-            return cmd_helper::saveStringPreference("WIFI_SSID", cmdWords[3]);
+            return cmd_helper::saveWifiSetting(true, cmdWords[3]);
         }
         if (cmdWords[1] == "WIFI" && cmdWords[2] == "PASS") {
             Serial.println("[MQTT COMMAND DOWNLINK] Lenh yeu cau cau hinh WIFI PASS");
-            return cmd_helper::saveStringPreference("WIFI_PASS", cmdWords[3]);
+            return cmd_helper::saveWifiSetting(false, cmdWords[3]);
         }
         if (cmdWords[1] == "4G" && cmdWords[2] == "APN") {
             Serial.println("[MQTT COMMAND DOWNLINK] Lenh yeu cau cau hinh 4G APN");

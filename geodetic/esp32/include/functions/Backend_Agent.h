@@ -43,7 +43,7 @@ public:
     bool licenseValid() const { return licenseValid_; }
     bool baseStartupConfigured() const {
         return baseStartupState_ == "fixed_restored" || baseStartupState_ == "survey_started"
-            || baseStartupState_ == "survey_resumed" || baseStartupState_ == "preserved"
+            || baseStartupState_ == "preserved"
             || baseStartupState_ == "configured";
     }
     bool mqttConnected() const;

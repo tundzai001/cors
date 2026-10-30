@@ -184,7 +184,6 @@ c++ -std=c++17 -fsanitize=address,undefined -g -Itest/host -Iinclude \
   -o /tmp/esp32-base-checks
 /tmp/esp32-base-checks
 python3 -B test/host/check_cors.py /path/to/cors /tmp/esp32-base-checks
-python3 -B test/host/check_base_startup.py
 ```
 
 Kiểm tra này chạy bộ tạo lệnh C++ thật, kiểm tra khóa, checksum, routing UART
@@ -227,3 +226,7 @@ dùng kết quả auto base cho đo đạc.
 Luồng Unicore từ chối dữ liệu nhị phân và nhiều dòng lệnh trong cùng một gói,
 để mỗi lệnh gửi đi có một phản hồi được kiểm tra riêng. Các truy vấn trạng thái
 `mode`/`log` vẫn đi theo luồng truy vấn, không yêu cầu ACK cấu hình.
+
+## Cấu hình Wi-Fi không cần Internet
+
+ESP luôn phát mạng cấu hình riêng. Xem [hướng dẫn Wi-Fi cục bộ](wifi-config.md) để mở trang `192.168.4.1`, lưu Wi-Fi/hotspot và quản lý mạng đã lưu.

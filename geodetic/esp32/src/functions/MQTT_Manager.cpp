@@ -39,6 +39,8 @@ namespace {
   };
 
   MqttGsmClient gsmMqttClient(modem, 1);
+  MqttGsmClient gsmProbeClient(modem, 4);
+  WiFiClient wifiProbeClient;
 }
 PubSubClient mqtt(wifiMqttClient);
 
@@ -90,6 +92,32 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       ESP.restart();
     }
   }
+}
+
+bool probeMqttTransport(bool useGsm) {
+  prefs.begin("myPrefs", true);
+  String host = prefs.getString("MQTT_SERVER", String(MQTT_SERVER));
+  if (host.equalsIgnoreCase("aitogy.asia")) host = MQTT_SERVER;
+  const uint16_t port = prefs.getUShort("MQTT_PORT", MQTT_PORT);
+  const String user = prefs.getString("MQTT_USER", String(MQTT_USER));
+  const String password = prefs.getString("MQTT_PASS", String(MQTT_PASS));
+  prefs.end();
+
+  Client& transport = useGsm ? static_cast<Client&>(gsmProbeClient)
+                             : static_cast<Client&>(wifiProbeClient);
+  PubSubClient probe(transport);
+  probe.setServer(host.c_str(), port);
+  probe.setSocketTimeout(3);
+  if (!probe.setBufferSize(1024)) return false;
+  // TinyGSM connect timeout is seconds; WiFiClient uses milliseconds.
+  const bool tcpReady = useGsm ? gsmProbeClient.connect(host.c_str(), port, 5)
+                               : wifiProbeClient.connect(host.c_str(), port, 3000);
+  // No LWT, publish or subscribe: this probe cannot change station status.
+  const String clientId = "net-probe-" + backendAgent.serial();
+  const bool reachable = tcpReady && probe.connect(clientId.c_str(), user.c_str(), password.c_str());
+  if (reachable) probe.disconnect();
+  transport.stop();
+  return reachable;
 }
 
 int setupMQTT() {

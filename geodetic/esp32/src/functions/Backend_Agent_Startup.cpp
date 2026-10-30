@@ -1,9 +1,9 @@
 #include "functions/Backend_Agent.h"
 #include "Backend_Agent_Internal.h"
-#include "functions/Base_Startup.h"
 #include "functions/Ublox_Readback.h"
 #include "functions/Unicore_Readback.h"
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 
@@ -16,8 +16,10 @@ double configNumber(JsonVariantConst value, double fallback) {
     if (value.isNull()) return fallback;
     if (value.is<bool>()) return NAN;
     if (value.is<const char *>()) {
-        double number = 0;
-        return baseNumber(value.as<const char *>(), number) ? number : double(NAN);
+        const char *text = value.as<const char *>();
+        char *end = nullptr;
+        const double number = std::strtod(text, &end);
+        return end != text && *end == '\0' && std::isfinite(number) ? number : double(NAN);
     }
     return value.is<double>() ? value.as<double>() : double(NAN);
 }
@@ -71,8 +73,9 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     }
     // Do not guess a mode when a receiver cannot be read reliably.
     if (!receiverRead) return fail(queryError.isEmpty() ? String("Receiver mode could not be read") : queryError);
-    const BaseStartupAction action = baseStartupAction(method.c_str(), false);
-    if (action == BaseStartupAction::Blocked) return fail("Unsupported saved Base mode");
+    const bool restoreFixed = method == "FIXED_LLA";
+    if (!restoreFixed && !method.isEmpty() && method != "SURVEY_IN")
+        return fail("Unsupported saved Base mode");
     if (!saved) {
         base["base_setup_method"] = "SURVEY_IN";
         base["survey_in_duration"] = AUTO_SURVEY_IN_SECONDS;
@@ -96,7 +99,7 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     CommandList commands;
     double fixedLatitude = 0, fixedLongitude = 0, fixedAltitude = 0;
     bool ellipsoid = detected == GnssSensorType::Ublox;
-    if (action == BaseStartupAction::Fixed) {
+    if (restoreFixed) {
         JsonObjectConst coords = base["coords"].as<JsonObjectConst>();
         if (coords.isNull()) coords = base;
         const double lat = configNumber(coords["lat"], NAN), lon = configNumber(coords["lon"], NAN), alt = configNumber(coords["alt"], NAN);
@@ -128,24 +131,23 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
         surveyInTargetSeconds_ = duration;
         surveyInMonitoring_ = true;
         surveyInResultPending_ = true;
-        if (action == BaseStartupAction::Survey)
-            commands = buildBaseSurveyInCommand(static_cast<uint32_t>(duration), accuracy, detected, options);
+        commands = buildBaseSurveyInCommand(static_cast<uint32_t>(duration), accuracy, detected, options);
     }
     if (!commands.empty() && !writeGnssCommands(commands)) return fail("Receiver rejected startup configuration");
     if (!saved) {
         baseConfig_.clear(); serializeJson(config, baseConfig_);
     }
     if (!saveStatePreferences()) return fail("Could not save Base configuration");
-    baseStartupState_ = action == BaseStartupAction::Fixed ? "fixed_restored"
+    baseStartupState_ = restoreFixed ? "fixed_restored"
         : "survey_started";
     lastReceiverPollMs_ = 0;
     String error;
     if (!refreshReceiverReadback(error)) return fail(error);
     DynamicJsonDocument readback(2048);
     deserializeJson(readback, receiverBaseReadback_.c_str());
-    const String expected = action == BaseStartupAction::Fixed ? "base" : "survey_in";
+    const String expected = restoreFixed ? "base" : "survey_in";
     if (String(readback["mode_kind"] | "") != expected) return fail("Receiver mode does not match startup configuration");
-    if (action == BaseStartupAction::Fixed) {
+    if (restoreFixed) {
         const JsonObjectConst position = readback["bestpos"].as<JsonObjectConst>();
         if (position["state"] != "ok" || position["position_type"] != "FIXEDPOS")
             return fail("Receiver has not confirmed the saved fixed position");

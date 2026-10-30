@@ -3,6 +3,7 @@
 #include "functions/RTCM_Receiver.h"
 #include "functions/cmd_handler.h"
 #include "functions/NTRIP_Handler_IP.h"
+#include "hardware/Wifi_Config_Portal.h"
 
 #include <time.h>
 #include "esp_bt.h"
@@ -45,6 +46,12 @@ static void serviceMqtt(const bool reconnect);
 static void settleModemBeforeNtrip();
 static bool tryWifiFallback(bool protocolsRunning);
 static void checkSimInternetFallback();
+static void checkSimRecovery();
+static void activateNetwork(ConnectionType type, bool protocolsRunning);
+static void logNetworkStatus(bool force = false);
+static bool wifiFallbackActive = false;
+static uint32_t lastSimProbeMs = 0;
+static uint8_t simRecoverySuccesses = 0;
 
 __attribute__((noreturn)) void taskNtrip([[maybe_unused]] void *parameter);
 __attribute__((noreturn)) void healthCheckTask([[maybe_unused]] void *parameter);
@@ -60,6 +67,9 @@ void setup() {
     Serial.println("     ESP32 GNSS GATEWAY KHOI DONG        ");
     Serial.println("=========================================");
     Serial.printf("[FIRMWARE] %s | build %s %s\n", AGENT_VERSION, __DATE__, __TIME__);
+#if PROGRAM_DEBUG
+    Serial.println("[DEBUG] PROGRAM_DEBUG=1");
+#endif
 
     // Release controller memory because this firmware does not use Bluetooth.
     esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
@@ -79,6 +89,9 @@ void setup() {
     const int rx2ModemTX = RX_TO_MODEM_TX;
     const int tx2ModemRX = TX_TO_MODEM_RX;
     prefs.end();
+
+    if (!beginWifiConfigPortal())
+        Serial.println("[WIFI CONFIG][ERROR] Khong khoi dong duoc trang cau hinh Wi-Fi.");
 
     (void)restartCount;
     Serial.println("[SETUP] Khoi dong UART GNSS: TX=" + String(gnssTX)
@@ -144,14 +157,17 @@ void setup() {
 
     bool networkConnected = false;
     while (!networkConnected) {
-        if (isWifiConnection()) {
-            Serial.println("[SETUP] Su dung ket noi WIFI");
-            networkConnected = setupWiFi();
-        } else {
-            Serial.println("[SETUP] Su dung ket noi SIM/GSM");
-            DeviceRuntime::gsmDisconnectCount = 0;
-            networkConnected = startSIM() && connectGSM(1);
-            if (!networkConnected) networkConnected = tryWifiFallback(false);
+        if (takeWifiConfigUpdate()) networkConnected = tryWifiFallback(false);
+        if (!networkConnected) {
+            if (isWifiConnection()) {
+                Serial.println("[SETUP] Su dung ket noi WIFI");
+                networkConnected = setupWiFi();
+            } else {
+                Serial.println("[SETUP] Su dung ket noi SIM/GSM");
+                DeviceRuntime::gsmDisconnectCount = 0;
+                networkConnected = startSIM() && connectGSM(1);
+                if (!networkConnected) networkConnected = tryWifiFallback(false);
+            }
         }
         if (networkConnected) {
             Serial.println("[SETUP] Ket noi mang thanh cong!");
@@ -165,10 +181,12 @@ void setup() {
             setupMQTT();
         } else {
             Serial.println("[ERROR] Khong the ket noi mang. Vui long kiem tra cau hinh va thu lai.");
+            delay(1000);
         }
     }
 
     Serial.println("[SETUP] Ket noi mang thanh cong!");
+    logNetworkStatus(true);
     configTime(0, 0, "pool.ntp.org", "time.google.com");
 
     Serial.println("[SETUP] Task MQTT: Quan ly ket noi MQTT va callback.");
@@ -273,6 +291,7 @@ __attribute__((noreturn)) void taskMQTT([[maybe_unused]] void *parameter) {
             serviceMqtt(true);
             checkSimInternetFallback();
             backendAgent.loop();
+            logNetworkStatus();
             xSemaphoreGive(tcpStreamMutex);
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -289,6 +308,11 @@ __attribute__((noreturn)) void taskSerialCommand([[maybe_unused]] void *paramete
 }
 
 void loop() {
+    if (wifiConfigUpdatePending() && tcpStreamMutex
+        && xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
+        if (takeWifiConfigUpdate()) tryWifiFallback(true);
+        xSemaphoreGive(tcpStreamMutex);
+    }
     if (isGsmConnection() && tcpStreamMutex
         && xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
         if (!modem.isGprsConnected()) {
@@ -315,45 +339,99 @@ void loop() {
         xSemaphoreGive(tcpStreamMutex);
     }
 
-    if (isWifiConnection() && WiFiClass::status() != WL_CONNECTED) {
-        digitalWrite(LED_PIN, HIGH);
-        setupWiFi();
-        digitalWrite(LED_PIN, LOW);
+    if (isWifiConnection() && tcpStreamMutex
+        && xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
+        checkSimRecovery();
+        if (isWifiConnection() && WiFiClass::status() != WL_CONNECTED) {
+            digitalWrite(LED_PIN, HIGH);
+            mqtt.disconnect();
+            stopNtrip();
+            setupWiFi();
+            digitalWrite(LED_PIN, LOW);
+        }
+        xSemaphoreGive(tcpStreamMutex);
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 // Called with the shared modem mutex held once worker tasks are running.
 static bool tryWifiFallback(bool protocolsRunning) {
-    Serial.println("[NETWORK] SIM khong truy cap duoc dich vu; thu Wi-Fi du phong da luu.");
-    if (!setupWiFi()) return false;
-    // Check the actual broker destination over Wi-Fi, not a public probe IP.
-    prefs.begin("myPrefs", true);
-    String host = prefs.getString("MQTT_SERVER", String(MQTT_SERVER));
-    if (host.equalsIgnoreCase("aitogy.asia")) host = MQTT_SERVER;
-    const uint16_t port = prefs.getUShort("MQTT_PORT", MQTT_PORT);
-    prefs.end();
-    WiFiClient probe;
-    const bool reachable = probe.connect(host.c_str(), port, 3000);
-    probe.stop();
-    if (!reachable) {
-        Serial.println("[NETWORK] Wi-Fi chua truy cap duoc MQTT broker; giu SIM va se thu lai.");
-        WiFi.disconnect();
-        return false;
+    const bool simPreferred = isGsmConnection() || wifiFallbackActive;
+    Serial.println("[NETWORK] Dang thu cac mang Wi-Fi da luu.");
+    // setupWiFi disconnects STA before trying profiles. Release the caster's
+    // source session while the old Wi-Fi route can still deliver TCP FIN.
+    // Keep SIM sockets alive until a Wi-Fi candidate passes validation.
+    if (protocolsRunning && isWifiConnection()) {
+        mqtt.disconnect();
+        stopNtrip();
     }
+    if (!setupWiFi([] { return probeMqttTransport(false); })) return false;
+    activateNetwork(ConnectionType::WIFI, protocolsRunning);
+    wifiFallbackActive = simPreferred;
+    lastSimProbeMs = millis();
+    simRecoverySuccesses = 0;
+    Serial.println("[NETWORK] Da ket noi Wi-Fi; giu nguyen tuy chon mang da luu.");
+    logNetworkStatus(true);
+    return true;
+}
+
+// Both switching directions close old sockets before selecting new clients.
+static void activateNetwork(ConnectionType type, bool protocolsRunning) {
     if (protocolsRunning) {
         mqtt.disconnect();
-        stopNtrip(); // Close the GSM sockets before changing client selection.
+        stopNtrip();
     }
-    connectionType = ConnectionType::WIFI;
+    connectionType = type;
     backendAgent.onNetworkChanged();
     if (protocolsRunning) {
         setupMQTT();
         setupNTRIP();
         connectNTRIP();
     }
-    Serial.println("[NETWORK] Da chuyen sang Wi-Fi du phong; giu nguyen tuy chon SIM da luu.");
-    return true;
+}
+
+// Caller holds tcpStreamMutex after startup; connected() may issue modem AT.
+static void logNetworkStatus(bool force) {
+    static uint32_t lastLogMs = 0;
+    const uint32_t now = millis();
+    if (!force && now - lastLogMs < 30000UL) return;
+    lastLogMs = now;
+    Serial.printf("[NETWORK][ACTIVE] transport=%s; fallback=%s; MQTT=%s; NTRIP=%s\n",
+                  isWifiConnection() ? "WIFI" : "SIM/4G",
+                  wifiFallbackActive ? "YES" : "NO",
+                  mqtt.connected() ? "UP" : "DOWN",
+                  isNtripConnected() ? "UP" : "DOWN");
+    if (isWifiConnection()) {
+        Serial.printf("[NETWORK][WIFI] connected=%s; SSID=%s; IP=%s; RSSI=%d dBm\n",
+                      WiFi.status() == WL_CONNECTED ? "YES" : "NO",
+                      WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    }
+}
+
+// Only Wi-Fi entered through SIM fallback is eligible for automatic return.
+static void checkSimRecovery() {
+    if (!wifiFallbackActive || !isWifiConnection()) return;
+    const bool wifiConnected = WiFiClass::status() == WL_CONNECTED;
+    const uint32_t now = millis();
+    const uint32_t interval = wifiConnected ? 60000UL : 15000UL;
+    if (now - lastSimProbeMs < interval) return;
+    lastSimProbeMs = now;
+    // Avoid a blocking registration wait while healthy Wi-Fi carries traffic.
+    const bool reachable = modem.isNetworkConnected()
+        && (modem.isGprsConnected() || connectGSM(1))
+        && probeMqttTransport(true);
+    if (!reachable) {
+        simRecoverySuccesses = 0;
+        return;
+    }
+    // Two successful broker handshakes a minute apart avoid switching on a blip.
+    if (++simRecoverySuccesses < 2 && wifiConnected) return;
+    Serial.println("[NETWORK] SIM da truy cap lai MQTT broker; chuyen ve SIM.");
+    activateNetwork(ConnectionType::GSM, true);
+    wifiFallbackActive = false;
+    simRecoverySuccesses = 0;
+    WiFi.disconnect();
+    logNetworkStatus(true);
 }
 
 static void checkSimInternetFallback() {

@@ -270,6 +270,8 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
         reader.baudrate = 115200
         reader._stop_event = threading.Event()
         reader._pause_event = threading.Event()
+        reader._base_queries = Queue(maxsize=1)
+        reader._base_query = None
         reader.rtcm_inject_queue = Queue()
         correction = b'\xd3\x00\x03correction'
         reader.rtcm_inject_queue.put(correction)
