@@ -2,6 +2,32 @@
 (() => {
     'use strict';
     window.CorsReceiverCoordinates = {
+        compareFixed(position, config, chip) {
+            if (!position?.isBaseFixed || config?.base_setup_method !== 'FIXED_LLA') return null;
+            const saved = config.coords || config;
+            const number = value => (typeof value === 'number' || (typeof value === 'string' && value.trim()))
+                ? Number(String(value).replace(',', '.')) : NaN;
+            const [lat, lon, alt] = [saved.lat, saved.lon, saved.alt].map(number);
+            const height = chip === 'Ublox' || config.altitude_reference === 'ELLIPSOID'
+                ? number(position.alt) : number(position.heightMsl);
+            const actualLat = number(position.lat), actualLon = number(position.lon);
+            if (![lat, lon, alt, height, actualLat, actualLon].every(Number.isFinite)
+                || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+            const dLat = actualLat - lat;
+            const dLon = ((actualLon - lon + 540) % 360) - 180;
+            const dAlt = height - alt;
+            // Allow one receiver encoding step, not the user-declared position accuracy.
+            const angularStep = chip === 'Ublox' ? 1e-9 : 1e-11;
+            const rad = Math.PI / 180;
+            const haversine = Math.sin(dLat * rad / 2) ** 2
+                + Math.cos(lat * rad) * Math.cos(actualLat * rad) * Math.sin(dLon * rad / 2) ** 2;
+            return {
+                matches: Math.abs(dLat) <= angularStep + 1e-12 && Math.abs(dLon) <= angularStep + 1e-12
+                    && Math.abs(dAlt) <= 0.0001 + 1e-8,
+                horizontalMeters: 6378137 * 2 * Math.asin(Math.sqrt(Math.min(1, haversine))),
+                heightMeters: Math.abs(dAlt)
+            };
+        },
         fromReceiver(position, allowUnfixed = false) {
             if (position?.message !== 'UBX') return this.fromUnicore(position, allowUnfixed);
             const isBaseFixed = position.position_type === 'FIXEDPOS';

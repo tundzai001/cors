@@ -344,6 +344,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         && Number(receiverReadback.age_seconds) <= 60
         && !receiverOffline;
     const receiverCoordinates = window.CorsReceiverCoordinates?.fromReceiver(receiverPosition);
+    const fixedCoordinateComparison = receiverReadbackIsFresh && receiverReadback.mode_kind === 'base'
+        ? window.CorsReceiverCoordinates?.compareFixed(receiverCoordinates, device.base_config, device.detected_chip_type)
+        : null;
     const receiverInstantCoordinates = window.CorsReceiverCoordinates?.fromReceiver(receiverPosition, true);
     const canUseReceiverCoordinates = !!receiverCoordinates && receiverReadbackIsFresh
         && !isReadingReceiver;
@@ -975,7 +978,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     {receiverCoordinates.source === 'UBX'
                                         ? <div className="small text-muted mb-2">Độ cao ellipsoid WGS 84 từ tọa độ receiver đã xác nhận.</div>
                                         : <div className="small text-muted mb-2">Undulation chip báo: {receiverCoordinates.undulation} m. h = độ cao chip báo + undulation; undulation = 0 thì giữ nguyên độ cao. Đây không phải geoid địa phương đã hiệu chỉnh.</div>}
-                                    <div className="small text-muted mb-2">Receiver đã giữ tọa độ Base. Đối chiếu mốc hoặc hiệu chỉnh trước khi dùng làm Fixed LLA.</div>
+                                    {savedMethod === 'SURVEY_IN' && (
+                                        <div className="small text-muted mb-2">Receiver đã giữ tọa độ Base sau khảo sát.</div>
+                                    )}
                                     <div className="d-flex flex-wrap gap-2">
                                         <button type="button" className="btn btn-outline-info btn-sm" style={{ minHeight: '44px' }}
                                             disabled={!canUseReceiverCoordinates} onClick={handleCopyReceiverCoordinates}>Sao chép tọa độ</button>
@@ -1003,7 +1008,14 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </div>
                             )}
                             {receiverReadbackIsFresh && !receiverModeMismatch && receiverReadback.mode_kind === 'base' && savedMethod === 'FIXED_LLA' && (
-                                <div className="small text-warning mt-2">Mode BASE khớp. Cần đối chiếu tọa độ receiver với Fixed LLA đã lưu.</div>
+                                <div className={`small mt-2 ${fixedCoordinateComparison?.matches ? 'text-success-emphasis' : fixedCoordinateComparison ? 'text-danger-emphasis' : 'text-muted'}`}
+                                    role="status" aria-live="polite">
+                                    {fixedCoordinateComparison?.matches
+                                        ? 'Tọa độ máy khớp Fixed LLA đã lưu.'
+                                        : fixedCoordinateComparison
+                                            ? `Tọa độ máy lệch Fixed LLA đã lưu: ngang ${fixedCoordinateComparison.horizontalMeters.toFixed(4)} m; độ cao ${fixedCoordinateComparison.heightMeters.toFixed(4)} m.`
+                                            : 'Mode BASE khớp; chưa đủ dữ liệu để so sánh tọa độ đã lưu.'}
+                                </div>
                             )}
                             {receiverReadbackIsFresh ? (
                                 <div className="small text-muted mt-1">Đọc cách đây {Number(receiverReadback.age_seconds) || 0} giây.</div>

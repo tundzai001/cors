@@ -26,3 +26,24 @@ assert.equal(window.getCoords(device).lat,21.074038);
 const legacy={base_config:{coords:{lat:20,lon:106}},status:'online'};
 assert.equal(window.getCoords(legacy).lat,20);
 console.log('PASS: station marker and popup prefer fresh receiver coordinates, distinguish SINGLE from completed Survey-In, and label saved fallback coordinates');
+
+const helper = window.CorsReceiverCoordinates;
+const fixedPosition = helper.fromReceiver({state:'ok', message:'UBX', position_type:'FIXEDPOS',
+    datum:'WGS84', altitude_reference:'ELLIPSOID', lat:'21.33363526300', lon:'106.84699289000', alt:'39.1240'});
+const fixedConfig = {base_setup_method:'FIXED_LLA', coords:{lat:'21.3336352637',lon:'106.8469928903',alt:'39.124'},accuracy:0.02};
+assert.equal(helper.compareFixed(fixedPosition, fixedConfig, 'Ublox').matches,true,
+    'Receiver encoding precision must not produce a false coordinate warning');
+for (const key of ['lat','lon','alt']) {
+    const changed = {...fixedConfig,accuracy:100,coords:{...fixedConfig.coords,[key]:Number(fixedConfig.coords[key])+0.01}};
+    assert.equal(helper.compareFixed(fixedPosition,changed,'Ublox').matches,false,
+        'Declared accuracy cannot hide a changed fixed coordinate');
+}
+assert.equal(helper.compareFixed(fixedPosition,{...fixedConfig,coords:{...fixedConfig.coords,alt:''}},'Ublox'),null);
+assert.equal(helper.compareFixed(null,fixedConfig,'Ublox'),null);
+assert.equal(helper.compareFixed(fixedPosition,{...fixedConfig,base_setup_method:'SURVEY_IN'},'Ublox'),null);
+const umPosition = helper.fromReceiver({state:'ok',position_type:'FIXEDPOS',
+    raw:'#BESTNAVA,97,GPS;SOL_COMPUTED,FIXEDPOS,21.33363526370,106.84699289030,30.0000,9.1240,WGS84,0*00000000'});
+assert.equal(helper.compareFixed(umPosition,{...fixedConfig,altitude_reference:'ELLIPSOID'},'Unicorecomm').matches,true);
+assert.equal(helper.compareFixed(umPosition,{...fixedConfig,altitude_reference:'LEGACY',coords:{...fixedConfig.coords,alt:30}},'Unicorecomm').matches,true);
+assert.equal(helper.compareFixed(umPosition,{...fixedConfig,altitude_reference:'LEGACY'},'Unicorecomm').matches,false);
+console.log('PASS: fixed coordinate match, receiver quantization, real mismatch, missing data and UM height references');
