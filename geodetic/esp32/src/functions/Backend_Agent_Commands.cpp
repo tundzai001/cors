@@ -465,7 +465,7 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
                 progress["ntrip_host"] = payload["ip"];
                 progress["ntrip_port"] = payload["port"];
                 progress["mountpoint"] = payload["mountpoint"];
-                progress["note"] = "ESP32 forwards opaque RTCM and uses GNSS RTK/GGA; no RTCM decoder is running on the ESP32.";
+                progress["note"] = "Collect RTK Fixed LLH; VNGEONET datum parameters are decoded per session and results wait for review.";
                 String progressJson;
                 serializeJson(progress, progressJson);
                 setAgentState("auto_setup_queued");
@@ -513,63 +513,8 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             detail = "auto base stopped";
         }
     } else if (command == "APPLY_VN2000_PROVINCE") {
-        String province = payload["province_code"] | String();
-        province.toUpperCase();
-        double centralMeridianDeg = 0.0;
-        double scale = 0.0;
-        String provinceName;
-        DynamicJsonDocument baseDoc(CONFIG_DOCUMENT_SIZE);
-        const bool baseParsed = deserializeJson(baseDoc, baseConfig_) == DeserializationError::Ok
-            && baseDoc.is<JsonObject>();
-        JsonObject base = baseDoc.as<JsonObject>();
-        JsonObject rawCoordinates = base["auto_base_raw_itrf_llh"].as<JsonObject>();
-        if (rawCoordinates.isNull()) rawCoordinates = base["coords"].as<JsonObject>();
-        if (rawCoordinates.isNull()) rawCoordinates = base;
-        const double rawLatitude = rawCoordinates["lat"] | NAN;
-        const double rawLongitude = rawCoordinates["lon"] | NAN;
-        const double rawAltitude = rawCoordinates["alt"] | NAN;
-        double localLatitude = rawLatitude;
-        double localLongitude = rawLongitude;
-        double localAltitude = rawAltitude;
-        double northing = 0.0;
-        double easting = 0.0;
-        if (province.isEmpty()) {
-            success = false;
-            error = "missing payload.province_code";
-        } else if (!getProvinceProjection(province, centralMeridianDeg, scale, provinceName)) {
-            success = false;
-            error = "invalid province_code";
-        } else if (!baseParsed || !std::isfinite(rawLatitude) || !std::isfinite(rawLongitude)
-                   || !std::isfinite(rawAltitude)
-                   || !transformToVn2000(rawLatitude, rawLongitude, rawAltitude,
-                                         centralMeridianDeg, scale, localLatitude,
-                                         localLongitude, localAltitude, northing, easting)) {
-            success = false;
-            error = "base coordinates are missing or cannot be transformed";
-        } else if (!applyBaseCoordinates(localLatitude, localLongitude, localAltitude)) {
-            success = false;
-            error = "cannot apply transformed coordinates to GNSS";
-        } else {
-            JsonObject coordinates = base["coords"].as<JsonObject>();
-            if (coordinates.isNull()) coordinates = base.createNestedObject("coords");
-            coordinates["lat"] = localLatitude;
-            coordinates["lon"] = localLongitude;
-            coordinates["alt"] = localAltitude;
-            base["itrf_vn2000_transform_applied"] = true;
-            base["central_meridian_deg"] = centralMeridianDeg;
-            base["k0"] = scale;
-            base["province_code"] = province;
-            base["province_name"] = provinceName;
-            base["projection_source"] = "manual_province_override";
-            base["vn2000_northing"] = northing;
-            base["vn2000_easting"] = easting;
-            baseConfig_.clear();
-            serializeJson(baseDoc, baseConfig_);
-            saveStatePreferences();
-            publishConfigState("base_config_state");
-            setWorkflowProgress("reprojected", 4, 4);
-            detail = "VN2000 province transform applied";
-        }
+        success = false;
+        error = "Review Auto Base results and apply Fixed LLA; province overrides no longer write the receiver";
     } else if (command == "REBOOT_DEVICE") {
         requestWorkflowStop();
         setAgentState("rebooting");

@@ -346,6 +346,7 @@ namespace {
 BackendAgent backendAgent;
 
 void BackendAgent::begin() {
+    if (!autoBaseLocationQueue_) autoBaseLocationQueue_ = xQueueCreate(1, sizeof(AutoBaseLocationReply));
     // Image verification uses shared bootloader mappings; do it once before tasks.
     firmwareSize_ = ESP.getSketchSize();
     loadPreferences();
@@ -889,12 +890,20 @@ void BackendAgent::loop() {
 
 void BackendAgent::handleControlAck(const String &source, const String &message, bool retained) {
     if (retained) return;
-    DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(4096);
     if (deserializeJson(doc, message) != DeserializationError::Ok) return;
     if (doc["type"] != "control_plane_ack") return;
     if (doc["status_boot_id"].as<String>() != statusBootId_) return;
+    if (doc["serial"].as<String>() != serialNumber_) return;
     const int32_t sequence = doc["status_sequence"] | -1;
     if (sequence < 0) return;
+    JsonObjectConst location = doc["auto_base_location"].as<JsonObjectConst>();
+    if (autoBaseLocationQueue_ && workflowActive() && !location.isNull()
+        && measureJson(location) < sizeof(AutoBaseLocationReply::json)) {
+        AutoBaseLocationReply reply;
+        serializeJson(location, reply.json, sizeof(reply.json));
+        xQueueOverwrite(autoBaseLocationQueue_, &reply);
+    }
     if (source == "mqtt") {
         if (sequence > lastMqttAckSequence_) {
             lastMqttAckSequence_ = sequence;

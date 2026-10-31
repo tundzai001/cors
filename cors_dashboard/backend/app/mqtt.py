@@ -1211,6 +1211,10 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
         return any(marker in normalized for marker in ("password", "passwd", "secret", "token")) or normalized.endswith(("_pass", "pass"))
 
     def normalize_val(v):
+        if isinstance(v, dict):
+            return {key: normalize_val(value) for key, value in v.items()}
+        if isinstance(v, list):
+            return [normalize_val(value) for value in v]
         if v is None: 
             return ""
         s = str(v).strip().lower()

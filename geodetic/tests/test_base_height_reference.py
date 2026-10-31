@@ -88,7 +88,7 @@ class BaseHeightTests(unittest.TestCase):
                 receiver.__exit__ = Mock(return_value=False)
                 async def no_wait(_):
                     pass
-                scope = {'GNSSReader': object, 'DEFAULT_BAUDRATE': 115200, 'logging': logging,
+                scope = {'Decimal': __import__('decimal').Decimal, 'GNSSReader': object, 'DEFAULT_BAUDRATE': 115200, 'logging': logging,
                          'asyncio': SimpleNamespace(sleep=no_wait), 'serial_port_lock': threading.Lock(),
                          'serial': SimpleNamespace(Serial=Mock(return_value=receiver)),
                          '_runtime_serial_baud': lambda **kw: 115200}

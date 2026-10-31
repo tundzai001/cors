@@ -90,7 +90,7 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         struct.pack_into('<iii', fixed, 4, 210849876, 1057867141, 291)
         fixed[16:19] = bytes([12, 88, 94])
         result = await self.refresh([self.pack(6, 0x71, fixed)])
-        self.assertEqual(result['bestpos']['lat'], '21.08498761200')
+        self.assertEqual(result['bestpos']['lat'], repr(21.084987612))
         self.assertEqual(result['bestpos']['alt'], '2.9194')
         self.assertEqual(result['mode_kind'], 'base')
         self.assertEqual(self.system()['survey_in_status']['state'], 'not_monitoring')

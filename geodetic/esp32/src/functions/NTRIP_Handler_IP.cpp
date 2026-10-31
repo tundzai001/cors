@@ -186,6 +186,7 @@ struct NtripEndpoint {
 };
 
 NtripEndpoint endpoints[NTRIP_SERVER_COUNT];
+static Vn2000Session roverDatumSession;
 WiFiClient wifiNtripClient1;
 WiFiClient wifiNtripClient2;
 TinyGsmClient gsmNtripClient1(modem, 0);
@@ -311,18 +312,18 @@ void stopEndpoint(uint8_t index) {
     clearEndpointState(endpoints[index]);
 }
 
-bool waitForNtripResponse(Client &client, String *statusLine = nullptr) {
+bool waitForNtripResponse(Client &client, String *statusLine = nullptr, bool rover = false) {
     String response;
     response.reserve(512);
-    const uint32_t deadline = millis() + 10000UL;
-    while ((client.connected() || client.available() > 0) && millis() < deadline && response.length() < 4096) {
+    const uint32_t started = millis();
+    while ((client.connected() || client.available() > 0) && millis() - started < 10000UL && response.length() < 4096) {
         while (client.available() > 0 && response.length() < 4096) {
             const int value = client.read();
             if (value < 0) break;
             response += static_cast<char>(value);
-            if (response.endsWith("\r\n\r\n")) break;
+            if (response.endsWith("\r\n\r\n") || (rover && response == "ICY 200 OK\r\n")) break;
         }
-        if (response.indexOf("\r\n\r\n") >= 0) break;
+        if (response.indexOf("\r\n\r\n") >= 0 || (rover && response == "ICY 200 OK\r\n")) break;
         delay(1);
     }
     if (statusLine) {
@@ -718,7 +719,7 @@ int connectNTRIP() {
 }
 
 int loopNTRIP(String &rtcmData) {
-    if (roverSessionActive) return 504;
+    if (roverSessionActive || backendAgent.workflowActive()) return 504;
 
     int returnCode = NTRIP_MODE;
     bool anyConnected = false;
@@ -809,6 +810,7 @@ bool startNtripRover(const String &host, const uint16_t port, const String &user
 
     // The temporary rover reuses source server 1's client and modem mux 0.
     // Close that client before opening a receive-only correction stream.
+    roverDatumSession.reset();
     roverBytesReceived = 0;
     roverPacketsReceived = 0;
     roverSessionActive = true;
@@ -842,7 +844,7 @@ bool startNtripRover(const String &host, const uint16_t port, const String &user
     }
     client.print(request);
 
-    if (!waitForNtripResponse(client)) {
+    if (!waitForNtripResponse(client, nullptr, true)) {
         client.stop();
         roverSessionActive = false;
         return false;
@@ -874,6 +876,7 @@ int loopNtripRover() {
     const size_t bytesToRead = min(static_cast<size_t>(available), sizeof(buffer));
     const int bytesRead = client.read(buffer, bytesToRead);
     if (bytesRead > 0) {
+        roverDatumSession.feed(buffer, static_cast<size_t>(bytesRead));
         Serial1.write(buffer, static_cast<size_t>(bytesRead));
         roverBytesReceived += static_cast<uint32_t>(bytesRead);
         ++roverPacketsReceived;
@@ -895,3 +898,5 @@ bool ntripRoverActive() {
 
 uint32_t ntripRoverBytesReceived() { return roverBytesReceived; }
 uint32_t ntripRoverPacketsReceived() { return roverPacketsReceived; }
+
+Vn2000Datum ntripRoverDatum() { return roverDatumSession.datum(); }

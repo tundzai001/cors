@@ -4,6 +4,7 @@
 // ============ GẮN CÁC THƯ VIỆN CẦN THIẾT ==============
 
 #include <Arduino.h>
+#include "functions/Vn2000_Datum.h"
 #include "Top_Lvl_Config.h"
 #include "hardware/Connection_type.h"
 #include "functions/gnss_cmd_builder.h"
@@ -28,7 +29,7 @@ Client& activeNtripClient();
 
 // Temporary rover-side NTRIP session used by the auto-base/reference
 // workflows. RTCM received here is injected into the GNSS module unchanged;
-// this firmware never decodes the RTCM payload.
+// datum frames are decoded separately for the current receive session.
 bool startNtripRover(const String &host, uint16_t port, const String &username,
                     const String &password, String mountpoint,
                     uint8_t version = 1);
@@ -37,5 +38,7 @@ void stopNtripRover();
 bool ntripRoverActive();
 uint32_t ntripRoverBytesReceived();
 uint32_t ntripRoverPacketsReceived();
+// Caller owns tcpStreamMutex, like start/loop/stopNtripRover.
+Vn2000Datum ntripRoverDatum();
 
 #endif

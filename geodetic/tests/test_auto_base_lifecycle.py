@@ -3,6 +3,7 @@ import ast
 import asyncio
 import base64
 import copy
+from decimal import Decimal, ROUND_DOWN
 from collections import OrderedDict
 import importlib.util
 import logging
@@ -97,7 +98,7 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.scope = load({'_ubx_packet', '_verify_ublox_tmode', '_is_rtk_usable_status',
                            '_get_fresh_outbound_gga', '_apply_rover_mode_to_chip', '_apply_base_mode_to_chip'},
-                          dict(asyncio=SimpleNamespace(sleep=yield_only), time=time, logging=logging,
+                          dict(Decimal=Decimal, ROUND_DOWN=ROUND_DOWN, asyncio=SimpleNamespace(sleep=yield_only), time=time, logging=logging,
                                GNSSReader=object, serial_port_lock=threading.Lock(),
                                _runtime_serial_baud=lambda **kwargs: 115200))
         self.packet = self.scope['_ubx_packet']
@@ -294,30 +295,33 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(receiver.closed)
 
     async def test_auto_base_failure_never_saves_a_completed_coordinate(self):
-        for apply_error, review_only in ((None, False), (RuntimeError('receiver still Rover'), False), (None, True)):
-            with self.subTest(apply_error=apply_error, review_only=review_only):
+        for apply_error, review_only, host, k0 in ((None, False, 'other.example', 0.9996), (RuntimeError('receiver still Rover'), False, 'other.example', 0.9996), (None, True, 'vngeonet.vn', 0.9996), (None, True, '14.238.1.125', 0.9996), (None, True, '14.238.1.125', 0.9999)):
+            with self.subTest(apply_error=apply_error, review_only=review_only, host=host, k0=k0):
+                expected_failure = apply_error or (host == '14.238.1.125' and k0 != 0.9996)
                 now = [1000.0]
                 reader = SimpleNamespace(pause=Mock(), resume=Mock(), inject_rtcm=Mock())
                 client = SimpleNamespace(start=Mock(), stop=Mock(), join=Mock())
                 old = {'base_setup_method': 'FIXED_LLA', 'coords': {'lat': 1, 'lon': 2, 'alt': 3}}
                 agent = SimpleNamespace(config={'base_config': old, 'auto_base_setup': {
-                    'enabled': True, 'review_only': review_only, 'port': 2101, 'l0_deg': 105, 'k0': 0.9999,
-                    'enable_itrf_vn2000_transform': False}},
+                    'enabled': True, 'review_only': review_only, 'port': 2101, 'ip': host, 'l0_deg': 105, 'k0': k0,
+                    'enable_itrf_vn2000_transform': host != '14.238.1.125'}},
                     detected_chip={'type': 'Ublox', 'port': 'USB'}, save_config=Mock(), log=Mock())
                 phases = []
-                scope = dict(AgentManager=object, GNSSReader=object, mqtt=SimpleNamespace(Client=object),
+                scope = dict(Decimal=Decimal, ROUND_DOWN=ROUND_DOWN, AgentManager=object, GNSSReader=object, mqtt=SimpleNamespace(Client=object),
                     time=SimpleNamespace(time=lambda: now[0]), math=math, logging=logging, copy=copy,
                     DATUM_LOCK=threading.RLock(), _resolve_auto_base_location=lambda *args: {},
-                    RTCMDatum=lambda: SimpleNamespace(l0=math.radians(105), k0=0.9999,
-                        rtcm1021_update=False, rtcm1023_update=False, rtcm1025_update=False,
+                    RTCMDatum=lambda: SimpleNamespace(l0=math.radians(105), k0=0.9996,
+                        rtcm1021_update=True, rtcm1023_update=False, rtcm1025_update=False,
                         **dict.fromkeys(("dX", "dY", "dZ", "rX", "rY", "rZ", "kT", "resB", "resL", "resH"), 0)),
+                    _is_valid_vn2000_projection_params=lambda datum: True,
+                    _transform_itrf_to_vn2000_neh_and_llh=Mock(return_value=(2300000, 580000, 25, 20.100000000123456, 105.10000000098765, 2.1000123456789)),
                     active_auto_base_client=None, _cleanup_inject_queue=Mock(),
                     _apply_rover_mode_to_chip=AsyncMock(),
                     _apply_base_mode_to_chip=AsyncMock(side_effect=apply_error),
                     _set_auto_base_progress=lambda phase, **kwargs: phases.append(phase),
                     send_status=AsyncMock(), NTRIPClientWorker=lambda *args, **kwargs: client,
                     _plain_mean=statistics.mean, _datum_snapshot=lambda: SimpleNamespace(
-                        l0=math.radians(105), k0=0.9999, rtcm1021_update=False,
+                        l0=math.radians(105), k0=0.9996, rtcm1021_update=False,
                         rtcm1023_update=False, rtcm1025_update=False),
                     LAST_RAW_GGA='$GNGGA,test', LAST_RAW_GGA_TS=now[0],
                     LAST_GGA_FIX_STATUS='RTK_FIXED', LAST_GGA_COORD=(20.0, 105.0, 2.0))
@@ -331,12 +335,23 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
                       '_is_rtk_usable_status'}, scope)
                 with self.assertLogs(level='INFO'):
                     await scope['auto_base_state_machine'](agent, reader, None)
-                self.assertEqual(phases[-1], 'failed' if apply_error else 'ready_for_review')
+                self.assertEqual(phases[-1], 'failed' if expected_failure else 'ready_for_review')
                 self.assertEqual(agent.config['gnss_config_pending'], apply_error is not None)
                 self.assertIs(agent.config['base_config'], old)
                 scope['_apply_base_mode_to_chip'].assert_awaited_once_with('Ublox', 'USB', 1.0, 2.0, 3.0, reader)
-                if not apply_error:
-                    self.assertEqual(agent.config['auto_base_candidate']['averaged_coord']['lat'], '20.0000000000')
+                if not expected_failure:
+                    candidate = agent.config['auto_base_candidate']
+                    converted = host == '14.238.1.125'
+                    self.assertEqual(candidate['averaged_coord']['lat'], '20.100000000' if converted else '20.000000000')
+                    self.assertEqual(candidate['transform_applied'], converted)
+                    if converted:
+                        self.assertEqual(candidate['conversion_report']['calculated_coord'],
+                            {'lat': repr(20.100000000123456), 'lon': '105.10000000098765', 'alt': '2.1000123456789'})
+                        self.assertEqual(candidate['averaged_coord']['lon'], '105.100000000')
+                        self.assertEqual(candidate['averaged_coord']['alt'], '2.1000')
+                    self.assertEqual(scope['_transform_itrf_to_vn2000_neh_and_llh'].called, converted)
+                    self.assertEqual(candidate['conversion_report']['projected_coord'],
+                        {'north': 2300000, 'east': 580000, 'h': 25} if converted else None)
                 self.assertFalse(agent.config['auto_base_setup']['enabled'])
                 self.assertIsNone(scope['active_auto_base_client'])
                 self.assertTrue(client.stop.called)

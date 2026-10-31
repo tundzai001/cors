@@ -10,8 +10,7 @@ DATA = Path(__file__).with_name('data')
 @lru_cache(maxsize=1)
 def _catalog():
     features = json.loads((DATA / 'vietnam_provinces.geojson').read_text(encoding='utf-8'))['features']
-    projections = json.loads((DATA / 'coordinate_provinces.json').read_text(encoding='utf-8'))
-    return features, projections
+    return features
 
 
 def _in_ring(x, y, ring):
@@ -28,7 +27,7 @@ def _in_ring(x, y, ring):
 def resolve_location(lat, lon, alt):
     if not all(math.isfinite(v) for v in (lat, lon, alt)) or abs(lat) > 90 or abs(lon) > 180:
         raise ValueError('LLH không hợp lệ')
-    features, projections = _catalog()
+    features = _catalog()
     matches = []
     for feature in features:
         geometry = feature['geometry']
@@ -41,11 +40,10 @@ def resolve_location(lat, lon, alt):
         result['state'] = 'boundary_ambiguous' if matches else 'outside_boundaries'
         return result
     province = matches[0]
-    options = [dict(region=p['name'], l0_deg=p['central_meridian'], k0=0.9999)
-               for p in projections if p['current_code'] == province['code']]
-    meridians = {option['l0_deg'] for option in options}
+    # Auto Base uses six-degree UTM zones; province TM-3 catalogs are unrelated.
+    zone = min(60, int((lon + 180) // 6) + 1)
+    meridian = zone * 6 - 183
+    options = [dict(region=f"UTM {zone}N", l0_deg=meridian, k0=0.9996, zone_width_deg=6)]
     result.update(province_code=province['code'], province_name=province['fullName'], projection_options=options,
-                  state='resolved' if len(meridians) == 1 else 'projection_selection_required')
-    if len(meridians) == 1:
-        result.update(l0_deg=meridians.pop(), k0=0.9999)
+                  state='resolved', l0_deg=meridian, k0=0.9996, zone_width_deg=6, utm_zone=zone)
     return result

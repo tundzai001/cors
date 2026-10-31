@@ -13,7 +13,7 @@
 class BackendAgentWebsocket;
 
 // Device agent for backend commands, status, provisioning and base workflows.
-// Receiver coordinates come from NMEA or Unicore readback; RTCM is forwarded.
+// Receiver coordinates come from NMEA/readback; CORS datum frames are session-scoped.
 class BackendAgent {
 public:
     void begin();
@@ -111,6 +111,8 @@ private:
 
     QueueHandle_t nmeaQueue_ = nullptr;
     QueueHandle_t rtcmQueue_ = nullptr;
+    struct AutoBaseLocationReply { char json[1536]; };
+    QueueHandle_t autoBaseLocationQueue_ = nullptr;
     BackendAgentWebsocket *websocket_ = nullptr;
     TaskHandle_t workflowTask_ = nullptr;
     String workflowKind_;
@@ -142,12 +144,6 @@ private:
     bool refreshReceiverReadback(String &error);
     void saveSurveyResult(JsonObjectConst bestPosition, const String &mode);
     void pollGnssStatus();
-    bool transformToVn2000(double latitude, double longitude, double altitude,
-                           double centralMeridianDeg, double scale,
-                           double &localLatitude, double &localLongitude,
-                           double &localAltitude, double &northing, double &easting);
-    bool getProvinceProjection(const String &code, double &centralMeridianDeg,
-                               double &scale, String &name) const;
     void markStatusDirty() { statusDirty_ = true; }
 
     String buildStatusPayload();

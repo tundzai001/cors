@@ -28,7 +28,7 @@ def build_control_plane_ack(
     if normalized_channel not in {"websocket", "mqtt"}:
         return None
 
-    return {
+    ack = {
         "type": "control_plane_ack",
         "channel": normalized_channel,
         "serial": str(serial or ""),
@@ -39,3 +39,20 @@ def build_control_plane_ack(
             3,
         ),
     }
+
+    progress = payload.get("auto_base_progress")
+    if isinstance(progress, Mapping) and progress.get("phase") == "resolving_location":
+        request = progress.get("location_request")
+        if isinstance(request, Mapping):
+            request_id = request.get("request_id")
+            if isinstance(request_id, str) and 0 < len(request_id) <= 128:
+                from .auto_base_location import resolve_location
+                try:
+                    if any(isinstance(request.get(key), bool) for key in ("lat", "lon", "alt")):
+                        raise ValueError("Boolean LLH")
+                    point = [float(request[key]) for key in ("lat", "lon", "alt")]
+                    location = resolve_location(*point)
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    location = {"state": "invalid_request"}
+                ack["auto_base_location"] = {"request_id": request_id, "location": location}
+    return ack

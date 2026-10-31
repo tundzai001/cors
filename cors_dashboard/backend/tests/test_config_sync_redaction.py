@@ -14,6 +14,18 @@ compare = scope['_compare_configs']
 
 
 class ConfigSyncRedactionTests(unittest.TestCase):
+    def test_nested_list_objects_ignore_json_key_order(self):
+        db = {'conversion_report': {'location': {'projection_options': [
+            {'k0': 0.9999, 'l0_deg': 105, 'region': 'Hà Nội'}]}}}
+        agent = {'conversion_report': {'location': {'projection_options': [
+            {'region': 'Hà Nội', 'l0_deg': 105, 'k0': 0.9999}]}}}
+        self.assertEqual(compare(agent, db, 'Base'), (True, []))
+        agent['conversion_report']['location']['projection_options'][0]['l0_deg'] = 106
+        ok, errors = compare(agent, db, 'Base')
+        self.assertFalse(ok)
+        self.assertIn('Base.conversion_report.location.projection_options', errors[0])
+        self.assertFalse(compare({'ports': ['USB', 'UART1']}, {'ports': ['UART1', 'USB']})[0])
+
     def test_survey_ignores_retained_fixed_coordinates_and_accuracy(self):
         agent = {'base_setup_method': 'SURVEY_IN', 'survey_in_duration': 120,
                  'survey_in_accuracy': 5, 'gnss_options': {'output_mode': 'rtcm_only'}}

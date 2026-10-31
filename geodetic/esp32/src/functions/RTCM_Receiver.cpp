@@ -4,6 +4,8 @@
 #include "Prog_Config.h"
 #include "functions/Backend_Agent.h"
 #include <cstdio>
+#include <cmath>
+#include "functions/Base_Sample.h"
 
 namespace {
 
@@ -105,7 +107,7 @@ void parseNmeaSentence(const String &rawSentence) {
     }
     if (fieldCount == 0) return;
 
-    const size_t typeLength = strnlen(fields[0], sizeof(fields[0]));
+    const size_t typeLength = strlen(fields[0]);
     if (typeLength < 3) return;
     const char *type = fields[0] + typeLength - 3;
 
@@ -136,7 +138,9 @@ void parseNmeaSentence(const String &rawSentence) {
             longitude = nmeaCoordinate(fields[4], fields[5]);
             satellites = static_cast<uint8_t>(constrain(atoi(fields[7]), 0, 255));
             hdop = static_cast<float>(atof(fields[8]));
-            altitude = atof(fields[9]);
+            // GGA reports orthometric H and geoid separation N. Auto Base uses h.
+            altitude = fieldCount > 12
+                ? ggaEllipsoidalHeight(fields[9], fields[10], fields[11], fields[12]) : NAN;
             updatePosition = true;
         }
     } else if (strcmp(type, "GSA") == 0) {
@@ -181,6 +185,7 @@ void parseNmeaSentence(const String &rawSentence) {
         snprintf(telemetry.lastGga, sizeof(telemetry.lastGga), "%s", sentence.c_str());
         telemetry.lastGga[sizeof(telemetry.lastGga) - 1] = '\0';
         telemetry.lastGgaMs = millis();
+        if (!updatePosition) telemetry.latitude = telemetry.longitude = telemetry.altitude = NAN;
     }
     if (updatePosition) {
         telemetry.latitude = latitude;

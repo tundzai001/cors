@@ -1,56 +1,13 @@
-#include "functions/Backend_Agent.h"
+#include "functions/Vn2000_Datum.h"
+#include <cstring>
 #include <cmath>
 
-// Transform receiver coordinates to VN2000; RTCM payloads are not inspected.
+// Portable RTCM datum decoder and the same LLH/NEh/local-LLH chain as Python.
 namespace {
 constexpr double WGS84_A = 6378137.0;
-constexpr double WGS84_B = 6356752.31424518;
+constexpr double WGS84_B = 6356752.3142;
 constexpr double WGS84_E2 = 1.0 - (WGS84_B * WGS84_B) / (WGS84_A * WGS84_A);
 constexpr double ARCSEC_TO_RAD = 3.14159265358979323846 / (180.0 * 3600.0);
-
-struct ProvinceProjection {
-    const char *code;
-    const char *name;
-    double centralMeridianDeg;
-    double scale;
-};
-
-constexpr ProvinceProjection VN2000_PROVINCES[] = {
-    {"AG_KG", "An Giang + Kien Giang", 104.75, 0.9999},
-    {"BN_BG", "Bac Ninh + Bac Giang", 107.0, 0.9999},
-    {"CM_BL", "Ca Mau + Bac Lieu", 104.5, 0.9999},
-    {"CAO_BANG", "Cao Bang", 105.75, 0.9999},
-    {"DAKLAK_PY", "Dak Lak + Phu Yen", 108.5, 0.9999},
-    {"DIEN_BIEN", "Dien Bien", 103.0, 0.9999},
-    {"DNAI_BPHUOC", "Dong Nai + Binh Phuoc", 107.75, 0.9999},
-    {"DTHAP_TGIANG", "Dong Thap + Tien Giang", 105.0, 0.9999},
-    {"GLAI_BDINH", "Gia Lai + Binh Dinh", 108.25, 0.9999},
-    {"HA_TINH", "Ha Tinh", 105.5, 0.9999},
-    {"HYEN_TBINH", "Hung Yen + Thai Binh", 105.5, 0.9999},
-    {"KH_HOA_NTHUAN", "Khanh Hoa + Ninh Thuan", 108.25, 0.9999},
-    {"LAI_CHAU", "Lai Chau", 104.75, 0.9999},
-    {"LANG_SON", "Lang Son", 107.25, 0.9999},
-    {"LCAI_YBAI", "Lao Cai + Yen Bai", 104.75, 0.9999},
-    {"LDONG_DNONG_BTHUAN", "Lam Dong + Dak Nong + Binh Thuan", 107.75, 0.9999},
-    {"NGHE_AN", "Nghe An", 104.75, 0.9999},
-    {"NBINH_HNAM_NDINH", "Ninh Binh + Ha Nam + Nam Dinh", 105.0, 0.9999},
-    {"PHU_THO_VPHUC_HBINH", "Phu Tho + Vinh Phuc + Hoa Binh", 104.75, 0.9999},
-    {"QNGAI_KTUM", "Quang Ngai + Kon Tum", 108.0, 0.9999},
-    {"QNINH", "Quang Ninh", 107.75, 0.9999},
-    {"QTRI_QBINH", "Quang Tri + Quang Binh", 106.0, 0.9999},
-    {"SON_LA", "Son La", 104.0, 0.9999},
-    {"TNINH_LONGAN", "Tay Ninh + Long An", 105.75, 0.9999},
-    {"TNGUYEN_BKAN", "Thai Nguyen + Bac Kan", 106.5, 0.9999},
-    {"THANH_HOA", "Thanh Hoa", 105.0, 0.9999},
-    {"CTHO_STRANG_HGIANG", "Can Tho + Soc Trang + Hau Giang", 105.0, 0.9999},
-    {"DANANG_QNAM", "Da Nang + Quang Nam", 107.75, 0.9999},
-    {"HA_NOI", "Ha Noi", 105.0, 0.9999},
-    {"HPHONG_HDUONG", "Hai Phong + Hai Duong", 105.75, 0.9999},
-    {"HCM_BRVT_BDUONG", "Ho Chi Minh + Ba Ria Vung Tau + Binh Duong", 105.75, 0.9999},
-    {"HUE", "Hue", 107.0, 0.9999},
-    {"TQUANG_HGIANG", "Tuyen Quang + Ha Giang", 106.0, 0.9999},
-    {"VLONG_BTRE_TVINH", "Vinh Long + Ben Tre + Tra Vinh", 105.5, 0.9999},
-};
 
 struct EcefCoordinate {
     double x = 0.0;
@@ -96,7 +53,7 @@ void ecefToLlh(const EcefCoordinate &coordinate, double &latitudeRad,
 
 void blhToUtm(double centralMeridianRad, double scale, double latitudeRad,
               double longitudeRad, double height, double &northing,
-              double &easting) {
+              double &easting, double falseEasting, double falseNorthing) {
     const double ep2 = WGS84_E2 / (1.0 - WGS84_E2);
     const double sinLatitude = sin(latitudeRad);
     const double cosLatitude = cos(latitudeRad);
@@ -112,11 +69,11 @@ void blhToUtm(double centralMeridianRad, double scale, double latitudeRad,
         - (3.0 * WGS84_E2 / 8.0 + 3.0 * e4 / 32.0 + 45.0 * e6 / 1024.0) * sin(2.0 * latitudeRad)
         + (15.0 * e4 / 256.0 + 45.0 * e6 / 1024.0) * sin(4.0 * latitudeRad)
         - (35.0 * e6 / 3072.0) * sin(6.0 * latitudeRad));
-    northing = scale * (meridian + radius * tangent * (
+    northing = falseNorthing + scale * (meridian + radius * tangent * (
         a * a / 2.0
         + (5.0 - t + 9.0 * c + 4.0 * c * c) * pow(a, 4) / 24.0
         + (61.0 - 58.0 * t + t * t + 600.0 * c - 330.0 * ep2) * pow(a, 6) / 720.0));
-    easting = 500000.0 + scale * radius * (
+    easting = falseEasting + scale * radius * (
         a + (1.0 - t + c) * pow(a, 3) / 6.0
         + (5.0 - 18.0 * t + t * t + 72.0 * c - 58.0 * ep2) * pow(a, 5) / 120.0);
     (void)height;
@@ -124,10 +81,10 @@ void blhToUtm(double centralMeridianRad, double scale, double latitudeRad,
 
 void utmToBlh(double centralMeridianRad, double scale, double northing,
               double easting, double height, double &latitudeRad,
-              double &longitudeRad) {
+              double &longitudeRad, double falseEasting, double falseNorthing) {
     const double ep2 = WGS84_E2 / (1.0 - WGS84_E2);
-    const double x = northing / scale;
-    const double y = (easting - 500000.0) / scale;
+    const double x = (northing - falseNorthing) / scale;
+    const double y = (easting - falseEasting) / scale;
     const double e4 = WGS84_E2 * WGS84_E2;
     const double e6 = e4 * WGS84_E2;
     const double mu = x / (WGS84_A * (1.0 - WGS84_E2 / 4.0
@@ -165,27 +122,33 @@ bool transformItrfToVn2000(double latitudeDeg, double longitudeDeg, double heigh
                            double centralMeridianDeg, double scale,
                            double &localLatitude, double &localLongitude,
                            double &localAltitude, double &northing,
-                           double &easting) {
+                           double &easting, double &vnHeight, const Vn2000Datum &datum) {
     const EcefCoordinate source = llhToEcef(latitudeDeg, longitudeDeg, height);
-    const double omega = 0.00928836 * ARCSEC_TO_RAD;
-    const double phi = -0.01975479 * ARCSEC_TO_RAD;
-    const double epsilon = 0.00427372 * ARCSEC_TO_RAD;
-    const double k = 0.999999747093722;
+    const double omega = datum.rX * ARCSEC_TO_RAD;
+    const double phi = datum.rY * ARCSEC_TO_RAD;
+    const double epsilon = datum.rZ * ARCSEC_TO_RAD;
+    const double k = datum.kT;
     const EcefCoordinate transformed = {
-        191.90441429 + k * (source.x + epsilon * source.y - phi * source.z),
-        39.30318279 + k * (-epsilon * source.x + source.y + omega * source.z),
-        111.45032835 + k * (phi * source.x - omega * source.y + source.z),
+        datum.dX + k * (source.x + epsilon * source.y - phi * source.z),
+        datum.dY + k * (-epsilon * source.x + source.y + omega * source.z),
+        datum.dZ + k * (phi * source.x - omega * source.y + source.z),
     };
 
     double latitudeRad = 0.0;
     double longitudeRad = 0.0;
     double transformedHeight = 0.0;
     ecefToLlh(transformed, latitudeRad, longitudeRad, transformedHeight);
+    if (datum.has1023) {
+        latitudeRad += datum.resB;
+        longitudeRad += datum.resL;
+        transformedHeight += datum.resH;
+    }
+    vnHeight = transformedHeight;
     const double centralMeridianRad = centralMeridianDeg * 3.14159265358979323846 / 180.0;
     blhToUtm(centralMeridianRad, scale, latitudeRad, longitudeRad,
-             transformedHeight, northing, easting);
+             transformedHeight, northing, easting, datum.falseEasting, datum.falseNorthing);
     utmToBlh(centralMeridianRad, scale, northing, easting, transformedHeight,
-             latitudeRad, longitudeRad);
+             latitudeRad, longitudeRad, datum.falseEasting, datum.falseNorthing);
 
     const EcefCoordinate vn2000 = llhToEcef(
         latitudeRad * 180.0 / 3.14159265358979323846,
@@ -210,32 +173,119 @@ bool transformItrfToVn2000(double latitudeDeg, double longitudeDeg, double heigh
 
 } // namespace
 
-bool BackendAgent::getProvinceProjection(const String &code, double &centralMeridianDeg,
-                                         double &scale, String &name) const {
-    for (const ProvinceProjection &province : VN2000_PROVINCES) {
-        if (code.equalsIgnoreCase(province.code)) {
-            centralMeridianDeg = province.centralMeridianDeg;
-            scale = province.scale;
-            name = province.name;
-            return true;
-        }
-    }
-    return false;
+bool transformVn2000(double latitude, double longitude, double altitude,
+                     const Vn2000Datum &datum, Vn2000Result &result) {
+    if (!datum.has1021 || !std::isfinite(latitude) || !std::isfinite(longitude) || !std::isfinite(altitude)
+        || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180
+        || !std::isfinite(datum.centralMeridianDeg) || datum.centralMeridianDeg < 100 || datum.centralMeridianDeg > 112
+        || !std::isfinite(datum.scale) || fabs(datum.scale - 0.9996) > 1e-9) return false;
+    return transformItrfToVn2000(latitude, longitude, altitude, datum.centralMeridianDeg, datum.scale,
+        result.latitude, result.longitude, result.altitude, result.north, result.east, result.h, datum)
+        && std::isfinite(result.north) && std::isfinite(result.east) && std::isfinite(result.h)
+        && result.altitude >= -1000 && result.altitude <= 100000;
 }
 
-bool BackendAgent::transformToVn2000(const double latitude, const double longitude,
-                                     const double altitude, const double centralMeridianDeg,
-                                     const double scale, double &localLatitude,
-                                     double &localLongitude, double &localAltitude,
-                                     double &northing, double &easting) {
-    if (!std::isfinite(latitude) || !std::isfinite(longitude) || !std::isfinite(altitude)
-        || latitude < -90.0 || latitude > 90.0
-        || longitude < -180.0 || longitude > 180.0
-        || centralMeridianDeg < 100.0 || centralMeridianDeg > 112.0
-        || scale < 0.9990 || scale > 1.0010) {
-        return false;
+namespace {
+struct Bits {
+    const uint8_t *data;
+    size_t limit, pos = 36;
+    bool ok = true;
+    uint64_t u(size_t width) {
+        if (width > 63 || pos + width > limit) { ok = false; return 0; }
+        uint64_t value = 0;
+        for (size_t i = 0; i < width; ++i, ++pos) value = (value << 1) | ((data[pos / 8] >> (7 - pos % 8)) & 1);
+        return value;
     }
-    return transformItrfToVn2000(latitude, longitude, altitude, centralMeridianDeg,
-                                 scale, localLatitude, localLongitude, localAltitude,
-                                 northing, easting);
+    int64_t s(size_t width) {
+        const uint64_t value = u(width);
+        return (value & (uint64_t(1) << (width - 1)))
+            ? int64_t(value) - int64_t(uint64_t(1) << width) : int64_t(value);
+    }
+    void skip(size_t width) { if (pos + width > limit) ok = false; else pos += width; }
+};
+uint32_t crc24q(const uint8_t *bytes, size_t length) {
+    uint32_t crc = 0;
+    for (size_t i = 0; i < length; ++i) {
+        crc ^= uint32_t(bytes[i]) << 16;
+        for (int bit = 0; bit < 8; ++bit) crc = (crc << 1) ^ ((crc & 0x800000) ? 0x1864CFB : 0);
+    }
+    return crc & 0xFFFFFF;
+}
+}
+
+void Vn2000Session::reset() { datum_ = Vn2000Datum(); size_ = 0; }
+
+void Vn2000Session::feed(const uint8_t *data, size_t length) {
+    for (size_t i = 0; i < length; ++i) {
+        frame_[size_++] = data[i];
+        while (size_ > 0) {
+            if (frame_[0] != 0xD3 || (size_ >= 2 && (frame_[1] & 0xFC))) {
+                memmove(frame_, frame_ + 1, --size_);
+                continue;
+            }
+            if (size_ < 3) break;
+            const size_t expected = ((size_t(frame_[1] & 3) << 8) | frame_[2]) + 6;
+            if (expected < 8) { memmove(frame_, frame_ + 1, --size_); continue; }
+            if (size_ < expected) break;
+            const uint32_t actual = (uint32_t(frame_[expected - 3]) << 16)
+                | (uint32_t(frame_[expected - 2]) << 8) | frame_[expected - 1];
+            if (crc24q(frame_, expected - 3) == actual) {
+                decode(expected);
+                size_ -= expected;
+                memmove(frame_, frame_ + expected, size_);
+            } else memmove(frame_, frame_ + 1, --size_);
+        }
+    }
+}
+
+void Vn2000Session::decode(size_t length) {
+    const unsigned message = (unsigned(frame_[3]) << 4) | (frame_[4] >> 4);
+    Bits bits{frame_, (length - 3) * 8};
+    Vn2000Datum next = datum_;
+    if (message == 1021) {
+        ++datum_.count1021;
+        const size_t sourceName = bits.u(5); bits.skip(8 * sourceName);
+        const size_t targetName = bits.u(5); bits.skip(8 * targetName);
+        bits.skip(8 + 10 + 5 + 4 + 2 + 19 + 20 + 14 + 14);
+        next.dX = double(bits.s(23)) * 0.001;
+        next.dY = double(bits.s(23)) * 0.001;
+        next.dZ = double(bits.s(23)) * 0.001;
+        next.rX = double(bits.s(32)) * 0.00002;
+        next.rY = double(bits.s(32)) * 0.00002;
+        next.rZ = double(bits.s(32)) * 0.00002;
+        next.kT = 1.0 + double(bits.s(25)) * 1e-11;
+        next.has1021 = bits.ok;
+    } else if (message == 1023) {
+        ++datum_.count1023;
+        bits.skip(8 + 1 + 1 + 21 + 22 + 12 + 12);
+        const double meanB = double(bits.s(8)) * 0.001;
+        const double meanL = double(bits.s(8)) * 0.001;
+        const double meanH = double(bits.s(15)) * 0.01;
+        double b = 0, l = 0, h = 0;
+        // Retain the reference algorithm's central-four residual mean.
+        for (int i = 0; i < 16; ++i) {
+            const double db = bits.s(9), dl = bits.s(9), dh = bits.s(9);
+            if (i == 5 || i == 6 || i == 9 || i == 10) { b += db; l += dl; h += dh; }
+        }
+        next.resB = (meanB + b * 0.00003 / 4.0) * ARCSEC_TO_RAD;
+        next.resL = (meanL + l * 0.00003 / 4.0) * ARCSEC_TO_RAD;
+        next.resH = -(meanH + h * 0.001 / 4.0);
+        next.has1023 = bits.ok;
+    } else if (message == 1025) {
+        ++datum_.count1025;
+        bits.skip(8 + 6);
+        const int64_t originLatitude = bits.s(34);
+        next.centralMeridianDeg = double(bits.s(35)) * 1.1e-8;
+        next.scale = (double(bits.u(30)) * 0.00001 + 993000.0) * 0.000001;
+        next.falseEasting = double(bits.u(36)) * 0.001;
+        next.falseNorthing = double(bits.s(35)) * 0.001;
+        if (originLatitude != 0 || next.centralMeridianDeg < 100 || next.centralMeridianDeg > 112
+            || next.scale < 0.999 || next.scale > 1.001) return;
+        next.has1025 = bits.ok;
+    } else return;
+    if (!bits.ok) return;
+    next.count1021 = datum_.count1021;
+    next.count1023 = datum_.count1023;
+    next.count1025 = datum_.count1025;
+    datum_ = next;
 }

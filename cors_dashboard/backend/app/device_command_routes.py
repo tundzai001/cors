@@ -150,7 +150,7 @@ async def configure_chip_endpoint(
                     "command": "TRIGGER_AUTO_BASE",
                     "payload": {
                         "review_only": True,
-                        "enable_itrf_vn2000_transform": auto_cors_config["ip"].lower() in {"14.238.1.125", "vngeonet.vn"},
+                        "enable_itrf_vn2000_transform": auto_cors_config["ip"] == "14.238.1.125",
                         **auto_cors_config,
                         "timeout": 3600,
                         "samples": 60,

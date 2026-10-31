@@ -8,14 +8,19 @@ class AutoBaseLocationTests(unittest.TestCase):
         result = resolve_location(21.08499, 105.78666, -7.9815)
         self.assertEqual(result['province_code'], '01')
         self.assertEqual(result['l0_deg'], 105)
+        self.assertEqual(result['k0'], 0.9996)
+        self.assertEqual(result['zone_width_deg'], 6)
         self.assertEqual(result['input_coord']['alt'], -7.9815)
 
-    def test_merged_province_does_not_guess_old_region(self):
+    def test_merged_province_uses_six_degree_zone_not_old_tm3_regions(self):
         result = resolve_location(10.7769, 106.7009, 10)
         self.assertEqual(result['province_code'], '79')
-        self.assertEqual(result['state'], 'projection_selection_required')
-        self.assertIsNone(result['l0_deg'])
-        self.assertGreater(len(result['projection_options']), 1)
+        self.assertEqual(result['state'], 'resolved')
+        self.assertEqual(result['l0_deg'], 105)
+        self.assertEqual(result['k0'], 0.9996)
+        east = resolve_location(16.0544, 108.2022, 10)
+        self.assertEqual(east['utm_zone'], 49)
+        self.assertEqual(east['l0_deg'], 111)
 
     def test_outside_country_and_invalid_llh(self):
         self.assertEqual(resolve_location(0, 0, 0)['state'], 'outside_boundaries')

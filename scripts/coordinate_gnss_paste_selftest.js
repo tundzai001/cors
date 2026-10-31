@@ -203,17 +203,32 @@ function paste(name, text) {
         receiver_base_readback: { state: 'ok', chip: 'Ublox', revision: 1, age_seconds: 2,
             mode_kind: 'survey_in', mode_raw: 'Survey-In (NAV-SVIN)', bestpos: ubxPosition } };
     render();
-    assert(find(tree, node => node.children.includes('Đã tự bắt đầu Survey-In khi bật nguồn. Trạng thái và tọa độ sẽ tự cập nhật.')));
+    assert(find(tree, node => node.children.includes('Tự động Survey-In 120 giây khi bật nguồn. Lệnh áp dụng từ UI dùng thời lượng đã chọn.')));
     assert(find(tree, node => node.children.includes('u-blox đã xác nhận khảo sát hoàn tất (NAV-SVIN valid).')));
     assert(find(tree, node => node.type === 'select' && node.props.value === 'SURVEY_IN'),
         'A late boot configuration updates the form without switching devices');
     assert(receiverButton('Điền vào Fixed LLA'));
     const beforeBootFill = sent.length;
     receiverButton('Điền vào Fixed LLA').props.onClick(); render();
-    assert.deepEqual(position(), ['21.0849876364', '105.7867141884', '2.9193']);
+    assert.deepEqual(position(), ['21.084987636', '105.786714188', '2.9193']);
     assert.equal(sent.length, beforeBootFill);
+    device.serial = 'UBLOX_SAVED_PRECISION'; device.status = 'online';
+    device.base_config = {base_setup_method:'FIXED_LLA',coords:{lat:'21.0849876369',lon:'105.7867141889',alt:'2.9193'}};
+    render();
+    assert.deepEqual(position(), ['21.084987636', '105.786714188', '2.9193'], 'Saved u-blox coordinates load at nine digits');
+    device.auto_base_progress = {phase:'ready_for_review',fixed_samples_only:true,
+        averaged_coord:{lat:'21.0849876369',lon:'105.7867141889',alt:'2.9193'}};
+    find(tree, node => node.type === 'select' && node.props.id === `base-method-${device.serial}`).props.onChange({target:{value:'AUTO_CORS'}});
+    render();
+    const useCandidate = find(tree, node => node.type === 'button' && node.children.includes('Kiểm tra và dùng kết quả cho Fixed LLA'));
+    assert(useCandidate && !useCandidate.props.disabled);
+    const beforeCandidate = sent.length;
+    useCandidate.props.onClick(); render();
+    assert.deepEqual(position(), ['21.084987636', '105.786714188', '2.9193'], 'Auto Base prefill uses nine digits before submission');
+    assert.equal(sent.length, beforeCandidate, 'Review/prefill never writes the receiver');
     device.status = 'offline'; render();
     assert.equal(receiverButton('Điền vào Fixed LLA').props.disabled, true);
+    console.log('PASS: u-blox saved/readback/Auto Base prefill all use nine decimal digits');
     console.log('PASS: shipped GNSS form fills all fields from any coordinate input, validates frame/height, preserves accuracy, blocks partial writes, and configures only on submit');
     console.log('PASS: survey coordinates preserve raw precision, convert geoid height, copy/prefill without commands, allow correction, and reject stale/offline/invalid results');
 })().catch(error => { console.error(error); process.exitCode = 1; });

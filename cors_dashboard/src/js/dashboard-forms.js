@@ -19,6 +19,26 @@ const STATUS_TEXT_MAP = {
     'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu & Tính trung bình (10 số sau dấu phẩy)',
     'auto_setup_base': 'Bước 4/4: Hoàn thiện kết quả Auto Base'
 };
+const displayMeridian = value => value !== null && value !== undefined && Number.isFinite(Number(value))
+    ? String(value) : 'Chưa có dữ liệu';
+const isSixDegreeReport = report => Number.isFinite(Number(report?.k0)) && Math.abs(Number(report.k0) - 0.9996) <= 1e-9;
+const Vn2000Result = ({ report }) => {
+    if (!report?.transform_applied) return null;
+    const neh = report.projected_coord;
+    const hasNeh = neh && ['north', 'east', 'h'].every(key =>
+        neh[key] !== null && neh[key] !== '' && Number.isFinite(Number(neh[key])));
+    return <section className="border rounded p-3 mb-3" aria-label="Kết quả VN-2000 NEh">
+        <h3 className="h6 mb-2">VN-2000 — NEh · {isSixDegreeReport(report) ? 'múi 6°' : 'khác múi 6°'}</h3>
+        {!isSixDegreeReport(report) && <p className="small text-warning">Kết quả cũ không dùng chuẩn múi 6° (k₀ = 0.9996). Cần lấy lại từ mountpoint M6.</p>}
+        {hasNeh ? <dl className="row g-2 small mb-2">
+            {[['north', 'N — Northing (m)'], ['east', 'E — Easting (m)'], ['h', 'h — Độ cao ellipsoid (m)']].map(([key, label]) => (
+                <div className="col-sm-4" key={key}><dt className="text-muted fw-normal">{label}</dt>
+                    <dd className="font-monospace text-break mb-0">{String(neh[key])}</dd></div>
+            ))}
+        </dl> : <p className="small text-muted mb-2">Phiên cũ chưa lưu NEh. Cần lấy lại kết quả Auto Base để hiển thị đủ N, E, h.</p>}
+        <div className="small text-muted">Kinh tuyến trục: {displayMeridian(report.central_meridian_deg)}°; k₀: {report.k0 ?? 'Chưa có dữ liệu'}.</div>
+    </section>;
+};
 const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {
     const [isDeploying, setIsDeploying] = useState(false);
     const [isUpdatingBypass, setIsUpdatingBypass] = useState(false);
@@ -271,7 +291,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const fixedStreak = autoProgress.fixed_streak || 0;
     const fixedStreakReq = autoProgress.fixed_streak_required || 5;
     const autoFixedResult = ['ready_for_review', 'completed'].includes(autoProgress.phase) && autoProgress.fixed_samples_only === true;
-    const conversionReport = autoProgress.conversion_report || {};
+    const conversionReport = autoProgress.conversion_report || device.base_config?.conversion_report || {};
     const supportsAutoBaseReview = device.system_info?.auto_base_review_supported === true;
     const autoResultText = autoFixedResult
         ? `Đã lấy ${autoProgress.sample_count || 0} mẫu RTK Fixed. Xem tọa độ trước khi áp dụng Fixed LLA.`
@@ -440,8 +460,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     : null
             );
             if (coords) {
-                setLatitude(coords.lat ?? '');
-                setLongitude(coords.lon ?? '');
+                setLatitude(activeChip === 'Ublox' && coords.lat != null ? chipCoordinate(coords.lat, 9) : coords.lat ?? '');
+                setLongitude(activeChip === 'Ublox' && coords.lon != null ? chipCoordinate(coords.lon, 9) : coords.lon ?? '');
                 setAltitude(coords.alt ?? '');
                 setAltitudeReference(config.altitude_reference === 'ELLIPSOID' || device.detected_chip_type === 'Ublox'
                     ? 'ELLIPSOID' : 'LEGACY');
@@ -475,7 +495,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 }
             }
         }
-    }, [device.serial, device.base_config?.base_setup_method, device.system_info?.base_startup?.state]);
+    }, [device.serial, device.detected_chip_type, device.base_config?.base_setup_method, device.system_info?.base_startup?.state]);
 
     const handleDecimalInputChange = (setter, maxDecimals) => (e) => {
         const value = e.target.value.replace(',', '.');
@@ -497,15 +517,13 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const formatCoord10 = (val) => {
         if (val === null || val === undefined || val === '') return '';
         if (activeChip === 'Ublox') return chipCoordinate(val, 9);
-        const num = parseFloat(val);
-        return Number.isFinite(num) ? num.toFixed(10) : String(val);
+        return String(val);
     };
 
     const formatAlt10 = (val) => {
         if (val === null || val === undefined || val === '') return '';
         if (activeChip === 'Ublox') return chipCoordinate(val, 4);
-        const num = parseFloat(val);
-        return Number.isFinite(num) ? num.toFixed(10) : String(val);
+        return String(val);
     };
 
     const handleCoordinatePaste = (event) => {
@@ -528,12 +546,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const handleUseReceiverCoordinates = () => {
         if (!canUseReceiverCoordinates || disabled || isSubmitting) return;
         setMethod('FIXED_LLA');
-        setLatitude(chipCoordinate(receiverCoordinates.lat, 10));
-        setLongitude(chipCoordinate(receiverCoordinates.lon, 10));
+        setLatitude(chipCoordinate(receiverCoordinates.lat, activeChip === 'Ublox' ? 9 : 10));
+        setLongitude(chipCoordinate(receiverCoordinates.lon, activeChip === 'Ublox' ? 9 : 10));
         setAltitude(receiverCoordinates.alt);
         setAltitudeReference('ELLIPSOID');
         setCoordinatePasteNotice({ error: false,
-            message: 'Đã điền tọa độ Base từ UM. Kiểm tra, hiệu chỉnh tọa độ và sai số trước khi bấm áp dụng.' });
+            message: `Đã điền tọa độ Base từ ${receiverLabel}. Kiểm tra tọa độ và sai số trước khi bấm áp dụng.` });
         window.requestAnimationFrame(() => document.getElementById(`base-latitude-${device.serial}`)?.focus());
     };
 
@@ -635,7 +653,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 const candidate = autoProgress.averaged_coord;
                 if (autoFixedResult && candidate && ['lat', 'lon', 'alt'].every(key =>
                     Math.abs(Number(params.coords[key]) - Number(candidate[key])) <= (key === 'alt' ? 0.00011 : 1.01e-9))) {
-                    params.conversion_report = conversionReport;
+                    params.conversion_report = { ...conversionReport, output_coord: { ...params.coords } };
                     params.coordinate_source = 'AUTO_CORS';
                 }
                 // Preserve decimal meters through the API and UBX encoding.
@@ -970,8 +988,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 <div className="border rounded p-3 mt-3">
                                     <div className="fw-bold small mb-2">{savedMethod === 'SURVEY_IN' ? 'Tọa độ Base sau Survey-In' : 'Tọa độ Base đang giữ'}</div>
                                     <dl className="row g-2 small mb-2">
-                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Vĩ độ WGS 84</dt><dd className="font-monospace text-break mb-0">{receiverCoordinates.lat}</dd></div>
-                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Kinh độ WGS 84</dt><dd className="font-monospace text-break mb-0">{receiverCoordinates.lon}</dd></div>
+                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Vĩ độ WGS 84</dt><dd className="font-monospace text-break mb-0">{formatCoord10(receiverCoordinates.lat)}</dd></div>
+                                        <div className="col-sm-6"><dt className="text-muted fw-normal">Kinh độ WGS 84</dt><dd className="font-monospace text-break mb-0">{formatCoord10(receiverCoordinates.lon)}</dd></div>
                                         <div className="col-sm-6"><dt className="text-muted fw-normal">Độ cao h ellipsoid (m)</dt><dd className="font-monospace mb-0">{receiverCoordinates.alt}</dd></div>
                                         <div className="col-sm-6"><dt className="text-muted fw-normal">Độ cao chip báo (m)</dt><dd className="font-monospace mb-0">{receiverCoordinates.heightMsl}</dd></div>
                                     </dl>
@@ -997,8 +1015,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </div>
                             ) : receiverPosition.state === 'ok' && (
                                 <div className="small text-muted mt-1">
-                                    {receiverPosition.message || 'BESTPOS'} hiện tại: <code>{Number(receiverPosition.latitude).toFixed(10)}, {Number(receiverPosition.longitude).toFixed(10)}</code>
-                                    {' · '}độ cao chip báo {Number(receiverPosition.height_msl).toFixed(4)} m
+                                    {receiverPosition.message || 'BESTPOS'} hiện tại: <code>{String(receiverPosition.latitude)}, {String(receiverPosition.longitude)}</code>
+                                    {' · '}độ cao chip báo {String(receiverPosition.height_msl)} m
                                     {receiverPosition.position_type ? ` · ${receiverPosition.position_type}` : ''}
                                 </div>
                             )}
@@ -1074,6 +1092,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 </div>
             </div>
 
+            {method !== 'AUTO_CORS' && <Vn2000Result report={conversionReport} />}
             <div className="mb-3">
                 {device.system_info?.survey_in_result?.bestpos && savedMethod !== 'SURVEY_IN' && (() => {
                     const saved = window.CorsReceiverCoordinates?.fromReceiver(device.system_info.survey_in_result.bestpos);
@@ -1229,6 +1248,13 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </div>
                             </div>
                         </div>
+                        <div className="col-12 small text-info" role="status">
+                            {corsHost.trim() === '14.238.1.125'
+                                ? 'Lần lấy mẫu tiếp theo: LLH trung bình → VN-2000 NEh múi 6° → LLH để đặt Base. Chọn mountpoint M6.'
+                                : corsHost.trim()
+                                    ? 'Lần lấy mẫu tiếp theo: giữ LLH trung bình, không chuyển qua VN-2000.'
+                                    : 'Chỉ IP 14.238.1.125 sử dụng chuyển đổi qua VN-2000 NEh. Các nguồn khác giữ LLH trung bình.'}
+                        </div>
                         <div className="col-12">
                             <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
                                 <i className="bi bi-robot me-2"></i>
@@ -1252,18 +1278,20 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         <div className="small mb-2">Tỉnh/thành: {conversionReport.location?.province_name || conversionReport.province_name || 'Chưa xác định'}
                                             {conversionReport.location?.state === 'projection_selection_required' && ' · Có nhiều vùng kinh tuyến trục cũ'}</div>
                                         <div className="table-responsive">
-                                            <table className="table table-sm small mb-2">
+                                            <table className="table table-sm small mb-2" style={{minWidth: '640px'}}>
                                                 <caption className="visually-hidden">Đối chiếu LLH gốc và kết quả Auto Base</caption>
-                                                <thead><tr><th scope="col">Tọa độ</th><th scope="col">LLH gốc</th><th scope="col">Kết quả để đặt Base</th></tr></thead>
+                                                <thead><tr><th scope="col">Tọa độ</th><th scope="col">LLH gốc</th><th scope="col">LLH sau tính</th><th scope="col">Gửi máy</th></tr></thead>
                                                 <tbody>{[['lat', 'Vĩ độ (°)'], ['lon', 'Kinh độ (°)'], ['alt', 'h ellipsoid (m)']].map(([key, label]) => (
                                                     <tr key={key}><th scope="row">{label}</th>
-                                                        <td className="font-monospace">{conversionReport.input_coord?.[key] ?? 'Chưa có dữ liệu'}</td>
-                                                        <td className="font-monospace">{autoProgress.averaged_coord?.[key] ?? 'Chưa có dữ liệu'}</td></tr>
+                                                        <td className="font-monospace">{conversionReport.input_coord?.[key] == null ? 'Chưa có dữ liệu' : String(conversionReport.input_coord[key])}</td>
+                                                        <td className="font-monospace text-break">{(conversionReport.calculated_coord || autoProgress.calculated_coord)?.[key] ?? 'Chưa lưu'}</td>
+                                                        <td className="font-monospace">{autoProgress.averaged_coord?.[key] == null ? 'Chưa có dữ liệu' : key === 'alt' ? autoProgress.averaged_coord[key] : formatCoord10(autoProgress.averaged_coord[key])}</td></tr>
                                                 ))}</tbody>
                                             </table>
                                         </div>
+                                        <Vn2000Result report={conversionReport} />
                                         <div className="small">{conversionReport.transform_applied
-                                            ? `Đã tính LLH địa phương qua VN-2000. Kinh tuyến trục ${conversionReport.central_meridian_deg}°; k₀ ${conversionReport.k0}.`
+                                            ? `Đã tính LLH địa phương qua VN-2000 ${isSixDegreeReport(conversionReport) ? 'múi 6°' : 'khác múi 6°'}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg)}°; k₀ ${String(conversionReport.k0)}.`
                                             : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.'}</div>
                                         {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
                                         {conversionReport.transform_applied && <details className="small mt-2"><summary>Tham số chuyển đổi</summary>
@@ -1275,8 +1303,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     </div>
                                 </div>
                                 <div className="col-12">
-                                    <button type="button" className="btn btn-outline-primary" disabled={disabled || isSubmitting || isAutoSetupActive}
-                                        onClick={() => { const coords = autoProgress.averaged_coord; if (!coords) return; setLatitude(coords.lat); setLongitude(coords.lon); setAltitude(coords.alt); setMethod('FIXED_LLA'); setAltitudeReference('ELLIPSOID'); }}>
+                                    <button type="button" className="btn btn-outline-primary" disabled={disabled || isSubmitting || isAutoSetupActive || (conversionReport.transform_applied && !isSixDegreeReport(conversionReport))}
+                                        onClick={() => { const coords = autoProgress.averaged_coord; if (!coords) return; setLatitude(activeChip === 'Ublox' ? chipCoordinate(coords.lat, 9) : coords.lat); setLongitude(activeChip === 'Ublox' ? chipCoordinate(coords.lon, 9) : coords.lon); setAltitude(coords.alt); setMethod('FIXED_LLA'); setAltitudeReference('ELLIPSOID'); }}>
                                         Kiểm tra và dùng kết quả cho Fixed LLA
                                     </button>
                                 </div>
