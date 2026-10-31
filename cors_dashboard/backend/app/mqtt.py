@@ -1231,6 +1231,30 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
         except ValueError:
             return s
 
+    if prefix == "Service":
+        def is_disabled(value):
+            return normalize_val(value) in ("false", "off", 0.0, "")
+
+        # A disabled service may omit its connection settings from telemetry.
+        # Still compare enable flags whenever the agent reports it running.
+        enable_fields = {key for key in config2 if key == "rtcm_enabled" or (
+            key.startswith("server") and key.endswith("_enabled")
+            and key[6:-8].isdigit())}
+        disabled_fields = {key for key in enable_fields
+                           if is_disabled(config2[key]) and is_disabled(config1.get(key))}
+        for flag in disabled_fields:
+            ignore_fields.add(flag)
+            if flag == "rtcm_enabled":
+                ignore_fields.update({"rtcmserver1", "rtcmport1", "rtcmmountpoint1",
+                                      "rtcmusername1", "rtcmntripversion1"})
+            else:
+                server_id = flag[6:-8]
+                ignore_fields.update(f"{field}{server_id}" for field in
+                                     ("serverhost", "port", "mountpoint", "username", "ntrip_version"))
+                ignore_fields.add(f"server{server_id}_stream_on_demand")
+        if enable_fields and disabled_fields == enable_fields:
+            ignore_fields.update({"ncomport", "reconnectioninterval", "stream_on_demand"})
+
     for key, db_val in config2.items():
         if key in ignore_fields or is_secret_field(key):
             continue
