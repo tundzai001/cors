@@ -345,18 +345,32 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
 
 const EspStoragePanel = memo(function EspStoragePanel({ device }) {
     const [pending, setPending] = useState(null);
+    const [inventory, setInventory] = useState(null);
+    const [inventoryOpen, setInventoryOpen] = useState(false);
+    const inventoryDialog = useRef(null);
     const [notice, setNotice] = useState('');
     const [failed, setFailed] = useState(false);
     const info = device.system_info || {};
     const storage = info.nvs;
     const action = storage?.last_action;
-    useEffect(() => { setPending(null); setNotice(''); setFailed(false); }, [device.serial]);
+    useEffect(() => { setPending(null); setNotice(''); setFailed(false); setInventory(null); setInventoryOpen(false); }, [device.serial]);
+    useEffect(() => {
+        const dialog = inventoryDialog.current;
+        if (!dialog) return;
+        if (inventoryOpen && !dialog.open) dialog.showModal();
+        else if (!inventoryOpen && dialog.open) dialog.close();
+    }, [inventoryOpen]);
     useEffect(() => {
         if (!pending) return;
         if (action?.command_id === pending.id && ['success', 'error', 'rejected'].includes(action.status)) {
             setPending(null);
-            setFailed(action.status !== 'success');
-            setNotice(action.status === 'success' ? 'Thiết bị đã cập nhật bộ nhớ.' : (action.detail || 'Thiết bị từ chối thao tác.'));
+            const report = storage?.inventory;
+            const validInventory = !pending.inspect || report?.command_id === pending.id;
+            setFailed(action.status !== 'success' || !validInventory);
+            if (action.status === 'success' && pending.inspect && validInventory) setInventory(report);
+            setNotice(action.status !== 'success' ? (action.detail || 'Thiết bị từ chối thao tác.')
+                : !validInventory ? 'Chưa nhận được bảng NVS đúng yêu cầu. Hãy kiểm tra lại.'
+                : pending.inspect ? 'Đã đọc dữ liệu NVS từ thiết bị.' : 'Thiết bị đã cập nhật bộ nhớ.');
             return;
         }
         const timeout = setTimeout(() => {
@@ -364,11 +378,11 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
             setNotice('Chưa nhận xác nhận từ thiết bị. Kiểm tra kết nối và số liệu mới trước khi thử lại.');
         }, 45000);
         return () => clearTimeout(timeout);
-    }, [pending, action?.command_id, action?.status]);
+    }, [pending, action?.command_id, action?.status, storage?.inventory?.command_id]);
     const formatBytes = value => value != null && Number.isFinite(Number(value)) ? `${(Number(value) / 1024).toFixed(1)}\u00a0KB` : 'Chưa có số liệu';
     const offline = isDeviceStaleOffline(device);
     const disabled = !!pending || offline || device.is_locked || storage?.cleanup_supported !== true;
-    async function run(group) {
+    async function run(group, offset = null) {
         if (disabled) return;
         if (group) {
             const description = group === 'unused_wifi'
@@ -379,12 +393,14 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
                 : window.confirm(description);
             if (!confirmed) return;
         }
-        setPending({ id: null }); setFailed(false); setNotice('Đang gửi yêu cầu tới ESP32…');
+        const inspect = offset !== null;
+        if (group) setInventory(null);
+        setPending({ id: null, inspect }); setFailed(false); setNotice('Đang gửi yêu cầu tới ESP32…');
         try {
-            const response = await window.DeviceApi.sendCommand(device.serial, group ? 'CLEAR_NVS_DATA' : 'CHECK_STORAGE_STATUS', group ? { group, confirm: group } : {});
+            const response = await window.DeviceApi.sendCommand(device.serial, group ? 'CLEAR_NVS_DATA' : 'CHECK_STORAGE_STATUS', group ? { group, confirm: group } : inspect ? { inspect: true, offset } : {});
             const result = await response.json();
             if (!response.ok || !result.command_id) throw new Error(result.detail || 'Không gửi được yêu cầu.');
-            setPending({ id: result.command_id });
+            setPending({ id: result.command_id, inspect });
             setNotice('Đã gửi, đang chờ thiết bị xác nhận…');
         } catch (error) { setPending(null); setFailed(true); setNotice(error.message); }
     }
@@ -429,6 +445,45 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
                 </div>;
             })}
         </>}
+        <button type="button" className="btn btn-outline-primary w-100 mt-3" style={{ minHeight: 44 }} disabled={disabled || storage?.inventory_supported !== true}
+            onClick={() => { setInventory(null); setInventoryOpen(true); run(null, 0); }}>Kiểm tra NVS</button>
+        {storage && storage.inventory_supported !== true && <p className="small text-muted mt-1">Cập nhật firmware để xem các mục đang lưu.</p>}
+        <dialog ref={inventoryDialog} className="esp-nvs-dialog bg-dark text-light border border-secondary rounded" aria-labelledby="nvs-inventory-title"
+            onCancel={() => setInventoryOpen(false)} onClose={() => setInventoryOpen(false)}>
+            <div className="d-flex justify-content-between align-items-center gap-3 p-3 border-bottom border-secondary">
+                <div><h5 id="nvs-inventory-title" className="mb-1">Dữ liệu NVS đang lưu</h5><div className="small text-muted">{device.name || device.serial} · Chỉ đọc, giá trị nhạy cảm được che.</div></div>
+                <button type="button" className="btn btn-outline-secondary" style={{ minHeight: 44 }} onClick={() => setInventoryOpen(false)} aria-label="Đóng bảng NVS">Đóng</button>
+            </div>
+            <div className="p-3" aria-busy={!!pending}>
+                {pending && <p role="status" className="text-info">Đang đọc NVS từ ESP32…</p>}
+                {failed && <p role="alert" className="text-danger">{notice}</p>}
+                {inventory && <>
+                    <p className="small text-muted">{inventory.total} mục · Hiển thị {inventory.entries.length ? inventory.offset + 1 : 0}–{inventory.offset + inventory.entries.length} · Dung lượng là dữ liệu giá trị, chưa gồm phần quản lý NVS.</p>
+                    {inventory.unavailable_partitions?.length > 0 && <p className="text-warning small">Một vùng nhớ chưa đọc được; bảng hiện các vùng khả dụng.</p>}
+                    <p className="small text-muted d-md-none">Vuốt ngang để xem đủ các cột.</p>
+                    <div className="table-responsive" tabIndex={0} role="region" aria-label="Danh sách mục NVS">
+                        <table className="table table-dark table-striped table-hover align-middle mb-0 esp-nvs-table">
+                            <caption className="visually-hidden">Dữ liệu NVS đã đọc từ thiết bị, giá trị bí mật được che</caption>
+                            <thead><tr><th scope="col">Vùng lưu</th><th scope="col">Nhóm / Mục</th><th scope="col">Kiểu</th><th scope="col">Dung lượng</th><th scope="col">Giá trị</th></tr></thead>
+                            <tbody>{inventory.entries.map((entry, index) => <tr key={`${entry.partition}:${entry.namespace}:${entry.key}:${index}`}>
+                                <td>{entry.partition === 'nvs' ? 'Cấu hình kết nối' : 'Dữ liệu trạm'}</td>
+                                <th scope="row"><div className="small text-muted">{entry.namespace}</div><code>{entry.key}</code></th>
+                                <td>{entry.type || '—'}</td><td>{entry.bytes == null ? '—' : `${entry.bytes} B`}</td>
+                                <td className="esp-nvs-value">{entry.error || (entry.redacted ? 'Đã che' : entry.value === '' ? '(trống)' : entry.value ?? 'Đã lưu')}</td>
+                            </tr>)}</tbody>
+                        </table>
+                    </div>
+                    {!inventory.entries.length && <p className="text-muted mt-3">Không có mục ở trang này. Bấm kiểm tra lại để đọc từ đầu.</p>}
+                </>}
+            </div>
+            <div className="d-flex flex-wrap justify-content-between gap-2 p-3 border-top border-secondary">
+                <button type="button" className="btn btn-outline-primary" style={{ minHeight: 44 }} disabled={disabled} onClick={() => { setInventory(null); run(null, 0); }}>Kiểm tra lại</button>
+                <div className="d-flex gap-2">
+                    <button type="button" className="btn btn-outline-secondary" style={{ minHeight: 44 }} disabled={disabled || !inventory || inventory.offset === 0} onClick={() => run(null, Math.max(0, inventory.offset - inventory.page_size))}>Trước</button>
+                    <button type="button" className="btn btn-outline-secondary" style={{ minHeight: 44 }} disabled={disabled || !inventory?.has_more} onClick={() => run(null, inventory.offset + inventory.page_size)}>Sau</button>
+                </div>
+            </div>
+        </dialog>
         {offline && <p className="small text-warning mt-2 mb-0">Thiết bị ngoại tuyến. Số liệu là lần nhận gần nhất.</p>}
         {notice && <p className={`small mt-2 mb-0 ${failed ? 'text-danger' : 'text-info'}`} role={failed ? 'alert' : 'status'}>{notice}</p>}
     </section>;

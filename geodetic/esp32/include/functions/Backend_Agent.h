@@ -65,6 +65,8 @@ private:
     String agentState_ = "initializing";
     String deviceName_;
     String lastCommandResult_ = "{}";
+    String nvsInventory_ = "{}";
+    uint32_t nvsInventoryMs_ = 0;
     String autoBaseProgress_ = "{}";
     String baseConfig_ = "{}";
     String serviceConfig_ = "{}";

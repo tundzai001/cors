@@ -518,8 +518,19 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
         success = false;
         error = "Review Auto Base results and apply Fixed LLA; province overrides no longer write the receiver";
     } else if (command == "CHECK_STORAGE_STATUS") {
+        if (payload["inspect"] == true) {
+            if (!payload["offset"].is<uint32_t>() || payload["offset"].as<uint32_t>() > 8192) {
+                success = false;
+                error = "NVS offset must be an integer from 0 to 8192";
+            } else {
+                nvsInventory_ = static_cast<const char *>(nullptr);
+                success = readNvsInventory(payload["offset"].as<uint32_t>(), commandId, nvsInventory_, error);
+                nvsInventoryMs_ = millis();
+            }
+        }
         detail = "storage status refreshed";
     } else if (command == "CLEAR_NVS_DATA") {
+        nvsInventory_ = static_cast<const char *>(nullptr);
         const String group = payload["group"] | "";
         const String confirmation = payload["confirm"] | "";
         if (workflowActive() || (surveyInMonitoring_ && !surveyInReadbackReady_)) {

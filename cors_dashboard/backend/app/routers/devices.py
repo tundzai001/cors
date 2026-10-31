@@ -182,6 +182,13 @@ async def send_generic_command(
         storage = (device.system_info or {}).get("nvs", {})
         if not isinstance(storage, dict) or storage.get("cleanup_supported") is not True:
             raise HTTPException(status_code=409, detail="Firmware chưa hỗ trợ quản lý bộ nhớ. Hãy cập nhật ESP32.")
+        if command.command == "CHECK_STORAGE_STATUS" and command.payload.get("inspect"):
+            if storage.get("inventory_supported") is not True:
+                raise HTTPException(status_code=409, detail="Cập nhật firmware để xem bảng dữ liệu NVS.")
+            offset = command.payload.get("offset", 0)
+            if type(offset) is not int or not 0 <= offset <= 8192:
+                raise HTTPException(status_code=400, detail="Vị trí trang NVS không hợp lệ.")
+            command.payload = {"inspect": True, "offset": offset}
         if command.command == "CLEAR_NVS_DATA":
             group = command.payload.get("group")
             if group not in ("unused_wifi", "auto_base_history") or command.payload.get("confirm") != group:

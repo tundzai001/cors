@@ -28,7 +28,10 @@ String BackendAgent::buildLwtPayload() const {
 }
 
 String BackendAgent::buildStatusPayload() {
-    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE);
+    // Inventory is an on-demand snapshot, not permanent telemetry overhead.
+    if (nvsInventory_.length() > 2 && millis() - nvsInventoryMs_ >= 60000UL)
+        nvsInventory_ = static_cast<const char *>(nullptr);
+    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (nvsInventory_.length() > 2 ? 3072 : 0));
     DynamicJsonDocument serviceDoc(CONFIG_DOCUMENT_SIZE);
     deserializeJson(serviceDoc, serviceConfig_);
     const JsonObjectConst service = serviceDoc.as<JsonObjectConst>();
@@ -179,6 +182,11 @@ String BackendAgent::buildStatusPayload() {
     disk["used_gb"] = static_cast<double>(flashUsed) / (1024.0 * 1024.0 * 1024.0);
     disk["percent"] = flashTotal > 0 ? (round((static_cast<double>(flashUsed) * 1000.0 / flashTotal)) / 10.0) : 0.0;
     appendStorageStatus(system);
+    if (nvsInventory_.length() > 2) {
+        DynamicJsonDocument inventory(3072);
+        if (deserializeJson(inventory, nvsInventory_) == DeserializationError::Ok)
+            system["nvs"]["inventory"].set(inventory.as<JsonObjectConst>());
+    }
     system["uptime_seconds"] = millis() / 1000UL;
     system["timestamp"] = timestamp.toInt();
     system["auth_license_bypass"] = false;

@@ -82,3 +82,30 @@ kiểm tra giao diện là fixture, không phải telemetry phần cứng.
 
 Chưa triển khai backend/frontend hoặc flash ESP32 trong lần làm này. Chỉ
 firmware mới mới gửi các trường bộ nhớ và xử lý hai lệnh trên.
+
+## Bảng dữ liệu NVS
+
+Trong System Monitor, bấm **Kiểm tra NVS** để đọc từ thiết bị và mở bảng.
+Mỗi trang tối đa 6 mục, gồm phân vùng, namespace, key, kiểu, dung lượng giá trị
+và nội dung được phép hiển thị. Dùng Trước/Sau để xem trang khác, Kiểm tra lại
+để đọc từ đầu. Trên điện thoại có thể vuốt ngang bảng. Escape/Đóng đóng bảng.
+
+Firmware liệt kê hai phân vùng `nvs` và `agent_state` bằng handle chỉ đọc.
+Chỉ giá trị key thuộc danh sách cho phép ở namespace cấu hình mới được gửi.
+Mật khẩu/license/token, JSON và blob chỉ hiển thị metadata, không gửi nội dung.
+Chuỗi cho phép dài hơn 96 byte chỉ hiện thông báo; không cấp phát để đọc toàn
+bộ giá trị. Mỗi trang có command ID và thời điểm đọc; các trang là các lần đọc
+riêng nên nếu dữ liệu thay đổi trong lúc xem, hãy kiểm tra lại từ đầu.
+
+Lệnh dùng lại `CHECK_STORAGE_STATUS` với payload `{"inspect":true,"offset":0}`.
+Backend yêu cầu quyền admin và firmware có capability `inventory_supported`.
+Offset phải là số nguyên 0–8192. Kết quả nằm ở `system_info.nvs.inventory`;
+UI chỉ nhận bảng có command ID đúng yêu cầu. Snapshot chỉ giữ trong RAM tối đa 60 giây,
+không ghi bản kiểm kê vào NVS; trang xóa dữ liệu sẽ hủy snapshot đã đọc.
+Document kiểm kê giới hạn 3072 byte và chỉ thêm dung lượng JSON status khi có
+snapshot. Không có API ghi/xóa key tùy ý trong bảng này.
+
+Đã kiểm tra phân trang, che giá trị bí mật, đọc metadata, đóng handle/iterator,
+phân vùng không khả dụng, phân quyền/offset và giao diện desktop/390 px bằng
+fixture. Các thử nghiệm không tạo thêm file check trong repository. Chưa đo
+trên ESP32 thật hoặc triển khai lên web vận hành.

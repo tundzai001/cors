@@ -1874,3 +1874,10 @@ body.dashboard-fixed-layout > main.container-fluid {
 }
 
 .station-host-lock-dialog{width:min(560px,calc(100% - 24px));max-height:calc(100dvh - 32px);padding:0;overflow:auto}.station-host-lock-dialog::backdrop{background:rgba(0,0,0,.7);backdrop-filter:blur(4px)}.station-host-lock-dialog label{cursor:pointer}.station-host-lock-dialog input:disabled{cursor:not-allowed}.station-host-lock-dialog .btn{min-height:44px}
+
+/* Native dialog keeps NVS inspection above the station side panel. */
+.esp-nvs-dialog { width: min(960px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; }
+.esp-nvs-dialog::backdrop { background: rgba(0, 0, 0, .65); }
+.esp-nvs-table { min-width: 620px; font-size: .875rem; }
+.esp-nvs-value { max-width: 240px; overflow-wrap: anywhere; }
+.esp-nvs-dialog button:focus-visible, .esp-nvs-dialog [tabindex]:focus-visible { outline: 2px solid var(--bs-primary, #0d6efd); outline-offset: 3px; }
