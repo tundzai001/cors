@@ -19,9 +19,18 @@ const STATUS_TEXT_MAP = {
     'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu & Tính trung bình (10 số sau dấu phẩy)',
     'auto_setup_base': 'Bước 4/4: Hoàn thiện kết quả Auto Base'
 };
-const displayMeridian = value => value !== null && value !== undefined && Number.isFinite(Number(value))
-    ? String(value) : 'Chưa có dữ liệu';
 const isSixDegreeReport = report => Number.isFinite(Number(report?.k0)) && Math.abs(Number(report.k0) - 0.9996) <= 1e-9;
+// Show the nominal VN M6 zone constants when RTCM's quantized values decode a few nanodegrees off.
+const displayMeridian = (value, report) => {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Chưa có dữ liệu';
+    const raw = Number(value);
+    if (isSixDegreeReport(report)) {
+        const nominal = [105, 111].find(center => Math.abs(raw - center) <= 5.6e-9);
+        if (nominal !== undefined) return String(nominal);
+    }
+    return String(value);
+};
+const displayProjectionScale = report => isSixDegreeReport(report) ? '0.9996' : report?.k0 ?? 'Chưa có dữ liệu';
 const Vn2000Result = ({ report }) => {
     if (!report?.transform_applied) return null;
     const neh = report.projected_coord;
@@ -36,7 +45,7 @@ const Vn2000Result = ({ report }) => {
                     <dd className="font-monospace text-break mb-0">{String(neh[key])}</dd></div>
             ))}
         </dl> : <p className="small text-muted mb-2">Phiên cũ chưa lưu NEh. Cần lấy lại kết quả Auto Base để hiển thị đủ N, E, h.</p>}
-        <div className="small text-muted">Kinh tuyến trục: {displayMeridian(report.central_meridian_deg)}°; k₀: {report.k0 ?? 'Chưa có dữ liệu'}.</div>
+        <div className="small text-muted">Kinh tuyến trục: {displayMeridian(report.central_meridian_deg, report)}°; k₀: {displayProjectionScale(report)}.</div>
     </section>;
 };
 const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {
@@ -1291,7 +1300,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         </div>
                                         <Vn2000Result report={conversionReport} />
                                         <div className="small">{conversionReport.transform_applied
-                                            ? `Đã tính LLH địa phương qua VN-2000 ${isSixDegreeReport(conversionReport) ? 'múi 6°' : 'khác múi 6°'}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg)}°; k₀ ${String(conversionReport.k0)}.`
+                                            ? `Đã tính LLH địa phương qua VN-2000 ${isSixDegreeReport(conversionReport) ? 'múi 6°' : 'khác múi 6°'}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg, conversionReport)}°; k₀ ${displayProjectionScale(conversionReport)}.`
                                             : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.'}</div>
                                         {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
                                         {conversionReport.transform_applied && <details className="small mt-2"><summary>Tham số chuyển đổi</summary>
