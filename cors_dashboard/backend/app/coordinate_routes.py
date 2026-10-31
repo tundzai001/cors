@@ -137,3 +137,15 @@ def convert(request: ConversionRequest):
                         + " Chọn đúng vùng đo và kinh tuyến theo hồ sơ; kết quả không thay thế hiệu chỉnh địa phương."}
     except (ProjError, ValueError) as exc:
         raise HTTPException(422, "Không thể chuyển đổi. Kiểm tra hệ tọa độ, thứ tự trục và phạm vi tọa độ.") from exc
+
+
+class AutoBaseLocationRequest(BaseModel):
+    lat: FiniteFloat = Field(ge=-90, le=90)
+    lon: FiniteFloat = Field(ge=-180, le=180)
+    alt: FiniteFloat
+
+
+@router.post('/auto-base-location')
+def auto_base_location(request: AutoBaseLocationRequest):
+    from .auto_base_location import resolve_location
+    return resolve_location(float(request.lat), float(request.lon), float(request.alt))

@@ -103,6 +103,7 @@ String BackendAgent::buildStatusPayload() {
     }
 
     JsonObject system = doc.createNestedObject("system_info");
+    system["auto_base_review_supported"] = true;
     JsonObject startup = system.createNestedObject("base_startup");
     startup["state"] = baseStartupState_;
     if (!baseStartupError_.isEmpty()) startup["error"] = baseStartupError_;

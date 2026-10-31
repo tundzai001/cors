@@ -303,14 +303,27 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     const uint8_t fixedStreakRequired = static_cast<uint8_t>(constrain(
         static_cast<int>(payload["fixed_streak_seconds"] | 5), 1, 60));
 
+    const bool reviewOnly = payload["review_only"] | true;
+    DynamicJsonDocument previousBase(CONFIG_DOCUMENT_SIZE);
+    deserializeJson(previousBase, baseConfig_);
+    JsonObject previousCoords = previousBase["coords"].as<JsonObject>();
+    const double previousLat = previousCoords["lat"] | NAN;
+    const double previousLon = previousCoords["lon"] | NAN;
+    const double previousAlt = previousCoords["alt"] | NAN;
+    auto restorePreviousBase = [&]() {
+        return !reviewOnly || !std::isfinite(previousLat) || !std::isfinite(previousLon) || !std::isfinite(previousAlt)
+            || applyBaseCoordinates(previousLat, previousLon, previousAlt);
+    };
     auto finish = [&](const bool success, const bool cancelled, const String &reason) {
         // restartConfiguredNtrip() stops the temporary rover session while
         // holding tcpStreamMutex, then restores the configured source streams.
+        const bool roverStopped = stopNtripRoverLocked();
+        const bool baseRestored = roverStopped && restorePreviousBase();
         const bool transportRestored = restartConfiguredNtrip();
         setAgentState(normalAgentState());
         DynamicJsonDocument details(1024);
         if (!reason.isEmpty()) details["reason"] = reason;
-        if (!transportRestored) details["cleanup_error"] = "could not restore configured NTRIP transport";
+        if (!transportRestored || !baseRestored) details["cleanup_error"] = "could not restore configured NTRIP transport";
         String serialized;
         serializeJson(details, serialized);
         setWorkflowProgress(
@@ -501,7 +514,11 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     double finalAltitude = rawAltitude;
     double northing = 0.0;
     double easting = 0.0;
-    const bool enableTransform = payload["enable_itrf_vn2000_transform"] | true;
+    const bool enableTransform = payload["enable_itrf_vn2000_transform"] | false;
+    if (reviewOnly && enableTransform) {
+        finish(false, false, "VNGEONET datum decoding requires the Python agent; no default-parameter conversion applied");
+        return false;
+    }
     if (enableTransform) {
         transformed = transformToVn2000(rawLatitude, rawLongitude, rawAltitude,
                                          centralMeridianDeg, scale, finalLatitude,
@@ -527,6 +544,23 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     if (!stopNtripRoverLocked()) {
         finish(false, false, "cannot acquire transport lock to stop CORS rover session");
         return false;
+    }
+    if (reviewOnly) {
+        if (!restorePreviousBase() || !restartConfiguredNtrip()) {
+            finish(false, false, "cannot restore previous Base/NTRIP state after sampling");
+            return false;
+        }
+        baseProgress["fixed_samples_only"] = true;
+        baseProgress["receiver_write_completed"] = false;
+        baseProgress["raw_coord"]["lat"] = rawLatitude;
+        baseProgress["raw_coord"]["lon"] = rawLongitude;
+        baseProgress["raw_coord"]["alt"] = rawAltitude;
+        baseProgressJson.clear();
+        serializeJson(baseProgress, baseProgressJson);
+        setAgentState(normalAgentState());
+        setWorkflowProgress("ready_for_review", 4, 4, baseProgressJson);
+        saveStatePreferences();
+        return true;
     }
     if (!applyBaseCoordinates(finalLatitude, finalLongitude, finalAltitude)) {
         finish(false, false, "cannot configure GNSS base mode");

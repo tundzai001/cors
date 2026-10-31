@@ -17,7 +17,6 @@ from .database import get_db, get_auth_db
 from . import mqtt as mqtt_handler
 from . import command_builder
 from .command_dispatcher import send_command_to_pi
-from .runtime_config import _get_env_preferring_dotenv
 from .station_config import _device_service_config, _preserve_relay_config_metadata
 from .station_host_lock import (
     check_host_lock,
@@ -82,11 +81,21 @@ async def configure_chip_endpoint(
             detail="Missing required fields: sensor_type or mode"
         )
 
+    auto_cors_config = None
+    if mode == 'BASE' and method == 'AUTO_CORS':
+        if not (device_in_db.system_info or {}).get('auto_base_review_supported'):
+            raise HTTPException(status_code=409, detail='Cập nhật agent để lấy và duyệt kết quả Auto Base trước khi áp dụng Fixed LLA.')
+        from .routers.devices import _normalize_auto_cors_config
+        try:
+            auto_cors_config = _normalize_auto_cors_config(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # ==================== BƯỚC 3: LƯU CẤU HÌNH VÀO DATABASE ====================
     try:
         if sensor_type:
             device_in_db.detected_chip_type = sensor_type
-        if isinstance(params, dict) and params:
+        if isinstance(params, dict) and params and method != "AUTO_CORS":
             normalized_params = crud.normalize_base_config(params)
             if normalized_params:
                 if "gnss_options" not in normalized_params and "gnss_options" in existing_base_config:
@@ -140,11 +149,9 @@ async def configure_chip_endpoint(
                 pi_command = {
                     "command": "TRIGGER_AUTO_BASE",
                     "payload": {
-                        "ip": _get_env_preferring_dotenv("AUTO_BASE_CORS_IP", "14.238.1.125"),
-                        "port": int(_get_env_preferring_dotenv("AUTO_BASE_CORS_PORT", "2101")),
-                        "user": _get_env_preferring_dotenv("AUTO_BASE_CORS_USER", ""),
-                        "password": _get_env_preferring_dotenv("AUTO_BASE_CORS_PASS", ""),
-                        "mountpoint": _get_env_preferring_dotenv("AUTO_BASE_CORS_MOUNTPOINT", "VRS.105M3"),
+                        "review_only": True,
+                        "enable_itrf_vn2000_transform": auto_cors_config["ip"].lower() in {"14.238.1.125", "vngeonet.vn"},
+                        **auto_cors_config,
                         "timeout": 3600,
                         "samples": 60,
                         "sensor_type": sensor_type

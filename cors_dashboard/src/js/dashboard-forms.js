@@ -17,7 +17,7 @@ const STATUS_TEXT_MAP = {
     'auto_setup_rover': 'Bước 1/4: Đặt chip sang ROVER (mở NMEA GGA)',
     'auto_setup_wait_fix': 'Bước 2/4: Gửi GGA lên Caster & Chờ RTK Fix',
     'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu & Tính trung bình (10 số sau dấu phẩy)',
-    'auto_setup_base': 'Bước 4/4: Đặt chip về BASE với tọa độ chuẩn'
+    'auto_setup_base': 'Bước 4/4: Hoàn thiện kết quả Auto Base'
 };
 const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {
     const [isDeploying, setIsDeploying] = useState(false);
@@ -252,7 +252,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const activeChip = needsManualSelection ? manualChip : device.detected_chip_type;
     const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
 
-    const ACTIVE_AUTO_BASE_PHASES = ['queued', 'starting', 'set_rover', 'wait_fix', 'averaging', 'set_base'];
+    const ACTIVE_AUTO_BASE_PHASES = ['queued', 'starting', 'set_rover', 'wait_fix', 'averaging', 'resolving_location', 'set_base'];
     const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
     const autoProgress = device?.auto_base_progress || {};
     const isAutoSetupActive = isAutoSetupStatus || ACTIVE_AUTO_BASE_PHASES.includes(autoProgress.phase);
@@ -270,9 +270,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const rtcmPktsReceived = autoProgress.rtcm_pkts || 0;
     const fixedStreak = autoProgress.fixed_streak || 0;
     const fixedStreakReq = autoProgress.fixed_streak_required || 5;
-    const autoFixedResult = autoProgress.phase === 'completed' && autoProgress.fixed_samples_only === true;
+    const autoFixedResult = ['ready_for_review', 'completed'].includes(autoProgress.phase) && autoProgress.fixed_samples_only === true;
+    const conversionReport = autoProgress.conversion_report || {};
+    const supportsAutoBaseReview = device.system_info?.auto_base_review_supported === true;
     const autoResultText = autoFixedResult
-        ? `Auto Base hoàn tất: ${autoProgress.sample_count || 0} mẫu RTK Fixed.`
+        ? `Đã lấy ${autoProgress.sample_count || 0} mẫu RTK Fixed. Xem tọa độ trước khi áp dụng Fixed LLA.`
         : ['completed', 'unverified'].includes(autoProgress.phase)
         ? 'Kết quả cũ chưa được xác nhận RTK Fixed. Cần chạy lại Auto Base.'
         : autoProgress.phase === 'failed'
@@ -396,14 +398,6 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         if (readbackTimeoutRef.current) window.clearTimeout(readbackTimeoutRef.current);
     }, []);
 
-    useEffect(() => {
-        if (!autoFixedResult) return;
-        const coords = autoProgress.averaged_coord || device.base_config?.coords;
-        if (!coords) return;
-        setLatitude(coords.lat ?? '');
-        setLongitude(coords.lon ?? '');
-        setAltitude(coords.alt ?? '');
-    }, [device.serial, autoProgress.updated_at, autoFixedResult]);
 
     useEffect(() => {
         // 1. Reset về giá trị mặc định khi đổi thiết bị
@@ -638,6 +632,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     setAltitude(params.coords.alt);
                 }
                 params.altitude_reference = finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
+                const candidate = autoProgress.averaged_coord;
+                if (autoFixedResult && candidate && ['lat', 'lon', 'alt'].every(key =>
+                    Math.abs(Number(params.coords[key]) - Number(candidate[key])) <= (key === 'alt' ? 0.00011 : 1.01e-9))) {
+                    params.conversion_report = conversionReport;
+                    params.coordinate_source = 'AUTO_CORS';
+                }
                 // Preserve decimal meters through the API and UBX encoding.
                 params.accuracy = String(fixedAccuracyM).trim().replace(',', '.') || '0.01';
             } else if (method === 'SURVEY_IN') {
@@ -758,7 +758,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             )}
 
             {/* Realtime NMEA GGA & Auto Base Monitor (Rover Mode) - Chỉ hiện khi method là AUTO_CORS hoặc khi trạm đang thực sự chạy Auto Base */}
-            {((method === 'AUTO_CORS' && (isAutoSetupActive || rawGgaSentence || autoProgress.phase)) || isAutoSetupActive) && (
+            {(isAutoSetupActive || (method === 'AUTO_CORS' && ['failed', 'stopped'].includes(autoProgress.phase))) && (
                 <div className="mb-3">
                     <div className="card border-info bg-dark shadow-sm">
                         <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
@@ -1084,8 +1084,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         <div className="small font-monospace text-break mt-2">WGS 84: {saved.lat}, {saved.lon} · h {saved.alt} m</div>
                     </details>;
                 })()}
-                <label className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>
+                <label htmlFor={`base-method-${device.serial}`} className="form-label fw-bold text-primary">Phương pháp xác định vị trí</label>
                 <select
+                    id={`base-method-${device.serial}`}
                     className="form-select border-primary"
                     value={method}
                     onChange={(e) => setMethod(e.target.value)}
@@ -1100,6 +1101,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             <fieldset disabled={disabled}>
                 {method === 'AUTO_CORS' ? (
                     <div className="row g-3 auto-cors-config">
+                        {!supportsAutoBaseReview && <div className="col-12"><div className="alert alert-warning small mb-0" role="status">
+                            Cần cập nhật agent để lấy kết quả Auto Base và duyệt trước khi áp dụng Fixed LLA.
+                        </div></div>}
                         <div className="col-12">
                             <div className="auto-cors-config__panel p-3 rounded border border-info-subtle bg-dark-subtle">
                                 <div className="d-flex align-items-start gap-2 mb-3">
@@ -1212,31 +1216,14 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         </select>
                                         <div className="form-text">
                                             {corsSources.length
-                                                ? `${corsSources.length} mountpoint đã sẵn sàng. Chọn MP và bấm Bước 3 bên dưới để bắt đầu.`
+                                                ? `${corsSources.length} mountpoint đã sẵn sàng. Chọn mountpoint, kiểm tra đầu ra rồi bấm Lấy tọa độ Auto Base bên dưới.`
                                                 : 'Bấm nút Bước 1 để tải danh sách mountpoint.'}
                                         </div>
                                     </div>
                                     <div className="col-12 mt-2">
-                                        <button
-                                            type="submit"
-                                            className="btn btn-primary w-100 py-2 fw-semibold shadow-sm"
-                                            disabled={isSubmitting || isLoadingCorsSources || !selectedMountpoint}
-                                        >
-                                            {isSubmitting ? (
-                                                <>
-                                                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                                    Đang chạy quy trình Auto Base từ Base...
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <i className="bi bi-play-circle-fill me-2" aria-hidden="true"></i>
-                                                    Bước 3: Bắt đầu chạy Auto Base từ Base {selectedMountpoint ? `(${selectedMountpoint})` : ''}
-                                                </>
-                                            )}
-                                        </button>
                                         <div className="form-text text-muted mt-2">
                                             <i className="bi bi-info-circle me-1"></i>
-                                            Quy trình: Chuyển chip sang Rover &rarr; Gửi NMEA GGA lên Caster &rarr; Nhận RTCM &rarr; Đạt RTK Fix &rarr; Thu thập tọa độ TB (10 số sau dấu phẩy) &rarr; Đặt Base.
+                                            Quy trình: Chuyển chip sang Rover &rarr; Gửi NMEA GGA lên Caster &rarr; Nhận RTCM &rarr; Đạt RTK Fix &rarr; Lấy tọa độ trung bình &rarr; Xem kết quả &rarr; Xác nhận áp dụng Fixed LLA.
                                         </div>
                                     </div>
                                 </div>
@@ -1246,25 +1233,52 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
                                 <i className="bi bi-robot me-2"></i>
                                 {autoFixedResult ? (
-                                    <span>Chip đã tự chuyển về BASE và áp dụng tọa độ trung bình RTK Fixed. Không cần bấm áp dụng lần nữa.</span>
+                                    <span>Đã có kết quả. Kiểm tra tọa độ rồi chuyển sang Fixed LLA để áp dụng; lấy mẫu không tự ghi tọa độ mới vào máy.</span>
                                 ) : (
-                                    <span>Hệ thống sẽ tự động ghép nối với máy chủ Base và tính trung bình tọa độ (10 số thập phân) để thiết lập trạm phát Base hoàn toàn tự động!</span>
+                                    <span>Lấy mẫu RTK Fixed từ Base liên kết. Sau khi có kết quả, bạn kiểm tra và xác nhận áp dụng Fixed LLA.</span>
                                 )}
                             </div>
                         </div>
-                        {Boolean(autoFixedResult && latitude !== '' && longitude !== '') && (
+                        {Boolean(autoFixedResult && autoProgress.averaged_coord) && (
                             <>
-                                <div className="col-md-4">
-                                    <label className="form-label small fw-bold">Lat (Tự động - 10 số thập phân)</label>
-                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatCoord10(latitude)} readOnly />
+                                <div className="col-12" role="status" aria-live="polite">
+                                    <div className="border rounded p-3">
+                                        <h3 className="h6">Kết quả Auto Base — chờ kiểm tra</h3>
+                                        <p className="small mb-2">{autoProgress.phase === 'ready_for_review'
+                                            ? 'Chưa áp dụng tọa độ này vào máy.'
+                                            : 'Kết quả từ phiên cũ đã tự áp dụng. Các phiên mới sẽ chờ bạn xác nhận.'}</p>
+                                        <div className="small text-break mb-2">Base liên kết: {conversionReport.source?.host || 'Chưa có dữ liệu'}
+                                            {conversionReport.source?.mountpoint ? ` / ${conversionReport.source.mountpoint}` : ''}</div>
+                                        <div className="small mb-2">Tỉnh/thành: {conversionReport.location?.province_name || conversionReport.province_name || 'Chưa xác định'}
+                                            {conversionReport.location?.state === 'projection_selection_required' && ' · Có nhiều vùng kinh tuyến trục cũ'}</div>
+                                        <div className="table-responsive">
+                                            <table className="table table-sm small mb-2">
+                                                <caption className="visually-hidden">Đối chiếu LLH gốc và kết quả Auto Base</caption>
+                                                <thead><tr><th scope="col">Tọa độ</th><th scope="col">LLH gốc</th><th scope="col">Kết quả để đặt Base</th></tr></thead>
+                                                <tbody>{[['lat', 'Vĩ độ (°)'], ['lon', 'Kinh độ (°)'], ['alt', 'h ellipsoid (m)']].map(([key, label]) => (
+                                                    <tr key={key}><th scope="row">{label}</th>
+                                                        <td className="font-monospace">{conversionReport.input_coord?.[key] ?? 'Chưa có dữ liệu'}</td>
+                                                        <td className="font-monospace">{autoProgress.averaged_coord?.[key] ?? 'Chưa có dữ liệu'}</td></tr>
+                                                ))}</tbody>
+                                            </table>
+                                        </div>
+                                        <div className="small">{conversionReport.transform_applied
+                                            ? `Đã tính LLH địa phương qua VN-2000. Kinh tuyến trục ${conversionReport.central_meridian_deg}°; k₀ ${conversionReport.k0}.`
+                                            : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.'}</div>
+                                        {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
+                                        {conversionReport.transform_applied && <details className="small mt-2"><summary>Tham số chuyển đổi</summary>
+                                            <p className="mb-1">Nguồn 7 tham số: {conversionReport.parameter_source === 'rtcm1021' ? 'RTCM 1021' : 'Chưa xác nhận'};
+                                                {' '}hiệu chỉnh: {conversionReport.residual_source === 'rtcm1023' ? 'RTCM 1023' : 'Không có'};
+                                                {' '}phép chiếu: {conversionReport.projection_source === 'rtcm1025' ? 'RTCM 1025' : 'Danh mục máy chủ'}.</p>
+                                            <dl className="mb-0">{Object.entries(conversionReport.parameters || {}).map(([key, value]) => <div key={key} className="d-flex gap-2"><dt>{key}</dt><dd className="font-monospace mb-0 text-break">{String(value)}</dd></div>)}</dl>
+                                        </details>}
+                                    </div>
                                 </div>
-                                <div className="col-md-4">
-                                    <label className="form-label small fw-bold">Lon (Tự động - 10 số thập phân)</label>
-                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatCoord10(longitude)} readOnly />
-                                </div>
-                                <div className="col-md-4">
-                                    <label className="form-label small fw-bold">Alt h ellipsoid (Tự động)</label>
-                                    <input type="text" className="form-control form-control-sm bg-dark-subtle fw-semibold font-monospace" value={formatAlt10(altitude)} readOnly />
+                                <div className="col-12">
+                                    <button type="button" className="btn btn-outline-primary" disabled={disabled || isSubmitting || isAutoSetupActive}
+                                        onClick={() => { const coords = autoProgress.averaged_coord; if (!coords) return; setLatitude(coords.lat); setLongitude(coords.lon); setAltitude(coords.alt); setMethod('FIXED_LLA'); setAltitudeReference('ELLIPSOID'); }}>
+                                        Kiểm tra và dùng kết quả cho Fixed LLA
+                                    </button>
                                 </div>
                             </>
                         )}
@@ -1491,18 +1505,18 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     <button
                         type="submit"
                         className="btn btn-primary mt-4 w-100 base-config-submit"
-                        disabled={isSubmitting || isLoadingCorsSources || (method === 'AUTO_CORS' && !selectedMountpoint)}
+                        disabled={isSubmitting || isAutoSetupActive || isLoadingCorsSources || (method === 'AUTO_CORS' && (!selectedMountpoint || !supportsAutoBaseReview))}
                     >
                         {isSubmitting ? (
                             <>
                                 <span className="spinner-border spinner-border-sm me-2"></span>
-                                {method === 'AUTO_CORS' ? 'Đang chạy quy trình Auto Base từ Base...' : 'Đang gửi...'}
+                                {method === 'AUTO_CORS' ? 'Đang gửi yêu cầu lấy tọa độ…' : 'Đang gửi...'}
                             </>
                         ) : (
                             <>
                                 <i className="bi bi-lightning-charge-fill me-2"></i>
                                 {method === 'AUTO_CORS'
-                                    ? (autoFixedResult ? 'Chạy lại Auto Base từ Base' : 'Bắt đầu chạy Auto Base từ Base')
+                                    ? (isAutoSetupActive ? 'Đang lấy tọa độ…' : autoFixedResult ? 'Lấy lại tọa độ Auto Base' : 'Lấy tọa độ Auto Base')
                                     : 'Áp dụng cấu hình BASE'}
                             </>
                         )}

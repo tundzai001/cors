@@ -314,6 +314,8 @@ async def configure_chip_endpoint(
 
     auto_cors_config = None
     if mode == "BASE" and method == "AUTO_CORS":
+        if not (device_in_db.system_info or {}).get('auto_base_review_supported'):
+            raise HTTPException(status_code=409, detail='Cập nhật agent để lấy và duyệt kết quả Auto Base trước khi áp dụng Fixed LLA.')
         try:
             auto_cors_config = _normalize_auto_cors_config(payload)
         except ValueError as exc:
@@ -321,7 +323,7 @@ async def configure_chip_endpoint(
 
     try:
         device_in_db.detected_chip_type = sensor_type
-        if isinstance(params, dict) and params:
+        if isinstance(params, dict) and params and method != "AUTO_CORS":
             normalized_params = crud.normalize_base_config(params)
             if normalized_params:
                 if "gnss_options" not in normalized_params and "gnss_options" in existing_base_config:
@@ -368,6 +370,8 @@ async def configure_chip_endpoint(
                 pi_command = {
                     "command": "TRIGGER_AUTO_BASE",
                     "payload": {
+                        "review_only": True,
+                        "enable_itrf_vn2000_transform": auto_cors_config["ip"].lower() in {"14.238.1.125", "vngeonet.vn"},
                         **auto_cors_config,
                         "timeout": 3600,
                         "samples": 60,

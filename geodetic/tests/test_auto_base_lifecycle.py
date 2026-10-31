@@ -294,19 +294,23 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(receiver.closed)
 
     async def test_auto_base_failure_never_saves_a_completed_coordinate(self):
-        for apply_error in (None, RuntimeError('receiver still Rover')):
-            with self.subTest(apply_error=apply_error):
+        for apply_error, review_only in ((None, False), (RuntimeError('receiver still Rover'), False), (None, True)):
+            with self.subTest(apply_error=apply_error, review_only=review_only):
                 now = [1000.0]
                 reader = SimpleNamespace(pause=Mock(), resume=Mock(), inject_rtcm=Mock())
                 client = SimpleNamespace(start=Mock(), stop=Mock(), join=Mock())
                 old = {'base_setup_method': 'FIXED_LLA', 'coords': {'lat': 1, 'lon': 2, 'alt': 3}}
                 agent = SimpleNamespace(config={'base_config': old, 'auto_base_setup': {
-                    'enabled': True, 'l0_deg': 105, 'k0': 0.9999,
+                    'enabled': True, 'review_only': review_only, 'port': 2101, 'l0_deg': 105, 'k0': 0.9999,
                     'enable_itrf_vn2000_transform': False}},
                     detected_chip={'type': 'Ublox', 'port': 'USB'}, save_config=Mock(), log=Mock())
                 phases = []
                 scope = dict(AgentManager=object, GNSSReader=object, mqtt=SimpleNamespace(Client=object),
-                    time=SimpleNamespace(time=lambda: now[0]), math=math, logging=logging,
+                    time=SimpleNamespace(time=lambda: now[0]), math=math, logging=logging, copy=copy,
+                    DATUM_LOCK=threading.RLock(), _resolve_auto_base_location=lambda *args: {},
+                    RTCMDatum=lambda: SimpleNamespace(l0=math.radians(105), k0=0.9999,
+                        rtcm1021_update=False, rtcm1023_update=False, rtcm1025_update=False,
+                        **dict.fromkeys(("dX", "dY", "dZ", "rX", "rY", "rZ", "kT", "resB", "resL", "resH"), 0)),
                     active_auto_base_client=None, _cleanup_inject_queue=Mock(),
                     _apply_rover_mode_to_chip=AsyncMock(),
                     _apply_base_mode_to_chip=AsyncMock(side_effect=apply_error),
@@ -327,17 +331,47 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
                       '_is_rtk_usable_status'}, scope)
                 with self.assertLogs(level='INFO'):
                     await scope['auto_base_state_machine'](agent, reader, None)
-                self.assertEqual(phases[-1], 'failed' if apply_error else 'completed')
+                self.assertEqual(phases[-1], 'failed' if apply_error else 'ready_for_review')
                 self.assertEqual(agent.config['gnss_config_pending'], apply_error is not None)
-                if apply_error:
-                    self.assertIs(agent.config['base_config'], old)
-                else:
-                    self.assertEqual(agent.config['base_config']['base_setup_method'], 'AUTO_CORS')
-                    self.assertEqual(agent.config['base_config']['samples_collected'], 60)
+                self.assertIs(agent.config['base_config'], old)
+                scope['_apply_base_mode_to_chip'].assert_awaited_once_with('Ublox', 'USB', 1.0, 2.0, 3.0, reader)
+                if not apply_error:
+                    self.assertEqual(agent.config['auto_base_candidate']['averaged_coord']['lat'], '20.0000000000')
                 self.assertFalse(agent.config['auto_base_setup']['enabled'])
                 self.assertIsNone(scope['active_auto_base_client'])
                 self.assertTrue(client.stop.called)
                 self.assertTrue(reader.resume.called)
+
+    async def test_review_result_restores_old_base_without_installing_candidate(self):
+        old = {'base_setup_method': 'FIXED_LLA', 'coords': {'lat': 21, 'lon': 105, 'alt': 30}}
+        candidate = {'averaged_coord': {'lat': '22', 'lon': '106', 'alt': '40'}, 'fixed_samples_only': True}
+        for failure in (None, RuntimeError('sampling failed'), asyncio.CancelledError()):
+            with self.subTest(failure=type(failure).__name__):
+                agent = SimpleNamespace(config={'base_config': copy.deepcopy(old),
+                    'auto_base_setup': {'enabled': True, 'review_only': True}},
+                    detected_chip={'type': 'Ublox', 'port': 'USB'}, save_config=Mock())
+                phases = []
+                apply = AsyncMock()
+                scope = load({'auto_base_state_machine'}, dict(AgentManager=object, GNSSReader=object,
+                    mqtt=SimpleNamespace(Client=object), asyncio=asyncio, copy=copy, logging=logging,
+                    _run_auto_base_setup=AsyncMock(return_value=candidate, side_effect=failure),
+                    _apply_base_mode_to_chip=apply, _cleanup_inject_queue=Mock(),
+                    _set_auto_base_progress=lambda phase, **kwargs: phases.append(phase), send_status=AsyncMock(),
+                    active_auto_base_client=None))
+                with self.assertLogs(level='ERROR') if isinstance(failure, RuntimeError) else __import__('contextlib').nullcontext():
+                    if isinstance(failure, asyncio.CancelledError):
+                        with self.assertRaises(asyncio.CancelledError):
+                            await scope['auto_base_state_machine'](agent, None, None)
+                    else:
+                        await scope['auto_base_state_machine'](agent, None, None)
+                apply.assert_awaited_once_with('Ublox', 'USB', 21.0, 105.0, 30.0, None)
+                self.assertEqual(agent.config['base_config'], old)
+                self.assertNotIn('pending_base_restore', agent.config)
+                if failure is None:
+                    self.assertEqual(phases[-1], 'ready_for_review')
+                    self.assertEqual(agent.config['auto_base_candidate'], candidate)
+                else:
+                    self.assertNotIn('auto_base_candidate', agent.config)
 
     def test_ntrip_v1_corrections_reach_chip_while_outbound_stream_is_asleep(self):
         scope = load({'NTRIPClientWorker', 'GNSSReader', '_crc24q', 'is_valid_rtcm3_packet', 'extract_valid_rtcm3_packets'}, dict(
