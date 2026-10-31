@@ -1,4 +1,7 @@
 #include "Backend_Agent_Websocket.h"
+#include "Websocket_Protocol.h"
+#include <mbedtls/sha1.h>
+#include <mbedtls/base64.h>
 #include "functions/Backend_Agent.h"
 
 #include <cstring>
@@ -73,12 +76,11 @@ void BackendAgentWebsocket::loop() {
         if (count <= 0) {
             break;
         }
-        rx_.insert(rx_.end(), chunk, chunk + count);
-        if (rx_.size() > 32768) {
-            rx_.clear();
+        if (rx_.size() + static_cast<size_t>(count) > 32768) {
             disconnect(false);
             return;
         }
+        rx_.insert(rx_.end(), chunk, chunk + count);
     }
     parseFrames();
 }
@@ -89,7 +91,7 @@ void BackendAgentWebsocket::disconnect(bool permanent) {
     if (client_) {
         client_->stop();
     }
-    rx_.clear();
+    std::vector<uint8_t>().swap(rx_);
     connected_ = false;
     nextAttemptMs_ = millis() + (permanent ? 60000UL : 10000UL);
     if (owner_) {
@@ -116,7 +118,7 @@ bool BackendAgentWebsocket::sendText(const String &text) {
     } else {
         header[1] = 0x80 | 127;
         for (uint8_t i = 0; i < 8; ++i) {
-            header[2 + i] = static_cast<uint8_t>((length >> (56 - (i * 8))) & 0xFF);
+            header[2 + i] = static_cast<uint8_t>((static_cast<uint64_t>(length) >> (56 - (i * 8))) & 0xFF);
         }
         headerLength = 10;
     }
@@ -172,9 +174,9 @@ void BackendAgentWebsocket::connectNow() {
                    + "Sec-WebSocket-Version: 13\r\n\r\n");
 
     String response;
-    const uint32_t deadline = millis() + 5000UL;
-    while (millis() < deadline && response.length() < 4096) {
-        while (client_->available() > 0) {
+    const uint32_t started = millis();
+    while (millis() - started < 5000UL && response.length() < 4096) {
+        while (client_->available() > 0 && response.length() < 4096) {
             const int byte = client_->read();
             if (byte < 0) break;
             response += static_cast<char>(byte);
@@ -188,7 +190,15 @@ void BackendAgentWebsocket::connectNow() {
         delay(1);
     }
 
-    if (response.indexOf(" 101 ") < 0 && response.indexOf(" 101\r") < 0) {
+    const String challenge = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    unsigned char digest[20], encoded[32];
+    size_t encodedLength = 0;
+    const bool valid = mbedtls_sha1_ret(reinterpret_cast<const unsigned char *>(challenge.c_str()),
+                                      challenge.length(), digest) == 0
+        && mbedtls_base64_encode(encoded, sizeof(encoded), &encodedLength, digest, sizeof(digest)) == 0
+        && WebsocketProtocol::validUpgrade(std::string(response.c_str(), response.length()),
+                                          std::string(reinterpret_cast<char *>(encoded), encodedLength));
+    if (!valid) {
         client_->stop();
         return;
     }
@@ -223,25 +233,28 @@ void BackendAgentWebsocket::parseFrames() {
             headerLength = 10;
         }
 
+        const uint8_t opcode = first & 0x0F;
+        // Reject unsupported fragmentation instead of dispatching partial commands.
+        // Server frames must be unmasked and carry no unnegotiated RSV flags.
+        if (masked || (first & 0x70) || !(first & 0x80)
+            || (opcode != 1 && opcode != 2 && opcode != 8 && opcode != 9 && opcode != 10)
+            || (opcode >= 8 && (payloadLength > 125 || (opcode == 8 && payloadLength == 1)))
+            || ((second & 0x7F) == 126 && payloadLength < 126)
+            || ((second & 0x7F) == 127 && payloadLength < 65536)) {
+            disconnect(false);
+            return;
+        }
         if (payloadLength > 32768) {
             disconnect(false);
             return;
         }
-        if (masked) headerLength += 4;
         if (rx_.size() < headerLength + payloadLength) return;
 
-        uint8_t mask[4] = {};
-        if (masked) {
-            const size_t maskOffset = headerLength - 4;
-            memcpy(mask, rx_.data() + maskOffset, sizeof(mask));
-        }
-        const uint8_t opcode = first & 0x0F;
         String payload;
         payload.reserve(static_cast<size_t>(payloadLength));
         const size_t payloadOffset = headerLength;
         for (size_t i = 0; i < payloadLength; ++i) {
             uint8_t byte = rx_[payloadOffset + i];
-            if (masked) byte ^= mask[i & 3];
             payload += static_cast<char>(byte);
         }
         rx_.erase(rx_.begin(), rx_.begin() + payloadOffset + payloadLength);
@@ -257,6 +270,7 @@ void BackendAgentWebsocket::parseFrames() {
             owner_->handleWebsocketText(payload);
         }
     }
+    if (rx_.empty() && rx_.capacity() > 4096) std::vector<uint8_t>().swap(rx_);
 }
 
 void BackendAgentWebsocket::sendControl(uint8_t opcode, const uint8_t *payload, size_t length) {

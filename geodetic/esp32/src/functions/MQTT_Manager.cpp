@@ -63,19 +63,20 @@ Client& activeMqttClient() {
 // ================= ĐỊNH NGHĨA HÀM =================
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  if (!topic || !payload || length == 0) return;
   backendAgent.onMqttMessage(topic, payload, length);
 
   // Dispatch plain-text ATG commands separately from JSON device commands.
   if (strcmp(topic, TOPIC_SUB_CMD) == 0) {
+    if (backendAgent.isLocked() || length > 1024 || memchr(payload, '\0', length)) {
+      Serial.println("[MQTT DOWNLINK] Rejected locked device or invalid legacy command.");
+      return;
+    }
     Serial.printf("[MQTT DOWNLINK] Nhan lenh legacy (%u bytes).\n", length);
-    String cmd = "";
-    for (int i = 0; i < length; i++) cmd += (char)payload[i];
+    String cmd;
+    cmd.reserve(length);
+    for (unsigned int i = 0; i < length; ++i) cmd += static_cast<char>(payload[i]);
     
-    #if PROGRAM_DEBUG
-    Serial.print("\n[MQTT DOWNLINK] Lenh: ");
-    Serial.println(cmd);
-    #endif
-
     if (cmd.isEmpty()) {
       #if PROGRAM_DEBUG
       Serial.println("[MQTT DOWNLINK] Lenh rong, khong xu ly.");

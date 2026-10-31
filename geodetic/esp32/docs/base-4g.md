@@ -176,19 +176,12 @@ CORS để giữ đúng envelope, command ID và quyền người vận hành.
 
 ## Kiểm tra
 
-Chạy kiểm tra host, không cần gắn ESP32:
+Build firmware, không cần gắn ESP32:
 
 ```sh
-c++ -std=c++17 -fsanitize=address,undefined -g -Itest/host -Iinclude \
-  test/host/base_checks.cpp src/functions/gnss_cmd_builder.cpp src/functions/ublox_commands.cpp src/functions/unicore_commands.cpp \
-  -o /tmp/esp32-base-checks
-/tmp/esp32-base-checks
-python3 -B test/host/check_cors.py /path/to/cors /tmp/esp32-base-checks
+pio run -e tdm240x_dev_general
+git diff --check
 ```
-
-Kiểm tra này chạy bộ tạo lệnh C++ thật, kiểm tra khóa, checksum, routing UART
-  và đưa lệnh sinh từ `cors_dashboard/backend/app/command_builder.py` thật qua
-bộ routing firmware cho fixed/survey của cả hai loại chip.
 
 Kiểm tra thực địa còn cần: nhận đúng GNSS, survey hoàn tất, auto base đạt FIX,
 rover nhận được cải chính, độ đúng tọa độ và khóa/mở từng máy chủ sau reboot.
@@ -229,4 +222,4 @@ Luồng Unicore từ chối dữ liệu nhị phân và nhiều dòng lệnh tro
 
 ## Cấu hình Wi-Fi không cần Internet
 
-ESP luôn phát mạng cấu hình riêng. Xem [hướng dẫn Wi-Fi cục bộ](wifi-config.md) để mở trang `192.168.4.1`, lưu Wi-Fi/hotspot và quản lý mạng đã lưu.
+ESP không phát mạng cấu hình. Chỉ giữ một mạng Wi-Fi cho kết nối dự phòng; xem [hướng dẫn Wi-Fi](wifi-config.md). Quản lý RAM, flash và dữ liệu NVS tại System Monitor trên web.

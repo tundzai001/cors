@@ -275,22 +275,23 @@ using namespace GnssCmdBuilder;
         }
     }
 
+    namespace {
+    CommandList buildBaseCommands(Command &message, const GnssOptions &options) {
+        finishTmode3Checksum(message);
+        return {message, buildOutputConfigCommand(options),
+                Command(std::begin(UBLOX_SAVE_CONFIG), std::end(UBLOX_SAVE_CONFIG))};
+    }
+    } // namespace
+
     CommandList buildBaseSurveyInCommand(uint32_t duration, float accuracy, const GnssOptions &options) {
-        CommandList commands;
         Command message = buildTmode3Message();
         message[8] = 1;
         writeU32(message, 30, duration);
         writeU32(message, 34, static_cast<uint32_t>(accuracy * 10000));
-        finishTmode3Checksum(message);
-        commands.push_back(message);
-        commands.push_back(buildOutputConfigCommand(options));
-        commands.emplace_back(std::begin(UBLOX_SAVE_CONFIG), std::end(UBLOX_SAVE_CONFIG));
-
-        return commands;
+        return buildBaseCommands(message, options);
     }
 
     CommandList buildBaseFixedLlaCommand(double lat, double lon, double alt, float accuracy, const GnssOptions &options) {
-        CommandList commands;
         Command message = buildTmode3Message();
         message[8] = 2;
         message[9] = 1;
@@ -304,12 +305,7 @@ using namespace GnssCmdBuilder;
         }
         const auto accuracyValue = static_cast<uint32_t>(accuracy * 10000);
         writeU32(message, 26, accuracyValue);
-        finishTmode3Checksum(message);
-        commands.push_back(message);
-        commands.push_back(buildOutputConfigCommand(options));
-        commands.emplace_back(std::begin(UBLOX_SAVE_CONFIG), std::end(UBLOX_SAVE_CONFIG));
-
-        return commands;
+        return buildBaseCommands(message, options);
     }
 
     CommandList buildBaseRtcmOutputCommand(const String &message, const String &port, bool enabled) {

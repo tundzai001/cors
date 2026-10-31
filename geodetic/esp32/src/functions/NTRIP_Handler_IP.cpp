@@ -4,9 +4,8 @@
 
 #include "Prog_Config.h"
 #include "functions/Backend_Agent.h"
+#include "Backend_Agent_Internal.h"
 #include "functions/RTCM_Receiver.h"
-#include "functions/unicore_commands.h"
-#include "functions/Unicore_Identification.h"
 #include "hardware/Sim_handler.h"
 #include "hardware/Wifi_handler.h"
 
@@ -17,129 +16,10 @@
 extern Preferences prefs;
 extern TinyGsm modem;
 
+using BackendAgentInternal::jsonBool;
+using BackendAgentInternal::jsonString;
+
 namespace {
-  class ntripConfig {
-  public:
-    inline static bool isIcyOk = false;
-    inline static unsigned long lastReconnect = 0;
-    inline static bool isNmeaSent = false;
-  };
-
-  // ================= HẰNG STRING =================
-  inline constexpr const char nmeaCmdUnlog[] = "UNLOG\r\n";
-  inline constexpr const char nmeaCmdSetBase[] = "MODE BASE TIME 120 2.5\r\n";
-  inline constexpr const char rtcm1084SetOutputCom2[] = "RTCM1084 COM2 1\r\n";
-  inline constexpr const char rtcm1074SetOutputCom2[] = "RTCM1074 COM2 1\r\n";
-  inline constexpr const char rtcm1006SetOutputCom2[] = "RTCM1006 COM2 1\r\n";
-  inline constexpr const char rtcm1124SetOutputCom2[] = "RTCM1124 COM2 1\r\n";
-  inline constexpr const char rtcm1087SetOutputCom2[] = "RTCM1087 COM2 1\r\n";
-  inline constexpr const char rtcm1077SetOutputCom2[] = "RTCM1077 COM2 1\r\n";
-  inline constexpr const char rtcm1127SetOutputCom2[] = "RTCM1127 COM2 1\r\n";
-  inline constexpr const char rtcmSetBaudCom2[] = "CONFIG COM2 115200\r\n";
-  inline constexpr const char cmdSaveConfig[] = "saveconfig\r\n";
-  inline constexpr uint8_t ubxMonVerPoll[] = {
-    0xB5, 0x62, 0x0A, 0x04, 0x00, 0x00, 0x0E, 0x34
-  };
-
-  void clearGnssInput()
-  {
-    while (Serial1.available() > 0) {
-      Serial1.read();
-    }
-  }
-
-  bool hasValidUbxFrame(const uint8_t *data, size_t length)
-  {
-    for (size_t start = 0; start + 8 <= length; ++start) {
-      if (data[start] != 0xB5 || data[start + 1] != 0x62 ||
-          data[start + 2] != 0x0A || data[start + 3] != 0x04) {
-        continue;
-      }
-
-      const size_t payloadLength =
-          static_cast<size_t>(data[start + 4]) |
-          (static_cast<size_t>(data[start + 5]) << 8);
-      const size_t frameLength = payloadLength + 8;
-      // A MON-VER response contains SW (30 bytes) and HW (10 bytes), never an empty poll.
-      if (payloadLength < 40 || frameLength > 512) continue;
-      if (start + frameLength > length) {
-        continue;
-      }
-
-      uint8_t checksumA = 0;
-      uint8_t checksumB = 0;
-      for (size_t i = start + 2; i < start + 6 + payloadLength; ++i) {
-        checksumA = static_cast<uint8_t>(checksumA + data[i]);
-        checksumB = static_cast<uint8_t>(checksumB + checksumA);
-      }
-
-      if (checksumA == data[start + frameLength - 2] &&
-          checksumB == data[start + frameLength - 1]) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool receiveUbxFrame(uint32_t timeoutMs)
-  {
-    uint8_t buffer[512] = {};
-    size_t length = 0;
-    const uint32_t start = millis();
-
-    while (millis() - start < timeoutMs) {
-      while (Serial1.available() > 0) {
-        const int value = Serial1.read();
-        if (length < sizeof(buffer)) {
-          buffer[length++] = static_cast<uint8_t>(value);
-        } else {
-          memmove(buffer, buffer + 1, sizeof(buffer) - 1);
-          buffer[sizeof(buffer) - 1] = static_cast<uint8_t>(value);
-        }
-
-        if (hasValidUbxFrame(buffer, length)) {
-          return true;
-        }
-      }
-      delay(2);
-    }
-    return false;
-  }
-
-  bool receiveUnicoreIdentification(uint32_t timeoutMs)
-  {
-    UnicoreIdentification identity;
-    const uint32_t start = millis();
-    while (millis() - start < timeoutMs) {
-      while (Serial1.available() > 0) {
-        if (identity.feed(static_cast<uint8_t>(Serial1.read()))) {
-          Serial.printf("[GNSS][UNICORE RESPONSE] %s\n", identity.line);
-          return true;
-        }
-      }
-      delay(2);
-    }
-
-    return false;
-  }
-} // namespace
-
-bool jsonBool(JsonObjectConst object, const String &key, bool fallback = false) {
-    const JsonVariantConst value = object[key.c_str()];
-    if (value.isNull()) return fallback;
-    if (value.is<bool>()) return value.as<bool>();
-    if (value.is<const char *>()) {
-        const String text = value.as<const char *>();
-        if (text.equalsIgnoreCase("true") || text == "1" || text.equalsIgnoreCase("on")) return true;
-        if (text.equalsIgnoreCase("false") || text == "0" || text.equalsIgnoreCase("off")) return false;
-    }
-    return value.as<int>() != 0;
-}
-
-String jsonString(JsonObjectConst object, const String &key, const String &fallback = String()) {
-    const JsonVariantConst value = object[key.c_str()];
-    return value.isNull() ? fallback : value.as<String>();
-}
 
 bool safeNtripField(const String &value) {
     return value.indexOf('\r') < 0 && value.indexOf('\n') < 0;
@@ -162,7 +42,6 @@ String base64Encode(const String &plain) {
     return encoded;
 }
 
-namespace {
 constexpr size_t CONFIG_DOCUMENT_SIZE = 4096;
 constexpr uint8_t NTRIP_SERVER_COUNT = 2;
 constexpr uint32_t RECONNECT_INTERVAL_MS = 5000;
@@ -206,7 +85,6 @@ Client &clientFor(uint8_t index) {
     return isWifiConnection()
         ? static_cast<Client &>(wifiNtripClient2)
         : static_cast<Client &>(gsmNtripClient2);
-  }
 }
 
 void clearEndpointState(NtripEndpoint &endpoint) {
@@ -430,277 +308,10 @@ void updateBps(NtripEndpoint &endpoint) {
     }
 }
 
+} // namespace
+
 Client &activeNtripClient() {
     return clientFor(0);
-}
-
-int bootstrapUM980() {
-  // Gửi lệnh ASCII cấu hình output và survey-in cho Unicore trên COM2.
-  // Nhánh khởi tạo này chỉ gửi UART và ghi log, chưa kiểm tra ACK của từng lệnh.
-  unsigned long WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-
-  Serial1.write(nmeaCmdUnlog, strlen(nmeaCmdUnlog)); // Gửi lệnh UNLOG
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  String nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // cài baud rate cho COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcmSetBaudCom2, strlen(rtcmSetBaudCom2)); // Đặt baud COM2 bằng lệnh ASCII.
-
-  // thiết lập chế độ base
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(nmeaCmdSetBase, strlen(nmeaCmdSetBase)); // Bắt đầu survey-in bằng lệnh ASCII.
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // gửi rtcm 1084 ra COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcm1084SetOutputCom2, strlen(rtcm1084SetOutputCom2)); // Gửi lệnh RTCM để thiết lập đầu ra COM2
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // gửi rtcm 1074 ra COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcm1074SetOutputCom2, strlen(rtcm1074SetOutputCom2)); // Gửi lệnh RTCM để thiết lập đầu ra COM2
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // gửi rtcm 1006 ra COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcm1006SetOutputCom2, strlen(rtcm1006SetOutputCom2)); // Gửi lệnh RTCM để thiết lập đầu ra COM2
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // gửi rtcm 1124 ra COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcm1124SetOutputCom2, strlen(rtcm1124SetOutputCom2)); // Gửi lệnh RTCM để thiết lập đầu ra COM2
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // gửi rtcm 1087 ra COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcm1087SetOutputCom2, strlen(rtcm1087SetOutputCom2)); // Gửi lệnh RTCM để thiết lập đầu ra COM2
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // gửi rtcm 1077 ra COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcm1077SetOutputCom2, strlen(rtcm1077SetOutputCom2)); // Gửi lệnh RTCM để thiết lập đầu ra COM2
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // gửi rtcm 1127 ra COM2
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(rtcm1127SetOutputCom2, strlen(rtcm1127SetOutputCom2)); // Gửi lệnh RTCM để thiết lập đầu ra COM2
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-
-  // Send ephemeris output commands before saving the receiver configuration.
-  for (const auto &command : UnicoreCommands::buildEphemerisOutputCommands("COM2")) {
-    if (Serial1.write(command.data(), command.size()) != command.size()) {
-      Serial.println("[UNICORE][ERROR] Khong gui duoc lenh bat ephemeris.");
-      return -1;
-    }
-    Serial1.flush();
-    delay(100);
-  }
-
-  // lưu cấu hình
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  Serial1.write(cmdSaveConfig, strlen(cmdSaveConfig)); // Gửi lệnh lưu cấu hình
-
-  #ifdef PROGRAM_DEBUG
-  WaitStartTime = millis();
-  while (!Serial1.available() && millis() - WaitStartTime < 2000) {
-    delay(10);
-  }
-  nmeaResponse = Serial1.readStringUntil('\n'); // Đọc phản hồi từ GNSS
-  Serial.println("[NMEA CMD] Response: " + nmeaResponse);
-  #endif
-  delay(20);
-  return 0;
-}
-
-int bootstrapUblox() {
-  GnssCmdBuilder::GnssOptions options;
-  options.ports = {"UART1"};
-  options.outputMode = GnssCmdBuilder::OutputMode::DiagnosticsRtcm;
-  options.msmLevel = GnssCmdBuilder::MsmLevel::Both;
-
-  const GnssCmdBuilder::Command outputConfig =
-      GnssCmdBuilder::buildUbloxOutputConfigCommand(options);
-  if (outputConfig.empty()) {
-    Serial.println("[UBLOX][ERROR] Khong tao duoc lenh cau hinh output.");
-    return -1;
-  }
-
-  Serial1.write(outputConfig.data(), outputConfig.size());
-  Serial1.flush();
-  delay(100);
-
-  const GnssCmdBuilder::Command saveConfig = {
-      0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x03, 0x1D, 0xAB};
-  Serial1.write(saveConfig.data(), saveConfig.size());
-  Serial1.flush();
-
-  Serial.println("[UBLOX] Da cau hinh output RTCM/NMEA tren UART1.");
-  return 0;
-}
-
-GnssCmdBuilder::GnssSensorType detectGnssSensorType() {
-  Serial.println("[GNSS] Cho receiver khoi dong 2000 ms truoc khi probe.");
-  delay(2000);
-  const uint32_t baudRates[] = {GNSS_BAUD, 38400, 9600, 19200, 57600, 230400, 460800};
-  for (const uint32_t baud : baudRates) {
-    Serial1.updateBaudRate(baud);
-    delay(30);
-    Serial.printf("[GNSS] Probe baud=%lu\n", static_cast<unsigned long>(baud));
-    clearGnssInput();
-    Serial1.write(ubxMonVerPoll, sizeof(ubxMonVerPoll));
-    Serial1.flush();
-    if (receiveUbxFrame(1000)) {
-      Serial.printf("[GNSS] Da nhan dien u-blox qua UBX-MON-VER, baud=%lu.\n", static_cast<unsigned long>(baud));
-      return GnssCmdBuilder::GnssSensorType::Ublox;
-    }
-
-    clearGnssInput();
-    Serial1.print("VERSIONA\r\n");
-    Serial1.flush();
-    delay(50);
-    if (receiveUnicoreIdentification(1000)) {
-      Serial.printf("[GNSS] Da nhan dien Unicore qua lenh VERSIONA, baud=%lu.\n", static_cast<unsigned long>(baud));
-      return GnssCmdBuilder::GnssSensorType::Unicore;
-    }
-  }
-
-  Serial1.updateBaudRate(GNSS_BAUD);
-  delay(30);
-  clearGnssInput();
-  Serial.printf("[GNSS] Thu lai VERSIONA tai baud=%lu sau khi receiver da khoi dong.\n",
-                static_cast<unsigned long>(GNSS_BAUD));
-  Serial1.print("VERSIONA\r\n");
-  Serial1.flush();
-  if (receiveUnicoreIdentification(1500)) return GnssCmdBuilder::GnssSensorType::Unicore;
-  Serial.println("[GNSS][ERROR] Khong the nhan dien chip GNSS.");
-  return GnssCmdBuilder::GnssSensorType::Invalid;
 }
 
 int setupNTRIP() {

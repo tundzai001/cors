@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import time
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,21 @@ async def send_generic_command(
         raise HTTPException(status_code=404, detail="Device not found")
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
+    if command.command in ("CHECK_STORAGE_STATUS", "CLEAR_NVS_DATA"):
+        if current_user.role != auth.Role.ADMIN:
+            raise HTTPException(status_code=403, detail="Chỉ quản trị viên được quản lý bộ nhớ thiết bị.")
+        storage = (device.system_info or {}).get("nvs", {})
+        if not isinstance(storage, dict) or storage.get("cleanup_supported") is not True:
+            raise HTTPException(status_code=409, detail="Firmware chưa hỗ trợ quản lý bộ nhớ. Hãy cập nhật ESP32.")
+        if command.command == "CLEAR_NVS_DATA":
+            group = command.payload.get("group")
+            if group not in ("unused_wifi", "auto_base_history") or command.payload.get("confirm") != group:
+                raise HTTPException(status_code=400, detail="Chọn và xác nhận đúng nhóm dữ liệu cần xóa.")
+        command_id = secrets.token_urlsafe(18)
+        result = await send_command_to_pi(serial, {**command.model_dump(), "command_id": command_id})
+        await crud.log_system_event(db=db, type="info", user_id=current_user.id, serial=serial,
+                                   message=f"Storage command {command.command} ({command.payload.get('group', 'status')}) by {current_user.username}")
+        return {**result, "command_id": command_id}
     if command.command == "PROVISION_DEVICE":
         # Provisioning must persist the chosen name before sending it to Pi.
         # Reuse rename so offline broadcasts and explicit renames agree.

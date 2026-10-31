@@ -11,6 +11,7 @@ inline constexpr size_t CONFIG_DOCUMENT_SIZE = 4096;
 inline constexpr size_t COMMAND_DOCUMENT_SIZE = 24576;
 
 Preferences &backendPreferences();
+const char *backendPreferencesPartition();
 bool beginBackendPreferences(bool readOnly);
 String readPreference(const char *key, const String &fallback = String());
 String epochString();

@@ -4,7 +4,7 @@
 #include "Prog_Config.h"
 #include "functions/gnss_cmd_builder.h"
 #include "functions/Backend_Agent.h"
-#include "hardware/Wifi_Profiles.h"
+#include "hardware/Wifi_Credentials.h"
 #include <cstring>
 
 extern SemaphoreHandle_t rtcmBufferMutex;
@@ -104,14 +104,11 @@ namespace cmd_helper {
     }
 
     inline cmd_action_t saveWifiSetting(bool ssidSetting, const String &value) {
-        const WifiProfiles profiles = loadWifiProfiles();
-        const WifiProfile current = profiles.count ? profiles.entries[0] : WifiProfile{WIFI_SSID, WIFI_PASSWORD};
-        const String ssid = ssidSetting ? value : current.ssid;
-        const String password = ssidSetting ? current.password : value;
-        String error;
-        if (!saveWifiProfile(ssid, password, password.isEmpty(), error))
-            Serial.println("[WIFI][ERROR] " + error);
-        return CMD_ACTION_NONE;
+        if (!(ssidSetting ? validWifiSsid(value) : validWifiPassword(value))) {
+            Serial.println("[WIFI][ERROR] Invalid Wi-Fi credential.");
+            return CMD_ACTION_NONE;
+        }
+        return saveStringPreference(ssidSetting ? "WIFI_SSID" : "WIFI_PASS", value);
     }
 
     inline cmd_action_t saveUShortPreference(const char *key, uint16_t value)

@@ -3,6 +3,7 @@
 #include "Prog_Config.h"
 #include "functions/NTRIP_Handler_IP.h"
 #include "functions/RTCM_Receiver.h"
+#include "functions/Storage_Status.h"
 #include <cmath>
 #include <cstring>
 
@@ -217,7 +218,8 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
         || command == "STOP_AUTO_BASE" || command == "APPLY_VN2000_PROVINCE"
         || command == "EXECUTE_RAW_COMMANDS" || command == "DEPLOY_SERVICE_CONFIG"
         || command == "SET_RTCM_STREAM_ACTIVE" || command == "DELETE_DEVICE"
-        || command == "CHECK_BASE_STATUS" || command == "REBOOT_DEVICE";
+        || command == "CHECK_BASE_STATUS" || command == "REBOOT_DEVICE"
+        || command == "CHECK_STORAGE_STATUS" || command == "CLEAR_NVS_DATA";
     if (!allowed) {
         recordCommandResult(command, source, "rejected", "unsupported command", commandId);
         publishStatus(true);
@@ -515,6 +517,35 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
     } else if (command == "APPLY_VN2000_PROVINCE") {
         success = false;
         error = "Review Auto Base results and apply Fixed LLA; province overrides no longer write the receiver";
+    } else if (command == "CHECK_STORAGE_STATUS") {
+        detail = "storage status refreshed";
+    } else if (command == "CLEAR_NVS_DATA") {
+        const String group = payload["group"] | "";
+        const String confirmation = payload["confirm"] | "";
+        if (workflowActive() || (surveyInMonitoring_ && !surveyInReadbackReady_)) {
+            success = false;
+            error = "Cannot clean storage during an active GNSS workflow or survey";
+        } else if (confirmation != group || (group != "unused_wifi" && group != "auto_base_history")) {
+            success = false;
+            error = "Select and confirm a supported cleanup group";
+        } else if (group == "unused_wifi") {
+            success = clearUnusedWifi(error);
+            detail = "obsolete Wi-Fi portal data cleared; active network preserved";
+        } else {
+            success = beginBackendPreferences(false);
+            if (success) {
+                Preferences &store = backendPreferences();
+                success = !store.isKey("PROGRESS_JSON") || store.remove("PROGRESS_JSON");
+                store.end();
+            }
+            if (success) {
+                // Null assignment releases the old JSON buffer in Arduino String.
+                autoBaseProgress_ = static_cast<const char *>(nullptr);
+                autoBaseProgress_ = "{}";
+            }
+            else error = "Cannot clear Auto Base history";
+            detail = "saved Auto Base history cleared; base configuration and Survey-In result preserved";
+        }
     } else if (command == "REBOOT_DEVICE") {
         requestWorkflowStop();
         setAgentState("rebooting");

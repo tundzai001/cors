@@ -3,6 +3,7 @@
 #include "Prog_Config.h"
 #include "functions/NTRIP_Handler_IP.h"
 #include "functions/RTCM_Receiver.h"
+#include "functions/Storage_Status.h"
 #include <cmath>
 
 #include "functions/MQTT_Manager.h"
@@ -177,6 +178,7 @@ String BackendAgent::buildStatusPayload() {
     disk["total_gb"] = static_cast<double>(flashTotal) / (1024.0 * 1024.0 * 1024.0);
     disk["used_gb"] = static_cast<double>(flashUsed) / (1024.0 * 1024.0 * 1024.0);
     disk["percent"] = flashTotal > 0 ? (round((static_cast<double>(flashUsed) * 1000.0 / flashTotal)) / 10.0) : 0.0;
+    appendStorageStatus(system);
     system["uptime_seconds"] = millis() / 1000UL;
     system["timestamp"] = timestamp.toInt();
     system["auth_license_bypass"] = false;
@@ -309,6 +311,11 @@ String BackendAgent::buildStatusPayload() {
     transport["control_plane_fail_open"] = controlPlaneFailOpen_;
 
     copyJsonObject(doc, "last_command_result", lastCommandResult_);
+    JsonObject lastStorageAction = system["nvs"].createNestedObject("last_action");
+    const JsonObjectConst lastCommand = doc["last_command_result"];
+    lastStorageAction["command_id"] = lastCommand["command_id"];
+    lastStorageAction["status"] = lastCommand["status"];
+    lastStorageAction["detail"] = lastCommand["detail"];
     JsonObject control = doc.createNestedObject("control_plane_failover");
     control["active"] = controlPlaneFailOpen_;
     control["stale_after_seconds"] = BACKEND_CONTROL_STALE_MS / 1000UL;

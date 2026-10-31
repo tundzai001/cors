@@ -343,6 +343,98 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
 // === SYSTEM INFO SIDE PANEL 
 // ===============================================================================
 
+const EspStoragePanel = memo(function EspStoragePanel({ device }) {
+    const [pending, setPending] = useState(null);
+    const [notice, setNotice] = useState('');
+    const [failed, setFailed] = useState(false);
+    const info = device.system_info || {};
+    const storage = info.nvs;
+    const action = storage?.last_action;
+    useEffect(() => { setPending(null); setNotice(''); setFailed(false); }, [device.serial]);
+    useEffect(() => {
+        if (!pending) return;
+        if (action?.command_id === pending.id && ['success', 'error', 'rejected'].includes(action.status)) {
+            setPending(null);
+            setFailed(action.status !== 'success');
+            setNotice(action.status === 'success' ? 'Thiết bị đã cập nhật bộ nhớ.' : (action.detail || 'Thiết bị từ chối thao tác.'));
+            return;
+        }
+        const timeout = setTimeout(() => {
+            setPending(null); setFailed(true);
+            setNotice('Chưa nhận xác nhận từ thiết bị. Kiểm tra kết nối và số liệu mới trước khi thử lại.');
+        }, 45000);
+        return () => clearTimeout(timeout);
+    }, [pending, action?.command_id, action?.status]);
+    const formatBytes = value => value != null && Number.isFinite(Number(value)) ? `${(Number(value) / 1024).toFixed(1)}\u00a0KB` : 'Chưa có số liệu';
+    const offline = isDeviceStaleOffline(device);
+    const disabled = !!pending || offline || device.is_locked || storage?.cleanup_supported !== true;
+    async function run(group) {
+        if (disabled) return;
+        if (group) {
+            const description = group === 'unused_wifi'
+                ? 'Xóa danh sách mạng phụ và mật khẩu Wi-Fi cấu hình cũ. Mạng đang dùng được giữ lại.'
+                : 'Xóa kết quả Auto Base cũ. Cấu hình Base hiện tại và kết quả Survey-In được giữ lại.';
+            const confirmed = window.CorsUI?.confirmAction
+                ? await window.CorsUI.confirmAction({ title: 'Xóa dữ liệu đã chọn?', message: description, confirmText: 'Xóa dữ liệu', cancelText: 'Giữ lại', tone: 'danger' })
+                : window.confirm(description);
+            if (!confirmed) return;
+        }
+        setPending({ id: null }); setFailed(false); setNotice('Đang gửi yêu cầu tới ESP32…');
+        try {
+            const response = await window.DeviceApi.sendCommand(device.serial, group ? 'CLEAR_NVS_DATA' : 'CHECK_STORAGE_STATUS', group ? { group, confirm: group } : {});
+            const result = await response.json();
+            if (!response.ok || !result.command_id) throw new Error(result.detail || 'Không gửi được yêu cầu.');
+            setPending({ id: result.command_id });
+            setNotice('Đã gửi, đang chờ thiết bị xác nhận…');
+        } catch (error) { setPending(null); setFailed(true); setNotice(error.message); }
+    }
+    const firmware = info.disk?.firmware_bytes;
+    const capacity = info.disk?.app_capacity_bytes;
+    const groups = [
+        { id: 'unused_wifi', title: 'Wi-Fi cấu hình cũ', detail: 'Danh sách mạng phụ và mật khẩu AP đã bỏ.' },
+        { id: 'auto_base_history', title: 'Lịch sử Auto Base', detail: 'Kết quả cũ; giữ cấu hình Base và Survey-In.' },
+    ];
+    return <section className="info-section mt-3" aria-label="Bộ nhớ ESP32" aria-busy={!!pending}>
+        <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
+            <h6 className="mb-0">Bộ nhớ ESP32</h6>
+            <button type="button" className="btn btn-sm btn-outline-primary" style={{ minHeight: 44 }} disabled={disabled} onClick={() => run(null)}>{pending ? 'Đang xử lý…' : 'Cập nhật'}</button>
+        </div>
+        <div className="metric-card small mb-2">
+            <dl className="row mb-0 g-1">
+                <dt className="col-7">RAM còn trống</dt><dd className="col-5 text-end">{formatBytes(info.memory?.free_heap_bytes)}</dd>
+                <dt className="col-7">RAM thấp nhất từ khi bật</dt><dd className="col-5 text-end">{formatBytes(info.memory?.minimum_free_heap_bytes)}</dd>
+                <dt className="col-7">Khối RAM trống lớn nhất</dt><dd className="col-5 text-end">{formatBytes(info.memory?.largest_free_block_bytes)}</dd>
+                <dt className="col-7">Flash vật lý</dt><dd className="col-5 text-end">{formatBytes(info.disk?.total_bytes)}</dd>
+                <dt className="col-7">Firmware / vùng ứng dụng</dt><dd className="col-5 text-end">{firmware != null && capacity ? `${formatBytes(firmware)} / ${formatBytes(capacity)}` : 'Chưa có số liệu'}</dd>
+            </dl>
+            <p className="text-muted mb-0 mt-2">Flash chứa riêng firmware, vùng cập nhật và dữ liệu lưu. Dọn dữ liệu NVS không tăng RAM.</p>
+        </div>
+        {!storage ? <p className="text-muted small">Cập nhật firmware để xem và dọn dữ liệu lưu trên ESP32.</p> : <>
+            {(storage.partitions || []).map(partition => <div key={partition.id} className="metric-card small mb-2">
+                <div className="fw-semibold">{partition.id === 'nvs' ? 'Bộ nhớ cấu hình kết nối' : 'Bộ nhớ dữ liệu trạm'}</div>
+                {partition.available ? <>
+                    <div className="d-flex justify-content-between gap-2 mt-1"><span>{formatBytes(partition.size_bytes)}</span><span>{partition.used_entries} / {partition.total_entries} ô đã dùng</span></div>
+                    <div className="progress mt-2" role="progressbar" aria-label="Ô NVS đã dùng" aria-valuenow={partition.used_entries} aria-valuemin={0} aria-valuemax={partition.total_entries} style={{ height: 6 }}>
+                        <div className="progress-bar" style={{ width: `${Math.min(100, partition.total_entries ? partition.used_entries / partition.total_entries * 100 : 0)}%` }} />
+                    </div>
+                    <div className="text-muted mt-1">Còn {partition.free_entries} ô lưu trữ.</div>
+                </> : <p className="text-muted mb-0">Chưa đọc được bộ nhớ này.</p>}
+            </div>)}
+            <p className="small mb-2">Giữ lại license, khóa trạm, mạng đang dùng và cấu hình GNSS.</p>
+            {groups.map(group => {
+                const stored = storage.cleanup_groups?.find(item => item.id === group.id);
+                return <div key={group.id} className="d-flex align-items-center justify-content-between gap-2 border-top py-2">
+                    <div className="small"><strong>{group.title}</strong><div className="text-muted">{group.detail}</div></div>
+                    <button type="button" className="btn btn-sm btn-outline-danger flex-shrink-0" style={{ minHeight: 44 }} disabled={disabled || !(stored?.keys > 0)} onClick={() => run(group.id)} aria-label={`Xóa ${group.title}`}>{stored?.keys > 0 ? 'Xóa' : 'Đã sạch'}</button>
+                </div>;
+            })}
+        </>}
+        {offline && <p className="small text-warning mt-2 mb-0">Thiết bị ngoại tuyến. Số liệu là lần nhận gần nhất.</p>}
+        {notice && <p className={`small mt-2 mb-0 ${failed ? 'text-danger' : 'text-info'}`} role={failed ? 'alert' : 'status'}>{notice}</p>}
+    </section>;
+});
+window.EspStoragePanel = EspStoragePanel;
+
 const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose }) {
     if (!device || !device.system_info) {
         return null;
@@ -489,6 +581,7 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                     ) : <div className="text-muted small">No sensor data</div>}
                 </div>
 
+                {/^esp_/i.test(device.serial) ? <EspStoragePanel key={device.serial} device={device} /> : (
                 <div className="info-section mt-3">
                     <div className="section-title">
                         <i className={`bi ${/^esp_/i.test(device.serial) ? 'bi-memory' : 'bi-hdd'} me-2`}></i>
@@ -526,6 +619,8 @@ const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose 
                         </div>
                     ) : <div className="text-muted small">No disk data</div>}
                 </div>
+
+                )}
 
                 <div className="info-section mt-3 mb-4">
                     <div className="section-title"><i className="bi bi-activity me-2"></i>Network Latency (Agent → Server)</div>

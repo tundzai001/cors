@@ -7,7 +7,6 @@
 #include "functions/Vn2000_Datum.h"
 #include "Top_Lvl_Config.h"
 #include "hardware/Connection_type.h"
-#include "functions/gnss_cmd_builder.h"
 
 extern SemaphoreHandle_t rtcmBufferMutex;
 extern SemaphoreHandle_t tcpStreamMutex;
@@ -15,9 +14,6 @@ extern SemaphoreHandle_t tcpStreamMutex;
 // =============== KHAI BÁO HÀM =================
 
 int setupNTRIP();
-int bootstrapUM980();
-int bootstrapUblox();
-GnssCmdBuilder::GnssSensorType detectGnssSensorType();
 int loopNTRIP(String& rtcmData);
 int connectNTRIP();
 bool isNtripConnected();
