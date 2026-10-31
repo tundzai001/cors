@@ -20,5 +20,19 @@ danh sách cũ để thử lại lần sau. Khi chuyển đổi xong, không dù
 nhiều mạng nữa. Có thể xóa dữ liệu portal cũ từ System
 Monitor trên web sau khi thiết bị chạy firmware mới.
 
+## Prog_Config.h và NVS
+
+`include/Prog_Config.h` là nơi điền mặc định. Cấu hình đã lưu trong NVS luôn
+được ưu tiên; sửa header, nạp firmware mới hoặc reboot không tự ghi đè chúng.
+Chỉ khi bộ nhớ chưa có cấu hình, hoặc sau lệnh xóa/reset phần tương ứng,
+firmware mới dùng mặc định trong header. Không tự xóa NVS khi phát hiện header
+thay đổi.
+
+`CONNECTION_PREFERENCE` chọn mặc định `"4G"` hoặc `"WIFI"`. APN đã lưu được
+ưu tiên; giá trị `"auto"` cho phép chọn APN theo nhà mạng. `ATG CONFIG RESET`
+reset cấu hình kết nối; cấu hình dịch vụ/Base trong vùng dữ liệu trạm được
+quản lý riêng. Hai thao tác dọn Wi-Fi portal cũ/lịch sử Auto Base trên web
+không reset mạng đang dùng, license hoặc cấu hình dịch vụ.
+
 Thông tin NVS chỉ báo số ô đã dùng/còn trống, không gửi SSID, mật khẩu hoặc
 license lên web. Xem thêm [bộ nhớ ESP32](memory-storage.md).

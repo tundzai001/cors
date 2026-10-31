@@ -2,6 +2,7 @@
 #define PROG_CONFIG_H
 
 #include <cstdint>
+#include <string_view>
 #include "Top_Lvl_Config.h"
 #include <Preferences.h>
 
@@ -26,6 +27,12 @@ inline constexpr uint8_t GNSS_UNICORE_PORT = 0;
 inline constexpr int MUTEX_TIMEOUT_MS = 1500; // Thời gian tối đa để chờ mutex (ms)
 
 // ================= CẤU HÌNH KẾT NỐI =================
+// Giá trị mặc định khi chưa có cấu hình NVS hoặc sau lệnh reset phần tương ứng.
+// Sửa header/nạp firmware/reboot không ghi đè cấu hình đã lưu.
+// Muốn dùng lại mặc định mới: gửi lệnh xóa/reset cấu hình NVS tương ứng.
+inline constexpr char CONNECTION_PREFERENCE[] = "4G"; // "4G" hoặc "WIFI".
+static_assert(std::string_view(CONNECTION_PREFERENCE) == "4G" || std::string_view(CONNECTION_PREFERENCE) == "WIFI",
+              "CONNECTION_PREFERENCE must be 4G or WIFI");
 
 inline constexpr char WIFI_SSID[] = "AITOGY";
 inline constexpr char WIFI_PASSWORD[] = "aitogy@aitogy";
@@ -36,7 +43,7 @@ inline constexpr uint8_t RX_TO_MODEM_TX = 16;
 inline constexpr uint8_t MODEM_DC_PIN = 15;
 inline constexpr uint8_t MODEM_DTR_PIN = 4;
 
-inline constexpr char APN[] = "v-internet"; // Thay bằng APN của nhà mạng bạn
+inline constexpr char APN[] = "v-internet"; // APN cụ thể; "auto" để chọn theo nhà mạng
 inline constexpr char GPRS_USER[] = "";     // Thường để trống
 inline constexpr char GPRS_PASS[] = "";
 
