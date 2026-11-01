@@ -75,6 +75,37 @@ function getDashboardPosition(device, data) {
         || position(saved?.lat, saved?.lon, 'Cấu hình Base đã lưu');
 }
 
+function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
+    const snapshot = device.gnss_satellites;
+    if (!live || snapshot?.source !== 'ubx_nav_sat' || typeof snapshot.payload_b64 !== 'string'
+        || snapshot.payload_b64.length > 2060 || typeof snapshot.age_seconds !== 'number') return null;
+    const received = Number(device.server_received_at || device.timestamp);
+    const age = snapshot.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    if (!Number.isFinite(age) || age < 0 || age > 45) return null;
+    try {
+        const raw = atob(snapshot.payload_b64);
+        const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+        if (bytes.length < 8 || bytes[4] !== 1 || bytes[5] > 128 || bytes.length !== 8 + bytes[5] * 12) return null;
+        const view = new DataView(bytes.buffer), seen = new Set(), satellites = [];
+        const systems = ['us', 'sb', 'eu', 'cn', 'im', 'jp', 'ru', 'in'];
+        for (let offset = 8; offset < bytes.length; offset += 12) {
+            const gnss = bytes[offset], prn = bytes[offset + 1], key = `${gnss}:${prn}`;
+            if (gnss === 6 && prn === 255) continue; // No known slot to correlate with decoded RTCM.
+            if (gnss > 7 || prn === 0 || seen.has(key)) return null;
+            seen.add(key);
+            const cno = bytes[offset + 2], elevation = view.getInt8(offset + 3);
+            const azimuth = view.getInt16(offset + 4, true), flags = view.getUint32(offset + 8, true);
+            const geometry = elevation >= -90 && elevation <= 90 && azimuth >= 0 && azimuth <= 360;
+            satellites.push({id: `UBX:${key}`, system: systems[gnss], prn, snr: cno,
+                elevation: geometry ? elevation : null, azimuth: geometry ? azimuth : null,
+                has_geometry: geometry, isTracking: (flags & 7) >= 2,
+                used_in_solution: Boolean(flags & 8), source: 'ubx_nav_sat',
+                lastSeen: (now - age) * 1000});
+        }
+        return {satellites, age_seconds: age};
+    } catch (_) { return null; }
+}
+
 function getSatelliteTelemetrySource(sat) {
     if (sat?.telemetry_source) return sat.telemetry_source;
     const identifier = String(sat?.talker || sat?.id || '');
@@ -83,10 +114,17 @@ function getSatelliteTelemetrySource(sat) {
     return null;
 }
 
-function getSatellitePlotSource(device, data, live = true) {
-    return {satellites: live ? Object.values(data?.satellites || {})
-        .filter(sat => getSatelliteTelemetrySource(sat) === 'rtcm') : [],
-        source: 'RTCM', maxAgeMs: 7000};
+function getSatellitePlotSource(device, data, live = true, now = Date.now() / 1000) {
+    const receiver = getReceiverSatellites(device, live, now);
+    const angles = new Map((receiver?.satellites || [])
+        .filter(hasSatellitePosition).map(sat => [getSatelliteKey(sat), sat]));
+    const satellites = live ? Object.values(data?.satellites || {})
+        .filter(sat => getSatelliteTelemetrySource(sat) === 'rtcm').map(sat => {
+            const angle = angles.get(getSatelliteKey(sat));
+            return angle ? {...sat, azimuth: angle.azimuth, elevation: angle.elevation,
+                has_geometry: true, geometry_source: 'ubx_nav_sat'} : sat;
+        }) : [];
+    return {satellites, source: 'RTCM', maxAgeMs: 7000};
 }
 
 function getLeaflet() {

@@ -227,10 +227,12 @@ is allocated only while the snapshot exists.
 
 The dashboard satellite count, C/N0, sky view and signal bars use only fresh
 RTCM observations with positive decoded C/N0, deduplicated by constellation/SV.
-NAV-SAT and NMEA never populate or backfill these displays. When RTCM is empty
+NMEA and NAV-SAT never add satellites to these displays. Fresh NAV-SAT can
+provide elevation/azimuth for an existing RTCM observation matched by normalized
+constellation + PRN; RTCM C/N0 and observation time remain unchanged. When RTCM is empty
 or expired the count is zero. Unknown angles are not plotted; the chart explains
-when observations exist without geometry. The NAV-SAT snapshot remains available
-in telemetry but is not used by these dashboard satellite displays.
+when observations exist without geometry. A missing, invalid or expired NAV-SAT match leaves the RTCM observation
+without extra geometry.
 
 
 The UI keeps the complete unsigned NAV-DOP range (0–655.35) in its readback
