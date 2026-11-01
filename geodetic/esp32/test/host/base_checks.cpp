@@ -296,6 +296,35 @@ int main(int argc, char **argv) {
         assert(output == buildUbloxOutputConfigCommand(uart));
     }
 
+    // Independent u-blox HPG 1.32 keys; exercise multi-port VALSET splitting.
+    GnssOptions allPorts;
+    allPorts.ports = {"UART1", "UART2", "USB"};
+    allPorts.outputMode = OutputMode::RtcmOnly;
+    allPorts.msmLevel = MsmLevel::Both;
+    allPorts.gal = true; allPorts.bds = false;
+    const auto multiPortOutput = buildUbloxOutputConfigCommand(allPorts);
+    checkPackets(multiPortOutput);
+    size_t valsets = 0, outputKeys = 0;
+    bool galileoMsm4 = false, galileoMsm7 = false, beidouMsm7Disabled = false;
+    for (size_t offset = 0; offset < multiPortOutput.size();) {
+        const uint8_t *packet = multiPortOutput.data() + offset;
+        const size_t length = packet[4] | (size_t(packet[5]) << 8);
+        if (packet[2] == 6 && packet[3] == 0x8A) {
+            ++valsets;
+            assert((length - 4) / 5 <= 64);
+            outputKeys += (length - 4) / 5;
+            for (size_t i = 10; i < length + 6; i += 5) {
+                const uint32_t key = UbxBaseStatus::u32(packet + i);
+                if (key == 0x20910369) galileoMsm4 = packet[i + 4] == 1;
+                if (key == 0x20910319) galileoMsm7 = packet[i + 4] == 1;
+                if (key == 0x209102D7) beidouMsm7Disabled = packet[i + 4] == 0;
+            }
+        }
+        offset += length + 8;
+    }
+    assert(valsets == 2 && outputKeys == 93);
+    assert(galileoMsm4 && galileoMsm7 && beidouMsm7Disabled);
+
     // Route hexadecimal packets from stdin and emit the resulting bytes for comparison.
     if (argc > 1) {
         const bool ublox = std::string(argv[1]) == "Ublox";

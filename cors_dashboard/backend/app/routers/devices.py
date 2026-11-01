@@ -176,6 +176,19 @@ async def send_generic_command(
         raise HTTPException(status_code=404, detail="Device not found")
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
+    if command.command == "VERIFY_GNSS_CONFIG":
+        if device.detected_chip_type != "Ublox" or (device.system_info or {}).get("gnss_verification_supported") is not True:
+            raise HTTPException(status_code=409, detail="Cập nhật firmware ESP32 u-blox để xác minh cấu hình.")
+        try:
+            # Compare against the saved desired configuration, never client input.
+            expected = command_builder.build_ublox_verification_payload(device.base_config or {})
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        command_id = secrets.token_urlsafe(18)
+        result = await send_command_to_pi(serial, {"command": command.command, "payload": expected, "command_id": command_id})
+        await crud.log_system_event(db=db, type="info", user_id=current_user.id, serial=serial,
+                                   message=f"GNSS configuration verification by {current_user.username}")
+        return {**result, "command_id": command_id}
     if command.command in ("CHECK_STORAGE_STATUS", "CLEAR_NVS_DATA"):
         if current_user.role != auth.Role.ADMIN:
             raise HTTPException(status_code=403, detail="Chỉ quản trị viên được quản lý bộ nhớ thiết bị.")

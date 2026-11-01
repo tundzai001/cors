@@ -1,4 +1,5 @@
 import logging
+import base64
 import math
 from decimal import Decimal, InvalidOperation
 
@@ -55,15 +56,13 @@ UBLOX_RTCM_KEYS = {
     "1005": {"UART1": 0x209102BE, "UART2": 0x209102BF, "USB": 0x209102C0},
     "1074": {"UART1": 0x2091035F, "UART2": 0x20910360, "USB": 0x20910361},  # GPS MSM4
     "1084": {"UART1": 0x20910364, "UART2": 0x20910365, "USB": 0x20910366},  # GLONASS MSM4
-    "1094": {"UART1": 0x20910368, "UART2": 0x20910369, "USB": 0x2091036A},  # Galileo MSM4
+    "1094": {"UART1": 0x20910369, "UART2": 0x2091036A, "USB": 0x2091036B},  # Galileo MSM4
     "1124": {"UART1": 0x2091036E, "UART2": 0x2091036F, "USB": 0x20910370},  # BeiDou MSM4
     
     "1077": {"UART1": 0x209102CD, "UART2": 0x209102CE, "USB": 0x209102CF},  # GPS MSM7
     "1087": {"UART1": 0x209102D2, "UART2": 0x209102D3, "USB": 0x209102D4},  # GLONASS MSM7
-    "1097": {"UART1": 0x209102D7, "UART2": 0x209102D8, "USB": 0x209102D9},  # Galileo MSM7
-    # RTCM 1127 is configured through the CFG-MSG fallback below. ZED-F9P
-    # HPG 1.32 NAKs CFG-VALSET key 0x209102DE; including it would reject the
-    # entire combined VALSET packet, including all NMEA message-rate changes.
+    "1097": {"UART1": 0x20910319, "UART2": 0x2091031A, "USB": 0x2091031B},  # Galileo MSM7
+    "1127": {"UART1": 0x209102D7, "UART2": 0x209102D8, "USB": 0x209102D9},  # BeiDou MSM7
     
     "1230": {"UART1": 0x20910304, "UART2": 0x20910305, "USB": 0x20910306},  # GLONASS bias
 }
@@ -94,11 +93,16 @@ def _ubx_packet(msg_class: int, msg_id: int, payload: bytes) -> bytes:
 
 
 def _ubx_cfg_valset_u1(entries: dict[int, int], layers: int = 0x07) -> bytes:
-    payload = bytearray([0x00, layers & 0x07, 0x00, 0x00])
-    for key, value in entries.items():
-        payload.extend(int(key).to_bytes(4, 'little'))
-        payload.append(1 if value else 0)
-    return _ubx_packet(0x06, 0x8A, bytes(payload))
+    # UBX-22008968: at most 64 key/value pairs per VALSET message.
+    items = list(entries.items())
+    packets = []
+    for offset in range(0, len(items), 64):
+        payload = bytearray([0x00, layers & 0x07, 0x00, 0x00])
+        for key, value in items[offset:offset + 64]:
+            payload.extend(int(key).to_bytes(4, 'little'))
+            payload.append(1 if value else 0)
+        packets.append(_ubx_packet(0x06, 0x8A, bytes(payload)))
+    return b''.join(packets)
 
 def _ubx_cfg_msg(msg_class: int, msg_id: int, ports: list[str], rate: int = 1) -> bytes:
     payload = bytearray([msg_class, msg_id, 0, 0, 0, 0, 0, 0])
@@ -206,6 +210,31 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
             enabled = level_enabled and constellations[constellation]
             command += _ubx_cfg_msg(0xF5, msg_id, ports if enabled else [], rate=1 if enabled else 0)
     return command
+
+
+def build_ublox_verification_payload(config: dict) -> dict:
+    """Expected live configuration for the ESP32's physical GNSS UART1.
+
+    Only constructs comparison data; the verifier sends poll requests, never
+    replays these configuration packets to the receiver.
+    """
+    if not isinstance(config, dict) or config.get("base_setup_method") != "FIXED_LLA":
+        raise ValueError("Chọn và lưu Fixed LLA trước khi xác minh cấu hình.")
+    coords = config.get("coords") or {}
+    if not isinstance(coords, dict) or not all(key in coords for key in ("lat", "lon", "alt")):
+        raise ValueError("Chưa có đủ tọa độ Fixed LLA đã lưu.")
+    # ESP32 routes USB/UART2 output requests to the GNSS UART1 connection.
+    options = {**normalize_gnss_options(config.get("gnss_options")), "ports": ["UART1"]}
+    packets = build_base_fixed_lla_command(
+        "Ublox", coords["lat"], coords["lon"], coords["alt"],
+        config.get("accuracy", 10.0), options,
+        altitude_reference=config.get("altitude_reference"),
+    )
+    output_length = int.from_bytes(packets[1][4:6], "little")
+    return {
+        "tmode_b64": base64.b64encode(packets[0][6:-2]).decode("ascii"),
+        "output_b64": base64.b64encode(packets[1][10:6 + output_length]).decode("ascii"),
+    }
 
 
 def _append_unicore_output_commands(commands: list[bytes], port: str, gnss_options: dict | None = None) -> None:

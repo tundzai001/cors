@@ -272,6 +272,98 @@ const ProvisionForm = memo(function ProvisionForm({ device, currentUser = {}, on
     );
 });
 
+const GnssConfigVerification = ({ device, disabled }) => {
+    const [pending, setPending] = useState(null);
+    const [result, setResult] = useState(null);
+    const [notice, setNotice] = useState('');
+    const requestRef = useRef(0);
+    const info = device.system_info || {};
+    const report = info.gnss_verification;
+    const action = device.last_command_result;
+    const configSnapshot = JSON.stringify(device.base_config || {});
+    const offline = device.status === 'offline' || !!window.CorsDashboardShared?.isDeviceStaleOffline?.(device);
+    const supported = info.gnss_verification_supported === true;
+    const fixed = device.base_config?.base_setup_method === 'FIXED_LLA';
+    useEffect(() => {
+        ++requestRef.current;
+        setPending(null); setResult(null); setNotice('');
+        return () => { ++requestRef.current; };
+    }, [device.serial, configSnapshot, device.status_boot_id]);
+    useEffect(() => {
+        if (!pending) return;
+        if (pending.id && report?.command_id === pending.id && Number(report.age_seconds) <= 60) {
+            setResult(report); setPending(null); setNotice('');
+            return;
+        }
+        if (pending.id && action?.command_id === pending.id && ['error', 'rejected'].includes(action.status)) {
+            setPending(null); setNotice('Thiết bị chưa xác minh được cấu hình. Hãy thử lại khi GNSS sẵn sàng.');
+            return;
+        }
+        const timer = setTimeout(() => {
+            ++requestRef.current;
+            setPending(null); setNotice('Chưa nhận được kết quả từ thiết bị. Hãy kiểm tra kết nối rồi thử lại.');
+        }, 45000);
+        return () => clearTimeout(timer);
+    }, [pending, report, action]);
+    useEffect(() => {
+        if (!result) return;
+        const timer = setTimeout(() => {
+            setResult(null); setNotice('Kết quả đã cũ. Hãy xác minh lại cấu hình.');
+        }, Math.max(0, 60 - Number(result.age_seconds || 0)) * 1000);
+        return () => clearTimeout(timer);
+    }, [result]);
+    const blocked = disabled || offline || device.is_locked || !supported || !fixed || !!pending;
+    async function verify() {
+        if (blocked) return;
+        const request = ++requestRef.current;
+        setResult(null); setNotice(''); setPending({ id: null });
+        try {
+            const response = await window.DeviceApi.sendCommand(device.serial, 'VERIFY_GNSS_CONFIG', {});
+            const data = await response.json();
+            if (request !== requestRef.current) return;
+            if (!response.ok || !data.command_id) throw new Error(data.detail || 'Không gửi được yêu cầu xác minh.');
+            setPending({ id: data.command_id });
+        } catch (error) {
+            if (request !== requestRef.current) return;
+            setPending(null); setNotice(error.message);
+        }
+    }
+    return <section className="border-top border-secondary mt-3 pt-3" aria-label="Xác minh cấu hình" aria-busy={!!pending}>
+        <button type="button" className="btn btn-outline-info" style={{ minHeight: 44 }} disabled={blocked} onClick={verify}>
+            {pending && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}
+            {pending ? 'Đang xác minh…' : 'Xác minh cấu hình'}
+        </button>
+        {!supported ? <div className="small text-muted mt-2">Cập nhật firmware để xác minh cấu hình.</div>
+            : !fixed ? <div className="small text-muted mt-2">Lưu cấu hình Fixed LLA trước khi xác minh.</div>
+            : <div className="small text-muted mt-2">Đối chiếu cấu hình đang chạy với cấu hình đã lưu. Không thay đổi cấu hình chip.</div>}
+        <div role="status" aria-live="polite" aria-atomic="true">
+            {pending && <div className="small text-info mt-2">Đang chờ chip trả cấu hình…</div>}
+            {notice && <div className="small text-warning mt-2">{notice}</div>}
+            {result && <>
+                <div className={`small fw-bold mt-2 ${offline || result.state !== 'match' ? 'text-warning' : 'text-success-emphasis'}`}>
+                    {offline ? 'Thiết bị ngoại tuyến. Kết quả là lần xác minh gần nhất.'
+                        : result.state === 'match' ? 'Cấu hình đang chạy khớp.'
+                        : result.state === 'mismatch' ? 'Cấu hình chưa khớp.' : 'Chưa đọc đủ cấu hình để xác minh.'}
+                </div>
+                <dl className="row g-2 small mt-1 mb-0">
+                    {[['fixed', 'Fixed LLA và độ chính xác'], ['protocols', 'Giao thức đầu ra'],
+                        ['diagnostics', 'Bản tin NMEA / UBX'], ['rtcm', 'Bản tin RTCM']].map(([key, label]) => {
+                        const group = result.groups?.[key];
+                        const unread = !group || Number(group.unread) > 0 || !(Number(group.checked) > 0);
+                        const mismatch = Number(group?.mismatched) > 0;
+                        return <React.Fragment key={key}>
+                            <dt className="col-7 fw-normal">{label}</dt>
+                            <dd className={`col-5 text-end mb-0 ${unread ? 'text-warning' : mismatch ? 'text-danger-emphasis' : 'text-success-emphasis'}`}>
+                                {unread ? 'Chưa đọc được' : mismatch ? `Sai (${group.mismatched}/${group.checked})` : 'Khớp'}
+                            </dd>
+                        </React.Fragment>;
+                    })}
+                </dl>
+            </>}
+        </div>
+    </section>;
+};
+
 const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, onStopAutoBase, onReadBaseStatus, disabled }) {
     const knownChips = ['Ublox', 'Unicorecomm'];
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
@@ -1056,6 +1148,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         </div>
                     ) : (
                         <div className="small text-muted" role="status">Đang chờ thiết bị tự cập nhật mode và tọa độ.</div>
+                    )}
+                    {device.detected_chip_type === 'Ublox' && (
+                        <GnssConfigVerification device={device} disabled={disabled || isSubmitting || isReadingReceiver} />
                     )}
                     {pendingReadbackRevision !== null && (
                         <div className="small text-info mt-1" role="status" aria-live="polite">Đang chờ firmware trả kết quả đọc mới...</div>

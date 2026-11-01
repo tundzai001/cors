@@ -27,10 +27,11 @@ void BackendAgent::recordCommandResult(const String &command, const String &sour
     doc["timestamp"] = epochString().toInt();
     lastCommandResult_.clear();
     serializeJson(doc, lastCommandResult_);
-    const bool saved = saveStatePreferences();
+    const bool readOnly = command == "VERIFY_GNSS_CONFIG";
+    const bool saved = readOnly || saveStatePreferences();
     Serial.printf("[BACKEND][CMD] %s id=%s source=%s status=%s; NVS=%s\n",
                   command.c_str(), commandId.c_str(), source.c_str(), status.c_str(),
-                  saved ? "OK" : "LOI");
+                  readOnly ? "SKIPPED (read-only)" : saved ? "OK" : "LOI");
 }
 
 void BackendAgent::publishConfigState(const char *kind) {
@@ -219,7 +220,8 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
         || command == "EXECUTE_RAW_COMMANDS" || command == "DEPLOY_SERVICE_CONFIG"
         || command == "SET_RTCM_STREAM_ACTIVE" || command == "DELETE_DEVICE"
         || command == "CHECK_BASE_STATUS" || command == "REBOOT_DEVICE"
-        || command == "CHECK_STORAGE_STATUS" || command == "CLEAR_NVS_DATA";
+        || command == "CHECK_STORAGE_STATUS" || command == "CLEAR_NVS_DATA"
+        || command == "VERIFY_GNSS_CONFIG";
     if (!allowed) {
         recordCommandResult(command, source, "rejected", "unsupported command", commandId);
         publishStatus(true);
@@ -430,6 +432,14 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
                 publishConfigState("base_config_state");
             }
         }
+    } else if (command == "VERIFY_GNSS_CONFIG") {
+        if (workflowActive() || sensorType_ != "Ublox") {
+            success = false;
+            error = "Verification requires an idle u-blox receiver";
+        } else {
+            success = verifyGnssConfig(payload, commandId, error);
+            if (success) detail = "GNSS readback completed; inspect verification result";
+        }
     } else if (command == "CHECK_BASE_STATUS") {
         if (sensorType_ == "Unicorecomm" || sensorType_ == "Ublox") {
             success = refreshReceiverReadback(error);
@@ -597,7 +607,7 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
         setAgentState(normalAgentState());
         recordCommandResult(command, source, "error", error, commandId);
     }
-    saveStatePreferences();
+    if (command != "VERIFY_GNSS_CONFIG") saveStatePreferences();
     publishStatus(true);
     if (success && restartAfterCommand) {
         delay(500);

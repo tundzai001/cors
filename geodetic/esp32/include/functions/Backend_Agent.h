@@ -67,6 +67,8 @@ private:
     String lastCommandResult_ = "{}";
     String nvsInventory_ = "{}";
     uint32_t nvsInventoryMs_ = 0;
+    String gnssVerification_;
+    uint32_t gnssVerificationMs_ = 0;
     String autoBaseProgress_ = "{}";
     String baseConfig_ = "{}";
     String serviceConfig_ = "{}";
@@ -144,6 +146,7 @@ private:
     bool stopNtripRoverLocked();
     bool applyBaseCoordinates(double latitude, double longitude, double altitude);
     bool refreshReceiverReadback(String &error);
+    bool verifyGnssConfig(JsonObjectConst payload, const String &commandId, String &error);
     void saveSurveyResult(JsonObjectConst bestPosition, const String &mode);
     void pollGnssStatus();
     void markStatusDirty() { statusDirty_ = true; }

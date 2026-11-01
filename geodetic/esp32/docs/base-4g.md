@@ -223,3 +223,35 @@ Luồng Unicore từ chối dữ liệu nhị phân và nhiều dòng lệnh tro
 ## Cấu hình Wi-Fi không cần Internet
 
 ESP không phát mạng cấu hình. Chỉ giữ một mạng Wi-Fi cho kết nối dự phòng; xem [hướng dẫn Wi-Fi](wifi-config.md). Quản lý RAM, flash và dữ liệu NVS tại System Monitor trên web.
+
+## Xác minh cấu hình u-blox
+
+Sau khi lưu Fixed LLA, chọn **Xác minh cấu hình** trong phần trạng thái Base.
+Cần cập nhật cả backend, giao diện và firmware ESP32. Backend lấy cấu hình
+mong muốn từ bản đã lưu, không dùng tọa độ hay key do trình duyệt gửi lên.
+ESP32 chỉ poll CFG-TMODE3 và CFG-VALGET ở lớp RAM, không gửi lại VALSET,
+không lưu NVS, không thay đổi cấu hình hoặc tự khởi động lại chip.
+
+Kết quả gồm bốn nhóm: Fixed LLA/độ chính xác, giao thức đầu ra, các bản tin
+NMEA/UBX đã cấu hình và 10 bản tin RTCM trong bộ cấu hình. Mỗi nhóm hiển thị
+Khớp, Sai hoặc Chưa đọc được. Thiếu phản hồi, sai checksum, thiếu/trùng key,
+phản hồi sai lớp đều không được coi là khớp. Tọa độ được so theo tổng phần
+nguyên và HP; dung sai một bước lượng tử hóa: 1e-9 độ, 0.1 mm độ cao và
+0.1 mm fixedPosAcc, để tránh báo lệch do chuyển đổi số thập phân/số thực.
+
+ESP32 chuyển đầu ra USB/UART2 về UART1 nối GNSS; phép so sánh dùng UART1
+cùng quy tắc đó. RTCM-only tắt NMEA và tốc độ định kỳ NAV-PVT/HPPOSLLH;
+UBX protocol vẫn bật để chip trả lời lệnh đọc cấu hình. Nhận ACK không
+đủ để kết luận các tham số đã khớp.
+
+Kết quả gắn command_id, hết hạn sau 60 giây và bị bỏ trên giao diện khi đổi
+cấu hình hoặc thiết bị. Snapshot firmware chỉ tồn tại tạm trong RAM.
+Kiểm tra này xác minh cấu hình đang chạy, không xác nhận toàn bộ bản tin
+RTCM thực sự đang phát, tọa độ giải mã từ 1005 hoặc việc lưu bền qua mất
+nguồn. Cần kiểm tra luồng RTCM và xác minh lại sau khởi động trên phần cứng.
+
+Key Galileo 1094/1097 và BeiDou 1127, giới hạn 64 key mỗi VALSET,
+CFG-VALGET v0 request/v1 response theo tài liệu chính thức:
+[u-blox F9 HPG 1.32, UBX-22008968](https://content.u-blox.com/sites/default/files/documents/u-blox-F9-HPG-1.32_InterfaceDescription_UBX-22008968.pdf),
+trang 89–90, 95–96 và 239–241. Kiểm tra host dùng các key độc lập từ tài
+liệu, không chỉ so bảng Python với bảng C++.

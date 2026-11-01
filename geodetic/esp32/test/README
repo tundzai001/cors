@@ -48,3 +48,10 @@ in init_preference and test_sim run on hardware, not as host checks.
 
 VS Code uses PlatformIO-generated IntelliSense configuration. These host
 files do not need to be added to the production compilation database.
+
+u-blox configuration verification (no device required):
+
+python3 -B test/host/check_ublox_verification.py
+c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Iinclude \
+  test/host/config_verification_checks.cpp -o /tmp/esp32-config-verification
+/tmp/esp32-config-verification

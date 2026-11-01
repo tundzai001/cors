@@ -2,6 +2,7 @@
 #include "Backend_Agent_Internal.h"
 #include "functions/Unicore_Readback.h"
 #include "functions/Ublox_Readback.h"
+#include "functions/Ubx_Config_Verification.h"
 #include <cstdio>
 #include <cstring>
 #include "Prog_Config.h"
@@ -12,6 +13,52 @@
 using namespace BackendAgentInternal;
 
 extern SemaphoreHandle_t rtcmBufferMutex;
+
+bool BackendAgent::verifyGnssConfig(JsonObjectConst payload, const String &commandId, String &error) {
+    gnssVerification_ = static_cast<const char *>(nullptr);
+    uint8_t expectedMode[40], expectedOutput[UbxConfigVerification::MAX_KEYS * 5];
+    const size_t modeLength = decodeBase64(payload["tmode_b64"] | "", expectedMode, sizeof(expectedMode));
+    const size_t outputLength = decodeBase64(payload["output_b64"] | "", expectedOutput, sizeof(expectedOutput));
+    if (modeLength != 40 || expectedMode[2] != 2 || expectedMode[3] != 1
+        || !UbxConfigVerification::validExpected(expectedOutput, outputLength)) {
+        error = "Invalid GNSS verification expectation";
+        return false;
+    }
+    uint8_t actualMode[40] = {}, values[UbxConfigVerification::MAX_KEYS] = {};
+    String modeError, outputError;
+    const bool modeRead = UbloxReadback::readTmode(actualMode, modeError);
+    const bool outputRead = UbloxReadback::readOutputValues(expectedOutput, outputLength, values, outputError);
+    DynamicJsonDocument result(1536);
+    result["command_id"] = commandId;
+    JsonObject groups = result.createNestedObject("groups");
+    JsonObject fixed = groups.createNestedObject("fixed");
+    fixed["checked"] = modeRead ? 1 : 0;
+    fixed["mismatched"] = modeRead && !UbxConfigVerification::fixedMatches(expectedMode, actualMode, 40) ? 1 : 0;
+    fixed["unread"] = modeRead ? 0 : 1;
+    for (const char *name : {"protocols", "diagnostics", "rtcm"}) {
+        JsonObject group = groups.createNestedObject(name);
+        group["checked"] = 0; group["mismatched"] = 0; group["unread"] = 0;
+    }
+    for (size_t i = 0; i < outputLength; i += 5) {
+        const uint32_t key = UbxBaseStatus::u32(expectedOutput + i);
+        const char *name = key >> 28 == 1 ? "protocols" : key >= 0x209102BD ? "rtcm" : "diagnostics";
+        JsonObject group = groups[name];
+        const char *count = outputRead ? "checked" : "unread";
+        group[count] = group[count].as<unsigned>() + 1;
+        if (outputRead && values[i / 5] != expectedOutput[i + 4])
+            group["mismatched"] = group["mismatched"].as<unsigned>() + 1;
+    }
+    bool mismatch = false;
+    for (JsonPair group : groups) mismatch |= group.value()["mismatched"].as<unsigned>() > 0;
+    result["state"] = !modeRead || !outputRead ? "unread" : mismatch ? "mismatch" : "match";
+    if (!modeRead) result["mode_error"] = modeError;
+    if (!outputRead) result["output_error"] = outputError;
+    if (result.overflowed()) { error = "GNSS verification result overflow"; return false; }
+    serializeJson(result, gnssVerification_);
+    gnssVerificationMs_ = millis();
+    markStatusDirty();
+    return true; // Command completion is separate from match/mismatch/unread.
+}
 
 void BackendAgent::saveSurveyResult(JsonObjectConst bestPosition, const String &mode) {
     if (!surveyInMonitoring_ || !surveyInReadbackReady_ || !surveyInReadbackHasPosition_
