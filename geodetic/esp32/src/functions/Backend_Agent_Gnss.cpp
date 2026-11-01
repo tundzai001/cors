@@ -426,6 +426,10 @@ void BackendAgent::pollGnssStatus() {
                 dopMs_ = millis();
                 markStatusDirty();
             }
+            if (UbloxReadback::readSatellites(satelliteReadback_, error)) {
+                satelliteReadbackMs_ = millis();
+                markStatusDirty();
+            }
         }
     }
 

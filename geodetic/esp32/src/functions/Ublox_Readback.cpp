@@ -2,6 +2,8 @@
 #include "functions/Ubx_Reply.h"
 #include "functions/Ubx_Config_Verification.h"
 #include "functions/RTCM_Receiver.h"
+#include "functions/Ubx_Satellites.h"
+#include "Backend_Agent_Codec.h"
 #include "Prog_Config.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -12,7 +14,8 @@ extern SemaphoreHandle_t gnssSerialMutex;
 
 namespace {
 
-bool query(uint8_t cls, uint8_t id, UbxReply &reply, String &error,
+template <size_t Capacity>
+bool query(uint8_t cls, uint8_t id, UbxReplyBuffer<Capacity> &reply, String &error,
            const uint8_t *payload = nullptr, size_t length = 0) {
     if (length > 4 + UbxConfigVerification::MAX_KEYS * 4) {
         error = "u-blox query exceeds readback limit";
@@ -70,6 +73,18 @@ bool query(uint8_t cls, uint8_t id, UbxReply &reply, String &error,
 }
 
 } // namespace
+
+bool UbloxReadback::readSatellites(String &payloadBase64, String &error) {
+    // Larger reply buffer is temporary; other UBX exchanges keep their 256-byte limit.
+    UbxReplyBuffer<UbxSatellites::MAX_PAYLOAD + 8> reply;
+    if (!query(1, 0x35, reply, error)) return false;
+    if (!UbxSatellites::valid(reply.frame + 6, reply.length - 8)) {
+        error = "Invalid NAV-SAT response";
+        return false;
+    }
+    payloadBase64 = BackendAgentInternal::encodeBase64(reply.frame + 6, reply.length - 8);
+    return payloadBase64.length() > 0;
+}
 
 bool UbloxReadback::readDop(UbxDop &status, String &error) {
     UbxReply reply;

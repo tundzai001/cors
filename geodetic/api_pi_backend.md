@@ -208,3 +208,26 @@ SNR use the same constellation/PRN deduplication and seven-second expiry.
 these satellites remain in signal bars but are not plotted at fake 0°/0°.
 The position strip and map share the same selection: valid GGA, receiver Base
 readback, RTCM Base coordinates, then saved Base coordinates, with source labels.
+
+
+### u-blox satellite angles without RTCM ephemeris
+
+Pi and ESP32 now poll UBX-NAV-SAT (01/35) with an empty payload every 30 seconds
+through the existing serial owner. This reads angles already calculated by the
+receiver; it does not require RTCM 1019/1020 or enable periodic UBX output.
+Frames must pass UBX checksum, version 1, exact `8 + 12*numSvs` length and a
+128-satellite cap. The normal ESP32 UBX reader stays at 256 bytes; only the
+NAV-SAT query allocates a temporary larger reply buffer.
+
+`gnss_satellites` contains `source: ubx_nav_sat`, `payload_b64` (validated UBX
+payload, no frame header/checksum) and `age_seconds`, or null after 45 seconds.
+Base64 keeps the ESP32 snapshot compact instead of expanding 128 JSON objects;
+it is transient RAM state and is never written to NVS. Its JSON pool allowance
+is allocated only while the snapshot exists.
+
+The dashboard reads GNSS ID/SV ID, C/N0, signed elevation/azimuth and svUsed
+from this payload. Fresh NAV-SAT drives sky view and signal bars with an
+explicit source/age label. Unknown or below-horizon angles are not plotted.
+NAV-SAT is a full snapshot, so removed satellites do not linger as old markers.
+When unavailable/expired/offline, the chart falls back to fresh NMEA/RTCM data.
+The decoded RTCM counter remains separate from receiver-reported svUsed.

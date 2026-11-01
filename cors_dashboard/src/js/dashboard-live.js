@@ -70,6 +70,43 @@ function getDashboardPosition(device, data) {
         || position(saved?.lat, saved?.lon, 'Cấu hình Base đã lưu');
 }
 
+function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
+    const snapshot = device.gnss_satellites;
+    if (!live || snapshot?.source !== 'ubx_nav_sat' || typeof snapshot.payload_b64 !== 'string'
+        || snapshot.payload_b64.length > 2060 || typeof snapshot.age_seconds !== 'number') return null;
+    const received = Number(device.server_received_at || device.timestamp);
+    const age = snapshot.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    if (!Number.isFinite(age) || age < 0 || age > 45) return null;
+    try {
+        const raw = atob(snapshot.payload_b64);
+        const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+        if (bytes.length < 8 || bytes[4] !== 1 || bytes[5] > 128 || bytes.length !== 8 + bytes[5] * 12) return null;
+        const view = new DataView(bytes.buffer), seen = new Set(), satellites = [];
+        const systems = ['us', 'sb', 'eu', 'cn', 'im', 'jp', 'ru', 'in'];
+        for (let offset = 8; offset < bytes.length; offset += 12) {
+            const gnss = bytes[offset], prn = bytes[offset + 1], key = `${gnss}:${prn}`;
+            if (gnss === 6 && prn === 255) continue; // No known slot to correlate with decoded RTCM.
+            if (gnss > 7 || prn === 0 || seen.has(key)) return null;
+            seen.add(key);
+            const cno = bytes[offset + 2], elevation = view.getInt8(offset + 3);
+            const azimuth = view.getInt16(offset + 4, true), flags = view.getUint32(offset + 8, true);
+            const geometry = elevation >= -90 && elevation <= 90 && azimuth >= 0 && azimuth <= 360;
+            satellites.push({id: `UBX:${key}`, system: systems[gnss], prn, snr: cno,
+                elevation: geometry ? elevation : null, azimuth: geometry ? azimuth : null,
+                has_geometry: geometry, isTracking: (flags & 7) >= 2,
+                used_in_solution: Boolean(flags & 8), source: 'ubx_nav_sat',
+                lastSeen: (now - age) * 1000});
+        }
+        return {satellites, age_seconds: age};
+    } catch (_) { return null; }
+}
+
+function getSatellitePlotSource(device, data, live = true, now = Date.now() / 1000) {
+    const receiver = getReceiverSatellites(device, live, now);
+    return receiver ? {...receiver, source: 'NAV-SAT', maxAgeMs: 45000}
+        : {satellites: live ? Object.values(data?.satellites || {}) : [], source: 'NMEA/RTCM', maxAgeMs: 7000};
+}
+
 function getLeaflet() {
     const leaflet = window.Leaflet || window.L;
     return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
@@ -186,12 +223,12 @@ flags.jp.src = '/assets/img/flags/jp.jpg';
 flags.un.src = '/assets/img/flags/un.jpg';
 
 const colors = { us: '#00d47e', ru: '#ff5c5c', eu: '#5c9cff', cn: '#ffb95c', jp: '#ff77a9', un: '#aaaaaa' };
-const constellationNames = { us: "GPS (USA)", ru: "GLONASS (Russia)", eu: "Galileo (EU)", cn: "BeiDou (China)", jp: "QZSS (Japan)", un: "Unknown" };
+const constellationNames = { us: "GPS (USA)", ru: "GLONASS (Russia)", eu: "Galileo (EU)", cn: "BeiDou (China)", jp: "QZSS (Japan)", sb: "SBAS", im: "IMES", in: "NavIC", un: "Unknown" };
 
 function getSatelliteSystem(sat) {
     if (!sat) return 'un';
     const sys = String(sat.system || '').toLowerCase();
-    if (['us', 'ru', 'eu', 'cn', 'jp'].includes(sys)) return sys;
+    if (['us', 'ru', 'eu', 'cn', 'jp', 'sb', 'im', 'in'].includes(sys)) return sys;
     
     const mapping = {
         g: 'us', gps: 'us',
@@ -411,9 +448,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const currentNmeaData = metricsNmeaDataRef.current || {};
             const gga = currentNmeaData.gga || {};
             const gsa = currentNmeaData.gsa || {};
-            const sats = getVisibleSatellites(Object.values(currentNmeaData.satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION);
+            const plot = getSatellitePlotSource(device, currentNmeaData, liveDataAvailable);
+            const sats = getVisibleSatellites(plot.satellites, plot.maxAgeMs);
             const quality = getGnssQuality(device, currentNmeaData, liveDataAvailable);
-            const satCount = quality?.satellites ?? gga.satellites ?? null;
+            const satCount = plot.source === 'NAV-SAT' ? plot.satellites.filter(s => s.used_in_solution).length
+                : quality?.satellites ?? gga.satellites ?? null;
 
             const avgSnr = sats.length > 0
                 ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length
@@ -449,7 +488,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             }));
         }, 2000);
         return () => clearInterval(interval);
-    }, [device?.serial, device?.bps, device?.gnss_quality, device?.server_received_at, device?.satellite_count, liveDataAvailable]); // Update logic dependencies
+    }, [device?.serial, device?.bps, device?.gnss_quality, device?.gnss_satellites, device?.server_received_at, device?.satellite_count, liveDataAvailable]); // Update logic dependencies
 
     // SKYPLOT & CANVAS LOGIC
     useEffect(() => {
@@ -463,7 +502,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             if (w === 0 || h === 0) return;
 
             const centerX = w / 2, centerY = h / 2;
-            const radius = Math.min(centerX, centerY) * 0.85;
+            const radius = Math.max(0, Math.min(centerX, centerY) - 36);
 
             bgCtx.clearRect(0, 0, w, h);
 
@@ -516,11 +555,12 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
         drawSkyplotBase();
 
-        const drawSkyplotSatellites = (satellites) => {
+        const drawSkyplotSatellites = (satellites, maxAgeMs = SATELLITE_TIMEOUT + FADE_DURATION) => {
             const now = Date.now();
             const buffer = satelliteBufferRef.current;
+            if (maxAgeMs === 45000) buffer.clear(); // NAV-SAT is a complete snapshot, not incremental GSV pages.
 
-            getVisibleSatellites(satellites, SATELLITE_TIMEOUT + FADE_DURATION).forEach(sat => {
+            getVisibleSatellites(satellites, maxAgeMs).forEach(sat => {
                 let observedAt = Number(sat.lastSeen || sat.last_seen || now);
                 if (observedAt < 1e11) observedAt *= 1000;
                 buffer.set(getSatelliteKey(sat), {...sat, lastSeen: observedAt, opacity: 1.0});
@@ -528,10 +568,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
             for (const [satKey, satData] of buffer.entries()) {
                 const timeSinceLastSeen = now - satData.lastSeen;
-                if (timeSinceLastSeen > SATELLITE_TIMEOUT + FADE_DURATION) {
+                if (timeSinceLastSeen > maxAgeMs) {
                     buffer.delete(satKey);
-                } else if (timeSinceLastSeen > SATELLITE_TIMEOUT) {
-                    const fadeProgress = (timeSinceLastSeen - SATELLITE_TIMEOUT) / FADE_DURATION;
+                } else if (timeSinceLastSeen > maxAgeMs - FADE_DURATION) {
+                    const fadeProgress = (timeSinceLastSeen - maxAgeMs + FADE_DURATION) / FADE_DURATION;
                     satData.opacity = Math.max(0, 1 - fadeProgress);
                 }
             }
@@ -539,7 +579,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             satCtx.clearRect(0, 0, satCtx.canvas.width, satCtx.canvas.height);
             const centerX = satCtx.canvas.width / 2;
             const centerY = satCtx.canvas.height / 2;
-            const radius = Math.min(centerX, centerY) * 0.82;
+            const radius = Math.max(0, Math.min(centerX, centerY) - 36);
 
             if (satCtx.canvas.width === 0 || satCtx.canvas.height === 0) return;
 
@@ -569,7 +609,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     satCtx.fill();
                 }
 
-                if (flag && flag.complete) {
+                if (flag && flag.complete && flag.naturalWidth > 0) {
                     satCtx.drawImage(flag, x - flagSize / 2, y - flagSize / 2, flagSize, flagSize);
                 } else {
                     satCtx.beginPath();
@@ -589,12 +629,12 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             satCtx.globalAlpha = 1.0;
         };
 
-        const drawSignalBars = (satellites) => {
+        const drawSignalBars = (satellites, plot) => {
             const container = signalBarsContainerRef.current;
             if (!container) return;
 
             // Count only fresh satellites with a positive SNR; canvas fade remains visual-only.
-            const activeSatellites = getVisibleSatellites(satellites, SATELLITE_TIMEOUT + FADE_DURATION);
+            const activeSatellites = getVisibleSatellites(satellites, plot.maxAgeMs);
 
             // Tạo hash cấu trúc (Chỉ phụ thuộc số lượng và loại PRN - Không chứa giá trị SNR để tránh giật hình)
             const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort().join('|');
@@ -617,7 +657,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 bySystem: groupedSats,
                 avgSnr: avgSnr,
                 lowSnrCount: lowSnrCount,
-                positioned: activeSatellites.filter(hasSatellitePosition).length
+                positioned: activeSatellites.filter(hasSatellitePosition).length,
+                source: plot.source, age_seconds: plot.age_seconds
             });
 
             // 1. Nếu CẤU TRÚC bị đổi (thêm/bớt vệ tinh) -> Xóa toàn bộ và vẽ lại DOM
@@ -626,7 +667,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 const fragment = document.createDocumentFragment();
 
-                ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
+                Object.keys(constellationNames).forEach(system => {
                     if (groupedSats[system]) {
                         // Bắt chước phần mềm u-center: Phải sắp xếp cố định theo số PRN thay vì SNR để cột không bị đảo lộn vị trí!
                         const sats = groupedSats[system].sort((a, b) => parseFloat(a.prn) - parseFloat(b.prn));
@@ -635,7 +676,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                         const headerDiv = document.createElement('div');
                         headerDiv.className = 'constellation-header';
-                        headerDiv.innerHTML = `<img src="${flags[system].src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${sats.length}</span>)`;
+                        headerDiv.innerHTML = `<img src="${(flags[system] || flags.un).src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${sats.length}</span>)`;
 
                         const barsWrapper = document.createElement('div');
                         barsWrapper.className = 'bars-wrapper';
@@ -729,12 +770,16 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
             // Canvas & Bars Updates
             if (now - lastCanvasUpdate.current >= CANVAS_INTERVAL) {
-                drawSkyplotSatellites(Object.values(satellites || {}));
+                const plot = getSatellitePlotSource(deviceRef.current, safeNmeaDataRef.current,
+                    !isDeviceStaleOffline(deviceRef.current), now / 1000);
+                drawSkyplotSatellites(plot.satellites, plot.maxAgeMs);
                 lastCanvasUpdate.current = now;
             }
 
             if (now - lastBarsUpdate.current >= BARS_INTERVAL) {
-                drawSignalBars(Object.values(satellites || {}));
+                const plot = getSatellitePlotSource(deviceRef.current, safeNmeaDataRef.current,
+                    !isDeviceStaleOffline(deviceRef.current), now / 1000);
+                drawSignalBars(plot.satellites, plot);
                 lastBarsUpdate.current = now;
             }
 
@@ -814,7 +859,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
                     <window.MetricCard title="Vệ tinh chip dùng" value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
                     <window.MetricCard title="hAcc (ước lượng)" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
-                    <window.MetricCard title="Avg SNR" value={metrics.signalStrength.value} unit="dB" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
+                    <window.MetricCard title={satStats.source === 'NAV-SAT' ? "C/N0 từ chip" : "C/N0 giải mã"} value={metrics.signalStrength.value} unit="dB-Hz" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
                 </div>
             )}
 
@@ -1165,12 +1210,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     Đang chờ dữ liệu vệ tinh từ decoder RTCM. Có danh sách bản tin chưa đồng nghĩa đã đủ dữ liệu vị trí quỹ đạo để vẽ biểu đồ.
                 </div>
             )}
-            <div className="sky-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="sky-grid">
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>
                         <i className="bi bi-radar"></i><span>Sky View</span>
-                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} vệ tinh giải mã</span>
+                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} tín hiệu · {satStats.source === 'NAV-SAT' ? 'NAV-SAT' : 'giải mã'}</span>
                     </div>
+                    {satStats.source === 'NAV-SAT' && <div className="small text-muted px-3 py-1">Góc đọc từ chip · {satStats.positioned}/{satStats.total} có góc trên chân trời · {Math.floor(satStats.age_seconds || 0)} giây trước</div>}
                     <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
                         {satStats.total > 0 && !satStats.positioned && <div className="position-absolute top-50 start-50 translate-middle text-center small text-muted px-3" style={{zIndex: 3, width: '80%'}}>
@@ -1185,7 +1231,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         <i className="bi bi-bar-chart-fill"></i><span>Signal Strength (SNR)</span>
                         <div className="ms-auto d-flex gap-2">
                             <span className="badge bg-success">{satStats.tracking} có tín hiệu</span>
-                            <span className="badge bg-secondary">{satStats.total} giải mã</span>
+                            <span className="badge bg-secondary">{satStats.total} {satStats.source === 'NAV-SAT' ? 'từ chip' : 'giải mã'}</span>
                         </div>
                     </div>
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
@@ -1215,12 +1261,6 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             </div>
                         </div>
                     </div>
-                    {/* Premium Chart Overlay */}
-                    {window.SatelliteBars && safeNmeaData?.satellites && Object.keys(safeNmeaData.satellites).length > 0 && (
-                        <div className="mt-auto pt-2 border-top border-secondary-subtle">
-                            <window.SatelliteBars satellites={safeNmeaData.satellites} />
-                        </div>
-                    )}
                 </div>
             </div>
 

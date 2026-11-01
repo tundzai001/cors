@@ -1,13 +1,43 @@
 #include "functions/Ubx_Config_Verification.h"
 #include "functions/Ubx_Reply.h"
 #include "functions/Ubx_Navigation.h"
+#include "functions/Ubx_Satellites.h"
 #include "functions/Unicore_Config_Verification.h"
 #include <cassert>
 #include <cstdio>
 #include <initializer_list>
 #include <string>
+#include <vector>
 
 int main() {
+    std::vector<uint8_t> sat(8 + 28 * 12);
+    sat[4] = 1; sat[5] = 28;
+    for (size_t n = 0; n < 28; ++n) {
+        sat[8 + n * 12] = 0;
+        sat[9 + n * 12] = n + 1;
+        sat[10 + n * 12] = 40;
+        sat[11 + n * 12] = 45;
+    }
+    assert(UbxSatellites::valid(sat.data(), sat.size()));
+    assert(!UbxSatellites::valid(sat.data(), sat.size() - 1));
+    std::vector<uint8_t> frame = {0xB5, 0x62, 1, 0x35, uint8_t(sat.size()), uint8_t(sat.size() >> 8)};
+    frame.insert(frame.end(), sat.begin(), sat.end());
+    uint8_t a = 0, b = 0;
+    for (size_t i = 2; i < frame.size(); ++i) { a += frame[i]; b += a; }
+    frame.push_back(a); frame.push_back(b);
+    UbxReplyBuffer<UbxSatellites::MAX_PAYLOAD + 8> satelliteReply;
+    UbxReply ordinaryReply;
+    bool satelliteMatched = false, ordinaryMatched = false;
+    for (uint8_t byte : frame) { satelliteMatched |= satelliteReply.feed(byte); ordinaryMatched |= ordinaryReply.feed(byte); }
+    assert(satelliteMatched && satelliteReply.length == frame.size());
+    assert(!ordinaryMatched && sizeof(ordinaryReply.frame) == 256);
+    frame.back() ^= 1;
+    bool corruptMatched = false;
+    for (uint8_t byte : frame) corruptMatched |= satelliteReply.feed(byte);
+    assert(!corruptMatched);
+    sat[20] = sat[8]; sat[21] = sat[9];
+    assert(!UbxSatellites::valid(sat.data(), sat.size()));
+
     uint8_t dop[18] = {};
     dop[6] = 120; dop[12] = 85;
     UbxDop dopStatus;

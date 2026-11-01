@@ -28,12 +28,15 @@ String BackendAgent::buildLwtPayload() const {
 }
 
 String BackendAgent::buildStatusPayload() {
+    if (satelliteReadback_.length() && millis() - satelliteReadbackMs_ > 45000UL)
+        satelliteReadback_ = static_cast<const char *>(nullptr);
     // Inventory is an on-demand snapshot, not permanent telemetry overhead.
     if (nvsInventory_.length() > 2 && millis() - nvsInventoryMs_ >= 60000UL)
         nvsInventory_ = static_cast<const char *>(nullptr);
     if (gnssVerification_.length() && millis() - gnssVerificationMs_ >= 60000UL)
         gnssVerification_ = static_cast<const char *>(nullptr);
-    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (nvsInventory_.length() > 2 ? 3072 : 0)
+    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (satelliteReadback_.length() ? satelliteReadback_.length() + 256 : 0)
+                            + (nvsInventory_.length() > 2 ? 3072 : 0)
                             + (gnssVerification_.length() ? VERIFICATION_DOCUMENT_SIZE : 0));
     DynamicJsonDocument serviceDoc(CONFIG_DOCUMENT_SIZE);
     deserializeJson(serviceDoc, serviceConfig_);
@@ -244,6 +247,13 @@ String BackendAgent::buildStatusPayload() {
     doc["hacc"] = nullptr; // Compatibility field: always millimetres, never HDOP.
     doc["gnss_quality"] = nullptr;
     doc["gnss_dop"] = nullptr;
+    doc["gnss_satellites"] = nullptr;
+    if (sensorType_ == "Ublox" && satelliteReadback_.length()) {
+        JsonObject satellites = doc.createNestedObject("gnss_satellites");
+        satellites["source"] = "ubx_nav_sat";
+        satellites["age_seconds"] = (nowMs - satelliteReadbackMs_) / 1000.0;
+        satellites["payload_b64"] = satelliteReadback_;
+    }
     if (sensorType_ == "Ublox" && dopMs_ > 0 && nowMs - dopMs_ <= 45000UL) {
         JsonObject dop = doc.createNestedObject("gnss_dop");
         dop["source"] = "ubx_nav_dop";

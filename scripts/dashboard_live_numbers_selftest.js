@@ -76,3 +76,24 @@ assert.equal(visible.filter(satelliteContext.positioned).length,1,'unknown angle
 assert.equal(visible.reduce((n,s)=>n+Number(s.snr),0)/visible.length,845/21);
 assert(source.includes('Vệ tinh chip dùng') && source.includes('Vệ tinh giải mã'));
 console.log('PASS: NAV-DOP beats GSA sentinels; PVT fallback; saved Base coordinates; 21 decoded vs 28 receiver uses distinct labels; satellite dedup/expiry/geometry');
+
+const receiverContext = {atob: s => Buffer.from(s, 'base64').toString('binary')};
+vm.runInNewContext(`${helper};this.receiver=getReceiverSatellites;this.plot=getSatellitePlotSource;`, receiverContext);
+const navsat=Buffer.alloc(8+28*12);navsat[4]=1;navsat[5]=28;
+for(let i=0;i<28;i++){const o=8+i*12;navsat[o]=0;navsat[o+1]=i+1;navsat[o+2]=40;navsat.writeInt8(i===27?127:45,o+3);navsat.writeInt16LE(i*12,o+4);navsat.writeUInt32LE(0x80F,o+8);}
+const navDevice={timestamp:100,gnss_satellites:{source:'ubx_nav_sat',payload_b64:navsat.toString('base64'),age_seconds:1}};
+const receiver=receiverContext.receiver(navDevice,true,102);
+assert.equal(receiver.satellites.length,28);
+assert.equal(receiver.satellites[0].azimuth,0);
+assert.equal(receiver.satellites[1].azimuth,12);
+assert.equal(receiver.satellites[0].elevation,45);
+assert(receiver.satellites[0].used_in_solution);
+assert.equal(receiver.satellites[27].has_geometry,false);
+assert.equal(receiverContext.plot(navDevice,{satellites:{}},true,102).source,'NAV-SAT');
+assert.equal(receiverContext.receiver(navDevice,true,146),null);
+assert.equal(receiverContext.receiver(navDevice,false,102),null);
+assert.equal(receiverContext.plot(navDevice,{satellites:{}},true,146).source,'NMEA/RTCM');
+for(const raw of [navsat.subarray(0,navsat.length-1),Buffer.alloc(8),Buffer.alloc(8+129*12)]){
+    assert.equal(receiverContext.receiver({...navDevice,gnss_satellites:{...navDevice.gnss_satellites,payload_b64:raw.toString('base64')}},true,102),null);
+}
+console.log('PASS: actual NAV-SAT decoder handles 28 satellites, signed angles, used flags, invalid elevation, packet bounds, TTL/offline and decoder fallback');

@@ -1,6 +1,7 @@
 """Exercise the agent's real parser, UART query queue and UI status without hardware."""
 import ast
 import asyncio
+import base64
 import copy
 import json
 import logging
@@ -21,12 +22,12 @@ NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
          'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',
-         'receiver_quality_status', '_ubx_dop'}
+         'receiver_quality_status', '_ubx_dop', '_ubx_satellite_payload'}
 
 
 def load():
     scope = dict(asyncio=asyncio, threading=threading, Queue=Queue, Empty=Empty, Full=Full,
-                 time=time, logging=logging, math=math, struct=struct, re=re, copy=copy,
+                 time=time, logging=logging, math=math, struct=struct, re=re, copy=copy, base64=base64,
                  PARSER_DEBUG_ENABLED=False, PARSER_DEBUG_INTERVAL_SECONDS=30,
                  dispatch_rtcm_data=Mock(), dispatch_nmea_data=Mock())
     nodes = [n for n in ast.parse(SOURCE.read_text()).body if getattr(n, 'name', None) in NAMES]
@@ -72,7 +73,7 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         dop = bytearray(18)
         struct.pack_into('<H', dop, 6, 120)
         struct.pack_into('<H', dop, 12, 85)
-        self.reader.query_base = AsyncMock(side_effect=[self.pack(1, 7, pvt), self.pack(1, 4, dop)])
+        self.reader.query_base = AsyncMock(side_effect=[self.pack(1, 7, pvt), self.pack(1, 4, dop), self.pack(1, 0x35, b'\0\0\0\0\1\0\0\0')])
         await self.s['refresh_receiver_quality'](self.agent, self.reader)
         self.reader.query_base.assert_any_await(b'\xb5\x62\x01\x07\x00\x00\x08\x19', (1, 7))
         self.reader.query_base.assert_any_await(b'\xb5\x62\x01\x04\x00\x00\x05\x10', (1, 4))
@@ -103,11 +104,37 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gst['gnss_quality']['source'], 'nmea_gst')
         self.assertIsNone(self.s['receiver_quality_status'](now + 16)['hacc'])
 
+    async def test_navsat_poll_large_frame_and_expiry(self):
+        pvt = bytearray(92); pvt[20:24] = bytes([5, 1, 0, 28])
+        sat = bytearray(8 + 28 * 12)
+        sat[4:6] = bytes([1, 28])
+        for index in range(28):
+            offset = 8 + index * 12
+            struct.pack_into('<BBBbhhI', sat, offset, 0, index + 1, 40 + index % 10,
+                             45, index * 12, 0, 0x80F)
+        packets = [self.pack(1, 7, pvt), self.pack(1, 4, bytes(18)), self.pack(1, 0x35, sat)]
+        self.reader.query_base = AsyncMock(side_effect=packets)
+        await self.s['refresh_receiver_quality'](self.agent, self.reader)
+        self.reader.query_base.assert_any_await(b'\xb5\x62\x01\x35\x00\x00\x36\xa3', (1, 0x35))
+        now = self.s['LAST_UBX_SATELLITES_TS']
+        snapshot = self.s['receiver_quality_status'](now)['gnss_satellites']
+        self.assertEqual(base64.b64decode(snapshot['payload_b64']), sat)
+        self.assertIsNone(self.s['receiver_quality_status'](now + 46)['gnss_satellites'])
+        self.reader._parse_buffer(bytearray(self.pack(1, 7, pvt)))
+        self.assertEqual(self.s['receiver_quality_status'](time.time())['gnss_satellites']['payload_b64'], snapshot['payload_b64'])
+        self.assertEqual(self.reader._parse_buffer(bytearray(packets[-1])), b'')
+        for invalid in (sat[:-1], bytes(8), bytes(8 + 129 * 12)):
+            with self.assertRaises(ValueError):
+                self.s['_ubx_satellite_payload'](invalid)
+        sat[20:22] = sat[8:10]
+        with self.assertRaises(ValueError):
+            self.s['_ubx_satellite_payload'](sat)
+
     async def test_dop_failure_does_not_destroy_pvt(self):
         pvt = bytearray(92)
         pvt[20:24] = bytes([5, 1, 0, 28])
         struct.pack_into('<H', pvt, 76, 123)
-        self.reader.query_base = AsyncMock(side_effect=[self.pack(1, 7, pvt), TimeoutError('DOP timeout')])
+        self.reader.query_base = AsyncMock(side_effect=[self.pack(1, 7, pvt), TimeoutError('DOP timeout'), self.pack(1, 0x35, b'\0\0\0\0\1\0\0\0')])
         await self.s['refresh_receiver_quality'](self.agent, self.reader)
         status = self.s['receiver_quality_status'](time.time())
         self.assertEqual(status['gnss_quality']['satellites'], 28)
@@ -136,7 +163,9 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
                      STATUS_ALLOW_HEAVY_FIELDS=False, buffer_metrics={'status_payload_compacted_count': 0})
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
         for quality in ({'hacc_m': 4.08, 'source': 'ubx_nav_pvt', 'age_seconds': 0}, None):
-            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality})
+            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality, 'gnss_satellites': quality})
+            self.assertIn('gnss_satellites', result)
+            self.assertEqual(result['gnss_satellites'], quality)
             self.assertIn('gnss_dop', result)
             self.assertEqual(result['gnss_dop'], quality)
             self.assertIn('gnss_quality', result)
