@@ -225,12 +225,12 @@ Base64 keeps the ESP32 snapshot compact instead of expanding 128 JSON objects;
 it is transient RAM state and is never written to NVS. Its JSON pool allowance
 is allocated only while the snapshot exists.
 
-The dashboard reads GNSS ID/SV ID, C/N0, signed elevation/azimuth and svUsed
-from this payload. Fresh NAV-SAT drives sky view and signal bars with an
-explicit source/age label. Unknown or below-horizon angles are not plotted.
-NAV-SAT is a full snapshot, so removed satellites do not linger as old markers.
-When unavailable/expired/offline, the chart falls back to fresh NMEA/RTCM data.
-The decoded RTCM counter remains separate from receiver-reported svUsed.
+The dashboard satellite count, C/N0, sky view and signal bars use only fresh
+RTCM observations with positive decoded C/N0, deduplicated by constellation/SV.
+NAV-SAT and NMEA never populate or backfill these displays. When RTCM is empty
+or expired the count is zero. Unknown angles are not plotted; the chart explains
+when observations exist without geometry. The NAV-SAT snapshot remains available
+in telemetry but is not used by these dashboard satellite displays.
 
 
 The UI keeps the complete unsigned NAV-DOP range (0–655.35) in its readback

@@ -66,7 +66,7 @@ assert.equal(render({gsa:{pdop:99.99}},false,{...device,gnss_dop:null})['db-dop'
 assert.equal(render({gsa:{hdop:0.9,pdop:1.4,received_at:-10}},false,{})['db-dop'],'— / —');
 const satellitesCode=source.slice(source.indexOf('function getSatelliteSystem('),source.indexOf('const DashboardPanel'));
 const satelliteContext={Date:{now:()=>1e12},window:{}};
-vm.runInNewContext(satellitesCode+';this.visible=getVisibleSatellites;this.counts=getDecodedSatelliteCounts;this.positioned=hasSatellitePosition;',satelliteContext);
+vm.runInNewContext(helper+satellitesCode+';this.visible=getVisibleSatellites;this.counts=getDecodedSatelliteCounts;this.positioned=hasSatellitePosition;',satelliteContext);
 const signals=Array.from({length:21},(_,i)=>({system:'G',prn:i+1,snr:40,lastSeen:1e12,azimuth:0,elevation:0,has_geometry:false}));
 signals.push({system:'G',prn:'G01',snr:45,lastSeen:1e12,azimuth:90,elevation:45,has_geometry:true});
 signals.push({system:'G',prn:22,snr:42,lastSeen:1e12-8000});
@@ -76,26 +76,14 @@ assert.equal(visible.filter(satelliteContext.positioned).length,1,'unknown angle
 assert.equal(visible.reduce((n,s)=>n+Number(s.snr),0)/visible.length,845/21);
 console.log('PASS: NAV-DOP beats GSA sentinels; PVT fallback; saved Base coordinates; 21 decoded vs 28 receiver uses distinct labels; satellite dedup/expiry/geometry');
 
-const receiverContext = {atob: s => Buffer.from(s, 'base64').toString('binary')};
-vm.runInNewContext(`${helper};this.receiver=getReceiverSatellites;this.plot=getSatellitePlotSource;`, receiverContext);
-const navsat=Buffer.alloc(8+28*12);navsat[4]=1;navsat[5]=28;
-for(let i=0;i<28;i++){const o=8+i*12;navsat[o]=0;navsat[o+1]=i+1;navsat[o+2]=40;navsat.writeInt8(i===27?127:45,o+3);navsat.writeInt16LE(i*12,o+4);navsat.writeUInt32LE(0x80F,o+8);}
-const navDevice={timestamp:100,gnss_satellites:{source:'ubx_nav_sat',payload_b64:navsat.toString('base64'),age_seconds:1}};
-const receiver=receiverContext.receiver(navDevice,true,102);
-assert.equal(receiver.satellites.length,28);
-assert.equal(receiver.satellites[0].azimuth,0);
-assert.equal(receiver.satellites[1].azimuth,12);
-assert.equal(receiver.satellites[0].elevation,45);
-assert(receiver.satellites[0].used_in_solution);
-assert.equal(receiver.satellites[27].has_geometry,false);
-assert.equal(receiverContext.plot(navDevice,{satellites:{}},true,102).source,'NAV-SAT');
-assert.equal(receiverContext.receiver(navDevice,true,146),null);
-assert.equal(receiverContext.receiver(navDevice,false,102),null);
-assert.equal(receiverContext.plot(navDevice,{satellites:{}},true,146).source,'NMEA/RTCM');
-for(const raw of [navsat.subarray(0,navsat.length-1),Buffer.alloc(8),Buffer.alloc(8+129*12)]){
-    assert.equal(receiverContext.receiver({...navDevice,gnss_satellites:{...navDevice.gnss_satellites,payload_b64:raw.toString('base64')}},true,102),null);
-}
-console.log('PASS: actual NAV-SAT decoder handles 28 satellites, signed angles, used flags, invalid elevation, packet bounds, TTL/offline and decoder fallback');
+const plotReader=vm.runInNewContext(`${helper};getSatellitePlotSource;`);
+const mixed={satellites:{a:{telemetry_source:'rtcm',prn:1},b:{telemetry_source:'nmea',prn:2},c:{talker:'RTCM',prn:3},d:{talker:'GP',prn:4}}};
+const navDevice={gnss_satellites:{source:'ubx_nav_sat',payload_b64:'ignored'}};
+assert.equal(plotReader(navDevice,mixed).source,'RTCM');
+assert.equal(JSON.stringify(plotReader(navDevice,mixed).satellites.map(s=>s.prn)),JSON.stringify([1,3]));
+assert.equal(plotReader(navDevice,mixed,false).satellites.length,0);
+assert.equal(plotReader(navDevice,{satellites:{}}).satellites.length,0,'never substitute NAV-SAT when RTCM is empty');
+console.log('PASS: RTCM-only plot excludes NMEA/NAV-SAT and has no receiver fallback');
 
 const dopReader=vm.runInNewContext(`${helper};getGnssDop;`);
 const timing={...device,gnss_quality:{...device.gnss_quality,fix_type:5},gnss_dop:{source:'ubx_nav_dop',age_seconds:0,hdop:99.99,pdop:99.99}};

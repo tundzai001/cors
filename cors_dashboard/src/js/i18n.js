@@ -213,6 +213,7 @@
         ['Máy theo ngày', 'Devices per day'],
         ['Máy trong ngày', 'Devices on selected day'],
         ['Chọn ngày để xem các máy đã kết nối.', 'Select a day to view connected devices.'],
+        ['Vệ tinh RTCM', 'RTCM satellites'],
         ['Vệ tinh đang dùng', 'Satellites in use'],
         ['Vệ tinh giải mã', 'Decoded satellites'],
         ['có tín hiệu', 'with signal'],

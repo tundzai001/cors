@@ -75,41 +75,18 @@ function getDashboardPosition(device, data) {
         || position(saved?.lat, saved?.lon, 'Cấu hình Base đã lưu');
 }
 
-function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
-    const snapshot = device.gnss_satellites;
-    if (!live || snapshot?.source !== 'ubx_nav_sat' || typeof snapshot.payload_b64 !== 'string'
-        || snapshot.payload_b64.length > 2060 || typeof snapshot.age_seconds !== 'number') return null;
-    const received = Number(device.server_received_at || device.timestamp);
-    const age = snapshot.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
-    if (!Number.isFinite(age) || age < 0 || age > 45) return null;
-    try {
-        const raw = atob(snapshot.payload_b64);
-        const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
-        if (bytes.length < 8 || bytes[4] !== 1 || bytes[5] > 128 || bytes.length !== 8 + bytes[5] * 12) return null;
-        const view = new DataView(bytes.buffer), seen = new Set(), satellites = [];
-        const systems = ['us', 'sb', 'eu', 'cn', 'im', 'jp', 'ru', 'in'];
-        for (let offset = 8; offset < bytes.length; offset += 12) {
-            const gnss = bytes[offset], prn = bytes[offset + 1], key = `${gnss}:${prn}`;
-            if (gnss === 6 && prn === 255) continue; // No known slot to correlate with decoded RTCM.
-            if (gnss > 7 || prn === 0 || seen.has(key)) return null;
-            seen.add(key);
-            const cno = bytes[offset + 2], elevation = view.getInt8(offset + 3);
-            const azimuth = view.getInt16(offset + 4, true), flags = view.getUint32(offset + 8, true);
-            const geometry = elevation >= -90 && elevation <= 90 && azimuth >= 0 && azimuth <= 360;
-            satellites.push({id: `UBX:${key}`, system: systems[gnss], prn, snr: cno,
-                elevation: geometry ? elevation : null, azimuth: geometry ? azimuth : null,
-                has_geometry: geometry, isTracking: (flags & 7) >= 2,
-                used_in_solution: Boolean(flags & 8), source: 'ubx_nav_sat',
-                lastSeen: (now - age) * 1000});
-        }
-        return {satellites, age_seconds: age};
-    } catch (_) { return null; }
+function getSatelliteTelemetrySource(sat) {
+    if (sat?.telemetry_source) return sat.telemetry_source;
+    const identifier = String(sat?.talker || sat?.id || '');
+    if (/^RTCM(?::|$)/i.test(identifier)) return 'rtcm';
+    if (/^(G[PNLABDQI]|BD|QZ)(?::|$)/i.test(identifier)) return 'nmea';
+    return null;
 }
 
-function getSatellitePlotSource(device, data, live = true, now = Date.now() / 1000) {
-    const receiver = getReceiverSatellites(device, live, now);
-    return receiver ? {...receiver, source: 'NAV-SAT', maxAgeMs: 45000}
-        : {satellites: live ? Object.values(data?.satellites || {}) : [], source: 'NMEA/RTCM', maxAgeMs: 7000};
+function getSatellitePlotSource(device, data, live = true) {
+    return {satellites: live ? Object.values(data?.satellites || {})
+        .filter(sat => getSatelliteTelemetrySource(sat) === 'rtcm') : [],
+        source: 'RTCM', maxAgeMs: 7000};
 }
 
 function getLeaflet() {
@@ -313,9 +290,7 @@ function getVisibleSatellites(satellites, maxAgeMs) {
 function getDecodedSatelliteCounts(satellites, maxAgeMs) {
     const bySource = {rtcm: [], nmea: []};
     (satellites || []).forEach(sat => {
-        const source = sat?.telemetry_source ||
-            (/^RTCM(?::|$)/i.test(String(sat?.talker || sat?.id || '')) ? 'rtcm' :
-             /^(G[PNLABDQI]|BD|QZ)(?::|$)/i.test(String(sat?.talker || sat?.id || '')) ? 'nmea' : null);
+        const source = getSatelliteTelemetrySource(sat);
         if (bySource[source]) bySource[source].push(sat);
     });
     return {rtcm: getVisibleSatellites(bySource.rtcm, maxAgeMs).length,
@@ -468,8 +443,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const plot = getSatellitePlotSource(device, currentNmeaData, liveDataAvailable);
             const sats = getVisibleSatellites(plot.satellites, plot.maxAgeMs);
             const quality = getGnssQuality(device, currentNmeaData, liveDataAvailable);
-            const satCount = plot.source === 'NAV-SAT' ? plot.satellites.filter(s => s.used_in_solution).length
-                : quality?.satellites ?? gga.satellites ?? null;
+            const satCount = sats.length;
 
             const avgSnr = sats.length > 0
                 ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length
@@ -575,7 +549,6 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         const drawSkyplotSatellites = (satellites, maxAgeMs = SATELLITE_TIMEOUT + FADE_DURATION) => {
             const now = Date.now();
             const buffer = satelliteBufferRef.current;
-            if (maxAgeMs === 45000) buffer.clear(); // NAV-SAT is a complete snapshot, not incremental GSV pages.
 
             getVisibleSatellites(satellites, maxAgeMs).forEach(sat => {
                 let observedAt = Number(sat.lastSeen || sat.last_seen || now);
@@ -768,7 +741,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) {
                     const counts = getDecodedSatelliteCounts(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION);
-                    satCountEl.textContent = `RTCM ${counts.rtcm} · NMEA ${counts.nmea}`;
+                    satCountEl.textContent = counts.rtcm;
                 }
 
                 const dop = getGnssDop(deviceRef.current, safeNmeaDataRef.current,
@@ -874,11 +847,6 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         else if (acc < 0.1) accColor = "#ffd43b";
     }
 
-    const decodedCounts = getDecodedSatelliteCounts(Object.values(safeNmeaData.satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION);
-    const decodedDescription = `RTCM ${decodedCounts.rtcm} · NMEA ${decodedCounts.nmea}`;
-    const satelliteDescription = satStats.source === 'NAV-SAT'
-        ? `${satStats.total} có tín hiệu · ${decodedDescription}`
-        : `${decodedDescription}${device.detected_chip_type === 'Ublox' ? ' · đang chờ NAV-SAT' : ''}`;
     if (fixedBase) accColor = 'var(--bs-info, #0dcaf0)';
     return (
         <div className="dashboard-master">
@@ -886,9 +854,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             {window.MetricCard && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
                     <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
-                    <window.MetricCard title="Vệ tinh đang dùng" description={satelliteDescription} value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
+                    <window.MetricCard title="Vệ tinh RTCM" value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
                     <window.MetricCard title="hAcc (ước lượng)" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
-                    <window.MetricCard title={satStats.source === 'NAV-SAT' ? "C/N0 từ chip" : "C/N0 giải mã"} value={metrics.signalStrength.value} unit="dB-Hz" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
+                    <window.MetricCard title="C/N0 RTCM" value={metrics.signalStrength.value} unit="dB-Hz" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
                 </div>
             )}
 
@@ -911,7 +879,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         </div>
                     </div>
                 </div>
-                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh giải mã</div><div id="db-sats" className="stat-value stat-small">RTCM 0 · NMEA 0</div></div></div>
+                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh RTCM</div><div id="db-sats" className="stat-value">0</div></div></div>
                 <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">— / —</div><div id="db-dop-source" className="small text-muted">Đang đọc DOP</div><div id="db-dop-raw" className="small text-muted"></div></div></div>
                 <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">—</span> / <span id="db-lon">—</span></div><div id="db-position-source" className="small text-muted"></div></div></div>
             </div>
@@ -1243,9 +1211,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>
                         <i className="bi bi-radar"></i><span>Sky View</span>
-                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} có tín hiệu · <span data-no-translate>{satStats.source === 'NAV-SAT' ? 'NAV-SAT' : 'NMEA/RTCM'}</span></span>
+                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} có tín hiệu · <span data-no-translate>RTCM</span></span>
                     </div>
-                    {satStats.source === 'NAV-SAT' && <div className="small text-muted px-3 py-1">Góc từ chip · {satStats.positioned < satStats.total ? `${satStats.positioned}/${satStats.total} có góc hợp lệ · ` : ''}{Math.floor(satStats.age_seconds || 0)} giây trước</div>}
                     <div className="small text-muted px-3 pb-1" data-no-translate>G GPS · R GLONASS · E Galileo · C BeiDou · J QZSS · S SBAS</div>
                     <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
