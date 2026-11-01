@@ -1421,6 +1421,7 @@ function handleWebSocketMessage(message) {
                 currentNmeaData.satellites[satKey] = {
                     ...existingSat,
                     ...sat,
+                    telemetry_source: 'nmea',
                     lastSeen: Date.now()
                 };
             });
@@ -1485,6 +1486,7 @@ function handleWebSocketMessage(message) {
                 currentNmeaData.satellites[satKey] = {
                     ...existingSat,
                     ...sat,
+                    telemetry_source: 'nmea',
                     lastSeen: Date.now()
                 };
             });
@@ -1532,6 +1534,7 @@ function handleWebSocketMessage(message) {
                     currentNmeaData.satellites[satKey] = {
                         ...existingSat,
                         ...sat,
+                        telemetry_source: 'rtcm',
                         azimuth: existingSat.azimuth,
                         elevation: existingSat.elevation,
                         lastSeen: Date.now()
@@ -1540,6 +1543,7 @@ function handleWebSocketMessage(message) {
                     currentNmeaData.satellites[satKey] = {
                         ...existingSat,
                         ...sat,
+                        telemetry_source: 'rtcm',
                         lastSeen: Date.now()
                     };
                 }

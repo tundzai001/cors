@@ -310,6 +310,18 @@ function getVisibleSatellites(satellites, maxAgeMs) {
     return Array.from(visibleByKey.values());
 }
 
+function getDecodedSatelliteCounts(satellites, maxAgeMs) {
+    const bySource = {rtcm: [], nmea: []};
+    (satellites || []).forEach(sat => {
+        const source = sat?.telemetry_source ||
+            (/^RTCM(?::|$)/i.test(String(sat?.talker || sat?.id || '')) ? 'rtcm' :
+             /^(G[PNLABDQI]|BD|QZ)(?::|$)/i.test(String(sat?.talker || sat?.id || '')) ? 'nmea' : null);
+        if (bySource[source]) bySource[source].push(sat);
+    });
+    return {rtcm: getVisibleSatellites(bySource.rtcm, maxAgeMs).length,
+        nmea: getVisibleSatellites(bySource.nmea, maxAgeMs).length};
+}
+
 // ===============================================================================
 // === ENHANCED DASHBOARD COMPONENT (REPLACED)
 // ===============================================================================
@@ -755,8 +767,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) {
-                    const activeCount = getVisibleSatellites(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION).length;
-                    satCountEl.textContent = activeCount;
+                    const counts = getDecodedSatelliteCounts(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION);
+                    satCountEl.textContent = `RTCM ${counts.rtcm} · NMEA ${counts.nmea}`;
                 }
 
                 const dop = getGnssDop(deviceRef.current, safeNmeaDataRef.current,
@@ -862,10 +874,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         else if (acc < 0.1) accColor = "#ffd43b";
     }
 
-    const decodedCount = getVisibleSatellites(Object.values(safeNmeaData.satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION).length;
+    const decodedCounts = getDecodedSatelliteCounts(Object.values(safeNmeaData.satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION);
+    const decodedDescription = `RTCM ${decodedCounts.rtcm} · NMEA ${decodedCounts.nmea}`;
     const satelliteDescription = satStats.source === 'NAV-SAT'
-        ? `${satStats.total} có tín hiệu · ${decodedCount} trong RTCM/NMEA`
-        : `${decodedCount} trong RTCM/NMEA${device.detected_chip_type === 'Ublox' ? ' · đang chờ NAV-SAT' : ''}`;
+        ? `${satStats.total} có tín hiệu · ${decodedDescription}`
+        : `${decodedDescription}${device.detected_chip_type === 'Ublox' ? ' · đang chờ NAV-SAT' : ''}`;
     if (fixedBase) accColor = 'var(--bs-info, #0dcaf0)';
     return (
         <div className="dashboard-master">
@@ -898,7 +911,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         </div>
                     </div>
                 </div>
-                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh giải mã</div><div id="db-sats" className="stat-value">0</div></div></div>
+                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh giải mã</div><div id="db-sats" className="stat-value stat-small">RTCM 0 · NMEA 0</div></div></div>
                 <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">— / —</div><div id="db-dop-source" className="small text-muted">Đang đọc DOP</div><div id="db-dop-raw" className="small text-muted"></div></div></div>
                 <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">—</span> / <span id="db-lon">—</span></div><div id="db-position-source" className="small text-muted"></div></div></div>
             </div>

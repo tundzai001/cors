@@ -66,7 +66,7 @@ assert.equal(render({gsa:{pdop:99.99}},false,{...device,gnss_dop:null})['db-dop'
 assert.equal(render({gsa:{hdop:0.9,pdop:1.4,received_at:-10}},false,{})['db-dop'],'— / —');
 const satellitesCode=source.slice(source.indexOf('function getSatelliteSystem('),source.indexOf('const DashboardPanel'));
 const satelliteContext={Date:{now:()=>1e12},window:{}};
-vm.runInNewContext(satellitesCode+';this.visible=getVisibleSatellites;this.positioned=hasSatellitePosition;',satelliteContext);
+vm.runInNewContext(satellitesCode+';this.visible=getVisibleSatellites;this.counts=getDecodedSatelliteCounts;this.positioned=hasSatellitePosition;',satelliteContext);
 const signals=Array.from({length:21},(_,i)=>({system:'G',prn:i+1,snr:40,lastSeen:1e12,azimuth:0,elevation:0,has_geometry:false}));
 signals.push({system:'G',prn:'G01',snr:45,lastSeen:1e12,azimuth:90,elevation:45,has_geometry:true});
 signals.push({system:'G',prn:22,snr:42,lastSeen:1e12-8000});
@@ -107,3 +107,25 @@ assert.equal(render({},false,rover)['db-dop'],'99.99 / 99.99','UBX values must n
 assert.equal(dopReader({...rover,gnss_dop:{...rover.gnss_dop,hdop:655.35}}, {},true,10).hdop,655.35);
 assert.equal(dopReader({...rover,gnss_dop:null},{},true,10).rawHdop,null);
 console.log('PASS: verified Time-only mode is explained; original NAV-DOP values retained; high UBX DOP is not silently filtered');
+
+const sourceSignals = [
+    {system:'G',prn:1,snr:40,lastSeen:1e12,telemetry_source:'rtcm'},
+    {system:'G',prn:1,snr:45,lastSeen:1e12,telemetry_source:'rtcm'},
+    {system:'G',prn:'G01',snr:41,lastSeen:1e12,telemetry_source:'nmea'},
+    {system:'G',prn:2,snr:40,lastSeen:1e12,talker:'RTCM'},
+    {system:'G',prn:3,snr:40,lastSeen:1e12,id:'GP:3'},
+    {system:'G',prn:4,snr:40,lastSeen:1e12-8000,telemetry_source:'nmea'},
+    {system:'G',prn:5,snr:0,lastSeen:1e12,telemetry_source:'nmea'},
+    {system:'G',prn:6,snr:40,lastSeen:1e12}
+];
+assert.equal(JSON.stringify(satelliteContext.counts(sourceSignals,7000)),JSON.stringify({rtcm:2,nmea:2}));
+assert.equal(JSON.stringify(satelliteContext.counts(sourceSignals.filter(s=>s.telemetry_source==='rtcm'||s.talker==='RTCM'),7000)),JSON.stringify({rtcm:2,nmea:0}));
+// Exercise the real WebSocket ingestion before counting, including an RTCM record with no talker/id.
+const mainSource=fs.readFileSync(path.join(__dirname,'../cors_dashboard/src/js/main.js'),'utf8');
+const socketCode=mainSource.slice(mainSource.indexOf('function handleWebSocketMessage('),mainSource.indexOf('async function apiFetch('));
+const socketContext={Date:{now:()=>1e12},lastSatelliteGcTs:1e12,currentNmeaData:{satellites:{}},globalState:{selectedDeviceSerial:'test',devices:[]},requestDetailsPanelUpdate(){}};
+vm.runInNewContext(socketCode+';this.receive=handleWebSocketMessage;',socketContext);
+socketContext.receive({type:'rtcm_signal_update',serial:'test',data:{satellites:[{system:'G',prn:1,snr:42}]}});
+socketContext.receive({type:'nmea_update',serial:'test',data:{type:'GSV',satellites:[{talker:'GP',prn:1,snr:40}]}});
+assert.equal(JSON.stringify(satelliteContext.counts(Object.values(socketContext.currentNmeaData.satellites),7000)),JSON.stringify({rtcm:1,nmea:1}));
+console.log('PASS: real RTCM/NMEA ingestion keeps sources separate; dedup within each source; same satellite counted in both; stale/zero/unknown excluded; RTCM-only NMEA=0');
