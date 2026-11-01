@@ -112,6 +112,7 @@ String BackendAgent::buildStatusPayload() {
     JsonObject system = doc.createNestedObject("system_info");
     system["auto_base_review_supported"] = true;
     system["gnss_verification_supported"] = true;
+    system["gnss_verification_uart1"] = true;
     system["gnss_verification"] = nullptr;
     if (gnssVerification_.length()) {
         DynamicJsonDocument verification(1536);

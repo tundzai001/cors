@@ -3,6 +3,7 @@
 #include "functions/Unicore_Readback.h"
 #include "functions/Ublox_Readback.h"
 #include "functions/Ubx_Config_Verification.h"
+#include "functions/Unicore_Config_Verification.h"
 #include <cstdio>
 #include <cstring>
 #include "Prog_Config.h"
@@ -13,6 +14,110 @@
 using namespace BackendAgentInternal;
 
 extern SemaphoreHandle_t rtcmBufferMutex;
+
+bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &commandId, String &error) {
+    gnssVerification_ = static_cast<const char *>(nullptr);
+    const JsonArrayConst expectedLogs = payload["logs"].as<JsonArrayConst>();
+    const String reference = payload["altitude_reference"] | "LEGACY";
+    double wanted[3];
+    size_t coordinate = 0;
+    for (const char *key : {"lat", "lon", "alt"}) {
+        const String value = payload["coords"][key].as<String>();
+        char *end = nullptr;
+        wanted[coordinate++] = std::strtod(value.c_str(), &end);
+        if (value.isEmpty() || end == value.c_str() || *end || !std::isfinite(wanted[coordinate - 1])) {
+            error = "Invalid Unicore verification coordinates"; return false;
+        }
+    }
+    if (std::abs(wanted[0]) > 90 || std::abs(wanted[1]) > 180 || wanted[2] < -12000 || wanted[2] > 100000
+        || (reference != "LEGACY" && reference != "ELLIPSOID")
+        || expectedLogs.isNull() || !expectedLogs.size() || expectedLogs.size() > 64) {
+        error = "Invalid Unicore verification expectation"; return false;
+    }
+    std::vector<String> names;
+    names.reserve(expectedLogs.size());
+    for (JsonVariantConst item : expectedLogs) {
+        const char *name = item.as<const char *>();
+        if (!name || std::strlen(name) < 2 || std::strlen(name) > 23 || name[0] < 'A' || name[0] > 'Z') {
+            error = "Invalid Unicore output name"; return false;
+        }
+        for (const char *c = name; *c; ++c)
+            if (!(*c >= 'A' && *c <= 'Z') && !(*c >= '0' && *c <= '9')) {
+                error = "Invalid Unicore output name"; return false;
+            }
+        names.emplace_back(name);
+    }
+    DynamicJsonDocument result(1536);
+    result["command_id"] = commandId;
+    JsonObject groups = result.createNestedObject("groups");
+    for (const char *name : {"fixed", "diagnostics", "rtcm"}) {
+        JsonObject group = groups.createNestedObject(name);
+        group["checked"] = 0; group["mismatched"] = 0; group["unread"] = 0;
+    }
+    String mode, modeError;
+    bool positionRead = UnicoreReadback::readMode(mode, modeError);
+    if (positionRead && String(UnicoreReadback::modeKind(mode)) != "base") {
+        groups["fixed"]["checked"] = 1;
+        groups["fixed"]["mismatched"] = 1;
+    } else if (positionRead) {
+        DynamicJsonDocument position(1024);
+        positionRead = UnicoreReadback::readBestPosition(position.to<JsonObject>(), modeError)
+            && String(position["position_type"] | "") == "FIXEDPOS";
+        if (positionRead) {
+            const double height = position["height_msl"].as<double>()
+                + (reference == "ELLIPSOID" ? position["undulation"].as<double>() : 0);
+            const bool matches = std::abs(position["latitude"].as<double>() - wanted[0]) <= 1e-9
+                && std::abs(position["longitude"].as<double>() - wanted[1]) <= 1e-9
+                && std::abs(height - wanted[2]) <= 0.0001;
+            groups["fixed"]["checked"] = 1;
+            groups["fixed"]["mismatched"] = matches ? 0 : 1;
+        }
+    }
+    if (!positionRead) { groups["fixed"]["unread"] = 1; result["mode_error"] = modeError; }
+    String rawLogs, outputError;
+    std::vector<UnicoreConfigVerification::Log> logs;
+    bool logsRead = UnicoreReadback::readLogList(rawLogs, outputError)
+        && UnicoreConfigVerification::parseLogs(rawLogs.c_str(), rawLogs.length(), logs);
+    if (GNSS_UNICORE_PORT < 1 || GNSS_UNICORE_PORT > 3) {
+        logsRead = false;
+        result["note"] = "Chưa xác định số cổng COM nối GNSS để đối chiếu bản tin UM.";
+    }
+    if (logsRead) {
+        for (const String &name : names) {
+            JsonObject group = groups[name.startsWith("RTCM") ? "rtcm" : "diagnostics"];
+            group["checked"] = group["checked"].as<unsigned>() + 1;
+            bool matches = false;
+            for (const auto &log : logs)
+                if (log.port == GNSS_UNICORE_PORT && name == log.name && std::abs(log.period - 1) <= 1e-6) matches = true;
+            if (!matches) group["mismatched"] = group["mismatched"].as<unsigned>() + 1;
+        }
+        for (const auto &log : logs) {
+            if (log.port != GNSS_UNICORE_PORT || log.period == 0) continue;
+            bool expected = false;
+            for (const String &name : names) if (name == log.name) expected = true;
+            if (!expected) {
+                JsonObject group = groups[std::strncmp(log.name, "RTCM", 4) ? "diagnostics" : "rtcm"];
+                group["checked"] = group["checked"].as<unsigned>() + 1;
+                group["mismatched"] = group["mismatched"].as<unsigned>() + 1;
+            }
+        }
+        for (const char *name : {"diagnostics", "rtcm"})
+            if (groups[name]["checked"].as<unsigned>() == 0) groups[name]["checked"] = 1;
+    } else {
+        groups["diagnostics"]["unread"] = groups["rtcm"]["unread"] = 1;
+        result["output_error"] = outputError;
+    }
+    bool mismatch = false, unread = false;
+    for (JsonPair group : groups) {
+        mismatch |= group.value()["mismatched"].as<unsigned>() > 0;
+        unread |= group.value()["unread"].as<unsigned>() > 0;
+    }
+    result["state"] = unread ? "unread" : mismatch ? "mismatch" : "match";
+    if (result.overflowed()) { error = "GNSS verification result overflow"; return false; }
+    serializeJson(result, gnssVerification_);
+    gnssVerificationMs_ = millis(); markStatusDirty();
+    return true;
+}
 
 bool BackendAgent::verifyGnssConfig(JsonObjectConst payload, const String &commandId, String &error) {
     gnssVerification_ = static_cast<const char *>(nullptr);
@@ -48,9 +153,12 @@ bool BackendAgent::verifyGnssConfig(JsonObjectConst payload, const String &comma
         if (outputRead && values[i / 5] != expectedOutput[i + 4])
             group["mismatched"] = group["mismatched"].as<unsigned>() + 1;
     }
-    bool mismatch = false;
-    for (JsonPair group : groups) mismatch |= group.value()["mismatched"].as<unsigned>() > 0;
-    result["state"] = !modeRead || !outputRead ? "unread" : mismatch ? "mismatch" : "match";
+    bool mismatch = false, unread = false;
+    for (JsonPair group : groups) {
+        mismatch |= group.value()["mismatched"].as<unsigned>() > 0;
+        unread |= group.value()["unread"].as<unsigned>() > 0 || !group.value()["checked"].as<unsigned>();
+    }
+    result["state"] = unread ? "unread" : mismatch ? "mismatch" : "match";
     if (!modeRead) result["mode_error"] = modeError;
     if (!outputRead) result["output_error"] = outputError;
     if (result.overflowed()) { error = "GNSS verification result overflow"; return false; }

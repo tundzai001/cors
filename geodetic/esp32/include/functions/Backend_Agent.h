@@ -147,6 +147,7 @@ private:
     bool applyBaseCoordinates(double latitude, double longitude, double altitude);
     bool refreshReceiverReadback(String &error);
     bool verifyGnssConfig(JsonObjectConst payload, const String &commandId, String &error);
+    bool verifyUnicoreConfig(JsonObjectConst payload, const String &commandId, String &error);
     void saveSurveyResult(JsonObjectConst bestPosition, const String &mode);
     void pollGnssStatus();
     void markStatusDirty() { statusDirty_ = true; }

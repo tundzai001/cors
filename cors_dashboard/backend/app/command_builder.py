@@ -212,8 +212,8 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
     return command
 
 
-def build_ublox_verification_payload(config: dict) -> dict:
-    """Expected live configuration for the ESP32's physical GNSS UART1.
+def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = False) -> dict:
+    """Expected live configuration on the agent's configured output ports.
 
     Only constructs comparison data; the verifier sends poll requests, never
     replays these configuration packets to the receiver.
@@ -224,17 +224,47 @@ def build_ublox_verification_payload(config: dict) -> dict:
     if not isinstance(coords, dict) or not all(key in coords for key in ("lat", "lon", "alt")):
         raise ValueError("Chưa có đủ tọa độ Fixed LLA đã lưu.")
     # ESP32 routes USB/UART2 output requests to the GNSS UART1 connection.
-    options = {**normalize_gnss_options(config.get("gnss_options")), "ports": ["UART1"]}
+    options = normalize_gnss_options(config.get("gnss_options"))
+    if route_to_uart1:
+        options["ports"] = ["UART1"]
     packets = build_base_fixed_lla_command(
         "Ublox", coords["lat"], coords["lon"], coords["alt"],
         config.get("accuracy", 10.0), options,
         altitude_reference=config.get("altitude_reference"),
     )
-    output_length = int.from_bytes(packets[1][4:6], "little")
+    output = bytearray()
+    offset = 0
+    while offset < len(packets[1]):
+        length = int.from_bytes(packets[1][offset + 4:offset + 6], "little")
+        if packets[1][offset + 2:offset + 4] == b'\x06\x8a':
+            output.extend(packets[1][offset + 10:offset + 6 + length])
+        offset += length + 8
     return {
         "tmode_b64": base64.b64encode(packets[0][6:-2]).decode("ascii"),
-        "output_b64": base64.b64encode(packets[1][10:6 + output_length]).decode("ascii"),
+        "output_b64": base64.b64encode(output).decode("ascii"),
     }
+
+
+def build_unicore_verification_payload(config: dict, *, current_port: bool = False) -> dict:
+    if not isinstance(config, dict) or config.get("base_setup_method") != "FIXED_LLA":
+        raise ValueError("Chọn và lưu Fixed LLA trước khi xác minh cấu hình.")
+    coords = config.get("coords") or {}
+    if not isinstance(coords, dict) or not all(key in coords for key in ("lat", "lon", "alt")):
+        raise ValueError("Chưa có đủ tọa độ Fixed LLA đã lưu.")
+    packets = build_base_fixed_lla_command(
+        "Unicorecomm", coords["lat"], coords["lon"], coords["alt"],
+        config.get("accuracy", 10.0), config.get("gnss_options"),
+        altitude_reference=config.get("altitude_reference"),
+    )
+    logs = []
+    for packet in packets:
+        fields = packet.decode("ascii").strip().upper().split()
+        if len(fields) == 3 and fields[1:] == ["COM3", "1"]:
+            logs.append(fields[0])
+    normalized_coords = {key: format(_coordinate_decimal(coords[key], key, low, high), 'f')
+                         for key, low, high in (("lat", -90, 90), ("lon", -180, 180), ("alt", -12000, 100000))}
+    return {"coords": normalized_coords, "altitude_reference": config.get("altitude_reference") or "LEGACY",
+            "logs": logs, "port": "CURRENT" if current_port else "COM3"}
 
 
 def _append_unicore_output_commands(commands: list[bytes], port: str, gnss_options: dict | None = None) -> None:

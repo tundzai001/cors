@@ -1,8 +1,10 @@
 #include "functions/Ubx_Config_Verification.h"
 #include "functions/Ubx_Reply.h"
+#include "functions/Unicore_Config_Verification.h"
 #include <cassert>
 #include <cstdio>
 #include <initializer_list>
+#include <string>
 
 int main() {
     uint8_t expected[40] = {}, actual[40] = {};
@@ -44,5 +46,33 @@ int main() {
     assert(!UbxConfigVerification::validExpected(records, 9));
     uint8_t tooMany[205] = {};
     assert(!UbxConfigVerification::validExpected(tooMany, sizeof(tooMany)));
+    const auto packet = [](const std::string &body) {
+        uint32_t crc = 0;
+        for (size_t i = 1; i < body.size(); ++i) {
+            crc ^= static_cast<uint8_t>(body[i]);
+            for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320U : 0);
+        }
+        char checksum[10]; std::snprintf(checksum, sizeof(checksum), "*%08x", crc);
+        return body + checksum;
+    };
+    const std::string header = "#UNILOGLIST,66,GPS,FINE,2203,447089000,0,0,18,33;\r\n";
+    std::vector<UnicoreConfigVerification::Log> logs;
+    std::string list = packet(header + "< 3\r\n< RTCM1094 COM1 1\r\n< LOG COM2 RTCM1097 ONTIME 1\r\n< BESTNAVA COM1 ONCE\r\n");
+    assert(UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
+    assert(logs.size() == 3 && logs[0].port == 1 && logs[1].port == 2 && logs[2].period == 0);
+    for (const std::string &body : {
+            header + "< 2\r\n< RTCM1094 COM1 1\r\n", // Truncated rows.
+            header + "< 2\r\n< RTCM1094 COM1 1\r\n< RTCM1094 COM1 1\r\n", // Duplicate key.
+            header + "< 1\r\n< RTCM1094 COM9 1\r\n",
+            header + "< 1\r\n< RTCM1094 COM1 nan\r\n",
+            header + "< 1\r\n< RTCM1094 COM1 ONCHANGED\r\n"}) {
+        list = packet(body);
+        assert(!UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
+    }
+    list = packet(header + "< 0\r\n");
+    assert(UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs) && logs.empty());
+    list.back() ^= 1;
+    assert(!UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
     puts("PASS: Fixed LLA/accuracy mismatch, reordered values, missing/duplicate keys, wrong layer and bounded parsing");
+    puts("PASS: UM multi-line log CRC, port/period/trigger parsing, truncated/duplicate entries and invalid values");
 }

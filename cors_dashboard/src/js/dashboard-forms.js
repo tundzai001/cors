@@ -333,7 +333,7 @@ const GnssConfigVerification = ({ device, disabled }) => {
             {pending && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}
             {pending ? 'Đang xác minh…' : 'Xác minh cấu hình'}
         </button>
-        {!supported ? <div className="small text-muted mt-2">Cập nhật firmware để xác minh cấu hình.</div>
+        {!supported ? <div className="small text-muted mt-2">Cập nhật agent để xác minh cấu hình.</div>
             : !fixed ? <div className="small text-muted mt-2">Lưu cấu hình Fixed LLA trước khi xác minh.</div>
             : <div className="small text-muted mt-2">Đối chiếu cấu hình đang chạy với cấu hình đã lưu. Không thay đổi cấu hình chip.</div>}
         <div role="status" aria-live="polite" aria-atomic="true">
@@ -346,8 +346,10 @@ const GnssConfigVerification = ({ device, disabled }) => {
                         : result.state === 'mismatch' ? 'Cấu hình chưa khớp.' : 'Chưa đọc đủ cấu hình để xác minh.'}
                 </div>
                 <dl className="row g-2 small mt-1 mb-0">
-                    {[['fixed', 'Fixed LLA và độ chính xác'], ['protocols', 'Giao thức đầu ra'],
-                        ['diagnostics', 'Bản tin NMEA / UBX'], ['rtcm', 'Bản tin RTCM']].map(([key, label]) => {
+                    {[[ 'fixed', device.detected_chip_type === 'Ublox' ? 'Fixed LLA và độ chính xác' : 'Fixed LLA'],
+                        ...(device.detected_chip_type === 'Ublox' ? [['protocols', 'Giao thức đầu ra']] : []),
+                        ['diagnostics', device.detected_chip_type === 'Ublox' ? 'Bản tin NMEA / UBX' : 'Bản tin NMEA'],
+                        ['rtcm', 'Bản tin RTCM']].map(([key, label]) => {
                         const group = result.groups?.[key];
                         const unread = !group || Number(group.unread) > 0 || !(Number(group.checked) > 0);
                         const mismatch = Number(group?.mismatched) > 0;
@@ -359,6 +361,7 @@ const GnssConfigVerification = ({ device, disabled }) => {
                         </React.Fragment>;
                     })}
                 </dl>
+                {result.note && <div className="small text-warning mt-2">{result.note}</div>}
             </>}
         </div>
     </section>;
@@ -1149,7 +1152,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     ) : (
                         <div className="small text-muted" role="status">Đang chờ thiết bị tự cập nhật mode và tọa độ.</div>
                     )}
-                    {device.detected_chip_type === 'Ublox' && (
+                    {['Ublox', 'Unicorecomm'].includes(device.detected_chip_type) && (
                         <GnssConfigVerification device={device} disabled={disabled || isSubmitting || isReadingReceiver} />
                     )}
                     {pendingReadbackRevision !== null && (

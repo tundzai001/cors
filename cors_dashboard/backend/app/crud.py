@@ -731,6 +731,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
             or old_info.get("survey_in_result") != new_system_info.get("survey_in_result")
             or old_info.get("base_startup") != new_system_info.get("base_startup")
             or old_info.get("gnss_verification_supported") != new_system_info.get("gnss_verification_supported")
+            or old_info.get("gnss_verification_uart1") != new_system_info.get("gnss_verification_uart1")
             or old_info.get("gnss_verification") != new_system_info.get("gnss_verification")
         ):
             # Merge to preserve backend-managed flags (e.g. auth_license_bypass)

@@ -36,7 +36,7 @@ for msm in (4, 7, "both"):
                   "accuracy": "0.0123", "gnss_options": {"ports": ["USB", "UART2"], "output_mode": "rtcm_only", "msm_level": msm,
                   "constellations": {"gps": True, "glo": True, "gal": gal, "bds": bds}}}
         original = copy.deepcopy(config)
-        result = builder.build_ublox_verification_payload(config)
+        result = builder.build_ublox_verification_payload(config, route_to_uart1=True)
         assert config == original
         mode = base64.b64decode(result["tmode_b64"])
         assert len(mode) == 40 and mode[2:4] == b"\x02\x01"

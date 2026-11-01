@@ -177,11 +177,17 @@ async def send_generic_command(
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
     if command.command == "VERIFY_GNSS_CONFIG":
-        if device.detected_chip_type != "Ublox" or (device.system_info or {}).get("gnss_verification_supported") is not True:
-            raise HTTPException(status_code=409, detail="Cập nhật firmware ESP32 u-blox để xác minh cấu hình.")
+        live_info = (mqtt_handler.device_telemetry_cache.get(serial) or {}).get("system_info")
+        capabilities = live_info if isinstance(live_info, dict) else device.system_info or {}
+        if device.detected_chip_type not in ("Ublox", "Unicorecomm") or capabilities.get("gnss_verification_supported") is not True:
+            raise HTTPException(status_code=409, detail="Cập nhật agent để xác minh cấu hình GNSS.")
         try:
             # Compare against the saved desired configuration, never client input.
-            expected = command_builder.build_ublox_verification_payload(device.base_config or {})
+            embedded = capabilities.get("gnss_verification_uart1") is True
+            if device.detected_chip_type == "Ublox":
+                expected = command_builder.build_ublox_verification_payload(device.base_config or {}, route_to_uart1=embedded)
+            else:
+                expected = command_builder.build_unicore_verification_payload(device.base_config or {}, current_port=embedded)
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         command_id = secrets.token_urlsafe(18)

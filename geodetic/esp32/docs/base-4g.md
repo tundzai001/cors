@@ -224,15 +224,18 @@ Luồng Unicore từ chối dữ liệu nhị phân và nhiều dòng lệnh tro
 
 ESP không phát mạng cấu hình. Chỉ giữ một mạng Wi-Fi cho kết nối dự phòng; xem [hướng dẫn Wi-Fi](wifi-config.md). Quản lý RAM, flash và dữ liệu NVS tại System Monitor trên web.
 
-## Xác minh cấu hình u-blox
+## Xác minh cấu hình u-blox và UM
 
 Sau khi lưu Fixed LLA, chọn **Xác minh cấu hình** trong phần trạng thái Base.
-Cần cập nhật cả backend, giao diện và firmware ESP32. Backend lấy cấu hình
+Cần cập nhật backend, giao diện và agent thiết bị: firmware ESP32 hoặc
+`agent_universal.py`. Cả hai hỗ trợ u-blox và Unicore/UM. Backend lấy cấu hình
 mong muốn từ bản đã lưu, không dùng tọa độ hay key do trình duyệt gửi lên.
-ESP32 chỉ poll CFG-TMODE3 và CFG-VALGET ở lớp RAM, không gửi lại VALSET,
-không lưu NVS, không thay đổi cấu hình hoặc tự khởi động lại chip.
+Lệnh xác minh không lưu NVS/cấu hình, không thay đổi mode, không bật thêm
+bản tin định kỳ hoặc tự khởi động lại chip. Truy vấn đi qua luồng UART đang
+sở hữu cổng, không mở thêm một serial reader.
 
-Kết quả gồm bốn nhóm: Fixed LLA/độ chính xác, giao thức đầu ra, các bản tin
+Với u-blox, chỉ poll CFG-TMODE3 và CFG-VALGET ở lớp RAM. Kết quả gồm bốn
+nhóm: Fixed LLA/độ chính xác, giao thức đầu ra, các bản tin
 NMEA/UBX đã cấu hình và 10 bản tin RTCM trong bộ cấu hình. Mỗi nhóm hiển thị
 Khớp, Sai hoặc Chưa đọc được. Thiếu phản hồi, sai checksum, thiếu/trùng key,
 phản hồi sai lớp đều không được coi là khớp. Tọa độ được so theo tổng phần
@@ -242,7 +245,25 @@ nguyên và HP; dung sai một bước lượng tử hóa: 1e-9 độ, 0.1 mm đ
 ESP32 chuyển đầu ra USB/UART2 về UART1 nối GNSS; phép so sánh dùng UART1
 cùng quy tắc đó. RTCM-only tắt NMEA và tốc độ định kỳ NAV-PVT/HPPOSLLH;
 UBX protocol vẫn bật để chip trả lời lệnh đọc cấu hình. Nhận ACK không
-đủ để kết luận các tham số đã khớp.
+đủ để kết luận các tham số đã khớp. `agent_universal.py` giữ đúng danh sách
+cổng UART1/UART2/USB đã chọn; truy vấn được chia thành từng nhóm tối đa 40 key.
+
+Với UM, đọc MODE, BESTNAVA và UNILOGLIST, kiểm tra checksum rồi đối chiếu
+Fixed LLA, danh sách bản tin NMEA/RTCM và chu kỳ 1 giây. BESTNAV phải xác nhận
+SOL_COMPUTED/FIXEDPOS/WGS84. Cấu hình ELLIPSOID so h = height_msl + undulation;
+cấu hình LEGACY giữ cách hiểu độ cao cũ. Không so trường accuracy của u-blox
+cho UM vì bộ tạo lệnh UM không thiết lập trường này. UNILOGLIST phải đủ số
+dòng đã khai báo; sai CRC, trùng dòng, thiếu dữ liệu hoặc trigger chưa hỗ trợ
+được coi là chưa đọc được, không coi là đã khớp.
+
+Universal đối chiếu cổng COM3, đúng với bộ tạo lệnh UM trên backend. ESP32
+đối chiếu GNSS_UNICORE_PORT = 1–3. Nếu dùng giá trị 0 (cổng hiện tại),
+UNILOGLIST không chứng minh được số COM vật lý đang nối ESP32: phần bản tin
+báo Chưa đọc được cùng ghi chú cổng, vẫn xác minh mode/tọa độ độc lập. Không
+tự đoán COM hoặc thay đổi cấu hình đang chạy để lấy kết quả xanh.
+
+Lệnh đọc UM theo [Unicore N4 Commands and Logs R1.2](https://ms.unicore.com/uploads/file/unicore-reference-commands-manual-for-n4-high-precision-products-v2-en-r1.2.pdf),
+mục MODE, BESTNAV và UNILOGLIST (7.3.24).
 
 Kết quả gắn command_id, hết hạn sau 60 giây và bị bỏ trên giao diện khi đổi
 cấu hình hoặc thiết bị. Snapshot firmware chỉ tồn tại tạm trong RAM.

@@ -433,11 +433,12 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             }
         }
     } else if (command == "VERIFY_GNSS_CONFIG") {
-        if (workflowActive() || sensorType_ != "Ublox") {
+        if (workflowActive() || (sensorType_ != "Ublox" && sensorType_ != "Unicorecomm")) {
             success = false;
-            error = "Verification requires an idle u-blox receiver";
+            error = "Verification requires an idle supported GNSS receiver";
         } else {
-            success = verifyGnssConfig(payload, commandId, error);
+            success = sensorType_ == "Ublox" ? verifyGnssConfig(payload, commandId, error)
+                                             : verifyUnicoreConfig(payload, commandId, error);
             if (success) detail = "GNSS readback completed; inspect verification result";
         }
     } else if (command == "CHECK_BASE_STATUS") {

@@ -123,3 +123,31 @@ Khi Rover ngắt kết nối quá 90s, Backend gửi lệnh tắt luồng:
 > 2. Đăng nhập phần mềm MQTT Explorer với Username/Pass.
 > 3. Subscribe vào topic `pi/devices/{serial}/command` để hứng lệnh Bật/Tắt ngủ.
 > 4. Publish NMEA thô vào topic `pi/devices/{serial}/nmea` và dữ liệu RTCM vào `pi/devices/{serial}/raw_data` để thấy giao diện nhảy vệ tinh!
+
+### Xác minh cấu hình GNSS
+
+`VERIFY_GNSS_CONFIG` hỗ trợ u-blox và Unicore/UM ở cả ESP32 và
+`agent_universal.py`. UI dùng nút **Xác minh cấu hình**. Backend tạo expectation
+chỉ từ `base_config` đã lưu, kiểm tra quyền EDIT_CHIP_CONFIG và capability
+mới nhất của đúng thiết bị; không chuyển expectation tùy ý từ trình duyệt.
+
+- `system_info.gnss_verification_supported`: agent đã hỗ trợ lệnh.
+- `system_info.gnss_verification_uart1`: true cho ESP32 có quy tắc chuyển cổng;
+  false cho Universal giữ cổng của bộ tạo lệnh trên backend.
+- u-blox: payload `tmode_b64` chứa 40 byte TMODE3 mong muốn, `output_b64` chứa
+  các cặp key U4/value U1. Chỉ dùng để so sánh, không phát lại thành lệnh set.
+- UM: payload `coords`, `altitude_reference`, `logs`, `port`. Đọc MODE,
+  BESTNAVA và danh sách UNILOGLIST có CRC để so sánh tọa độ, bản tin, chu kỳ.
+- Kết quả ở `system_info.gnss_verification`: `command_id`, `state`
+  (`match`/`mismatch`/`unread`), các nhóm có `checked`, `mismatched`, `unread`,
+  `age_seconds` và ghi chú nếu chưa đủ dữ liệu. `success` của command chỉ
+  nghĩa là đã hoàn tất đọc; UI phải dùng kết quả đối chiếu riêng.
+
+Snapshot chỉ tồn tại trong RAM 60 giây, không ghi cấu hình. Auto Base đang
+chạy/thiết bị khóa thì từ chối xác minh. Việc lưu qua mất nguồn và đầu ra
+RTCM thực tế cần kiểm tra riêng trên phần cứng. Với ESP32 UM dùng cổng hiện
+tại chưa biết số COM, chỉ xác nhận các phần đã đọc đủ; không suy đoán cổng
+để báo khớp bản tin.
+
+Kiểm tra không cần thiết bị: `python3 -B -m unittest discover -s geodetic/tests
+-p test_configuration_verification.py` (từ thư mục gốc repo).

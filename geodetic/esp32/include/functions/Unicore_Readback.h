@@ -6,5 +6,6 @@
 namespace UnicoreReadback {
 bool readMode(String &mode, String &error);
 bool readBestPosition(JsonObject position, String &error);
+bool readLogList(String &response, String &error);
 const char *modeKind(const String &mode);
 } // namespace UnicoreReadback

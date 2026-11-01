@@ -14,7 +14,8 @@ extern SemaphoreHandle_t gnssSerialMutex;
 
 namespace UnicoreReadback {
 namespace {
-bool queryUnicoreLine(const char *query, const char *prefix, String &response, String &error) {
+bool queryUnicoreLine(const char *query, const char *prefix, String &response, String &error,
+                      bool multiline = false) {
     if (!rtcmBufferMutex
         || xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) {
         error = "GNSS command port is busy";
@@ -56,15 +57,28 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
             }
             if (value == prefix[0]) {
                 candidate = String(value);
+            } else if (multiline && value == '\r' && !candidate.isEmpty()) {
+                candidate += value;
             } else if (value == '\r' || value == '\n') {
+                if (multiline && candidate.startsWith(prefix)) {
+                    size_t end = candidate.length();
+                    while (end && (candidate[end - 1] == '\r' || candidate[end - 1] == ' ')) --end;
+                    if (end >= 9 && candidate[end - 9] == '*') {
+                        candidate.remove(end);
+                        response = candidate;
+                        break;
+                    }
+                    candidate += value;
+                    continue;
+                }
                 if (candidate.startsWith(prefix)) {
                     response = candidate;
                     break;
                 }
                 candidate = "";
-            } else if (!candidate.isEmpty() && candidate.length() < 383) {
+            } else if (!candidate.isEmpty() && candidate.length() < (multiline ? 4095U : 383U)) {
                 candidate += value;
-            } else if (candidate.length() >= 383) {
+            } else if (candidate.length() >= (multiline ? 4095U : 383U)) {
                 candidate = "";
             }
         }
@@ -90,6 +104,15 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
 }
 
 } // namespace
+
+bool readLogList(String &response, String &error) {
+    if (!queryUnicoreLine("UNILOGLIST", "#UNILOGLIST,", response, error, true)) return false;
+    if (!validUnicoreLogChecksum(response.c_str(), response.length())) {
+        error = "Unicore UNILOGLIST checksum mismatch";
+        return false;
+    }
+    return true;
+}
 
 bool readMode(String &mode, String &error) {
     String response;
@@ -139,11 +162,11 @@ bool readBestPosition(JsonObject position, String &error) {
     String payload = response.substring(separator + 1);
     const int checksum = payload.indexOf('*');
     if (checksum >= 0) payload.remove(checksum);
-    String fields[5];
+    String fields[7];
     int start = 0;
-    for (size_t index = 0; index < 5; ++index) {
+    for (size_t index = 0; index < 7; ++index) {
         const int comma = payload.indexOf(',', start);
-        if (index < 4 && comma < 0) {
+        if (index < 6 && comma < 0) {
             error = "Unicore BESTNAV response is incomplete";
             return false;
         }
@@ -184,6 +207,12 @@ bool readBestPosition(JsonObject position, String &error) {
     position["latitude"] = latitude;
     position["longitude"] = longitude;
     position["height_msl"] = height;
+    const double undulation = std::strtod(fields[5].c_str(), &end);
+    if (end == fields[5].c_str() || *end != '\0' || !std::isfinite(undulation) || fields[6] != "WGS84") {
+        error = "Unicore BESTNAV undulation/datum is invalid";
+        return false;
+    }
+    position["undulation"] = undulation;
     return true;
 }
 
