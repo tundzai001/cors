@@ -1,5 +1,5 @@
 # geotek_aitogy_working.py
-RELAY_VERSION = "V2.4.1"
+RELAY_VERSION = "V2.4.2"
 
 import json
 import logging
