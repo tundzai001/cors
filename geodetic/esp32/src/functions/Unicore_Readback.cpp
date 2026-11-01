@@ -1,7 +1,6 @@
 #include "functions/Unicore_Readback.h"
 #include "functions/Unicore_Reply.h"
 #include "functions/Unicore_Log.h"
-#include "functions/Unicore_Rf.h"
 #include "functions/RTCM_Receiver.h"
 #include "Prog_Config.h"
 #include <freertos/FreeRTOS.h>
@@ -109,21 +108,6 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
 }
 
 } // namespace
-
-bool readRfLog(unsigned kind, String &response, String &error) {
-    const char *command = kind == 1 ? "AGCA" : kind == 2 ? "FREQJAMSTATUSA" : "JAMSTATUSA";
-    const char *prefix = kind == 1 ? "#AGCA," : kind == 2 ? "#FREQJAMSTATUSA," : "#JAMSTATUSA,";
-    String candidate;
-    error = "";
-    if (!queryUnicoreLine(command, prefix, candidate, error)) return false;
-    UnicoreRf parsed;
-    if (!parsed.decode(candidate.c_str(), candidate.length()) || parsed.kind != kind) {
-        error = "Invalid Unicore RF response";
-        return false;
-    }
-    response = candidate;
-    return true;
-}
 
 bool readLogList(String &response, String &error) {
     if (!queryUnicoreLine("UNILOGLIST", "#UNILOGLIST,", response, error, true)) return false;

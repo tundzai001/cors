@@ -93,47 +93,6 @@ bool UbloxReadback::readVersion(String &payloadBase64, String &error) {
     return payloadBase64.length() > 0;
 }
 
-bool UbloxReadback::readInterferenceMonitor(bool &enabled, String &error) {
-    const uint8_t poll[] = {0,0,0,0,0x0D,0,0x41,0x10}; // RAM, CFG-ITFM-ENABLE
-    UbxReply reply;
-    if (query(6, 0x8B, reply, error, poll, sizeof(poll))) {
-        const uint8_t *p = reply.frame + 6;
-        if (reply.length == 17 && p[0] == 1 && !p[1] && !p[2] && !p[3]
-            && UbxBaseStatus::u32(p + 4) == 0x1041000D && p[8] <= 1) {
-            enabled = p[8] != 0;
-            return true;
-        }
-    }
-    UbxReply legacy;
-    if (!query(6, 0x39, legacy, error)) return false;
-    if (legacy.length != 16) { error = "Invalid CFG-ITFM response"; return false; }
-    enabled = (UbxBaseStatus::u32(legacy.frame + 6) & 0x80000000UL) != 0;
-    return true;
-}
-
-bool UbloxReadback::readRf(uint8_t messageId, String &payloadBase64, String &error) {
-    if (messageId != 0x38 && messageId != 0x31) return false;
-    // MON-SPAN: at most four RF paths; this larger buffer exists only during the query.
-    UbxReplyBuffer<4 + 4 * 272 + 8> reply;
-    if (!query(0x0A, messageId, reply, error)) return false;
-    const uint8_t *p = reply.frame + 6;
-    const size_t length = reply.length - 8, stride = messageId == 0x38 ? 24 : 272;
-    if (length < 4 || p[0] != 0 || p[1] < 1 || p[1] > 4 || length != 4 + p[1] * stride) {
-        error = String("Invalid RF payload: bytes=") + length + "; header=" + (length ? p[0] : 255) + "/" + (length > 1 ? p[1] : 255);
-        return false;
-    }
-    for (size_t offset = 4; offset < length; offset += stride) {
-        if (messageId == 0x31 && (!UbxBaseStatus::u32(p + offset + 256)
-            || !UbxBaseStatus::u32(p + offset + 260) || !UbxBaseStatus::u32(p + offset + 264))) {
-            error = "Invalid MON-SPAN frequencies";
-            return false;
-        }
-    }
-    // HPG <1.30 may repeat RF blockId=0; retain all raw RF records.
-    payloadBase64 = BackendAgentInternal::encodeBase64(p, length);
-    return payloadBase64.length() > 0;
-}
-
 bool UbloxReadback::readSatellites(String &payloadBase64, String &error) {
     // Larger reply buffer is temporary; other UBX exchanges keep their 256-byte limit.
     UbxReplyBuffer<UbxSatellites::MAX_PAYLOAD + 8> reply;

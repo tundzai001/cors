@@ -139,7 +139,7 @@ const CONTROL_STATUS_VALUES = new Set([
 const LIVE_STATUS_FIELDS = [
     'status', 'timestamp', 'offline_since', 'agent_timestamp', 'server_received_at',
     'status_revision', 'status_source', 'bps', 'ntrip_connected',
-    'ntrip_status', 'ntrip_stats', 'transport_status', 'gnss_quality', 'gnss_dop', 'gnss_satellites', 'gnss_rf', 'gnss_spectrum', 'gnss_receiver', 'hacc', 'satellite_count'
+    'ntrip_status', 'ntrip_stats', 'transport_status', 'gnss_quality', 'gnss_dop', 'gnss_satellites', 'gnss_rf', 'gnss_rf_monitor', 'gnss_spectrum', 'gnss_receiver', 'hacc', 'satellite_count'
 ];
 let pendingStatusUpdates = new Map();
 let lastStatusMetaBySerial = new Map();

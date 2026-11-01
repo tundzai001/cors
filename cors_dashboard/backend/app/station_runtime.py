@@ -143,6 +143,7 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
         "gnss_dop",
         "gnss_satellites",
         "gnss_rf",
+        "gnss_rf_monitor",
         "gnss_spectrum",
         "gnss_receiver",
         "transport_status",

@@ -1,0 +1,20 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('cors_dashboard/src/js/dashboard-live.js','utf8');
+const code = source.slice(source.indexOf('function getAutomaticRfAssessment('),source.indexOf('function getRfDiagnostic('));
+const assess = vm.runInNewContext(`${code};getAutomaticRfAssessment;`);
+const report = {source:'ubx_mon_rf',age_seconds:0,sample_count:4,warning_samples:2,critical_samples:0,episodes:1,
+    coincident_cno_drops:1,quality_comparisons:3,current_severity:1};
+const device = {timestamp:100,gnss_rf_monitor:report};
+assert.match(assess(device,true,100).title,/trùng mẫu/);
+assert.match(assess(device,false,100).title,/thiếu dữ liệu/);
+assert.match(assess(device,true,146).title,/thiếu dữ liệu/);
+assert.match(assess({...device,gnss_rf_monitor:{...report,current_severity:null}},true,100).title,/thiếu dữ liệu/);
+assert.match(assess({...device,gnss_rf_monitor:{...report,sample_count:1}},true,100).title,/đầu tiên/);
+assert.equal(assess({},true,100).report,null);
+assert.equal(assess({...device,gnss_rf_monitor:{...report,sample_count:NaN}},true,100).report,null);
+assert.equal(assess({...device,gnss_rf_monitor:{...report,source:'untrusted'}},true,100).report,null);
+assert.match(assess({...device,gnss_rf_monitor:{...report,source:'unicore_rf',coincident_cno_drops:0}},true,100).title,/cảnh báo RF/);
+console.log('PASS: automatic Pi RF report, warm-up, UM, unknown/stale/offline and malformed reports');

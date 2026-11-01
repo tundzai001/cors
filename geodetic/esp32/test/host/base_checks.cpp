@@ -7,7 +7,6 @@
 #include "functions/Unicore_Reply.h"
 #include "functions/Unicore_Identification.h"
 #include "functions/Unicore_Log.h"
-#include "functions/Unicore_Rf.h"
 #include "functions/unicore_commands.h"
 #include "functions/Ubx_Base_Status.h"
 #include <cassert>
@@ -31,17 +30,6 @@ void checkPackets(const Command &bytes) {
 }
 
 int main(int argc, char **argv) {
-    UnicoreRf rf;
-    const std::string agc = "#AGCA,65,GPS,FINE,2190,375570000,0,0,18,37;44,46,63,-1,-1,41,1,0,-1,-1*634f1e4b";
-    assert(rf.decode(agc.c_str(), agc.length()) && rf.kind == 1);
-    assert(rf.values[0] == 44 && rf.values[2] == 63 && rf.values[3] == -1 && rf.values[5] == 41);
-    const std::string freqJam = "#FREQJAMSTATUSA,97,GPS,FINE,2164,559464000,0,0,18,8;SINGLE,255,2,0,0,0,0,0,0*b0cdc7de";
-    assert(rf.decode(freqJam.c_str(), freqJam.length()) && rf.kind == 2);
-    assert(rf.values[0] == 255 && rf.values[1] == 2 && rf.values[5] == 0);
-    auto rfCorrupt = agc; rfCorrupt.back() = '0';
-    assert(!rf.decode(rfCorrupt.c_str(), rfCorrupt.length()));
-    const std::string jam = "#JAMSTATUSA,97,GPS,FINE,2190,365412000,0,0,18,14;SINGLE,0,0,0,0*e31418ea";
-    assert(rf.decode(jam.c_str(),jam.length()) && rf.kind == 3 && rf.values[0] == 0 && rf.values[1] == 0);
     uint8_t svin[40] = {};
     const auto put32 = [](uint8_t *p, uint32_t value) {
         for (int i = 0; i < 4; ++i) p[i] = value >> (8*i);

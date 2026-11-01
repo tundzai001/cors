@@ -127,6 +127,22 @@ function getSatellitePlotSource(device, data, live = true, now = Date.now() / 10
     return {satellites, source: 'RTCM', maxAgeMs: 7000};
 }
 
+function getAutomaticRfAssessment(device, live = true, now = Date.now() / 1000) {
+    const report = device?.gnss_rf_monitor;
+    const received = Number(device?.server_received_at || device?.timestamp);
+    const age = report?.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    if (!report || !['ubx_mon_rf','unicore_rf'].includes(report.source)
+        || !['sample_count','warning_samples','critical_samples','episodes','coincident_cno_drops','quality_comparisons'].every(key => Number.isInteger(report[key]) && report[key] >= 0 && report[key] <= 120)
+        || typeof report.age_seconds !== 'number' || !Number.isFinite(age) || age < 0)
+        return {tone:'secondary',title:'Chưa có báo cáo theo dõi tự động từ Pi',report:null};
+    if (!live || age > 45 || report.current_severity == null)
+        return {tone:'warning',title:'Theo dõi đang thiếu dữ liệu RF mới',report};
+    if (report.sample_count < 3) return {tone:'info',title:'Pi đang thu thập các mẫu đầu tiên',report};
+    return {tone:report.warning_samples ? 'warning' : 'info',report,
+        title:report.coincident_cno_drops ? 'Cảnh báo RF trùng mẫu C/N₀ giảm'
+            : report.warning_samples ? 'Đã ghi nhận cảnh báo RF' : 'Chưa ghi nhận cảnh báo RF trong các mẫu đã thu'};
+}
+
 function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
     const snapshot = device?.[field], spectrum = field === 'gnss_spectrum';
     if (!live || !snapshot || snapshot.source !== (spectrum ? 'ubx_mon_span' : 'ubx_mon_rf')
@@ -498,6 +514,8 @@ function isDeviceStaleOffline(device, nowMs = Date.now()) {
 }
 
 function RfDiagnostics({device, live}) {
+    const esp32 = device.system_info?.gnss_rf_supported === false || /^esp_/i.test(device.serial || '');
+    const automatic = getAutomaticRfAssessment(device, live);
     const unicore = device.detected_chip_type === 'Unicorecomm';
     const um = unicore ? getUnicoreRfDiagnostic(device, live) : null;
     const rf = unicore ? null : getRfDiagnostic(device, 'gnss_rf', live);
@@ -511,13 +529,33 @@ function RfDiagnostics({device, live}) {
     const serial = device.serial;
     const stateNames = ['Chưa xác định', 'Không báo nhiễu đáng kể', 'Cảnh báo nhiễu', 'Nhiễu nghiêm trọng'];
     const exportReading = () => {
-        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, receiver, interference_config:interferenceConfig, raw_receiver:device.gnss_receiver || null, unicore: um, reference, assessment, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
+        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, receiver, interference_config:interferenceConfig, raw_receiver:device.gnss_receiver || null, unicore: um, reference, assessment, automatic:device.gnss_rf_monitor || null, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
         const link = document.createElement('a'); link.href = url; link.download = 'gnss-rf.json'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
+    if (esp32) return unicore ? null : <section className="card mt-3" aria-label="Thông tin chip GNSS">
+        <div className="card-body">
+            <h6>Thông tin MON-VER đầy đủ</h6>
+            {receiver?.software ? <dl className="row g-2 mb-0" aria-label="MON-VER đầy đủ">
+                {getReceiverVersionRows(receiver).map((row,index) => <React.Fragment key={index}>
+                    <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
+                    <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
+                </React.Fragment>)}
+            </dl> : <p className="text-muted mb-0" role="status">Chưa nhận được MON-VER mới từ chip.</p>}
+        </div>
+    </section>;
     return <section className="card mt-3" aria-label="Chẩn đoán nhiễu GNSS">
         <div className="card-body">
+            <div className={`alert alert-${automatic.tone} mb-3`} aria-label="Theo dõi tự động tại Pi">
+                <strong className="d-block mb-1" role="status" aria-atomic="true">{automatic.title}</strong>
+                <p className="small mb-1">Pi tự theo dõi cả khi đóng web. Cửa sổ 10 phút, theo nhịp đọc RF hiện có; đợt ngắn giữa hai lần đọc có thể bị bỏ sót.</p>
+                {automatic.report && <>
+                    <p className="mb-1">{automatic.report.sample_count} mẫu · {automatic.report.warning_samples} mẫu cảnh báo · {automatic.report.episodes} đợt · {automatic.report.critical_samples} mẫu mức mạnh</p>
+                    <p className="small mb-1">{automatic.report.quality_comparisons ? `${automatic.report.coincident_cno_drops} mẫu cảnh báo trùng mức C/N₀ giảm ít nhất 3 dB-Hz (trung vị trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc).` : 'Chưa có đủ mẫu C/N₀ cùng nguồn để đối chiếu suy giảm tín hiệu.'}</p>
+                </>}
+                <p className="small mb-0">Trùng thời điểm là dấu hiệu cần kiểm tra, chưa xác định nguồn BTS hay chứng minh sai số đo.</p>
+            </div>
             <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                 <h6 className="mb-0">Chẩn đoán nhiễu GNSS</h6>
                 <div className="d-flex flex-wrap gap-2">

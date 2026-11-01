@@ -6,6 +6,8 @@ import copy
 import json
 import logging
 import math
+import statistics
+from collections import deque
 from pathlib import Path
 from queue import Queue, Empty, Full
 import re
@@ -22,12 +24,13 @@ NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
          'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',
-         'receiver_quality_status', '_ubx_dop', '_ubx_satellite_payload', '_ubx_rf_payload', '_unicore_rf_log', '_ubx_version_payload', '_refresh_ubx_receiver_info'}
+         'receiver_quality_status', '_ubx_dop', '_ubx_satellite_payload', '_ubx_rf_payload', '_unicore_rf_log', '_ubx_version_payload', '_refresh_ubx_receiver_info',
+         'GnssRfMonitor', '_rf_monitor_age', '_rf_monitor_decode', '_update_automatic_rf_monitor'}
 
 
 def load():
     scope = dict(asyncio=asyncio, threading=threading, Queue=Queue, Empty=Empty, Full=Full,
-                 time=time, logging=logging, math=math, struct=struct, re=re, copy=copy, base64=base64,
+                 time=time, logging=logging, math=math, struct=struct, re=re, copy=copy, base64=base64, statistics=statistics, deque=deque,
                  PARSER_DEBUG_ENABLED=False, PARSER_DEBUG_INTERVAL_SECONDS=30,
                  dispatch_rtcm_data=Mock(), dispatch_nmea_data=Mock())
     nodes = [n for n in ast.parse(SOURCE.read_text()).body if getattr(n, 'name', None) in NAMES]
