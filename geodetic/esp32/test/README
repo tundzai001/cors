@@ -9,3 +9,34 @@ in the development cycle.
 
 More information about PlatformIO Unit Testing:
 - https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+
+Host checks (run from geodetic/esp32, no device required):
+
+c++ -std=c++17 -fsanitize=address,undefined -g -Itest/host -Iinclude \
+  test/host/base_checks.cpp src/functions/gnss_cmd_builder.cpp \
+  src/functions/ublox_commands.cpp src/functions/unicore_commands.cpp \
+  -o /tmp/esp32-base-checks
+/tmp/esp32-base-checks
+python3 -B test/host/check_cors.py ../.. /tmp/esp32-base-checks
+python3 -B test/host/check_gnss_stream.py
+python3 -B test/host/check_rover_gga.py
+python3 -B test/host/check_gga_position.py
+python3 -B test/host/check_wifi_handover.py
+python3 -B test/host/check_auto_base_location.py
+python3 -B test/host/check_vn2000.py
+c++ -std=c++17 -fsanitize=address,undefined -Itest/host -Iinclude \
+  test/host/mqtt_write_checks.cpp -o /tmp/esp32-mqtt-checks
+/tmp/esp32-mqtt-checks
+c++ -std=c++17 -fsanitize=address,undefined -Itest/host -Iinclude \
+  test/host/wifi_profiles_checks.cpp -o /tmp/esp32-wifi-checks
+/tmp/esp32-wifi-checks
+
+wifi_profiles_checks.cpp validates credentials using Wifi_Credentials.h;
+it does not restore the removed AP or multiple-network profile feature.
+check_wifi_handover.py reads the current Network_Manager.cpp implementation.
+check_status_flash.py requires a real flashed device and a closed Serial Monitor;
+it observes startup logs and does not upload firmware. The PlatformIO tests
+in init_preference and test_sim run on hardware, not as host checks.
+
+VS Code uses PlatformIO-generated IntelliSense configuration. These host
+files do not need to be added to the production compilation database.
