@@ -43,11 +43,16 @@ function getGnssDop(device, data, live = true, now = Date.now() / 1000) {
     const gsa = fresh(data?.gsa) ? data?.gsa : null;
     const gga = fresh(data?.gga) ? data?.gga : null;
     const quality = getGnssQuality(device, data, live, now);
-    const hdop = usable(readback?.hdop) ?? usable(gsa?.hdop) ?? usable(gga?.hdop);
-    const pdop = usable(readback?.pdop) ?? usable(gsa?.pdop) ?? usable(quality?.pdop);
-    return {hdop, pdop, source: readback
-        ? `NAV-DOP · ${Math.floor(age)} giây${hdop === null && pdop === null ? ' · chip chưa báo DOP hợp lệ' : ''}`
-        : hdop !== null || pdop !== null ? 'GSA / GGA / NAV-PVT' : 'Chưa đọc được DOP hợp lệ từ chip'};
+    const reported = value => typeof value === 'number' && Number.isFinite(value)
+        && value >= 0 && value <= 655.35 ? value : null;
+    const rawHdop = reported(readback?.hdop), rawPdop = reported(readback?.pdop);
+    const hdop = rawHdop > 0 ? rawHdop : usable(gsa?.hdop) ?? usable(gga?.hdop);
+    const pdop = rawPdop > 0 ? rawPdop : usable(gsa?.pdop) ?? usable(quality?.pdop);
+    const timeOnly = quality?.source === 'ubx_nav_pvt' && quality.fix_type === 5;
+    return {hdop, pdop, timeOnly, rawHdop, rawPdop, source: timeOnly
+        ? 'Time-only: chip dùng tọa độ cố định, DOP vị trí không áp dụng.'
+        : readback ? `NAV-DOP · ${Math.floor(age)} giây`
+        : hdop !== null || pdop !== null ? 'GSA / GGA / NAV-PVT' : 'Chưa đọc được DOP từ chip'};
 }
 
 function getDashboardPosition(device, data) {
@@ -619,12 +624,15 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 }
 
                 satCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-                satCtx.fillRect(x - 8, y + flagSize / 2 + 2, 16, 10);
+                const prefix = {us:'G',ru:'R',eu:'E',cn:'C',jp:'J',sb:'S',im:'I',in:'N'}[system] || '?';
+                const label = `${prefix}${getNormalizedPrn(satData)}`;
+                const labelWidth = Math.max(20, label.length * 5);
+                satCtx.fillRect(x - labelWidth / 2, y + flagSize / 2 + 2, labelWidth, 11);
                 satCtx.fillStyle = '#fff';
                 satCtx.font = 'bold 7px Arial';
                 satCtx.textAlign = 'center';
                 satCtx.textBaseline = 'middle';
-                satCtx.fillText(getNormalizedPrn(satData), x, y + flagSize / 2 + 7);
+                satCtx.fillText(label, x, y + flagSize / 2 + 7);
             }
             satCtx.globalAlpha = 1.0;
         };
@@ -754,7 +762,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 const dop = getGnssDop(deviceRef.current, safeNmeaDataRef.current,
                     !isDeviceStaleOffline(deviceRef.current), now / 1000);
                 const dopEl = document.getElementById('db-dop');
-                if (dopEl) dopEl.textContent = `${formatTelemetryNumber(dop.hdop, 2, '—')} / ${formatTelemetryNumber(dop.pdop, 2, '—')}`;
+                if (dopEl) dopEl.textContent = dop.timeOnly ? 'Không áp dụng'
+                    : `${formatTelemetryNumber(dop.hdop, 2, '—')} / ${formatTelemetryNumber(dop.pdop, 2, '—')}`;
+                const rawDop = document.getElementById('db-dop-raw');
+                if (rawDop) rawDop.textContent = dop.timeOnly && (dop.rawHdop !== null || dop.rawPdop !== null)
+                    ? `Chip trả: ${formatTelemetryNumber(dop.rawHdop, 2, '—')} / ${formatTelemetryNumber(dop.rawPdop, 2, '—')}` : '';
                 const dopSource = document.getElementById('db-dop-source');
                 if (dopSource) dopSource.textContent = dop.source;
                 const position = getDashboardPosition(deviceRef.current, safeNmeaDataRef.current);
@@ -850,6 +862,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         else if (acc < 0.1) accColor = "#ffd43b";
     }
 
+    const decodedCount = getVisibleSatellites(Object.values(safeNmeaData.satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION).length;
+    const satelliteDescription = satStats.source === 'NAV-SAT'
+        ? `${satStats.total} có tín hiệu · ${decodedCount} trong RTCM/NMEA`
+        : `${decodedCount} trong RTCM/NMEA${device.detected_chip_type === 'Ublox' ? ' · đang chờ NAV-SAT' : ''}`;
     if (fixedBase) accColor = 'var(--bs-info, #0dcaf0)';
     return (
         <div className="dashboard-master">
@@ -857,7 +873,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             {window.MetricCard && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
                     <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
-                    <window.MetricCard title="Vệ tinh chip dùng" value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
+                    <window.MetricCard title="Vệ tinh đang dùng" description={satelliteDescription} value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
                     <window.MetricCard title="hAcc (ước lượng)" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
                     <window.MetricCard title={satStats.source === 'NAV-SAT' ? "C/N0 từ chip" : "C/N0 giải mã"} value={metrics.signalStrength.value} unit="dB-Hz" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
                 </div>
@@ -883,7 +899,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     </div>
                 </div>
                 <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh giải mã</div><div id="db-sats" className="stat-value">0</div></div></div>
-                <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">— / —</div><div id="db-dop-source" className="small text-muted">Đang đọc DOP</div></div></div>
+                <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">— / —</div><div id="db-dop-source" className="small text-muted">Đang đọc DOP</div><div id="db-dop-raw" className="small text-muted"></div></div></div>
                 <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">—</span> / <span id="db-lon">—</span></div><div id="db-position-source" className="small text-muted"></div></div></div>
             </div>
             <div className="alert alert-info mt-3" role="status">
@@ -1214,9 +1230,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>
                         <i className="bi bi-radar"></i><span>Sky View</span>
-                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} tín hiệu · {satStats.source === 'NAV-SAT' ? 'NAV-SAT' : 'giải mã'}</span>
+                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} có tín hiệu · <span data-no-translate>{satStats.source === 'NAV-SAT' ? 'NAV-SAT' : 'NMEA/RTCM'}</span></span>
                     </div>
-                    {satStats.source === 'NAV-SAT' && <div className="small text-muted px-3 py-1">Góc đọc từ chip · {satStats.positioned}/{satStats.total} có góc trên chân trời · {Math.floor(satStats.age_seconds || 0)} giây trước</div>}
+                    {satStats.source === 'NAV-SAT' && <div className="small text-muted px-3 py-1">Góc từ chip · {satStats.positioned < satStats.total ? `${satStats.positioned}/${satStats.total} có góc hợp lệ · ` : ''}{Math.floor(satStats.age_seconds || 0)} giây trước</div>}
+                    <div className="small text-muted px-3 pb-1" data-no-translate>G GPS · R GLONASS · E Galileo · C BeiDou · J QZSS · S SBAS</div>
                     <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
                         {satStats.total > 0 && !satStats.positioned && <div className="position-absolute top-50 start-50 translate-middle text-center small text-muted px-3" style={{zIndex: 3, width: '80%'}}>
@@ -1230,8 +1247,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <div className="panel-header">
                         <i className="bi bi-bar-chart-fill"></i><span>Signal Strength (SNR)</span>
                         <div className="ms-auto d-flex gap-2">
-                            <span className="badge bg-success">{satStats.tracking} có tín hiệu</span>
-                            <span className="badge bg-secondary">{satStats.total} {satStats.source === 'NAV-SAT' ? 'từ chip' : 'giải mã'}</span>
+                            <span className="badge bg-secondary">{satStats.total} có tín hiệu</span>
                         </div>
                     </div>
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>

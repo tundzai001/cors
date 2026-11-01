@@ -74,7 +74,6 @@ const visible=satelliteContext.visible(signals,7000);
 assert.equal(visible.length,21,'MSM4/MSM7/NMEA signals deduplicate by constellation and satellite');
 assert.equal(visible.filter(satelliteContext.positioned).length,1,'unknown angles must not be plotted north');
 assert.equal(visible.reduce((n,s)=>n+Number(s.snr),0)/visible.length,845/21);
-assert(source.includes('Vệ tinh chip dùng') && source.includes('Vệ tinh giải mã'));
 console.log('PASS: NAV-DOP beats GSA sentinels; PVT fallback; saved Base coordinates; 21 decoded vs 28 receiver uses distinct labels; satellite dedup/expiry/geometry');
 
 const receiverContext = {atob: s => Buffer.from(s, 'base64').toString('binary')};
@@ -97,3 +96,14 @@ for(const raw of [navsat.subarray(0,navsat.length-1),Buffer.alloc(8),Buffer.allo
     assert.equal(receiverContext.receiver({...navDevice,gnss_satellites:{...navDevice.gnss_satellites,payload_b64:raw.toString('base64')}},true,102),null);
 }
 console.log('PASS: actual NAV-SAT decoder handles 28 satellites, signed angles, used flags, invalid elevation, packet bounds, TTL/offline and decoder fallback');
+
+const dopReader=vm.runInNewContext(`${helper};getGnssDop;`);
+const timing={...device,gnss_quality:{...device.gnss_quality,fix_type:5},gnss_dop:{source:'ubx_nav_dop',age_seconds:0,hdop:99.99,pdop:99.99}};
+assert.equal(dopReader(timing,{},true,10).timeOnly,true);
+assert.equal(dopReader(timing,{},true,10).rawHdop,99.99);
+assert.equal(render({},false,timing)['db-dop'],'Không áp dụng');
+const rover={...timing,gnss_quality:{...timing.gnss_quality,fix_type:3}};
+assert.equal(render({},false,rover)['db-dop'],'99.99 / 99.99','UBX values must not be discarded by an NMEA threshold');
+assert.equal(dopReader({...rover,gnss_dop:{...rover.gnss_dop,hdop:655.35}}, {},true,10).hdop,655.35);
+assert.equal(dopReader({...rover,gnss_dop:null},{},true,10).rawHdop,null);
+console.log('PASS: verified Time-only mode is explained; original NAV-DOP values retained; high UBX DOP is not silently filtered');

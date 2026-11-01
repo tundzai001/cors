@@ -231,3 +231,13 @@ explicit source/age label. Unknown or below-horizon angles are not plotted.
 NAV-SAT is a full snapshot, so removed satellites do not linger as old markers.
 When unavailable/expired/offline, the chart falls back to fresh NMEA/RTCM data.
 The decoded RTCM counter remains separate from receiver-reported svUsed.
+
+
+The UI keeps the complete unsigned NAV-DOP range (0–655.35) in its readback
+rather than applying the NMEA fallback threshold to UBX values. A fresh
+NAV-PVT fixType=5 is explicitly labelled Time-only: position DOP does not
+independently assess the fixed Base coordinates. The original NAV-DOP pair
+remains visible so a reported placeholder is distinguishable from a missing
+reply. This interpretation must not be inferred from saved FIXED_LLA alone.
+Technical UBX identifiers are excluded from weekday translation, including
+NAV-SAT and MON-VER.

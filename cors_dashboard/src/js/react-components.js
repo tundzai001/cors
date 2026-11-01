@@ -43,7 +43,7 @@ const MetricLineChart = memo(function MetricLineChart({ label, data = [], color,
 });
 window.MetricLineChart = MetricLineChart;
 
-const MetricCard = memo(function MetricCard({ title, value, unit, trend, sparklineData = [], color, icon }) {
+const MetricCard = memo(function MetricCard({ title, value, unit, description, trend, sparklineData = [], color, icon }) {
     const max = Math.max(...sparklineData, 1);
     const min = Math.min(...sparklineData, 0);
     const range = max - min || 1;
@@ -72,6 +72,7 @@ const MetricCard = memo(function MetricCard({ title, value, unit, trend, sparkli
                         </svg>
                     )}
                 </div>
+                {description && <div className="small text-muted mt-2">{description}</div>}
             </div>
         </div>
     );

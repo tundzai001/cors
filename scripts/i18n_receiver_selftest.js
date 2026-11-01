@@ -14,6 +14,12 @@ assert.equal(translate('Thu hồi', 'vi'), 'Thu hồi');
 assert.equal(translate('Thu', 'vi'), 'Thứ 5');
 assert.equal(translate('Thứ 5', 'en'), 'Thu');
 assert.equal(translate(translate(assessment, 'en'), 'vi'), assessment);
+for (const term of ['NAV-SAT', 'UBX-NAV-SAT', 'MON-VER', 'CFG-TMODE3', 'NAV-PVT', 'NAV-DOP']) {
+  assert.equal(translate(term, 'vi'), term);
+  assert.equal(translate(term, 'en'), term);
+  assert(!translate(`Nguồn: ${term} · 32 có tín hiệu`, 'vi').includes('Thứ 7'));
+}
+assert.equal(translate('Sat', 'vi'), 'Thứ 7', 'real weekday translation remains supported');
 console.log('PASS: Vietnamese reception text, receiver labels, revoke, Thursday and language round-trip');
 
 // Repeated placement must not mutate class: the header observer watches it.

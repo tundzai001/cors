@@ -213,6 +213,14 @@
         ['Máy theo ngày', 'Devices per day'],
         ['Máy trong ngày', 'Devices on selected day'],
         ['Chọn ngày để xem các máy đã kết nối.', 'Select a day to view connected devices.'],
+        ['Vệ tinh đang dùng', 'Satellites in use'],
+        ['Vệ tinh giải mã', 'Decoded satellites'],
+        ['có tín hiệu', 'with signal'],
+        ['trong RTCM/NMEA', 'decoded from RTCM/NMEA'],
+        ['đang chờ NAV-SAT', 'waiting for NAV-SAT'],
+        ['Không áp dụng', 'Not applicable'],
+        ['Chip trả:', 'Receiver reported:'],
+        ['Time-only: chip dùng tọa độ cố định, DOP vị trí không áp dụng.', 'Time-only: the receiver uses a fixed position; position DOP does not apply.'],
         ['Thứ 2', 'Mon'],
         ['Thứ 3', 'Tue'],
         ['Thứ 4', 'Wed'],
@@ -1419,6 +1427,8 @@
             return `\uE000${index}\uE001`;
         };
         let result = String(value ?? '');
+        // UBX message identifiers contain weekday abbreviations (SAT, MON, TIM).
+        result = result.replace(/\b(?:UBX|NAV|NAV2|CFG|MON|RXM|TIM|MGA|SEC|LOG|ACK|RTCM|NMEA)(?:-[A-Z0-9]+)+\b/g, protect);
         if (direction === 'vi' && result.trim() === 'Thu') return result.replace('Thu', 'Thứ 5');
         if (direction === 'en') {
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+điểm\s+vị trí(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} position point${Number(count) === 1 ? '' : 's'}`);
