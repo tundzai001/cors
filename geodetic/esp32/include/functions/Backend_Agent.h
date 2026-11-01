@@ -110,6 +110,10 @@ private:
     uint32_t navigationMs_ = 0;
     UbxDop dop_;
     uint32_t dopMs_ = 0;
+    String agcReadback_, jamReadback_;
+    uint32_t agcReadbackMs_ = 0, jamReadbackMs_ = 0;
+    String rfReadback_, spectrumReadback_;
+    uint32_t rfReadbackMs_ = 0, spectrumReadbackMs_ = 0;
     String satelliteReadback_;
     uint32_t satelliteReadbackMs_ = 0;
     float unicoreHorizontalSigma_ = 0;

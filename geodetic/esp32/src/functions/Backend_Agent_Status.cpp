@@ -4,6 +4,7 @@
 #include "functions/NTRIP_Handler_IP.h"
 #include "functions/RTCM_Receiver.h"
 #include "functions/Storage_Status.h"
+#include "functions/Unicore_Rf.h"
 #include <cmath>
 
 #include "functions/MQTT_Manager.h"
@@ -30,12 +31,23 @@ String BackendAgent::buildLwtPayload() const {
 String BackendAgent::buildStatusPayload() {
     if (satelliteReadback_.length() && millis() - satelliteReadbackMs_ > 45000UL)
         satelliteReadback_ = static_cast<const char *>(nullptr);
+    if (rfReadback_.length() && millis() - rfReadbackMs_ > 45000UL)
+        rfReadback_ = static_cast<const char *>(nullptr);
+    if (spectrumReadback_.length() && millis() - spectrumReadbackMs_ > 45000UL)
+        spectrumReadback_ = static_cast<const char *>(nullptr);
+    if (agcReadback_.length() && millis() - agcReadbackMs_ > 45000UL)
+        agcReadback_ = static_cast<const char *>(nullptr);
+    if (jamReadback_.length() && millis() - jamReadbackMs_ > 45000UL)
+        jamReadback_ = static_cast<const char *>(nullptr);
     // Inventory is an on-demand snapshot, not permanent telemetry overhead.
     if (nvsInventory_.length() > 2 && millis() - nvsInventoryMs_ >= 60000UL)
         nvsInventory_ = static_cast<const char *>(nullptr);
     if (gnssVerification_.length() && millis() - gnssVerificationMs_ >= 60000UL)
         gnssVerification_ = static_cast<const char *>(nullptr);
     DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (satelliteReadback_.length() ? satelliteReadback_.length() + 256 : 0)
+                            + (rfReadback_.length() ? rfReadback_.length() + 256 : 0)
+                            + (spectrumReadback_.length() ? spectrumReadback_.length() + 256 : 0)
+                            + (agcReadback_.length() ? 1024 : 0) + (jamReadback_.length() ? 512 : 0)
                             + (nvsInventory_.length() > 2 ? 3072 : 0)
                             + (gnssVerification_.length() ? VERIFICATION_DOCUMENT_SIZE : 0));
     DynamicJsonDocument serviceDoc(CONFIG_DOCUMENT_SIZE);
@@ -248,6 +260,41 @@ String BackendAgent::buildStatusPayload() {
     doc["gnss_quality"] = nullptr;
     doc["gnss_dop"] = nullptr;
     doc["gnss_satellites"] = nullptr;
+    doc["gnss_rf"] = nullptr;
+    doc["gnss_spectrum"] = nullptr;
+    if (sensorType_ == "Unicorecomm" && (agcReadback_.length() || jamReadback_.length())) {
+        JsonObject rf = doc.createNestedObject("gnss_rf");
+        rf["source"] = "unicore_rf";
+        UnicoreRf parsed;
+        if (parsed.decode(agcReadback_.c_str(), agcReadback_.length()) && parsed.kind == 1) {
+            JsonObject agc = rf.createNestedObject("agc");
+            agc["source"] = "unicore_agca";
+            agc["age_seconds"] = (nowMs - agcReadbackMs_) / 1000.0;
+            JsonArray values = agc.createNestedArray("values");
+            for (int value : parsed.values) values.add(value);
+        }
+        if (parsed.decode(jamReadback_.c_str(), jamReadback_.length()) && parsed.kind != 1) {
+            JsonObject jam = rf.createNestedObject("jamming");
+            jam["source"] = parsed.kind == 2 ? "unicore_freqjamstatusa" : "unicore_jamstatusa";
+            jam["age_seconds"] = (nowMs - jamReadbackMs_) / 1000.0;
+            JsonArray ratios = jam.createNestedArray("ratios"), flags = jam.createNestedArray("flags");
+            for (size_t i = 0; i < (parsed.kind == 2 ? 3U : 1U); ++i) {
+                ratios.add(parsed.values[2*i]); flags.add(parsed.values[2*i+1]);
+            }
+        }
+    }
+    if (sensorType_ == "Ublox" && rfReadback_.length()) {
+        JsonObject rf = doc.createNestedObject("gnss_rf");
+        rf["source"] = "ubx_mon_rf";
+        rf["age_seconds"] = (nowMs - rfReadbackMs_) / 1000.0;
+        rf["payload_b64"] = rfReadback_;
+    }
+    if (sensorType_ == "Ublox" && spectrumReadback_.length()) {
+        JsonObject spectrum = doc.createNestedObject("gnss_spectrum");
+        spectrum["source"] = "ubx_mon_span";
+        spectrum["age_seconds"] = (nowMs - spectrumReadbackMs_) / 1000.0;
+        spectrum["payload_b64"] = spectrumReadback_;
+    }
     if (sensorType_ == "Ublox" && satelliteReadback_.length()) {
         JsonObject satellites = doc.createNestedObject("gnss_satellites");
         satellites["source"] = "ubx_nav_sat";

@@ -74,6 +74,35 @@ bool query(uint8_t cls, uint8_t id, UbxReplyBuffer<Capacity> &reply, String &err
 
 } // namespace
 
+bool UbloxReadback::readRf(uint8_t messageId, String &payloadBase64, String &error) {
+    if (messageId != 0x38 && messageId != 0x31) return false;
+    // MON-SPAN: at most four RF paths; this larger buffer exists only during the query.
+    UbxReplyBuffer<4 + 4 * 272 + 8> reply;
+    if (!query(0x0A, messageId, reply, error)) return false;
+    const uint8_t *p = reply.frame + 6;
+    const size_t length = reply.length - 8, stride = messageId == 0x38 ? 24 : 272;
+    if (length < 4 || p[0] != 0 || p[1] < 1 || p[1] > 4 || length != 4 + p[1] * stride) {
+        error = "Invalid MON-RF/MON-SPAN response";
+        return false;
+    }
+    for (size_t offset = 4; offset < length; offset += stride) {
+        if (messageId == 0x31 && (!UbxBaseStatus::u32(p + offset + 256)
+            || !UbxBaseStatus::u32(p + offset + 260) || !UbxBaseStatus::u32(p + offset + 264))) {
+            error = "Invalid MON-SPAN frequencies";
+            return false;
+        }
+        if (messageId == 0x38 && (p[offset + 14] | (uint16_t(p[offset + 15]) << 8)) > 8191) {
+            error = "Invalid MON-RF AGC";
+            return false;
+        }
+        if (messageId == 0x38)
+            for (size_t previous = 4; previous < offset; previous += stride)
+                if (p[previous] == p[offset]) { error = "Duplicate RF block"; return false; }
+    }
+    payloadBase64 = BackendAgentInternal::encodeBase64(p, length);
+    return payloadBase64.length() > 0;
+}
+
 bool UbloxReadback::readSatellites(String &payloadBase64, String &error) {
     // Larger reply buffer is temporary; other UBX exchanges keep their 256-byte limit.
     UbxReplyBuffer<UbxSatellites::MAX_PAYLOAD + 8> reply;

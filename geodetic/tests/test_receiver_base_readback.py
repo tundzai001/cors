@@ -22,7 +22,7 @@ NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
          'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',
-         'receiver_quality_status', '_ubx_dop', '_ubx_satellite_payload'}
+         'receiver_quality_status', '_ubx_dop', '_ubx_satellite_payload', '_ubx_rf_payload', '_unicore_rf_log'}
 
 
 def load():
@@ -154,6 +154,61 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status['hacc'], 500)
         self.reader.query_base.assert_any_await(b'\r\nBESTNAVA\r\n', b'#BESTNAVA')
 
+    async def test_rf_poll_validation_expiry_and_partial_failure(self):
+        rf = bytearray(4 + 2 * 24); rf[1] = 2
+        for i in range(2):
+            o = 4 + i * 24
+            rf[o:o+4] = bytes([i, i+1, 2, 1])
+            struct.pack_into('<HHB', rf, o + 12, 80+i, 4000+i, 12+i)
+        span = bytearray(4 + 2 * 272); span[1] = 2
+        for i in range(2):
+            o = 4 + i * 272
+            span[o:o+256] = bytes(range(256))
+            struct.pack_into('<III', span, o + 256, 25600000, 100000, 1575420000-i*350000000)
+            span[o+268] = 30
+        self.reader.query_base = AsyncMock(side_effect=[TimeoutError('PVT'), TimeoutError('DOP'),
+            TimeoutError('SAT'), self.pack(10, 0x38, rf), self.pack(10, 0x31, span)])
+        await self.s['refresh_receiver_quality'](self.agent, self.reader)
+        self.reader.query_base.assert_any_await(self.pack(10, 0x38), (10, 0x38))
+        self.reader.query_base.assert_any_await(self.pack(10, 0x31), (10, 0x31))
+        now = time.time()
+        status = self.s['receiver_quality_status'](now)
+        self.assertEqual(base64.b64decode(status['gnss_rf']['payload_b64']), rf)
+        self.assertEqual(base64.b64decode(status['gnss_spectrum']['payload_b64']), span)
+        self.assertIsNone(status['gnss_quality'])
+        self.assertIsNone(self.s['receiver_quality_status'](now+46)['gnss_rf'])
+        self.assertIsNone(self.s['receiver_quality_status'](now+46)['gnss_spectrum'])
+        for message_id, payload in [(0x38, rf), (0x31, span)]:
+            for invalid in [payload[:-1], bytes([1])+payload[1:], bytes([0, 5, 0, 0])]:
+                with self.assertRaises(ValueError): self.s['_ubx_rf_payload'](invalid, message_id)
+            corrupt = bytearray(self.pack(10, message_id, payload)); corrupt[-1] ^= 1
+            with self.assertRaises(ValueError): self.s['_base_ubx_payload'](corrupt, (10, message_id))
+        invalid = bytearray(rf); invalid[28] = 0
+        with self.assertRaises(ValueError): self.s['_ubx_rf_payload'](invalid, 0x38)
+        invalid = bytearray(span); invalid[260:264] = bytes(4)
+        with self.assertRaises(ValueError): self.s['_ubx_rf_payload'](invalid, 0x31)
+
+    async def test_unicore_rf_agc_jamming_and_fallback(self):
+        self.agent.detected_chip['type'] = 'Unicorecomm'
+        agc = b'#AGCA,65,GPS,FINE,2190,375570000,0,0,18,37;44,46,63,-1,-1,41,1,0,-1,-1*634f1e4b'
+        jam = unicore('#FREQJAMSTATUSA,97,GPS,FINE,2190,365412000,0,0,18,14;SINGLE,255,2,10,1,0,0,0,0')
+        self.reader.query_base = AsyncMock(side_effect=[agc, jam])
+        await self.s['refresh_receiver_quality'](self.agent, self.reader)
+        self.reader.query_base.assert_any_await(b'\r\nAGCA\r\n', b'#AGCA')
+        self.reader.query_base.assert_any_await(b'\r\nFREQJAMSTATUSA\r\n', b'#FREQJAMSTATUSA')
+        result = self.s['receiver_quality_status'](time.time())['gnss_rf']
+        self.assertEqual(result['agc']['values'],[44,46,63,-1,-1,41,1,0,-1,-1])
+        self.assertEqual(result['jamming']['ratios'],[255,10,0])
+        self.assertEqual(result['jamming']['flags'],[2,1,0])
+        self.assertIsNone(self.s['receiver_quality_status'](time.time()+46)['gnss_rf'])
+        overall = unicore('#JAMSTATUSA,97,GPS,FINE,2190,365412000,0,0,18,14;SINGLE,0,0,0,0')
+        self.reader.query_base = AsyncMock(side_effect=[TimeoutError('AGC'), TimeoutError('per-band unsupported'), overall])
+        await self.s['refresh_receiver_quality'](self.agent, self.reader)
+        self.assertEqual(self.s['receiver_quality_status'](time.time())['gnss_rf']['jamming']['source'],'unicore_jamstatusa')
+        for invalid in [agc[:-1]+b'0', unicore('#AGCA,65,GPS;44,46'), unicore('#AGCA,65,GPS;256,1,2,3,4,5,6,7,8,9'),
+                        unicore('#JAMSTATUSA,65,GPS;SINGLE,1,3,0,0')]:
+            with self.assertRaises(ValueError): self.s['_unicore_rf_log'](invalid)
+
     async def test_backend_compaction_keeps_quality_and_null_clear(self):
         from typing import Any, Optional
         source = SOURCE.parents[1] / 'cors_dashboard/backend/app/station_runtime.py'
@@ -163,7 +218,9 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
                      STATUS_ALLOW_HEAVY_FIELDS=False, buffer_metrics={'status_payload_compacted_count': 0})
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
         for quality in ({'hacc_m': 4.08, 'source': 'ubx_nav_pvt', 'age_seconds': 0}, None):
-            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality, 'gnss_satellites': quality})
+            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality, 'gnss_satellites': quality, 'gnss_rf': quality, 'gnss_spectrum': quality})
+            self.assertEqual(result['gnss_rf'], quality)
+            self.assertEqual(result['gnss_spectrum'], quality)
             self.assertIn('gnss_satellites', result)
             self.assertEqual(result['gnss_satellites'], quality)
             self.assertIn('gnss_dop', result)

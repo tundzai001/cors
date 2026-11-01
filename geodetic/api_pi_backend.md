@@ -243,3 +243,65 @@ remains visible so a reported placeholder is distinguishable from a missing
 reply. This interpretation must not be inferred from saved FIXED_LLA alone.
 Technical UBX identifiers are excluded from weekday translation, including
 NAV-SAT and MON-VER.
+
+
+### ZED-F9P RF diagnostics
+
+Pi and ESP32 poll read-only UBX-MON-RF (0A/38) and UBX-MON-SPAN (0A/31)
+alongside the existing 30-second navigation readback. A failure in one query
+does not prevent the remaining queries. No CFG command, NVS write or receiver
+firmware update is performed. This requires updating the station agent/ESP32
+application as well as the web application; updating the web alone cannot
+create RF telemetry from an older agent.
+
+Status carries `gnss_rf` and `gnss_spectrum` independently as
+`{source, payload_b64, age_seconds}`, or null when older than 45 seconds.
+Version-0 packets are bounded to four RF paths: 4+24*n and 4+272*n bytes.
+The receiver UART owner validates the UBX checksum before delivery. Per-path
+noise and AGC are raw receiver counts; CW suppression is scaled 0..255.
+Jamming state 0 is unknown/disabled, never a clean-RF result. MON-RF's legacy
+jamming flag may be deprecated on newer protocols supporting SEC-SIG v2;
+this first diagnostic panel reports MON-RF only, without claiming SEC-SIG coverage.
+MON-SPAN's 256 bins are relative amplitude in dB, not calibrated dBm. Frequency
+is center + span*(bin-127)/256. PGA is displayed separately and a changed PGA
+is flagged when comparing a saved reference.
+
+The web panel shows current source/age and clears expired readings. The reference
+is local to the open station panel and is cleared on station change or reload.
+Download captures serial, capture/receive times, current decoded readings and the
+reference; it is a snapshot, not continuous logging. Thirty-second polling can
+miss short interference events. Empty/unavailable RF data is never presented as
+absence of interference. These readings cannot identify a BTS or prove absolute
+Base/rover accuracy; compare positions, datum/height convention, antenna setup,
+rover behavior and alternate correction sources independently.
+
+Reference: u-blox F9 HPG 1.32 Interface Description, UBX-22008968, sections
+3.14.9 and 3.14.12 (MON-RF and MON-SPAN).
+
+
+### Unicore N4 RF diagnostics
+
+UM980/UM982 use AGCA and FREQJAMSTATUSA; JAMSTATUSA is an overall CW fallback
+if the per-frequency query is unavailable. Queries omit port and rate, using
+the N4 default single output at the current port; no persistent 1-Hz log,
+CONFIG ANTIJAM, UNLOG or SAVECONFIG is issued. Firmware that rejects a query
+leaves that reading unavailable. Unicore's CW logs document 1-Hz periodic
+output; the single-output query path still requires confirmation on the actual
+receiver firmware. Do not automatically change existing output rates to obtain it.
+
+Both Pi and ESP32 validate the ASCII CRC32 and exact field counts. AGCA has ten
+signed values (-1..255), of which indices 0/1/2 are ANT1 L1/L2/L5 and 5/6/7 are
+ANT2 L1/L2/L5; other slots are reserved. -1 is invalid, never a low AGC measurement.
+CW ratios use 0..255 and flags 0=no CW, 1=CW, 2=strong CW. The per-frequency log
+has three ratio/flag pairs; the overall fallback has one, never duplicated into
+three bands. These are not u-blox's AGC scale or MON-RF jamming states.
+
+`gnss_rf` with source `unicore_rf` carries independent `agc` and `jamming`
+readings with age_seconds; stale sub-readings become null independently after
+45 seconds. Both paths support the same reference/export controls as u-blox.
+No calibrated spectrum, noise-floor measurement or BTS identification is inferred
+from AGC. The reference remains local, and telemetry polling is not continuous RF logging.
+
+Reference: Unicore N4 Reference Commands Manual V2 EN R1.4, output syntax section
+and sections 7.3.54 JAMSTATUS, 7.3.55 FREQJAMSTATUS, 7.3.58 AGC:
+https://en.unicore.com/uploads/file/20241219/Unicore_Reference_Commands_Manual_For_N4_High_Precision_Products_V2_EN_R1.4.pdf

@@ -127,6 +127,58 @@ function getSatellitePlotSource(device, data, live = true, now = Date.now() / 10
     return {satellites, source: 'RTCM', maxAgeMs: 7000};
 }
 
+function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
+    const snapshot = device?.[field], spectrum = field === 'gnss_spectrum';
+    if (!live || !snapshot || snapshot.source !== (spectrum ? 'ubx_mon_span' : 'ubx_mon_rf')
+        || typeof snapshot.payload_b64 !== 'string' || snapshot.payload_b64.length > 1456
+        || typeof snapshot.age_seconds !== 'number') return null;
+    const received = Number(device.server_received_at || device.timestamp);
+    const age = snapshot.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    if (!Number.isFinite(age) || age < 0 || age > 45) return null;
+    try {
+        const bytes = Uint8Array.from(atob(snapshot.payload_b64), c => c.charCodeAt(0));
+        const stride = spectrum ? 272 : 24;
+        if (bytes.length < 4 || bytes[0] !== 0 || bytes[1] < 1 || bytes[1] > 4
+            || bytes.length !== 4 + bytes[1] * stride) return null;
+        const view = new DataView(bytes.buffer), blocks = [], ids = new Set();
+        for (let o = 4; o < bytes.length; o += stride) {
+            if (spectrum) {
+                const span = view.getUint32(o + 256, true), resolution = view.getUint32(o + 260, true);
+                const center = view.getUint32(o + 264, true);
+                if (!span || !resolution || !center) return null;
+                blocks.push({bins: Array.from(bytes.slice(o, o + 256)), span, resolution, center, pga: bytes[o + 268]});
+            } else {
+                const id = bytes[o], agc = view.getUint16(o + 14, true);
+                if (ids.has(id) || agc > 8191) return null;
+                ids.add(id);
+                blocks.push({id, jamming: bytes[o + 1] & 3, antenna: bytes[o + 2], power: bytes[o + 3],
+                    noise: view.getUint16(o + 12, true), agc, cw: bytes[o + 16]});
+            }
+        }
+        return {source: snapshot.source, age_seconds: age, blocks};
+    } catch (_) { return null; }
+}
+
+function getUnicoreRfDiagnostic(device, live = true, now = Date.now() / 1000) {
+    const snapshot = device?.gnss_rf;
+    if (!live || snapshot?.source !== 'unicore_rf') return null;
+    const received = Number(device.server_received_at || device.timestamp);
+    const fresh = value => {
+        const age = value?.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+        return typeof value?.age_seconds === 'number' && Number.isFinite(age) && age >= 0 && age <= 45
+            ? {...value, age_seconds: age} : null;
+    };
+    let agc = fresh(snapshot.agc), jamming = fresh(snapshot.jamming);
+    if (agc?.source !== 'unicore_agca' || !Array.isArray(agc.values) || agc.values.length !== 10
+        || !agc.values.every(value => Number.isInteger(value) && value >= -1 && value <= 255)) agc = null;
+    const count = jamming?.source === 'unicore_freqjamstatusa' ? 3 : jamming?.source === 'unicore_jamstatusa' ? 1 : 0;
+    if (!count || !Array.isArray(jamming.ratios) || !Array.isArray(jamming.flags)
+        || jamming.ratios.length !== count || jamming.flags.length !== count
+        || !jamming.ratios.every(value => Number.isInteger(value) && value >= 0 && value <= 255)
+        || !jamming.flags.every(value => Number.isInteger(value) && value >= 0 && value <= 2)) jamming = null;
+    return agc || jamming ? {source:'unicore_rf', agc, jamming} : null;
+}
+
 function getLeaflet() {
     const leaflet = window.Leaflet || window.L;
     return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
@@ -341,6 +393,100 @@ function getDecodedSatelliteCounts(satellites, maxAgeMs) {
 
 function isDeviceStaleOffline(device, nowMs = Date.now()) {
     return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
+}
+
+function RfDiagnostics({device, live}) {
+    const unicore = device.detected_chip_type === 'Unicorecomm';
+    const um = unicore ? getUnicoreRfDiagnostic(device, live) : null;
+    const rf = unicore ? null : getRfDiagnostic(device, 'gnss_rf', live);
+    const spectrum = unicore ? null : getRfDiagnostic(device, 'gnss_spectrum', live);
+    const hasData = Boolean(rf || spectrum || um);
+    const [reference, setReference] = useState(null);
+    const serial = device.serial;
+    const stateNames = ['Chưa xác định', 'Không báo nhiễu đáng kể', 'Cảnh báo nhiễu', 'Nhiễu nghiêm trọng'];
+    const exportReading = () => {
+        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, unicore: um, reference};
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
+        const link = document.createElement('a'); link.href = url; link.download = 'gnss-rf.json'; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    return <section className="card mt-3" aria-label="Chẩn đoán nhiễu GNSS">
+        <div className="card-body">
+            <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                <h6 className="mb-0">Chẩn đoán nhiễu GNSS</h6>
+                <div className="d-flex flex-wrap gap-2">
+                    <button className="btn btn-sm btn-outline-primary" disabled={!hasData}
+                        onClick={() => setReference({captured_at:new Date().toISOString(), rf, spectrum, unicore:um})}>Lưu mốc so sánh</button>
+                    <button className="btn btn-sm btn-outline-secondary" disabled={!hasData && !reference}
+                        onClick={exportReading}>Tải số liệu</button>
+                </div>
+            </div>
+            {!hasData && <p className="text-muted mb-2" role="status">Chưa có dữ liệu RF mới. Cần agent hỗ trợ và chip trả lời; dữ liệu quá 45 giây không được dùng để kết luận.</p>}
+            {unicore && <div className="d-grid gap-2 mb-2">
+                {um?.agc ? <div className="rf-band border rounded p-3">
+                    <h6>AGCA · {Math.floor(um.agc.age_seconds)} giây trước</h6>
+                    <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
+                        {[0,1,2,5,6,7].map((index, order) => <React.Fragment key={index}>
+                            <dt className="fw-normal text-muted">ANT{order < 3 ? 1 : 2} · {['L1','L2','L5'][order % 3]}</dt>
+                            <dd className="mb-0">{um.agc.values[index] === -1 ? 'Kênh không hợp lệ' : um.agc.values[index]}
+                                {reference?.unicore?.agc?.values[index] >= 0 && <small className="text-muted"> · mốc: {reference.unicore.agc.values[index]}</small>}
+                            </dd>
+                        </React.Fragment>)}
+                    </dl>
+                </div> : <p className="small text-muted mb-0">Chưa có AGC mới từ UM.</p>}
+                {um?.jamming ? <div className="rf-band border rounded p-3">
+                    <h6>{um.jamming.source === 'unicore_freqjamstatusa' ? 'FREQJAMSTATUSA' : 'JAMSTATUSA'} · {Math.floor(um.jamming.age_seconds)} giây trước</h6>
+                    {um.jamming.flags.map((flag, index) => <div className="d-flex flex-wrap gap-2 align-items-center mb-1" key={index}>
+                        <strong>{um.jamming.flags.length === 3 ? ['L1','L2','L5'][index] : 'CW tổng'}</strong>
+                        <span className={`badge ${['bg-success','bg-warning text-dark','bg-danger'][flag]}`}>{['Không báo nhiễu CW','Có nhiễu CW','Nhiễu CW mạnh'][flag]}</span>
+                        <span>{um.jamming.ratios[index]} / 255</span>
+                    </div>)}
+                </div> : <p className="small text-muted mb-0">Chưa có cảnh báo CW mới từ UM; chưa thể kết luận.</p>}
+                <p className="small text-muted mb-0">AGC UM: 0–255; −1 là kênh không hợp lệ. So sánh cùng thiết bị và anten, không áp ngưỡng u-blox. Chưa có dữ liệu phổ RF từ UM.</p>
+            </div>}
+            {rf && <>
+                <p className="small text-muted mb-2">MON-RF · {Math.floor(rf.age_seconds)} giây trước</p>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',gap:12}}>
+                    {rf.blocks.map(block => <div className="rf-band border rounded p-3" key={block.id}>
+                        <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+                            <strong>{block.id === 0 ? 'L1' : block.id === 1 ? 'L2 / L5' : `RF ${block.id}`}</strong>
+                            <span className={`badge ${['bg-secondary','bg-success','bg-warning text-dark','bg-danger'][block.jamming]}`}>{stateNames[block.jamming]}</span>
+                        </div>
+                        <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
+                            <dt className="fw-normal text-muted">Nhiễu nền (thô)</dt><dd className="mb-0">{block.noise}</dd>
+                            <dt className="fw-normal text-muted">AGC (thô)</dt><dd className="mb-0">{block.agc} / 8191</dd>
+                            <dt className="fw-normal text-muted">Triệt nhiễu CW (0–255)</dt><dd className="mb-0">{block.cw}</dd>
+                            <dt className="fw-normal text-muted">Anten</dt><dd className="mb-0">{['Khởi tạo','Chưa xác định','OK','Ngắn mạch','Hở mạch'][block.antenna] || 'Chưa xác định'}</dd>
+                        </dl>
+                    </div>)}
+                </div>
+            </>}
+            {reference && <p className="small mb-2" role="status">Mốc so sánh: {new Date(reference.captured_at).toLocaleString()}.
+                <button className="btn btn-sm btn-link" onClick={() => setReference(null)}>Xóa mốc</button></p>}
+            {!unicore && !spectrum && <p className="small text-muted mb-2">Chưa có phổ GNSS mới.</p>}
+            {spectrum && <>
+                <p className="small text-muted mb-2">MON-SPAN · {Math.floor(spectrum.age_seconds)} giây trước · Nét liền: hiện tại · Nét đứt: mốc so sánh</p>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',gap:12}}>
+                {spectrum.blocks.map((block, index) => {
+                    const previous = reference?.spectrum?.blocks.find(b => b.center === block.center && b.span === block.span && b.resolution === block.resolution);
+                    const frequency = bin => ((block.center + block.span * (bin - 127) / 256) / 1e6).toFixed(2);
+                    const points = bins => bins.map((value, i) => `${i * 2},${255 - value}`).join(' ');
+                    return <figure className="mb-2" key={index}>
+                        <figcaption className="small">{(block.center / 1e6).toFixed(2)} MHz · PGA {block.pga} dB · Bước {block.resolution} Hz</figcaption>
+                        <svg viewBox="0 0 510 255" role="img" aria-label={`Phổ GNSS quanh ${block.center / 1e6} MHz, biên độ tương đối 0 đến 255 dB`}
+                            style={{width:'100%',height:'auto',border:'1px solid var(--bs-border-color)',background:'var(--bs-tertiary-bg)'}}>
+                            {[0,64,128,192,255].map(value => <g key={value}><line x1="0" x2="510" y1={255-value} y2={255-value} stroke="currentColor" opacity="0.12"/><text x="3" y={Math.max(12,251-value)} fontSize="12" fill="currentColor">{value}</text></g>)}
+                            {previous && <polyline points={points(previous.bins)} fill="none" stroke="var(--bs-warning, #ffc107)" strokeWidth="2" strokeDasharray="6 4"/>}
+                            <polyline points={points(block.bins)} fill="none" stroke="var(--bs-info, #0dcaf0)" strokeWidth="2"/>
+                        </svg>
+                        <div className="d-flex justify-content-between small"><span>{frequency(0)} MHz</span><span>{frequency(255)} MHz</span></div>
+                        {previous && previous.pga !== block.pga && <p className="small text-warning mb-0">PGA đã đổi: {previous.pga} → {block.pga} dB; cần tính đến mức khuếch đại khi so sánh.</p>}
+                    </figure>;
+                })}</div>
+            </>}
+            <p className="small text-muted mb-0">{!unicore && 'Phổ là biên độ tương đối, không phải dBm. '}Chỉ số RF không xác định nguồn phát; chưa đủ kết luận trạm 4G gây sai số hoặc tọa độ Base đúng.</p>
+        </div>
+    </section>;
 }
 
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
@@ -1245,6 +1391,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     Đang chờ dữ liệu vệ tinh từ decoder RTCM. Có danh sách bản tin chưa đồng nghĩa đã đủ dữ liệu vị trí quỹ đạo để vẽ biểu đồ.
                 </div>
             )}
+            {['Ublox','Unicorecomm'].includes(device.detected_chip_type) && <RfDiagnostics key={`${device.serial}:${device.detected_chip_type}`} device={device} live={liveDataAvailable} />}
+
             <div className="sky-grid">
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>

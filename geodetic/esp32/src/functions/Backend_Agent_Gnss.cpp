@@ -430,6 +430,24 @@ void BackendAgent::pollGnssStatus() {
                 satelliteReadbackMs_ = millis();
                 markStatusDirty();
             }
+            if (UbloxReadback::readRf(0x38, rfReadback_, error)) {
+                rfReadbackMs_ = millis();
+                markStatusDirty();
+            }
+            if (UbloxReadback::readRf(0x31, spectrumReadback_, error)) {
+                spectrumReadbackMs_ = millis();
+                markStatusDirty();
+            }
+        } else {
+            if (UnicoreReadback::readRfLog(1, agcReadback_, error)) {
+                agcReadbackMs_ = millis();
+                markStatusDirty();
+            }
+            if (UnicoreReadback::readRfLog(2, jamReadback_, error)
+                || UnicoreReadback::readRfLog(3, jamReadback_, error)) {
+                jamReadbackMs_ = millis();
+                markStatusDirty();
+            }
         }
     }
 
