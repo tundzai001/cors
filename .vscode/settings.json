@@ -24,6 +24,5 @@
             "commands": "platformio-ide.uploadAndMonitor"
         }
     ],
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",
     "C_Cpp.default.cppStandard": "gnu++17"
 }
