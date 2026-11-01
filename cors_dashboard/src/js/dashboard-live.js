@@ -134,13 +134,26 @@ function getAutomaticRfAssessment(device, live = true, now = Date.now() / 1000) 
     if (!report || !['ubx_mon_rf','unicore_rf'].includes(report.source)
         || !['sample_count','warning_samples','critical_samples','episodes','coincident_cno_drops','quality_comparisons'].every(key => Number.isInteger(report[key]) && report[key] >= 0 && report[key] <= 120)
         || typeof report.age_seconds !== 'number' || !Number.isFinite(age) || age < 0)
-        return {tone:'secondary',title:'Chưa có báo cáo theo dõi tự động từ Pi',report:null};
+        return {tone:'secondary',title:'Chờ dữ liệu RF',report:null};
     if (!live || age > 45 || report.current_severity == null)
-        return {tone:'warning',title:'Theo dõi đang thiếu dữ liệu RF mới',report};
-    if (report.sample_count < 3) return {tone:'info',title:'Pi đang thu thập các mẫu đầu tiên',report};
+        return {tone:'warning',title:'Tạm thiếu mẫu RF',report};
+    if (report.sample_count < 3) return {tone:'info',title:'Đang thu mẫu',report};
     return {tone:report.warning_samples ? 'warning' : 'info',report,
-        title:report.coincident_cno_drops ? 'Cảnh báo RF trùng mẫu C/N₀ giảm'
-            : report.warning_samples ? 'Đã ghi nhận cảnh báo RF' : 'Chưa ghi nhận cảnh báo RF trong các mẫu đã thu'};
+        title:report.coincident_cno_drops ? 'Cảnh báo RF kèm C/N₀ giảm'
+            : report.warning_samples ? 'Có cảnh báo RF' : 'Không có cảnh báo trong các mẫu đã thu'};
+}
+
+function getRfMonitorWindow(device, live = true, now = Date.now() / 1000) {
+    const assessment = getAutomaticRfAssessment(device, live, now), report = assessment.report;
+    if (!report) return {...assessment, elapsed:0, age:null, samples:[]};
+    const received = Number(device.server_received_at || device.timestamp);
+    const age = report.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    const duration = typeof report.observed_seconds === 'number' ? report.observed_seconds : report.last_sample_at - report.first_sample_at;
+    const elapsed = Number.isFinite(duration) ? Math.max(0,Math.min(600,duration)) : 0;
+    const samples = Array.isArray(report.samples) && report.samples.length <= 120 ? report.samples.filter(sample =>
+        Array.isArray(sample) && sample.length === 3 && typeof sample[0] === 'number' && Number.isFinite(sample[0]) && sample[0] >= 0 && sample[0] + age <= 600
+        && [0,1,2].includes(sample[1]) && (sample[2] === null || typeof sample[2] === 'number' && Number.isFinite(sample[2]))) : [];
+    return {...assessment,elapsed,age,samples};
 }
 
 function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
@@ -277,7 +290,7 @@ function getRfAssessment({live, rf, um, readError, receiver, unicore = false}) {
     const fault = rf.blocks.filter(b => b.antenna === 3 || b.antenna === 4);
     if (fault.length) return {tone:'danger',title:'Chip báo lỗi đường anten',
         reason:`${fault.map(band).join(', ')}: có chỉ báo hở mạch hoặc ngắn mạch anten.`,
-        next:'Kiểm tra cáp, đầu nối và nguồn anten trước khi quy nguyên nhân cho BTS.'};
+        next:'Kiểm tra cáp, đầu nối và nguồn anten.'};
     const severity = Math.max(...rf.blocks.map(b => b.jamming));
     if (severity >= 2) return {tone:severity === 3 ? 'danger' : 'warning',
         title:severity === 3 ? 'Chip báo nhiễu nghiêm trọng' : 'Chip báo có nhiễu',
@@ -513,9 +526,56 @@ function isDeviceStaleOffline(device, nowMs = Date.now()) {
     return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
 }
 
+function RfMonitorOverview({model}) {
+    const {report,elapsed,age,samples} = model;
+    const duration = seconds => `${Math.floor(seconds / 60).toString().padStart(2,'0')}:${Math.floor(seconds % 60).toString().padStart(2,'0')}`;
+    const levels = ['Không cảnh báo','Cảnh báo','Mức mạnh'];
+    const colors = ['var(--bs-info)','var(--bs-warning)','var(--bs-danger)'];
+    const clock = offset => new Date((Date.now()/1000 - age - offset)*1000).toLocaleTimeString('vi-VN',{hour12:false});
+    return <div className="border rounded-3 p-3 mb-3" aria-label="Cửa sổ theo dõi RF">
+        <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+            <div><h6 className="mb-1">Theo dõi RF</h6><span className="small text-muted">10 phút gần nhất · Tự động tại Pi</span></div>
+            <span className={`badge text-bg-${model.tone}`} style={{whiteSpace:'normal',textAlign:'left'}} role="status">{model.title}</span>
+        </div>
+        <div className="d-flex flex-wrap justify-content-between gap-2 small mb-2">
+            <span>{elapsed < 600 ? 'Đang mở rộng cửa sổ' : 'Cửa sổ cuốn liên tục'}</span>
+            <span className="font-monospace">{duration(elapsed)} / 10:00</span>
+        </div>
+        <div className="progress mb-2" style={{height:6}} role="progressbar" aria-label="Độ dài cửa sổ đã theo dõi" aria-valuenow={Math.floor(elapsed)} aria-valuemin={0} aria-valuemax={600} aria-valuetext={`${duration(elapsed)} trên 10 phút`}>
+            <div className="progress-bar bg-info" style={{width:`${elapsed/6}%`,transition:'none'}} />
+        </div>
+        <p className="small text-muted mb-3">{age === null ? 'Chưa nhận mẫu' : `Mẫu mới nhất: ${Math.floor(age)} giây trước`}</p>
+        <div className="row g-2 mb-3">
+            {[[report?.sample_count,'Mẫu đã thu'],[report?.warning_samples,'Mẫu cảnh báo'],[report?.episodes,'Đợt cảnh báo'],[report?.quality_comparisons ? report.coincident_cno_drops : null,'Kèm C/N₀ giảm']].map(([value,label]) => <div className="col-6 col-lg-3" key={label}>
+                <div className="rounded border p-2 h-100"><strong className="fs-5 d-block">{value ?? '—'}</strong><span className="small text-muted">{label}</span></div>
+            </div>)}
+        </div>
+        {samples.length ? <>
+            <div className="d-flex flex-wrap gap-3 small mb-2"><span>● Không cảnh báo</span><span>▲ Cảnh báo</span><span>◆ Mức mạnh</span></div>
+            <svg viewBox="0 0 600 105" role="img" aria-label={`${samples.length} mẫu RF trong 10 phút; các khoảng trống không có mẫu`} style={{width:'100%',height:'auto',minHeight:100}}>
+                {[2,1,0].map(level => <line key={level} x1="10" x2="590" y1={20+(2-level)*30} y2={20+(2-level)*30} stroke="currentColor" opacity="0.12" />)}
+                {samples.map(([offset,level,delta],index) => {
+                    const x=10+(1-(age+offset)/600)*580, y=20+(2-level)*30;
+                    return <g key={index} fill={colors[level]}><title>{clock(offset)} · {levels[level]}{delta === null ? '' : ` · ΔC/N₀ ${delta} dB-Hz`}</title>
+                        {level === 0 ? <circle cx={x} cy={y} r="4" /> : <path d={level === 1 ? `M${x} ${y-5}l5 10h-10z` : `M${x} ${y-6}l6 6l-6 6l-6-6z`} />}
+                        {delta !== null && delta <= -3 && <circle cx={x} cy={y} r="8" fill="none" stroke="currentColor" />}
+                    </g>;
+                })}
+            </svg>
+            <div className="d-flex justify-content-between small text-muted mb-2"><span>−10 phút</span><span>−5 phút</span><span>Hiện tại</span></div>
+            <p className="small text-muted mb-2">Mỗi dấu là một lần đọc. Khoảng trống: không có mẫu. Vòng ngoài: C/N₀ giảm.</p>
+            <details><summary className="small py-2" style={{minHeight:44}}>Xem mẫu và cách tính</summary>
+                <div className="table-responsive"><table className="table table-sm small"><caption className="visually-hidden">Các mẫu RF đã thu trong cửa sổ</caption><thead><tr><th>Thời điểm</th><th>RF</th><th>ΔC/N₀</th></tr></thead>
+                    <tbody>{samples.map(([offset,level,delta],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta} dB-Hz`}</td></tr>)}</tbody></table></div>
+                <p className="small text-muted mb-0">C/N₀ giảm: trung vị giảm từ 3 dB-Hz trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc. {report?.quality_comparisons || 0} cặp mẫu đủ dữ liệu đối chiếu.</p>
+            </details>
+        </> : <p className="small text-muted mb-0">Chưa có lịch sử từng mẫu. Số đếm phía trên vẫn cập nhật khi nhận báo cáo.</p>}
+    </div>;
+}
+
 function RfDiagnostics({device, live}) {
     const esp32 = device.system_info?.gnss_rf_supported === false || /^esp_/i.test(device.serial || '');
-    const automatic = getAutomaticRfAssessment(device, live);
+    const automatic = getRfMonitorWindow(device, live);
     const unicore = device.detected_chip_type === 'Unicorecomm';
     const um = unicore ? getUnicoreRfDiagnostic(device, live) : null;
     const rf = unicore ? null : getRfDiagnostic(device, 'gnss_rf', live);
@@ -547,15 +607,7 @@ function RfDiagnostics({device, live}) {
     </section>;
     return <section className="card mt-3" aria-label="Chẩn đoán nhiễu GNSS">
         <div className="card-body">
-            <div className={`alert alert-${automatic.tone} mb-3`} aria-label="Theo dõi tự động tại Pi">
-                <strong className="d-block mb-1" role="status" aria-atomic="true">{automatic.title}</strong>
-                <p className="small mb-1">Pi tự theo dõi cả khi đóng web. Cửa sổ 10 phút, theo nhịp đọc RF hiện có; đợt ngắn giữa hai lần đọc có thể bị bỏ sót.</p>
-                {automatic.report && <>
-                    <p className="mb-1">{automatic.report.sample_count} mẫu · {automatic.report.warning_samples} mẫu cảnh báo · {automatic.report.episodes} đợt · {automatic.report.critical_samples} mẫu mức mạnh</p>
-                    <p className="small mb-1">{automatic.report.quality_comparisons ? `${automatic.report.coincident_cno_drops} mẫu cảnh báo trùng mức C/N₀ giảm ít nhất 3 dB-Hz (trung vị trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc).` : 'Chưa có đủ mẫu C/N₀ cùng nguồn để đối chiếu suy giảm tín hiệu.'}</p>
-                </>}
-                <p className="small mb-0">Trùng thời điểm là dấu hiệu cần kiểm tra, chưa xác định nguồn BTS hay chứng minh sai số đo.</p>
-            </div>
+            <RfMonitorOverview model={automatic} />
             <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                 <h6 className="mb-0">Chẩn đoán nhiễu GNSS</h6>
                 <div className="d-flex flex-wrap gap-2">
@@ -625,7 +677,7 @@ function RfDiagnostics({device, live}) {
                         <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
                             <dt className="fw-normal text-muted">Nhiễu nền (thô)</dt><dd className="mb-0">{block.noise}</dd>
                             <dt className="fw-normal text-muted">AGC (thô)</dt><dd className="mb-0">{block.agc}{block.agc_valid ? ' / 8191' : ' · ngoài dải mô tả'}</dd>
-                            <dt className="fw-normal text-muted">Triệt nhiễu CW (0–255)</dt><dd className="mb-0">{block.cw}</dd>
+                                <dt className="fw-normal text-muted">Chỉ báo nhiễu CW · jamInd (0–255)</dt><dd className="mb-0">{block.cw}</dd>
                             <dt className="fw-normal text-muted">Anten</dt><dd className="mb-0">{['Khởi tạo','Chưa xác định','OK','Ngắn mạch','Hở mạch'][block.antenna] || 'Chưa xác định'}</dd>
                         </dl>
                     </div>)}
@@ -654,7 +706,7 @@ function RfDiagnostics({device, live}) {
                     </figure>;
                 })}</div>
             </>}
-            <p className="small text-muted mb-0">{!unicore && 'Phổ thô không phải công suất dBm; đỉnh phổ đơn lẻ chưa chứng minh có nhiễu. '}Chỉ số RF không xác định nguồn phát; chưa đủ kết luận trạm 4G gây sai số hoặc tọa độ Base đúng.</p>
+            <p className="small text-muted mb-0">{!unicore && 'Phổ thô không phải công suất dBm; đỉnh phổ đơn lẻ chưa chứng minh có nhiễu. '}Chỉ số RF không xác định nguồn gây nhiễu hoặc sai số tọa độ.</p>
             </details>
         </div>
     </section>;

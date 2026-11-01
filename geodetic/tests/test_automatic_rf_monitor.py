@@ -29,6 +29,8 @@ class AutomaticRfMonitorTests(unittest.TestCase):
         result = self.monitor.observe(self.payload(age=2), 102)
         self.assertEqual(result['sample_count'], 1)  # Same receiver sample, new heartbeat.
         result = self.monitor.observe(self.payload(2, 40), 130)
+        self.assertEqual(result['observed_seconds'], 30)
+        self.assertEqual(result['samples'], [[30, 0, None], [0, 1, -5]])
         self.assertEqual(result['coincident_cno_drops'], 1)
         self.assertEqual(result['cno_delta_dbhz'], -5)
         self.assertEqual(result['matched_satellites'], 6)
@@ -70,6 +72,10 @@ class AutomaticRfMonitorTests(unittest.TestCase):
                 source='unicore_freqjamstatusa', age_seconds=0, flags=[0, 1, 0])))
             result = self.monitor.observe(packet, now)
         self.assertLessEqual(len(self.monitor.samples), 120)
+        self.assertEqual(result['observed_seconds'], 600)
+        self.assertEqual(len(result['samples']), result['sample_count'])
+        self.assertEqual(result['samples'][-1][0], 0)
+        self.assertTrue(all(0 <= sample[0] <= 600 for sample in result['samples']))
         self.assertEqual(result['warning_samples'], result['sample_count'])
         self.assertEqual(result['quality_comparisons'], 0)
         self.scope['AUTOMATIC_RF_REPORT'] = result
