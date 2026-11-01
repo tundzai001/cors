@@ -9,6 +9,28 @@ function formatTelemetryNumber(value, digits, fallback) {
     return Number.isFinite(number) ? number.toFixed(digits) : fallback;
 }
 
+function getGnssQuality(device, nmeaData, live = true, now = Date.now() / 1000) {
+    if (!live) return null;
+    const quality = device.gnss_quality;
+    if (quality && ['ubx_nav_pvt', 'nmea_gst', 'unicore_bestnav_sigma'].includes(quality.source)) {
+        const received = Number(device.server_received_at || device.timestamp);
+        const age = quality.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+        const limit = quality.source === 'nmea_gst' ? 15 : 45;
+        if (typeof quality.age_seconds !== 'number' || !Number.isFinite(age) || age < 0 || age > limit) return null;
+        return {...quality, age_seconds: age,
+            hacc_m: typeof quality.hacc_m === 'number' && Number.isFinite(quality.hacc_m)
+                && quality.hacc_m >= 0 && quality.fix_valid !== false ? quality.hacc_m : null};
+    }
+    const gst = nmeaData?.gst;
+    const age = now - gst?.received_at;
+    if (gst?.hacc_source === 'gst_lat_lon_sigma' && typeof gst.hacc === 'number'
+        && Number.isFinite(gst.hacc) && gst.hacc > 0 && age >= 0 && age <= 15) {
+        return {hacc_m: gst.hacc, source: 'nmea_gst', age_seconds: age};
+    }
+    // Untagged legacy hacc can be mm, m or HDOP. Do not guess its units.
+    return null;
+}
+
 function getLeaflet() {
     const leaflet = window.Leaflet || window.L;
     return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
@@ -314,6 +336,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const safeNmeaData = liveDataAvailable
         ? { ...(nmeaData || { gga: null, gsa: null, satellites: {} }), base_coords: nmeaData?.base_coords || device.base_config?.coords }
         : { gga: null, gsa: null, satellites: {} };
+    const deviceRef = useRef(device);
+    deviceRef.current = device;
     const safeNmeaDataRef = useRef(safeNmeaData);
     useEffect(() => {
         safeNmeaDataRef.current = safeNmeaData;
@@ -352,18 +376,14 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const gga = currentNmeaData.gga || {};
             const gsa = currentNmeaData.gsa || {};
             const sats = Object.values(currentNmeaData.satellites || {}).filter(s => s.snr > 0);
-            const satCount = sats.length || gga.satellites || 0;
+            const quality = getGnssQuality(device, currentNmeaData, liveDataAvailable);
+            const satCount = quality?.satellites ?? device.satellite_count ?? (sats.length || gga.satellites || 0);
 
             const avgSnr = sats.length > 0
                 ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length
                 : 0;
 
-            let currentHacc = undefined;
-            if (device.hacc !== undefined) {
-                currentHacc = device.hacc / 1000;
-            } else if (currentNmeaData.hacc !== undefined) {
-                currentHacc = currentNmeaData.hacc / 1000;
-            }
+            const currentHacc = quality?.hacc_m ?? undefined;
 
             setMetrics(prev => ({
                 fixQuality: {
@@ -376,7 +396,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 },
                 accuracy: {
                     value: currentHacc,
-                    history: [...(prev.accuracy?.history || []), currentHacc !== undefined ? currentHacc : 0].slice(-30)
+                    history: currentHacc === undefined ? [] : [...(prev.accuracy?.history || []), currentHacc].slice(-30)
                 },
                 hdop: {
                     value: gsa.hdop || 0,
@@ -393,7 +413,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             }));
         }, 2000);
         return () => clearInterval(interval);
-    }, [device?.serial, device?.bps, device?.hacc, liveDataAvailable]); // Update logic dependencies
+    }, [device?.serial, device?.bps, device?.gnss_quality, device?.server_received_at, device?.satellite_count, liveDataAvailable]); // Update logic dependencies
 
     // SKYPLOT & CANVAS LOGIC
     useEffect(() => {
@@ -669,6 +689,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         const animate = () => {
             const now = Date.now();
             const { gga, gsa, satellites, base_coords } = safeNmeaDataRef.current;
+            const quality = getGnssQuality(deviceRef.current, safeNmeaDataRef.current,
+                !isDeviceStaleOffline(deviceRef.current), now / 1000);
 
             // Text Stats Updates
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
@@ -676,13 +698,14 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) {
                     const activeCount = getVisibleSatellites(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION).length;
-                    satCountEl.textContent = activeCount || gga?.satellites || 0;
+                    satCountEl.textContent = quality?.satellites ?? (activeCount || gga?.satellites || 0);
                 }
 
                 const dopEl = document.getElementById('db-dop');
                 if (dopEl) {
-                    const hText = gsa?.hdop >= 99 ? 'N/A' : formatTelemetryNumber(gsa?.hdop, 2, isReadonly4g ? 'N/A' : '0.0');
-                    const pText = gsa?.pdop >= 99 ? 'N/A' : formatTelemetryNumber(gsa?.pdop, 2, isReadonly4g ? 'N/A' : '0.0');
+                    const hText = gsa?.hdop >= 99 ? 'N/A' : formatTelemetryNumber(gsa?.hdop, 2, 'N/A');
+                    const pdop = gsa?.pdop ?? quality?.pdop;
+                    const pText = pdop >= 99 ? 'N/A' : formatTelemetryNumber(pdop, 2, 'N/A');
                     dopEl.textContent = `${hText} / ${pText}`;
                 }
 
@@ -751,7 +774,10 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const fixInfo = FIX_STATUS_MAP[rtk_status] || FIX_STATUS_MAP['NO_FIX'];
     */
 
-    const acc = metrics.accuracy?.value;
+    const quality = getGnssQuality(device, safeNmeaData, liveDataAvailable);
+    const acc = quality?.hacc_m;
+    const fixedBase = device.system_info?.receiver_base_readback?.mode_kind === 'base'
+        || (device.base_mode_active && device.base_config?.base_setup_method === 'FIXED_LLA');
     let accDisplayValue = "--";
     let accUnit = "m";
     let accColor = "#ff6b6b";
@@ -770,6 +796,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         else if (acc < 0.1) accColor = "#ffd43b";
     }
 
+    if (fixedBase) accColor = 'var(--bs-info, #0dcaf0)';
     return (
         <div className="dashboard-master">
             {/* 🆕 METRIC CARDS WITH SPARKLINES (Nếu có component MetricCard) */}
@@ -777,7 +804,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
                     <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
                     <window.MetricCard title="Active Sats" value={metrics.satellites.value} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
-                    <window.MetricCard title="hAcc" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
+                    <window.MetricCard title="hAcc (ước lượng)" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
                     <window.MetricCard title="Avg SNR" value={metrics.signalStrength.value} unit="dB" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
                 </div>
             )}
@@ -805,18 +832,20 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">0.0 / 0.0</div></div></div>
                 <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">0.0</span> / <span id="db-lon">0.0</span></div></div></div>
             </div>
-            {/* BASE MODE WARNING */}
-            {device.base_mode_active && rtk_status !== 'RTK_FIXED' && (
-                <div className="alert alert-warning mt-3" role="alert">
-                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
-                    <strong>Base Station Mode Active</strong> - Waiting for RTK convergence...
-                    {rtk_status === 'DGPS' && (
-                        <div className="small mt-1">
-                            Currently in DGPS mode. RTK Fixed typically requires 5-10 minutes after power-on.
-                        </div>
-                    )}
+            <div className="alert alert-info mt-3" role="status">
+                {quality ? <div>
+                    Nguồn: {quality.source === 'ubx_nav_pvt' ? 'UBX-NAV-PVT'
+                        : quality.source === 'unicore_bestnav_sigma' ? 'Unicore BESTNAV (σ ngang tổng hợp)'
+                        : 'NMEA GST (σ ngang tổng hợp)'}
+                    {' · '}Đọc cách đây {Math.floor(quality.age_seconds)} giây.
+                    {quality.hacc_m === null && ' Chip chưa báo độ chính xác hợp lệ.'}
+                </div> : <div>Chưa có số liệu độ chính xác còn hiệu lực từ chip.</div>}
+                <div className="small mt-1">
+                    {fixedBase
+                        ? 'Fixed LLA dùng tọa độ đã khai báo. hAcc không xác minh sai số tọa độ Base và không phải độ chính xác RTK của rover.'
+                        : 'hAcc là ước lượng của chip, không phải sai số được đo với tọa độ chuẩn.'}
                 </div>
-            )}
+            </div>
 
             {/* MAP */}
             <div className="map-section">

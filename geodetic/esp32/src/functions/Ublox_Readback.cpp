@@ -71,6 +71,14 @@ bool query(uint8_t cls, uint8_t id, UbxReply &reply, String &error,
 
 } // namespace
 
+bool UbloxReadback::readNavigation(UbxNavigation &status, String &error) {
+    UbxReply reply;
+    if (!query(1, 7, reply, error)) return false;
+    if (status.decode(reply.frame + 6, reply.length - 8)) return true;
+    error = "Invalid NAV-PVT response";
+    return false;
+}
+
 bool UbloxReadback::readBaseStatus(UbxBaseStatus &status, String &error) {
     UbxReply mode;
     if (!query(0x06, 0x71, mode, error)) return false;

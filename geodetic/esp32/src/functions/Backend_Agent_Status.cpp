@@ -241,11 +241,35 @@ String BackendAgent::buildStatusPayload() {
 
     doc["rtk_fix_status"] = gnss.fixStatus;
     if (gnss.satellites > 0) doc["satellite_count"] = gnss.satellites;
-    if (gnss.gstHacc > 0 && gnss.lastGstMs > 0
+    doc["hacc"] = nullptr; // Compatibility field: always millimetres, never HDOP.
+    doc["gnss_quality"] = nullptr;
+    if (sensorType_ == "Ublox" && navigationMs_ > 0 && nowMs - navigationMs_ <= 45000UL) {
+        JsonObject quality = doc.createNestedObject("gnss_quality");
+        quality["source"] = "ubx_nav_pvt";
+        quality["age_seconds"] = (nowMs - navigationMs_) / 1000.0;
+        quality["fix_valid"] = navigation_.valid;
+        quality["fix_type"] = navigation_.fixType;
+        quality["satellites"] = navigation_.satellites;
+        quality["pdop"] = navigation_.pdop * 0.01;
+        quality["hacc_m"] = nullptr;
+        doc["satellite_count"] = navigation_.satellites;
+        if (navigation_.valid) {
+            quality["hacc_m"] = navigation_.haccMm * 0.001;
+            doc["hacc"] = navigation_.haccMm;
+        }
+    } else if (sensorType_ == "Unicorecomm" && unicoreQualityMs_ > 0 && nowMs - unicoreQualityMs_ <= 45000UL) {
+        JsonObject quality = doc.createNestedObject("gnss_quality");
+        quality["source"] = "unicore_bestnav_sigma";
+        quality["age_seconds"] = (nowMs - unicoreQualityMs_) / 1000.0;
+        quality["hacc_m"] = unicoreHorizontalSigma_;
+        doc["hacc"] = unicoreHorizontalSigma_ * 1000.0;
+    } else if (gnss.gstHacc > 0 && gnss.lastGstMs > 0
         && nowMs - gnss.lastGstMs <= 15000UL) {
-        doc["hacc"] = gnss.gstHacc;
-    } else if (gnss.hdop > 0) {
-        doc["hacc"] = gnss.hdop;
+        doc["hacc"] = gnss.gstHacc * 1000.0;
+        JsonObject quality = doc.createNestedObject("gnss_quality");
+        quality["hacc_m"] = gnss.gstHacc;
+        quality["source"] = "nmea_gst";
+        quality["age_seconds"] = (nowMs - gnss.lastGstMs) / 1000.0;
     }
 
     JsonObject gnssStats = doc.createNestedObject("gnss_stats");

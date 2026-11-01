@@ -168,3 +168,27 @@ Capability `gnss_verification_details_supported` cho biết agent đã hỗ tr�
 chi tiết. Agent cũ chỉ trả nhóm kết quả thì UI yêu cầu cập nhật, không tự tạo
 bảng giá trị từ cấu hình web. Kết quả chi tiết cũng chỉ là cấu hình chip,
 không phải phép đo điện trên chân I2C/UART/SPI hoặc xác nhận rover nhận RTCM.
+
+
+### GNSS accuracy telemetry
+
+`gnss_quality` is a transient readback snapshot, or `null` when unavailable.
+`hacc_m` is always metres; `source` is `ubx_nav_pvt`, `nmea_gst` or
+`unicore_bestnav_sigma`; `age_seconds` is its age when the status was sent.
+The legacy top-level `hacc` field is consistently millimetres, or `null`.
+HDOP is never an accuracy in metres. GST/BESTNAV horizontal sigma is
+`sqrt(latitude_sigma² + longitude_sigma²)`, not a guaranteed error radius.
+
+Pi and ESP32 poll u-blox NAV-PVT every 30 seconds through the existing serial
+owner, with UBX checksum and fix/invalid-LLH validation. The snapshot includes
+satellites, fix type and PDOP. Unicore uses the existing MODE/BESTNAVA poll and
+reads the optional latitude/longitude standard deviations. No periodic message
+rates, output protocol gates or persisted configuration are changed by these
+queries. The connected port must accept receiver commands and permit replies;
+a port restricted to RTCM cannot supply UBX readbacks without reconfiguration.
+
+Receiver snapshots expire after 45 seconds; GST expires after 15 seconds.
+The UI also adds time since server receipt and suppresses offline or expired
+values. Legacy untagged hacc is hidden because old agents mixed mm, m and HDOP.
+Fixed LLA hAcc does not independently validate the declared Base coordinates,
+and a fixed Base does not need the rover's RTK Fixed convergence state.

@@ -1,5 +1,6 @@
 #include "functions/Ubx_Config_Verification.h"
 #include "functions/Ubx_Reply.h"
+#include "functions/Ubx_Navigation.h"
 #include "functions/Unicore_Config_Verification.h"
 #include <cassert>
 #include <cstdio>
@@ -7,6 +8,19 @@
 #include <string>
 
 int main() {
+    uint8_t pvt[92] = {};
+    pvt[20] = 5; pvt[21] = 1; pvt[23] = 35;
+    pvt[40] = 0xF0; pvt[41] = 0x0F; // 4080 mm, not 4.08 mm.
+    pvt[76] = 123;
+    UbxNavigation nav;
+    assert(nav.decode(pvt, sizeof(pvt)) && nav.valid);
+    assert(nav.haccMm == 4080 && nav.pdop == 123 && nav.satellites == 35);
+    pvt[78] = 1;
+    assert(nav.decode(pvt, sizeof(pvt)) && !nav.valid);
+    pvt[78] = 0; pvt[21] = 0;
+    assert(nav.decode(pvt, sizeof(pvt)) && !nav.valid);
+    assert(!nav.decode(pvt, 91));
+
     uint8_t expected[40] = {}, actual[40] = {};
     expected[2] = actual[2] = 2;
     expected[3] = actual[3] = 1;

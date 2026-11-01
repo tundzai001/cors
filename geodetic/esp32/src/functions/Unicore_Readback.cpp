@@ -162,9 +162,9 @@ bool readBestPosition(JsonObject position, String &error) {
     String payload = response.substring(separator + 1);
     const int checksum = payload.indexOf('*');
     if (checksum >= 0) payload.remove(checksum);
-    String fields[7];
+    String fields[10];
     int start = 0;
-    for (size_t index = 0; index < 7; ++index) {
+    for (size_t index = 0; index < 10; ++index) {
         const int comma = payload.indexOf(',', start);
         if (index < 6 && comma < 0) {
             error = "Unicore BESTNAV response is incomplete";
@@ -173,6 +173,7 @@ bool readBestPosition(JsonObject position, String &error) {
         const int end = comma < 0 ? payload.length() : comma;
         fields[index] = payload.substring(start, end);
         start = end + 1;
+        if (comma < 0) break;
     }
     for (String &field : fields) field.trim();
     position["solution_status"] = fields[0];
@@ -213,6 +214,14 @@ bool readBestPosition(JsonObject position, String &error) {
         return false;
     }
     position["undulation"] = undulation;
+    if (!fields[7].isEmpty() && !fields[8].isEmpty()) {
+        const double latSigma = std::strtod(fields[7].c_str(), &end);
+        const bool latValid = end != fields[7].c_str() && *end == '\0' && std::isfinite(latSigma) && latSigma >= 0 && latSigma <= 10000000;
+        const double lonSigma = std::strtod(fields[8].c_str(), &end);
+        if (latValid && end != fields[8].c_str() && *end == '\0' && std::isfinite(lonSigma) && lonSigma >= 0 && lonSigma <= 10000000) {
+            position["horizontal_sigma_m"] = std::hypot(latSigma, lonSigma);
+        }
+    }
     return true;
 }
 

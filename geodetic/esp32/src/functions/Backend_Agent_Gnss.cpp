@@ -356,6 +356,7 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
         receiverBaseReadbackMs_ = millis(); markStatusDirty();
         return success;
     }
+    unicoreQualityMs_ = 0;
     String mode;
     const bool success = UnicoreReadback::readMode(mode, error);
     DynamicJsonDocument readbackDoc(1024);
@@ -386,6 +387,10 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
             bestPosition["error"] = positionError;
         } else {
             surveyInReadbackHasPosition_ = true;
+            if (!bestPosition["horizontal_sigma_m"].isNull()) {
+                unicoreHorizontalSigma_ = bestPosition["horizontal_sigma_m"].as<float>();
+                unicoreQualityMs_ = millis();
+            }
             surveyInReadbackReady_ = String(bestPosition["position_type"] | "") == "FIXEDPOS";
         }
         saveSurveyResult(bestPosition, mode);
@@ -408,6 +413,14 @@ void BackendAgent::pollGnssStatus() {
         || (lastReceiverPollMs_ != 0 && now - lastReceiverPollMs_ >= 30000UL)) {
         String error;
         refreshReceiverReadback(error);
+        if (sensorType_ == "Ublox") {
+            UbxNavigation navigation;
+            if (UbloxReadback::readNavigation(navigation, error)) {
+                navigation_ = navigation;
+                navigationMs_ = millis();
+                markStatusDirty();
+            }
+        }
     }
 
     // MODE/BESTNAV are read-only receiver logs; do not request NMEA output.

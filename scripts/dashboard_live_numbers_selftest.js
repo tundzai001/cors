@@ -15,7 +15,7 @@ function render(data, readonly = false) {
     vm.runInNewContext(`${helper}\n${animation}\nanimate();`, {
         Date: {now: () => 10000},
         document: {getElementById: id => nodes[id] || null},
-        safeNmeaDataRef: {current: data}, isReadonly4g: readonly,
+        safeNmeaDataRef: {current: data}, deviceRef: {current: {}}, isDeviceStaleOffline: () => false, isReadonly4g: readonly,
         lastStatsUpdate: {current: 0}, STATS_INTERVAL: 1000,
         lastCanvasUpdate: {current: 0}, CANVAS_INTERVAL: 200,
         lastBarsUpdate: {current: 0}, BARS_INTERVAL: 500,
@@ -36,5 +36,22 @@ for (const invalid of [null, undefined, '', ' ', 'bad', '1x', 'Infinity', Infini
 }
 assert.deepEqual(render({gga: {latitude: 0, longitude: '0'}, gsa: {hdop: '99', pdop: 100}}),
     {'db-lat': '0.00000000', 'db-lon': '0.00000000', 'db-dop': 'N/A / N/A'});
-assert.deepEqual(render({}), {'db-lat': '0.0', 'db-lon': '0.0', 'db-dop': '0.0 / 0.0'});
+assert.deepEqual(render({}), {'db-lat': '0.0', 'db-lon': '0.0', 'db-dop': 'N/A / N/A'});
 console.log('PASS: numeric/string telemetry, saved Base coordinates, invalid/missing values, zero, DOP sentinel, animation continues');
+
+const q = vm.runInNewContext(`${helper}; getGnssQuality;`);
+const pvt = {hacc_m: 4.08, source: 'ubx_nav_pvt', age_seconds: 1, satellites: 35, pdop: 1.23};
+assert.equal(q({gnss_quality:pvt, server_received_at:100}, {}, true, 102).hacc_m, 4.08);
+assert.equal(q({gnss_quality:{...pvt,source:'nmea_gst'}, timestamp:100}, {}, true, 102).hacc_m, 4.08);
+assert.equal(q({gnss_quality:{...pvt, source:'unicore_bestnav_sigma', hacc_m:0.5}}, {}, true, 100).hacc_m, 0.5);
+assert.equal(q({hacc:4080}, {}, true, 100), null, 'unknown legacy units are not guessed');
+assert.equal(q({gnss_quality:pvt, timestamp:100}, {}, false, 100), null);
+assert.equal(q({gnss_quality:pvt, timestamp:100}, {}, true, 146), null, 'client ages retained data too');
+assert.equal(q({gnss_quality:{...pvt,fix_valid:false}, timestamp:100}, {}, true, 102).hacc_m, null);
+assert.equal(q({}, {gst:{hacc:4.08,hacc_source:'gst_lat_lon_sigma',received_at:100}}, true, 102).hacc_m, 4.08);
+assert.equal(q({}, {gst:{hacc:4.08,hacc_source:'gst_lat_lon_sigma',received_at:100}}, true, 116), null);
+for (const invalid of [null, undefined, '', '4.08', NaN, Infinity, -1]) {
+    assert.equal(q({gnss_quality:{...pvt,hacc_m:invalid}}, {}, true, 100).hacc_m, null);
+}
+assert(!source.includes('Waiting for RTK convergence'), 'Fixed Base must not show rover convergence advice');
+console.log('PASS: PVT/GST metres, source/validity/age guards, legacy ambiguity and Fixed Base guidance');

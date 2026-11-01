@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include "functions/Station_Lock.h"
 #include "functions/gnss_cmd_builder.h"
+#include "functions/Ubx_Navigation.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -105,6 +106,10 @@ private:
     uint32_t receiverBaseReadbackMs_ = 0;
     uint32_t receiverBaseReadbackRevision_ = 0;
     uint32_t lastReceiverPollMs_ = 0;
+    UbxNavigation navigation_;
+    uint32_t navigationMs_ = 0;
+    float unicoreHorizontalSigma_ = 0;
+    uint32_t unicoreQualityMs_ = 0;
     bool surveyInResultPending_ = false;
     bool surveyInReadbackReady_ = false;
     bool surveyInReadbackHasPosition_ = false;

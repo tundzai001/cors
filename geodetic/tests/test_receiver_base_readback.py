@@ -20,7 +20,8 @@ SOURCE = Path(__file__).resolve().parents[1] / 'agent_universal.py'
 NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
-         'is_valid_rtcm3_packet'}
+         'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',
+         'receiver_quality_status'}
 
 
 def load():
@@ -62,6 +63,81 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
 
     def system(self):
         return self.s['receiver_base_system_info'](self.agent)
+
+    async def test_rtcm_only_navigation_poll_units_and_expiry(self):
+        pvt = bytearray(92)
+        pvt[20:24] = bytes([5, 1, 0, 35])  # Time-only base, valid.
+        struct.pack_into('<I', pvt, 40, 4080)
+        struct.pack_into('<H', pvt, 76, 123)
+        self.reader.query_base = AsyncMock(return_value=self.pack(1, 7, pvt))
+        await self.s['refresh_receiver_quality'](self.agent, self.reader)
+        self.reader.query_base.assert_awaited_once_with(b'\xb5\x62\x01\x07\x00\x00\x08\x19', (1, 7))
+        now = self.s['LAST_RECEIVER_QUALITY_TS']
+        status = self.s['receiver_quality_status'](now)
+        self.assertEqual(status['hacc'], 4080)
+        self.assertAlmostEqual(status['gnss_quality']['hacc_m'], 4.08)
+        self.assertEqual(status['gnss_quality']['satellites'], 35)
+        self.assertAlmostEqual(status['gnss_quality']['pdop'], 1.23)
+        self.assertIsNone(self.s['receiver_quality_status'](now + 46)['gnss_quality'])
+        # Invalid fix actively clears the old good reading. Never replace it with HDOP.
+        pvt[21] = 0
+        self.reader._parse_buffer(bytearray(self.pack(1, 7, pvt)))
+        self.assertIsNone(self.s['receiver_quality_status'](time.time())['hacc'])
+        pvt[21] = 1; pvt[78] = 1
+        self.assertIsNone(self.s['_ubx_navigation_quality'](pvt)['hacc_m'])
+        with self.assertRaises(ValueError):
+            self.s['_ubx_navigation_quality'](pvt[:-1])
+        self.s.update(LAST_RECEIVER_QUALITY=None, LAST_GST_HACC_M=4.08, LAST_GST_TS=now)
+        gst = self.s['receiver_quality_status'](now)
+        self.assertEqual(gst['hacc'], 4080)
+        self.assertAlmostEqual(gst['gnss_quality']['hacc_m'], 4.08)
+        self.assertEqual(gst['gnss_quality']['source'], 'nmea_gst')
+        self.assertIsNone(self.s['receiver_quality_status'](now + 16)['hacc'])
+
+    async def test_unicore_rtcm_only_bestnav_accuracy(self):
+        self.agent.detected_chip['type'] = 'Unicorecomm'
+        mode = unicore('#MODE,81,GPS;MODE BASE 21 105 5', xor=True)
+        best = unicore('#BESTNAVA,97,GPS;SOL_COMPUTED,FIXEDPOS,21,105,5,0,WGS84,0.3,0.4,0.6')
+        await self.refresh([mode, best])
+        status = self.s['receiver_quality_status'](time.time())
+        self.assertEqual(status['gnss_quality']['source'], 'unicore_bestnav_sigma')
+        self.assertAlmostEqual(status['gnss_quality']['hacc_m'], 0.5)
+        self.assertEqual(status['hacc'], 500)
+        self.reader.query_base.assert_any_await(b'\r\nBESTNAVA\r\n', b'#BESTNAVA')
+
+    async def test_backend_compaction_keeps_quality_and_null_clear(self):
+        from typing import Any, Optional
+        source = SOURCE.parents[1] / 'cors_dashboard/backend/app/station_runtime.py'
+        node = next(n for n in ast.parse(source.read_text()).body
+                    if getattr(n, 'name', None) == '_compact_status_payload')
+        scope = dict(Any=Any, Optional=Optional, STATUS_PAYLOAD_COMPACT_ENABLED=True,
+                     STATUS_ALLOW_HEAVY_FIELDS=False, buffer_metrics={'status_payload_compacted_count': 0})
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
+        for quality in ({'hacc_m': 4.08, 'source': 'ubx_nav_pvt', 'age_seconds': 0}, None):
+            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality})
+            self.assertIn('gnss_quality', result)
+            self.assertEqual(result['gnss_quality'], quality)
+
+    async def test_checksum_and_hpposllh_offsets(self):
+        pvt = bytearray(92)
+        pvt[20:24] = bytes([3, 1, 0, 35])
+        corrupt = bytearray(self.pack(1, 7, pvt)); corrupt[-1] ^= 1
+        self.reader._parse_buffer(corrupt)
+        self.assertNotIn('LAST_RECEIVER_QUALITY', self.s)
+        self.assertEqual(self.reader.parse_errors, 1)
+        hp = bytearray(36)
+        struct.pack_into('<I', hp, 4, 123456000)  # iTOW must not become longitude.
+        struct.pack_into('<iii', hp, 8, 1057866572, 210849638, -8115)
+        struct.pack_into('<bbb', hp, 24, 4, -2, -4)
+        self.reader._parse_buffer(bytearray(self.pack(1, 0x14, hp)))
+        lat, lon, alt = self.s['LAST_HPPOSLLH_COORD']
+        self.assertAlmostEqual(lat, 21.084963798, places=9)
+        self.assertAlmostEqual(lon, 105.786657204, places=9)
+        self.assertAlmostEqual(alt, -8.1154, places=4)
+        before = self.s['LAST_HPPOSLLH_TS']
+        hp[3] = 1  # invalidLlh
+        self.reader._parse_buffer(bytearray(self.pack(1, 0x14, hp)))
+        self.assertEqual(self.s['LAST_HPPOSLLH_TS'], before)
 
     async def test_real_device_survey_completion_and_persistence(self):
         result = await self.refresh([self.pack(6, 0x71, self.mode), self.pack(1, 0x3b, self.svin)])
@@ -236,6 +312,7 @@ assert.strictEqual(context.window.CorsReceiverCoordinates.fromReceiver(positions
             if blocked == 'command':
                 await lock.acquire()
             refresh = AsyncMock()
+            quality = AsyncMock()
             status = AsyncMock()
             self.agent.gnss_reader = self.reader
             scope = dict(AgentManager=object, mqtt=SimpleNamespace(Client=object), logging=logging,
@@ -244,11 +321,12 @@ assert.strictEqual(context.window.CorsReceiverCoordinates.fromReceiver(positions
                          STATUS_PUBLISH_INTERVAL_SECONDS=5, send_status=status,
                          command_execution_lock=lock, is_remote_locked=lambda: blocked == 'locked',
                          active_auto_base_task=SimpleNamespace(done=lambda: False) if blocked == 'auto_base' else None,
-                         refresh_receiver_base_status=refresh)
+                         refresh_receiver_base_status=refresh, refresh_receiver_quality=quality)
             exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), 'exec'), scope)
             with self.assertRaises(asyncio.CancelledError):
                 await scope['status_publisher_task'](self.agent, None)
             self.assertEqual(refresh.await_count, 3 if blocked == 'none' else 0)
+            self.assertEqual(quality.await_count, 3 if blocked == 'none' else 0)
             self.assertEqual(status.await_count, 13)  # Heartbeats continue even while polling is skipped.
 
 
