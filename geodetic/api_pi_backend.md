@@ -262,7 +262,10 @@ noise and AGC are raw receiver counts; CW suppression is scaled 0..255.
 Jamming state 0 is unknown/disabled, never a clean-RF result. MON-RF's legacy
 jamming flag may be deprecated on newer protocols supporting SEC-SIG v2;
 this first diagnostic panel reports MON-RF only, without claiming SEC-SIG coverage.
-MON-SPAN's 256 bins are relative amplitude in dB, not calibrated dBm. Frequency
+MON-SPAN bins are retained as raw 0..255 values, never labeled as calibrated
+dBm. The current interface reference describes dB while the newer integration
+manual specifies 0.25-dB increments; the UI does not guess a conversion without
+a firmware-specific scale. Frequency
 is center + span*(bin-127)/256. PGA is displayed separately and a changed PGA
 is flagged when comparing a saved reference.
 
@@ -305,3 +308,33 @@ from AGC. The reference remains local, and telemetry polling is not continuous R
 Reference: Unicore N4 Reference Commands Manual V2 EN R1.4, output syntax section
 and sections 7.3.54 JAMSTATUS, 7.3.55 FREQJAMSTATUS, 7.3.58 AGC:
 https://en.unicore.com/uploads/file/20241219/Unicore_Reference_Commands_Manual_For_N4_High_Precision_Products_V2_EN_R1.4.pdf
+
+
+RF interpretation and read errors:
+- The summary follows fresh receiver flags only. MON-RF 0 remains unknown;
+  1 means no significant interference reported at that reading, 2/3 report
+  interference. Antenna open/short flags are reported separately. UM CW flags
+  do not classify broadband RF noise. Spectrum shape, C/N0 and raw AGC never
+  independently produce a clean/noisy verdict.
+- MON-SPAN-only data explicitly reports insufficient evidence even with visible
+  peaks. Charts identify L1 and L2/L5 and label the 0..255 amplitude as raw.
+- Failed u-blox MON-RF queries are represented by source=ubx_mon_rf,
+  state=read_error, error_kind (timeout / invalid_response / query_failed), error
+  and age_seconds. If an older successful reading is still fresh, failure is in
+  last_error instead. The Pi includes up to 128 bytes of the rejected UBX frame
+  as frame_b64; native errors contain version/count/length or offending AGC.
+  A successful read clears the failure, and errors expire after 45 seconds.
+- Download includes raw_rf/raw_spectrum alongside interpreted readings, summary
+  and read_error so a parser failure is not hidden by its own decoded export.
+  Raw details are collapsed by default; next-step guidance is visible first.
+
+
+Legacy ZED-F9P MON-RF compatibility: HPG 1.30 release notes (UBX-21047459)
+explicitly fix earlier firmware returning blockId=0 in every repeated block.
+Neither agent nor UI requires unique RF block IDs. All blocks are retained in
+wire order. Duplicate IDs are labeled RF 1/2/... with their reported ID, rather
+than guessing a band or merging records. AGC is retained over its full U2 wire
+range; values above the documented 8191 are marked unusable for assessment,
+without losing the remaining RF flags. Packet CRC, version, exact length and
+bounded block count remain mandatory.
+https://content.u-blox.com/sites/default/files/ZED-F9P-FW100-HPG130_RN_UBX-21047459.pdf

@@ -20,8 +20,10 @@ for(const field of ['gnss_rf','gnss_spectrum']){
     for(const value of [{...device[field],age_seconds:NaN},{...device[field],age_seconds:-1},{...device[field],source:'other'},{...device[field],payload_b64:'bad'},{...device[field],payload_b64:Buffer.alloc(2000).toString('base64')}])assert.equal(decode({...device,[field]:value},field,true,100),null);
 }
 const duplicate=Buffer.from(rf);duplicate[28]=0;
-assert.equal(decode({...device,gnss_rf:{...device.gnss_rf,payload_b64:duplicate.toString('base64')}},'gnss_rf',true,102),null);
-console.log('PASS: real RF decoder offsets, per-band states, spectrum bins/frequencies/PGA, stale/offline/invalid/duplicate frames');
+const legacy=decode({...device,gnss_rf:{...device.gnss_rf,payload_b64:duplicate.toString('base64')}},'gnss_rf',true,102);
+assert.equal(legacy.blocks.length,2);assert.equal(legacy.blocks[1].id,0);assert.equal(legacy.blocks[1].index,1);
+const highAgc=Buffer.from(rf);highAgc.writeUInt16LE(9000,18);const high=decode({...device,gnss_rf:{...device.gnss_rf,payload_b64:highAgc.toString('base64')}},'gnss_rf',true,102);assert.equal(high.blocks[0].agc,9000);assert.equal(high.blocks[0].agc_valid,false);
+console.log('PASS: real RF decoder offsets, per-band states, spectrum bins/frequencies/PGA, stale/offline/invalid frames, legacy duplicate IDs and raw AGC preservation');
 if(process.argv[2])fs.writeFileSync(process.argv[2],JSON.stringify(device));
 
 const decodeUm=vm.runInNewContext(`${code};getUnicoreRfDiagnostic;`);
@@ -37,3 +39,28 @@ assert.equal(decodeUm(overall,true,102).jamming.flags.length,1);
 assert.equal(decodeUm({...overall,gnss_rf:{source:'unicore_rf',jamming:{...overall.gnss_rf.jamming,flags:[3]}}},true,102),null);
 console.log('PASS: UM AGC master/slave mapping, -1 invalid channels, per-band and overall CW, independent expiry and malformed rejection');
 if(process.argv[3])fs.writeFileSync(process.argv[3],JSON.stringify(umDevice));
+
+const assess=vm.runInNewContext(`${code};getRfAssessment;`);
+const healthy={...reading,blocks:reading.blocks.map(b=>({...b,jamming:1}))};
+assert.equal(assess({live:true}).title,'Chưa đủ dữ liệu kết luận','spectrum alone must not pass RF assessment');
+assert.equal(assess({live:true,rf:high}).title,'Chip báo có nhiễu');
+assert.equal(assess({live:true,rf:healthy}).title,'Chưa ghi nhận nhiễu đáng kể');
+assert.equal(assess({live:true,rf:{blocks:[{id:0,jamming:0,antenna:2}]}}).tone,'warning');
+assert.equal(assess({live:true,rf:{blocks:[{id:0,jamming:3,antenna:2}]}}).tone,'danger');
+assert.equal(assess({live:true,rf:{blocks:[{id:0,jamming:1,antenna:4}]}}).title,'Chip báo lỗi đường anten');
+assert.equal(assess({live:false,rf:healthy}).title,'Chưa đủ dữ liệu kết luận');
+assert.equal(assess({live:true,um:{agc:{values:[40]}}}).title,'Chưa đủ dữ liệu kết luận');
+assert.equal(assess({live:true,um:{jamming:{flags:[0,0,0]}}}).title,'Chưa ghi nhận nhiễu CW');
+assert.equal(assess({live:true,um:{jamming:{flags:[2,0,0]}}}).tone,'danger');
+assert.equal(assess({live:true,rf:healthy,readError:{error_kind:'invalid_response'}}).title,'Chưa đủ dữ liệu kết luận');
+const readError=vm.runInNewContext(`${code};getRfReadError;`);
+assert.equal(readError({...device,gnss_rf:{source:'ubx_mon_rf',state:'read_error',error_kind:'timeout',error:'timeout',age_seconds:0}},null,true,102).error_kind,'timeout');
+assert.equal(readError(device,null,true,102).error_kind,'invalid_response','data present but UI rejects must be distinguished');
+assert.equal(readError(device,null,true,146),null);
+console.log('PASS: evidence-based verdicts; missing/unknown/stale/error never clean; antenna fault, UM CW and MON-RF separated');
+
+const blockLabel=vm.runInNewContext(`${code};getRfBlockLabel;`);
+assert.equal(blockLabel(legacy.blocks[0],legacy.blocks),'RF 1 (ID 0)');
+assert.equal(blockLabel(legacy.blocks[1],legacy.blocks),'RF 2 (ID 0)');
+assert.equal(assess({live:true,rf:{...high,blocks:high.blocks.map(b=>({...b,jamming:1}))}}).title,'Chưa đủ dữ liệu kết luận');
+assert.equal(assess({live:true,unicore:true}).title,'Chưa đủ dữ liệu kết luận');

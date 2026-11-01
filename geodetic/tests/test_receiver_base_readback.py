@@ -184,9 +184,31 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
             corrupt = bytearray(self.pack(10, message_id, payload)); corrupt[-1] ^= 1
             with self.assertRaises(ValueError): self.s['_base_ubx_payload'](corrupt, (10, message_id))
         invalid = bytearray(rf); invalid[28] = 0
-        with self.assertRaises(ValueError): self.s['_ubx_rf_payload'](invalid, 0x38)
+        self.assertEqual(self.s['_ubx_rf_payload'](invalid, 0x38)['source'],'ubx_mon_rf')
+        legacy = bytearray(rf); legacy[28]=0;struct.pack_into('<H',legacy,18,9000)
+        self.assertEqual(base64.b64decode(self.s['_ubx_rf_payload'](legacy,0x38)['payload_b64']),legacy)
         invalid = bytearray(span); invalid[260:264] = bytes(4)
         with self.assertRaises(ValueError): self.s['_ubx_rf_payload'](invalid, 0x31)
+
+    async def test_rf_error_preserved_instead_of_silent_null(self):
+        self.reader.query_base = AsyncMock(side_effect=[TimeoutError('PVT'),TimeoutError('DOP'),TimeoutError('SAT'),TimeoutError('MON-RF timeout'),TimeoutError('SPAN')])
+        await self.s['refresh_receiver_quality'](self.agent,self.reader)
+        failure=self.s['receiver_quality_status'](time.time())['gnss_rf']
+        self.assertEqual(failure['state'],'read_error');self.assertEqual(failure['error_kind'],'timeout')
+        self.assertIn('MON-RF timeout',failure['error'])
+        self.assertIsNone(self.s['receiver_quality_status'](time.time()+46)['gnss_rf'])
+        raw = bytearray(28);raw[1]=1;raw[0]=1
+        packet=self.pack(10,0x38,raw)
+        self.reader.query_base = AsyncMock(side_effect=[TimeoutError('PVT'),TimeoutError('DOP'),TimeoutError('SAT'),packet,TimeoutError('SPAN')])
+        await self.s['refresh_receiver_quality'](self.agent,self.reader)
+        failure=self.s['receiver_quality_status'](time.time())['gnss_rf']
+        self.assertEqual(failure['error_kind'],'invalid_response');self.assertIn('Invalid RF payload',failure['error'])
+        self.assertEqual(base64.b64decode(failure['frame_b64']),packet)
+        raw[0]=0;struct.pack_into('<H',raw,18,4000)
+        self.reader.query_base = AsyncMock(side_effect=[TimeoutError('PVT'),TimeoutError('DOP'),TimeoutError('SAT'),self.pack(10,0x38,raw),TimeoutError('SPAN')])
+        await self.s['refresh_receiver_quality'](self.agent,self.reader)
+        result=self.s['receiver_quality_status'](time.time())['gnss_rf']
+        self.assertIn('payload_b64',result);self.assertNotIn('last_error',result)
 
     async def test_unicore_rf_agc_jamming_and_fallback(self):
         self.agent.detected_chip['type'] = 'Unicorecomm'

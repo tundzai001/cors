@@ -82,7 +82,7 @@ bool UbloxReadback::readRf(uint8_t messageId, String &payloadBase64, String &err
     const uint8_t *p = reply.frame + 6;
     const size_t length = reply.length - 8, stride = messageId == 0x38 ? 24 : 272;
     if (length < 4 || p[0] != 0 || p[1] < 1 || p[1] > 4 || length != 4 + p[1] * stride) {
-        error = "Invalid MON-RF/MON-SPAN response";
+        error = String("Invalid RF payload: bytes=") + length + "; header=" + (length ? p[0] : 255) + "/" + (length > 1 ? p[1] : 255);
         return false;
     }
     for (size_t offset = 4; offset < length; offset += stride) {
@@ -91,14 +91,8 @@ bool UbloxReadback::readRf(uint8_t messageId, String &payloadBase64, String &err
             error = "Invalid MON-SPAN frequencies";
             return false;
         }
-        if (messageId == 0x38 && (p[offset + 14] | (uint16_t(p[offset + 15]) << 8)) > 8191) {
-            error = "Invalid MON-RF AGC";
-            return false;
-        }
-        if (messageId == 0x38)
-            for (size_t previous = 4; previous < offset; previous += stride)
-                if (p[previous] == p[offset]) { error = "Duplicate RF block"; return false; }
     }
+    // HPG <1.30 may repeat RF blockId=0; retain all raw RF records.
     payloadBase64 = BackendAgentInternal::encodeBase64(p, length);
     return payloadBase64.length() > 0;
 }

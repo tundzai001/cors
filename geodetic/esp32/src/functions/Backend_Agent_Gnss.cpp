@@ -430,10 +430,15 @@ void BackendAgent::pollGnssStatus() {
                 satelliteReadbackMs_ = millis();
                 markStatusDirty();
             }
+            error = "";
             if (UbloxReadback::readRf(0x38, rfReadback_, error)) {
                 rfReadbackMs_ = millis();
-                markStatusDirty();
+                rfReadbackError_ = "";
+            } else {
+                rfReadbackError_ = error.substring(0, 160);
+                rfReadbackErrorMs_ = millis();
             }
+            markStatusDirty();
             if (UbloxReadback::readRf(0x31, spectrumReadback_, error)) {
                 spectrumReadbackMs_ = millis();
                 markStatusDirty();

@@ -140,7 +140,7 @@ function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
         const stride = spectrum ? 272 : 24;
         if (bytes.length < 4 || bytes[0] !== 0 || bytes[1] < 1 || bytes[1] > 4
             || bytes.length !== 4 + bytes[1] * stride) return null;
-        const view = new DataView(bytes.buffer), blocks = [], ids = new Set();
+        const view = new DataView(bytes.buffer), blocks = [];
         for (let o = 4; o < bytes.length; o += stride) {
             if (spectrum) {
                 const span = view.getUint32(o + 256, true), resolution = view.getUint32(o + 260, true);
@@ -149,9 +149,7 @@ function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
                 blocks.push({bins: Array.from(bytes.slice(o, o + 256)), span, resolution, center, pga: bytes[o + 268]});
             } else {
                 const id = bytes[o], agc = view.getUint16(o + 14, true);
-                if (ids.has(id) || agc > 8191) return null;
-                ids.add(id);
-                blocks.push({id, jamming: bytes[o + 1] & 3, antenna: bytes[o + 2], power: bytes[o + 3],
+                blocks.push({id, index: blocks.length, agc_valid: agc <= 8191, jamming: bytes[o + 1] & 3, antenna: bytes[o + 2], power: bytes[o + 3],
                     noise: view.getUint16(o + 12, true), agc, cw: bytes[o + 16]});
             }
         }
@@ -177,6 +175,60 @@ function getUnicoreRfDiagnostic(device, live = true, now = Date.now() / 1000) {
         || !jamming.ratios.every(value => Number.isInteger(value) && value >= 0 && value <= 255)
         || !jamming.flags.every(value => Number.isInteger(value) && value >= 0 && value <= 2)) jamming = null;
     return agc || jamming ? {source:'unicore_rf', agc, jamming} : null;
+}
+
+function getRfReadError(device, rf, live = true, now = Date.now() / 1000) {
+    if (!live || device?.gnss_rf?.source !== 'ubx_mon_rf') return null;
+    const raw = device.gnss_rf, error = raw.last_error || (raw.state === 'read_error' ? raw : null);
+    const received = Number(device.server_received_at || device.timestamp);
+    const fresh = value => typeof value?.age_seconds === 'number' && Number.isFinite(value.age_seconds)
+        && value.age_seconds >= 0 && value.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0) <= 45;
+    if (error && fresh(error)) return {error_kind: error.error_kind, error: String(error.error || 'Lỗi truy vấn RF').slice(0,160)};
+    if (!rf && typeof raw.payload_b64 === 'string' && fresh(raw))
+        return {error_kind:'invalid_response', error:'Có phản hồi RF nhưng giao diện không giải mã được.'};
+    return null;
+}
+
+function getRfBlockLabel(block, blocks) {
+    const unique = blocks.filter(other => other.id === block.id).length === 1;
+    return unique && block.id === 0 ? 'L1' : unique && block.id === 1 ? 'L2/L5'
+        : `RF ${block.index + 1} (ID ${block.id})`;
+}
+
+function getRfAssessment({live, rf, um, readError, unicore = false}) {
+    const unknown = (reason, next) => ({tone:'warning',title:'Chưa đủ dữ liệu kết luận',reason,next});
+    if (!live) return unknown('Trạm không có dữ liệu trực tiếp.', 'Kết nối lại trạm rồi kiểm tra mẫu RF mới.');
+    if (readError) return unknown(readError.error_kind === 'timeout'
+        ? 'Agent đã hỏi MON-RF nhưng không nhận được phản hồi đúng hạn.'
+        : readError.error_kind === 'invalid_response' ? 'Có phản hồi nhưng bộ đọc từ chối dữ liệu RF.'
+        : 'Lần đọc MON-RF gần nhất bị lỗi.', 'Xem chi tiết lỗi đọc; chưa dùng riêng hình phổ để kết luận trạm sạch nhiễu.');
+    if (unicore || um) {
+        if (!um?.jamming) return unknown(um?.agc ? 'UM mới có AGC; chưa có chỉ báo nhiễu CW.' : 'Chưa nhận được chỉ báo nhiễu CW từ UM.', 'AGC đơn lẻ không đủ để phân loại nhiễu. Cần phản hồi JAMSTATUS hoặc FREQJAMSTATUS.');
+        const severity = Math.max(...um.jamming.flags);
+        return {tone: severity === 2 ? 'danger' : severity === 1 ? 'warning' : 'info',
+            title: severity === 2 ? 'Chip báo nhiễu CW mạnh' : severity === 1 ? 'Chip báo có nhiễu CW' : 'Chưa ghi nhận nhiễu CW',
+            reason:'Kết quả từ cờ cảnh báo CW của UM, không suy ra từ AGC hay hình phổ.',
+            next: severity ? 'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.'
+                : 'Kết quả chỉ áp dụng cho nhiễu CW lúc đọc; nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten.'};
+    }
+    if (!rf) return unknown('Chưa có MON-RF hợp lệ. Có phổ MON-SPAN cũng chưa thay thế được trạng thái cảnh báo.',
+        'Kiểm tra phản hồi MON-RF; giữ mẫu phổ để so sánh trước/sau khi đổi vị trí anten hoặc tắt thiết bị phát của mình.');
+    const band = block => getRfBlockLabel(block, rf.blocks);
+    const fault = rf.blocks.filter(b => b.antenna === 3 || b.antenna === 4);
+    if (fault.length) return {tone:'danger',title:'Chip báo lỗi đường anten',
+        reason:`${fault.map(band).join(', ')}: có chỉ báo hở mạch hoặc ngắn mạch anten.`,
+        next:'Kiểm tra cáp, đầu nối và nguồn anten trước khi quy nguyên nhân cho BTS.'};
+    const severity = Math.max(...rf.blocks.map(b => b.jamming));
+    if (severity >= 2) return {tone:severity === 3 ? 'danger' : 'warning',
+        title:severity === 3 ? 'Chip báo nhiễu nghiêm trọng' : 'Chip báo có nhiễu',
+        reason:`MON-RF báo nhiễu ở ${rf.blocks.filter(b=>b.jamming>=2).map(band).join(', ')}.`,
+        next:'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.'};
+    if (rf.blocks.some(b=>b.agc_valid === false)) return unknown('Chip có trả RF nhưng có AGC ngoài dải mô tả.', 'Xem giá trị AGC gốc trong chi tiết; chưa dùng giá trị ngoài dải để đánh giá mức nhiễu.');
+    if (rf.blocks.some(b=>b.jamming === 0)) return unknown('Có MON-RF nhưng bộ phát hiện nhiễu báo chưa xác định hoặc chưa bật.',
+        'Không coi trạng thái chưa xác định là không có nhiễu.');
+    return {tone:'info',title:'Chưa ghi nhận nhiễu đáng kể',
+        reason:`MON-RF của ${rf.blocks.map(band).join(', ')} đều báo không có nhiễu đáng kể ở lần đọc này.`,
+        next:'Nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten; kết quả RF không chứng minh tọa độ Base đúng.'};
 }
 
 function getLeaflet() {
@@ -401,11 +453,13 @@ function RfDiagnostics({device, live}) {
     const rf = unicore ? null : getRfDiagnostic(device, 'gnss_rf', live);
     const spectrum = unicore ? null : getRfDiagnostic(device, 'gnss_spectrum', live);
     const hasData = Boolean(rf || spectrum || um);
+    const readError = unicore ? null : getRfReadError(device, rf, live);
+    const assessment = getRfAssessment({live,rf,um,readError,unicore});
     const [reference, setReference] = useState(null);
     const serial = device.serial;
     const stateNames = ['Chưa xác định', 'Không báo nhiễu đáng kể', 'Cảnh báo nhiễu', 'Nhiễu nghiêm trọng'];
     const exportReading = () => {
-        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, unicore: um, reference};
+        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, unicore: um, reference, assessment, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
         const link = document.createElement('a'); link.href = url; link.download = 'gnss-rf.json'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -416,11 +470,20 @@ function RfDiagnostics({device, live}) {
                 <h6 className="mb-0">Chẩn đoán nhiễu GNSS</h6>
                 <div className="d-flex flex-wrap gap-2">
                     <button className="btn btn-sm btn-outline-primary" disabled={!hasData}
-                        onClick={() => setReference({captured_at:new Date().toISOString(), rf, spectrum, unicore:um})}>Lưu mốc so sánh</button>
-                    <button className="btn btn-sm btn-outline-secondary" disabled={!hasData && !reference}
+                        onClick={() => setReference({captured_at:new Date().toISOString(), rf, spectrum, unicore:um})}>Giữ mẫu hiện tại</button>
+                    <button className="btn btn-sm btn-outline-secondary" disabled={!hasData && !reference && !readError}
                         onClick={exportReading}>Tải số liệu</button>
                 </div>
             </div>
+            <div className={`alert alert-${assessment.tone} mb-2`} role="status">
+                <strong className="d-block mb-1">{assessment.title}</strong>
+                <p className="mb-1">{assessment.reason}</p>
+                <p className="mb-0"><strong>Bước tiếp theo: </strong>{assessment.next}</p>
+            </div>
+            <p className="small text-muted mb-2">Giữ mẫu trước khi đổi vị trí anten hoặc tắt nguồn phát của mình, rồi so sánh. Mốc được chọn chưa chắc sạch nhiễu.</p>
+            {readError && <details className="mb-2"><summary>Chi tiết lỗi đọc MON-RF</summary><p className="small mb-0" data-no-translate>{readError.error}</p></details>}
+            {!unicore && <p className="small text-muted mb-2">Trạng thái RF: {rf ? `${Math.floor(rf.age_seconds)} giây trước` : 'Chưa có'} · Phổ: {spectrum ? `${Math.floor(spectrum.age_seconds)} giây trước` : 'Chưa có'}</p>}
+            <details className="mt-2 rf-details"><summary className="mb-2">Xem chỉ số và phổ chi tiết</summary>
             {!hasData && <p className="text-muted mb-2" role="status">Chưa có dữ liệu RF mới. Cần agent hỗ trợ và chip trả lời; dữ liệu quá 45 giây không được dùng để kết luận.</p>}
             {unicore && <div className="d-grid gap-2 mb-2">
                 {um?.agc ? <div className="rf-band border rounded p-3">
@@ -446,15 +509,16 @@ function RfDiagnostics({device, live}) {
             </div>}
             {rf && <>
                 <p className="small text-muted mb-2">MON-RF · {Math.floor(rf.age_seconds)} giây trước</p>
+                {new Set(rf.blocks.map(b=>b.id)).size !== rf.blocks.length && <p className="small text-warning">Chip báo trùng ID khối RF; giữ đủ các khối theo thứ tự, chưa gán tên băng.</p>}
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',gap:12}}>
-                    {rf.blocks.map(block => <div className="rf-band border rounded p-3" key={block.id}>
+                    {rf.blocks.map(block => <div className="rf-band border rounded p-3" key={block.index}>
                         <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
-                            <strong>{block.id === 0 ? 'L1' : block.id === 1 ? 'L2 / L5' : `RF ${block.id}`}</strong>
+                            <strong>{getRfBlockLabel(block, rf.blocks)}</strong>
                             <span className={`badge ${['bg-secondary','bg-success','bg-warning text-dark','bg-danger'][block.jamming]}`}>{stateNames[block.jamming]}</span>
                         </div>
                         <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
                             <dt className="fw-normal text-muted">Nhiễu nền (thô)</dt><dd className="mb-0">{block.noise}</dd>
-                            <dt className="fw-normal text-muted">AGC (thô)</dt><dd className="mb-0">{block.agc} / 8191</dd>
+                            <dt className="fw-normal text-muted">AGC (thô)</dt><dd className="mb-0">{block.agc}{block.agc_valid ? ' / 8191' : ' · ngoài dải mô tả'}</dd>
                             <dt className="fw-normal text-muted">Triệt nhiễu CW (0–255)</dt><dd className="mb-0">{block.cw}</dd>
                             <dt className="fw-normal text-muted">Anten</dt><dd className="mb-0">{['Khởi tạo','Chưa xác định','OK','Ngắn mạch','Hở mạch'][block.antenna] || 'Chưa xác định'}</dd>
                         </dl>
@@ -472,8 +536,8 @@ function RfDiagnostics({device, live}) {
                     const frequency = bin => ((block.center + block.span * (bin - 127) / 256) / 1e6).toFixed(2);
                     const points = bins => bins.map((value, i) => `${i * 2},${255 - value}`).join(' ');
                     return <figure className="mb-2" key={index}>
-                        <figcaption className="small">{(block.center / 1e6).toFixed(2)} MHz · PGA {block.pga} dB · Bước {block.resolution} Hz</figcaption>
-                        <svg viewBox="0 0 510 255" role="img" aria-label={`Phổ GNSS quanh ${block.center / 1e6} MHz, biên độ tương đối 0 đến 255 dB`}
+                        <figcaption className="small"><strong>{index === 0 ? 'L1' : index === 1 ? 'L2 / L5' : `RF ${index}`}</strong> · Tâm {(block.center / 1e6).toFixed(2)} MHz · Khuếch đại {block.pga} dB<br/>Mức phổ thô (0–255) · Bước {(block.resolution / 1e6).toFixed(2)} MHz</figcaption>
+                        <svg viewBox="0 0 510 255" role="img" aria-label={`Phổ GNSS quanh ${block.center / 1e6} MHz, mức phổ thô 0 đến 255`}
                             style={{width:'100%',height:'auto',border:'1px solid var(--bs-border-color)',background:'var(--bs-tertiary-bg)'}}>
                             {[0,64,128,192,255].map(value => <g key={value}><line x1="0" x2="510" y1={255-value} y2={255-value} stroke="currentColor" opacity="0.12"/><text x="3" y={Math.max(12,251-value)} fontSize="12" fill="currentColor">{value}</text></g>)}
                             {previous && <polyline points={points(previous.bins)} fill="none" stroke="var(--bs-warning, #ffc107)" strokeWidth="2" strokeDasharray="6 4"/>}
@@ -484,7 +548,8 @@ function RfDiagnostics({device, live}) {
                     </figure>;
                 })}</div>
             </>}
-            <p className="small text-muted mb-0">{!unicore && 'Phổ là biên độ tương đối, không phải dBm. '}Chỉ số RF không xác định nguồn phát; chưa đủ kết luận trạm 4G gây sai số hoặc tọa độ Base đúng.</p>
+            <p className="small text-muted mb-0">{!unicore && 'Phổ thô không phải công suất dBm; đỉnh phổ đơn lẻ chưa chứng minh có nhiễu. '}Chỉ số RF không xác định nguồn phát; chưa đủ kết luận trạm 4G gây sai số hoặc tọa độ Base đúng.</p>
+            </details>
         </div>
     </section>;
 }
@@ -1263,7 +1328,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                                         <li className="text-warning mb-1">Cường độ tín hiệu thấp (SNR trung bình {avgSnr.toFixed(1)} dB-Hz). <strong>Khuyến nghị:</strong> Nâng cao ăng-ten hoặc đưa ra nơi trống trải.</li>
                                     )}
                                     {avgSnr >= 38 && (
-                                        <li className="text-success mb-1">Tín hiệu thu được từ ăng-ten rất tốt và ổn định (SNR trung bình {avgSnr.toFixed(1)} dB-Hz).</li>
+                                        <li className="text-success mb-1">C/N0 trung bình của các vệ tinh RTCM: {avgSnr.toFixed(1)} dB-Hz.</li>
                                     )}
                                     {avgSnr >= 35 && avgSnr < 38 && (
                                         <li className="text-info mb-1">Tín hiệu ăng-ten đạt mức khá (SNR trung bình {avgSnr.toFixed(1)} dB-Hz).</li>

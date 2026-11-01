@@ -39,6 +39,8 @@ String BackendAgent::buildStatusPayload() {
         agcReadback_ = static_cast<const char *>(nullptr);
     if (jamReadback_.length() && millis() - jamReadbackMs_ > 45000UL)
         jamReadback_ = static_cast<const char *>(nullptr);
+    if (rfReadbackError_.length() && millis() - rfReadbackErrorMs_ > 45000UL)
+        rfReadbackError_ = static_cast<const char *>(nullptr);
     // Inventory is an on-demand snapshot, not permanent telemetry overhead.
     if (nvsInventory_.length() > 2 && millis() - nvsInventoryMs_ >= 60000UL)
         nvsInventory_ = static_cast<const char *>(nullptr);
@@ -46,6 +48,7 @@ String BackendAgent::buildStatusPayload() {
         gnssVerification_ = static_cast<const char *>(nullptr);
     DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (satelliteReadback_.length() ? satelliteReadback_.length() + 256 : 0)
                             + (rfReadback_.length() ? rfReadback_.length() + 256 : 0)
+                            + (rfReadbackError_.length() ? rfReadbackError_.length() + 256 : 0)
                             + (spectrumReadback_.length() ? spectrumReadback_.length() + 256 : 0)
                             + (agcReadback_.length() ? 1024 : 0) + (jamReadback_.length() ? 512 : 0)
                             + (nvsInventory_.length() > 2 ? 3072 : 0)
@@ -288,6 +291,15 @@ String BackendAgent::buildStatusPayload() {
         rf["source"] = "ubx_mon_rf";
         rf["age_seconds"] = (nowMs - rfReadbackMs_) / 1000.0;
         rf["payload_b64"] = rfReadback_;
+    }
+    if (sensorType_ == "Ublox" && rfReadbackError_.length()) {
+        JsonObject rf = doc["gnss_rf"].isNull() ? doc.createNestedObject("gnss_rf") : doc["gnss_rf"].as<JsonObject>();
+        JsonObject failure = rfReadback_.length() ? rf.createNestedObject("last_error") : rf;
+        if (!rfReadback_.length()) { rf["source"] = "ubx_mon_rf"; rf["state"] = "read_error"; }
+        failure["error"] = rfReadbackError_;
+        failure["error_kind"] = rfReadbackError_.indexOf("timeout") >= 0 ? "timeout"
+            : rfReadbackError_.startsWith("Invalid") || rfReadbackError_.startsWith("Duplicate") ? "invalid_response" : "query_failed";
+        failure["age_seconds"] = (nowMs - rfReadbackErrorMs_) / 1000.0;
     }
     if (sensorType_ == "Ublox" && spectrumReadback_.length()) {
         JsonObject spectrum = doc.createNestedObject("gnss_spectrum");
