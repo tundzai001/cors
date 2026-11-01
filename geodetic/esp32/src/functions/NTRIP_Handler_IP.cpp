@@ -18,28 +18,12 @@ extern TinyGsm modem;
 
 using BackendAgentInternal::jsonBool;
 using BackendAgentInternal::jsonString;
+using BackendAgentInternal::encodeBase64;
 
 namespace {
 
 bool safeNtripField(const String &value) {
     return value.indexOf('\r') < 0 && value.indexOf('\n') < 0;
-}
-
-String base64Encode(const String &plain) {
-    static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    String encoded;
-    encoded.reserve(((plain.length() + 2) / 3) * 4);
-    for (size_t i = 0; i < plain.length(); i += 3) {
-        const uint32_t a = static_cast<uint8_t>(plain[i]);
-        const uint32_t b = i + 1 < plain.length() ? static_cast<uint8_t>(plain[i + 1]) : 0;
-        const uint32_t c = i + 2 < plain.length() ? static_cast<uint8_t>(plain[i + 2]) : 0;
-        const uint32_t value = (a << 16) | (b << 8) | c;
-        encoded += alphabet[(value >> 18) & 0x3F];
-        encoded += alphabet[(value >> 12) & 0x3F];
-        encoded += i + 1 < plain.length() ? alphabet[(value >> 6) & 0x3F] : '=';
-        encoded += i + 2 < plain.length() ? alphabet[value & 0x3F] : '=';
-    }
-    return encoded;
 }
 
 constexpr size_t CONFIG_DOCUMENT_SIZE = 4096;
@@ -255,7 +239,7 @@ bool connectEndpoint(uint8_t index) {
     }
 
     const String user = endpoint.username.isEmpty() ? String("source") : endpoint.username;
-    const String auth = base64Encode(user + ":" + endpoint.password);
+    const String auth = encodeBase64(user + ":" + endpoint.password);
     String request;
     if (endpoint.version == 2) {
         request = "POST /" + endpoint.mountpoint + " HTTP/1.1\r\n"
@@ -436,7 +420,7 @@ bool startNtripRover(const String &host, const uint16_t port, const String &user
     }
 
     const String user = username.isEmpty() ? String("source") : username;
-    const String auth = base64Encode(user + ":" + password);
+    const String auth = encodeBase64(user + ":" + password);
     String request;
     if (version == 2) {
         request = "GET /" + mountpoint + " HTTP/1.1\r\n"

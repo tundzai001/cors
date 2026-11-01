@@ -12,13 +12,14 @@ implementation is split by responsibility under `src/functions/`:
 | `Backend_Agent_Startup.cpp` | Receiver mode restoration and startup configuration |
 | `Backend_Agent_Commands.cpp` | Backend command validation, execution and results |
 | `Backend_Agent_Workflows.cpp` | Auto Base, reference checks and GNSS command exchanges |
-| `Backend_Agent_Gnss.cpp` | Periodic receiver readback and saved Survey-In results |
+| `Backend_Agent_Gnss.cpp` | GNSS command writes, ACK/readback, Rover transition and Survey-In status |
+| `Backend_Agent_Codec.cpp` | Shared Base64/URL encoding, token fingerprints and legacy license compatibility |
 | `Backend_Agent_Status.cpp` | Status and health payloads |
 | `Backend_Agent_Projection.cpp` | Coordinate transformation and province projections |
 | `Backend_Agent_Websocket.cpp` | RFC6455 handshake, framing and TCP reconnects |
 
-`Backend_Agent_Internal.h` and `Backend_Agent_Websocket.h` are implementation
-headers. Keep transport framing out of command handling and status formatting.
+`Backend_Agent_Internal.h`, `Backend_Agent_Codec.h` and
+`Backend_Agent_Websocket.h` are implementation headers. Keep transport framing out of command handling and status formatting.
 Survey-In status uses receiver readback; the removed GGA polling state must not
 be reintroduced to make RTCM-only mode depend on NMEA.
 
@@ -89,3 +90,17 @@ Continued cleanup in this CORS working tree: share service JSON conversion
 between backend agent and NTRIP, and share base command finalization within
 each receiver implementation. JSON keys, fallback rules, command order and
 delays are preserved. Shared JSON conversions were verified during development.
+
+## Codec and GNSS ownership cleanup
+
+NTRIP authentication and WebSocket nonces share the Base64 encoder. Token
+fingerprints, raw-command decoding, URL encoding, delay markers and legacy
+license compatibility are isolated from the agent loop in the codec module.
+Legacy license calculations and receiver command/ACK/readback bodies were
+compared with the prior source without changing their algorithms or timing.
+
+Workflow code owns Auto Base/reference orchestration. GNSS command exchange,
+UART ownership and reply validation live with receiver operations. MQTT
+routing returns early for non-legacy topics and rejected inputs; its five-second
+reconnect backoff and subscription topics remain unchanged. Host checks for
+codec vectors and MQTT dispatch are documented in `test/README`.

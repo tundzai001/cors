@@ -20,7 +20,6 @@ ntrip = (root / 'src/functions/NTRIP_Handler_IP.cpp').read_text()
 handshake = 'bool waitForNtripResponse(' + ntrip.split('bool waitForNtripResponse(', 1)[1].split('\nvoid sendRoverGgaIfAvailable', 1)[0]
 shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')
 shim = shim.replace('    void trim() {', '''    int indexOf(const char *value) const { const auto p = find(value); return p == npos ? -1 : int(p); }
-    String substring(size_t start, size_t end = npos) const { return substr(start, end == npos ? npos : end - start); }
     void trim() {''')
 harness = r'''
 #include <cassert>

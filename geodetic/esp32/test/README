@@ -31,6 +31,14 @@ c++ -std=c++17 -fsanitize=address,undefined -Itest/host -Iinclude \
   test/host/wifi_profiles_checks.cpp -o /tmp/esp32-wifi-checks
 /tmp/esp32-wifi-checks
 
+Shared codec and MQTT dispatch checks:
+
+c++ -std=c++17 -DNATIVE_BUILD -fsanitize=address,undefined \
+  -Itest/host -Iinclude -Isrc/functions test/host/codec_checks.cpp \
+  src/functions/Backend_Agent_Codec.cpp -o /tmp/esp32-codec-checks
+/tmp/esp32-codec-checks
+python3 -B test/host/check_mqtt_dispatch.py
+
 wifi_profiles_checks.cpp validates credentials using Wifi_Credentials.h;
 it does not restore the removed AP or multiple-network profile feature.
 check_wifi_handover.py reads the current Network_Manager.cpp implementation.

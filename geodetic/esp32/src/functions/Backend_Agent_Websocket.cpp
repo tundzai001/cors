@@ -1,4 +1,5 @@
 #include "Backend_Agent_Websocket.h"
+#include "Backend_Agent_Codec.h"
 #include "Websocket_Protocol.h"
 #include <mbedtls/sha1.h>
 #include <mbedtls/base64.h>
@@ -11,7 +12,6 @@
 
 namespace {
 String websocketNonce() {
-    static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     uint8_t nonce[16] = {};
     for (size_t i = 0; i < sizeof(nonce); i += sizeof(uint32_t)) {
 #if !defined(NATIVE_BUILD)
@@ -21,19 +21,7 @@ String websocketNonce() {
 #endif
         memcpy(nonce + i, &randomValue, sizeof(randomValue));
     }
-    String encoded;
-    encoded.reserve(24);
-    for (size_t i = 0; i < sizeof(nonce); i += 3) {
-        const uint32_t a = nonce[i];
-        const uint32_t b = i + 1 < sizeof(nonce) ? nonce[i + 1] : 0;
-        const uint32_t c = i + 2 < sizeof(nonce) ? nonce[i + 2] : 0;
-        const uint32_t value = (a << 16) | (b << 8) | c;
-        encoded += alphabet[(value >> 18) & 0x3F];
-        encoded += alphabet[(value >> 12) & 0x3F];
-        encoded += i + 1 < sizeof(nonce) ? alphabet[(value >> 6) & 0x3F] : '=';
-        encoded += i + 2 < sizeof(nonce) ? alphabet[value & 0x3F] : '=';
-    }
-    return encoded;
+    return BackendAgentInternal::encodeBase64(nonce, sizeof(nonce));
 }
 } // namespace
 
