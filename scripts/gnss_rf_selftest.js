@@ -88,3 +88,14 @@ assert.equal(configStatus(configDevice,{itfm_enabled:false,itfm_error:'timeout'}
 assert.equal(configStatus({base_config:{base_setup_method:'FIXED_LLA'}},{itfm_enabled:true}).label,'Khớp trạng thái đang chạy');
 assert.equal(configStatus({},receiver).desired,null);
 console.log('PASS: saved ITFM true/false/default vs running readback, mismatch, timeout, missing/stale and no saved config');
+
+const versionRows=vm.runInNewContext(`${code};getReceiverVersionRows;`);
+const fullVer=Buffer.alloc(250);fullVer.write('EXT CORE 1.00 (abc123)');fullVer.write('00190000',30);
+['ROM BASE 0x118B2060','FWVER=HPG 1.13','PROTVER=27.12','MOD=ZED-F9P','GPS;GLO;GAL;BDS','CUSTOM=value',''].forEach((line,index)=>fullVer.write(line,40+30*index));
+const fullReceiver=decodeReceiver({...receiverDevice,gnss_receiver:{...receiverDevice.gnss_receiver,payload_b64:fullVer.toString('base64')}},true,102);
+const rows=versionRows(fullReceiver);
+assert.equal(rows[0].value,'EXT CORE 1.00 (abc123)');assert.equal(rows[1].value,'00190000');assert.equal(rows[2].value,'0x118B2060');
+assert.equal(rows.length,10);assert.equal(rows[8].value,'CUSTOM=value');assert.equal(rows[9].value,'(trống)');
+assert.equal(versionRows(receiver)[2].value,'Chip không trả trường này');assert.equal(versionRows(null).length,0);
+assert.equal(blockLabel(reading.blocks[0],reading.blocks),'L1');assert.equal(blockLabel(reading.blocks[1],reading.blocks),'L2/L5');
+console.log('PASS: complete MON-VER software/hardware/ROM and every extension including unknown/empty; missing ROM never fabricated; duplicate RF IDs never assigned bands');

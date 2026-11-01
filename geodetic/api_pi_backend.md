@@ -350,3 +350,5 @@ References: [MON-VER / CFG-ITFM interface](https://content.u-blox.com/sites/defa
 ### Persisted u-blox interference setting
 
 `base_config.gnss_options.interference_detection_enabled` is a boolean, default true when omitted; explicit false is preserved. The u-blox BASE form applies it only through the existing Apply BASE action. Fixed LLA and Survey-in builders append a separate VALSET of `CFG-ITFM-ENABLE` (`0x1041000d`) with RAM/BBR/Flash layers `0x07`, before the existing save command. This key is not a per-port output key and is excluded from output verification payloads. UM commands are unchanged. The diagnostics compare saved intent against fresh `gnss_receiver.itfm_enabled`; matching runtime readback does not prove persistence after power loss. No automatic fleet changes or firmware flashing occurs.
+
+The diagnostics UI displays the complete decoded MON-VER by default: software/hardware, ROM BASE when supplied, and every extension in reply order, including unknown or empty extensions. RF1/RF2 are block ordinals when IDs are duplicated, not antenna or port numbers; no band is inferred for those ambiguous records.

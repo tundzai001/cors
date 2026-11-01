@@ -179,6 +179,18 @@ function getReceiverDiagnostic(device, live = true, now = Date.now() / 1000) {
     } catch (_) { return {...result,error:'Phản hồi MON-VER không hợp lệ.'}; }
 }
 
+function getReceiverVersionRows(receiver) {
+    if (!receiver?.software) return [];
+    const extensions = receiver.extensions || [];
+    const rom = extensions.find(value=>/^ROM BASE\s+/.test(value));
+    return [
+        {label:'Phần mềm lõi (swVersion)',value:receiver.software},
+        {label:'Phần cứng (hwVersion)',value:receiver.hardware || 'Chip không trả trường này'},
+        {label:'ROM BASE',value:rom ? rom.replace(/^ROM BASE\s+/, '') : 'Chip không trả trường này'},
+        ...extensions.map((value,index)=>({label:`extension[${index}]`,value:value || '(trống)'}))
+    ];
+}
+
 function getInterferenceConfigStatus(device, receiver) {
     const config = device?.base_config;
     if (!config?.base_setup_method) return {desired:null, label:'Chưa lưu cấu hình BASE', tone:'text-muted'};
@@ -517,6 +529,13 @@ function RfDiagnostics({device, live}) {
             </div>
             {!unicore && <div className="small border rounded p-2 mb-2" aria-label="Thông tin chip GNSS">
                 <div data-no-translate style={{overflowWrap:'anywhere'}}><strong>{receiver?.model || 'u-blox'}</strong> · Firmware: {receiver?.firmware || receiver?.software || 'Chưa đọc được'} · Protocol: {receiver?.protocol || 'Chưa đọc được'}</div>
+                <h6 className="mt-3 mb-2">Thông tin MON-VER đầy đủ</h6>
+                {receiver?.software ? <dl className="row g-2 mb-3" aria-label="MON-VER đầy đủ">
+                    {getReceiverVersionRows(receiver).map((row,index)=><React.Fragment key={index}>
+                        <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
+                        <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
+                    </React.Fragment>)}
+                </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
                 <div>Cấu hình đã lưu: <strong>{interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
                 <div>Chip đọc lại: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
                 <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
@@ -531,6 +550,7 @@ function RfDiagnostics({device, live}) {
             <p className="small text-muted mb-2">Giữ mẫu trước khi đổi vị trí anten hoặc tắt nguồn phát của mình, rồi so sánh. Mốc được chọn chưa chắc sạch nhiễu.</p>
             {readError && <details className="mb-2"><summary>Chi tiết lỗi đọc MON-RF</summary><p className="small mb-0" data-no-translate>{readError.error}</p></details>}
             {!unicore && <p className="small text-muted mb-2">Trạng thái RF: {rf ? `${Math.floor(rf.age_seconds)} giây trước` : 'Chưa có'} · Phổ: {spectrum ? `${Math.floor(spectrum.age_seconds)} giây trước` : 'Chưa có'}</p>}
+            {rf && <p className="small text-muted mb-2">RF1 và RF2 là các khối xử lý tín hiệu vô tuyến bên trong chip, không phải tên cổng USB/UART hay số anten. Khi ID hợp lệ: 0 là L1, 1 là L2/L5 tùy model. Nếu trùng ID, số RF chỉ thứ tự khối trả về, chưa xác định được băng của từng khối.</p>}
             <details className="mt-2 rf-details"><summary className="mb-2">Xem chỉ số và phổ chi tiết</summary>
             {!hasData && <p className="text-muted mb-2" role="status">Chưa có dữ liệu RF mới. Cần agent hỗ trợ và chip trả lời; dữ liệu quá 45 giây không được dùng để kết luận.</p>}
             {unicore && <div className="d-grid gap-2 mb-2">
