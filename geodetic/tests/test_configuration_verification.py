@@ -44,10 +44,21 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
         mode = base64.b64decode(payload['tmode_b64'])
         output = base64.b64decode(payload['output_b64'])
         rates = dict(struct.iter_unpack('<IB', output))
+        for port in payload.get('readback', {}).get('ports', []):
+            for key, _ in struct.iter_unpack('<IB', base64.b64decode(port['output_b64'])):
+                rates.setdefault(key, int(key >> 16 in (0x1072, 0x107a)))
+        rates[0x2091031C] = 3  # SPI Galileo MSM7: actual setting outside desired ports.
+        rates.update({0x10510003: 1, 0x10520005: 1, 0x10530005: 1, 0x10650001: 1, 0x10640006: 0})
         async def respond(wire, key):
             if key == (6, 0x71):
                 self.assertEqual(wire, self.pack(6, 0x71))
                 return self.pack(6, 0x71, mode)
+            if key == (6, 0):
+                self.assertIn(wire[6:-2], (b'\x01', b'\x02'))
+                body = bytearray(20)
+                body[0] = wire[6]
+                struct.pack_into('<I', body, 8, 115200 if body[0] == 1 else 57600)
+                return self.pack(6, 0, body)
             self.assertEqual(key, (6, 0x8b))
             self.assertEqual(wire[6:10], b'\0\0\0\0')
             keys = [key for (key,) in struct.iter_unpack('<I', wire[10:-2])]
@@ -63,9 +74,16 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
         self.ublox_responses(payload)
         result = await self.verify(payload)
         self.assertEqual(result['state'], 'match')
-        self.assertEqual(self.reader.query_base.await_count, 4)
-        self.assertEqual(result['groups']['protocols']['checked'], 9)
+        self.assertEqual(self.reader.query_base.await_count, 8)
+        self.assertEqual(result['groups']['protocols']['checked'], 12)
         self.assertEqual(result['groups']['rtcm']['checked'], 30)
+        details = result['details']
+        self.assertEqual([port['name'] for port in details['ports']], ['I2C', 'UART1', 'UART2', 'USB', 'SPI'])
+        self.assertEqual(details['ports'][1]['baud'], 115200)
+        self.assertEqual(details['ports'][2]['baud'], 57600)
+        self.assertEqual(details['ports'][4]['values'][details['fields'].index('RTCM 1097')], 3)
+        self.assertEqual(details['ports'][4]['enabled'], 0)
+        self.assertEqual(details['fixed']['actual']['self_position']['lat'], '21.123456789')
         status = self.s['receiver_base_system_info'](self.agent)
         self.assertTrue(status['gnss_verification_supported'])
         self.assertFalse(status['gnss_verification_uart1'])
@@ -79,6 +97,38 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
         for mismatch, malformed, expected in ((True, False, 'mismatch'), (False, True, 'unread')):
             self.ublox_responses(payload, mismatch=mismatch, malformed=malformed)
             self.assertEqual((await self.verify(payload))['state'], expected)
+
+    async def test_unread_optional_port_is_not_reported_as_disabled(self):
+        payload = builder.build_ublox_verification_payload(self.config)
+        self.ublox_responses(payload)
+        respond = self.reader.query_base.side_effect
+        async def missing_spi(wire, key):
+            if key == (6, 0x8b) and wire[10:14] == bytes.fromhex('01007a10'):
+                raise TimeoutError('SPI readback unavailable')
+            return await respond(wire, key)
+        self.reader.query_base.side_effect = missing_spi
+        result = await self.verify(payload)
+        self.assertEqual(result['state'], 'match')
+        self.assertEqual(result['details']['ports'][-1]['state'], 'unread')
+        self.assertIsNone(result['details']['ports'][-1]['values'])
+
+    async def test_disabled_selected_interface_is_a_mismatch(self):
+        payload = builder.build_ublox_verification_payload(self.config)
+        self.ublox_responses(payload)
+        respond = self.reader.query_base.side_effect
+        async def disabled_uart2(wire, key):
+            reply = await respond(wire, key)
+            if key == (6, 0x8b):
+                body = bytearray(reply[6:-2])
+                for offset in range(4, len(body), 5):
+                    if int.from_bytes(body[offset:offset + 4], 'little') == 0x10530005:
+                        body[offset + 4] = 0
+                return self.pack(6, 0x8b, body)
+            return reply
+        self.reader.query_base.side_effect = disabled_uart2
+        result = await self.verify(payload)
+        self.assertEqual(result['state'], 'mismatch')
+        self.assertEqual(result['details']['ports'][2]['enabled'], 0)
 
     def unicore_responses(self, payload, *, extra=False, wrong_port=False, bad_count=False):
         self.agent.detected_chip['type'] = 'Unicorecomm'
@@ -107,6 +157,9 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('RTCM1094', payload['logs'])
         self.assertIn('RTCM1097', payload['logs'])
         self.assertEqual(payload['port'], 'COM3')
+        self.assertEqual(result['details']['logs_state'], 'ok')
+        self.assertEqual(result['details']['logs'][0]['port'], 'COM3')
+        self.assertEqual(result['details']['fixed']['actual']['self_position']['alt'], 30)
 
     async def test_unicore_extra_nmea_wrong_port_truncation_and_unknown_port(self):
         payload = builder.build_unicore_verification_payload(self.config)

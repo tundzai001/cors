@@ -46,6 +46,11 @@ int main() {
     assert(!UbxConfigVerification::validExpected(records, 9));
     uint8_t tooMany[205] = {};
     assert(!UbxConfigVerification::validExpected(tooMany, sizeof(tooMany)));
+    const uint8_t i2c[] = {1, 0, 0x72, 0x10, 0, 3, 0, 0x51, 0x10, 0};
+    const uint8_t spi[] = {1, 0, 0x7A, 0x10, 0, 6, 0, 0x64, 0x10, 0};
+    assert(UbxConfigVerification::validExpected(i2c, sizeof(i2c)));
+    assert(UbxConfigVerification::validExpected(spi, sizeof(spi)));
+    assert(UbxConfigVerification::enabledKey(3) == 0x10650001);
     const auto packet = [](const std::string &body) {
         uint32_t crc = 0;
         for (size_t i = 1; i < body.size(); ++i) {

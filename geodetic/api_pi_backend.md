@@ -151,3 +151,20 @@ tại chưa biết số COM, chỉ xác nhận các phần đã đọc đủ; kh
 
 Kiểm tra không cần thiết bị: `python3 -B -m unittest discover -s geodetic/tests
 -p test_configuration_verification.py` (từ thư mục gốc repo).
+
+`gnss_verification.details` chứa dữ liệu thực tế để giao diện trình bày:
+
+- `kind`, `fixed.actual`, `fixed.expected`: mode và tọa độ/accuracy đã giải mã.
+- u-blox: `fields`, `expected`, `compare_ports`, `ports[]` gồm `name`, `state`,
+  `values` (cùng thứ tự fields), `enabled`, `baud` nếu là UART. Backend gửi
+  catalogue `readback` để poll cả 5 cổng; expectation chỉ áp dụng các cổng đã
+  chọn, còn cổng khác được hiển thị đúng giá trị chip trả về. Không dùng dữ
+  liệu expectation làm giá trị dự phòng khi timeout.
+- UM: `logs_state`, `logs[]` gồm `port`, `name`, `period` (null là ONCE),
+  `expected_logs`, `compare_ports`. Giữ tất cả cổng trong readback, không thay
+  tên COM bằng cổng mong muốn.
+
+Capability `gnss_verification_details_supported` cho biết agent đã hỗ trợ bảng
+chi tiết. Agent cũ chỉ trả nhóm kết quả thì UI yêu cầu cập nhật, không tự tạo
+bảng giá trị từ cấu hình web. Kết quả chi tiết cũng chỉ là cấu hình chip,
+không phải phép đo điện trên chân I2C/UART/SPI hoặc xác nhận rover nhận RTCM.

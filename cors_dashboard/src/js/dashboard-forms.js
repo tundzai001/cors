@@ -272,9 +272,120 @@ const ProvisionForm = memo(function ProvisionForm({ device, currentUser = {}, on
     );
 });
 
+const GnssReadbackDetails = ({ details }) => {
+    const [portName, setPortName] = useState('');
+    const [enabledOnly, setEnabledOnly] = useState(true);
+    const ublox = details.kind === 'Ublox';
+    const names = ublox ? ['I2C', 'UART1', 'UART2', 'USB', 'SPI'] : ['COM1', 'COM2', 'COM3'];
+    const selected = names.includes(portName) ? portName : details.compare_ports?.find(name => names.includes(name)) || names[0];
+    const actualFixed = details.fixed?.actual || {};
+    const expectedFixed = details.fixed?.expected || {};
+    const fixedRows = [
+        ['Mode', actualFixed.mode, expectedFixed.mode],
+        ['Kiểu tọa độ', actualFixed.coordinate_type, expectedFixed.coordinate_type],
+        ['Vĩ độ', actualFixed.self_position?.lat, expectedFixed.self_position?.lat],
+        ['Kinh độ', actualFixed.self_position?.lon, expectedFixed.self_position?.lon],
+        ['Độ cao (m)', actualFixed.self_position?.alt, expectedFixed.self_position?.alt],
+        ['Độ chính xác khai báo (m)', actualFixed.accuracy_m, expectedFixed.accuracy_m],
+        ['Độ cao chip báo (m)', actualFixed.height_msl, expectedFixed.height_msl],
+        ['Undulation (m)', actualFixed.undulation, expectedFixed.undulation],
+        ['Datum', actualFixed.datum, expectedFixed.datum],
+        ['Trạng thái vị trí', actualFixed.position_type, expectedFixed.position_type],
+    ].filter(([, actual, expected]) => actual != null || expected != null);
+    const fields = details.fields || [];
+    const ports = details.ports || [];
+    const observed = ports.find(port => port.name === selected);
+    const compare = details.compare_ports?.includes(selected);
+    const messageIndexes = fields.map((_, index) => index).filter(index => index >= 3 && fields[index] !== 'PORT_ENABLED'
+        && (!enabledOnly || observed?.values?.[index] !== 0 || (compare && details.expected?.[index] > 0)));
+    const logs = details.logs || [];
+    const expectedLogs = compare ? details.expected_logs || [] : [];
+    const rate = value => value === 0 ? 'Tắt' : value == null ? 'Chưa đọc được' : `Mỗi ${value} chu kỳ`;
+    const show = value => value == null ? 'Chưa đọc được' : String(value);
+    const logNames = [...new Set([...logs.filter(log => log.port === selected).map(log => log.name), ...expectedLogs])].sort()
+        .filter(name => !enabledOnly || expectedLogs.includes(name) || logs.some(log => log.port === selected && log.name === name && log.period > 0));
+    return <div className="mt-3">
+        <h6>Cấu hình chip trả về</h6>
+        <div className="table-responsive border rounded mb-3" tabIndex={0} role="region" aria-label="Mode và tọa độ; cuộn ngang để xem đủ các cột">
+            <table className="table table-sm align-middle mb-0 small" style={{ minWidth: 520 }}>
+                <caption className="visually-hidden">Mode và tọa độ đọc từ chip, so với cấu hình yêu cầu</caption>
+                <thead><tr><th scope="col">Thông số</th><th scope="col">Chip trả về</th><th scope="col">Yêu cầu</th></tr></thead>
+                <tbody>{fixedRows.map(([label, actual, expected]) => <tr key={label}>
+                    <th scope="row" className="fw-normal">{label}</th>
+                    <td className="font-monospace text-nowrap">{show(actual)}</td>
+                    <td className="font-monospace text-nowrap">{expected == null ? 'Không đặt' : show(expected)}</td>
+                </tr>)}</tbody>
+            </table>
+        </div>
+        <h6>Cổng và bản tin đầu ra</h6>
+        <div className="table-responsive border rounded">
+            <table className="table table-sm align-middle mb-0 small">
+                <caption className="visually-hidden">Các cổng đầu ra được đọc trực tiếp từ chip</caption>
+                <thead><tr><th scope="col">Cổng</th>{ublox ? <><th scope="col">Cổng bật</th><th scope="col">Baud</th><th scope="col">UBX</th><th scope="col">NMEA</th><th scope="col">RTCM</th></> : <th scope="col">Log định kỳ</th>}</tr></thead>
+                <tbody>{names.map(name => {
+                    const port = ports.find(item => item.name === name);
+                    const ready = ublox ? port?.state === 'ok' : details.logs_state === 'ok';
+                    return <tr key={name} className={selected === name ? 'table-active' : ''}>
+                        <th scope="row"><button type="button" className={`btn btn-sm ${selected === name ? 'btn-info' : 'btn-outline-info'}`}
+                            style={{ minHeight: 44 }} aria-pressed={selected === name} onClick={() => setPortName(name)}>{name}</button></th>
+                        {ublox ? <>
+                            <td>{!ready || port.enabled == null ? 'Chưa đọc được' : port.enabled === 1 ? 'Bật' : port.enabled === 0 ? 'Tắt' : String(port.enabled)}</td>
+                            <td>{name.startsWith('UART') ? port?.baud != null ? `${port.baud} bps` : 'Chưa đọc được' : '—'}</td>
+                            {[0, 1, 2].map(index => <td key={index} className={ready && port.values?.[index] === 1 ? 'text-success-emphasis' : 'text-body-secondary'}>
+                                {!ready ? 'Chưa đọc được' : port.values?.[index] === 1 ? 'Bật' : port.values?.[index] === 0 ? 'Tắt' : show(port.values?.[index])}
+                            </td>)}
+                        </> : <td>{ready ? logs.filter(log => log.port === name && log.period > 0).length : 'Chưa đọc được'}</td>}
+                    </tr>;
+                })}</tbody>
+            </table>
+        </div>
+        <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3 mb-2">
+            <div className="fw-semibold">Bản tin trên {selected}</div>
+            <label className="form-check-label d-flex align-items-center gap-2 small" style={{ minHeight: 44 }}>
+                <input className="form-check-input m-0" type="checkbox" checked={enabledOnly} onChange={event => setEnabledOnly(event.target.checked)} />Chỉ bản tin đang bật
+            </label>
+        </div>
+        {ublox ? observed?.state !== 'ok' ? <div className="small text-warning">Chưa đọc được danh sách bản tin trên {selected}.</div> : <>
+            <div className="table-responsive border rounded">
+                <table className="table table-sm align-middle mb-0 small">
+                    <caption className="visually-hidden">Tốc độ bản tin đọc từ chip trên {selected}</caption>
+                    <thead><tr><th scope="col">Bản tin</th><th scope="col">Chip trả về</th><th scope="col">Yêu cầu</th></tr></thead>
+                    <tbody>{messageIndexes.map(index => {
+                        const field = fields[index];
+                        const actual = observed.values?.[index];
+                        const expected = compare ? details.expected?.[index] : null;
+                        if (enabledOnly && actual === 0 && !(expected > 0)) return null;
+                        return <tr key={field}>
+                            <th scope="row" className="fw-normal">{field}</th>
+                            <td className={expected != null && actual !== expected ? 'text-danger-emphasis' : ''}>{rate(actual)}</td>
+                            <td>{expected == null ? 'Không đặt' : rate(expected)}</td>
+                        </tr>;
+                    })}{messageIndexes.length === 0 && <tr><td colSpan={3} className="text-muted">Không có bản tin định kỳ đang bật trong danh sách đã đọc.</td></tr>}</tbody>
+                </table>
+            </div>
+            <p className="small text-muted mt-2 mb-0">Tốc độ tính theo chu kỳ đo của chip. Bảng liệt kê các bản tin trong bộ cấu hình Base. Cổng và giao thức tương ứng phải bật để xuất bản tin.</p>
+        </> : details.logs_state !== 'ok' ? <div className="small text-warning">Chưa đọc được danh sách log từ UM.</div> : <div className="table-responsive border rounded">
+            <table className="table table-sm align-middle mb-0 small">
+                <caption className="visually-hidden">Danh sách log UM trên {selected}</caption>
+                <thead><tr><th scope="col">Bản tin</th><th scope="col">Chip trả về</th><th scope="col">Yêu cầu</th></tr></thead>
+                <tbody>{logNames.map(name => {
+                    const actual = logs.find(log => log.port === selected && log.name === name);
+                    const expected = expectedLogs.includes(name);
+                    if (enabledOnly && actual?.period == null && !expected) return null;
+                    return <tr key={name}><th scope="row" className="fw-normal">{name}</th>
+                        <td className={compare && ((!expected && actual?.period > 0) || (expected && actual?.period !== 1)) ? 'text-danger-emphasis' : ''}>{!actual ? 'Không có trong danh sách' : actual.period == null ? 'Một lần' : `${actual.period} giây`}</td>
+                        <td>{expected ? '1 giây' : compare ? 'Không bật' : 'Không đặt'}</td></tr>;
+                })}</tbody>
+            </table>
+            {logNames.length === 0 && <div className="small text-muted p-2">Chip không liệt kê log trên cổng này.</div>}
+        </div>}
+    </div>;
+};
+
 const GnssConfigVerification = ({ device, disabled }) => {
     const [pending, setPending] = useState(null);
     const [result, setResult] = useState(null);
+    const [expired, setExpired] = useState(false);
     const [notice, setNotice] = useState('');
     const requestRef = useRef(0);
     const info = device.system_info || {};
@@ -286,7 +397,7 @@ const GnssConfigVerification = ({ device, disabled }) => {
     const fixed = device.base_config?.base_setup_method === 'FIXED_LLA';
     useEffect(() => {
         ++requestRef.current;
-        setPending(null); setResult(null); setNotice('');
+        setPending(null); setResult(null); setExpired(false); setNotice('');
         return () => { ++requestRef.current; };
     }, [device.serial, configSnapshot, device.status_boot_id]);
     useEffect(() => {
@@ -308,7 +419,7 @@ const GnssConfigVerification = ({ device, disabled }) => {
     useEffect(() => {
         if (!result) return;
         const timer = setTimeout(() => {
-            setResult(null); setNotice('Kết quả đã cũ. Hãy xác minh lại cấu hình.');
+            setExpired(true);
         }, Math.max(0, 60 - Number(result.age_seconds || 0)) * 1000);
         return () => clearTimeout(timer);
     }, [result]);
@@ -316,7 +427,7 @@ const GnssConfigVerification = ({ device, disabled }) => {
     async function verify() {
         if (blocked) return;
         const request = ++requestRef.current;
-        setResult(null); setNotice(''); setPending({ id: null });
+        setResult(null); setExpired(false); setNotice(''); setPending({ id: null });
         try {
             const response = await window.DeviceApi.sendCommand(device.serial, 'VERIFY_GNSS_CONFIG', {});
             const data = await response.json();
@@ -340,12 +451,17 @@ const GnssConfigVerification = ({ device, disabled }) => {
             {pending && <div className="small text-info mt-2">Đang chờ chip trả cấu hình…</div>}
             {notice && <div className="small text-warning mt-2">{notice}</div>}
             {result && <>
-                <div className={`small fw-bold mt-2 ${offline || result.state !== 'match' ? 'text-warning' : 'text-success-emphasis'}`}>
+                <div className={`small fw-bold mt-2 ${offline || expired || result.state !== 'match' ? 'text-warning' : 'text-success-emphasis'}`}>
                     {offline ? 'Thiết bị ngoại tuyến. Kết quả là lần xác minh gần nhất.'
+                        : expired ? 'Kết quả là lần đọc trước. Xác minh lại để cập nhật.'
                         : result.state === 'match' ? 'Cấu hình đang chạy khớp.'
                         : result.state === 'mismatch' ? 'Cấu hình chưa khớp.' : 'Chưa đọc đủ cấu hình để xác minh.'}
                 </div>
-                <dl className="row g-2 small mt-1 mb-0">
+                {result.details?.ports?.some(port => port.state !== 'ok') && <div className="small text-warning mt-2">Một số cổng chưa đọc được; xem trạng thái trong bảng.</div>}
+                {result.details ? <GnssReadbackDetails details={result.details} />
+                    : <div className="small text-warning mt-2">Cập nhật agent để xem giá trị và từng cổng chip trả về.</div>}
+                <details className="mt-3"><summary>Đối chiếu các nhóm cấu hình</summary>
+                <dl className="row g-2 small mt-2 mb-0">
                     {[[ 'fixed', device.detected_chip_type === 'Ublox' ? 'Fixed LLA và độ chính xác' : 'Fixed LLA'],
                         ...(device.detected_chip_type === 'Ublox' ? [['protocols', 'Giao thức đầu ra']] : []),
                         ['diagnostics', device.detected_chip_type === 'Ublox' ? 'Bản tin NMEA / UBX' : 'Bản tin NMEA'],
@@ -361,6 +477,7 @@ const GnssConfigVerification = ({ device, disabled }) => {
                         </React.Fragment>;
                     })}
                 </dl>
+                </details>
                 {result.note && <div className="small text-warning mt-2">{result.note}</div>}
             </>}
         </div>

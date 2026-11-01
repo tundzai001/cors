@@ -34,7 +34,7 @@ String BackendAgent::buildStatusPayload() {
     if (gnssVerification_.length() && millis() - gnssVerificationMs_ >= 60000UL)
         gnssVerification_ = static_cast<const char *>(nullptr);
     DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (nvsInventory_.length() > 2 ? 3072 : 0)
-                            + (gnssVerification_.length() ? 1536 : 0));
+                            + (gnssVerification_.length() ? VERIFICATION_DOCUMENT_SIZE : 0));
     DynamicJsonDocument serviceDoc(CONFIG_DOCUMENT_SIZE);
     deserializeJson(serviceDoc, serviceConfig_);
     const JsonObjectConst service = serviceDoc.as<JsonObjectConst>();
@@ -112,10 +112,11 @@ String BackendAgent::buildStatusPayload() {
     JsonObject system = doc.createNestedObject("system_info");
     system["auto_base_review_supported"] = true;
     system["gnss_verification_supported"] = true;
+    system["gnss_verification_details_supported"] = true;
     system["gnss_verification_uart1"] = true;
     system["gnss_verification"] = nullptr;
     if (gnssVerification_.length()) {
-        DynamicJsonDocument verification(1536);
+        DynamicJsonDocument verification(VERIFICATION_DOCUMENT_SIZE);
         if (deserializeJson(verification, gnssVerification_) == DeserializationError::Ok) {
             system["gnss_verification"].set(verification.as<JsonObjectConst>());
             system["gnss_verification"]["age_seconds"] = (millis() - gnssVerificationMs_) / 1000UL;

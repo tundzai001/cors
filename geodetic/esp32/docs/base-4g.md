@@ -276,3 +276,30 @@ CFG-VALGET v0 request/v1 response theo tài liệu chính thức:
 [u-blox F9 HPG 1.32, UBX-22008968](https://content.u-blox.com/sites/default/files/documents/u-blox-F9-HPG-1.32_InterfaceDescription_UBX-22008968.pdf),
 trang 89–90, 95–96 và 239–241. Kiểm tra host dùng các key độc lập từ tài
 liệu, không chỉ so bảng Python với bảng C++.
+
+### Bảng dữ liệu đọc trực tiếp từ chip
+
+Kết quả xác minh hiện kèm bảng giá trị chip trả về, không chỉ số lượng khớp:
+
+- u-blox: đọc riêng cả I2C, UART1, UART2, USB và SPI, kể cả cổng không được chọn
+  trong cấu hình mong muốn. Mỗi cổng gồm ENABLED, ba OUTPROT UBX/NMEA/RTCM3X,
+  tốc độ các bản tin trong bộ cấu hình Base (NMEA, NAV-PVT/HPPOSLLH, RTCM).
+  UART1/UART2 đọc baud bằng CFG-PRT. Truy vấn CFG-VALGET RAM chứa tối đa 32
+  key/cổng; không dùng wildcard, không phát VALSET và không thay đổi routing.
+- TMODE3 trả về mode, kiểu tọa độ, tọa độ nguyên+HP và fixedPosAcc; UI hiển thị
+  riêng giá trị thực tế và giá trị yêu cầu. Chu kỳ bản tin u-blox là số chu kỳ
+  sự kiện/đo, không tự coi là giây hoặc Hz.
+- UM: hiển thị toàn bộ log UNILOGLIST đã kiểm CRC, chia theo COM1/COM2/COM3,
+  tên bản tin và period/ONCE. Kể cả ESP32 dùng cổng hiện tại chưa biết số COM,
+  danh sách log thực tế vẫn được hiển thị; phần đối chiếu cổng giữ trạng thái
+  chưa xác minh. BESTNAV hiển thị tọa độ, height_msl, undulation, datum và loại
+  nghiệm độc lập với dữ liệu mong muốn.
+
+Không có phản hồi thì hiển thị Chưa đọc được, không đổi thành giá trị 0/Tắt.
+Giao thức bật không đồng nghĩa cổng vật lý bật: ENABLED được đọc và hiển thị
+riêng; cổng yêu cầu nhưng ENABLED=0 được đánh dấu lệch. Người dùng chọn cổng
+để xem tốc độ từng bản tin, bật/tắt bộ lọc hiển thị log đang bật.
+
+Agent vẫn giải phóng snapshot RAM sau 60 giây. Trình duyệt giữ lần đọc để xem
+chi tiết, đánh dấu cũ sau 60 giây; đổi trạm/cấu hình sẽ bỏ snapshot. ESP32 bỏ
+snapshot NVS trước khi tạo snapshot GNSS, tránh cộng dồn hai bảng theo yêu cầu.

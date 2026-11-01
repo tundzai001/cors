@@ -51,6 +51,16 @@ for msm in (4, 7, "both"):
         assert rates[0x2091036E] == int(bds and msm in (4, "both"))
         assert rates[0x209102D7] == int(bds and msm in (7, "both"))
         assert rates[0x209102BE] == rates[0x20910304] == 1  # 1005 / 1230
+        readback = result['readback']
+        assert readback['compare_ports'] == ['UART1'] and len(readback['fields']) == 32
+        expected_keys = {'I2C': (0x10720001, 0x20910318, 0x10510003),
+                         'UART1': (0x10740001, 0x20910319, 0x10520005),
+                         'UART2': (0x10760001, 0x2091031A, 0x10530005),
+                         'USB': (0x10780001, 0x2091031B, 0x10650001),
+                         'SPI': (0x107A0001, 0x2091031C, 0x10640006)}
+        for port in readback['ports']:
+            keys = entries(base64.b64decode(port['output_b64']))
+            assert len(keys) == 32 and all(key in keys for key in expected_keys[port['name']])
 
 blob = builder.build_ublox_output_config_command({"ports": ["UART1", "UART2", "USB"]})
 valsets = [p for p in packets(blob) if p[2:4] == b"\x06\x8a"]

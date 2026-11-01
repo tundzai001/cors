@@ -239,9 +239,26 @@ def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = Fal
         if packets[1][offset + 2:offset + 4] == b'\x06\x8a':
             output.extend(packets[1][offset + 10:offset + 6 + length])
         offset += length + 8
+    desired = {int.from_bytes(output[i:i + 4], 'little'): output[i + 4] for i in range(0, len(output), 5)}
+    fields = ['UBX', 'NMEA', 'RTCM3X']
+    message_keys = []
+    for prefix, table in (('NMEA ', UBLOX_NMEA_KEYS), ('UBX ', UBLOX_NAV_KEYS), ('RTCM ', UBLOX_RTCM_KEYS)):
+        for name, keys in table.items():
+            fields.append(prefix + name.removeprefix('NAV_'))
+            message_keys.append(keys['UART1'])
+    inspection_ports = []
+    enabled_keys = {'I2C': 0x10510003, 'UART1': 0x10520005, 'UART2': 0x10530005, 'USB': 0x10650001, 'SPI': 0x10640006}
+    for port, delta, protocol in (('I2C', -1, 0x10720000), ('UART1', 0, 0x10740000),
+                                  ('UART2', 1, 0x10760000), ('USB', 2, 0x10780000), ('SPI', 3, 0x107A0000)):
+        keys = [protocol | suffix for suffix in (1, 2, 4)] + [key + delta for key in message_keys] + [enabled_keys[port]]
+        records = b''.join(key.to_bytes(4, 'little') + b'\0' for key in keys)
+        inspection_ports.append({'name': port, 'output_b64': base64.b64encode(records).decode('ascii')})
+        if port == options['ports'][0]:
+            expected_values = [desired[key] for key in keys[:-1]] + [1]
     return {
         "tmode_b64": base64.b64encode(packets[0][6:-2]).decode("ascii"),
         "output_b64": base64.b64encode(output).decode("ascii"),
+        "readback": {"fields": fields + ['PORT_ENABLED'], "expected": expected_values, "compare_ports": options['ports'], "ports": inspection_ports},
     }
 
 
