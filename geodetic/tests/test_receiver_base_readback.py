@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import statistics
+import sqlite3
 from collections import deque
 from pathlib import Path
 from queue import Queue, Empty, Full
@@ -30,12 +31,13 @@ NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
 
 def load():
     scope = dict(asyncio=asyncio, threading=threading, Queue=Queue, Empty=Empty, Full=Full,
-                 time=time, logging=logging, math=math, struct=struct, re=re, copy=copy, base64=base64, statistics=statistics, deque=deque,
+                 time=time, logging=logging, math=math, struct=struct, re=re, copy=copy, base64=base64, statistics=statistics, sqlite3=sqlite3, deque=deque,
                  PARSER_DEBUG_ENABLED=False, PARSER_DEBUG_INTERVAL_SECONDS=30,
                  dispatch_rtcm_data=Mock(), dispatch_nmea_data=Mock())
     nodes = [n for n in ast.parse(SOURCE.read_text()).body if getattr(n, 'name', None) in NAMES]
     assert len(nodes) == len(NAMES)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), 'exec'), scope)
+    scope['AUTOMATIC_RF_MONITOR'] = scope['GnssRfMonitor']()
     return scope
 
 

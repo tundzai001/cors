@@ -151,9 +151,21 @@ function getRfMonitorWindow(device, live = true, now = Date.now() / 1000) {
     const duration = typeof report.observed_seconds === 'number' ? report.observed_seconds : report.last_sample_at - report.first_sample_at;
     const elapsed = Number.isFinite(duration) ? Math.max(0,Math.min(600,duration)) : 0;
     const samples = Array.isArray(report.samples) && report.samples.length <= 120 ? report.samples.filter(sample =>
-        Array.isArray(sample) && sample.length === 3 && typeof sample[0] === 'number' && Number.isFinite(sample[0]) && sample[0] >= 0 && sample[0] + age <= 600
-        && [0,1,2].includes(sample[1]) && (sample[2] === null || typeof sample[2] === 'number' && Number.isFinite(sample[2]))) : [];
+        Array.isArray(sample) && [3,7].includes(sample.length) && typeof sample[0] === 'number' && Number.isFinite(sample[0]) && sample[0] >= 0 && sample[0] + age <= 600
+        && [0,1,2].includes(sample[1]) && (sample[2] === null || typeof sample[2] === 'number' && Number.isFinite(sample[2]))
+        && (sample.length === 3 || [sample[3],sample[4]].every(value=>Number.isInteger(value)&&value>=0&&value<=128)
+            && sample.slice(5).every(value=>value===null||typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=255))) : [];
     return {...assessment,elapsed,age,samples};
+}
+
+function getRfMonitorHistory(report) {
+    const rows = report?.history_24h?.hours;
+    const stamp = report?.history_24h?.last_sample_at;
+    if (typeof stamp !== 'number' || !Number.isFinite(stamp) || stamp <= 0 || !Array.isArray(rows) || rows.length > 25) return [];
+    return rows.filter(row=>Array.isArray(row)&&row.length===7&&Number.isInteger(row[0])&&row[0]>0
+        &&row.slice(1,6).every(value=>Number.isInteger(value)&&value>=0&&value<=20000)
+        &&row[2]<=row[1]&&row[3]<=row[2]&&row[4]<=row[2]&&row[5]<=row[1]
+        &&(row[6]===null||typeof row[6]==='number'&&Number.isFinite(row[6])&&Math.abs(row[6])<=255));
 }
 
 function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
@@ -531,6 +543,11 @@ function RfMonitorOverview({model}) {
     const duration = seconds => `${Math.floor(seconds / 60).toString().padStart(2,'0')}:${Math.floor(seconds % 60).toString().padStart(2,'0')}`;
     const levels = ['Không cảnh báo','Cảnh báo','Mức mạnh'];
     const colors = ['var(--bs-info)','var(--bs-warning)','var(--bs-danger)'];
+    const history = getRfMonitorHistory(report);
+    const blocks = Array.isArray(report?.block_ranges) ? report.block_ranges.filter(row => Array.isArray(row) && row.length === 11
+        && row.every(value => Number.isInteger(value) && value >= 0 && value <= 65535)
+        && row[0] >= 1 && row[0] <= 4 && row[2] <= 120 && row[3] + row[4] <= row[2]).slice(0,4) : [];
+    const hour = timestamp => new Date(timestamp*1000).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
     const clock = offset => new Date((Date.now()/1000 - age - offset)*1000).toLocaleTimeString('vi-VN',{hour12:false});
     return <div className="border rounded-3 p-3 mb-3" aria-label="Cửa sổ theo dõi RF">
         <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
@@ -550,6 +567,20 @@ function RfMonitorOverview({model}) {
                 <div className="rounded border p-2 h-100"><strong className="fs-5 d-block">{value ?? '—'}</strong><span className="small text-muted">{label}</span></div>
             </div>)}
         </div>
+        {report?.sample_count >= 3 && <div className="small border-start border-3 ps-3 mb-3" role="status" aria-atomic="true">
+            <strong className="d-block">{report.warning_samples === report.sample_count ? 'Cảnh báo ở mọi lần đọc; chưa có mẫu không cảnh báo để so sánh.'
+                : report.warning_samples ? 'Cảnh báo xuất hiện ở một phần các mẫu.' : 'Các mẫu đã thu không có cảnh báo từ chip.'}</strong>
+            <span className="text-muted">{!report.quality_comparisons ? 'Chưa đủ dữ liệu đối chiếu C/N₀.'
+                : report.coincident_cno_drops ? `${report.coincident_cno_drops} mẫu cảnh báo đi kèm C/N₀ giảm so với lần đọc trước.`
+                : `Chưa thấy mức giảm C/N₀ đạt điều kiện trong ${report.quality_comparisons} cặp mẫu. Tín hiệu yếu sẵn từ đầu vẫn có thể không tạo ra mức giảm.`} Chưa xác định nguồn phát hoặc sai số tọa độ.</span>
+        </div>}
+        {blocks.length > 0 && <details className="mb-3"><summary className="small py-2" style={{minHeight:44}}>Biến động từng khối RF trong 10 phút</summary>
+            <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động từng khối RF"><table className="table table-sm small" style={{minWidth:520}}>
+                <thead><tr><th>Khối</th><th>Cảnh báo / mẫu</th><th>Mức mạnh</th><th>Nhiễu nền</th><th>AGC</th><th>jamInd</th></tr></thead>
+                <tbody>{blocks.map(row=><tr key={row[0]}><td className="text-nowrap">RF {row[0]} (ID {row[1]})</td><td>{row[3]+row[4]} / {row[2]}</td><td>{row[4]}</td><td>{row[5]}–{row[6]}</td><td>{row[7]}–{row[8]}</td><td>{row[9]}–{row[10]}</td></tr>)}</tbody>
+            </table></div>
+            <p className="small text-muted mb-0">Thấp nhất–cao nhất trong các lần đọc. Giá trị thô, không phải dBm hay ngưỡng kết luận nguồn nhiễu. Khối giữ theo thứ tự chip trả về.</p>
+        </details>}
         {samples.length ? <>
             <div className="d-flex flex-wrap gap-3 small mb-2"><span>● Không cảnh báo</span><span>▲ Cảnh báo</span><span>◆ Mức mạnh</span></div>
             <svg viewBox="0 0 600 105" role="img" aria-label={`${samples.length} mẫu RF trong 10 phút; các khoảng trống không có mẫu`} style={{width:'100%',height:'auto',minHeight:100}}>
@@ -565,11 +596,25 @@ function RfMonitorOverview({model}) {
             <div className="d-flex justify-content-between small text-muted mb-2"><span>−10 phút</span><span>−5 phút</span><span>Hiện tại</span></div>
             <p className="small text-muted mb-2">Mỗi dấu là một lần đọc. Khoảng trống: không có mẫu. Vòng ngoài: C/N₀ giảm.</p>
             <details><summary className="small py-2" style={{minHeight:44}}>Xem mẫu và cách tính</summary>
-                <div className="table-responsive"><table className="table table-sm small"><caption className="visually-hidden">Các mẫu RF đã thu trong cửa sổ</caption><thead><tr><th>Thời điểm</th><th>RF</th><th>ΔC/N₀</th></tr></thead>
-                    <tbody>{samples.map(([offset,level,delta],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta} dB-Hz`}</td></tr>)}</tbody></table></div>
+                <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động C/N₀ từng mẫu; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:600}}><caption className="visually-hidden">Các mẫu RF đã thu trong cửa sổ</caption><thead><tr><th>Thời điểm</th><th>RF</th><th>ΔC/N₀ trung vị</th><th>Thấp / cao nhất</th><th>Vệ tinh thay đổi</th></tr></thead>
+                    <tbody>{samples.map(([offset,level,delta,matched,changed,minimum,maximum],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta} dB-Hz`}</td><td className="text-nowrap">{minimum == null ? '—' : `${minimum} / ${maximum} dB-Hz`}</td><td>{delta === null || matched == null ? '—' : `${changed} / ${matched}`}</td></tr>)}</tbody></table></div>
+                <p className="small text-muted d-sm-none mb-1">Vuốt ngang để xem đủ các cột.</p>
                 <p className="small text-muted mb-0">C/N₀ giảm: trung vị giảm từ 3 dB-Hz trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc. {report?.quality_comparisons || 0} cặp mẫu đủ dữ liệu đối chiếu.</p>
+                <p className="small text-muted mb-0">Trung vị bằng 0 vẫn có thể có vệ tinh tăng hoặc giảm. Cùng epoch NAV-SAT hoặc thiếu dữ liệu: không tính Δ.</p>
             </details>
         </> : <p className="small text-muted mb-0">Chưa có lịch sử từng mẫu. Số đếm phía trên vẫn cập nhật khi nhận báo cáo.</p>}
+        <details className="mt-3 border-top pt-2"><summary className="py-2" style={{minHeight:44}}>Lịch sử 24 giờ</summary>
+            {report?.history_error && <p className="small text-warning" role="status">Không lưu được lịch sử tại Pi. Các mẫu trực tiếp vẫn được hiển thị.</p>}
+            {history.length ? <>
+                <p className="small text-muted">Lưu tại Pi, giữ qua lần khởi động lại. Báo cáo mới nhất: {hour(report.history_24h.last_sample_at)}.</p>
+                <p className="small">{history.reduce((sum,row)=>sum+row[1],0)} mẫu đã lưu · {history.reduce((sum,row)=>sum+row[2],0)} mẫu cảnh báo</p>
+                <div className="table-responsive" tabIndex={0} role="region" aria-label="Lịch sử RF theo giờ; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:480}}><caption className="visually-hidden">Tổng hợp RF theo giờ trong 24 giờ gần nhất</caption>
+                    <thead><tr><th>Giờ bắt đầu</th><th>Mẫu</th><th>Cảnh báo</th><th>Mức mạnh</th><th>Kèm C/N₀ giảm</th></tr></thead>
+                    <tbody>{history.map(row=><tr key={row[0]}><td className="text-nowrap">{hour(row[0])}</td><td>{row[1]}</td><td>{row[2]} / {row[1]}<div className="progress mt-1" style={{height:4}}><div className="progress-bar bg-warning" style={{width:`${row[1] ? row[2]/row[1]*100 : 0}%`}} /></div></td><td>{row[3]}</td><td>{row[5] ? row[4] : '—'}</td></tr>)}</tbody>
+                </table></div>
+                <p className="small text-muted mb-0">Đếm theo mẫu đã thu, không phải thời lượng nhiễu liên tục. Không có mẫu thì không suy ra trạng thái RF.</p>
+            </> : <p className="small text-muted mb-0">Chưa có lịch sử đã lưu.</p>}
+        </details>
     </div>;
 }
 

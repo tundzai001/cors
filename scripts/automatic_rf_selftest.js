@@ -32,3 +32,12 @@ assert.equal(model.samples.length,1);
 model=windowModel({...device,gnss_rf_monitor:{...history,samples:[[590,1,null],[0,0,null]]}},true,120);
 assert.equal(model.samples.length,1,'expired samples leave the timeline');
 console.log('PASS: window progress, bounded rolling timeline, old agents and invalid/stale sample points');
+
+model=windowModel({...device,gnss_rf_monitor:{...history,samples:[[0,1,0,6,4,-3,3]]}},true,100);
+assert.equal(model.samples[0][2],0);assert.equal(model.samples[0][4],4);
+const archived=vm.runInNewContext(`${code};getRfMonitorHistory;`);
+const archiveReport={history_24h:{last_sample_at:7200,hours:[[3600,300,200,10,3,250,-5]]}};
+assert.equal(archived(archiveReport).length,1);
+assert.equal(archived({history_24h:{...archiveReport.history_24h,hours:[[3600,2,3,0,0,0,null]]}}).length,0);
+assert.equal(archived({}).length,0);
+console.log('PASS: median-zero spread, changed satellite count and bounded 24-hour archive');
