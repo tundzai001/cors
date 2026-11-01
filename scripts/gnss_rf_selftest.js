@@ -78,3 +78,13 @@ assert.match(assess({live:true,rf:unknownRf}).reason,/chưa đọc được/);
 assert.equal(decodeReceiver({...receiverDevice,gnss_receiver:{...receiverDevice.gnss_receiver,payload_b64:'bad',itfm_enabled:0}},true,102).itfm_enabled,null);
 assert.match(decodeReceiver({...receiverDevice,gnss_receiver:{...receiverDevice.gnss_receiver,payload_b64:Buffer.alloc(42).toString('base64')}},true,102).error,/không hợp lệ/);
 console.log('PASS: MON-VER firmware/hardware/protocol/model, TTL and independent ITFM off/on/unknown verdicts');
+
+const configStatus=vm.runInNewContext(`${code};getInterferenceConfigStatus;`);
+const configDevice={base_config:{base_setup_method:'FIXED_LLA',gnss_options:{interference_detection_enabled:false}}};
+assert.equal(configStatus(configDevice,{itfm_enabled:false}).label,'Khớp trạng thái đang chạy');
+assert.equal(configStatus(configDevice,{itfm_enabled:true}).label,'Không khớp cấu hình đã lưu');
+assert.equal(configStatus(configDevice,null).label,'Chưa xác minh');
+assert.equal(configStatus(configDevice,{itfm_enabled:false,itfm_error:'timeout'}).label,'Lỗi đọc trạng thái chip');
+assert.equal(configStatus({base_config:{base_setup_method:'FIXED_LLA'}},{itfm_enabled:true}).label,'Khớp trạng thái đang chạy');
+assert.equal(configStatus({},receiver).desired,null);
+console.log('PASS: saved ITFM true/false/default vs running readback, mismatch, timeout, missing/stale and no saved config');

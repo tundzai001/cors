@@ -346,3 +346,7 @@ Pi and ESP32 publish `gnss_receiver` (45-second TTL): `source=ubx_mon_ver`, boun
 ITFM is read from running RAM using CFG-VALGET key `0x1041000d`; legacy CFG-ITFM poll is a fallback (enable bit 31). No VALSET, persistence, antenna power change or receiver reset is performed. A failed query is unknown, never disabled. For MON-RF state 0 the UI distinguishes confirmed disabled, confirmed enabled-but-unknown and unread configuration. Firmware before HPG 1.30 is annotated for the documented duplicate RF block ID issue.
 
 References: [MON-VER / CFG-ITFM interface](https://content.u-blox.com/sites/default/files/documents/u-blox-F9-HPG-1.32_InterfaceDescription_UBX-22008968.pdf), [HPG 1.30 release note](https://content.u-blox.com/sites/default/files/ZED-F9P-FW100-HPG130_RN_UBX-21047459.pdf).
+
+### Persisted u-blox interference setting
+
+`base_config.gnss_options.interference_detection_enabled` is a boolean, default true when omitted; explicit false is preserved. The u-blox BASE form applies it only through the existing Apply BASE action. Fixed LLA and Survey-in builders append a separate VALSET of `CFG-ITFM-ENABLE` (`0x1041000d`) with RAM/BBR/Flash layers `0x07`, before the existing save command. This key is not a per-port output key and is excluded from output verification payloads. UM commands are unchanged. The diagnostics compare saved intent against fresh `gnss_receiver.itfm_enabled`; matching runtime readback does not prove persistence after power loss. No automatic fleet changes or firmware flashing occurs.

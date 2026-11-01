@@ -179,6 +179,16 @@ function getReceiverDiagnostic(device, live = true, now = Date.now() / 1000) {
     } catch (_) { return {...result,error:'Phản hồi MON-VER không hợp lệ.'}; }
 }
 
+function getInterferenceConfigStatus(device, receiver) {
+    const config = device?.base_config;
+    if (!config?.base_setup_method) return {desired:null, label:'Chưa lưu cấu hình BASE', tone:'text-muted'};
+    const desired = config.gnss_options?.interference_detection_enabled !== false;
+    if (typeof receiver?.itfm_enabled !== 'boolean' || receiver.itfm_error)
+        return {desired,label:receiver?.itfm_error ? 'Lỗi đọc trạng thái chip' : 'Chưa xác minh',tone:'text-warning'};
+    return {desired, label:receiver.itfm_enabled === desired ? 'Khớp trạng thái đang chạy' : 'Không khớp cấu hình đã lưu',
+        tone:receiver.itfm_enabled === desired ? 'text-success' : 'text-warning'};
+}
+
 function getUnicoreRfDiagnostic(device, live = true, now = Date.now() / 1000) {
     const snapshot = device?.gnss_rf;
     if (!live || snapshot?.source !== 'unicore_rf') return null;
@@ -248,7 +258,7 @@ function getRfAssessment({live, rf, um, readError, receiver, unicore = false}) {
     if (rf.blocks.some(b=>b.agc_valid === false)) return unknown('Chip có trả RF nhưng có AGC ngoài dải mô tả.', 'Xem giá trị AGC gốc trong chi tiết; chưa dùng giá trị ngoài dải để đánh giá mức nhiễu.');
     if (rf.blocks.some(b=>b.jamming === 0)) {
         if (receiver?.itfm_enabled === false) return unknown('Chip xác nhận bộ phát hiện nhiễu đang tắt (CFG-ITFM-ENABLE = 0).',
-            'Cần bật bộ phát hiện nhiễu rồi đọc lại; phần kiểm tra này không tự thay đổi cấu hình.');
+            'Bật Phát hiện nhiễu GNSS trong cấu hình BASE rồi bấm Áp dụng cấu hình BASE.');
         if (receiver?.itfm_enabled === true) return unknown('Bộ phát hiện nhiễu đang bật, nhưng MON-RF vẫn trả trạng thái chưa xác định.',
             'Đối chiếu firmware chip và giữ mẫu RF; không coi cờ 0 là trạm sạch nhiễu.');
         return unknown('MON-RF trả trạng thái chưa xác định; chưa đọc được cấu hình bộ phát hiện nhiễu.',
@@ -483,12 +493,13 @@ function RfDiagnostics({device, live}) {
     const hasData = Boolean(rf || spectrum || um);
     const readError = unicore ? null : getRfReadError(device, rf, live);
     const receiver = unicore ? null : getReceiverDiagnostic(device, live);
+    const interferenceConfig = getInterferenceConfigStatus(device, receiver);
     const assessment = getRfAssessment({live,rf,um,readError,receiver,unicore});
     const [reference, setReference] = useState(null);
     const serial = device.serial;
     const stateNames = ['Chưa xác định', 'Không báo nhiễu đáng kể', 'Cảnh báo nhiễu', 'Nhiễu nghiêm trọng'];
     const exportReading = () => {
-        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, receiver, raw_receiver:device.gnss_receiver || null, unicore: um, reference, assessment, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
+        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, receiver, interference_config:interferenceConfig, raw_receiver:device.gnss_receiver || null, unicore: um, reference, assessment, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
         const link = document.createElement('a'); link.href = url; link.download = 'gnss-rf.json'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -506,7 +517,9 @@ function RfDiagnostics({device, live}) {
             </div>
             {!unicore && <div className="small border rounded p-2 mb-2" aria-label="Thông tin chip GNSS">
                 <div data-no-translate style={{overflowWrap:'anywhere'}}><strong>{receiver?.model || 'u-blox'}</strong> · Firmware: {receiver?.firmware || receiver?.software || 'Chưa đọc được'} · Protocol: {receiver?.protocol || 'Chưa đọc được'}</div>
-                <div>Phát hiện nhiễu: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+                <div>Cấu hình đã lưu: <strong>{interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
+                <div>Chip đọc lại: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+                <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
                 {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
                 {(receiver?.error || receiver?.itfm_error) && <details><summary>Chi tiết đọc thông tin chip</summary><p className="mb-0" data-no-translate style={{overflowWrap:'anywhere'}}>{[receiver.error,receiver.itfm_error].filter(Boolean).join(' · ')}</p></details>}
             </div>}

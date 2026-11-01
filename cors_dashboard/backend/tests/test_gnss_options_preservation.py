@@ -150,7 +150,7 @@ class TestGnssOptionsPreservation(unittest.TestCase):
             gnss_options,
         )
         self.assertTrue(len(commands) > 0)
-        output_cmd = commands[-2]
+        output_cmd = commands[1]
         usb_nmea_key = command_builder.UBLOX_OUTPUT_PROTOCOL_KEYS["USB"]["NMEA"].to_bytes(4, "little")
         self.assertIn(usb_nmea_key + b"\x00", output_cmd)
         usb_1077_key = command_builder.UBLOX_RTCM_KEYS["1077"]["USB"].to_bytes(4, "little")

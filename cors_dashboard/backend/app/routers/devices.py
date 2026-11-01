@@ -354,6 +354,15 @@ async def configure_chip_endpoint(
     if not sensor_type or not mode:
         raise HTTPException(status_code=400, detail="Missing required fields: sensor_type or mode")
 
+    if mode == "BASE" and sensor_type == "Ublox":
+        try:
+            enabled = command_builder.normalize_gnss_options(gnss_options)["interference_detection_enabled"]
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        gnss_options = {**(gnss_options if isinstance(gnss_options, dict) else {}), "interference_detection_enabled": enabled}
+        if isinstance(params, dict):
+            params["gnss_options"] = gnss_options
+
     auto_cors_config = None
     if mode == "BASE" and method == "AUTO_CORS":
         if not (device_in_db.system_info or {}).get('auto_base_review_supported'):

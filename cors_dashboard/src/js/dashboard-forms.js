@@ -544,6 +544,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [svinDuration, setSvinDuration] = useState('300'); // Giây
     const [svinAccuracyM, setSvinAccuracyM] = useState('3.00'); // Đơn vị Mét cho Survey-In (Mặc định 3m)
 
+    const [interferenceDetectionEnabled, setInterferenceDetectionEnabled] = useState(true);
     const [outputMode, setOutputMode] = useState(isLteStation ? 'rtcm_only' : 'diagnostics_rtcm');
     const [msmLevel, setMsmLevel] = useState(isLteStation ? 'both' : '4');
     const [constellations, setConstellations] = useState({
@@ -659,6 +660,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setCorsLookupError('');
         setSvinDuration('300');
         setSvinAccuracyM('3.00');
+        setInterferenceDetectionEnabled(true);
         setOutputMode(isLteStation ? 'rtcm_only' : 'diagnostics_rtcm');
         setMsmLevel(isLteStation ? 'both' : '4');
         setConstellations({ gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true });
@@ -702,6 +704,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             }
             if (config.gnss_options && typeof config.gnss_options === 'object') {
                 const options = config.gnss_options;
+                setInterferenceDetectionEnabled(options.interference_detection_enabled !== false);
                 if (options.output_mode) setOutputMode(String(options.output_mode));
                 if ([4, 7].includes(Number(options.msm_level)) || options.msm_level === 'both') setMsmLevel(String(options.msm_level));
                 if (options.constellations && typeof options.constellations === 'object') {
@@ -906,6 +909,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
             if (isAdmin) {
                 params.gnss_options = {
+                    ...(activeChip === 'Ublox' ? { interference_detection_enabled: interferenceDetectionEnabled } : {}),
                     output_mode: outputMode,
                     msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel),
                     constellations: constellations || {
@@ -922,6 +926,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 params.gnss_options = { ...existingGnss };
             } else {
                 params.gnss_options = {
+                    ...(activeChip === 'Ublox' ? { interference_detection_enabled: true } : {}),
                     output_mode: outputMode || 'diagnostics_rtcm',
                     msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel || 4),
                     constellations: constellations || {
@@ -1684,6 +1689,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     <option value="both">MSM4 + MSM7</option>
                                 </select>
                             </div>
+                            {activeChip === 'Ublox' && <div className="gnss-output-policy__field" style={{gridColumn:'1 / -1'}}>
+                                <label className="form-check form-switch d-flex align-items-center gap-2 mb-1" style={{minHeight:44}}>
+                                    <input id={`gnss-interference-${device.serial}`} className="form-check-input mt-0" type="checkbox" role="switch"
+                                        checked={interferenceDetectionEnabled} disabled={!isAdmin || isSubmitting}
+                                        aria-describedby={`gnss-interference-help-${device.serial}`}
+                                        onChange={event=>setInterferenceDetectionEnabled(event.target.checked)} />
+                                    <span>Phát hiện nhiễu GNSS</span>
+                                </label>
+                                <p className="form-text mb-0" id={`gnss-interference-help-${device.serial}`}>Lưu xuống chip khi bấm Áp dụng cấu hình BASE.</p>
+                            </div>}
                             <div className="gnss-output-policy__summary" style={isLteStation ? {gridColumn: '1 / -1'} : undefined}>
                                 <label className="gnss-output-policy__label gnss-output-policy__label--accent">
                                     <i className="bi bi-info-circle me-1"></i>Thông tin Hệ vệ tinh & Bản tin RTCM

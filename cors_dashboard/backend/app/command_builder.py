@@ -17,6 +17,7 @@ DEFAULT_GNSS_OPTIONS = {
     "output_mode": "diagnostics_rtcm",
     "msm_level": 4,
     "ports": ["USB"],
+    "interference_detection_enabled": True,
 }
 
 UBLOX_NMEA_KEYS = {
@@ -116,6 +117,9 @@ def _ubx_cfg_msg(msg_class: int, msg_id: int, ports: list[str], rate: int = 1) -
 
 def normalize_gnss_options(options: dict | None) -> dict:
     raw = options if isinstance(options, dict) else {}
+    interference_enabled = raw.get("interference_detection_enabled", True)
+    if not isinstance(interference_enabled, bool):
+        raise ValueError("Phát hiện nhiễu GNSS phải là bật hoặc tắt.")
     constellations = dict(DEFAULT_GNSS_OPTIONS["constellations"])
     for key, value in (raw.get("constellations") or {}).items():
         normalized_key = str(key).strip().lower()
@@ -151,6 +155,7 @@ def normalize_gnss_options(options: dict | None) -> dict:
         "output_mode": output_mode,
         "msm_level": msm_level,
         "ports": ports,
+        "interference_detection_enabled": interference_enabled,
     }
 
 
@@ -367,6 +372,8 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         
         commands.append(bytes(message))
         commands.append(build_ublox_output_config_command(gnss_options))
+        # Separate from per-port output keys so verification remains read-only and compatible.
+        commands.append(_ubx_cfg_valset_u1({0x1041000D: normalize_gnss_options(gnss_options)["interference_detection_enabled"]}))
         # Lệnh Save Config
         commands.append(UBLOX_SAVE_CONFIG)
         
@@ -460,6 +467,8 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         
         commands.append(bytes(message))
         commands.append(build_ublox_output_config_command(gnss_options))
+        # Separate from per-port output keys so verification remains read-only and compatible.
+        commands.append(_ubx_cfg_valset_u1({0x1041000D: normalize_gnss_options(gnss_options)["interference_detection_enabled"]}))
         # Lệnh Save Config
         commands.append(UBLOX_SAVE_CONFIG)
         
