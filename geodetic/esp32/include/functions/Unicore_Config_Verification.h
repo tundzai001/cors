@@ -11,13 +11,27 @@ struct Log { char name[24] = {}; uint8_t port = 0; double period = 0; };
 
 inline bool parseLogs(const char *text, size_t length, std::vector<Log> &logs) {
     logs.clear();
-    if (!text || length > 4096 || std::strlen(text) != length || std::strncmp(text, "#UNILOGLIST,", 12)
-        || !validUnicoreLogChecksum(text, length)) return false;
+    if (!text || length > 4096 || std::strlen(text) != length || std::strncmp(text, "#UNILOGLIST,", 12)) return false;
     const char *cursor = std::strchr(text, ';'), *end = std::strrchr(text, '*');
+    const bool hasChecksum = end != nullptr;
+    if (hasChecksum) {
+        if (!validUnicoreLogChecksum(text, length)) return false;
+    } else {
+        if (length < 2 || (std::strcmp(text + length - 2, "\n\n")
+            && (length < 4 || std::strcmp(text + length - 4, "\r\n\r\n")))) return false;
+        end = text + length;
+        for (const char *c = text; c < end; ++c)
+            if ((static_cast<unsigned char>(*c) < 32 && *c != '\r' && *c != '\n' && *c != '\t')
+                || static_cast<unsigned char>(*c) >= 127) return false;
+    }
     if (!cursor || !end || cursor >= end) return false;
     ++cursor;
     long count = -1;
     while (cursor < end) {
+        if (!hasChecksum) {
+            while (cursor < end && (*cursor == '\r' || *cursor == '\n' || *cursor == ' ' || *cursor == '\t')) ++cursor;
+            if (cursor < end && *cursor != '<') return false;
+        }
         while (cursor < end && (*cursor == '\r' || *cursor == '\n' || *cursor == ' ' || *cursor == '<')) ++cursor;
         if (cursor == end) break;
         const char *lineEnd = cursor;

@@ -127,6 +127,15 @@ int main() {
     assert(UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs) && logs.empty());
     list.back() ^= 1;
     assert(!UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
+    const std::string counted = header + "<\t3\r\n<\tGPGGA COM2 1 \r\n<\tRTCM1074 COM3 1 \r\n<\tRTCM1077 COM3 1 \r\n\r\n";
+    assert(UnicoreConfigVerification::parseLogs(counted.c_str(), counted.size(), logs));
+    assert(logs.size() == 3 && logs[0].port == 2 && logs[1].port == 3);
+    assert(!UnicoreConfigVerification::parseLogs(counted.c_str(), counted.size() - 2, logs));
+    list = counted;
+    list.replace(list.find("<\t3"), 3, "<\t4");
+    assert(!UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
+    list = counted + "binary";
+    assert(!UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
     puts("PASS: Fixed LLA/accuracy mismatch, reordered values, missing/duplicate keys, wrong layer and bounded parsing");
-    puts("PASS: UM multi-line log CRC, port/period/trigger parsing, truncated/duplicate entries and invalid values");
+    puts("PASS: UM CRC and checksum-free lists, port/period/trigger parsing, truncated/duplicate entries and invalid values");
 }

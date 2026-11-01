@@ -181,11 +181,52 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
             buffer.extend(part)
             buffer = reader._parse_buffer(buffer)
             self.assertLessEqual(len(request['response_preview']), 512)
-        self.assertEqual(request['reply'], self.log_packet)
+        self.assertEqual(request['reply'], self.log_packet + b'\r\n')
         self.assertEqual(len(self.s['_parse_unicore_loglist'](request['reply'])), len(payload['logs']))
         corrupt = self.log_packet[:-1] + bytes([self.log_packet[-1] ^ 1])
         with self.assertRaises(ValueError):
             self.s['_parse_unicore_loglist'](corrupt)
+
+    async def test_pq01_counted_reply_without_crc_preserves_following_rtcm(self):
+        names = ['GPGGA', 'GPRMC', 'RTCM1006', 'RTCM1033', 'RTCM1074', 'RTCM1077', 'RTCM1019',
+                 'RTCM1084', 'RTCM1087', 'RTCM1020', 'RTCM1094', 'RTCM1097', 'RTCM1045',
+                 'RTCM1124', 'RTCM1127', 'RTCM1042', 'RTCM1114', 'RTCM1117', 'RTCM1044']
+        packet = b'#UNILOGLIST,95,GPS,FINE,2443,64798000,0,0,18,73;\r\n<\t19\r\n'
+        packet += ''.join(f'<\t{name} COM{2 if index < 2 else 3} 1 \r\n'
+                           for index, name in enumerate(names)).encode() + b'\r\n'
+        raw = b'\xd3\x00\x03\x3e\xd0\x00'
+        rtcm = raw + self.s['_crc24q'](raw).to_bytes(3, 'big')
+        for chunk_size in (1, 17, len(packet) + len(rtcm)):
+            reader = self.s['GNSSReader'](Mock(), 'USB', 38400)
+            request = dict(key=b'#UNILOGLIST', deadline=time.monotonic() + 5, cancelled=False, reply=None)
+            reader._base_query = request
+            buffer = bytearray()
+            self.s['dispatch_rtcm_data'].reset_mock()
+            stream = packet + rtcm
+            for offset in range(0, len(stream), chunk_size):
+                buffer.extend(stream[offset:offset + chunk_size])
+                buffer = reader._parse_buffer(buffer)
+            self.assertEqual(request['reply'], packet)
+            self.s['dispatch_rtcm_data'].assert_called_once_with(rtcm)
+            self.assertEqual(buffer, b'')
+        parsed = self.s['_parse_unicore_loglist'](packet)
+        self.assertEqual(len(parsed), 19)
+        self.assertEqual(sum(port == 'COM3' for port, _ in parsed), 17)
+        self.assertNotIn(('COM3', 'GPGGA'), parsed)
+        for invalid in (packet[:-2], packet.replace(b'<\t19', b'<\t20'),
+                        packet.replace(b'COM2', b'COM9'), packet + rtcm):
+            with self.assertRaises((ValueError, UnicodeError)):
+                self.s['_parse_unicore_loglist'](invalid)
+        payload = builder.build_unicore_verification_payload(self.config)
+        self.unicore_responses(payload)
+        respond = self.reader.query_base.side_effect
+        async def reply(wire, key):
+            return packet if key == b'#UNILOGLIST' else await respond(wire, key)
+        self.reader.query_base.side_effect = reply
+        result = await self.verify(payload)
+        self.assertEqual(result['details']['logs_state'], 'ok')
+        self.assertEqual(result['groups']['diagnostics']['mismatched'], 0)
+        self.assertEqual(result['groups']['rtcm']['mismatched'], 3)  # Extra QZSS, not an unread result.
 
     async def test_unicore_failed_log_query_reports_reason_and_bounded_reply(self):
         payload = builder.build_unicore_verification_payload(self.config)

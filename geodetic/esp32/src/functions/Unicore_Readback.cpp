@@ -62,14 +62,18 @@ bool queryUnicoreLine(const char *query, const char *prefix, String &response, S
                 candidate += value;
             } else if (value == '\r' || value == '\n') {
                 if (multiline && candidate.startsWith(prefix)) {
+                    candidate += value;
+                    if (candidate.endsWith("\r\n\r\n") || candidate.endsWith("\n\n")) {
+                        response = candidate;
+                        break;
+                    }
                     size_t end = candidate.length();
-                    while (end && (candidate[end - 1] == '\r' || candidate[end - 1] == ' ')) --end;
+                    while (end && (candidate[end - 1] == '\r' || candidate[end - 1] == '\n' || candidate[end - 1] == ' ')) --end;
                     if (end >= 9 && candidate[end - 9] == '*') {
                         candidate.remove(end);
                         response = candidate;
                         break;
                     }
-                    candidate += value;
                     continue;
                 }
                 if (candidate.startsWith(prefix)) {
@@ -123,7 +127,7 @@ bool readRfLog(unsigned kind, String &response, String &error) {
 
 bool readLogList(String &response, String &error) {
     if (!queryUnicoreLine("UNILOGLIST", "#UNILOGLIST,", response, error, true)) return false;
-    if (!validUnicoreLogChecksum(response.c_str(), response.length())) {
+    if (response.indexOf('*') >= 0 && !validUnicoreLogChecksum(response.c_str(), response.length())) {
         error = "Unicore UNILOGLIST checksum mismatch";
         return false;
     }
