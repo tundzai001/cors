@@ -180,11 +180,33 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
         for part in (self.log_packet[:60], self.log_packet[60:120], self.log_packet[120:] + b'\r\n'):
             buffer.extend(part)
             buffer = reader._parse_buffer(buffer)
+            self.assertLessEqual(len(request['response_preview']), 512)
         self.assertEqual(request['reply'], self.log_packet)
         self.assertEqual(len(self.s['_parse_unicore_loglist'](request['reply'])), len(payload['logs']))
         corrupt = self.log_packet[:-1] + bytes([self.log_packet[-1] ^ 1])
         with self.assertRaises(ValueError):
             self.s['_parse_unicore_loglist'](corrupt)
+
+    async def test_unicore_failed_log_query_reports_reason_and_bounded_reply(self):
+        payload = builder.build_unicore_verification_payload(self.config)
+        for failure in ('timeout', 'count', 'checksum'):
+            self.unicore_responses(payload, bad_count=failure == 'count')
+            respond = self.reader.query_base.side_effect
+            async def reply(wire, key):
+                if key == b'#UNILOGLIST' and failure == 'timeout':
+                    raise TimeoutError('Receiver readback timeout: UNILOGLIST')
+                packet = await respond(wire, key)
+                return packet[:-1] + b'Z' if key == b'#UNILOGLIST' and failure == 'checksum' else packet
+            self.reader.query_base.side_effect = reply
+            with self.assertLogs(level='WARNING') as captured:
+                result = await self.verify(payload)
+            self.assertEqual(result['state'], 'unread')
+            self.assertEqual(result['groups']['fixed']['unread'], 0)
+            self.assertEqual(result['groups']['rtcm']['unread'], 1)
+            self.assertTrue(any(result['output_error'] in line for line in captured.output))
+            self.assertTrue(any('state=unread' in line for line in captured.output))
+            if failure != 'timeout':
+                self.assertIn(repr(self.log_packet[:512])[:50], captured.output[0])
 
     async def test_invalid_expectations_are_rejected_before_queries(self):
         for payload in ({}, {'tmode_b64': '!', 'output_b64': 'AA=='}, {'tmode_b64': 'A' * 57, 'output_b64': 'AA=='}):
