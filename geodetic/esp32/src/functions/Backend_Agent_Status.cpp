@@ -41,12 +41,17 @@ String BackendAgent::buildStatusPayload() {
         jamReadback_ = static_cast<const char *>(nullptr);
     if (rfReadbackError_.length() && millis() - rfReadbackErrorMs_ > 45000UL)
         rfReadbackError_ = static_cast<const char *>(nullptr);
+    if (receiverInfoMs_ && millis() - receiverInfoMs_ > 45000UL) {
+        versionReadback_ = versionReadbackError_ = itfmReadbackError_ = static_cast<const char *>(nullptr);
+        itfmEnabled_ = -1;
+        receiverInfoMs_ = 0;
+    }
     // Inventory is an on-demand snapshot, not permanent telemetry overhead.
     if (nvsInventory_.length() > 2 && millis() - nvsInventoryMs_ >= 60000UL)
         nvsInventory_ = static_cast<const char *>(nullptr);
     if (gnssVerification_.length() && millis() - gnssVerificationMs_ >= 60000UL)
         gnssVerification_ = static_cast<const char *>(nullptr);
-    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (satelliteReadback_.length() ? satelliteReadback_.length() + 256 : 0)
+    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (receiverInfoMs_ ? versionReadback_.length() + 768 : 0) + (satelliteReadback_.length() ? satelliteReadback_.length() + 256 : 0)
                             + (rfReadback_.length() ? rfReadback_.length() + 256 : 0)
                             + (rfReadbackError_.length() ? rfReadbackError_.length() + 256 : 0)
                             + (spectrumReadback_.length() ? spectrumReadback_.length() + 256 : 0)
@@ -263,6 +268,17 @@ String BackendAgent::buildStatusPayload() {
     doc["gnss_quality"] = nullptr;
     doc["gnss_dop"] = nullptr;
     doc["gnss_satellites"] = nullptr;
+    doc["gnss_receiver"] = nullptr;
+    if (sensorType_ == "Ublox" && receiverInfoMs_) {
+        JsonObject info = doc.createNestedObject("gnss_receiver");
+        info["source"] = "ubx_mon_ver";
+        info["age_seconds"] = (nowMs - receiverInfoMs_) / 1000.0;
+        if (versionReadback_.length()) info["payload_b64"] = versionReadback_;
+        if (versionReadbackError_.length()) info["error"] = versionReadbackError_;
+        info["itfm_enabled"] = nullptr;
+        if (itfmEnabled_ >= 0) info["itfm_enabled"] = itfmEnabled_ == 1;
+        if (itfmReadbackError_.length()) info["itfm_error"] = itfmReadbackError_;
+    }
     doc["gnss_rf"] = nullptr;
     doc["gnss_spectrum"] = nullptr;
     if (sensorType_ == "Unicorecomm" && (agcReadback_.length() || jamReadback_.length())) {

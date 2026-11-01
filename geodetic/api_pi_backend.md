@@ -338,3 +338,11 @@ range; values above the documented 8191 are marked unusable for assessment,
 without losing the remaining RF flags. Packet CRC, version, exact length and
 bounded block count remain mandatory.
 https://content.u-blox.com/sites/default/files/ZED-F9P-FW100-HPG130_RN_UBX-21047459.pdf
+
+### Receiver firmware and interference enable readback
+
+Pi and ESP32 publish `gnss_receiver` (45-second TTL): `source=ubx_mon_ver`, bounded MON-VER `payload_b64`, `age_seconds`, nullable `itfm_enabled`, and independent `error` / `itfm_error` on failed reads. MON-VER contains 30-byte software, 10-byte hardware and 30-byte extensions (FWVER/PROTVER/MOD). The UI shows receiver firmware, not agent version, and includes raw data in diagnostic downloads.
+
+ITFM is read from running RAM using CFG-VALGET key `0x1041000d`; legacy CFG-ITFM poll is a fallback (enable bit 31). No VALSET, persistence, antenna power change or receiver reset is performed. A failed query is unknown, never disabled. For MON-RF state 0 the UI distinguishes confirmed disabled, confirmed enabled-but-unknown and unread configuration. Firmware before HPG 1.30 is annotated for the documented duplicate RF block ID issue.
+
+References: [MON-VER / CFG-ITFM interface](https://content.u-blox.com/sites/default/files/documents/u-blox-F9-HPG-1.32_InterfaceDescription_UBX-22008968.pdf), [HPG 1.30 release note](https://content.u-blox.com/sites/default/files/ZED-F9P-FW100-HPG130_RN_UBX-21047459.pdf).

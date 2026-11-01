@@ -157,6 +157,28 @@ function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
     } catch (_) { return null; }
 }
 
+function getReceiverDiagnostic(device, live = true, now = Date.now() / 1000) {
+    const raw = device?.gnss_receiver;
+    const received = Number(device?.server_received_at || device?.timestamp);
+    const age = raw?.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    if (!live || raw?.source !== 'ubx_mon_ver' || typeof raw.age_seconds !== 'number' || !Number.isFinite(age) || age < 0 || age > 45) return null;
+    const result = {age_seconds:age, itfm_enabled:typeof raw.itfm_enabled === 'boolean' ? raw.itfm_enabled : null,
+        error:typeof raw.error === 'string' ? raw.error.slice(0,160) : null,
+        itfm_error:typeof raw.itfm_error === 'string' ? raw.itfm_error.slice(0,160) : null};
+    try {
+        if (typeof raw.payload_b64 !== 'string' || raw.payload_b64.length > 696) return result;
+        const bytes = atob(raw.payload_b64);
+        if (bytes.length < 40 || bytes.length > 520 || (bytes.length - 40) % 30) return {...result,error:'Phản hồi MON-VER không hợp lệ.'};
+        const text = (start, length) => bytes.slice(start,start+length).split('\0')[0].trim();
+        const extensions = [];
+        for (let i=40; i<bytes.length; i+=30) extensions.push(text(i,30));
+        const fields = [text(0,30),text(30,10),...extensions];
+        if (!fields[0] || fields.some(value=>/[^\x20-\x7e]/.test(value))) return {...result,error:'Phản hồi MON-VER không hợp lệ.'};
+        const extension = key => extensions.find(value=>value.startsWith(key+'='))?.slice(key.length+1) || null;
+        return {...result,software:fields[0],hardware:fields[1],firmware:extension('FWVER'),protocol:extension('PROTVER'),model:extension('MOD'),extensions};
+    } catch (_) { return {...result,error:'Phản hồi MON-VER không hợp lệ.'}; }
+}
+
 function getUnicoreRfDiagnostic(device, live = true, now = Date.now() / 1000) {
     const snapshot = device?.gnss_rf;
     if (!live || snapshot?.source !== 'unicore_rf') return null;
@@ -195,7 +217,7 @@ function getRfBlockLabel(block, blocks) {
         : `RF ${block.index + 1} (ID ${block.id})`;
 }
 
-function getRfAssessment({live, rf, um, readError, unicore = false}) {
+function getRfAssessment({live, rf, um, readError, receiver, unicore = false}) {
     const unknown = (reason, next) => ({tone:'warning',title:'Chưa đủ dữ liệu kết luận',reason,next});
     if (!live) return unknown('Trạm không có dữ liệu trực tiếp.', 'Kết nối lại trạm rồi kiểm tra mẫu RF mới.');
     if (readError) return unknown(readError.error_kind === 'timeout'
@@ -224,8 +246,14 @@ function getRfAssessment({live, rf, um, readError, unicore = false}) {
         reason:`MON-RF báo nhiễu ở ${rf.blocks.filter(b=>b.jamming>=2).map(band).join(', ')}.`,
         next:'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.'};
     if (rf.blocks.some(b=>b.agc_valid === false)) return unknown('Chip có trả RF nhưng có AGC ngoài dải mô tả.', 'Xem giá trị AGC gốc trong chi tiết; chưa dùng giá trị ngoài dải để đánh giá mức nhiễu.');
-    if (rf.blocks.some(b=>b.jamming === 0)) return unknown('Có MON-RF nhưng bộ phát hiện nhiễu báo chưa xác định hoặc chưa bật.',
-        'Không coi trạng thái chưa xác định là không có nhiễu.');
+    if (rf.blocks.some(b=>b.jamming === 0)) {
+        if (receiver?.itfm_enabled === false) return unknown('Chip xác nhận bộ phát hiện nhiễu đang tắt (CFG-ITFM-ENABLE = 0).',
+            'Cần bật bộ phát hiện nhiễu rồi đọc lại; phần kiểm tra này không tự thay đổi cấu hình.');
+        if (receiver?.itfm_enabled === true) return unknown('Bộ phát hiện nhiễu đang bật, nhưng MON-RF vẫn trả trạng thái chưa xác định.',
+            'Đối chiếu firmware chip và giữ mẫu RF; không coi cờ 0 là trạm sạch nhiễu.');
+        return unknown('MON-RF trả trạng thái chưa xác định; chưa đọc được cấu hình bộ phát hiện nhiễu.',
+            'Cần phản hồi MON-VER và cấu hình ITFM để phân biệt phiên bản và trạng thái bật/tắt.');
+    }
     return {tone:'info',title:'Chưa ghi nhận nhiễu đáng kể',
         reason:`MON-RF của ${rf.blocks.map(band).join(', ')} đều báo không có nhiễu đáng kể ở lần đọc này.`,
         next:'Nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten; kết quả RF không chứng minh tọa độ Base đúng.'};
@@ -454,12 +482,13 @@ function RfDiagnostics({device, live}) {
     const spectrum = unicore ? null : getRfDiagnostic(device, 'gnss_spectrum', live);
     const hasData = Boolean(rf || spectrum || um);
     const readError = unicore ? null : getRfReadError(device, rf, live);
-    const assessment = getRfAssessment({live,rf,um,readError,unicore});
+    const receiver = unicore ? null : getReceiverDiagnostic(device, live);
+    const assessment = getRfAssessment({live,rf,um,readError,receiver,unicore});
     const [reference, setReference] = useState(null);
     const serial = device.serial;
     const stateNames = ['Chưa xác định', 'Không báo nhiễu đáng kể', 'Cảnh báo nhiễu', 'Nhiễu nghiêm trọng'];
     const exportReading = () => {
-        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, unicore: um, reference, assessment, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
+        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, receiver, raw_receiver:device.gnss_receiver || null, unicore: um, reference, assessment, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
         const link = document.createElement('a'); link.href = url; link.download = 'gnss-rf.json'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -471,10 +500,16 @@ function RfDiagnostics({device, live}) {
                 <div className="d-flex flex-wrap gap-2">
                     <button className="btn btn-sm btn-outline-primary" disabled={!hasData}
                         onClick={() => setReference({captured_at:new Date().toISOString(), rf, spectrum, unicore:um})}>Giữ mẫu hiện tại</button>
-                    <button className="btn btn-sm btn-outline-secondary" disabled={!hasData && !reference && !readError}
+                    <button className="btn btn-sm btn-outline-secondary" disabled={!hasData && !reference && !readError && !receiver}
                         onClick={exportReading}>Tải số liệu</button>
                 </div>
             </div>
+            {!unicore && <div className="small border rounded p-2 mb-2" aria-label="Thông tin chip GNSS">
+                <div data-no-translate style={{overflowWrap:'anywhere'}}><strong>{receiver?.model || 'u-blox'}</strong> · Firmware: {receiver?.firmware || receiver?.software || 'Chưa đọc được'} · Protocol: {receiver?.protocol || 'Chưa đọc được'}</div>
+                <div>Phát hiện nhiễu: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+                {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
+                {(receiver?.error || receiver?.itfm_error) && <details><summary>Chi tiết đọc thông tin chip</summary><p className="mb-0" data-no-translate style={{overflowWrap:'anywhere'}}>{[receiver.error,receiver.itfm_error].filter(Boolean).join(' · ')}</p></details>}
+            </div>}
             <div className={`alert alert-${assessment.tone} mb-2`} role="status">
                 <strong className="d-block mb-1">{assessment.title}</strong>
                 <p className="mb-1">{assessment.reason}</p>

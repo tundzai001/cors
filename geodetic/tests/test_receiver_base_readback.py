@@ -22,7 +22,7 @@ NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
          'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',
-         'receiver_quality_status', '_ubx_dop', '_ubx_satellite_payload', '_ubx_rf_payload', '_unicore_rf_log'}
+         'receiver_quality_status', '_ubx_dop', '_ubx_satellite_payload', '_ubx_rf_payload', '_unicore_rf_log', '_ubx_version_payload', '_refresh_ubx_receiver_info'}
 
 
 def load():
@@ -57,6 +57,27 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         self.mode = bytes.fromhex('0000010000000000000000000000000000000000000000007800000050C300000000000000000000')
         self.svin = bytes.fromhex('00000000605BDE1AEB0B0000C77A58F644EE25227C46970D1627F0004DC30000A20B000001000000')
         self.pack = self.s['_ubx_packet']
+
+    async def test_receiver_version_and_running_itfm(self):
+        payload = b'EXT CORE 1.00'.ljust(30, b'\0') + b'00190000'.ljust(10, b'\0') + b'FWVER=HPG 1.13'.ljust(30, b'\0') + b'PROTVER=27.12'.ljust(30, b'\0')
+        for enabled in (0, 1):
+            self.reader.query_base = AsyncMock(side_effect=[self.pack(10,4,payload), self.pack(6,0x8b,b'\x01\0\0\0' + struct.pack('<I',0x1041000d) + bytes([enabled]))])
+            await self.s['_refresh_ubx_receiver_info'](self.reader)
+            result = self.s['receiver_quality_status'](time.time())['gnss_receiver']
+            self.assertEqual(base64.b64decode(result['payload_b64']), payload)
+            self.assertEqual(result['itfm_enabled'], bool(enabled))
+            self.assertEqual(self.reader.query_base.call_args_list[1].args[0], self.pack(6,0x8b,bytes(4)+struct.pack('<I',0x1041000d)))
+            self.assertIsNone(self.s['receiver_quality_status'](time.time()+46)['gnss_receiver'])
+        self.reader.query_base = AsyncMock(side_effect=[TimeoutError('MON-VER timeout'), ValueError('VALGET'), self.pack(6,0x39,struct.pack('<II',0x80000000,0))])
+        await self.s['_refresh_ubx_receiver_info'](self.reader)
+        result = self.s['LAST_UBX_RECEIVER_INFO']
+        self.assertEqual(result['itfm_enabled'],True)
+        self.assertIn('timeout',result['error'])
+        self.reader.query_base = AsyncMock(side_effect=TimeoutError('timeout'))
+        await self.s['_refresh_ubx_receiver_info'](self.reader)
+        self.assertIsNone(self.s['LAST_UBX_RECEIVER_INFO']['itfm_enabled'])
+        for bad in (b'', payload[:-1], bytes(40), b'\xff'+payload[1:]):
+            with self.assertRaises(ValueError): self.s['_ubx_version_payload'](bad)
 
     async def refresh(self, packets):
         self.reader.query_base = AsyncMock(side_effect=packets)
@@ -240,7 +261,8 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
                      STATUS_ALLOW_HEAVY_FIELDS=False, buffer_metrics={'status_payload_compacted_count': 0})
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
         for quality in ({'hacc_m': 4.08, 'source': 'ubx_nav_pvt', 'age_seconds': 0}, None):
-            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality, 'gnss_satellites': quality, 'gnss_rf': quality, 'gnss_spectrum': quality})
+            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality, 'gnss_satellites': quality, 'gnss_rf': quality, 'gnss_spectrum': quality, 'gnss_receiver': quality})
+            self.assertEqual(result['gnss_receiver'], quality)
             self.assertEqual(result['gnss_rf'], quality)
             self.assertEqual(result['gnss_spectrum'], quality)
             self.assertIn('gnss_satellites', result)

@@ -114,6 +114,9 @@ private:
     uint32_t agcReadbackMs_ = 0, jamReadbackMs_ = 0;
     String rfReadbackError_;
     uint32_t rfReadbackErrorMs_ = 0;
+    String versionReadback_, versionReadbackError_, itfmReadbackError_;
+    int8_t itfmEnabled_ = -1;
+    uint32_t receiverInfoMs_ = 0;
     String rfReadback_, spectrumReadback_;
     uint32_t rfReadbackMs_ = 0, spectrumReadbackMs_ = 0;
     String satelliteReadback_;

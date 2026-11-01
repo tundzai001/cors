@@ -74,6 +74,43 @@ bool query(uint8_t cls, uint8_t id, UbxReplyBuffer<Capacity> &reply, String &err
 
 } // namespace
 
+bool UbloxReadback::readVersion(String &payloadBase64, String &error) {
+    UbxReplyBuffer<528> reply;
+    if (!query(0x0A, 4, reply, error)) return false;
+    const size_t length = reply.length - 8;
+    const uint8_t *p = reply.frame + 6;
+    if (length < 40 || length > 520 || (length - 40) % 30 || !p[0]) {
+        error = "Invalid MON-VER payload";
+        return false;
+    }
+    for (size_t start = 0; start < length; start += start == 30 ? 10 : 30) {
+        const size_t width = start == 30 ? 10 : 30;
+        for (size_t i = start; i < start + width && p[i]; ++i) {
+            if (p[i] < 32 || p[i] > 126) { error = "Invalid MON-VER text"; return false; }
+        }
+    }
+    payloadBase64 = BackendAgentInternal::encodeBase64(p, length);
+    return payloadBase64.length() > 0;
+}
+
+bool UbloxReadback::readInterferenceMonitor(bool &enabled, String &error) {
+    const uint8_t poll[] = {0,0,0,0,0x0D,0,0x41,0x10}; // RAM, CFG-ITFM-ENABLE
+    UbxReply reply;
+    if (query(6, 0x8B, reply, error, poll, sizeof(poll))) {
+        const uint8_t *p = reply.frame + 6;
+        if (reply.length == 17 && p[0] == 1 && !p[1] && !p[2] && !p[3]
+            && UbxBaseStatus::u32(p + 4) == 0x1041000D && p[8] <= 1) {
+            enabled = p[8] != 0;
+            return true;
+        }
+    }
+    UbxReply legacy;
+    if (!query(6, 0x39, legacy, error)) return false;
+    if (legacy.length != 16) { error = "Invalid CFG-ITFM response"; return false; }
+    enabled = (UbxBaseStatus::u32(legacy.frame + 6) & 0x80000000UL) != 0;
+    return true;
+}
+
 bool UbloxReadback::readRf(uint8_t messageId, String &payloadBase64, String &error) {
     if (messageId != 0x38 && messageId != 0x31) return false;
     // MON-SPAN: at most four RF paths; this larger buffer exists only during the query.

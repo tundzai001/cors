@@ -64,3 +64,17 @@ assert.equal(blockLabel(legacy.blocks[0],legacy.blocks),'RF 1 (ID 0)');
 assert.equal(blockLabel(legacy.blocks[1],legacy.blocks),'RF 2 (ID 0)');
 assert.equal(assess({live:true,rf:{...high,blocks:high.blocks.map(b=>({...b,jamming:1}))}}).title,'Chưa đủ dữ liệu kết luận');
 assert.equal(assess({live:true,unicore:true}).title,'Chưa đủ dữ liệu kết luận');
+
+const decodeReceiver=vm.runInNewContext(`${code};getReceiverDiagnostic;`, {atob:s=>Buffer.from(s,'base64').toString('binary')});
+const ver=Buffer.alloc(160);ver.write('EXT CORE 1.00');ver.write('00190000',30);ver.write('FWVER=HPG 1.13',40);ver.write('PROTVER=27.12',70);ver.write('MOD=ZED-F9P',100);ver.write('GPS;GLO;GAL;BDS',130);
+const receiverDevice={timestamp:100,gnss_receiver:{source:'ubx_mon_ver',payload_b64:ver.toString('base64'),age_seconds:0,itfm_enabled:false}};
+const receiver=decodeReceiver(receiverDevice,true,102);
+assert.equal(receiver.firmware,'HPG 1.13');assert.equal(receiver.protocol,'27.12');assert.equal(receiver.model,'ZED-F9P');assert.equal(receiver.hardware,'00190000');assert.equal(receiver.itfm_enabled,false);
+assert.equal(decodeReceiver(receiverDevice,true,146),null);assert.equal(decodeReceiver(receiverDevice,false,102),null);
+const unknownRf={blocks:[{id:0,index:0,jamming:0,antenna:1}]};
+assert.match(assess({live:true,rf:unknownRf,receiver}).reason,/đang tắt/);
+assert.match(assess({live:true,rf:unknownRf,receiver:{...receiver,itfm_enabled:true}}).reason,/đang bật/);
+assert.match(assess({live:true,rf:unknownRf}).reason,/chưa đọc được/);
+assert.equal(decodeReceiver({...receiverDevice,gnss_receiver:{...receiverDevice.gnss_receiver,payload_b64:'bad',itfm_enabled:0}},true,102).itfm_enabled,null);
+assert.match(decodeReceiver({...receiverDevice,gnss_receiver:{...receiverDevice.gnss_receiver,payload_b64:Buffer.alloc(42).toString('base64')}},true,102).error,/không hợp lệ/);
+console.log('PASS: MON-VER firmware/hardware/protocol/model, TTL and independent ITFM off/on/unknown verdicts');

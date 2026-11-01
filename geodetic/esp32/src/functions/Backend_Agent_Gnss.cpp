@@ -443,6 +443,18 @@ void BackendAgent::pollGnssStatus() {
                 spectrumReadbackMs_ = millis();
                 markStatusDirty();
             }
+            versionReadback_ = "";
+            versionReadbackError_ = "";
+            error = "";
+            if (!UbloxReadback::readVersion(versionReadback_, error)) versionReadbackError_ = error.substring(0, 160);
+            bool enabled = false;
+            itfmEnabled_ = -1;
+            itfmReadbackError_ = "";
+            error = "";
+            if (UbloxReadback::readInterferenceMonitor(enabled, error)) itfmEnabled_ = enabled ? 1 : 0;
+            else itfmReadbackError_ = error.substring(0, 160);
+            receiverInfoMs_ = millis();
+            markStatusDirty();
         } else {
             if (UnicoreReadback::readRfLog(1, agcReadback_, error)) {
                 agcReadbackMs_ = millis();

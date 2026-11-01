@@ -49,12 +49,13 @@ send({ serial: 'PI', status: 'online', server_received_at: 1020, status_revision
   is_synced: true, service_config: { server1_enabled: true } });
 assert.equal(context.globalState.devices[0].service_config.password1, 'saved-secret', 'Redacted telemetry retains loaded credentials');
 const rfReading={source:'ubx_mon_rf',age_seconds:0,payload_b64:'sample'};
-send({serial:'PI',status:'online',status_revision:4,server_received_at:1030,gnss_rf:rfReading,gnss_spectrum:rfReading});
-send({serial:'PI',status:'online',status_revision:0,server_received_at:1025,gnss_rf:null,gnss_spectrum:null});
+send({serial:'PI',status:'online',status_revision:4,server_received_at:1030,gnss_rf:rfReading,gnss_spectrum:rfReading,gnss_receiver:rfReading});
+send({serial:'PI',status:'online',status_revision:0,server_received_at:1025,gnss_rf:null,gnss_spectrum:null,gnss_receiver:null});
 assert.equal(context.globalState.devices[0].gnss_rf.payload_b64,'sample','Older DB snapshot must not erase newer RF telemetry');
-send({serial:'PI',status:'online',status_revision:5,server_received_at:1040,gnss_rf:null,gnss_spectrum:null});
+send({serial:'PI',status:'online',status_revision:5,server_received_at:1040,gnss_rf:null,gnss_spectrum:null,gnss_receiver:null});
 assert.equal(context.globalState.devices[0].gnss_rf,null,'Fresh null must clear expired RF');
 assert.equal(context.globalState.devices[0].gnss_spectrum,null);
+assert.equal(context.globalState.devices[0].gnss_receiver,null,'Fresh null clears receiver readback');
 console.log('PASS: live Pi without caster, real offline, revision reset, delayed offline, saved config preservation');
 
 const React = {
