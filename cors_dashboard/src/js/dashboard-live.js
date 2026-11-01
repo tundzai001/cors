@@ -31,6 +31,45 @@ function getGnssQuality(device, nmeaData, live = true, now = Date.now() / 1000) 
     return null;
 }
 
+function getGnssDop(device, data, live = true, now = Date.now() / 1000) {
+    const usable = value => (typeof value === 'number' || (typeof value === 'string' && value.trim()))
+        && Number.isFinite(Number(value)) && Number(value) > 0 && Number(value) < 99 ? Number(value) : null;
+    if (!live) return {hdop: null, pdop: null, source: 'Thiết bị ngoại tuyến'};
+    const dop = device.gnss_dop;
+    const receipt = Number(device.server_received_at || device.timestamp);
+    const age = dop?.age_seconds + (Number.isFinite(receipt) ? Math.max(0, now - receipt) : 0);
+    const readback = dop?.source === 'ubx_nav_dop' && age >= 0 && age <= 45 ? dop : null;
+    const fresh = entry => !entry?.received_at || now - entry.received_at <= 15;
+    const gsa = fresh(data?.gsa) ? data?.gsa : null;
+    const gga = fresh(data?.gga) ? data?.gga : null;
+    const quality = getGnssQuality(device, data, live, now);
+    const hdop = usable(readback?.hdop) ?? usable(gsa?.hdop) ?? usable(gga?.hdop);
+    const pdop = usable(readback?.pdop) ?? usable(gsa?.pdop) ?? usable(quality?.pdop);
+    return {hdop, pdop, source: readback
+        ? `NAV-DOP · ${Math.floor(age)} giây${hdop === null && pdop === null ? ' · chip chưa báo DOP hợp lệ' : ''}`
+        : hdop !== null || pdop !== null ? 'GSA / GGA / NAV-PVT' : 'Chưa đọc được DOP hợp lệ từ chip'};
+}
+
+function getDashboardPosition(device, data) {
+    const position = (lat, lon, source) => {
+        const valid = value => (typeof value === 'number' || (typeof value === 'string' && value.trim()))
+            && Number.isFinite(Number(value));
+        return valid(lat) && valid(lon) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lon)) <= 180
+            ? {lat, lon, source} : null;
+    };
+    const gga = data?.gga;
+    const live = gga?.fix_status !== 'NO_FIX' && (!gga?.received_at || Date.now() / 1000 - gga.received_at <= 15)
+        ? position(gga?.latitude, gga?.longitude, 'NMEA GGA') : null;
+    if (live) return live;
+    const readback = device.system_info?.receiver_base_readback;
+    const receiver = readback?.state === 'ok' && readback.age_seconds <= 45
+        ? window.CorsReceiverCoordinates?.fromReceiver(readback.bestpos) : null;
+    const saved = device.base_config?.coords || device.base_config;
+    return position(receiver?.lat, receiver?.lon, 'Chip trả về')
+        || position(data?.base_coords?.lat, data?.base_coords?.lon, 'RTCM 1005/1006')
+        || position(saved?.lat, saved?.lon, 'Cấu hình Base đã lưu');
+}
+
 function getLeaflet() {
     const leaflet = window.Leaflet || window.L;
     return leaflet && typeof leaflet.map === 'function' ? leaflet : null;
@@ -174,7 +213,7 @@ function getSatelliteSystem(sat) {
     if (prn >= 1 && prn <= 32) return 'us';
     if (prn >= 65 && prn <= 96) return 'ru';
     if (prn >= 301 && prn <= 336) return 'eu';
-    if (prn >= 193 && prn <= 200) return 'jp';
+    if (prn >= 193 && prn <= 202) return 'jp';
     if ((prn >= 33 && prn <= 64) || (prn >= 401 && prn <= 463)) return 'cn';
     return 'un';
 }
@@ -185,17 +224,24 @@ function getSatelliteSystem(sat) {
 // BeiDou: NMEA dùng 401-463 → chuẩn hóa về 1-63 (RTCM)
 // QZSS: NMEA dùng 193-200 → chuẩn hóa về 1-8 (RTCM)
 function getNormalizedPrn(sat) {
-    const prn = Number(sat.prn);
+    const prn = Number(String(sat.prn).replace(/^[GRECJ]/i, ''));
     const sys = getSatelliteSystem(sat);
     if (sys === 'ru' && prn >= 65 && prn <= 96) return prn - 64;  // GLONASS NMEA→RTCM
     if (sys === 'eu' && prn >= 301 && prn <= 336) return prn - 300; // Galileo NMEA→RTCM
     if (sys === 'cn' && prn >= 401 && prn <= 463) return prn - 400; // BeiDou NMEA→RTCM
-    if (sys === 'jp' && prn >= 193 && prn <= 200) return prn - 192; // QZSS NMEA→RTCM
+    if (sys === 'jp' && prn >= 193 && prn <= 202) return prn - 192; // QZSS NMEA→RTCM
     return prn; // GPS or already RTCM-space
 }
 
 function getSatelliteKey(sat) {
     return `${getSatelliteSystem(sat)}:${getNormalizedPrn(sat)}`;
+}
+
+function hasSatellitePosition(sat) {
+    if (!sat || sat.has_geometry === false || sat.azimuth === null || sat.elevation === null) return false;
+    const az = Number(sat.azimuth), el = Number(sat.elevation);
+    return Number.isFinite(az) && Number.isFinite(el) && az >= 0 && az <= 360 && el >= 0 && el <= 90
+        && (az !== 0 || el !== 0 || sat.has_geometry === true);
 }
 
 function getVisibleSatellites(satellites, maxAgeMs) {
@@ -210,12 +256,13 @@ function getVisibleSatellites(satellites, maxAgeMs) {
         if (lastSeen > 0 && lastSeen < 1e11) lastSeen *= 1000;
         if (lastSeen > 0 && now - lastSeen > maxAgeMs) return; // Uncommented to clear stale satellites
 
+        if (!Number.isInteger(getNormalizedPrn(sat))) return;
         const key = getSatelliteKey(sat);
         const existing = visibleByKey.get(key);
-        // Only overwrite if this sat has better SNR
-        if (!existing || snr > (Number(existing.snr) || 0)) {
-            visibleByKey.set(key, sat);
-        }
+        const best = !existing || snr > Number(existing.snr) ? sat : existing;
+        const geometry = hasSatellitePosition(sat) ? sat : hasSatellitePosition(existing) ? existing : null;
+        visibleByKey.set(key, geometry
+            ? {...best, azimuth: geometry.azimuth, elevation: geometry.elevation, has_geometry: true} : best);
     });
 
     return Array.from(visibleByKey.values());
@@ -311,7 +358,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     // 🆕 METRIC TRACKING STATE
     const [metrics, setMetrics] = useState({
         fixQuality: { value: 0, history: [] },
-        satellites: { value: 0, history: [] },
+        satellites: { value: null, history: [] },
         accuracy: { value: undefined, history: [] },
         hdop: { value: 0, history: [] },
         signalStrength: { value: 0, history: [] },
@@ -322,7 +369,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         if (liveDataAvailable) return;
         setMetrics({
             fixQuality: { value: 0, history: [] },
-            satellites: { value: 0, history: [] },
+            satellites: { value: null, history: [] },
             accuracy: { value: undefined, history: [] },
             hdop: { value: 0, history: [] },
             signalStrength: { value: 0, history: [] },
@@ -334,7 +381,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const SATELLITE_TIMEOUT = 5000;
     const FADE_DURATION = 2000;
     const safeNmeaData = liveDataAvailable
-        ? { ...(nmeaData || { gga: null, gsa: null, satellites: {} }), base_coords: nmeaData?.base_coords || device.base_config?.coords }
+        ? (nmeaData || { gga: null, gsa: null, satellites: {} })
         : { gga: null, gsa: null, satellites: {} };
     const deviceRef = useRef(device);
     deviceRef.current = device;
@@ -342,18 +389,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     useEffect(() => {
         safeNmeaDataRef.current = safeNmeaData;
     }, [safeNmeaData]);
-    const fallbackBaseCoords = device?.base_config?.coords || (
-        device?.base_config?.lat !== undefined && device?.base_config?.lon !== undefined
-            ? {
-                lat: device.base_config.lat,
-                lon: device.base_config.lon,
-                alt: device.base_config.alt
-            }
-            : null
-    );
-    const baseCoords = (safeNmeaData.base_coords && safeNmeaData.base_coords.lat !== 0 && safeNmeaData.base_coords.lon !== 0) 
-        ? safeNmeaData.base_coords 
-        : fallbackBaseCoords;
+    const baseCoords = getDashboardPosition(device, safeNmeaData);
 
     const lastStatsUpdate = useRef(0);
     const lastCanvasUpdate = useRef(0);
@@ -375,9 +411,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const currentNmeaData = metricsNmeaDataRef.current || {};
             const gga = currentNmeaData.gga || {};
             const gsa = currentNmeaData.gsa || {};
-            const sats = Object.values(currentNmeaData.satellites || {}).filter(s => s.snr > 0);
+            const sats = getVisibleSatellites(Object.values(currentNmeaData.satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION);
             const quality = getGnssQuality(device, currentNmeaData, liveDataAvailable);
-            const satCount = quality?.satellites ?? device.satellite_count ?? (sats.length || gga.satellites || 0);
+            const satCount = quality?.satellites ?? gga.satellites ?? null;
 
             const avgSnr = sats.length > 0
                 ? sats.reduce((sum, sat) => sum + (sat.snr || 0), 0) / sats.length
@@ -484,35 +520,11 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const now = Date.now();
             const buffer = satelliteBufferRef.current;
 
-            satellites.forEach(sat => {
-                const key = getSatelliteKey(sat);
-                const existing = buffer.get(key);
-                const satSnr = Number(sat.snr) || 0;
-                const existingSnr = existing ? (Number(existing.snr) || 0) : 0;
-                const newAz = Number(sat.azimuth) || 0;
-                const newEl = Number(sat.elevation) || 0;
-                const hasNewPos = (newAz !== 0 || newEl !== 0);
-                const hasOldPos = existing && (Number(existing.azimuth) !== 0 || Number(existing.elevation) !== 0);
-
-                // Only update buffer if the new satellite has SNR, or if the existing one also has no SNR
-                if (!existing || satSnr > 0 || existingSnr === 0) {
-                    if (!hasNewPos && hasOldPos) {
-                        // Giữ lại az/el cũ khi ephemeris chưa được tính lại
-                        buffer.set(key, { ...sat, azimuth: existing.azimuth, elevation: existing.elevation, lastSeen: now, opacity: 1.0 });
-                    } else {
-                        buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
-                    }
-                } else {
-                    existing.lastSeen = now; // keep it alive
-                    // Cập nhật SNR nhưng giữ az/el cũ nếu mới = 0
-                    if (satSnr > 0) existing.snr = satSnr;
-                    if (hasNewPos) {
-                        existing.azimuth = newAz;
-                        existing.elevation = newEl;
-                    }
-                }
+            getVisibleSatellites(satellites, SATELLITE_TIMEOUT + FADE_DURATION).forEach(sat => {
+                let observedAt = Number(sat.lastSeen || sat.last_seen || now);
+                if (observedAt < 1e11) observedAt *= 1000;
+                buffer.set(getSatelliteKey(sat), {...sat, lastSeen: observedAt, opacity: 1.0});
             });
-
 
             for (const [satKey, satData] of buffer.entries()) {
                 const timeSinceLastSeen = now - satData.lastSeen;
@@ -536,9 +548,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 let el = Number(satData.elevation);
                 let snr = Number(satData.snr);
 
-                if (isNaN(snr) || snr === 0) continue;
-                if (isNaN(az)) az = 0;
-                if (isNaN(el)) el = 0;
+                if (!hasSatellitePosition(satData) || !Number.isFinite(snr) || snr <= 0) continue;
 
                 const az_rad = (az * Math.PI) / 180;
                 const dist = radius * (90 - el) / 90;
@@ -606,7 +616,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 tracking: activeSatellites.filter(s => s.isTracking).length, 
                 bySystem: groupedSats,
                 avgSnr: avgSnr,
-                lowSnrCount: lowSnrCount
+                lowSnrCount: lowSnrCount,
+                positioned: activeSatellites.filter(hasSatellitePosition).length
             });
 
             // 1. Nếu CẤU TRÚC bị đổi (thêm/bớt vệ tinh) -> Xóa toàn bộ và vẽ lại DOM
@@ -688,9 +699,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
         const animate = () => {
             const now = Date.now();
-            const { gga, gsa, satellites, base_coords } = safeNmeaDataRef.current;
-            const quality = getGnssQuality(deviceRef.current, safeNmeaDataRef.current,
-                !isDeviceStaleOffline(deviceRef.current), now / 1000);
+            const { satellites } = safeNmeaDataRef.current;
 
             // Text Stats Updates
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
@@ -698,22 +707,22 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) {
                     const activeCount = getVisibleSatellites(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION).length;
-                    satCountEl.textContent = quality?.satellites ?? (activeCount || gga?.satellites || 0);
+                    satCountEl.textContent = activeCount;
                 }
 
+                const dop = getGnssDop(deviceRef.current, safeNmeaDataRef.current,
+                    !isDeviceStaleOffline(deviceRef.current), now / 1000);
                 const dopEl = document.getElementById('db-dop');
-                if (dopEl) {
-                    const hText = gsa?.hdop >= 99 ? 'N/A' : formatTelemetryNumber(gsa?.hdop, 2, 'N/A');
-                    const pdop = gsa?.pdop ?? quality?.pdop;
-                    const pText = pdop >= 99 ? 'N/A' : formatTelemetryNumber(pdop, 2, 'N/A');
-                    dopEl.textContent = `${hText} / ${pText}`;
-                }
-
+                if (dopEl) dopEl.textContent = `${formatTelemetryNumber(dop.hdop, 2, '—')} / ${formatTelemetryNumber(dop.pdop, 2, '—')}`;
+                const dopSource = document.getElementById('db-dop-source');
+                if (dopSource) dopSource.textContent = dop.source;
+                const position = getDashboardPosition(deviceRef.current, safeNmeaDataRef.current);
                 const latEl = document.getElementById('db-lat');
-                if (latEl) latEl.textContent = formatTelemetryNumber(gga?.latitude ?? (isReadonly4g ? base_coords?.lat : undefined), 8, isReadonly4g ? '—' : '0.0');
-
+                if (latEl) latEl.textContent = formatTelemetryNumber(position?.lat, 8, '—');
                 const lonEl = document.getElementById('db-lon');
-                if (lonEl) lonEl.textContent = formatTelemetryNumber(gga?.longitude ?? (isReadonly4g ? base_coords?.lon : undefined), 8, isReadonly4g ? '—' : '0.0');
+                if (lonEl) lonEl.textContent = formatTelemetryNumber(position?.lon, 8, '—');
+                const positionSource = document.getElementById('db-position-source');
+                if (positionSource) positionSource.textContent = position?.source || 'Chưa có tọa độ';
 
                 lastStatsUpdate.current = now;
             }
@@ -803,7 +812,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             {window.MetricCard && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
                     <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
-                    <window.MetricCard title="Active Sats" value={metrics.satellites.value} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
+                    <window.MetricCard title="Vệ tinh chip dùng" value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
                     <window.MetricCard title="hAcc (ước lượng)" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
                     <window.MetricCard title="Avg SNR" value={metrics.signalStrength.value} unit="dB" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
                 </div>
@@ -828,9 +837,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         </div>
                     </div>
                 </div>
-                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Satellites</div><div id="db-sats" className="stat-value">0</div></div></div>
-                <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">0.0 / 0.0</div></div></div>
-                <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">0.0</span> / <span id="db-lon">0.0</span></div></div></div>
+                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh giải mã</div><div id="db-sats" className="stat-value">0</div></div></div>
+                <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">— / —</div><div id="db-dop-source" className="small text-muted">Đang đọc DOP</div></div></div>
+                <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">—</span> / <span id="db-lon">—</span></div><div id="db-position-source" className="small text-muted"></div></div></div>
             </div>
             <div className="alert alert-info mt-3" role="status">
                 {quality ? <div>
@@ -1160,10 +1169,13 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>
                         <i className="bi bi-radar"></i><span>Sky View</span>
-                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} Sats</span>
+                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} vệ tinh giải mã</span>
                     </div>
                     <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
+                        {satStats.total > 0 && !satStats.positioned && <div className="position-absolute top-50 start-50 translate-middle text-center small text-muted px-3" style={{zIndex: 3, width: '80%'}}>
+                            Có tín hiệu vệ tinh nhưng chưa có góc phương vị / độ cao để vẽ.
+                        </div>}
                         <canvas ref={satCanvasRef} className="skyplot-sat" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2 }}></canvas>
                     </div>
                 </div>
@@ -1172,8 +1184,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     <div className="panel-header">
                         <i className="bi bi-bar-chart-fill"></i><span>Signal Strength (SNR)</span>
                         <div className="ms-auto d-flex gap-2">
-                            <span className="badge bg-success">{satStats.tracking} Tracking</span>
-                            <span className="badge bg-secondary">{satStats.total} Total</span>
+                            <span className="badge bg-success">{satStats.tracking} có tín hiệu</span>
+                            <span className="badge bg-secondary">{satStats.total} giải mã</span>
                         </div>
                     </div>
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>

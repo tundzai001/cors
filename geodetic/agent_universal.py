@@ -412,9 +412,20 @@ def _ubx_navigation_quality(payload):
                 hacc_m=struct.unpack_from('<I', payload, 40)[0] * 0.001 if valid else None)
 
 
+def _ubx_dop(payload):
+    if len(payload) != 18:
+        raise ValueError('Invalid NAV-DOP payload')
+    return dict(source='ubx_nav_dop', pdop=struct.unpack_from('<H', payload, 6)[0] * 0.01,
+                hdop=struct.unpack_from('<H', payload, 12)[0] * 0.01)
+
+
 def receiver_quality_status(now):
     # Explicit null clears stale data; legacy hacc is always millimetres.
-    status = dict(hacc=None, gnss_quality=None)
+    status = dict(hacc=None, gnss_quality=None, gnss_dop=None)
+    dop = globals().get('LAST_UBX_DOP')
+    dop_age = now - float(globals().get('LAST_UBX_DOP_TS') or 0)
+    if dop and 0 <= dop_age <= 45:
+        status['gnss_dop'] = dict(dop, age_seconds=round(dop_age, 1))
     quality = globals().get('LAST_RECEIVER_QUALITY')
     age = now - float(globals().get('LAST_RECEIVER_QUALITY_TS') or 0)
     if quality and 0 <= age <= 45:
@@ -439,6 +450,12 @@ async def refresh_receiver_quality(agent, reader):
     quality = _ubx_navigation_quality(_base_ubx_payload(packet, (1, 7)))
     globals()['LAST_RECEIVER_QUALITY'] = quality
     globals()['LAST_RECEIVER_QUALITY_TS'] = time.time()
+    try:
+        packet = await reader.query_base(_ubx_packet(1, 4), (1, 4))
+        globals()['LAST_UBX_DOP'] = _ubx_dop(_base_ubx_payload(packet, (1, 4)))
+        globals()['LAST_UBX_DOP_TS'] = time.time()
+    except Exception as error:
+        logging.warning('[GNSS][DOP] %s', error)  # Keep PVT available if only DOP fails.
 
 
 def _runtime_serial_baud(agent=None, gnss_reader=None) -> int:
@@ -1479,6 +1496,8 @@ def _mark_gnss_data_stale():
     globals()['LAST_UBX_NUMSV_TS'] = 0.0
     globals()['LAST_RECEIVER_QUALITY'] = None
     globals()['LAST_RECEIVER_QUALITY_TS'] = 0.0
+    globals()['LAST_UBX_DOP'] = None
+    globals()['LAST_UBX_DOP_TS'] = 0.0
 
 def _crc24q(data: bytes) -> int:
     crc = 0
@@ -3800,6 +3819,10 @@ class GNSSReader(threading.Thread):
                     except Exception:
                         pass
 
+                if ubx_class == 1 and ubx_id == 4 and payload_length == 18:
+                    globals()['LAST_UBX_DOP'] = _ubx_dop(packet[6:-2])
+                    globals()['LAST_UBX_DOP_TS'] = time.time()
+
                 # UBX-NAV-PVT (class=0x01, id=0x07): numSV at offset 23, hAcc at offset 40.
                 if ubx_class == 0x01 and ubx_id == 0x07 and payload_length == 92:
                     try:
@@ -4198,8 +4221,8 @@ def _base_ubx_payload(packet, key):
             or _ubx_packet(*key, packet[6:-2]) != packet):
         raise ValueError("Invalid UBX readback checksum or frame")
     payload = packet[6:-2]
-    if ((key == (1, 7) and len(payload) != 92)
-            or (key != (1, 7) and (len(payload) != 40 or payload[0] != 0))):
+    size = {(1, 7): 92, (1, 4): 18}.get(key, 40)
+    if len(payload) != size or (size == 40 and payload[0] != 0):
         raise ValueError("Unsupported UBX readback payload")
     return payload
 

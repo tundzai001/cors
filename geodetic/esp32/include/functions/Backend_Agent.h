@@ -108,6 +108,8 @@ private:
     uint32_t lastReceiverPollMs_ = 0;
     UbxNavigation navigation_;
     uint32_t navigationMs_ = 0;
+    UbxDop dop_;
+    uint32_t dopMs_ = 0;
     float unicoreHorizontalSigma_ = 0;
     uint32_t unicoreQualityMs_ = 0;
     bool surveyInResultPending_ = false;

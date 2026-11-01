@@ -243,6 +243,14 @@ String BackendAgent::buildStatusPayload() {
     if (gnss.satellites > 0) doc["satellite_count"] = gnss.satellites;
     doc["hacc"] = nullptr; // Compatibility field: always millimetres, never HDOP.
     doc["gnss_quality"] = nullptr;
+    doc["gnss_dop"] = nullptr;
+    if (sensorType_ == "Ublox" && dopMs_ > 0 && nowMs - dopMs_ <= 45000UL) {
+        JsonObject dop = doc.createNestedObject("gnss_dop");
+        dop["source"] = "ubx_nav_dop";
+        dop["age_seconds"] = (nowMs - dopMs_) / 1000.0;
+        dop["hdop"] = dop_.hdop * 0.01;
+        dop["pdop"] = dop_.pdop * 0.01;
+    }
     if (sensorType_ == "Ublox" && navigationMs_ > 0 && nowMs - navigationMs_ <= 45000UL) {
         JsonObject quality = doc.createNestedObject("gnss_quality");
         quality["source"] = "ubx_nav_pvt";

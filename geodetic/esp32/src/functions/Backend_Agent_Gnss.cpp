@@ -420,6 +420,12 @@ void BackendAgent::pollGnssStatus() {
                 navigationMs_ = millis();
                 markStatusDirty();
             }
+            UbxDop dop;
+            if (UbloxReadback::readDop(dop, error)) {
+                dop_ = dop;
+                dopMs_ = millis();
+                markStatusDirty();
+            }
         }
     }
 

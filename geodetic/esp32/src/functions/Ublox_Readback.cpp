@@ -71,6 +71,14 @@ bool query(uint8_t cls, uint8_t id, UbxReply &reply, String &error,
 
 } // namespace
 
+bool UbloxReadback::readDop(UbxDop &status, String &error) {
+    UbxReply reply;
+    if (!query(1, 4, reply, error)) return false;
+    if (status.decode(reply.frame + 6, reply.length - 8)) return true;
+    error = "Invalid NAV-DOP response";
+    return false;
+}
+
 bool UbloxReadback::readNavigation(UbxNavigation &status, String &error) {
     UbxReply reply;
     if (!query(1, 7, reply, error)) return false;

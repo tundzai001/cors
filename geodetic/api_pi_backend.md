@@ -192,3 +192,19 @@ The UI also adds time since server receipt and suppresses offline or expired
 values. Legacy untagged hacc is hidden because old agents mixed mm, m and HDOP.
 Fixed LLA hAcc does not independently validate the declared Base coordinates,
 and a fixed Base does not need the rover's RTK Fixed convergence state.
+
+
+`gnss_dop` is an independent NAV-DOP (01/04) readback with `source`,
+`age_seconds`, dimensionless `hdop` and `pdop`. Pi and ESP32 poll it without
+changing periodic output rates. It expires after 45 seconds independently of
+NAV-PVT. A failed DOP query does not discard a successful PVT read. The UI
+prefers valid NAV-DOP, then valid NMEA GSA/GGA or PVT PDOP; NMEA sentinel values
+must not mask valid receiver readback. Missing DOP remains explicitly unknown.
+
+The dashboard labels NAV-PVT numSV as receiver-used satellites separately
+from decoded satellites. Decoded counters, sky-view/SNR badges and average
+SNR use the same constellation/PRN deduplication and seven-second expiry.
+`has_geometry: false` means RTCM observations have no fresh azimuth/elevation;
+these satellites remain in signal bars but are not plotted at fake 0°/0°.
+The position strip and map share the same selection: valid GGA, receiver Base
+readback, RTCM Base coordinates, then saved Base coordinates, with source labels.

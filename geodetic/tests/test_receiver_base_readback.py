@@ -21,7 +21,7 @@ NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
          'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',
-         'receiver_quality_status'}
+         'receiver_quality_status', '_ubx_dop'}
 
 
 def load():
@@ -69,16 +69,25 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         pvt[20:24] = bytes([5, 1, 0, 35])  # Time-only base, valid.
         struct.pack_into('<I', pvt, 40, 4080)
         struct.pack_into('<H', pvt, 76, 123)
-        self.reader.query_base = AsyncMock(return_value=self.pack(1, 7, pvt))
+        dop = bytearray(18)
+        struct.pack_into('<H', dop, 6, 120)
+        struct.pack_into('<H', dop, 12, 85)
+        self.reader.query_base = AsyncMock(side_effect=[self.pack(1, 7, pvt), self.pack(1, 4, dop)])
         await self.s['refresh_receiver_quality'](self.agent, self.reader)
-        self.reader.query_base.assert_awaited_once_with(b'\xb5\x62\x01\x07\x00\x00\x08\x19', (1, 7))
-        now = self.s['LAST_RECEIVER_QUALITY_TS']
+        self.reader.query_base.assert_any_await(b'\xb5\x62\x01\x07\x00\x00\x08\x19', (1, 7))
+        self.reader.query_base.assert_any_await(b'\xb5\x62\x01\x04\x00\x00\x05\x10', (1, 4))
+        now = max(self.s['LAST_RECEIVER_QUALITY_TS'], self.s['LAST_UBX_DOP_TS'])
         status = self.s['receiver_quality_status'](now)
+        self.assertAlmostEqual(status['gnss_dop']['hdop'], 0.85)
+        self.assertAlmostEqual(status['gnss_dop']['pdop'], 1.20)
         self.assertEqual(status['hacc'], 4080)
         self.assertAlmostEqual(status['gnss_quality']['hacc_m'], 4.08)
         self.assertEqual(status['gnss_quality']['satellites'], 35)
         self.assertAlmostEqual(status['gnss_quality']['pdop'], 1.23)
         self.assertIsNone(self.s['receiver_quality_status'](now + 46)['gnss_quality'])
+        self.assertIsNone(self.s['receiver_quality_status'](now + 46)['gnss_dop'])
+        with self.assertRaises(ValueError):
+            self.s['_ubx_dop'](dop[:-1])
         # Invalid fix actively clears the old good reading. Never replace it with HDOP.
         pvt[21] = 0
         self.reader._parse_buffer(bytearray(self.pack(1, 7, pvt)))
@@ -93,6 +102,19 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(gst['gnss_quality']['hacc_m'], 4.08)
         self.assertEqual(gst['gnss_quality']['source'], 'nmea_gst')
         self.assertIsNone(self.s['receiver_quality_status'](now + 16)['hacc'])
+
+    async def test_dop_failure_does_not_destroy_pvt(self):
+        pvt = bytearray(92)
+        pvt[20:24] = bytes([5, 1, 0, 28])
+        struct.pack_into('<H', pvt, 76, 123)
+        self.reader.query_base = AsyncMock(side_effect=[self.pack(1, 7, pvt), TimeoutError('DOP timeout')])
+        await self.s['refresh_receiver_quality'](self.agent, self.reader)
+        status = self.s['receiver_quality_status'](time.time())
+        self.assertEqual(status['gnss_quality']['satellites'], 28)
+        self.assertIsNone(status['gnss_dop'])
+        corrupt = bytearray(self.pack(1, 4, bytes(18))); corrupt[-1] ^= 1
+        with self.assertRaises(ValueError):
+            self.s['_base_ubx_payload'](corrupt, (1, 4))
 
     async def test_unicore_rtcm_only_bestnav_accuracy(self):
         self.agent.detected_chip['type'] = 'Unicorecomm'
@@ -114,7 +136,9 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
                      STATUS_ALLOW_HEAVY_FIELDS=False, buffer_metrics={'status_payload_compacted_count': 0})
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
         for quality in ({'hacc_m': 4.08, 'source': 'ubx_nav_pvt', 'age_seconds': 0}, None):
-            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality})
+            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality})
+            self.assertIn('gnss_dop', result)
+            self.assertEqual(result['gnss_dop'], quality)
             self.assertIn('gnss_quality', result)
             self.assertEqual(result['gnss_quality'], quality)
 

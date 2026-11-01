@@ -8,6 +8,11 @@
 #include <string>
 
 int main() {
+    uint8_t dop[18] = {};
+    dop[6] = 120; dop[12] = 85;
+    UbxDop dopStatus;
+    assert(dopStatus.decode(dop, sizeof(dop)) && dopStatus.pdop == 120 && dopStatus.hdop == 85);
+    assert(!dopStatus.decode(dop, 17));
     uint8_t pvt[92] = {};
     pvt[20] = 5; pvt[21] = 1; pvt[23] = 35;
     pvt[40] = 0xF0; pvt[41] = 0x0F; // 4080 mm, not 4.08 mm.

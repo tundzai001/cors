@@ -139,7 +139,7 @@ const CONTROL_STATUS_VALUES = new Set([
 const LIVE_STATUS_FIELDS = [
     'status', 'timestamp', 'offline_since', 'agent_timestamp', 'server_received_at',
     'status_revision', 'status_source', 'bps', 'ntrip_connected',
-    'ntrip_status', 'ntrip_stats', 'transport_status', 'gnss_quality', 'hacc', 'satellite_count'
+    'ntrip_status', 'ntrip_stats', 'transport_status', 'gnss_quality', 'gnss_dop', 'hacc', 'satellite_count'
 ];
 let pendingStatusUpdates = new Map();
 let lastStatusMetaBySerial = new Map();
@@ -1467,7 +1467,7 @@ function handleWebSocketMessage(message) {
         const nmeaType = data.type;
 
         if (nmeaType === 'GSA') {
-            currentNmeaData.gsa = data;
+            currentNmeaData.gsa = {...data, received_at: Date.now() / 1000};
             if (data.active_sats && currentNmeaData.satellites) {
                 Object.values(currentNmeaData.satellites).forEach(sat => {
                     sat.isTracking = data.active_sats.includes(sat.prn);
@@ -1491,7 +1491,7 @@ function handleWebSocketMessage(message) {
             requestDetailsPanelUpdate('high');
         }
         else if (nmeaType === 'GGA') {
-            currentNmeaData.gga = data;
+            currentNmeaData.gga = {...data, received_at: Date.now() / 1000};
             requestDetailsPanelUpdate('high');
         }
         else if (nmeaType === 'GST') {

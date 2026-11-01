@@ -21,3 +21,15 @@ struct UbxNavigation {
         return true;
     }
 };
+
+// NAV-DOP (01/04): all values are dimensionless, scaled by 0.01.
+struct UbxDop {
+    uint16_t hdop = 0;
+    uint16_t pdop = 0;
+    bool decode(const uint8_t *p, size_t size) {
+        if (size != 18) return false;
+        pdop = uint16_t(p[6]) | uint16_t(p[7]) << 8;
+        hdop = uint16_t(p[12]) | uint16_t(p[13]) << 8;
+        return true;
+    }
+};

@@ -616,10 +616,12 @@ class RTCMSignalDecoder:
             sat_str_id = f"RTCM:{sys_code}:{prn}"
             elevation = 0.0
             azimuth = 0.0
+            has_geometry = False
             
             cached = self._azel_cache[serial].get(sat_str_id)
             if cached and now_s - cached[0] < 10.0:
                 azimuth, elevation = cached[1], cached[2]
+                has_geometry = True
             else:
                 if base_pos:
                     sat_pos = self._satpos(sys_code, prn, now_ms)
@@ -627,6 +629,7 @@ class RTCMSignalDecoder:
                         az, el = self._satazel(sat_pos, base_pos)
                         azimuth = az
                         elevation = el
+                        has_geometry = True
                         self._azel_cache[serial][sat_str_id] = (now_s, azimuth, elevation)
             
             satellites_out.append({
@@ -640,6 +643,7 @@ class RTCMSignalDecoder:
                 "isTracking": snr > 0,
                 "elevation": elevation,
                 "azimuth": azimuth,
+                "has_geometry": has_geometry,
                 "lastSeen": now_ms,
             })
             
@@ -795,6 +799,7 @@ class RTCMSignalDecoder:
             
             elevation = 0.0
             azimuth = 0.0
+            has_geometry = False
             
             now = time.time()
             if serial not in self._azel_cache: self._azel_cache[serial] = {}
@@ -802,6 +807,7 @@ class RTCMSignalDecoder:
             
             if cached and now - cached[0] < 10.0:
                 azimuth, elevation = cached[1], cached[2]
+                has_geometry = True
             else:
                 base_pos = self._base_positions.get(serial)
                 eph = self._ephemeris_data.get(serial, {}).get(sat_str_id)
@@ -816,6 +822,7 @@ class RTCMSignalDecoder:
                         az, el = self._satazel(sat_pos, base_pos)
                         azimuth = az
                         elevation = el
+                        has_geometry = True
                         self._azel_cache[serial][sat_str_id] = (now, azimuth, elevation)
 
             satellites.append(
@@ -831,6 +838,7 @@ class RTCMSignalDecoder:
                     "isTracking": True,
                     "elevation": elevation,
                     "azimuth": azimuth,
+                    "has_geometry": has_geometry,
                     "lastSeen": now_ms,
                 }
             )
