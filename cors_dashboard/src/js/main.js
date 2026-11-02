@@ -1421,7 +1421,7 @@ function handleWebSocketMessage(message) {
                 currentNmeaData.satellites[satKey] = {
                     ...existingSat,
                     ...sat,
-                    telemetry_source: 'nmea',
+                    telemetry_source: sat.telemetry_source || (/^RTCM(?::|$)/i.test(String(sat.id || sat.talker || '')) ? 'rtcm' : 'nmea'),
                     lastSeen: Date.now()
                 };
             });

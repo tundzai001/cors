@@ -44,6 +44,24 @@ class FirmwareCommandsTests(unittest.IsolatedAsyncioTestCase):
             merged.update(self.s['_ubx_valset_values'](command))
         return merged
 
+    def test_jamming_sensitivity_is_boolean_persisted_and_only_for_supported_firmware(self):
+        self.assertIs(builder.normalize_gnss_options(None)['jamming_sensitivity_high'],True)
+        for invalid in (None,0,1,'false',[]):
+            with self.assertRaises(ValueError): builder.normalize_gnss_options({'jamming_sensitivity_high':invalid})
+        for version in ('1.13','1.50','1.51'):
+            for high in (True,False):
+                options={'jamming_sensitivity_high':high}
+                for commands in (
+                    builder.build_base_fixed_lla_command('Ublox',21,105,10,.01,options,receiver_profile=self.profile(version)),
+                    builder.build_base_survey_in_command('Ublox',300,3,options,receiver_profile=self.profile(version)),
+                ):
+                    values=self.values(commands)
+                    if version == '1.13': self.assertNotIn(0x10f60051,values)
+                    else: self.assertEqual(values[0x10f60051],bytes([high]))
+        for chip in ('Unicorecomm',):
+            self.assertEqual(builder.build_base_fixed_lla_command(chip,21,105,10,.01,{'jamming_sensitivity_high':True}),
+                             builder.build_base_fixed_lla_command(chip,21,105,10,.01,{'jamming_sensitivity_high':False}))
+
     def test_modern_base_enables_selected_ports_and_verifies_the_enable_keys(self):
         enabled_keys = {'UART1': 0x10520005, 'UART2': 0x10530005, 'USB': 0x10650001}
         for ports in (['UART1'], ['UART2'], ['USB'], list(enabled_keys)):
@@ -108,7 +126,10 @@ class FirmwareCommandsTests(unittest.IsolatedAsyncioTestCase):
     async def test_modern_monver_skips_removed_itfm_polls(self):
         reader=SimpleNamespace(query_base=AsyncMock(return_value=self.s['_ubx_packet'](0x0a,4,monver())))
         await self.s['_refresh_ubx_receiver_info'](reader)
-        self.assertEqual(reader.query_base.await_count,1)
+        self.assertEqual(reader.query_base.await_count,2)
+        poll=reader.query_base.await_args.args[0]
+        self.assertEqual(poll[10:14],struct.pack('<I',0x10f60051))
+        self.assertNotIn(struct.pack('<I',0x1041000d),poll)
         info=self.s['LAST_UBX_RECEIVER_INFO']
         self.assertFalse(info['itfm_supported'])
         self.assertEqual(info['firmware'],'HPG 1.51')

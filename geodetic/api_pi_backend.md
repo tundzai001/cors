@@ -385,6 +385,10 @@ Roll out the Pi agent first, then the backend/web. This does not upgrade receive
 
 ### HPG 1.51 automatic signal diagnostics
 
+For HPG 1.50/1.51, `gnss_options.jamming_sensitivity_high` selects `CFG-SEC-JAMDET_SENSITIVITY_HI` (`0x10f60051`): boolean true (default, u-blox high sensitivity) or false (normal sensitivity; not detection disabled). It is persisted with BASE Fixed LLA/Survey-in VALSET to RAM/BBR/Flash, and checked by the existing write/readback path. Older firmware and UM never receive this key. Changing the form alone sends no command. The separate running RAM readback appears as `gnss_receiver.jamming_sensitivity_high`; missing replies are explicit `sensitivity_error`, never inferred from the saved setting. The key stays outside per-port message verification.
+
+Stream-only `MONITOR_*` stations do not expose chip RF diagnostic panels. RTCM satellite identity must be preserved when a status snapshot wraps decoded satellites in `nmea_data`; it remains eligible for Signal Strength without MON-RF/NAV-SAT.
+
 Universal agents poll SEC-SIG (`27 09`, version 2) and SEC-SIGLOG (`27 10`, version 1) after fresh MON-VER identifies HPG 1.50/1.51. Polling is read-only and works with RTCM-only output; it does not change detection sensitivity, antenna power, message rates, or stored BASE configuration. Existing firmware keeps MON-RF monitoring and UM keeps its own AGC/jamming path. ESP32 is unchanged.
 
 `gnss_security` carries the bounded raw payload plus jamming/spoofing enabled flags, their independent states and per-center-frequency jamming flags (frequency in kHz). `gnss_security_log` carries up to 16 chip events with elapsed seconds, detection type and event type. Both expire after 45 seconds. A failed poll replaces the corresponding snapshot with an explicit error. The chip log resets on receiver restart; it is not a persistent full-night log.

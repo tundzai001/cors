@@ -44,6 +44,7 @@ class SecurityTests(unittest.IsolatedAsyncioTestCase):
         pack = self.s['_ubx_packet']
         async def respond(wire, key):
             if key == (10,4): return pack(10,4,monver('1.51'))
+            if key == (6,0x8b): return pack(*key,b'\x01\0\0\0'+struct.pack('<I',0x10f60051)+b'\0')
             if key == (0x27,9): return pack(*key,signal(2))
             if key == (0x27,16): return pack(*key,b'\x01\0'+bytes(6))
             raise TimeoutError('test missing response')
@@ -53,6 +54,7 @@ class SecurityTests(unittest.IsolatedAsyncioTestCase):
         now = self.s['time'].time()
         status = self.s['receiver_quality_status'](now)
         self.assertEqual(status['gnss_security']['jam_state'],2)
+        self.assertIs(status['gnss_receiver']['jamming_sensitivity_high'],False)
         self.assertEqual(status['gnss_security_log']['events'],[])
         self.assertEqual(status['gnss_rf_monitor']['source'],'ubx_sec_sig')
         self.assertEqual(status['gnss_rf_monitor']['warning_samples'],1)

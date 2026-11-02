@@ -357,10 +357,12 @@ async def configure_chip_endpoint(
 
     if mode == "BASE" and sensor_type == "Ublox":
         try:
-            enabled = command_builder.normalize_gnss_options(gnss_options)["interference_detection_enabled"]
+            normalized_options = command_builder.normalize_gnss_options(gnss_options)
+            enabled = normalized_options["interference_detection_enabled"]
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        gnss_options = {**(gnss_options if isinstance(gnss_options, dict) else {}), "interference_detection_enabled": enabled}
+        gnss_options = {**(gnss_options if isinstance(gnss_options, dict) else {}), "interference_detection_enabled": enabled,
+                        "jamming_sensitivity_high": normalized_options["jamming_sensitivity_high"]}
         if isinstance(params, dict):
             params["gnss_options"] = gnss_options
 

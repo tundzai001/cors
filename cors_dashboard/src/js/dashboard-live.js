@@ -106,10 +106,37 @@ function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
     } catch (_) { return null; }
 }
 
+// NAV-SAT reports one C/N₀ per satellite; it cannot separate signal bands.
+function getReceptionSample(device, live = true, now = Date.now() / 1000) {
+    const reading = getReceiverSatellites(device, live, now);
+    if (!reading) return null;
+    const satellites = reading.satellites.filter(sat => sat.isTracking && sat.snr > 0);
+    const values = satellites.map(sat => sat.snr).sort((a,b) => a-b);
+    const middle = Math.floor(values.length / 2);
+    const median = values.length ? (values[middle] + values[Math.floor((values.length-1)/2)]) / 2 : null;
+    return {at:now-reading.age_seconds, median, tracking:satellites.length,
+        used:reading.satellites.filter(sat => sat.used_in_solution).length,
+        satellites:satellites.map(sat => ({key:sat.id, system:sat.system, cno:sat.snr}))};
+}
+
+function compareReception(current, previous) {
+    if (!current || !previous || current.at <= previous.at || current.at-previous.at > 60) return null;
+    const before = new Map(previous.satellites.map(sat => [sat.key,sat.cno]));
+    const changes = current.satellites.filter(sat => before.has(sat.key)).map(sat => sat.cno-before.get(sat.key)).sort((a,b)=>a-b);
+    return {matched:changes.length, delta:changes.length >= 4 ? (changes[Math.floor(changes.length/2)]+changes[Math.floor((changes.length-1)/2)])/2 : null,
+        lost:previous.satellites.filter(sat=>!current.satellites.some(next=>next.key===sat.key)).length};
+}
+
+function compareSpectrum(block, previous) {
+    if (!previous || block.center !== previous.center || block.span !== previous.span || block.resolution !== previous.resolution || block.pga !== previous.pga) return null;
+    const changes=block.bins.map((value,index)=>value-previous.bins[index]).sort((a,b)=>a-b);
+    return {median:(changes[127]+changes[128])/2, peak:Math.max(...block.bins)};
+}
+
 function getSatelliteTelemetrySource(sat) {
-    if (sat?.telemetry_source) return sat.telemetry_source;
     const identifier = String(sat?.talker || sat?.id || '');
-    if (/^RTCM(?::|$)/i.test(identifier)) return 'rtcm';
+    if ([sat?.id, sat?.talker].some(value=>/^RTCM(?::|$)/i.test(String(value || '')))) return 'rtcm';
+    if (sat?.telemetry_source) return sat.telemetry_source;
     if (/^(G[PNLABDQI]|BD|QZ)(?::|$)/i.test(identifier)) return 'nmea';
     return null;
 }
@@ -232,6 +259,8 @@ function getReceiverDiagnostic(device, live = true, now = Date.now() / 1000) {
     const age = raw?.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
     if (!live || raw?.source !== 'ubx_mon_ver' || typeof raw.age_seconds !== 'number' || !Number.isFinite(age) || age < 0 || age > 45) return null;
     const result = {age_seconds:age, itfm_enabled:typeof raw.itfm_enabled === 'boolean' ? raw.itfm_enabled : null,
+        jamming_sensitivity_high:typeof raw.jamming_sensitivity_high === 'boolean' ? raw.jamming_sensitivity_high : null,
+        sensitivity_error:typeof raw.sensitivity_error === 'string' ? raw.sensitivity_error.slice(0,160) : null,
         error:typeof raw.error === 'string' ? raw.error.slice(0,160) : null,
         itfm_error:typeof raw.itfm_error === 'string' ? raw.itfm_error.slice(0,160) : null};
     try {
@@ -303,9 +332,9 @@ function getRfReadError(device, rf, live = true, now = Date.now() / 1000) {
     return null;
 }
 
-function getRfBlockLabel(block, blocks) {
+function getRfBlockLabel(block, blocks, receiver = null) {
     const unique = blocks.filter(other => other.id === block.id).length === 1;
-    return unique && block.id === 0 ? 'L1' : unique && block.id === 1 ? 'L2/L5'
+    return unique && block.id === 0 ? 'L1' : unique && block.id === 1 ? (receiver?.model === 'ZED-F9P' && receiver?.firmware === 'HPG 1.51' ? 'L2' : 'L2/L5')
         : `RF ${block.index + 1} (ID ${block.id})`;
 }
 
@@ -334,7 +363,7 @@ function getRfAssessment({live, rf, um, readError, receiver, security, unicore =
     }
     if (!rf) return unknown('Chưa có MON-RF hợp lệ. Có phổ MON-SPAN cũng chưa thay thế được trạng thái cảnh báo.',
         'Kiểm tra phản hồi MON-RF; giữ mẫu phổ để so sánh trước/sau khi đổi vị trí anten hoặc tắt thiết bị phát của mình.');
-    const band = block => getRfBlockLabel(block, rf.blocks);
+    const band = block => getRfBlockLabel(block, rf.blocks, receiver);
     const fault = rf.blocks.filter(b => b.antenna === 3 || b.antenna === 4);
     if (fault.length) return {tone:'danger',title:'Chip báo lỗi đường anten',
         reason:`${fault.map(band).join(', ')}: có chỉ báo hở mạch hoặc ngắn mạch anten.`,
@@ -574,6 +603,56 @@ function isDeviceStaleOffline(device, nowMs = Date.now()) {
     return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
 }
 
+function ReceptionOverview({device, live}) {
+    const historyRef = useRef({serial:null, samples:[]});
+    const [paused, setPaused] = useState(false);
+    const current = getReceptionSample(device, live);
+    const history = historyRef.current;
+    if (history.serial !== device.serial) {
+        history.serial = device.serial;
+        history.samples = [];
+    }
+    if (!paused && current && (!history.samples.length || current.at > history.samples[history.samples.length-1].at+1)) {
+        history.samples = [...history.samples.filter(sample=>current.at-sample.at<=600), current].slice(-300);
+    }
+    const samples = history.samples;
+    const latest = paused ? samples[samples.length-1] : current;
+    const comparison = compareReception(latest, samples[samples.length-2]);
+    const drop = comparison?.delta !== null && comparison?.delta <= -3;
+    const format = value => value === null || value === undefined ? '—' : value.toFixed(1);
+    const systems = [['us','GPS'],['ru','GLONASS'],['eu','Galileo'],['cn','BeiDou'],['jp','QZSS'],['sb','SBAS']];
+    const end = samples[samples.length-1]?.at || Date.now()/1000;
+    return <div className="border rounded-3 p-3 mb-3" aria-label="Chất lượng thu GNSS">
+        <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div><h6 className="mb-1">Chất lượng thu GNSS</h6><span className="small text-muted">10 phút khi mở màn hình · C/N₀ từ chip</span></div>
+            <button className="btn btn-sm btn-outline-secondary" style={{minHeight:44}} aria-pressed={paused} onClick={()=>setPaused(value=>!value)}>{paused ? 'Tiếp tục cập nhật' : 'Tạm dừng biểu đồ'}</button>
+        </div>
+        <div className="row g-2 mb-3">
+            {[[format(latest?.median),'C/N₀ trung vị · dB-Hz'],[latest?.tracking ?? '—','Vệ tinh đang bám'],[latest?.used ?? '—','Được dùng định vị'],[comparison ? comparison.lost : '—','Không còn bám so với mẫu trước']].map(([value,label])=><div className="col-6 col-xl-3" key={label}><div className="border rounded p-2 h-100"><strong className="fs-4 d-block font-monospace">{value}</strong><span className="small text-muted">{label}</span></div></div>)}
+        </div>
+        <p className={`small mb-2 ${drop ? 'text-warning' : 'text-muted'}`} role="status">{!latest ? 'Đang chờ mẫu vệ tinh mới từ chip.' : paused ? 'Đã tạm dừng biểu đồ.' : comparison?.delta != null ? `${drop ? 'C/N₀ giảm' : 'Biến động C/N₀'}: ${comparison.delta>0 ? '+' : ''}${format(comparison.delta)} dB-Hz · đối chiếu ${comparison.matched} vệ tinh trùng nhau.` : 'Đang thu mẫu để đối chiếu cùng vệ tinh.'}</p>
+        {samples.length > 1 && <>
+            <svg viewBox="0 0 640 150" role="img" aria-label="Diễn biến C/N₀ trung vị, thang 0 đến 60 dB-Hz; khoảng trống là thiếu mẫu" style={{width:'100%',maxHeight:200}}>
+                {[0,20,40,60].map(value=><g key={value}><line x1="30" x2="630" y1={130-value*2} y2={130-value*2} stroke="currentColor" opacity="0.12"/><text x="0" y={134-value*2} fill="currentColor" fontSize="11">{value}</text></g>)}
+                {samples.map((sample,index)=>{
+                    const previous=samples[index-1], x=630-(end-sample.at), y=130-Math.min(60,sample.median ?? 0)*2;
+                    return sample.median === null ? null : <g key={sample.at}>
+                        {previous?.median != null && sample.at-previous.at<=60 && <line x1={630-(end-previous.at)} y1={130-Math.min(60,previous.median)*2} x2={x} y2={y} stroke="var(--bs-info)" strokeWidth="2"/>}
+                        <circle cx={x} cy={y} r="3" fill="var(--bs-info)"><title>{new Date(sample.at*1000).toLocaleTimeString('vi-VN')} · {sample.median} dB-Hz · {sample.tracking} đang bám</title></circle>
+                    </g>;
+                })}
+            </svg>
+            <div className="d-flex justify-content-between small text-muted mb-3"><span>−10 phút</span><span>−5 phút</span><span>Mẫu mới nhất</span></div>
+        </>}
+        {latest && <div className="d-flex flex-wrap gap-2 mb-2">{systems.map(([system,label])=>{
+            const rows=latest.satellites.filter(sat=>sat.system===system);
+            return rows.length ? <span className="border rounded px-2 py-1 small" key={system}>{label} <strong>{rows.length}</strong> · {(rows.reduce((sum,sat)=>sum+sat.cno,0)/rows.length).toFixed(1)} dB-Hz TB</span> : null;
+        })}</div>}
+        <p className="small text-muted mb-0">NAV-SAT chưa tách C/N₀ từng băng. Vệ tinh không còn bám có thể do khuất trời; C/N₀ giảm chưa xác nhận có nhiễu.</p>
+        {samples.length > 0 && <details className="mt-2"><summary className="small py-2" style={{minHeight:44}}>Xem số liệu chất lượng thu</summary><div className="table-responsive"><table className="table table-sm small"><thead><tr><th>Thời điểm</th><th>C/N₀ · dB-Hz</th><th>Đang bám</th><th>Được dùng</th></tr></thead><tbody>{samples.slice(-20).reverse().map(sample=><tr key={sample.at}><td>{new Date(sample.at*1000).toLocaleTimeString('vi-VN')}</td><td>{format(sample.median)}</td><td>{sample.tracking}</td><td>{sample.used}</td></tr>)}</tbody></table></div></details>}
+    </div>;
+}
+
 function RfMonitorOverview({model}) {
     const {report,elapsed,age,samples} = model;
     const duration = seconds => `${Math.floor(seconds / 60).toString().padStart(2,'0')}:${Math.floor(seconds % 60).toString().padStart(2,'0')}`;
@@ -621,7 +700,7 @@ function RfMonitorOverview({model}) {
         </details>}
         {samples.length ? <>
             <div className="d-flex flex-wrap gap-3 small mb-2"><span>● Không cảnh báo</span><span>▲ Cảnh báo</span><span>◆ Mức mạnh</span></div>
-            <svg viewBox="0 0 600 105" role="img" aria-label={`${samples.length} mẫu RF trong 10 phút; các khoảng trống không có mẫu`} style={{width:'100%',height:'auto',minHeight:100}}>
+            <svg viewBox="0 0 600 105" role="img" aria-label={`${samples.length} mẫu RF trong 10 phút; các khoảng trống không có mẫu`} style={{width:'100%',height:'auto',minHeight:100,maxHeight:150}}>
                 {[2,1,0].map(level => <line key={level} x1="10" x2="590" y1={20+(2-level)*30} y2={20+(2-level)*30} stroke="currentColor" opacity="0.12" />)}
                 {samples.map(([offset,level,delta],index) => {
                     const x=10+(model.fixed ? (report.last_sample_at-offset-report.window_started_at)/600 : 1-(age+offset)/600)*580, y=20+(2-level)*30;
@@ -698,6 +777,7 @@ function RfDiagnostics({device, live}) {
     </section>;
     return <section className="card mt-3" aria-label="Chẩn đoán nhiễu GNSS">
         <div className="card-body">
+            <ReceptionOverview key={device.serial} device={device} live={live} />
             <RfMonitorOverview model={automatic} />
             <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                 <h6 className="mb-0">Chẩn đoán nhiễu GNSS</h6>
@@ -717,7 +797,11 @@ function RfDiagnostics({device, live}) {
                         <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
                     </React.Fragment>)}
                 </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
-                {receiver?.itfm_supported === false ? <div className="small text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</div> : <>
+                {receiver?.itfm_supported === false ? <div className="small">
+                    <p className="mb-1 text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</p>
+                    <p className="mb-1">Độ nhạy đã lưu: <strong>{device.base_config?.gnss_options?.jamming_sensitivity_high === false ? 'Thường' : 'Cao (mặc định)'}</strong> · Chip đọc lại: <strong>{receiver.jamming_sensitivity_high === null ? 'Chưa đọc được' : receiver.jamming_sensitivity_high ? 'Cao' : 'Thường'}</strong></p>
+                    {receiver.sensitivity_error ? <p className="text-warning mb-0" data-no-translate>{receiver.sensitivity_error}</p> : receiver.jamming_sensitivity_high !== null && <p className={`mb-0 ${receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'text-success' : 'text-warning'}`}>{receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'Độ nhạy khớp cấu hình đã lưu.' : 'Độ nhạy chưa khớp cấu hình đã lưu.'}</p>}
+                </div> : <>
                     <div>Cấu hình đã lưu: <strong>{interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
                     <div>Chip đọc lại: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
                     <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
@@ -782,7 +866,7 @@ function RfDiagnostics({device, live}) {
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',gap:12}}>
                     {rf.blocks.map(block => <div className="rf-band border rounded p-3" key={block.index}>
                         <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
-                            <strong>{getRfBlockLabel(block, rf.blocks)}</strong>
+                            <strong>{getRfBlockLabel(block, rf.blocks, receiver)}</strong>
                             {receiver?.itfm_supported !== false && <span className={`badge ${['bg-secondary','bg-success','bg-warning text-dark','bg-danger'][block.jamming]}`}>{stateNames[block.jamming]}</span>}
                         </div>
                         <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
@@ -802,14 +886,16 @@ function RfDiagnostics({device, live}) {
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',gap:12}}>
                 {spectrum.blocks.map((block, index) => {
                     const previous = reference?.spectrum?.blocks.find(b => b.center === block.center && b.span === block.span && b.resolution === block.resolution);
+                    const difference = compareSpectrum(block, previous);
                     const frequency = bin => ((block.center + block.span * (bin - 127) / 256) / 1e6).toFixed(2);
                     const points = bins => bins.map((value, i) => `${i * 2},${255 - value}`).join(' ');
                     return <figure className="mb-2" key={index}>
-                        <figcaption className="small"><strong>{index === 0 ? 'L1' : index === 1 ? 'L2 / L5' : `RF ${index}`}</strong> · Tâm {(block.center / 1e6).toFixed(2)} MHz · Khuếch đại {block.pga} dB<br/>Mức phổ thô (0–255) · Bước {(block.resolution / 1e6).toFixed(2)} MHz</figcaption>
+                        <figcaption className="small"><strong>{index === 0 ? 'L1' : index === 1 ? (receiver?.model === 'ZED-F9P' && receiver?.firmware === 'HPG 1.51' ? 'L2' : 'L2 / L5') : `RF ${index}`}</strong> · Tâm {(block.center / 1e6).toFixed(2)} MHz · Khuếch đại {block.pga} dB<br/>Mức phổ thô (0–255) · Bước {(block.resolution / 1e6).toFixed(2)} MHz</figcaption>
+                        <p className="small text-muted my-1">{previous ? difference ? `So với mốc: trung vị ${difference.median>0 ? '+' : ''}${difference.median} mức thô · Đỉnh hiện tại ${difference.peak}/255` : 'Mốc khác mức khuếch đại; giữ mẫu mới để so sánh.' : 'Giữ mẫu hiện tại để so sánh thay đổi phổ.'}</p>
                         <svg viewBox="0 0 510 255" role="img" aria-label={`Phổ GNSS quanh ${block.center / 1e6} MHz, mức phổ thô 0 đến 255`}
                             style={{width:'100%',height:'auto',border:'1px solid var(--bs-border-color)',background:'var(--bs-tertiary-bg)'}}>
                             {[0,64,128,192,255].map(value => <g key={value}><line x1="0" x2="510" y1={255-value} y2={255-value} stroke="currentColor" opacity="0.12"/><text x="3" y={Math.max(12,251-value)} fontSize="12" fill="currentColor">{value}</text></g>)}
-                            {previous && <polyline points={points(previous.bins)} fill="none" stroke="var(--bs-warning, #ffc107)" strokeWidth="2" strokeDasharray="6 4"/>}
+                            {difference && <polyline points={points(previous.bins)} fill="none" stroke="var(--bs-warning, #ffc107)" strokeWidth="2" strokeDasharray="6 4"/>}
                             <polyline points={points(block.bins)} fill="none" stroke="var(--bs-info, #0dcaf0)" strokeWidth="2"/>
                         </svg>
                         <div className="d-flex justify-content-between small"><span>{frequency(0)} MHz</span><span>{frequency(255)} MHz</span></div>
@@ -1523,7 +1609,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         <div className="text-muted small mb-2 text-uppercase">Antenna Quality Diagnostics</div>
                         {(() => {
                             const avgSnr = Number(metrics.signalStrength.value) || 0;
-                            const sats = isReadonly4g ? Number(device.satellite_count || 0) : metrics.satellites.value;
+                            const sats = metrics.satellites.value;
                             const hasCoords = rtcmMessageTypes.some(k => k === "1005" || k === "1006");
                             
                             const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
@@ -1725,7 +1811,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     Đang chờ dữ liệu vệ tinh từ decoder RTCM. Có danh sách bản tin chưa đồng nghĩa đã đủ dữ liệu vị trí quỹ đạo để vẽ biểu đồ.
                 </div>
             )}
-            {['Ublox','Unicorecomm'].includes(device.detected_chip_type) && <RfDiagnostics key={`${device.serial}:${device.detected_chip_type}`} device={device} live={liveDataAvailable} />}
+            {!/^MONITOR_/i.test(String(device.serial || '')) && ['Ublox','Unicorecomm'].includes(device.detected_chip_type) && <RfDiagnostics key={`${device.serial}:${device.detected_chip_type}`} device={device} live={liveDataAvailable} />}
 
             <div className="sky-grid">
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

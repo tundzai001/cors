@@ -20,6 +20,7 @@ DEFAULT_GNSS_OPTIONS = {
     "msm_level": 4,
     "ports": ["USB"],
     "interference_detection_enabled": True,
+    "jamming_sensitivity_high": True,
 }
 
 UBLOX_NMEA_KEYS = {
@@ -134,6 +135,8 @@ def _ubx_base_commands(mode: bytes, options: dict | None, profile: dict | None) 
                 build_ublox_output_config_command(options, modern=modern)]
     if profile is None or profile['itfm']:
         commands.append(_ubx_cfg_valset_u1({0x1041000D: normalize_gnss_options(options)['interference_detection_enabled']}))
+    else:
+        commands.append(_ubx_cfg_valset_u1({0x10F60051: normalize_gnss_options(options)['jamming_sensitivity_high']}))
     if not modern:
         commands.append(UBLOX_SAVE_CONFIG)
     return commands
@@ -166,6 +169,9 @@ def normalize_gnss_options(options: dict | None) -> dict:
     interference_enabled = raw.get("interference_detection_enabled", True)
     if not isinstance(interference_enabled, bool):
         raise ValueError("Phát hiện nhiễu GNSS phải là bật hoặc tắt.")
+    sensitivity_high = raw.get("jamming_sensitivity_high", True)
+    if not isinstance(sensitivity_high, bool):
+        raise ValueError("Độ nhạy phát hiện nhiễu phải là cao hoặc thường.")
     constellations = dict(DEFAULT_GNSS_OPTIONS["constellations"])
     for key, value in (raw.get("constellations") or {}).items():
         normalized_key = str(key).strip().lower()
@@ -202,6 +208,7 @@ def normalize_gnss_options(options: dict | None) -> dict:
         "msm_level": msm_level,
         "ports": ports,
         "interference_detection_enabled": interference_enabled,
+        "jamming_sensitivity_high": sensitivity_high,
     }
 
 

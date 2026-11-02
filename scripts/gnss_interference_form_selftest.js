@@ -78,6 +78,13 @@ async function submit() {
     assert.equal(sent.at(-1).params.gnss_options.interference_detection_enabled,false);
     currentUser={role:'coordinator'};render();assert.equal(monitor().props.disabled,true);
     device={...device,serial:'ITFM_151',gnss_receiver:{itfm_supported:false}};render();assert.equal(monitor(),null,'HPG 1.50/1.51 must not offer removed ITFM switch');
+    const sensitivity=()=>find(tree,node=>node.type==='select'&&String(node.props.id).startsWith('gnss-sensitivity-'));
+    currentUser={role:'admin'};render();assert.equal(sensitivity().props.value,'high');
+    const pending=sent.length;sensitivity().props.onChange({target:{value:'normal'}});render();assert.equal(sent.length,pending);
+    await submit();assert.equal(sent.at(-1).params.gnss_options.jamming_sensitivity_high,false);
+    device={...device,serial:'SENSITIVITY_RELOAD',base_config:JSON.parse(JSON.stringify(sent.at(-1).params))};render();assert.equal(sensitivity().props.value,'normal');
+    currentUser={role:'coordinator'};render();assert.equal(sensitivity().props.disabled,true);
     device={...device,serial:'ITFM_UM',detected_chip_type:'Unicorecomm'};render();assert.equal(monitor(),null);
+    assert.equal(sensitivity(),null);
     console.log('PASS: actual BASE form ITFM default/on/off/reload/Survey-in, no apply on toggle, admin restriction and hidden for UM');
 })().catch(error => { console.error(error); process.exitCode = 1; });

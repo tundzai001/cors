@@ -78,6 +78,17 @@ console.log('PASS: NAV-DOP beats GSA sentinels; PVT fallback; saved Base coordin
 
 const plotReader=vm.runInNewContext(`${helper}${satellitesCode};getSatellitePlotSource;`, {atob:s=>Buffer.from(s,'base64').toString('binary')});
 const mixed={satellites:{a:{telemetry_source:'rtcm',prn:1},b:{telemetry_source:'nmea',prn:2},c:{talker:'RTCM',prn:3},d:{talker:'GP',prn:4}}};
+const monitorPlot=plotReader({serial:'MONITOR_70737'}, {satellites:{a:{id:'RTCM:G:8',system:'G',prn:8,snr:42,telemetry_source:'nmea'}}},true,100);
+assert.equal(monitorPlot.satellites.length,1,'RTCM identity survives a legacy status snapshot mislabeled NMEA');
+const ingestionSource=fs.readFileSync(path.join(__dirname,'../cors_dashboard/src/js/main.js'),'utf8');
+const handler=ingestionSource.slice(ingestionSource.indexOf('function handleWebSocketMessage('),ingestionSource.indexOf('\nfunction removeDeviceLocal('));
+const ingestion=vm.createContext({Date,console,lastSatelliteGcTs:Date.now(),currentNmeaData:{satellites:{}},
+  globalState:{selectedDeviceSerial:'MONITOR_70737',devices:[{serial:'MONITOR_70737'}],currentUser:{role:'admin'}},
+  enqueueStatusUpdate:()=>{},requestDetailsPanelUpdate:()=>{}});
+vm.runInContext(handler,ingestion);
+vm.runInContext(`handleWebSocketMessage({type:'status_update',serial:'MONITOR_70737',data:{status:'online',nmea_data:{satellites:[{id:'RTCM:G:8',prn:8,system:'G',snr:42}]}}})`,ingestion);
+assert.equal(ingestion.currentNmeaData.satellites['RTCM:G:8'].telemetry_source,'rtcm');
+assert.equal(plotReader({serial:'MONITOR_70737'},ingestion.currentNmeaData,true).satellites.length,1);
 const navDevice={gnss_satellites:{source:'ubx_nav_sat',payload_b64:'ignored'}};
 assert.equal(plotReader(navDevice,mixed).source,'RTCM');
 assert.equal(JSON.stringify(plotReader(navDevice,mixed).satellites.map(s=>s.prn)),JSON.stringify([1,3]));
