@@ -160,6 +160,22 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
             await self.scope['_apply_base_mode_to_chip']('Ublox', 'USB', 20, 105, 2, self.reader)
         self.reader.resume.assert_called_once()
 
+    async def test_base_restore_hp_boundary_never_rounds_to_100(self):
+        for sign in (1, -1):
+            receiver = Receiver(self.rover)
+            self.scope['serial'] = SimpleNamespace(Serial=lambda *args, **kwargs: receiver)
+            await self.scope['_apply_base_mode_to_chip'](
+                'Ublox', 'USB', sign * 21.1234567996, sign * 105.9876543996, sign * 8.1199996, self.reader)
+            for whole_key, hp_key, expected in (
+                (0x40030009, 0x2003000c, 21123456799),
+                (0x4003000a, 0x2003000d, 105987654399),
+                (0x4003000b, 0x2003000e, 81199),
+            ):
+                whole = int.from_bytes(receiver.values[whole_key], 'little', signed=True)
+                hp = int.from_bytes(receiver.values[hp_key], 'little', signed=True)
+                self.assertEqual(hp, sign * 99)
+                self.assertEqual(whole * 100 + hp, sign * expected)
+
     def test_readback_timeout_wrong_coordinates_and_nak(self):
         expected = self.fixed()
         receiver = Receiver(self.rover)

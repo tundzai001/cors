@@ -44,6 +44,33 @@ class FirmwareCommandsTests(unittest.IsolatedAsyncioTestCase):
             merged.update(self.s['_ubx_valset_values'](command))
         return merged
 
+    def test_modern_base_enables_selected_ports_and_verifies_the_enable_keys(self):
+        enabled_keys = {'UART1': 0x10520005, 'UART2': 0x10530005, 'USB': 0x10650001}
+        for ports in (['UART1'], ['UART2'], ['USB'], list(enabled_keys)):
+            options = {'ports': ports}
+            profile = self.profile('1.51')
+            for commands in (
+                builder.build_base_fixed_lla_command('Ublox', 21, 105, 2, .01, options, receiver_profile=profile),
+                builder.build_base_survey_in_command('Ublox', 300, 3, options, receiver_profile=profile),
+            ):
+                values = self.values(commands)
+                for port, key in enabled_keys.items():
+                    if port in ports:
+                        self.assertEqual(values[key], b'\x01')
+                    else:
+                        self.assertNotIn(key, values)
+            config = {'base_setup_method': 'FIXED_LLA', 'coords': {'lat': 21, 'lon': 105, 'alt': 2},
+                      'accuracy': .01, 'gnss_options': options}
+            payload = builder.build_ublox_verification_payload(config, receiver_profile=profile)
+            expected = dict(struct.iter_unpack('<IB', base64.b64decode(payload['output_b64'])))
+            for port in ports:
+                self.assertEqual(expected[enabled_keys[port]], 1)
+            self.s['_query_ubx_serial'] = lambda ser, cls, mid, poll: bytes([1, poll[1], 0, 0]) + b''.join(
+                struct.pack('<I', key) + (b'\0' if key in enabled_keys.values() else values[key])
+                for key, in struct.iter_unpack('<I', poll[4:]))
+            with self.assertRaisesRegex(RuntimeError, 'configuration differs'):
+                self.s['_verify_ublox_values'](None, values)
+
     def test_fixed_survey_persistence_precision_and_no_legacy_for_every_profile(self):
         for version in ('1.13','1.30','1.32','1.50','1.51'):
             for output_mode in ('rtcm_only','diagnostics_rtcm'):

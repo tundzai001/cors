@@ -6728,12 +6728,14 @@ async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: f
                 msg[9] = 1
 
                 multiplier = 10000000
-                ecef_x_or_lat = int(lat * multiplier).to_bytes(4, byteorder='little', signed=True)
-                ecef_x_or_lat_hp = int(round((lat * multiplier - int(lat * multiplier)) * 100)).to_bytes(1, byteorder='little', signed=True)
-                ecef_y_or_lon = int(lon * multiplier).to_bytes(4, byteorder='little', signed=True)
-                ecef_y_or_lon_hp = int(round((lon * multiplier - int(lon * multiplier)) * 100)).to_bytes(1, byteorder='little', signed=True)
-                ecef_z_or_alt = int(alt * 100).to_bytes(4, byteorder='little', signed=True)
-                ecef_z_or_alt_hp = int(round((alt * 100 - int(alt * 100)) * 100)).to_bytes(1, byteorder='little', signed=True)
+                # Match the BASE builder's truncation; rounding the residual can produce invalid HP +/-100.
+                fixed_lat, fixed_lon, fixed_alt = (Decimal(str(value)) for value in (lat, lon, alt))
+                ecef_x_or_lat = int(fixed_lat * multiplier).to_bytes(4, byteorder='little', signed=True)
+                ecef_x_or_lat_hp = (int(fixed_lat * multiplier * 100) - int(fixed_lat * multiplier) * 100).to_bytes(1, byteorder='little', signed=True)
+                ecef_y_or_lon = int(fixed_lon * multiplier).to_bytes(4, byteorder='little', signed=True)
+                ecef_y_or_lon_hp = (int(fixed_lon * multiplier * 100) - int(fixed_lon * multiplier) * 100).to_bytes(1, byteorder='little', signed=True)
+                ecef_z_or_alt = int(fixed_alt * 100).to_bytes(4, byteorder='little', signed=True)
+                ecef_z_or_alt_hp = (int(fixed_alt * 10000) - int(fixed_alt * 100) * 100).to_bytes(1, byteorder='little', signed=True)
                 fixed_pos_acc = int(accuracy * 10000).to_bytes(4, byteorder='little', signed=False)
 
                 for i in range(4):

@@ -221,6 +221,8 @@ def build_ublox_output_config_command(gnss_options: dict | None = None, *, moder
         entries[protocol_keys["RTCM3X"]] = 1
 
     if modern:
+        for port in ports:
+            entries[{'UART1': 0x10520005, 'UART2': 0x10530005, 'USB': 0x10650001}[port]] = 1
         # F9P 1.51 requires identical RTCM configuration on every emitting port.
         for port, prefix in (('I2C',0x10720000),('UART1',0x10740000),('UART2',0x10760000),('USB',0x10780000),('SPI',0x107a0000)):
             if port not in ports:
