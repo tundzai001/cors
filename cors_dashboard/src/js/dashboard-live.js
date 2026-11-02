@@ -777,18 +777,18 @@ function RfDiagnostics({device, live}) {
                 <p className="small text-muted mb-0">AGC UM: 0–255; −1 là kênh không hợp lệ. So sánh cùng thiết bị và anten, không áp ngưỡng u-blox. Chưa có dữ liệu phổ RF từ UM.</p>
             </div>}
             {rf && <>
-                <p className="small text-muted mb-2">MON-RF · {Math.floor(rf.age_seconds)} giây trước</p>
+                <p className="small text-muted mb-2">MON-RF · {Math.floor(rf.age_seconds)} giây trước{receiver?.itfm_supported === false ? ' · Chỉ số thu; cảnh báo nhiễu xem SEC-SIG phía trên.' : ''}</p>
                 {new Set(rf.blocks.map(b=>b.id)).size !== rf.blocks.length && <p className="small text-warning">Chip báo trùng ID khối RF; giữ đủ các khối theo thứ tự, chưa gán tên băng.</p>}
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',gap:12}}>
                     {rf.blocks.map(block => <div className="rf-band border rounded p-3" key={block.index}>
                         <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
                             <strong>{getRfBlockLabel(block, rf.blocks)}</strong>
-                            <span className={`badge ${['bg-secondary','bg-success','bg-warning text-dark','bg-danger'][block.jamming]}`}>{stateNames[block.jamming]}</span>
+                            {receiver?.itfm_supported !== false && <span className={`badge ${['bg-secondary','bg-success','bg-warning text-dark','bg-danger'][block.jamming]}`}>{stateNames[block.jamming]}</span>}
                         </div>
                         <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
                             <dt className="fw-normal text-muted">Nhiễu nền (thô)</dt><dd className="mb-0">{block.noise}</dd>
                             <dt className="fw-normal text-muted">AGC (thô)</dt><dd className="mb-0">{block.agc}{block.agc_valid ? ' / 8191' : ' · ngoài dải mô tả'}</dd>
-                                <dt className="fw-normal text-muted">Chỉ báo nhiễu CW · jamInd (0–255)</dt><dd className="mb-0">{block.cw}</dd>
+                            <dt className="fw-normal text-muted">Mức triệt nhiễu CW (0–255)</dt><dd className="mb-0">{block.cw}</dd>
                             <dt className="fw-normal text-muted">Anten</dt><dd className="mb-0">{['Khởi tạo','Chưa xác định','OK','Ngắn mạch','Hở mạch'][block.antenna] || 'Chưa xác định'}</dd>
                         </dl>
                     </div>)}

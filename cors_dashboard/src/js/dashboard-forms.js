@@ -1691,7 +1691,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </select>
                             </div>
                             {activeChip === 'Ublox' && <div className="gnss-output-policy__field" style={{gridColumn:'1 / -1'}}>
-                                {itfmUnsupported ? <p className="form-text mb-0">Firmware này không hỗ trợ công tắc phát hiện nhiễu ITFM cũ.</p> : <>
+                                {itfmUnsupported ? <p className="form-text mb-0">Theo dõi nhiễu và giả mạo tự động qua SEC-SIG. Firmware này không dùng công tắc ITFM cũ.</p> : <>
                                 <label className="form-check form-switch d-flex align-items-center gap-2 mb-1" style={{minHeight:44}}>
                                     <input id={`gnss-interference-${device.serial}`} className="form-check-input mt-0" type="checkbox" role="switch"
                                         checked={interferenceDetectionEnabled} disabled={!isAdmin || isSubmitting}
