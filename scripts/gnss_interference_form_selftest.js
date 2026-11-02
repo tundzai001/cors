@@ -77,6 +77,7 @@ async function submit() {
     render();assert.equal(monitor().props.checked,false);await submit();
     assert.equal(sent.at(-1).params.gnss_options.interference_detection_enabled,false);
     currentUser={role:'coordinator'};render();assert.equal(monitor().props.disabled,true);
+    device={...device,serial:'ITFM_151',gnss_receiver:{itfm_supported:false}};render();assert.equal(monitor(),null,'HPG 1.50/1.51 must not offer removed ITFM switch');
     device={...device,serial:'ITFM_UM',detected_chip_type:'Unicorecomm'};render();assert.equal(monitor(),null);
     console.log('PASS: actual BASE form ITFM default/on/off/reload/Survey-in, no apply on toggle, admin restriction and hidden for UM');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -21,7 +21,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 
 SOURCE = Path(__file__).resolve().parents[1] / 'agent_universal.py'
-NAMES = {'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
+NAMES = {'_ubx_cfg_values', '_ubx_tmode_fields', '_read_ublox_tmode', '_query_ubx_serial', '_ubx_valset_values', '_verify_ublox_values', 'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
          'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',

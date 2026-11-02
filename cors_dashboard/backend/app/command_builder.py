@@ -1,6 +1,8 @@
 import logging
 import base64
 import math
+import re
+import time
 from decimal import Decimal, InvalidOperation
 
 UBLOX_SAVE_CONFIG = b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab'
@@ -93,6 +95,50 @@ def _ubx_packet(msg_class: int, msg_id: int, payload: bytes) -> bytes:
     return header + payload + bytes([ck_a, ck_b])
 
 
+def select_ublox_profile(telemetry: dict, capabilities: dict) -> dict:
+    """Use only agent-reported MON-VER, never a requested firmware from the UI."""
+    info = telemetry.get('gnss_receiver') or {}
+    try:
+        age = float(info['age_seconds']) + max(0, time.time() - float(telemetry.get('server_received_at') or telemetry.get('timestamp') or 0))
+        raw = base64.b64decode(info['payload_b64'], validate=True)
+        if info.get('source') != 'ubx_mon_ver' or not 0 <= age <= 120 or not 40 <= len(raw) <= 520 or (len(raw)-40) % 30:
+            raise ValueError()
+        extensions = [raw[i:i+30].split(b'\0',1)[0].decode('ascii') for i in range(40,len(raw),30)]
+        versions = [re.fullmatch(r'FWVER=HPG (1\.(?:13|30|32|50|51))', item) for item in extensions]
+        versions = [match.group(1) for match in versions if match]
+        if len(versions) != 1 or 'MOD=ZED-F9P' not in extensions:
+            raise ValueError()
+    except (KeyError, TypeError, ValueError, UnicodeError):
+        raise ValueError('Chưa có MON-VER ZED-F9P còn hạn hoặc firmware chưa được hỗ trợ. Đọc lại thông tin chip trước khi áp dụng.') from None
+    modern = capabilities.get('gnss_valset_supported') is True
+    itfm = versions[0] not in ('1.50','1.51')
+    if not modern and not itfm:
+        raise ValueError('Cập nhật agent để áp dụng cấu hình cho HPG 1.50/1.51 bằng VALSET/VALGET.')
+    return dict(firmware='HPG '+versions[0], modern=modern, itfm=itfm)
+
+
+def _ubx_tmode_entries(mode: bytes) -> dict[int, bytes]:
+    # Internal canonical TMODE representation, not a legacy command sent to chip.
+    entries = {0x20030001: mode[2:3], 0x20030002: bytes([mode[3] & 1])}
+    for key, offset, size in ((0x40030009,4,4),(0x4003000a,8,4),(0x4003000b,12,4),
+                              (0x2003000c,16,1),(0x2003000d,17,1),(0x2003000e,18,1),
+                              (0x4003000f,20,4),(0x40030010,24,4),(0x40030011,28,4)):
+        entries[key] = mode[offset:offset+size]
+    return entries
+
+
+def _ubx_base_commands(mode: bytes, options: dict | None, profile: dict | None) -> list[bytes]:
+    modern = bool(profile and profile['modern'])
+    commands = [_ubx_packet(6,0x8a,b'\0\x07\0\0'+b''.join(key.to_bytes(4,'little')+value for key,value in _ubx_tmode_entries(mode).items()))
+                if modern else _ubx_packet(6,0x71,mode),
+                build_ublox_output_config_command(options, modern=modern)]
+    if profile is None or profile['itfm']:
+        commands.append(_ubx_cfg_valset_u1({0x1041000D: normalize_gnss_options(options)['interference_detection_enabled']}))
+    if not modern:
+        commands.append(UBLOX_SAVE_CONFIG)
+    return commands
+
+
 def _ubx_cfg_valset_u1(entries: dict[int, int], layers: int = 0x07) -> bytes:
     # UBX-22008968: at most 64 key/value pairs per VALSET message.
     items = list(entries.items())
@@ -159,7 +205,7 @@ def normalize_gnss_options(options: dict | None) -> dict:
     }
 
 
-def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes:
+def build_ublox_output_config_command(gnss_options: dict | None = None, *, modern: bool = False) -> bytes:
     opts = normalize_gnss_options(gnss_options)
     constellations = opts["constellations"]
     output_mode = opts["output_mode"]
@@ -173,6 +219,12 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
         entries[protocol_keys["UBX"]] = 1
         entries[protocol_keys["NMEA"]] = 1 if diagnostics_enabled else 0
         entries[protocol_keys["RTCM3X"]] = 1
+
+    if modern:
+        # F9P 1.51 requires identical RTCM configuration on every emitting port.
+        for port, prefix in (('I2C',0x10720000),('UART1',0x10740000),('UART2',0x10760000),('USB',0x10780000),('SPI',0x107a0000)):
+            if port not in ports:
+                entries[prefix | 4] = 0
 
     for message, keys_by_port in UBLOX_NMEA_KEYS.items():
         enabled = diagnostics_enabled and message in {"GGA", "GSA", "GSV", "GST"}
@@ -201,6 +253,9 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
 
     command = _ubx_cfg_valset_u1(entries)
 
+    if modern:
+        return command
+
     # Legacy CFG-MSG fallback must explicitly configure both MSM families.
     # Otherwise a message enabled by an older setup (for example MSM7) keeps
     # streaming after the user switches to MSM4, causing duplicate/conflicting
@@ -217,7 +272,7 @@ def build_ublox_output_config_command(gnss_options: dict | None = None) -> bytes
     return command
 
 
-def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = False) -> dict:
+def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = False, receiver_profile: dict | None = None) -> dict:
     """Expected live configuration on the agent's configured output ports.
 
     Only constructs comparison data; the verifier sends poll requests, never
@@ -237,6 +292,8 @@ def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = Fal
         config.get("accuracy", 10.0), options,
         altitude_reference=config.get("altitude_reference"),
     )
+    if receiver_profile and receiver_profile['modern']:
+        packets[1] = build_ublox_output_config_command(options, modern=True)
     output = bytearray()
     offset = 0
     while offset < len(packets[1]):
@@ -261,6 +318,8 @@ def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = Fal
         if port == options['ports'][0]:
             expected_values = [desired[key] for key in keys[:-1]] + [1]
     return {
+        "tmode_valget": bool(receiver_profile and receiver_profile["modern"]),
+        "receiver_profile": receiver_profile,
         "tmode_b64": base64.b64encode(packets[0][6:-2]).decode("ascii"),
         "output_b64": base64.b64encode(output).decode("ascii"),
         "readback": {"fields": fields + ['PORT_ENABLED'], "expected": expected_values, "compare_ports": options['ports'], "ports": inspection_ports},
@@ -337,7 +396,7 @@ def _coordinate_decimal(value, name: str, minimum: int, maximum: int) -> Decimal
     return number
 
 
-def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: float, gnss_options: dict | None = None) -> list[bytes]:
+def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: float, gnss_options: dict | None = None, *, receiver_profile: dict | None = None) -> list[bytes]:
     commands = []
     duration_value = _bounded_finite_number(duration, "Survey duration", 1, 604800)
     if not duration_value.is_integer():
@@ -370,13 +429,8 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         message[46] = CK_A
         message[47] = CK_B
         
-        commands.append(bytes(message))
-        commands.append(build_ublox_output_config_command(gnss_options))
-        # Separate from per-port output keys so verification remains read-only and compatible.
-        commands.append(_ubx_cfg_valset_u1({0x1041000D: normalize_gnss_options(gnss_options)["interference_detection_enabled"]}))
-        # Lệnh Save Config
-        commands.append(UBLOX_SAVE_CONFIG)
-        
+        commands.extend(_ubx_base_commands(bytes(message[6:-2]), gnss_options, receiver_profile))
+
     elif sensor_type == 'Unicorecomm':
         # BƯỚC 1: Clear all logs (TẮT TẤT CẢ OUTPUT)
         commands.append(b'unlogall\r\n')
@@ -398,7 +452,7 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
     return commands
 
 
-def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: float, accuracy: float, gnss_options: dict | None = None, *, altitude_reference: str | None = None) -> list[bytes]:
+def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: float, accuracy: float, gnss_options: dict | None = None, *, altitude_reference: str | None = None, receiver_profile: dict | None = None) -> list[bytes]:
     commands = []
     if altitude_reference not in (None, 'LEGACY', 'ELLIPSOID'):
         raise ValueError('Unsupported altitude reference')
@@ -465,13 +519,8 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         message[46] = CK_A
         message[47] = CK_B
         
-        commands.append(bytes(message))
-        commands.append(build_ublox_output_config_command(gnss_options))
-        # Separate from per-port output keys so verification remains read-only and compatible.
-        commands.append(_ubx_cfg_valset_u1({0x1041000D: normalize_gnss_options(gnss_options)["interference_detection_enabled"]}))
-        # Lệnh Save Config
-        commands.append(UBLOX_SAVE_CONFIG)
-        
+        commands.extend(_ubx_base_commands(bytes(message[6:-2]), gnss_options, receiver_profile))
+
     elif sensor_type == 'Unicorecomm':
         # BƯỚC 1: Clear all logs (TẮT TẤT CẢ OUTPUT)
         commands.append(b'unlogall\r\n')

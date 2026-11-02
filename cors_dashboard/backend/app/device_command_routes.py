@@ -81,6 +81,15 @@ async def configure_chip_endpoint(
             detail="Missing required fields: sensor_type or mode"
         )
 
+    receiver_profile = None
+    if sensor_type == 'Ublox' and mode == 'BASE' and method in ('FIXED_LLA', 'SURVEY_IN', 'AUTO_CORS'):
+        live = mqtt_handler.device_telemetry_cache.get(serial) or {}
+        capabilities = live.get('system_info') or device_in_db.system_info or {}
+        try:
+            receiver_profile = command_builder.select_ublox_profile(live, capabilities)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     auto_cors_config = None
     if mode == 'BASE' and method == 'AUTO_CORS':
         if not (device_in_db.system_info or {}).get('auto_base_review_supported'):
@@ -167,7 +176,7 @@ async def configure_chip_endpoint(
                     raise ValueError("Missing survey_in parameters")
 
                 commands_to_send = command_builder.build_base_survey_in_command(
-                    sensor_type, survey_duration, survey_accuracy, gnss_options
+                    sensor_type, survey_duration, survey_accuracy, gnss_options, receiver_profile=receiver_profile
                 )
                 logging.info(f"Built Survey-In commands for {serial}: {survey_duration}s, {survey_accuracy}m")
             elif method == "FIXED_LLA":
@@ -178,7 +187,7 @@ async def configure_chip_endpoint(
                 accuracy = params.get('accuracy', 10.0)
                 commands_to_send = command_builder.build_base_fixed_lla_command(
                     sensor_type, coords['lat'], coords['lon'], coords['alt'], accuracy, gnss_options,
-                    altitude_reference=params.get('altitude_reference')
+                    altitude_reference=params.get('altitude_reference'), receiver_profile=receiver_profile
                 )
                 logging.info(f"Built Fixed LLA commands for {serial}: lat/lon/alt, acc={accuracy}m")
             else:
@@ -193,7 +202,7 @@ async def configure_chip_endpoint(
 
             pi_command = {
                 "command": "EXECUTE_RAW_COMMANDS",
-                "payload": {"commands_b64": encoded_commands},
+                "payload": {"commands_b64": encoded_commands, "receiver_profile": receiver_profile},
                 "original_config": config_request.payload
             }
 

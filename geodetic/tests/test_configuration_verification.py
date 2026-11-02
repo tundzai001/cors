@@ -265,7 +265,8 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self, status_code, detail):
                 self.status_code, self.detail = status_code, detail
         device = SimpleNamespace(detected_chip_type='Ublox', base_config=self.config, system_info={}, user_id=1)
-        cache = {'test': {'system_info': {'gnss_verification_supported': True}}}
+        ver = bytearray(100); ver[:4] = b'CORE'; ver[40:54] = b'FWVER=HPG 1.13'; ver[70:81] = b'MOD=ZED-F9P'
+        cache = {'test': {'timestamp': time.time(), 'gnss_receiver': {'source':'ubx_mon_ver','age_seconds':0,'payload_b64':base64.b64encode(ver).decode()}, 'system_info': {'gnss_verification_supported': True}}}
         auth = SimpleNamespace(Role=SimpleNamespace(COORDINATOR='coordinator', ADMIN='admin'),
             Permission=SimpleNamespace(EDIT_CHIP_CONFIG='edit'), has_permission=lambda *_: True)
         dispatch = AsyncMock(return_value={'status': 'command_sent'})
@@ -281,7 +282,7 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
                 cache['test']['system_info']['gnss_verification_uart1'] = embedded
                 result = await scope['send_generic_command']('test', command, None, user)
                 sent = dispatch.await_args.args[1]
-                expected = (builder.build_ublox_verification_payload(self.config, route_to_uart1=embedded) if chip == 'Ublox'
+                expected = (builder.build_ublox_verification_payload(self.config, route_to_uart1=embedded, receiver_profile=builder.select_ublox_profile(cache['test'],cache['test']['system_info'])) if chip == 'Ublox'
                             else builder.build_unicore_verification_payload(self.config, current_port=embedded))
                 self.assertEqual(sent['payload'], expected)
                 self.assertEqual(result['command_id'], sent['command_id'])

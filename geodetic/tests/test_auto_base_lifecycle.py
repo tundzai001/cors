@@ -9,6 +9,7 @@ import importlib.util
 import logging
 import math
 import statistics
+import struct
 from pathlib import Path
 from queue import Queue, Empty, Full
 import re
@@ -38,6 +39,7 @@ class Receiver:
     """Small wire-level TMODE3 emulator: only valid UBX packets change mode."""
     def __init__(self, packet, *, reject=False, fragment=4096):
         self.packet = packet
+        self.values = {}
         self.reject = reject
         self.fragment = fragment
         self.writes = []
@@ -71,6 +73,23 @@ class Receiver:
             elif length == 0:
                 # Mix NMEA and ACK traffic with the actual receiver readback.
                 self.buffer.extend(b'$GNGGA,test\r\n' + self.packet)
+        if data[2:4] == b'\x06\x8a' and not self.reject:
+            offset = 10
+            while offset < len(data)-2:
+                key = int.from_bytes(data[offset:offset+4],'little')
+                size = {1:1,2:1,3:2,4:4,5:8}[key>>28]
+                self.values[key] = data[offset+4:offset+4+size]
+                offset += 4+size
+        if data[2:4] == b'\x06\x8b':
+            body = b'\x01'+data[7:10]
+            for offset in range(10,len(data)-2,4):
+                key = int.from_bytes(data[offset:offset+4],'little')
+                body += data[offset:offset+4]+self.values.get(key,bytes({1:1,2:1,3:2,4:4,5:8}[key>>28]))
+            header = b'\xb5\x62\x06\x8b'+len(body).to_bytes(2,'little')+body
+            a = b = 0
+            for byte in header[2:]:
+                a=(a+byte)&255; b=(b+a)&255
+            self.buffer.extend(header+bytes([a,b]))
         return len(data)
 
     @staticmethod
@@ -96,9 +115,9 @@ class Receiver:
 
 class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.scope = load({'_ubx_packet', '_verify_ublox_tmode', '_is_rtk_usable_status',
+        self.scope = load({'_ubx_cfg_values', '_ubx_tmode_fields', '_query_ubx_serial', '_verify_ublox_values', '_ubx_packet', '_verify_ublox_tmode', '_is_rtk_usable_status',
                            '_get_fresh_outbound_gga', '_apply_rover_mode_to_chip', '_apply_base_mode_to_chip'},
-                          dict(Decimal=Decimal, ROUND_DOWN=ROUND_DOWN, asyncio=SimpleNamespace(sleep=yield_only), time=time, logging=logging,
+                          dict(struct=struct, Decimal=Decimal, ROUND_DOWN=ROUND_DOWN, asyncio=SimpleNamespace(sleep=yield_only), time=time, logging=logging,
                                GNSSReader=object, serial_port_lock=threading.Lock(),
                                _runtime_serial_baud=lambda **kwargs: 115200))
         self.packet = self.scope['_ubx_packet']
@@ -115,7 +134,7 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
         receiver = Receiver(self.fixed())
         self.scope['serial'] = SimpleNamespace(Serial=lambda *args, **kwargs: receiver)
         await self.scope['_apply_rover_mode_to_chip']('Ublox', 'USB', self.reader)
-        self.assertEqual(receiver.packet[8:10], b'\0\0')
+        self.assertEqual(receiver.values[0x20030001], b'\0')
         keys = {int.from_bytes(p[10:14], 'little'): p[14]
                 for p in receiver.writes if p[2:4] == b'\x06\x8a'}
         for key in (0x10730004, 0x10750004, 0x10770004, 0x10780002, 0x209100BD):
@@ -123,20 +142,21 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(keys[0x209102C0], 0)
         self.assertEqual(keys[0x20030001], 0)  # CFG-TMODE-MODE, not navigation settings.
         self.assertNotIn(0x20110001, keys)
-        self.assertTrue(any(p[2:4] == b'\x06\x01' and p[6:8] == b'\xf5\x05' for p in receiver.writes))
+        self.assertFalse(any(p[2:4] in (b'\x06\x01',b'\x06\x71',b'\x06\x09') for p in receiver.writes))
         self.reader.resume.assert_called_once()
 
     async def test_base_writes_valid_mode_and_checks_exact_coordinates(self):
         receiver = Receiver(self.rover, fragment=3)
         self.scope['serial'] = SimpleNamespace(Serial=lambda *args, **kwargs: receiver)
         await self.scope['_apply_base_mode_to_chip']('Ublox', 'USB', 20.232041239, 105.978597812, 2, self.reader)
-        self.assertEqual(receiver.packet[8:10], b'\x02\x01')
-        self.assertTrue(any(p[2:4] == b'\x06\x71' and len(p) == 8 for p in receiver.writes))
+        self.assertEqual(receiver.values[0x20030001],b'\x02')
+        self.assertEqual(receiver.values[0x20030002],b'\x01')
+        self.assertTrue(any(p[2:4] == b'\x06\x8b' for p in receiver.writes))
 
     async def test_receiver_staying_rover_is_failure_and_reader_resumes(self):
         receiver = Receiver(self.rover, reject=True)
         self.scope['serial'] = SimpleNamespace(Serial=lambda *args, **kwargs: receiver)
-        with self.assertRaisesRegex(RuntimeError, 'TMODE mismatch'):
+        with self.assertRaisesRegex(RuntimeError, 'configuration differs'):
             await self.scope['_apply_base_mode_to_chip']('Ublox', 'USB', 20, 105, 2, self.reader)
         self.reader.resume.assert_called_once()
 

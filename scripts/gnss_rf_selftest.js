@@ -99,3 +99,10 @@ assert.equal(rows.length,10);assert.equal(rows[8].value,'CUSTOM=value');assert.e
 assert.equal(versionRows(receiver)[2].value,'Chip không trả trường này');assert.equal(versionRows(null).length,0);
 assert.equal(blockLabel(reading.blocks[0],reading.blocks),'L1');assert.equal(blockLabel(reading.blocks[1],reading.blocks),'L2/L5');
 console.log('PASS: complete MON-VER software/hardware/ROM and every extension including unknown/empty; missing ROM never fabricated; duplicate RF IDs never assigned bands');
+
+const modernVer=Buffer.from(ver);modernVer.fill(0,40,70);modernVer.write('FWVER=HPG 1.51',40);
+const modernReceiver=decodeReceiver({...receiverDevice,gnss_receiver:{...receiverDevice.gnss_receiver,payload_b64:modernVer.toString('base64')}},true,102);
+assert.equal(modernReceiver.itfm_supported,false);
+assert.equal(configStatus(configDevice,modernReceiver).desired,null);
+assert.match(assess({live:true,rf:unknownRf,receiver:modernReceiver}).reason,/SEC-SIG/);
+console.log('PASS: HPG 1.51 removed ITFM is inapplicable; MON-RF zero never interpreted as clean');

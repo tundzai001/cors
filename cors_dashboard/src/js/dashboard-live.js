@@ -129,6 +129,8 @@ function getSatellitePlotSource(device, data, live = true, now = Date.now() / 10
 
 function getAutomaticRfAssessment(device, live = true, now = Date.now() / 1000) {
     const report = device?.gnss_rf_monitor;
+    if (device?.detected_chip_type !== 'Unicorecomm' && device?.gnss_receiver?.itfm_supported === false)
+        return {tone:'secondary',title:'Chờ dữ liệu SEC-SIG',report:null};
     const received = Number(device?.server_received_at || device?.timestamp);
     const age = report?.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
     if (!report || !['ubx_mon_rf','unicore_rf'].includes(report.source)
@@ -216,7 +218,7 @@ function getReceiverDiagnostic(device, live = true, now = Date.now() / 1000) {
         const fields = [text(0,30),text(30,10),...extensions];
         if (!fields[0] || fields.some(value=>/[^\x20-\x7e]/.test(value))) return {...result,error:'Phản hồi MON-VER không hợp lệ.'};
         const extension = key => extensions.find(value=>value.startsWith(key+'='))?.slice(key.length+1) || null;
-        return {...result,software:fields[0],hardware:fields[1],firmware:extension('FWVER'),protocol:extension('PROTVER'),model:extension('MOD'),extensions};
+        return {...result,itfm_supported:!['HPG 1.50','HPG 1.51'].includes(extension('FWVER')),software:fields[0],hardware:fields[1],firmware:extension('FWVER'),protocol:extension('PROTVER'),model:extension('MOD'),extensions};
     } catch (_) { return {...result,error:'Phản hồi MON-VER không hợp lệ.'}; }
 }
 
@@ -233,6 +235,7 @@ function getReceiverVersionRows(receiver) {
 }
 
 function getInterferenceConfigStatus(device, receiver) {
+    if (receiver?.itfm_supported === false) return {desired:null,label:'Firmware này không hỗ trợ công tắc ITFM cũ.',tone:'text-muted'};
     const config = device?.base_config;
     if (!config?.base_setup_method) return {desired:null, label:'Chưa lưu cấu hình BASE', tone:'text-muted'};
     const desired = config.gnss_options?.interference_detection_enabled !== false;
@@ -283,6 +286,7 @@ function getRfBlockLabel(block, blocks) {
 function getRfAssessment({live, rf, um, readError, receiver, unicore = false}) {
     const unknown = (reason, next) => ({tone:'warning',title:'Chưa đủ dữ liệu kết luận',reason,next});
     if (!live) return unknown('Trạm không có dữ liệu trực tiếp.', 'Kết nối lại trạm rồi kiểm tra mẫu RF mới.');
+    if (receiver?.itfm_supported === false) return unknown('Firmware này dùng SEC-SIG để báo nhiễu; không dùng cờ MON-RF cũ để kết luận.', 'Chưa có dữ liệu SEC-SIG trong phiên bản chẩn đoán hiện tại.');
     if (readError) return unknown(readError.error_kind === 'timeout'
         ? 'Agent đã hỏi MON-RF nhưng không nhận được phản hồi đúng hạn.'
         : readError.error_kind === 'invalid_response' ? 'Có phản hồi nhưng bộ đọc từ chối dữ liệu RF.'
@@ -671,8 +675,8 @@ function RfDiagnostics({device, live}) {
                         <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
                     </React.Fragment>)}
                 </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
-                <div>Cấu hình đã lưu: <strong>{interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
-                <div>Chip đọc lại: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+                <div>Cấu hình đã lưu: <strong>{receiver?.itfm_supported === false ? 'Không áp dụng' : interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
+                <div>Chip đọc lại: <strong>{receiver?.itfm_supported === false ? 'Không áp dụng ITFM' : receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
                 <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
                 {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
                 {(receiver?.error || receiver?.itfm_error) && <details><summary>Chi tiết đọc thông tin chip</summary><p className="mb-0" data-no-translate style={{overflowWrap:'anywhere'}}>{[receiver.error,receiver.itfm_error].filter(Boolean).join(' · ')}</p></details>}

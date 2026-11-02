@@ -561,6 +561,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const readbackTimeoutRef = useRef(null);
     const pendingReadbackRevisionRef = useRef(null);
     const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+    const itfmUnsupported = device.gnss_receiver?.itfm_supported === false;
     const receiverReadback = device.system_info?.receiver_base_readback || {};
     const receiverPosition = receiverReadback.bestpos || {};
     const baseStartup = device.system_info?.base_startup || {};
@@ -1690,6 +1691,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </select>
                             </div>
                             {activeChip === 'Ublox' && <div className="gnss-output-policy__field" style={{gridColumn:'1 / -1'}}>
+                                {itfmUnsupported ? <p className="form-text mb-0">Firmware này không hỗ trợ công tắc phát hiện nhiễu ITFM cũ.</p> : <>
                                 <label className="form-check form-switch d-flex align-items-center gap-2 mb-1" style={{minHeight:44}}>
                                     <input id={`gnss-interference-${device.serial}`} className="form-check-input mt-0" type="checkbox" role="switch"
                                         checked={interferenceDetectionEnabled} disabled={!isAdmin || isSubmitting}
@@ -1698,6 +1700,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     <span>Phát hiện nhiễu GNSS</span>
                                 </label>
                                 <p className="form-text mb-0" id={`gnss-interference-help-${device.serial}`}>Lưu xuống chip khi bấm Áp dụng cấu hình BASE.</p>
+                                </>}
                             </div>}
                             <div className="gnss-output-policy__summary" style={isLteStation ? {gridColumn: '1 / -1'} : undefined}>
                                 <label className="gnss-output-policy__label gnss-output-policy__label--accent">

@@ -370,3 +370,14 @@ Pi agents keep raw monitor observations in `gnss_rf_history.sqlite3` under the e
 Sample tuples may contain seven fields: `[seconds_before_latest_sample, severity, median_delta, matched_count, changed_count, minimum_delta, maximum_delta]`. Three-field older samples remain supported. NAV-SAT iTOW must change before a C/N0 delta is computed. A zero median does not imply every satellite is unchanged.
 
 `block_ranges` summarizes each u-blox RF block in receiver order over the live ten-minute window: `[ordinal, block_id, samples, warning_samples, critical_samples, noise_min, noise_max, agc_min, agc_max, jam_min, jam_max]`. Duplicate IDs remain separate. These are raw receiver counters, not calibrated power or source identification. A window containing only warnings has no clear reference; consecutive C/N0 comparisons cannot detect degradation already present before monitoring started. Block ranges reset with the live window and are not part of the hourly archive.
+
+
+### Firmware-aware u-blox BASE commands
+
+`system_info.gnss_valset_supported=true` identifies the updated universal agent; agent release numbers do not identify receiver firmware. Before configuring Fixed LLA/Survey-in, both configure routes select the receiver profile from fresh agent-reported `gnss_receiver` MON-VER (including its raw extensions), not browser input. Supported ZED-F9P HPG profiles: 1.13, 1.30, 1.32, 1.50 and 1.51. Missing/expired/unknown firmware is rejected before saving the desired configuration or dispatching setters.
+
+Updated Pi agents receive typed CFG-TMODE VALSET entries plus output keys, all targeting RAM/BBR/Flash. They re-read MON-VER immediately before setters to reject receiver swaps/firmware changes and compare written keys in all three layers before acknowledging success. No CFG-CFG or CFG-MSG fallback is appended on this path. Unselected RTCM output protocol gates are disabled to avoid different MSM configurations on multiple emitting ports. Original coordinate quantization and signed HP precision are preserved.
+
+For HPG 1.50/1.51 the removed ITFM keys are never emitted/polled; the saved preference is preserved for older receivers but is inapplicable on those firmwares. The current RF diagnostic does not yet decode SEC-SIG and explicitly reports unavailable rather than interpreting deprecated MON-RF state zero as clean. Fixed verification uses VALGET, including UART baud readback. Existing agents without the new capability retain their legacy 1.13/1.30/1.32 path; 1.50/1.51 commands require an updated universal agent. ESP32 firmware and UM commands are unchanged.
+
+Roll out the Pi agent first, then the backend/web. This does not upgrade receiver firmware, automatically reconfigure stations, or reset stored BASE settings. Rollback is code-only; old desired configuration remains valid. Flash persistence across actual power loss still requires a connected test receiver.
