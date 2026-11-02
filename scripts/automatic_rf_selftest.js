@@ -41,3 +41,11 @@ assert.equal(archived(archiveReport).length,1);
 assert.equal(archived({history_24h:{...archiveReport.history_24h,hours:[[3600,2,3,0,0,0,null]]}}).length,0);
 assert.equal(archived({}).length,0);
 console.log('PASS: median-zero spread, changed satellite count and bounded 24-hour archive');
+
+const fixed={...report,source:'ubx_sec_sig',window_mode:'fixed',window_started_at:100,window_ends_at:700,observed_seconds:0,last_sample_at:100,first_sample_at:100};
+model=windowModel({timestamp:100,gnss_receiver:{itfm_supported:false},gnss_rf_monitor:fixed},true,120);
+assert.equal(model.fixed,true);assert.equal(model.elapsed,20);assert.equal(model.report.source,'ubx_sec_sig');
+model=windowModel({timestamp:700,gnss_receiver:{itfm_supported:false},gnss_rf_monitor:{...fixed,window_started_at:700,window_ends_at:1300,last_sample_at:700,first_sample_at:700}},true,705);
+assert.equal(model.elapsed,5,'new ten-minute period starts its progress again');
+assert.equal(assess({timestamp:100,gnss_receiver:{itfm_supported:false},gnss_rf_monitor:report},true,100).report,null,'new firmware never falls back to MON-RF');
+console.log('PASS: automatic SEC-SIG assessment and progress restart on the next ten-minute period');

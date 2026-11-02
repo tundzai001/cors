@@ -129,11 +129,11 @@ function getSatellitePlotSource(device, data, live = true, now = Date.now() / 10
 
 function getAutomaticRfAssessment(device, live = true, now = Date.now() / 1000) {
     const report = device?.gnss_rf_monitor;
-    if (device?.detected_chip_type !== 'Unicorecomm' && device?.gnss_receiver?.itfm_supported === false)
+    if (device?.detected_chip_type !== 'Unicorecomm' && device?.gnss_receiver?.itfm_supported === false && report?.source !== 'ubx_sec_sig')
         return {tone:'secondary',title:'Chờ dữ liệu SEC-SIG',report:null};
     const received = Number(device?.server_received_at || device?.timestamp);
     const age = report?.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
-    if (!report || !['ubx_mon_rf','unicore_rf'].includes(report.source)
+    if (!report || !['ubx_mon_rf','unicore_rf','ubx_sec_sig'].includes(report.source)
         || !['sample_count','warning_samples','critical_samples','episodes','coincident_cno_drops','quality_comparisons'].every(key => Number.isInteger(report[key]) && report[key] >= 0 && report[key] <= 120)
         || typeof report.age_seconds !== 'number' || !Number.isFinite(age) || age < 0)
         return {tone:'secondary',title:'Chờ dữ liệu RF',report:null};
@@ -151,13 +151,15 @@ function getRfMonitorWindow(device, live = true, now = Date.now() / 1000) {
     const received = Number(device.server_received_at || device.timestamp);
     const age = report.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
     const duration = typeof report.observed_seconds === 'number' ? report.observed_seconds : report.last_sample_at - report.first_sample_at;
-    const elapsed = Number.isFinite(duration) ? Math.max(0,Math.min(600,duration)) : 0;
+    const fixed = report.window_mode === 'fixed' && Number.isFinite(report.window_started_at) && report.window_ends_at - report.window_started_at === 600;
+    const progress = fixed && live && age <= 45 ? now - report.window_started_at : duration;
+    const elapsed = Number.isFinite(progress) ? Math.max(0,Math.min(600,progress)) : 0;
     const samples = Array.isArray(report.samples) && report.samples.length <= 120 ? report.samples.filter(sample =>
         Array.isArray(sample) && [3,7].includes(sample.length) && typeof sample[0] === 'number' && Number.isFinite(sample[0]) && sample[0] >= 0 && sample[0] + age <= 600
         && [0,1,2].includes(sample[1]) && (sample[2] === null || typeof sample[2] === 'number' && Number.isFinite(sample[2]))
         && (sample.length === 3 || [sample[3],sample[4]].every(value=>Number.isInteger(value)&&value>=0&&value<=128)
             && sample.slice(5).every(value=>value===null||typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=255))) : [];
-    return {...assessment,elapsed,age,samples};
+    return {...assessment,elapsed,age,samples,fixed};
 }
 
 function getRfMonitorHistory(report) {
@@ -197,6 +199,30 @@ function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
             }
         }
         return {source: snapshot.source, age_seconds: age, blocks};
+    } catch (_) { return null; }
+}
+
+function getSecurityDiagnostic(device, field = 'gnss_security', live = true, now = Date.now() / 1000) {
+    const raw = device?.[field], log = field === 'gnss_security_log';
+    const received = Number(device?.server_received_at || device?.timestamp);
+    const age = raw?.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    if (!live || raw?.source !== (log ? 'ubx_sec_siglog' : 'ubx_sec_sig') || typeof raw.age_seconds !== 'number' || !Number.isFinite(age) || age < 0 || age > 45) return null;
+    if (raw.error) return {error:String(raw.error).slice(0,160),age_seconds:age};
+    if (typeof raw.payload_b64 !== 'string' || raw.payload_b64.length > (log ? 184 : 92)) return null;
+    try {
+        const bytes = Uint8Array.from(atob(raw.payload_b64), c=>c.charCodeAt(0)), view = new DataView(bytes.buffer);
+        if (log) {
+            if (bytes.length < 8 || bytes[0] !== 1 || bytes[1] > 16 || bytes.length !== 8 + bytes[1]*8) return null;
+            return {age_seconds:age,events:Array.from({length:bytes[1]},(_,i)=>{const o=8+i*8;return {elapsed_seconds:view.getUint32(o,true),detection:bytes[o+4],event:bytes[o+5]};})};
+        }
+        if (bytes.length < 4 || bytes[0] !== 2 || bytes[3] > 16 || bytes.length !== 4 + bytes[3]*4) return null;
+        const flags=bytes[1], jam=(flags>>1)&3, spoof=(flags>>4)&7, frequencies=[];
+        if (jam > 2 || spoof > 3) return null;
+        for(let o=4;o<bytes.length;o+=4){const value=view.getUint32(o,true),khz=value&0xffffff;
+            if(!khz || frequencies.some(row=>row.khz===khz))return null;
+            frequencies.push({khz,jammed:Boolean(value&0x1000000)});
+        }
+        return {age_seconds:age,jam_enabled:Boolean(flags&1),jam_state:jam,spoof_enabled:Boolean(flags&8),spoof_state:spoof,frequencies};
     } catch (_) { return null; }
 }
 
@@ -283,10 +309,16 @@ function getRfBlockLabel(block, blocks) {
         : `RF ${block.index + 1} (ID ${block.id})`;
 }
 
-function getRfAssessment({live, rf, um, readError, receiver, unicore = false}) {
+function getRfAssessment({live, rf, um, readError, receiver, security, unicore = false}) {
     const unknown = (reason, next) => ({tone:'warning',title:'Chưa đủ dữ liệu kết luận',reason,next});
     if (!live) return unknown('Trạm không có dữ liệu trực tiếp.', 'Kết nối lại trạm rồi kiểm tra mẫu RF mới.');
-    if (receiver?.itfm_supported === false) return unknown('Firmware này dùng SEC-SIG để báo nhiễu; không dùng cờ MON-RF cũ để kết luận.', 'Chưa có dữ liệu SEC-SIG trong phiên bản chẩn đoán hiện tại.');
+    if (!unicore && (security || receiver?.itfm_supported === false)) {
+        if (!security || security.error) return unknown(security?.error ? 'Lần đọc SEC-SIG chưa thành công.' : 'Đang chờ trạng thái nhiễu và giả mạo tín hiệu từ chip.', 'Pi tự đọc lại SEC-SIG; chưa có phản hồi mới để kết luận.');
+        if (security.spoof_enabled && security.spoof_state >= 2) return {tone:'danger',title:security.spoof_state === 3 ? 'Chip xác nhận giả mạo tín hiệu' : 'Chip nghi ngờ giả mạo tín hiệu',reason:'Cảnh báo từ SEC-SIG; xem nhật ký sự kiện và trạng thái nhiễu bên dưới.',next:'Đối chiếu nguồn tín hiệu và tọa độ trước khi dùng kết quả đo.'};
+        if (security.jam_enabled && security.jam_state === 2) return {tone:'warning',title:'Chip báo nhiễu ảnh hưởng thu tín hiệu',reason:'SEC-SIG báo nhiễu ảnh hưởng khả năng bám tín hiệu. Các tần số bị ảnh hưởng được liệt kê bên dưới.',next:'Theo dõi các đợt tiếp theo và mức C/N₀. Cảnh báo không xác định thiết bị phát gây nhiễu.'};
+        if (!security.jam_enabled || !security.spoof_enabled || security.jam_state === 0 || security.spoof_state === 0) return unknown('Chip chưa có kết luận đầy đủ hoặc một bộ phát hiện đang tắt.', 'Xem riêng trạng thái nhiễu và giả mạo bên dưới; Pi tiếp tục thu mẫu.');
+        return {tone:'info',title:'Chip chưa báo nhiễu hoặc giả mạo',reason:'SEC-SIG hiện không báo bất thường trong hai bộ phát hiện.',next:'Xem lịch sử để kiểm tra những thời điểm khác; trạng thái này không xác minh độ đúng tọa độ Base.'};
+    }
     if (readError) return unknown(readError.error_kind === 'timeout'
         ? 'Agent đã hỏi MON-RF nhưng không nhận được phản hồi đúng hạn.'
         : readError.error_kind === 'invalid_response' ? 'Có phản hồi nhưng bộ đọc từ chối dữ liệu RF.'
@@ -555,11 +587,11 @@ function RfMonitorOverview({model}) {
     const clock = offset => new Date((Date.now()/1000 - age - offset)*1000).toLocaleTimeString('vi-VN',{hour12:false});
     return <div className="border rounded-3 p-3 mb-3" aria-label="Cửa sổ theo dõi RF">
         <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-            <div><h6 className="mb-1">Theo dõi RF</h6><span className="small text-muted">10 phút gần nhất · Tự động tại Pi</span></div>
+            <div><h6 className="mb-1">Theo dõi RF</h6><span className="small text-muted">{model.fixed ? 'Tự động từng đợt 10 phút' : '10 phút gần nhất'} · Tại Pi{report?.source === 'ubx_sec_sig' ? ' · SEC-SIG' : ''}</span></div>
             <span className={`badge text-bg-${model.tone}`} style={{whiteSpace:'normal',textAlign:'left'}} role="status">{model.title}</span>
         </div>
         <div className="d-flex flex-wrap justify-content-between gap-2 small mb-2">
-            <span>{elapsed < 600 ? 'Đang mở rộng cửa sổ' : 'Cửa sổ cuốn liên tục'}</span>
+            <span>{model.fixed ? `Đợt ${hour(report.window_started_at)} – ${hour(report.window_ends_at)}` : elapsed < 600 ? 'Đang mở rộng cửa sổ' : 'Cửa sổ cuốn liên tục'}</span>
             <span className="font-monospace">{duration(elapsed)} / 10:00</span>
         </div>
         <div className="progress mb-2" style={{height:6}} role="progressbar" aria-label="Độ dài cửa sổ đã theo dõi" aria-valuenow={Math.floor(elapsed)} aria-valuemin={0} aria-valuemax={600} aria-valuetext={`${duration(elapsed)} trên 10 phút`}>
@@ -571,6 +603,8 @@ function RfMonitorOverview({model}) {
                 <div className="rounded border p-2 h-100"><strong className="fs-5 d-block">{value ?? '—'}</strong><span className="small text-muted">{label}</span></div>
             </div>)}
         </div>
+        {model.fixed && <p className="small text-muted mb-3">{elapsed >= 600 ? 'Đang chờ mẫu đầu tiên của đợt mới.' : `Còn ${duration(600-elapsed)} đến đợt tiếp theo.`} Kết quả được tính vào lịch sử 24 giờ.</p>}
+        {report?.source === 'ubx_sec_sig' && <p className="small mb-3">Nhiễu: {report.jamming_samples ?? 0} mẫu · Giả mạo tín hiệu: {report.spoofing_samples ?? 0} mẫu</p>}
         {report?.sample_count >= 3 && <div className="small border-start border-3 ps-3 mb-3" role="status" aria-atomic="true">
             <strong className="d-block">{report.warning_samples === report.sample_count ? 'Cảnh báo ở mọi lần đọc; chưa có mẫu không cảnh báo để so sánh.'
                 : report.warning_samples ? 'Cảnh báo xuất hiện ở một phần các mẫu.' : 'Các mẫu đã thu không có cảnh báo từ chip.'}</strong>
@@ -590,14 +624,14 @@ function RfMonitorOverview({model}) {
             <svg viewBox="0 0 600 105" role="img" aria-label={`${samples.length} mẫu RF trong 10 phút; các khoảng trống không có mẫu`} style={{width:'100%',height:'auto',minHeight:100}}>
                 {[2,1,0].map(level => <line key={level} x1="10" x2="590" y1={20+(2-level)*30} y2={20+(2-level)*30} stroke="currentColor" opacity="0.12" />)}
                 {samples.map(([offset,level,delta],index) => {
-                    const x=10+(1-(age+offset)/600)*580, y=20+(2-level)*30;
+                    const x=10+(model.fixed ? (report.last_sample_at-offset-report.window_started_at)/600 : 1-(age+offset)/600)*580, y=20+(2-level)*30;
                     return <g key={index} fill={colors[level]}><title>{clock(offset)} · {levels[level]}{delta === null ? '' : ` · ΔC/N₀ ${delta} dB-Hz`}</title>
                         {level === 0 ? <circle cx={x} cy={y} r="4" /> : <path d={level === 1 ? `M${x} ${y-5}l5 10h-10z` : `M${x} ${y-6}l6 6l-6 6l-6-6z`} />}
                         {delta !== null && delta <= -3 && <circle cx={x} cy={y} r="8" fill="none" stroke="currentColor" />}
                     </g>;
                 })}
             </svg>
-            <div className="d-flex justify-content-between small text-muted mb-2"><span>−10 phút</span><span>−5 phút</span><span>Hiện tại</span></div>
+            <div className="d-flex justify-content-between small text-muted mb-2"><span>{model.fixed ? 'Bắt đầu' : '−10 phút'}</span><span>{model.fixed ? '+5 phút' : '−5 phút'}</span><span>{model.fixed ? '+10 phút' : 'Hiện tại'}</span></div>
             <p className="small text-muted mb-2">Mỗi dấu là một lần đọc. Khoảng trống: không có mẫu. Vòng ngoài: C/N₀ giảm.</p>
             <details><summary className="small py-2" style={{minHeight:44}}>Xem mẫu và cách tính</summary>
                 <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động C/N₀ từng mẫu; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:600}}><caption className="visually-hidden">Các mẫu RF đã thu trong cửa sổ</caption><thead><tr><th>Thời điểm</th><th>RF</th><th>ΔC/N₀ trung vị</th><th>Thấp / cao nhất</th><th>Vệ tinh thay đổi</th></tr></thead>
@@ -624,21 +658,29 @@ function RfMonitorOverview({model}) {
 
 function RfDiagnostics({device, live}) {
     const esp32 = device.system_info?.gnss_rf_supported === false || /^esp_/i.test(device.serial || '');
+    const [, refreshClock] = useState(0);
+    useEffect(() => {
+        if (esp32) return;
+        const timer = setInterval(() => refreshClock(value => value + 1), 1000);
+        return () => clearInterval(timer);
+    }, [device.serial, esp32]);
     const automatic = getRfMonitorWindow(device, live);
     const unicore = device.detected_chip_type === 'Unicorecomm';
     const um = unicore ? getUnicoreRfDiagnostic(device, live) : null;
     const rf = unicore ? null : getRfDiagnostic(device, 'gnss_rf', live);
     const spectrum = unicore ? null : getRfDiagnostic(device, 'gnss_spectrum', live);
-    const hasData = Boolean(rf || spectrum || um);
+    const hasData = Boolean(rf || spectrum || um || device.gnss_security || device.gnss_security_log);
     const readError = unicore ? null : getRfReadError(device, rf, live);
     const receiver = unicore ? null : getReceiverDiagnostic(device, live);
+    const security = unicore ? null : getSecurityDiagnostic(device, 'gnss_security', live);
+    const securityLog = unicore ? null : getSecurityDiagnostic(device, 'gnss_security_log', live);
     const interferenceConfig = getInterferenceConfigStatus(device, receiver);
-    const assessment = getRfAssessment({live,rf,um,readError,receiver,unicore});
+    const assessment = getRfAssessment({live,rf,um,readError,receiver,security,unicore});
     const [reference, setReference] = useState(null);
     const serial = device.serial;
     const stateNames = ['Chưa xác định', 'Không báo nhiễu đáng kể', 'Cảnh báo nhiễu', 'Nhiễu nghiêm trọng'];
     const exportReading = () => {
-        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, rf, spectrum, receiver, interference_config:interferenceConfig, raw_receiver:device.gnss_receiver || null, unicore: um, reference, assessment, automatic:device.gnss_rf_monitor || null, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
+        const data = {serial, captured_at: new Date().toISOString(), received_at: device.server_received_at || device.timestamp, security, security_log:securityLog, raw_security:device.gnss_security, raw_security_log:device.gnss_security_log, rf, spectrum, receiver, interference_config:interferenceConfig, raw_receiver:device.gnss_receiver || null, unicore: um, reference, assessment, automatic:device.gnss_rf_monitor || null, read_error:readError, raw_rf:device.gnss_rf || null, raw_spectrum:device.gnss_spectrum || null};
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
         const link = document.createElement('a'); link.href = url; link.download = 'gnss-rf.json'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -675,9 +717,11 @@ function RfDiagnostics({device, live}) {
                         <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
                     </React.Fragment>)}
                 </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
-                <div>Cấu hình đã lưu: <strong>{receiver?.itfm_supported === false ? 'Không áp dụng' : interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
-                <div>Chip đọc lại: <strong>{receiver?.itfm_supported === false ? 'Không áp dụng ITFM' : receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
-                <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
+                {receiver?.itfm_supported === false ? <div className="small text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</div> : <>
+                    <div>Cấu hình đã lưu: <strong>{interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
+                    <div>Chip đọc lại: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+                    <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
+                </>}
                 {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
                 {(receiver?.error || receiver?.itfm_error) && <details><summary>Chi tiết đọc thông tin chip</summary><p className="mb-0" data-no-translate style={{overflowWrap:'anywhere'}}>{[receiver.error,receiver.itfm_error].filter(Boolean).join(' · ')}</p></details>}
             </div>}
@@ -686,6 +730,24 @@ function RfDiagnostics({device, live}) {
                 <p className="mb-1">{assessment.reason}</p>
                 <p className="mb-0"><strong>Bước tiếp theo: </strong>{assessment.next}</p>
             </div>
+            {(security || receiver?.itfm_supported === false) && <div className="border rounded p-3 mb-3" aria-label="An toàn tín hiệu SEC-SIG">
+                <h6 className="mb-2">Nhiễu và giả mạo tín hiệu · SEC-SIG</h6>
+                {security && !security.error ? <>
+                    <div className="row g-2 mb-2">
+                        <div className="col-sm-6"><span className="text-muted">Phát hiện nhiễu: </span><strong>{!security.jam_enabled ? 'Đang tắt' : ['Chưa xác định','Không báo nhiễu','Có nhiễu ảnh hưởng thu tín hiệu'][security.jam_state]}</strong></div>
+                        <div className="col-sm-6"><span className="text-muted">Phát hiện giả mạo: </span><strong>{!security.spoof_enabled ? 'Đang tắt' : ['Chưa xác định','Không báo giả mạo','Nghi ngờ giả mạo','Xác nhận giả mạo'][security.spoof_state]}</strong></div>
+                    </div>
+                    <p className="small text-muted mb-2">Đọc {Math.floor(security.age_seconds)} giây trước. Cờ cảnh báo do chip trả về.</p>
+                    <div className="d-flex flex-wrap gap-2">{security.frequencies.map(row=><span key={row.khz} className={`badge ${row.jammed ? 'bg-warning text-dark' : 'bg-secondary'}`} style={{whiteSpace:'normal'}}>{(row.khz/1000).toFixed(3)} MHz · {row.jammed ? 'Bị nhiễu' : 'Không báo nhiễu'}</span>)}</div>
+                    {!security.frequencies.length && <p className="small text-muted mb-0">Chip chưa trả tần số đủ dữ liệu đánh giá.</p>}
+                </> : <p className="small mb-0" role="status">{security?.error ? <>Chưa đọc được SEC-SIG: <span data-no-translate>{security.error}</span></> : 'Đang chờ phản hồi SEC-SIG mới từ Pi.'}</p>}
+                <details className="mt-2"><summary className="py-2" style={{minHeight:44}}>Nhật ký sự kiện trên chip · SEC-SIGLOG</summary>
+                    {securityLog?.events ? securityLog.events.length ? <ul className="small mb-1 ps-3">{securityLog.events.map((event,index)=><li key={index}>
+                        {event.elapsed_seconds === 0xffffffff ? 'Hơn 45 ngày trước' : `${Math.floor(event.elapsed_seconds + securityLog.age_seconds)} giây trước`} · {['Tín hiệu mô phỏng','Tín hiệu bất thường','Lệch INS/GNSS','Tín hiệu GNSS đổi đột ngột','Nhiễu','Xác thực thất bại','Tín hiệu phát lại'][event.detection] || `Loại ${event.detection}`} · {['Bắt đầu','Kết thúc','Kích hoạt','Hết thời gian'][event.event] || `Trạng thái ${event.event}`}
+                    </li>)}</ul> : <p className="small mb-1">Chip chưa ghi sự kiện.</p> : <p className="small mb-1">{securityLog?.error ? <>Chưa đọc được nhật ký: <span data-no-translate>{securityLog.error}</span></> : 'Đang chờ nhật ký mới.'}</p>}
+                    <p className="small text-muted mb-0">Tối đa 16 sự kiện gần nhất; nhật ký chip xóa khi khởi động lại. Lịch sử thu mẫu tại Pi được giữ riêng trong 24 giờ.</p>
+                </details>
+            </div>}
             <p className="small text-muted mb-2">Giữ mẫu trước khi đổi vị trí anten hoặc tắt nguồn phát của mình, rồi so sánh. Mốc được chọn chưa chắc sạch nhiễu.</p>
             {readError && <details className="mb-2"><summary>Chi tiết lỗi đọc MON-RF</summary><p className="small mb-0" data-no-translate>{readError.error}</p></details>}
             {!unicore && <p className="small text-muted mb-2">Trạng thái RF: {rf ? `${Math.floor(rf.age_seconds)} giây trước` : 'Chưa có'} · Phổ: {spectrum ? `${Math.floor(spectrum.age_seconds)} giây trước` : 'Chưa có'}</p>}

@@ -247,10 +247,10 @@ NAV-SAT and MON-VER.
 
 ### ZED-F9P RF diagnostics
 
-Pi and ESP32 poll read-only UBX-MON-RF (0A/38) and UBX-MON-SPAN (0A/31)
+Universal Pi agents poll read-only UBX-MON-RF (0A/38) and UBX-MON-SPAN (0A/31)
 alongside the existing 30-second navigation readback. A failure in one query
 does not prevent the remaining queries. No CFG command, NVS write or receiver
-firmware update is performed. This requires updating the station agent/ESP32
+firmware update is performed. ESP32 retains MON-VER only. This requires updating the station agent
 application as well as the web application; updating the web alone cannot
 create RF telemetry from an older agent.
 
@@ -261,7 +261,7 @@ The receiver UART owner validates the UBX checksum before delivery. Per-path
 noise and AGC are raw receiver counts; CW suppression is scaled 0..255.
 Jamming state 0 is unknown/disabled, never a clean-RF result. MON-RF's legacy
 jamming flag may be deprecated on newer protocols supporting SEC-SIG v2;
-this first diagnostic panel reports MON-RF only, without claiming SEC-SIG coverage.
+modern firmware instead uses SEC-SIG v2 as documented below.
 MON-SPAN bins are retained as raw 0..255 values, never labeled as calibrated
 dBm. The current interface reference describes dB while the newer integration
 manual specifies 0.25-dB increments; the UI does not guess a conversion without
@@ -378,6 +378,19 @@ Sample tuples may contain seven fields: `[seconds_before_latest_sample, severity
 
 Updated Pi agents receive typed CFG-TMODE VALSET entries plus output keys, all targeting RAM/BBR/Flash. They re-read MON-VER immediately before setters to reject receiver swaps/firmware changes and compare written keys in all three layers before acknowledging success. No CFG-CFG or CFG-MSG fallback is appended on this path. Unselected RTCM output protocol gates are disabled to avoid different MSM configurations on multiple emitting ports. Original coordinate quantization and signed HP precision are preserved.
 
-For HPG 1.50/1.51 the removed ITFM keys are never emitted/polled; the saved preference is preserved for older receivers but is inapplicable on those firmwares. The current RF diagnostic does not yet decode SEC-SIG and explicitly reports unavailable rather than interpreting deprecated MON-RF state zero as clean. Fixed verification uses VALGET, including UART baud readback. Existing agents without the new capability retain their legacy 1.13/1.30/1.32 path; 1.50/1.51 commands require an updated universal agent. ESP32 firmware and UM commands are unchanged.
+For HPG 1.50/1.51 the removed ITFM keys are never emitted/polled; the saved preference is preserved for older receivers but is inapplicable on those firmwares. The RF diagnostic polls SEC-SIG v2 and SEC-SIGLOG v1 on these firmware profiles. Unknown or unsupported response versions remain unavailable; deprecated MON-RF state zero is never treated as clean. Fixed verification uses VALGET, including UART baud readback. Existing agents without the new capability retain their legacy 1.13/1.30/1.32 path; 1.50/1.51 commands require an updated universal agent. ESP32 firmware and UM commands are unchanged.
 
 Roll out the Pi agent first, then the backend/web. This does not upgrade receiver firmware, automatically reconfigure stations, or reset stored BASE settings. Rollback is code-only; old desired configuration remains valid. Flash persistence across actual power loss still requires a connected test receiver.
+
+
+### HPG 1.51 automatic signal diagnostics
+
+Universal agents poll SEC-SIG (`27 09`, version 2) and SEC-SIGLOG (`27 10`, version 1) after fresh MON-VER identifies HPG 1.50/1.51. Polling is read-only and works with RTCM-only output; it does not change detection sensitivity, antenna power, message rates, or stored BASE configuration. Existing firmware keeps MON-RF monitoring and UM keeps its own AGC/jamming path. ESP32 is unchanged.
+
+`gnss_security` carries the bounded raw payload plus jamming/spoofing enabled flags, their independent states and per-center-frequency jamming flags (frequency in kHz). `gnss_security_log` carries up to 16 chip events with elapsed seconds, detection type and event type. Both expire after 45 seconds. A failed poll replaces the corresponding snapshot with an explicit error. The chip log resets on receiver restart; it is not a persistent full-night log.
+
+The edge monitor prefers SEC-SIG on modern firmware, never MON-RF fallback. Warning samples include chip-indicated jamming or spoofing; affirmed spoofing maps to the strongest severity. Unknown/disabled detection without another positive warning is not counted as clear. Per-period `jamming_samples` and `spoofing_samples` expose the distinction. The generic 24-hour archive counts the combined severity, not independent spoof/jamming event totals.
+
+The archive also retains earlier MON-RF samples when a firmware upgrade switches diagnostics to SEC-SIG. The 24-hour expiry and 20,000-row cap apply across sources.
+
+Updated reports use `window_mode="fixed"`, `window_started_at` and `window_ends_at`. Periods last 600 seconds, anchored to the first accepted sample. A subsequent accepted sample starts the next period (skipping empty periods after gaps), resets the live counts and timeline, and leaves the 24-hour archive intact. UI progress follows the period clock while data is fresh; it does not generate samples or restart a period before Pi reports it. Older agents retain their rolling-window presentation.

@@ -21,7 +21,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 
 SOURCE = Path(__file__).resolve().parents[1] / 'agent_universal.py'
-NAMES = {'_ubx_cfg_values', '_ubx_tmode_fields', '_read_ublox_tmode', '_query_ubx_serial', '_ubx_valset_values', '_verify_ublox_values', 'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
+NAMES = {'_ubx_security_payload', '_ubx_cfg_values', '_ubx_tmode_fields', '_read_ublox_tmode', '_query_ubx_serial', '_ubx_valset_values', '_verify_ublox_values', 'GNSSReader', '_ubx_packet', '_ecef_to_llh_rad', '_base_ubx_payload',
          '_base_ecef_position', '_base_ubx_position', '_base_unicore_fields',
          'refresh_receiver_base_status', 'receiver_base_system_info', '_crc24q',
          'is_valid_rtcm3_packet', '_ubx_navigation_quality', 'refresh_receiver_quality',
@@ -266,7 +266,9 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
                      STATUS_ALLOW_HEAVY_FIELDS=False, buffer_metrics={'status_payload_compacted_count': 0})
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
         for quality in ({'hacc_m': 4.08, 'source': 'ubx_nav_pvt', 'age_seconds': 0}, None):
-            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality, 'gnss_satellites': quality, 'gnss_rf': quality, 'gnss_spectrum': quality, 'gnss_receiver': quality})
+            result = scope['_compact_status_payload']({'serial': 'PI', 'gnss_quality': quality, 'gnss_dop': quality, 'gnss_satellites': quality, 'gnss_rf': quality, 'gnss_spectrum': quality, 'gnss_receiver': quality, 'gnss_security': quality, 'gnss_security_log': quality})
+            self.assertEqual(result['gnss_security'], quality)
+            self.assertEqual(result['gnss_security_log'], quality)
             self.assertEqual(result['gnss_receiver'], quality)
             self.assertEqual(result['gnss_rf'], quality)
             self.assertEqual(result['gnss_spectrum'], quality)
@@ -369,6 +371,8 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         raw = b'\xd3\x00\x03\x3e\xd0\x00'
         rtcm = raw + self.s['_crc24q'](raw).to_bytes(3, 'big')
         for key, response in (((6, 0x71), self.pack(6, 0x71, self.mode)),
+                              ((0x27, 9), self.pack(0x27, 9, bytes([2, 0x1b, 0, 0]))),
+                              ((0x27, 0x10), self.pack(0x27, 0x10, bytes([1, 0])+bytes(6))),
                               (b'#MODE', unicore('#MODE,81,GPS;MODE BASE TIME 120 0 0', xor=True) + b'\r\n')):
             with self.subTest(key=key):
                 ser = SimpleNamespace(write=Mock(side_effect=lambda data: len(data)), flush=Mock())
@@ -384,7 +388,9 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(actual, response.strip())
                 self.assertEqual(buffer, b'')
                 ser.write.assert_called_once_with(b'poll')
-        self.assertEqual(self.s['dispatch_rtcm_data'].call_count, 4)
+        self.assertEqual(self.s['dispatch_rtcm_data'].call_count, 8)
+        self.assertEqual(self.s['LAST_UBX_SECURITY']['jam_state'], 1)
+        self.assertEqual(self.s['LAST_UBX_SECURITY_LOG']['events'], [])
         self.s['dispatch_nmea_data'].assert_not_called()
 
     async def test_cancelled_query_never_writes_and_short_write_fails(self):

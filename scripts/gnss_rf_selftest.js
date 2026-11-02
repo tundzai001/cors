@@ -104,5 +104,21 @@ const modernVer=Buffer.from(ver);modernVer.fill(0,40,70);modernVer.write('FWVER=
 const modernReceiver=decodeReceiver({...receiverDevice,gnss_receiver:{...receiverDevice.gnss_receiver,payload_b64:modernVer.toString('base64')}},true,102);
 assert.equal(modernReceiver.itfm_supported,false);
 assert.equal(configStatus(configDevice,modernReceiver).desired,null);
-assert.match(assess({live:true,rf:unknownRf,receiver:modernReceiver}).reason,/SEC-SIG/);
+assert.match(assess({live:true,rf:unknownRf,receiver:modernReceiver}).next,/SEC-SIG/);
 console.log('PASS: HPG 1.51 removed ITFM is inapplicable; MON-RF zero never interpreted as clean');
+
+const decodeSecurity=vm.runInNewContext(`${code};getSecurityDiagnostic;`,{atob:s=>Buffer.from(s,'base64').toString('binary')});
+const sec=Buffer.alloc(12);sec[0]=2;sec[1]=9|(2<<1)|(3<<4);sec[3]=2;sec.writeUInt32LE(1575420|0x1000000,4);sec.writeUInt32LE(1227600,8);
+const secLog=Buffer.alloc(16);secLog[0]=1;secLog[1]=1;secLog.writeUInt32LE(12,8);secLog[12]=4;secLog[13]=0;
+const securityDevice={timestamp:100,gnss_security:{source:'ubx_sec_sig',age_seconds:0,payload_b64:sec.toString('base64')},gnss_security_log:{source:'ubx_sec_siglog',age_seconds:0,payload_b64:secLog.toString('base64')}};
+const security=decodeSecurity(securityDevice,'gnss_security',true,102);
+assert.equal(security.jam_state,2);assert.equal(security.spoof_state,3);assert.equal(security.frequencies[0].khz,1575420);assert.equal(security.frequencies[0].jammed,true);
+assert.equal(decodeSecurity(securityDevice,'gnss_security_log',true,102).events[0].detection,4);
+assert.equal(decodeSecurity(securityDevice,'gnss_security',true,146),null);assert.equal(decodeSecurity(securityDevice,'gnss_security',false,102),null);
+for(const bytes of [sec.subarray(0,11),Buffer.from([2,7,0,0]),Buffer.from([2,0x79,0,0])])assert.equal(decodeSecurity({...securityDevice,gnss_security:{...securityDevice.gnss_security,payload_b64:bytes.toString('base64')}},'gnss_security',true,100),null);
+assert.equal(assess({live:true,receiver:modernReceiver,security}).title,'Chip xác nhận giả mạo tín hiệu');
+assert.match(assess({live:true,security:{...security,spoof_state:1}}).title,/nhiễu ảnh hưởng/);
+assert.equal(assess({live:true,security:{...security,jam_state:1,spoof_state:1}}).tone,'info');
+assert.equal(assess({live:true,security:{...security,jam_state:0,spoof_state:1}}).title,'Chưa đủ dữ liệu kết luận');
+assert.equal(assess({live:true,security:{...security,jam_enabled:false,spoof_state:1}}).title,'Chưa đủ dữ liệu kết luận');
+console.log('PASS: SEC-SIG v2 frequency flags, spoof/jamming verdicts, SIGLOG events, expiry, disabled and malformed states');
