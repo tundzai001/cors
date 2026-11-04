@@ -131,7 +131,9 @@ without calculated_coord explicitly show that field as unavailable.
 ## ESP32 cleanup after a temporary Rover session
 
 Auto Base restores the saved Base mode on success, failure and cancellation.
-Survey-In restores its saved duration, accuracy and output options; Fixed LLA
+Survey-In snapshots the effective receiver duration before entering Rover and
+restores that duration (for example 120 seconds at startup, even when the saved
+UI preference is 1800 seconds), with saved accuracy and output options; Fixed LLA
 restores its saved coordinates. A receiver mode readback must confirm the
 restored mode before source publishing resumes. If restoration/readback fails,
 the Base startup state becomes an error and source streams remain blocked.

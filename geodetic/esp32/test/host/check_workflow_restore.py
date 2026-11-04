@@ -7,6 +7,8 @@ root = Path(__file__).resolve().parents[2]
 workflow = (root / 'src/functions/backend/Backend_Agent_Workflows.cpp').read_text()
 number = 'double coordinateNumber(' + workflow.split('double coordinateNumber(', 1)[1].split('// Keep audit', 1)[0]
 restore = 'bool BackendAgent::restoreWorkflowBase(' + workflow.split('bool BackendAgent::restoreWorkflowBase(', 1)[1].split('\nvoid BackendAgent::runWorkflow()', 1)[0]
+snapshot = workflow[workflow.index('    DynamicJsonDocument previousBase(CONFIG_DOCUMENT_SIZE);'):workflow.index('    auto restorePreviousBase = [&]() {')]
+snapshot = 'bool BackendAgent::restoreSnapshot() {\n' + snapshot + '    surveyInTargetSeconds_ = 0; // Rover mode clears the live target after snapshot.\n    return restoreWorkflowBase(previousBase.as<JsonObjectConst>());\n}\n'
 ntrip = (root / 'src/functions/ntrip/NTRIP_Handler_IP.cpp').read_text()
 rover = 'int loopNtripRover() {' + ntrip.split('int loopNtripRover() {', 1)[1].split('\nvoid stopNtripRover()', 1)[0]
 shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')
@@ -17,6 +19,7 @@ harness = r'''
 #include <cstring>
 #include <vector>
 #include <ArduinoJson.h>
+constexpr size_t CONFIG_DOCUMENT_SIZE = 4096;
 #include "functions/gnss/gnss_cmd_builder.h"
 unsigned now = 10000;
 uint32_t millis() { return now; }
@@ -28,6 +31,9 @@ struct BackendAgent {
     uint32_t duration = 0;
     GnssCmdBuilder::GnssOptions restoredOptions;
     bool restoreWorkflowBase(JsonObjectConst);
+    bool restoreSnapshot();
+    String baseConfig_;
+    uint32_t surveyInTargetSeconds_ = 120;
     bool applyBaseCoordinates(double lat, double lon, double alt) { ++writes; survey = false; return !reject && std::isfinite(lat+lon+alt); }
     bool writeGnssCommands(const GnssCmdBuilder::CommandList &commands) { ++writes; return !reject && !commands.empty(); }
     bool refreshReceiverReadback(String &) {
@@ -81,6 +87,15 @@ int main() {
     assert(agent.restoreWorkflowBase(config.as<JsonObjectConst>()));
     assert(agent.duration == 300 && agent.baseStartupConfigured());
     assert(agent.surveyInResultPending_);
+    agent.baseConfig_ = R"({"base_setup_method":"SURVEY_IN","survey_in_duration":1800})";
+    assert(agent.restoreSnapshot() && agent.duration == 120);
+    assert(agent.baseConfig_ == R"({"base_setup_method":"SURVEY_IN","survey_in_duration":1800})"); // Keep the UI preference unchanged.
+    agent.surveyInTargetSeconds_ = 300;
+    assert(agent.restoreSnapshot() && agent.duration == 300); // Never hardcode 120 for a UI-applied survey.
+    agent.surveyInTargetSeconds_ = 0;
+    assert(!agent.restoreSnapshot() && !agent.baseStartupConfigured()); // Unknown actual target must not fall back to 1800.
+    assert(agent.restoreWorkflowBase(config.as<JsonObjectConst>()));
+
     assert(agent.restoredOptions.outputMode == GnssCmdBuilder::OutputMode::RtcmOnly);
     assert(agent.restoredOptions.msmLevel == GnssCmdBuilder::MsmLevel::Msm7 && !agent.restoredOptions.glo);
     for (unsigned failure = 0; failure < 3; ++failure) {
@@ -112,9 +127,9 @@ int main() {
 with tempfile.TemporaryDirectory(prefix='esp-workflow-restore-') as directory:
     path = Path(directory)
     (path / 'Arduino.h').write_text('#pragma once\n' + shim)
-    (path / 'check.cpp').write_text('#include <Arduino.h>\n' + harness + number + restore + rover + checks)
+    (path / 'check.cpp').write_text('#include <Arduino.h>\n' + harness + number + restore + snapshot + rover + checks)
     subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
                     '-I' + str(path), '-I' + str(root / 'include'), '-I' + str(root / '.pio/libdeps/tdm240x_dev_general/ArduinoJson/src'),
                     str(path / 'check.cpp'), '-o', str(path / 'check')], check=True)
     subprocess.run([str(path / 'check')], check=True)
-print('PASS: Survey-In/Fixed restore, mode verification, failure publishing gate, CORS receive/UART delivery and short writes')
+print('PASS: actual 120/300s snapshot over saved 1800s, Survey-In/Fixed restore, mode verification, failure publishing gate, CORS receive/UART delivery and short writes')

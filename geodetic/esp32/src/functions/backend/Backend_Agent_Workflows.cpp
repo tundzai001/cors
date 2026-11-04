@@ -271,6 +271,10 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
 
     DynamicJsonDocument previousBase(CONFIG_DOCUMENT_SIZE);
     deserializeJson(previousBase, baseConfig_);
+    // Startup can run 120 seconds while the saved UI preference remains 1800.
+    // Snapshot the receiver's effective target before Rover readback changes it.
+    if (previousBase["base_setup_method"] == "SURVEY_IN")
+        previousBase["survey_in_duration"] = surveyInTargetSeconds_;
     auto restorePreviousBase = [&]() {
         return restoreWorkflowBase(previousBase.as<JsonObjectConst>());
     };
@@ -587,6 +591,8 @@ bool BackendAgent::runReferenceCheckWorkflow(JsonObject payload) {
     const bool baseParsed = deserializeJson(storedBase, baseConfig_) == DeserializationError::Ok
         && storedBase.is<JsonObject>();
     JsonObject storedBaseObject = storedBase.as<JsonObject>();
+    if (storedBaseObject["base_setup_method"] == "SURVEY_IN")
+        storedBaseObject["survey_in_duration"] = surveyInTargetSeconds_;
     JsonObject storedCoordinates = storedBaseObject["coords"].as<JsonObject>();
     if (storedCoordinates.isNull()) storedCoordinates = storedBaseObject;
 
