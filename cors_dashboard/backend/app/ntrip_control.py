@@ -154,8 +154,8 @@ def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[
             host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
             if host and (normalized_req_addr in host or host in normalized_req_addr):
                 logger.info(
-                    f"[RTCM ROUTE] Explicit address match: mountpoint='{mountpoint_norm}' "
-                    f"requested_addr='{requested_address}' candidates={candidates} selected_server={sid}"
+                    f"[RTCM ROUTE] Explicit address match: mountpoint={mountpoint_norm!r} "
+                    f"requested_addr={requested_address!r} candidates={candidates} selected_server={sid}"
                 )
                 return sid
 
@@ -166,14 +166,14 @@ def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[
             host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
             if host and marker in host:
                 logger.info(
-                    f"[RTCM ROUTE] Preferred host match: mountpoint='{mountpoint_norm}' "
-                    f"marker='{marker}' candidates={candidates} selected_server={sid}"
+                    f"[RTCM ROUTE] Preferred host match: mountpoint={mountpoint_norm!r} "
+                    f"marker={marker!r} candidates={candidates} selected_server={sid}"
                 )
                 return sid
 
     selected = sorted(candidates)[0]
     logger.info(
-        f"[RTCM ROUTE] mountpoint='{mountpoint_norm}' candidates={candidates} "
+        f"[RTCM ROUTE] mountpoint={mountpoint_norm!r} candidates={candidates} "
         f"selected_server={selected}"
     )
     return selected

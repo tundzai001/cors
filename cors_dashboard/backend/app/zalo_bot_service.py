@@ -604,7 +604,7 @@ class ZaloBotService(
         ).strip()
         if not msg_id:
             dedup_src = f"{summary.get('chat_id')}:{summary.get('sender_id')}:{summary.get('text', '')}"
-            msg_id = hashlib.md5(dedup_src.encode("utf-8", errors="replace")).hexdigest()
+            msg_id = hashlib.sha256(dedup_src.encode("utf-8", errors="replace")).hexdigest()
         now = time.time()
         self._processed_msg_ids = {
             k: v for k, v in self._processed_msg_ids.items() if now - v < 60

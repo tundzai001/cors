@@ -6020,7 +6020,7 @@ async def _process_command(source: str, data: dict, agent: AgentManager, gnss_re
                 await send_status(agent, mqtt_client)
                 await asyncio.sleep(2)
                 remove_lock_file()
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+                os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
         
         elif command == "TRIGGER_AUTO_BASE":
             logging.info("Received TRIGGER_AUTO_BASE command. Configuring and starting state machine...")

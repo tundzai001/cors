@@ -643,14 +643,14 @@ async def ntrip_auth_check(
             for entry in block_entries:
                 # Block all mountpoints
                 if entry.mountpoint is None:
-                    logger.info(f"[NTRIP AUTH] BLOCKED user='{username}' reason='{entry.reason}' (all mountpoints)")
+                    logger.info("[NTRIP AUTH] BLOCKED user=%r reason=%r (all mountpoints)", username, entry.reason)
                     return PlainTextResponse(
                         f"BLOCKED: {entry.reason or 'User is blocked'}",
                         status_code=403,
                     )
                 # Block specific mountpoint
                 if mountpoint_clean and entry.mountpoint.lower().strip() == mountpoint_clean.lower():
-                    logger.info(f"[NTRIP AUTH] BLOCKED user='{username}' mountpoint='{mountpoint_clean}' reason='{entry.reason}'")
+                    logger.info("[NTRIP AUTH] BLOCKED user=%r mountpoint=%r reason=%r", username, mountpoint_clean, entry.reason)
                     return PlainTextResponse(
                         f"BLOCKED: {entry.reason or 'User is blocked on this mountpoint'}",
                         status_code=403,
@@ -660,6 +660,6 @@ async def ntrip_auth_check(
             return PlainTextResponse("OK", status_code=200)
 
     except Exception as e:
-        logger.error(f"[NTRIP AUTH] Error checking auth for user='{username}': {e}")
+        logger.error("[NTRIP AUTH] Error checking auth for user=%r: %r", username, e)
         return PlainTextResponse("UNAVAILABLE", status_code=503)
 

@@ -85,6 +85,8 @@ async def analytics_report(response: Response, days: int = Query(28, ge=1, le=90
                            user: models.User = Depends(auth.get_current_user)):
     if user.role != auth.Role.ADMIN:
         raise HTTPException(403, 'Chỉ quản trị viên được xem Analytics')
+    if not 1 <= days <= 90:
+        raise HTTPException(422, 'days phải từ 1 đến 90')
     response.headers['Cache-Control'] = 'no-store'
     now = int(time.time())
     today = datetime.fromtimestamp(now, LOCAL_TZ).date()

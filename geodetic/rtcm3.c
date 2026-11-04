@@ -239,7 +239,7 @@ static int decode_head1001(rtcm_t *rtcm, int *sync)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d %s nsat=%2d sync=%d",staid,
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d %s nsat=%2d sync=%d",staid,
                 time_str(rtcm->time,2),nsat,*sync);
     }
     return nsat;
@@ -390,7 +390,7 @@ static int decode_type1005(rtcm_t *rtcm)
     }
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d",staid);
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d",staid);
     }
     /* test station id */
     if (!test_staid(rtcm,staid)) return -1;
@@ -425,7 +425,7 @@ static int decode_type1006(rtcm_t *rtcm)
     }
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d",staid);
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d",staid);
     }
     /* test station id */
     if (!test_staid(rtcm,staid)) return -1;
@@ -461,7 +461,7 @@ static int decode_type1007(rtcm_t *rtcm)
     }
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d",staid);
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d",staid);
     }
     /* test station id */
     if (!test_staid(rtcm,staid)) return -1;
@@ -497,7 +497,7 @@ static int decode_type1008(rtcm_t *rtcm)
     }
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d",staid);
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d",staid);
     }
     /* test station id */
     if (!test_staid(rtcm,staid)) return -1;
@@ -536,7 +536,7 @@ static int decode_head1009(rtcm_t *rtcm, int *sync)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d %s nsat=%2d sync=%d",staid,
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d %s nsat=%2d sync=%d",staid,
                 time_str(rtcm->time,2),nsat,*sync);
     }
     return nsat;
@@ -710,7 +710,7 @@ static int decode_type1019(rtcm_t *rtcm)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," prn=%2d iode=%3d iodc=%3d week=%d toe=%6.0f toc=%6.0f svh=%02X",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," prn=%2d iode=%3d iodc=%3d week=%d toe=%6.0f toc=%6.0f svh=%02X",
                 prn,eph.iode,eph.iodc,week,eph.toes,toc,eph.svh);
     }
     if (!(sat=satno(sys,prn))) {
@@ -770,7 +770,7 @@ static int decode_type1020(rtcm_t *rtcm)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," prn=%2d tk=%02.0f:%02.0f:%02.0f frq=%2d bn=%d tb=%d",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," prn=%2d tk=%02.0f:%02.0f:%02.0f frq=%2d bn=%d tb=%d",
                 prn,tk_h,tk_m,tk_s,geph.frq,bn,tb);
     }
     geph.sat=sat;
@@ -897,7 +897,7 @@ static int decode_type1033(rtcm_t *rtcm)
     }
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d",staid);
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d",staid);
     }
     /* test station id */
     if (!test_staid(rtcm,staid)) return -1;
@@ -989,7 +989,7 @@ static int decode_type1044(rtcm_t *rtcm)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," prn=%3d iode=%3d iodc=%3d week=%d toe=%6.0f toc=%6.0f svh=%02X",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," prn=%3d iode=%3d iodc=%3d week=%d toe=%6.0f toc=%6.0f svh=%02X",
                 prn,eph.iode,eph.iodc,week,eph.toes,toc,eph.svh);
     }
     if (!(sat=satno(sys,prn))) {
@@ -1056,7 +1056,7 @@ static int decode_type1045(rtcm_t *rtcm)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," prn=%2d iode=%3d week=%d toe=%6.0f toc=%6.0f hs=%d dvs=%d",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," prn=%2d iode=%3d week=%d toe=%6.0f toc=%6.0f hs=%d dvs=%d",
                 prn,eph.iode,week,eph.toes,toc,e5a_hs,e5a_dvs);
     }
     if (!(sat=satno(sys,prn))) {
@@ -1126,7 +1126,7 @@ static int decode_type1046(rtcm_t *rtcm)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," prn=%2d iode=%3d week=%d toe=%6.0f toc=%6.0f hs=%d %d dvs=%d %d",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," prn=%2d iode=%3d week=%d toe=%6.0f toc=%6.0f hs=%d %d dvs=%d %d",
                 prn,eph.iode,week,eph.toes,toc,e5b_hs,e1_hs,e5b_dvs,e1_dvs);
     }
     if (!(sat=satno(sys,prn))) {
@@ -1194,7 +1194,7 @@ static int decode_type1042(rtcm_t *rtcm)
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," prn=%2d iode=%3d iodc=%3d week=%d toe=%6.0f toc=%6.0f svh=%02X",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," prn=%2d iode=%3d iodc=%3d week=%d toe=%6.0f toc=%6.0f svh=%02X",
                 prn,eph.iode,eph.iodc,week,eph.toes,toc,eph.svh);
     }
     if (!(sat=satno(sys,prn))) {
@@ -1250,7 +1250,7 @@ static int decode_ssr1_head(rtcm_t *rtcm, int sys, int *sync, int *iod,
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," %s nsat=%2d iod=%2d udi=%2d sync=%d",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," %s nsat=%2d iod=%2d udi=%2d sync=%d",
                 time_str(rtcm->time,2),nsat,*iod,udi,*sync);
     }
     *hsize=i;
@@ -1289,7 +1289,7 @@ static int decode_ssr2_head(rtcm_t *rtcm, int sys, int *sync, int *iod,
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," %s nsat=%2d iod=%2d udi=%2d sync=%d",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," %s nsat=%2d iod=%2d udi=%2d sync=%d",
                 time_str(rtcm->time,2),nsat,*iod,udi,*sync);
     }
     *hsize=i;
@@ -1675,10 +1675,18 @@ static void save_msm_obs(rtcm_t *rtcm, int sys, msm_h_t *h, const double *r,
             else if (freq[i]==4) freq[i]=3; /* B3 */
         }
         if (code[i]!=CODE_NONE) {
-            if (q) q+=sprintf(q,"L%s%s",sig[i],i<h->nsig-1?",":"");
+            if (q) {
+                snprintf(q,sizeof(rtcm->msmtype[0])-(q-msm_type),"L%s%s",
+                         sig[i],i<h->nsig-1?",":"");
+                q+=strlen(q);
+            }
         }
         else {
-            if (q) q+=sprintf(q,"(%d)%s",h->sigs[i],i<h->nsig-1?",":"");
+            if (q) {
+                snprintf(q,sizeof(rtcm->msmtype[0])-(q-msm_type),"(%d)%s",
+                         h->sigs[i],i<h->nsig-1?",":"");
+                q+=strlen(q);
+            }
             
             trace(2,"rtcm3 %d: unknown signal id=%2d\n",type,h->sigs[i]);
         }
@@ -1812,7 +1820,7 @@ static int decode_msm_head(rtcm_t *rtcm, int sys, int *sync, int *iod,
     
     if (rtcm->outtype) {
         msg=rtcm->msgtype+strlen(rtcm->msgtype);
-        sprintf(msg," staid=%4d %s nsat=%2d nsig=%2d iod=%2d ncell=%2d sync=%d",
+        snprintf(msg,sizeof(rtcm->msgtype)-(msg-rtcm->msgtype)," staid=%4d %s nsat=%2d nsig=%2d iod=%2d ncell=%2d sync=%d",
                 staid,time_str(rtcm->time,2),h->nsat,h->nsig,*iod,ncell,*sync);
     }
     return ncell;
@@ -2081,7 +2089,7 @@ extern int decode_rtcm3(rtcm_t *rtcm)
     trace(3,"decode_rtcm3: len=%3d type=%d\n",rtcm->len,type);
     
     if (rtcm->outtype) {
-        sprintf(rtcm->msgtype,"RTCM %4d (%4d):",type,rtcm->len);
+        snprintf(rtcm->msgtype,sizeof(rtcm->msgtype),"RTCM %4d (%4d):",type,rtcm->len);
     }
     /* real-time input option */
     if (strstr(rtcm->opt,"-RT_INP")) {
