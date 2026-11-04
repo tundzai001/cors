@@ -16,6 +16,7 @@ import os
 import re
 import signal
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -481,24 +482,27 @@ async def main() -> None:
 
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
-    run_metadata = output / "run.json"
-    if run_metadata.is_symlink():
-        raise SystemExit("run.json must not be a symbolic link")
-    run_metadata.write_text(
-        json.dumps(
-            {
-                "host": args.host,
-                "port": args.port,
-                "mountpoints": mountpoints,
-                "started_at": time.time(),
-                "duration_hours": args.duration_hours,
-                "file_format": "one_raw_rtcm_byte_file_per_mountpoint_txt_extension",
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output, delete=False) as metadata:
+        temporary_path = Path(metadata.name)
+        try:
+            json.dump(
+                {
+                    "host": args.host,
+                    "port": args.port,
+                    "mountpoints": mountpoints,
+                    "started_at": time.time(),
+                    "duration_hours": args.duration_hours,
+                    "file_format": "one_raw_rtcm_byte_file_per_mountpoint_txt_extension",
+                },
+                metadata,
+                ensure_ascii=False,
+                indent=2,
+            )
+            metadata.close()
+            temporary_path.replace(output / "run.json")
+        finally:
+            metadata.close()
+            temporary_path.unlink(missing_ok=True)
 
     print(f"Recording {len(mountpoints)} mountpoint(s) into {output.resolve()}", flush=True)
     stop_at = time.time() + args.duration_hours * 3600
