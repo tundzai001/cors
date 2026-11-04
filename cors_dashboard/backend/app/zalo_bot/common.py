@@ -6,6 +6,7 @@ import unicodedata
 from typing import List
 
 from .. import auth
+from ..runtime_config import _get_env_preferring_dotenv
 
 BOT_COMMANDS = (
     "start", "menu", "help", "cors", "register", "link", "notifications", "status", "errors", "stations", "station",
@@ -84,8 +85,9 @@ def _is_cors_status_question(text: str) -> bool:
         return True
     if region != "Việt Nam" and re.search(r"\b(?:khuyen nghi|tu van|khong che|bo tri)\b", words):
         return True
+    caster_host = _get_env_preferring_dotenv("CORS_CUC_NTRIP_HOST", "vngeonet.vn").strip().lower()
     target = (re.search(r"\b(?:cuc|vngeonet)\b", words)
-              or "14.238.1.125" in normalized
+              or (caster_host and caster_host in normalized)
               or re.match(r"^cors\b", words))
     if not target:
         target = re.search(r"\bdo\b", words)

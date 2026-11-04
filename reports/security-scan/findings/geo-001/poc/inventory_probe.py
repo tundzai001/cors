@@ -31,19 +31,20 @@ class Finding:
 
 def read_source(repo: Path, relative_path: str, revision: str | None) -> str:
     if revision:
+        object_name = f"{revision}:{relative_path}"
+        if any(char in object_name for char in "\r\n\0"):
+            raise RuntimeError("invalid Git object name")
         completed = subprocess.run(
-            ["git", "-C", str(repo), "show", "--no-ext-diff", "--no-textconv",
-             "--end-of-options", f"{revision}:{relative_path}"],
+            ["git", "cat-file", "--batch=%(objecttype)"],
+            cwd=repo,
+            input=(object_name + "\n").encode("utf-8"),
             check=False,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
         )
-        if completed.returncode != 0:
-            detail = completed.stderr.strip() or "git show failed"
-            raise RuntimeError(f"cannot read {relative_path} at revision: {detail}")
-        return completed.stdout
+        kind, _, content = completed.stdout.partition(b"\n")
+        if completed.returncode != 0 or kind != b"blob" or not content.endswith(b"\n"):
+            raise RuntimeError(f"cannot read {relative_path} at the requested revision")
+        return content[:-1].decode("utf-8", errors="replace")
 
     path = repo / relative_path
     return path.read_text(encoding="utf-8")

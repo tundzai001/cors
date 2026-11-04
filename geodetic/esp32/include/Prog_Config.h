@@ -57,7 +57,7 @@ inline constexpr char NTRIP_AUTH_BASE_STATION[] = "12345";
 
 // ================ CẤU HÌNH MQTT =================
 
-inline constexpr char MQTT_SERVER[] = "45.117.179.134";
+inline constexpr char MQTT_SERVER[] = "aitogy.click";
 inline constexpr uint16_t MQTT_PORT = 1883;
 inline constexpr char MQTT_USER[] = "mqttUser";
 inline constexpr char MQTT_PASS[] = "MqttPassword123$%^";

@@ -606,7 +606,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", default=os.getenv("UBLOX_SERIAL_PORT", "/dev/ttyUSB0"))
     parser.add_argument("--baud", type=int, default=int(os.getenv("UBLOX_BAUD", "115200")))
     parser.add_argument("--ublox-port", choices=("UART1", "UART2", "USB"), default=os.getenv("UBLOX_OUTPUT_PORT", "UART1").upper())
-    parser.add_argument("--ntrip-host", default=os.getenv("NTRIP_HOST", "14.238.1.125"))
+    parser.add_argument("--ntrip-host", default=os.getenv("NTRIP_HOST", "vngeonet.vn"))
     parser.add_argument("--ntrip-port", type=int, default=int(os.getenv("NTRIP_PORT", "2101")))
     parser.add_argument("--ntrip-user", default=os.getenv("NTRIP_USER", "phongkythuat869"))
     parser.add_argument("--ntrip-pass", default=os.getenv("NTRIP_PASS", "86868686"))

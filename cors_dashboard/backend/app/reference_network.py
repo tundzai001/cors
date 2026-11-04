@@ -126,7 +126,7 @@ async def probe_rtcm():
     try:
         # Bound the entire connection, login and stream read, including slow peers.
         async with asyncio.timeout(RTCM_PROBE_SECONDS):
-            host = _get_env_preferring_dotenv("CORS_CUC_NTRIP_HOST", "14.238.1.125")
+            host = _get_env_preferring_dotenv("CORS_CUC_NTRIP_HOST", "vngeonet.vn")
             port = int(_get_env_preferring_dotenv("CORS_CUC_NTRIP_PORT", "2101"))
             mountpoint = _get_env_preferring_dotenv("CORS_CUC_NTRIP_MOUNTPOINT", "VRS.105M3")
             if any(c in host + mountpoint for c in "\r\n"):
@@ -208,7 +208,7 @@ async def _scheduled_probe(key, interval, probe):
 def _rtcm_cache_key():
     # Invalidate old results if the endpoint or credentials change, without storing secrets.
     values = [_get_env_preferring_dotenv("CORS_CUC_NTRIP_" + name, default) for name, default in (
-        ("HOST", "14.238.1.125"), ("PORT", "2101"), ("MOUNTPOINT", "VRS.105M3"), ("USER", ""), ("PASSWORD", ""))]
+        ("HOST", "vngeonet.vn"), ("PORT", "2101"), ("MOUNTPOINT", "VRS.105M3"), ("USER", ""), ("PASSWORD", ""))]
     return "rtcm:" + hashlib.sha256("\0".join(values).encode()).hexdigest()
 
 

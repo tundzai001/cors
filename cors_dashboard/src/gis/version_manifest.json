@@ -27,17 +27,20 @@
     "postgres_CreateTables_vn_units.sql": {
       "description": "DDL script for administrative regions, units, provinces, and wards tables",
       "sha256": "9c9496fcef128ab2000a0314fe901608a11634d9743a97470e315942d5388d3d",
-      "size_bytes": 2355
+      "size_bytes": 2355,
+      "path": "../../backend/app/data/postgres_CreateTables_vn_units.sql"
     },
     "postgres_ImportData_vn_units.sql": {
       "description": "Full SQL INSERT statements for provinces and wards into PostgreSQL",
       "sha256": "46b59e96ca105edf090005fb4e8cc6373cfb3d66e657e8d5d763f0cf5f8fbda4",
-      "size_bytes": 351232
+      "size_bytes": 351232,
+      "path": "../../backend/app/data/postgres_ImportData_vn_units.sql"
     },
     "postgresql_CreateGISTables.sql": {
       "description": "PostGIS geometry tables DDL for spatial spatial querying and geometry columns",
       "sha256": "db69896fd3328de10114e6fc4a771f33fb2cb5724138216c3711c5723c3cc1cb",
-      "size_bytes": 1285
+      "size_bytes": 1285,
+      "path": "../../backend/app/data/postgresql_CreateGISTables.sql"
     }
   }
 }

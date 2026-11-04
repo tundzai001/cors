@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import ast
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
-import sys
+import threading
+import time
+from typing import Callable, Mapping
 import unittest
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from control_plane_failover import ControlPlaneFailover, resolve_effective_stream_switch
+# Load the production failover definitions without initializing hardware or network services.
+source = Path(__file__).resolve().parents[1] / "agent_universal.py"
+names = {"VALID_CHANNELS", "ControlPlaneFailover", "FailoverTransition", "resolve_effective_stream_switch"}
+definitions = [
+    node for node in ast.parse(source.read_text()).body
+    if getattr(node, "name", None) in names
+    or isinstance(node, ast.Assign)
+    and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)
+]
+exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), "exec"))
 
 
 class ControlPlaneFailoverTests(unittest.TestCase):

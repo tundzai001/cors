@@ -13,6 +13,8 @@ Thư mục này lưu trữ bản snapshot dữ liệu GIS và đơn vị hành c
 
 ## 2. Danh Mục Tệp (File Inventory & Checksums)
 
+Các tệp SQL nằm tại [backend/app/data](../../backend/app/data). Manifest ghi đường dẫn tương đối của từng tệp SQL.
+
 | Tệp tin | Kích thước | SHA-256 Checksum | Mô tả |
 | :--- | :--- | :--- | :--- |
 | `vietnam_provinces.geojson` | ~2.25 MB | `f5b47e29247bb27ee618f945f5ff15e878ce3087a8ddf813c63016aad6931abd` | Toạ độ ranh giới 34 tỉnh/thành phố trực thuộc Trung ương |
@@ -34,14 +36,13 @@ Khi Nhà nước ban hành nghị quyết mới về sáp nhập hoặc chia tá
    ```
 
 2. **Nếu có bản mới, tải về thư mục `src/gis/`**:
-   - Tải file GeoJSON và JSON mới.
+   - Tải GeoJSON và JSON vào `src/gis/`. Lưu các tệp SQL mới trực tiếp vào `backend/app/data/`.
    - Cập nhật SHA-256 trong `version_manifest.json` và `README.md`.
 
 3. **Đồng bộ sang runtime backend**:
    ```bash
    cp cors_dashboard/src/gis/vietnam_provinces.geojson cors_dashboard/backend/app/data/
    cp cors_dashboard/src/gis/vietnam_units.json cors_dashboard/backend/app/data/
-   cp cors_dashboard/src/gis/*.sql cors_dashboard/backend/app/data/
    ```
 
 4. **Chạy lại seeder để cập nhật DB PostgreSQL**:

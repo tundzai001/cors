@@ -72,8 +72,9 @@ else:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CONNECTION CONFIGURATION ---
-BACKEND_HOST = os.getenv("BACKEND_HOST", "aitogy.click")
-MQTT_BROKER = "45.117.179.134"
+BACKEND_WS_HOST = os.getenv("BACKEND_WS_HOST") or os.getenv("BACKEND_HOST") or "base.aitogy.com"
+BACKEND_WS_PORT = int(os.getenv("BACKEND_WS_PORT", "443"))
+MQTT_BROKER = "aitogy.click"
 MQTT_PORT = 1883
 # === THÊM 2 DÒNG NÀY ===
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "mqttUser")
@@ -3032,7 +3033,7 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
                 
             agent.config['auto_base_setup'] = {
                 "enabled": True,
-                "ip": auto_setup_metadata.get("ip", "14.238.1.125"),
+                "ip": auto_setup_metadata.get("ip", "vngeonet.vn"),
                 "port": auto_setup_metadata.get("port", 2101),
                 "user": auto_setup_metadata.get("user", "aitogy"),
                 "password": auto_setup_metadata.get("password", "123"),
@@ -3366,7 +3367,7 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
 
 async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
     global active_websocket_connection
-    ws_uri = f"ws://{BACKEND_HOST}:8000/ws/pi/{MACHINE_SERIAL}"
+    ws_uri = f"wss://{BACKEND_WS_HOST}:{BACKEND_WS_PORT}/ws/pi/{MACHINE_SERIAL}"
     
     while True:
         try:
@@ -3673,7 +3674,7 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         await asyncio.sleep(0.5)
             
     # Start temporary NTRIP client to get RTCM
-    ntrip_host = cfg.get("ip", "14.238.1.125")
+    ntrip_host = cfg.get("ip", "vngeonet.vn")
     ntrip_port = str(cfg.get("port", "2101"))
     ntrip_user = cfg.get("user", "aitogy")
     ntrip_pass = cfg.get("password", "123")
