@@ -165,6 +165,10 @@ __attribute__((noreturn)) void taskNtrip([[maybe_unused]] void *parameter) {
     auto* const rtcmState = static_cast<RtcmState*>(parameter);
     Serial.println("[NTRIP TASK] Bat dau task NTRIP...");
     int loopStatus = 0;
+#if PROGRAM_DEBUG
+    bool ntripStatusLogged = false;
+    bool ntripWasConnected = false;
+#endif
     while (true) {
         String rtcmRead;
         if (rtcmBufferMutex && xSemaphoreTake(rtcmBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS))) {
@@ -197,7 +201,13 @@ __attribute__((noreturn)) void taskNtrip([[maybe_unused]] void *parameter) {
             // A caster rejection is not a hardware failure. loopNTRIP keeps
             // its per-endpoint reconnect backoff while MQTT remains available.
             #if PROGRAM_DEBUG
-            Serial.println("[NTRIP TASK] loopNTRIP() tra ve: " + String(loopStatus));
+            const bool connected = loopStatus != 504;
+            if (!ntripStatusLogged || connected != ntripWasConnected) {
+                Serial.printf("[NTRIP TASK] NTRIP=%s; loop_status=%d\n",
+                              connected ? "UP" : "DOWN", loopStatus);
+                ntripStatusLogged = true;
+                ntripWasConnected = connected;
+            }
             #endif
         }
         vTaskDelay(pdMS_TO_TICKS(200));

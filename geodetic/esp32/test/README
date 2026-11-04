@@ -62,3 +62,6 @@ Upstream-cleanup regression checks (native C++, ASan/UBSan):
 The optional first argument is a previous firmware root. Status JSON is compared
 across versions; stream commands use expected outcomes because the old handler
 contains dangling JSON keys. WebSocket checks run unchanged on either version.
+
+NTRIP reconnect status and transition-only logging:
+  python3 -B test/host/check_ntrip_reconnect.py
