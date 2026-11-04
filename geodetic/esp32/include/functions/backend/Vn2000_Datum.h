@@ -18,8 +18,10 @@ public:
     void reset();
     void feed(const uint8_t *data, size_t size);
     const Vn2000Datum &datum() const { return datum_; }
+    uint32_t validFrames() const { return validFrames_; }
 private:
     Vn2000Datum datum_;
+    uint32_t validFrames_ = 0;
     uint8_t frame_[1029] = {};
     size_t size_ = 0;
     void decode(size_t length);

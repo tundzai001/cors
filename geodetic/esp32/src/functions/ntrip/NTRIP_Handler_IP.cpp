@@ -59,6 +59,8 @@ bool roverSessionAuthenticated = false;
 uint32_t roverLastGgaMs = 0;
 uint32_t roverBytesReceived = 0;
 uint32_t roverPacketsReceived = 0;
+uint32_t roverBytesWritten = 0, roverLastDiagnosticMs = 0;
+const char *roverLastError = "CORS rover connection lost";
 
 Client &clientFor(uint8_t index) {
     if (index == 0) {
@@ -408,6 +410,9 @@ bool startNtripRover(const String &host, const uint16_t port, const String &user
     roverDatumSession.reset();
     roverBytesReceived = 0;
     roverPacketsReceived = 0;
+    roverBytesWritten = 0;
+    roverLastDiagnosticMs = millis();
+    roverLastError = "CORS rover connection lost";
     roverSessionActive = true;
     roverSessionAuthenticated = false;
     roverLastGgaMs = 0;
@@ -455,11 +460,23 @@ int loopNtripRover() {
     if (!roverSessionActive || !roverSessionAuthenticated) return 504;
     Client &client = clientFor(0);
     if (!client.connected()) {
+        Serial.printf("[NTRIP ROVER][ERROR] CORS socket closed; cors_rx=%lu B; uart_tx=%lu B; rtcm_frames=%lu\n",
+                      static_cast<unsigned long>(roverBytesReceived),
+                      static_cast<unsigned long>(roverBytesWritten),
+                      static_cast<unsigned long>(roverDatumSession.validFrames()));
         roverSessionActive = false;
         roverSessionAuthenticated = false;
         return 504;
     }
     sendRoverGgaIfAvailable(client);
+    if (millis() - roverLastDiagnosticMs >= 5000UL) {
+        roverLastDiagnosticMs = millis();
+        const auto snapshot = getGnssTelemetrySnapshot();
+        Serial.printf("[NTRIP ROVER][DATA] cors_rx=%lu B; uart_tx=%lu B; rtcm_frames=%lu; fix=%s\n",
+                      static_cast<unsigned long>(roverBytesReceived),
+                      static_cast<unsigned long>(roverBytesWritten),
+                      static_cast<unsigned long>(roverDatumSession.validFrames()), snapshot.fixStatus);
+    }
     if (client.available() <= 0) return 200;
 
     uint8_t buffer[512] = {};
@@ -472,9 +489,17 @@ int loopNtripRover() {
     const int bytesRead = client.read(buffer, bytesToRead);
     if (bytesRead > 0) {
         roverDatumSession.feed(buffer, static_cast<size_t>(bytesRead));
-        Serial1.write(buffer, static_cast<size_t>(bytesRead));
+        const size_t written = Serial1.write(buffer, static_cast<size_t>(bytesRead));
         roverBytesReceived += static_cast<uint32_t>(bytesRead);
+        roverBytesWritten += static_cast<uint32_t>(written);
         ++roverPacketsReceived;
+        if (written != static_cast<size_t>(bytesRead)) {
+            roverLastError = "GNSS UART did not accept all CORS bytes";
+            Serial.printf("[NTRIP ROVER][ERROR] UART accepted %u/%u bytes\n",
+                          static_cast<unsigned>(written), static_cast<unsigned>(bytesRead));
+            xSemaphoreGive(rtcmBufferMutex);
+            return 504;
+        }
     }
     xSemaphoreGive(rtcmBufferMutex);
     return bytesRead > 0 ? bytesRead : 200;
@@ -495,3 +520,5 @@ uint32_t ntripRoverBytesReceived() { return roverBytesReceived; }
 uint32_t ntripRoverPacketsReceived() { return roverPacketsReceived; }
 
 Vn2000Datum ntripRoverDatum() { return roverDatumSession.datum(); }
+
+const char *ntripRoverLastError() { return roverLastError; }

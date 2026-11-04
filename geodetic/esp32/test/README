@@ -65,3 +65,6 @@ contains dangling JSON keys. WebSocket checks run unchanged on either version.
 
 NTRIP reconnect status and transition-only logging:
   python3 -B test/host/check_ntrip_reconnect.py
+
+Workflow Base-mode restoration and CORS-to-UART delivery:
+  python3 -B test/host/check_workflow_restore.py

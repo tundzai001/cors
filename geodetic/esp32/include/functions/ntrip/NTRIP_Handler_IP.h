@@ -34,6 +34,7 @@ void stopNtripRover();
 bool ntripRoverActive();
 uint32_t ntripRoverBytesReceived();
 uint32_t ntripRoverPacketsReceived();
+const char *ntripRoverLastError();
 // Caller owns tcpStreamMutex, like start/loop/stopNtripRover.
 Vn2000Datum ntripRoverDatum();
 

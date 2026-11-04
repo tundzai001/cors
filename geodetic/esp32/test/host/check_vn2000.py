@@ -85,6 +85,7 @@ int main(int argc, char **argv) {
     const auto decoded = session.datum();
     assert(decoded.has1021 && decoded.has1023 && decoded.has1025);
     assert(decoded.count1021 == 1 && decoded.count1023 == 1 && decoded.count1025 == 1);
+    assert(session.validFrames() == 3);
     assert(transformVn2000(21.08499, 105.786656, -8.0624, decoded, result));
     auto wrongZone = decoded; wrongZone.scale = 0.9999;
     assert(transformVn2000(21, 105, 0, wrongZone, result));
@@ -105,6 +106,7 @@ int main(int argc, char **argv) {
         << result.latitude << ' ' << result.longitude << ' ' << result.altitude << '\n';
     session.reset();
     assert(!session.datum().has1021 && !session.datum().has1023 && !session.datum().has1025);
+    assert(session.validFrames() == 0);
     assert(session.datum().count1021 == 0); // A new caster cannot reuse prior-session parameters.
     session.feed(bytes.data(), bytes.size());
     assert(session.datum().has1021 && session.datum().count1021 == 1);

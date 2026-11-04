@@ -126,3 +126,22 @@ u-blox receiver output is quantized to nine angular decimal digits and four
 height decimal digits. Unicore output retains the calculated double. The UI
 shows raw LLH, calculated LLH and receiver output separately; historical reports
 without calculated_coord explicitly show that field as unavailable.
+
+
+## ESP32 cleanup after a temporary Rover session
+
+Auto Base restores the saved Base mode on success, failure and cancellation.
+Survey-In restores its saved duration, accuracy and output options; Fixed LLA
+restores its saved coordinates. A receiver mode readback must confirm the
+restored mode before source publishing resumes. If restoration/readback fails,
+the Base startup state becomes an error and source streams remain blocked.
+An unconfigured receiver may remain Rover for candidate review, but cannot
+publish a Base stream until configured.
+
+Rover diagnostics distinguish `cors_rx` (raw caster bytes), `uart_tx` (bytes
+accepted by the ESP32 UART driver), and `rtcm_frames` (CRC-valid RTCM frames).
+These counts are scoped to the temporary CORS receive session, not GNSS output.
+A short UART write aborts the workflow with a UART-specific error. A closed
+CORS socket logs the counters. UART acceptance does not prove the GNSS receiver
+has decoded the corrections or reached RTK FIX; the GGA fix status remains the
+receiver's evidence for that.

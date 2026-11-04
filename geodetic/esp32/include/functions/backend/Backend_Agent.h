@@ -157,6 +157,7 @@ private:
     int loopNtripRoverLocked();
     bool stopNtripRoverLocked();
     bool applyBaseCoordinates(double latitude, double longitude, double altitude);
+    bool restoreWorkflowBase(JsonObjectConst base);
     bool refreshReceiverReadback(String &error);
     bool verifyGnssConfig(JsonObjectConst payload, const String &commandId, String &error);
     bool verifyUnicoreConfig(JsonObjectConst payload, const String &commandId, String &error);

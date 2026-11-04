@@ -218,7 +218,7 @@ uint32_t crc24q(const uint8_t *bytes, size_t length) {
 }
 }
 
-void Vn2000Session::reset() { datum_ = Vn2000Datum(); size_ = 0; }
+void Vn2000Session::reset() { datum_ = Vn2000Datum(); size_ = 0; validFrames_ = 0; }
 
 void Vn2000Session::feed(const uint8_t *data, size_t length) {
     for (size_t i = 0; i < length; ++i) {
@@ -235,6 +235,7 @@ void Vn2000Session::feed(const uint8_t *data, size_t length) {
             const uint32_t actual = (uint32_t(frame_[expected - 3]) << 16)
                 | (uint32_t(frame_[expected - 2]) << 8) | frame_[expected - 1];
             if (crc24q(frame_, expected - 3) == actual) {
+                ++validFrames_;
                 decode(expected);
                 size_ -= expected;
                 memmove(frame_, frame_ + expected, size_);
