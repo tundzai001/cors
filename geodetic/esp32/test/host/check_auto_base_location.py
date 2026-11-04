@@ -12,11 +12,11 @@ probe = {'status_boot_id': 'boot-1', 'status_sequence': 42, 'auto_base_progress'
     'phase': 'resolving_location', 'location_request': {
         'request_id': 'boot-1:1000', 'lat': '21.08499', 'lon': '105.786656', 'alt': '-8.0624'}}}
 ack = build_control_plane_ack(probe, channel='mqtt', serial='station-1', server_timestamp=123)
-source = (root / 'src/functions/Backend_Agent_Workflows.cpp').read_text()
+source = (root / 'src/functions/backend/Backend_Agent_Workflows.cpp').read_text()
 functions = source.split('namespace {', 1)[1].split('\n}\n\nvoid BackendAgent::setWorkflowProgress', 1)[0]
-agent = (root / 'src/functions/Backend_Agent.cpp').read_text()
+agent = (root / 'src/functions/backend/Backend_Agent.cpp').read_text()
 handler = 'void BackendAgent::handleControlAck(' + agent.split('void BackendAgent::handleControlAck(', 1)[1].split('\nvoid BackendAgent::onMqttMessage', 1)[0]
-ntrip = (root / 'src/functions/NTRIP_Handler_IP.cpp').read_text()
+ntrip = (root / 'src/functions/ntrip/NTRIP_Handler_IP.cpp').read_text()
 handshake = 'bool waitForNtripResponse(' + ntrip.split('bool waitForNtripResponse(', 1)[1].split('\nvoid sendRoverGgaIfAvailable', 1)[0]
 shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')
 shim = shim.replace('    void trim() {', '''    int indexOf(const char *value) const { const auto p = find(value); return p == npos ? -1 : int(p); }

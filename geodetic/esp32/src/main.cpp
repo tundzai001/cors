@@ -1,9 +1,9 @@
 #include "helper.h"
-#include "functions/Backend_Agent.h"
-#include "functions/RTCM_Receiver.h"
-#include "functions/cmd_handler.h"
-#include "functions/NTRIP_Handler_IP.h"
-#include "functions/Gnss_Detection.h"
+#include "functions/backend/Backend_Agent.h"
+#include "functions/ntrip/RTCM_Receiver.h"
+#include "functions/backend/cmd_handler.h"
+#include "functions/ntrip/NTRIP_Handler_IP.h"
+#include "functions/gnss/Gnss_Detection.h"
 #include "hardware/Network_Manager.h"
 
 #include <time.h>

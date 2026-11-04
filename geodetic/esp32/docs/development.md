@@ -2,8 +2,8 @@
 
 ## Backend agent ownership
 
-`include/functions/Backend_Agent.h` defines the public agent interface. Its
-implementation is split by responsibility under `src/functions/`:
+`include/functions/backend/Backend_Agent.h` defines the public agent interface. Its
+implementation is split by responsibility under `src/functions/backend/`:
 
 | File | Responsibility |
 | --- | --- |
@@ -18,10 +18,18 @@ implementation is split by responsibility under `src/functions/`:
 | `Backend_Agent_Projection.cpp` | Coordinate transformation and province projections |
 | `Backend_Agent_Websocket.cpp` | RFC6455 handshake, framing and TCP reconnects |
 
-`Backend_Agent_Internal.h`, `Backend_Agent_Codec.h` and
+Under `include/functions/backend/`, `Backend_Agent_Internal.h`, `Backend_Agent_Codec.h` and
 `Backend_Agent_Websocket.h` are implementation headers. Keep transport framing out of command handling and status formatting.
 Survey-In status uses receiver readback; the removed GGA polling state must not
 be reintroduced to make RTCM-only mode depend on NMEA.
+
+## Function directory groups
+
+Both `src/functions/` and `include/functions/` use `backend/`, `gnss/`,
+`mqtt/` and `ntrip/`. Hardware and maths retain their existing directories.
+Source files include headers by their full path from `include/`; no forwarding
+headers or recursive include search paths are required. Host harnesses and
+build instructions use the same layout.
 
 ## Firmware ownership
 
@@ -29,8 +37,8 @@ be reintroduced to make RTCM-only mode depend on NMEA.
 - `src/hardware/Network_Manager.cpp`: boot connectivity, Wi-Fi/SIM handover,
   recovery timing and transport client selection. Its MQTT-side helpers run
   with `tcpStreamMutex` held; maintenance acquires that mutex itself.
-- `src/functions/Gnss_Detection.cpp`: receiver identity probes and baud scan.
-- `src/functions/NTRIP_Handler_IP.cpp`: caster endpoints, authentication,
+- `src/functions/gnss/Gnss_Detection.cpp`: receiver identity probes and baud scan.
+- `src/functions/ntrip/NTRIP_Handler_IP.cpp`: caster endpoints, authentication,
   correction streaming and temporary rover sessions.
 
 The unused `bootstrapUM980`/`bootstrapUblox` UART configuration paths were

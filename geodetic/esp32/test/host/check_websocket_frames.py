@@ -9,7 +9,7 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 source_root = Path(sys.argv[1]) if len(sys.argv) > 1 else root
-source = (source_root / 'src/functions/Backend_Agent_Websocket.cpp').read_text()
+source = next((source_root / 'src/functions').rglob('Backend_Agent_Websocket.cpp')).read_text()
 start = source.index('bool BackendAgentWebsocket::readFrame(') if 'bool BackendAgentWebsocket::readFrame(' in source else source.index('void BackendAgentWebsocket::parseFrames(')
 source = source[start:source.index('\nvoid BackendAgentWebsocket::sendControl', start)]
 shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')

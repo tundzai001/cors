@@ -4,14 +4,14 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[2]
-source = (root / 'src/functions/RTCM_Receiver.cpp').read_text()
+source = (root / 'src/functions/ntrip/RTCM_Receiver.cpp').read_text()
 functions = 'double nmeaCoordinate(' + source.split('double nmeaCoordinate(', 1)[1].split('\nvoid resetRtcmParser', 1)[0]
-header = (root / 'include/functions/RTCM_Receiver.h').read_text()
+header = (root / 'include/functions/ntrip/RTCM_Receiver.h').read_text()
 telemetry = 'struct GnssTelemetrySnapshot {' + header.split('struct GnssTelemetrySnapshot {', 1)[1].split('\n};', 1)[0] + '\n};'
 shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')
 shim = shim.replace('    void trim() {', '    bool startsWith(const String &value) const { return compare(0, value.size(), value) == 0; }\n    void trim() {')
 harness = r'''
-#include "functions/Base_Sample.h"
+#include "functions/backend/Base_Sample.h"
 #include <cassert>
 #include <cmath>
 using std::min;

@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[2]
-source = (root / 'src/functions/MQTT_Manager.cpp').read_text()
+source = (root / 'src/functions/mqtt/MQTT_Manager.cpp').read_text()
 callback = 'void mqttCallback(' + source.split('void mqttCallback(', 1)[1].split('\nbool probeMqttTransport', 1)[0]
 connect = 'int connectMQTT() {' + source.split('int connectMQTT() {', 1)[1].split('\nint publishHealth', 1)[0]
 shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')

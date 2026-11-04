@@ -13,8 +13,8 @@ More information about PlatformIO Unit Testing:
 Host checks (run from geodetic/esp32, no device required):
 
 c++ -std=c++17 -fsanitize=address,undefined -g -Itest/host -Iinclude \
-  test/host/base_checks.cpp src/functions/gnss_cmd_builder.cpp \
-  src/functions/ublox_commands.cpp src/functions/unicore_commands.cpp \
+  test/host/base_checks.cpp src/functions/gnss/gnss_cmd_builder.cpp \
+  src/functions/gnss/ublox_commands.cpp src/functions/gnss/unicore_commands.cpp \
   -o /tmp/esp32-base-checks
 /tmp/esp32-base-checks
 python3 -B test/host/check_cors.py ../.. /tmp/esp32-base-checks
@@ -34,8 +34,8 @@ c++ -std=c++17 -fsanitize=address,undefined -Itest/host -Iinclude \
 Shared codec and MQTT dispatch checks:
 
 c++ -std=c++17 -DNATIVE_BUILD -fsanitize=address,undefined \
-  -Itest/host -Iinclude -Isrc/functions test/host/codec_checks.cpp \
-  src/functions/Backend_Agent_Codec.cpp -o /tmp/esp32-codec-checks
+  -Itest/host -Iinclude test/host/codec_checks.cpp \
+  src/functions/backend/Backend_Agent_Codec.cpp -o /tmp/esp32-codec-checks
 /tmp/esp32-codec-checks
 python3 -B test/host/check_mqtt_dispatch.py
 

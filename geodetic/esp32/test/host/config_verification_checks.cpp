@@ -1,8 +1,8 @@
-#include "functions/Ubx_Config_Verification.h"
-#include "functions/Ubx_Reply.h"
-#include "functions/Ubx_Navigation.h"
-#include "functions/Ubx_Satellites.h"
-#include "functions/Unicore_Config_Verification.h"
+#include "functions/gnss/Ubx_Config_Verification.h"
+#include "functions/gnss/Ubx_Reply.h"
+#include "functions/gnss/Ubx_Navigation.h"
+#include "functions/gnss/Ubx_Satellites.h"
+#include "functions/gnss/Unicore_Config_Verification.h"
 #include <cassert>
 #include <cstdio>
 #include <initializer_list>

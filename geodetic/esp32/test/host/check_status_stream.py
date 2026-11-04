@@ -20,15 +20,15 @@ shim = shim.replace('    void trim() {', '''    String(const char *text) : std::
     void toLowerCase() { std::transform(begin(), end(), begin(), [](unsigned char c) { return std::tolower(c); }); }
     bool equalsIgnoreCase(String value) const { String own = *this; own.toLowerCase(); value.toLowerCase(); return own == value; }
     void trim() {''')
-snapshot = (root / 'include/functions/RTCM_Receiver.h').read_text().split('struct GnssTelemetrySnapshot {', 1)[1].split('\n};', 1)[0]
+snapshot = (root / 'include/functions/ntrip/RTCM_Receiver.h').read_text().split('struct GnssTelemetrySnapshot {', 1)[1].split('\n};', 1)[0]
 common = r'''
 #include <cstdlib>
 #include <cmath>
 #include <iostream>
 #include <vector>
 #include <ArduinoJson.h>
-#include "functions/Station_Lock.h"
-#include "functions/Ubx_Navigation.h"
+#include "functions/backend/Station_Lock.h"
+#include "functions/gnss/Ubx_Navigation.h"
 class Stream;
 using QueueHandle_t = void *;
 using SemaphoreHandle_t = void *;
@@ -117,14 +117,14 @@ int main() {
 '''
 
 def run(source_root, reference=False):
-    header = (source_root / 'include/functions/Backend_Agent.h').read_text()
+    header = next((source_root / 'include/functions').rglob('Backend_Agent.h')).read_text()
     header = re.sub(r'^#include.*$', '', header, flags=re.M).replace('private:', 'public:')
-    status = (source_root / 'src/functions/Backend_Agent_Status.cpp').read_text()
+    status = next((source_root / 'src/functions').rglob('Backend_Agent_Status.cpp')).read_text()
     status = re.sub(r'^#include.*$', '', status, flags=re.M)
-    commands = (source_root / 'src/functions/Backend_Agent_Commands.cpp').read_text()
+    commands = next((source_root / 'src/functions').rglob('Backend_Agent_Commands.cpp')).read_text()
     helpers = commands[commands.index('namespace {'):commands.index('void BackendAgent::recordCommandResult')] if 'namespace {' in commands else ''
     stream = 'void BackendAgent::applyServiceStreamCommand' + commands.split('void BackendAgent::applyServiceStreamCommand', 1)[1].split('\nbool BackendAgent::executeRawCommands', 1)[0]
-    agent = (root / 'src/functions/Backend_Agent.cpp').read_text()
+    agent = (root / 'src/functions/backend/Backend_Agent.cpp').read_text()
     active = 'bool BackendAgent::effectiveStreamActive' + agent.split('bool BackendAgent::effectiveStreamActive', 1)[1].split('\nbool BackendAgent::mqttConnected', 1)[0]
     telemetry = 'struct GnssTelemetrySnapshot {' + snapshot + '\n};\nGnssTelemetrySnapshot getGnssTelemetrySnapshot() { GnssTelemetrySnapshot s; s.hasData = true; s.lastDataMs = s.lastGgaMs = 9000; s.satellites = 20; return s; }\n'
     with tempfile.TemporaryDirectory(prefix='esp-status-stream-') as directory:

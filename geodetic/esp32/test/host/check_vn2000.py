@@ -51,8 +51,8 @@ assert datum.rtcm1021_update and datum.rtcm1023_update and datum.rtcm1025_update
 expected = namespace['_transform_itrf_to_vn2000_neh_and_llh'](21.08499, 105.786656, -8.0624, datum)
 
 harness = r'''
-#include "functions/Vn2000_Datum.h"
-#include "functions/Base_Sample.h"
+#include "functions/backend/Vn2000_Datum.h"
+#include "functions/backend/Base_Sample.h"
 #include <cassert>
 #include <cmath>
 #include <fstream>
@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix='esp-vn2000-') as directory:
     (path / 'short.bin').write_bytes(frame(1021, []))
     (path / 'check.cpp').write_text(harness)
     subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
-                    '-I' + str(root / 'include'), str(root / 'src/functions/Backend_Agent_Projection.cpp'),
+                    '-I' + str(root / 'include'), str(root / 'src/functions/backend/Backend_Agent_Projection.cpp'),
                     str(path / 'check.cpp'), '-o', str(path / 'check')], check=True)
     actual = [float(value) for value in subprocess.check_output([str(path / 'check'), str(path / 'frames.bin'), str(path / 'short.bin')], text=True).split()]
     expected_cases = []
