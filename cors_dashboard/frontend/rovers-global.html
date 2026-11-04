@@ -102,12 +102,12 @@
                     <div class="filter-row">
                         <div class="search-input-wrapper">
                             <i class="bi bi-search"></i>
-                            <input type="text" id="search-box" class="premium-input" placeholder="Search username, serial, host...">
+                            <input type="text" id="search-box" aria-label="Tìm theo tên tài khoản, số máy hoặc máy chủ" class="premium-input" placeholder="Search username, serial, host...">
                         </div>
-                        <select id="filter-station" class="premium-select">
+                        <select id="filter-station" aria-label="Lọc theo trạm Base" class="premium-select">
                             <option value="">Tất cả trạm Base</option>
                         </select>
-                        <select id="filter-status" class="premium-select">
+                        <select id="filter-status" aria-label="Lọc theo trạng thái" class="premium-select">
                             <option value="">Tất cả Status</option>
                             <option value="active">Active (Online)</option>
                             <option value="standby">Standby (Offline)</option>
@@ -137,7 +137,7 @@
                     <div id="rover-bulk-toolbar" class="rover-bulk-toolbar d-none">
                         <div class="d-flex align-items-center gap-2">
                             <span class="badge bg-info text-dark"><span id="rover-selected-count">0</span> selected</span>
-                            <input type="number" id="bulk-renew-days" class="form-control form-control-sm" value="365" min="1" max="3650" style="width: 92px;">
+                            <input type="number" id="bulk-renew-days" aria-label="Số ngày gia hạn" class="form-control form-control-sm" value="365" min="1" max="3650" style="width: 92px;">
                             <button type="button" id="bulk-renew-btn" class="btn btn-sm btn-outline-warning"><i class="bi bi-calendar-plus me-1"></i>Bulk renew</button>
                             <button type="button" id="bulk-sync-btn" class="btn btn-sm btn-outline-info"><i class="bi bi-arrow-repeat me-1"></i>Sync caster status</button>
                             <button type="button" id="bulk-export-btn" class="btn btn-sm btn-outline-light"><i class="bi bi-download me-1"></i>Export selected</button>
@@ -151,7 +151,7 @@
                             <table class="premium-table rover-list-table">
                                 <thead>
                                     <tr>
-                                        <th class="text-center"><input type="checkbox" class="form-check-input" id="rover-select-all"></th>
+                                        <th class="text-center"><input type="checkbox" class="form-check-input" id="rover-select-all" aria-label="Chọn tất cả Rover"></th>
                                         <th>Username</th>
                                         <th>Password</th>
                                         <th>Mountpoints</th>
@@ -288,7 +288,7 @@
                                 <h6 class="text-primary mb-3 small text-uppercase fw-bold"><i class="bi bi-person-badge me-2"></i>Account Configuration</h6>
                                 
                                 <div class="mb-3">
-                                    <label class="form-label small text-muted fw-bold">Username</label>
+                                    <label for="new-username" class="form-label small text-muted fw-bold">Username</label>
                                     <div class="input-group">
                                         <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-person"></i></span>
                                         <input type="text" class="form-control" id="new-username" required pattern="^[a-zA-Z0-9_]+$" placeholder="user01">
@@ -297,7 +297,7 @@
                                 </div>
 
                                 <div class="mb-3">
-                                    <label class="form-label small text-muted fw-bold">Password</label>
+                                    <label for="new-password" class="form-label small text-muted fw-bold">Password</label>
                                     <div class="input-group">
                                         <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-key"></i></span>
                                         <input type="text" class="form-control" id="new-password" required placeholder="******">
@@ -334,7 +334,7 @@
                                         </div>
                                     </div>
                                     <div class="col-12 col-sm-6">
-                                        <label class="form-label small text-muted fw-bold">Kết nối tối đa (0 = không giới hạn)</label>
+                                        <label for="new-max-connections" class="form-label small text-muted fw-bold">Kết nối tối đa (0 = không giới hạn)</label>
                                         <input type="number" class="form-control" id="new-max-connections" value="1" min="0" max="100">
                                     </div>
                                 </div>
@@ -367,11 +367,11 @@
                                     </div>
                                     <div id="rtcm-cycle-interval-group" class="row g-2 mt-2 d-none">
                                         <div class="col-6">
-                                            <label class="form-label small text-muted mb-1 small">Interval (s)</label>
+                                            <label for="new-rtcm-disconnect-interval" class="form-label small text-muted mb-1 small">Interval (s)</label>
                                             <input type="number" class="form-control form-control-sm" id="new-rtcm-disconnect-interval" value="300">
                                         </div>
                                         <div class="col-6">
-                                            <label class="form-label small text-muted mb-1 small">Duration (s)</label>
+                                            <label for="new-rtcm-disconnect-duration" class="form-label small text-muted mb-1 small">Duration (s)</label>
                                             <input type="number" class="form-control form-control-sm" id="new-rtcm-disconnect-duration" value="10">
                                         </div>
                                     </div>
@@ -388,33 +388,33 @@
                                 <h6 class="text-primary mb-3 small text-uppercase fw-bold"><i class="bi bi-shield-lock me-2"></i>Access Rights & Mountpoints</h6>
                                 
                                 <div class="mb-4">
-                                    <label class="form-label small text-muted fw-bold mb-2">Chọn Trạm Phát (Check để cấp quyền)</label>
-                                    <div class="border rounded p-2 bg-dark-subtle scroll-panel scroll-panel-sm" id="station-checklist">
+                                    <span id="station-checklist-label" class="form-label small text-muted fw-bold mb-2">Chọn Trạm Phát (Check để cấp quyền)</span>
+                                    <div class="border rounded p-2 bg-dark-subtle scroll-panel scroll-panel-sm" id="station-checklist" role="group" aria-labelledby="station-checklist-label">
                                         <div class="text-muted small text-center">Đang tải danh sách...</div>
                                     </div>
                                 </div>
 
                                 <div class="mb-4">
-                                    <label class="form-label small text-muted fw-bold mb-2">Allowed Mountpoints</label>
+                                    <label for="new-mountpoints" class="form-label small text-muted fw-bold mb-2">Allowed Mountpoints</label>
                                     <div class="input-group">
                                         <span class="input-group-text bg-dark border-secondary text-info"><i class="bi bi-broadcast"></i></span>
                                         <input type="text" class="form-control" id="new-mountpoints" required placeholder="Tự động điền khi chọn trạm...">
                                     </div>
                                 </div>
 
-                                <div id="admin-live-mountpoints-box" class="premium-card-inner p-3 d-none">
+                                <div id="admin-live-mountpoints-box" role="group" aria-labelledby="admin-live-mountpoints-box-label" class="premium-card-inner p-3 d-none">
                                     <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <label class="form-label small text-muted fw-bold mb-0">Live Mountpoints (Admin)</label>
+                                        <span id="admin-live-mountpoints-box-label" class="form-label small text-muted fw-bold mb-0">Live Mountpoints (Admin)</span>
                                         <button type="button" class="btn btn-xs btn-link text-info p-0" id="reload-live-mountpoints-btn">
                                             <i class="bi bi-arrow-clockwise"></i> Refresh
                                         </button>
                                     </div>
                                     <div class="row g-2 mb-2">
                                         <div class="col-7">
-                                            <input type="text" class="form-control form-control-sm bg-dark border-secondary" id="live-mp-search" placeholder="Search live...">
+                                            <input type="text" class="form-control form-control-sm bg-dark border-secondary" id="live-mp-search" aria-label="Tìm mountpoint đang hoạt động" placeholder="Search live...">
                                         </div>
                                         <div class="col-5">
-                                            <select class="form-select form-select-sm bg-dark border-secondary" id="live-mp-host-filter">
+                                            <select class="form-select form-select-sm bg-dark border-secondary" id="live-mp-host-filter" aria-label="Lọc mountpoint theo caster">
                                                 <option value="all">Hosts</option>
                                             </select>
                                         </div>
@@ -458,12 +458,12 @@
                                 <h6 class="text-info mb-3 small text-uppercase fw-bold"><i class="bi bi-gear-fill me-2"></i>Account Settings</h6>
                                 
                                 <div class="mb-3">
-                                    <label class="form-label small text-muted fw-bold">Username</label>
+                                    <label for="edit-username" class="form-label small text-muted fw-bold">Username</label>
                                     <input type="text" class="form-control bg-secondary bg-opacity-10 border-secondary text-muted" id="edit-username" readonly disabled>
                                 </div>
 
                                 <div class="mb-3">
-                                    <label class="form-label small text-muted fw-bold">Mật khẩu mới (Để trống nếu không đổi)</label>
+                                    <label for="edit-password" class="form-label small text-muted fw-bold">Mật khẩu mới (Để trống nếu không đổi)</label>
                                     <div class="input-group">
                                         <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-key"></i></span>
                                         <input type="text" class="form-control" id="edit-password" placeholder="******">
@@ -501,7 +501,7 @@
                                         </div>
                                     </div>
                                     <div class="col-12 col-sm-6">
-                                        <label class="form-label small text-muted fw-bold">Kết nối tối đa (0 = không giới hạn)</label>
+                                        <label for="edit-max-connections" class="form-label small text-muted fw-bold">Kết nối tối đa (0 = không giới hạn)</label>
                                         <input type="number" class="form-control" id="edit-max-connections" min="0" max="100">
                                     </div>
                                 </div>
@@ -532,11 +532,11 @@
                                     </div>
                                     <div id="edit-rtcm-cycle-interval-group" class="row g-2 mt-2 d-none">
                                         <div class="col-6">
-                                            <label class="form-label small text-muted mb-1">Interval (s)</label>
+                                            <label for="edit-rtcm-disconnect-interval" class="form-label small text-muted mb-1">Interval (s)</label>
                                             <input type="number" class="form-control form-control-sm" id="edit-rtcm-disconnect-interval" value="300">
                                         </div>
                                         <div class="col-6">
-                                            <label class="form-label small text-muted mb-1">Duration (s)</label>
+                                            <label for="edit-rtcm-disconnect-duration" class="form-label small text-muted mb-1">Duration (s)</label>
                                             <input type="number" class="form-control form-control-sm" id="edit-rtcm-disconnect-duration" value="10">
                                         </div>
                                     </div>
@@ -553,28 +553,28 @@
                                 <h6 class="text-info mb-3 small text-uppercase fw-bold"><i class="bi bi-broadcast-pin me-2"></i>Station Permissions</h6>
                                 
                                 <div class="mb-4">
-                                    <label class="form-label small text-muted fw-bold mb-2">Chọn các Trạm được phép</label>
-                                    <div class="border rounded p-2 bg-dark-subtle scroll-panel scroll-panel-sm" id="edit-station-checklist">
+                                    <span id="edit-station-checklist-label" class="form-label small text-muted fw-bold mb-2">Chọn các Trạm được phép</span>
+                                    <div class="border rounded p-2 bg-dark-subtle scroll-panel scroll-panel-sm" id="edit-station-checklist" role="group" aria-labelledby="edit-station-checklist-label">
                                         <div class="text-muted small text-center">Đang tải...</div>
                                     </div>
                                 </div>
 
                                 <div class="mb-4">
-                                    <label class="form-label small text-muted fw-bold mb-2">Allowed Mountpoints</label>
+                                    <label for="edit-mountpoints" class="form-label small text-muted fw-bold mb-2">Allowed Mountpoints</label>
                                     <div class="input-group">
                                         <span class="input-group-text bg-dark border-secondary text-info"><i class="bi bi-broadcast"></i></span>
                                         <input type="text" class="form-control" id="edit-mountpoints" required placeholder="...">
                                     </div>
                                 </div>
 
-                                <div id="edit-admin-live-mountpoints-box" class="premium-card-inner p-3 d-none">
-                                    <label class="form-label small text-muted fw-bold mb-2 d-block">Live Mountpoints (Admin)</label>
+                                <div id="edit-admin-live-mountpoints-box" role="group" aria-labelledby="edit-admin-live-mountpoints-box-label" class="premium-card-inner p-3 d-none">
+                                    <span id="edit-admin-live-mountpoints-box-label" class="form-label small text-muted fw-bold mb-2 d-block">Live Mountpoints (Admin)</span>
                                     <div class="row g-2 mb-2">
                                         <div class="col-7">
-                                            <input type="text" class="form-control form-control-sm bg-dark border-secondary" id="edit-live-mp-search" placeholder="Search live...">
+                                            <input type="text" class="form-control form-control-sm bg-dark border-secondary" id="edit-live-mp-search" aria-label="Tìm mountpoint đang hoạt động" placeholder="Search live...">
                                         </div>
                                         <div class="col-5">
-                                            <select class="form-select form-select-sm bg-dark border-secondary" id="edit-live-mp-host-filter">
+                                            <select class="form-select form-select-sm bg-dark border-secondary" id="edit-live-mp-host-filter" aria-label="Lọc mountpoint theo caster">
                                                 <option value="all">Hosts</option>
                                             </select>
                                         </div>
@@ -708,8 +708,8 @@
                     </div>
 
                     <div class="mb-4">
-                        <label class="form-label small text-muted fw-bold">Chọn các Caster Servers muốn GỠ BỎ tài khoản:</label>
-                        <div id="delete-server-list" class="p-2 border rounded bg-dark-subtle">
+                        <span id="delete-server-list-label" class="form-label small text-muted fw-bold">Chọn các Caster Servers muốn GỠ BỎ tài khoản:</span>
+                        <div id="delete-server-list" role="group" aria-labelledby="delete-server-list-label" class="p-2 border rounded bg-dark-subtle">
                             <!-- JS will populate -->
                         </div>
                     </div>
@@ -744,7 +744,7 @@
                         <!-- JS will populate chips -->
                     </div>
                     <div class="mb-4">
-                        <label class="form-label small text-muted fw-bold">Lý do chặn</label>
+                        <label for="blockReason" class="form-label small text-muted fw-bold">Lý do chặn</label>
                         <textarea id="blockReason" class="form-control" rows="2" placeholder="Ví dụ: Hết hạn, vi phạm..."></textarea>
                     </div>
                     <div class="d-grid">

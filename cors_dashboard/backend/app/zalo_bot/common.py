@@ -112,33 +112,33 @@ def _is_cors_status_question(text: str) -> bool:
 # ---------------------------------------------------------------------------
 _NLP_INTENT_PATTERNS = [
     # === Rover: dangerous / mutating (Put Rover explicit matches first) ===
-    (re.compile(r"^(?:xoa(?:\s+bo)?|delete)\s+rover\s+(.+)$", re.I), "roverdelete"),
-    (re.compile(r"^(?:tao|create|them(?:\s+moi)?)\s+rover(?:\s+(.+))?$", re.I), "rovercreate"),
-    (re.compile(r"^(?:sua|update|cap\s*nhat|chinh\s*sua)(?:\s+(?:cau\s*hinh|config))?\s+rover\s+(.+)$", re.I), "roverupdate"),
-    (re.compile(r"^(?:gia\s*han(?:\s+them)?|renew)\s+rover\s+(.+)$", re.I), "roverrenew"),
-    (re.compile(r"^(?:chan|block|khoa)\s+rover\s+(.+)$", re.I), "roverblock"),
-    (re.compile(r"^(?:bo\s*chan|unblock|mo\s*chan|go\s*chan)\s+rover\s+(.+)$", re.I), "roverunblock"),
+    (re.compile(r"^(?:xoa(?:\s+bo)?|delete)\s+rover\s+(\S.*)$", re.I), "roverdelete"),
+    (re.compile(r"^(?:tao|create|them(?:\s+moi)?)\s+rover(?:\s+(\S.*))?$", re.I), "rovercreate"),
+    (re.compile(r"^(?:sua|update|cap\s*nhat|chinh\s*sua)(?:\s+(?:cau\s*hinh|config))?\s+rover\s+(\S.*)$", re.I), "roverupdate"),
+    (re.compile(r"^(?:gia\s*han(?:\s+them)?|renew)\s+rover\s+(\S.*)$", re.I), "roverrenew"),
+    (re.compile(r"^(?:chan|block|khoa)\s+rover\s+(\S.*)$", re.I), "roverblock"),
+    (re.compile(r"^(?:bo\s*chan|unblock|mo\s*chan|go\s*chan)\s+rover\s+(\S.*)$", re.I), "roverunblock"),
 
     # === Station: dangerous / mutating (Make "tram" optional but exclude "rover" matches) ===
-    (re.compile(r"^(?:xoa(?:\s+bo)?|delete)(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "stationdelete"),
-    (re.compile(r"^(?:khoa|lock)(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "stationlock"),
-    (re.compile(r"^(?:mo\s*khoa|unlock|go\s*khoa)(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "stationunlock"),
-    (re.compile(r"^(?:reset|khoi\s*dong\s*lai|restart)(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "stationreset"),
+    (re.compile(r"^(?:xoa(?:\s+bo)?|delete)(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "stationdelete"),
+    (re.compile(r"^(?:khoa|lock)(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "stationlock"),
+    (re.compile(r"^(?:mo\s*khoa|unlock|go\s*khoa)(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "stationunlock"),
+    (re.compile(r"^(?:reset|khoi\s*dong\s*lai|restart)(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "stationreset"),
 
     # === Station: config / coord ===
-    (re.compile(r"^(?:sua|chinh\s*sua|thay\s*doi|configset)(?:\s+(?:cau\s*hinh|config))?(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "configset"),
-    (re.compile(r"^(?:xem|kiem\s*tra|doc|hien\s*thi)?\s*(?:cau\s*hinh|config)(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "config"),
-    (re.compile(r"^(?:dat\s+)?(?:toa\s*do|coord(?:inates?)?)(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "coord"),
+    (re.compile(r"^(?:sua|chinh\s*sua|thay\s*doi|configset)(?:\s+(?:cau\s*hinh|config))?(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "configset"),
+    (re.compile(r"^(?:xem|kiem\s*tra|doc|hien\s*thi)?\s*(?:cau\s*hinh|config)(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "config"),
+    (re.compile(r"^(?:dat\s+)?(?:toa\s*do|coord(?:inates?)?)(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "coord"),
 
     # === Station: read ===
-    (re.compile(r"^(?:xem|thong\s*tin|chi\s*tiet|info|kiem\s*tra)(?:\s+(?:tram|station))?\s+(?!rover\s)(.+)$", re.I), "station"),
-    (re.compile(r"^(?:tram|station)\s+(?!rover\s)(.+)$", re.I), "station"),
-    (re.compile(r"^(?:danh\s*sach\s*(?:tram|station)|cac\s*tram|list\s*station)s?(?:\s+(.*))?$", re.I), "stations"),
+    (re.compile(r"^(?:xem|thong\s*tin|chi\s*tiet|info|kiem\s*tra)(?:\s+(?:tram|station))?\s+(?!rover(?:\s|$))(\S.*)$", re.I), "station"),
+    (re.compile(r"^(?:tram|station)\s+(?!rover(?:\s|$))(\S.*)$", re.I), "station"),
+    (re.compile(r"^(?:danh\s*sach\s*(?:tram|station)|cac\s*tram|list\s*station)s?(?:\s+(\S.*))?$", re.I), "stations"),
 
     # === Rover: read ===
-    (re.compile(r"^(?:xem|thong\s*tin|info|kiem\s*tra|cau\s*hinh|config)\s+rover\s+(.+)$", re.I), "rover"),
-    (re.compile(r"^rover\s+(.+)$", re.I), "rover"),
-    (re.compile(r"^(?:danh\s*sach\s*rover|cac\s*rover|list\s*rover)s?(?:\s+(.*))?$", re.I), "rovers"),
+    (re.compile(r"^(?:xem|thong\s*tin|info|kiem\s*tra|cau\s*hinh|config)\s+rover\s+(\S.*)$", re.I), "rover"),
+    (re.compile(r"^rover\s+(\S.*)$", re.I), "rover"),
+    (re.compile(r"^(?:danh\s*sach\s*rover|cac\s*rover|list\s*rover)s?(?:\s+(\S.*))?$", re.I), "rovers"),
 
     # === General (no args or optional args) ===
     (re.compile(r"^(?:trang\s*thai|tinh\s*hinh|status|tong\s*quan|overview|toan\s*canh)$", re.I), "status"),
@@ -146,9 +146,9 @@ _NLP_INTENT_PATTERNS = [
     (re.compile(r"^(?:tro\s*giup|huong\s*dan|help|ho\s*tro)$", re.I), "help"),
     (re.compile(r"^menu$", re.I), "menu"),
     (re.compile(r"^(?:thong\s*bao|notification)s?$", re.I), "notifications"),
-    (re.compile(r"^(?:huy|cancel)(?:\s+(.+))?$", re.I), "cancel"),
-    (re.compile(r"^(?:xac\s*nhan|confirm)(?:\s+(.+))?$", re.I), "confirm"),
-    (re.compile(r"^(?:dang\s*xuat|logout|ngat\s*ket\s*noi)(?:\s+(.+))?$", re.I), "logout"),
+    (re.compile(r"^(?:huy|cancel)(?:\s+(\S.*))?$", re.I), "cancel"),
+    (re.compile(r"^(?:xac\s*nhan|confirm)(?:\s+(\S.*))?$", re.I), "confirm"),
+    (re.compile(r"^(?:dang\s*xuat|logout|ngat\s*ket\s*noi)(?:\s+(\S.*))?$", re.I), "logout"),
 ]
 
 

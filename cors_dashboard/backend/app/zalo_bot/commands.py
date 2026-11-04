@@ -403,16 +403,11 @@ class CommandsMixin:
                     "Để kích hoạt quyền cho nhóm, hãy nhắc tên bot kèm lệnh "
                     "/register <mã>."
                 )
-        elif principal.is_linked:
+        else:
             text = (
                 "👋 Bot CORS Aitogy đã sẵn sàng trong cuộc trò chuyện cá nhân này.\n"
                 f"Đang liên kết với tài khoản {principal.username or '-'} ({principal.role or '-'}). "
                 "Gõ /menu để xem đúng menu theo quyền của bạn."
-            )
-        else:
-            text = (
-                "👋 Chào bạn! Bot giám sát hệ thống CORS Aitogy đã sẵn sàng.\n"
-                "Chat cá nhân dùng /link <mã tạo trong dashboard>. Group dùng /register <mã group>."
             )
         await update.message.reply_text(text)
 
