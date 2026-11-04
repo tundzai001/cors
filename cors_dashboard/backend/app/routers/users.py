@@ -162,7 +162,7 @@ async def rename_device_serial(
         try:
             await send_command_to_pi(serial, {"command": "CHANGE_SERIAL", "payload": {"new_serial": request.new_serial}})
         except Exception as e:
-            logger.warning(f"Không thể gửi lệnh CHANGE_SERIAL qua MQTT cho {serial}: {e}")
+            logger.warning("Không thể gửi lệnh CHANGE_SERIAL qua MQTT (%s)", type(e).__name__)
 
         from sqlalchemy import text
         await db.execute(

@@ -1,5 +1,7 @@
 # Wi-Fi trên ESP32
 
+Firmware mới không chứa thông tin đăng nhập Wi-Fi mặc định. Cấu hình thiết bị mới bằng các lệnh dưới đây.
+
 Firmware không phát AP và không phục vụ trang cấu hình Wi-Fi. Chỉ giữ một
 SSID/mật khẩu đang dùng trong cấu hình kết nối. Cài qua Serial 115200:
 

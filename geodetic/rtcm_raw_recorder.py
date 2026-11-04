@@ -82,8 +82,6 @@ DEFAULT_MOUNTPOINTS = [
 DEFAULT_CONFIG = {
     "host": "aitogy.com.vn",
     "port": 2101,
-    "username": "aitogy",
-    "password": "aitogy",
     "record_all_from_sourcetable": False,
     "output": "rtcm_raw_dataset",
     "duration_hours": 48.0,
@@ -405,15 +403,19 @@ async def record_mountpoint(args, mountpoint: str, stop_at: float, stop_event: a
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Record raw RTCM/NTRIP streams for datasets.")
+    parser = argparse.ArgumentParser(
+        description="Record raw RTCM/NTRIP streams for datasets.",
+        epilog="File arguments must stay within RTCM_RECORDER_ROOT (default: working directory). "
+               "Set NTRIP_USERNAME and NTRIP_PASSWORD for authenticated streams.",
+    )
     parser.add_argument("--host", default=os.getenv("NTRIP_HOST") or os.getenv("CASTER_HOST") or DEFAULT_CONFIG["host"])
     parser.add_argument(
         "--port",
         type=int,
         default=int(os.getenv("NTRIP_PORT") or os.getenv("CASTER_PORT") or DEFAULT_CONFIG["port"]),
     )
-    parser.add_argument("--username", default=os.getenv("NTRIP_USERNAME", DEFAULT_CONFIG["username"]))
-    parser.add_argument("--password", default=os.getenv("NTRIP_PASSWORD", DEFAULT_CONFIG["password"]))
+    parser.add_argument("--username", default=os.getenv("NTRIP_USERNAME", ""))
+    parser.add_argument("--password", default=os.getenv("NTRIP_PASSWORD", ""))
     parser.add_argument("--mountpoint", action="append", default=[], help="Mountpoint to record; repeatable.")
     parser.add_argument("--mountpoints-file", help="Text file with one mountpoint per line.")
     parser.add_argument(
@@ -434,6 +436,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gga", default=DEFAULT_CONFIG["gga"], help="Optional NMEA GGA line for VRS/GGA-required mountpoints.")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     args = parser.parse_args()
+    workspace = Path(os.getenv("RTCM_RECORDER_ROOT", ".")).resolve()
+    for field in ("mountpoints_file", "output"):
+        value = getattr(args, field)
+        if value is None:
+            continue
+        try:
+            path = (workspace / value).resolve()
+        except (OSError, RuntimeError):
+            parser.error(f"--{field.replace('_', '-')} cannot be resolved")
+        if not path.is_relative_to(workspace):
+            parser.error(f"--{field.replace('_', '-')} must stay within RTCM_RECORDER_ROOT")
+        setattr(args, field, path)
     if not args.host:
         parser.error("--host or NTRIP_HOST/CASTER_HOST is required")
     return args
@@ -453,7 +467,7 @@ async def main() -> None:
     if args.mountpoints_file:
         mountpoints.extend(
             line.strip()
-            for line in Path(args.mountpoints_file).read_text(encoding="utf-8").splitlines()
+            for line in args.mountpoints_file.read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.strip().startswith("#")
         )
     if args.all_from_sourcetable:
@@ -465,9 +479,12 @@ async def main() -> None:
     if not mountpoints:
         raise SystemExit("No mountpoints found.")
 
-    output = Path(args.output)
+    output = args.output
     output.mkdir(parents=True, exist_ok=True)
-    (output / "run.json").write_text(
+    run_metadata = output / "run.json"
+    if run_metadata.is_symlink():
+        raise SystemExit("run.json must not be a symbolic link")
+    run_metadata.write_text(
         json.dumps(
             {
                 "host": args.host,

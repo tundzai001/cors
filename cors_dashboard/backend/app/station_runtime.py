@@ -670,11 +670,11 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
             timeout=float(os.getenv("AGENT_WS_AUTH_TIMEOUT_SECONDS", "3")),
         )
     except (asyncio.TimeoutError, TimeoutError):
-        logger.warning("Pi '%s' auth lookup timed out; asking agent to retry", serial)
+        logger.warning("Pi auth lookup timed out; asking agent to retry")
         await _safe_ws_close(websocket, code=1013, reason="Server busy; retry")
         return
     except Exception as exc:
-        logger.warning("Pi '%s' auth lookup failed; asking agent to retry: %s", serial, exc)
+        logger.warning("Pi auth lookup failed; asking agent to retry (%s)", type(exc).__name__)
         await _safe_ws_close(websocket, code=1013, reason="Server busy; retry")
         return
 
@@ -692,18 +692,18 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
     )
 
     if not metadata.get("exists"):
-        logger.warning("Pi '%s' connection rejected: unknown device serial.", serial)
+        logger.warning("Pi connection rejected: unknown device serial")
         await _safe_ws_close(websocket, code=status.WS_1008_POLICY_VIOLATION)
         return
     if not license_bypass and (
         not license_manager.is_compatible_device_token(expected_token, serial)
         or not hmac.compare_digest(provided_token, expected_token)
     ):
-        logger.warning("Pi '%s' connection rejected: invalid or missing token.", serial)
+        logger.warning("Pi connection rejected: invalid or missing token")
         await _safe_ws_close(websocket, code=status.WS_1008_POLICY_VIOLATION)
         return
     if license_bypass and expected_token and provided_token != expected_token:
-        logger.warning("Pi '%s' connection allowed with invalid/missing token because per-device license bypass is enabled.", serial)
+        logger.warning("Pi connection allowed because per-device license bypass is enabled")
 
     await pi_manager.connect(serial, websocket)
 
@@ -934,11 +934,11 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                     }
                     device.timestamp = now_ts
                     await offline_db.commit()
-                    logger.info(f"Device '{serial}' set to offline (config preserved in DB)")
+                    logger.info("Device set to offline (config preserved in DB)")
                 else:
                     return
         except Exception as e:
-            logger.warning(f"[OFFLINE] DB lookup/update failed for '{serial}': {e}")
+            logger.warning("[OFFLINE] DB lookup/update failed (%s)", type(e).__name__)
 
         # Broadcast FULL payload (with config) to UI so map keeps station
         if mqtt_handler.device_was_deleted(serial):

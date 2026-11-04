@@ -437,7 +437,7 @@ async def configure_chip_endpoint(
         })
     except Exception as e:
         await db.rollback()
-        logger.error("Failed to save chip config for %s: %s", serial, e)
+        logger.error("Failed to save chip config (%s)", type(e).__name__)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to save configuration to database: {str(e)}"
@@ -498,7 +498,7 @@ async def configure_chip_endpoint(
                 "original_config": config_request.payload,
             }
     except Exception as e:
-        logger.error("Failed to build chip config commands for %s: %s", serial, e)
+        logger.error("Failed to build chip config commands (%s)", type(e).__name__)
         raise HTTPException(
             status_code=400,
             detail=f"Failed to build configuration commands: {str(e)}"
@@ -668,7 +668,7 @@ async def create_rover_for_base(
                 rtcm_disconnect_duration_seconds=rover_data.rtcm_disconnect_duration_seconds,
             )
             created_any = True
-            logger.info(f"✓ Created Rover '{rover_data.username}' for MP '{target_mountpoint}' on Caster {host}")
+            logger.info("Created rover on caster")
         except Exception as host_err:
             logger.error(f"Failed to create rover '{rover_data.username}' on Caster {host}: {host_err}")
 

@@ -47,7 +47,7 @@ async def delete_caster_user_endpoint(
             await caster.delete_user(identifier='admin', username=username)
             results_log.append(host)
         except Exception as e:
-            logger.error(f"Failed to delete user '{username}' on caster {host}: {e}")
+            logger.error("Failed to delete rover on caster (%s)", type(e).__name__)
             errors.append(f"{host}: {str(e)}")
 
     if errors and not results_log:
@@ -201,7 +201,7 @@ async def sync_rover_by_username(
             auto_save_fixed_points=update_req.auto_save_fixed_points if update_req.auto_save_fixed_points is not None else False,
             is_shared_with_managers=getattr(update_req, 'is_shared_with_managers', False)
         )
-        logger.info(f"âœ“ Adopted unknown rover '{username}' into DB")
+        logger.info("Adopted unknown rover into DB")
 
     # 4. TRƯỜNG HỢP: USER ĐÃ CÓ - CẬP NHẬT
     else:
@@ -265,9 +265,9 @@ async def sync_rover_by_username(
                             toggle_ok = True
                             break
                     if not toggle_ok:
-                        logger.warning(f"Sync-by-username could not confirm show_position toggle for '{username}' on host {host}")
+                        logger.warning("Sync-by-username could not confirm show_position toggle")
             except Exception as host_err:
-                logger.error(f"Failed to sync '{username}' to caster host {host}: {host_err}")
+                logger.error("Failed to sync rover to caster (%s)", type(host_err).__name__)
                 failed_hosts.append(host)
         if failed_hosts:
             raise HTTPException(status_code=502, detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Có thể thử lại.")
@@ -280,7 +280,7 @@ async def sync_rover_by_username(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Sync Caster Error for '{username}': {e}")
+        logger.error("Sync Caster Error (%s)", type(e).__name__)
         raise HTTPException(status_code=502, detail="Chưa thể đồng bộ Rover sang caster; hãy thử lại.") from None
 
     return rover

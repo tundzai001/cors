@@ -34,8 +34,8 @@ inline constexpr char CONNECTION_PREFERENCE[] = "4G"; // "4G" hoặc "WIFI".
 static_assert(std::string_view(CONNECTION_PREFERENCE) == "4G" || std::string_view(CONNECTION_PREFERENCE) == "WIFI",
               "CONNECTION_PREFERENCE must be 4G or WIFI");
 
-inline constexpr char WIFI_SSID[] = "AITOGY";
-inline constexpr char WIFI_PASSWORD[] = "aitogy@aitogy";
+inline constexpr char WIFI_SSID[] = "";
+inline constexpr char WIFI_PASSWORD[] = "";
 
 
 inline constexpr uint8_t TX_TO_MODEM_RX = 17;

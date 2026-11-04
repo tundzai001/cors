@@ -153,10 +153,7 @@ def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[
         for sid in candidates:
             host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
             if host and (normalized_req_addr in host or host in normalized_req_addr):
-                logger.info(
-                    f"[RTCM ROUTE] Explicit address match: mountpoint={mountpoint_norm!r} "
-                    f"requested_addr={requested_address!r} candidates={candidates} selected_server={sid}"
-                )
+                logger.info("[RTCM ROUTE] Explicit address match, selected_server=%d", sid)
                 return sid
 
     # CASE 2: Fallback to .env preferred host (for older casters or missing address)
@@ -165,17 +162,11 @@ def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[
         for sid in candidates:
             host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
             if host and marker in host:
-                logger.info(
-                    f"[RTCM ROUTE] Preferred host match: mountpoint={mountpoint_norm!r} "
-                    f"marker={marker!r} candidates={candidates} selected_server={sid}"
-                )
+                logger.info("[RTCM ROUTE] Preferred host match, selected_server=%d", sid)
                 return sid
 
     selected = sorted(candidates)[0]
-    logger.info(
-        f"[RTCM ROUTE] mountpoint={mountpoint_norm!r} candidates={candidates} "
-        f"selected_server={selected}"
-    )
+    logger.info("[RTCM ROUTE] Selected fallback server %d", selected)
     return selected
 
 
@@ -332,7 +323,7 @@ async def _set_station_stream(
             device.service_config = cfg
             await db.commit()
     except Exception as e:
-        logger.warning(f"[RTCM] Failed to persist stream state for '{serial}': {e}")
+        logger.warning("[RTCM] Failed to persist stream state (%s)", type(e).__name__)
 
 
 async def _count_active_station_sessions(db: AsyncSession, serial: str, now_ts: Optional[int] = None) -> int:
@@ -503,8 +494,7 @@ async def _ntrip_mqtt_start(serial: str, mountpoint: str, client_instance_id: st
 
         mountpoints = _extract_station_mountpoints(device)
         if _normalize_mountpoint(mountpoint) not in {_normalize_mountpoint(mp) for mp in mountpoints}:
-            logger.warning('[NTRIP ROUTE] Rejected serial=%s requested=%s enabled_mountpoints=%s',
-                           serial, mountpoint, mountpoints)
+            logger.warning("[NTRIP ROUTE] Rejected a mountpoint outside the enabled set")
         selected_mountpoint = _resolve_requested_mountpoint(mountpoints, mountpoint)
 
         session_id = uuid.uuid4().hex
@@ -1144,15 +1134,15 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
     """Xử lý wake trạm, trả về PlainTextResponse chuẩn cho Caster."""
     is_command_mp = mountpoint and _is_command_mountpoint(mountpoint)
     if is_command_mp:
-        logger.debug(f"[NTRIP Wake] mountpoint={mountpoint}, client_id={client_id}, address={requested_address or 'not-provided'}")
+        logger.debug("[NTRIP Wake] Passive wake requested")
     else:
-        logger.info(f"[NTRIP Wake] mountpoint={mountpoint}, client_id={client_id}, address={requested_address or 'not-provided'}")
+        logger.info("[NTRIP Wake] Wake requested")
 
     # 1. Check Blocklist ngay lập tức
     reason = await _check_rover_blocked(client_id, mountpoint)
     if reason:
         msg = f"BLOCKED: {reason}"
-        logger.warning(f"[NTRIP Wake] {msg} for {client_id}@{mountpoint}")
+        logger.warning("[NTRIP Wake] Blocklist denied wake request")
         return PlainTextResponse(f"WAKE_STATUS: blocked\n{msg}")
 
     # 1.5. Bypass cho command mountpoints
@@ -1237,10 +1227,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                 wake_note = "đã xử lý yêu cầu wake"
 
             if selected_server_id in service_server_ids(cfg):
-                logger.info(
-                    f"[NTRIP Wake] route serial={serial} mountpoint={mountpoint} "
-                    f"server_id={selected_server_id} host={selected_server_host or 'unknown'}"
-                )
+                logger.info("[NTRIP Wake] Selected server %s", selected_server_id)
 
             # Trả trạng thái rõ ràng để caster phân biệt "đã gửi lệnh" và "đang streaming".
             response_lines = [
@@ -1260,7 +1247,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
 
 async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, requested_address: Optional[str] = None):
     """Xử lý ngắt/dừng trạm, trả về PlainTextResponse."""
-    logger.info(f"[NTRIP Stop] mountpoint={mountpoint}, client_id={client_id}, force={force}, address={requested_address or 'not-provided'}")
+    logger.info("[NTRIP Stop] Stop requested, force=%s", bool(force))
     if is_4g_mountpoint(mountpoint):
         return PlainTextResponse(f"STOP_STATUS: ok\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
     try:
@@ -1323,7 +1310,7 @@ async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, r
                         )
                     await db.commit()
                 await _set_station_stream(serial, active=False, requested_address=target_host)
-                logger.info(f"[NTRIP Stop] Force stopped station stream serial={serial} mountpoint={mountpoint} host={target_host}")
+                logger.info("[NTRIP Stop] Force stopped station stream")
             else:
                 await _ntrip_mqtt_stop(
                     serial=serial,
