@@ -2,7 +2,7 @@
 # == backend/app/auth.py ==
 # ==============================================================================
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
@@ -196,8 +196,9 @@ async def sync_auth_session_cache(db: AsyncSession):
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
-    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
+    issued_at = datetime.now(timezone.utc)
+    expire = issued_at + (expires_delta or timedelta(minutes=15))
+    to_encode.update({"exp": expire, "iat": issued_at})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def decode_token(token: str) -> dict:

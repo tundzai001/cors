@@ -6,6 +6,7 @@ import copy
 import logging
 import re
 import time
+from ..background_tasks import schedule_background
 from .. import auth
 from ..zalo_assistant import zalo_repository
 from .common import (_COMMAND_DISPATCH, _NLP_INTENT_PATTERNS, _SyntheticContext,
@@ -69,7 +70,7 @@ class ConversationMixin:
             if state and state.get("expires_at", 0) <= time.time():
                 self._conversation_states.pop(key, None)
 
-        asyncio.create_task(expire_conversation())
+        schedule_background(expire_conversation())
 
     async def _start_notification_onboarding(
         self,

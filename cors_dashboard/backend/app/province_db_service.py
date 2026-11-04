@@ -1,5 +1,7 @@
 """Service for Vietnamese administrative provinces, districts, and wards database."""
+import asyncio
 import json
+from pathlib import Path
 import logging
 import os
 import re
@@ -226,8 +228,7 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
             logger.warning("vietnam_units.json not found at %s", UNITS_JSON_PATH)
             return {"provinces": 0, "districts": 0, "wards": 0}
 
-        with open(UNITS_JSON_PATH, "r", encoding="utf-8") as f:
-            units = json.load(f)
+        units = json.loads(await asyncio.to_thread(Path(UNITS_JSON_PATH).read_text, encoding="utf-8"))
 
         # 1. Regions
         reg_data = [

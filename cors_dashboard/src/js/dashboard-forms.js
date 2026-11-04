@@ -324,7 +324,7 @@ const GnssReadbackDetails = ({ details }) => {
     const expectedLogs = compare ? details.expected_logs || [] : [];
     const rate = value => value === 0 ? 'Tắt' : value == null ? 'Chưa đọc được' : `Mỗi ${value} chu kỳ`;
     const show = value => value == null ? 'Chưa đọc được' : String(value);
-    const logNames = [...new Set([...logs.filter(log => log.port === selected).map(log => log.name), ...expectedLogs])].sort()
+    const logNames = [...new Set([...logs.filter(log => log.port === selected).map(log => log.name), ...expectedLogs])].sort((a, b) => a.localeCompare(b))
         .filter(name => !enabledOnly || expectedLogs.includes(name) || logs.some(log => log.port === selected && log.name === name && log.period > 0));
     return <div className="mt-3">
         <h6>Cấu hình chip trả về</h6>

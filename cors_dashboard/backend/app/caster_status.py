@@ -6,6 +6,7 @@ import os
 from typing import Dict
 
 from . import models
+from .background_tasks import schedule_background
 
 logger = logging.getLogger("app.main")
 
@@ -143,84 +144,41 @@ def _status_changed(old_status: dict, new_status: dict) -> dict:
 
 
 async def _notify_casters_on_status_change(serial: str, device: models.Device, status_change: dict) -> None:
-    """
-    Detect per-server status change và gửi status to appropriate Caster.
-    
-    Logic:
-    - S1 changed → gửi cho serverhost1
-    - S2 changed → gửi cho serverhost2
-    - offline → gửi cho cả 2
-    """
+    """Send a separate snapshot to each affected caster."""
     try:
-        # 🔥 FIX: Robustly handle service_config type
         raw_cfg = getattr(device, "service_config", None)
-        if isinstance(raw_cfg, dict):
-            cfg = raw_cfg
-        elif isinstance(raw_cfg, str):
+        if isinstance(raw_cfg, str):
             import json
-            try: cfg = json.loads(raw_cfg)
-            except: cfg = {}
-        else:
-            cfg = {}
+            try:
+                raw_cfg = json.loads(raw_cfg)
+            except ValueError:
+                raw_cfg = None
+        cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
+        offline = str(device.status or "").lower() == "offline"
 
-        device_status = str(device.status or "").lower()
+        for server_id in (1, 2):
+            enabled = bool(cfg.get(f"server{server_id}_enabled"))
+            if offline:
+                current = {"state": "offline", "enabled": enabled}
+            else:
+                change = status_change[f"server{server_id}"]
+                if not change["changed"] or not enabled:
+                    continue
+                current = change["new"]
 
-        # Build common payload
-        payload = {
-            "mountpoint": "",
-            "state": "offline",  # streaming, sleep, offline
-            "enabled": False,
-        }
-
-        # Offline → notify both casters
-        if device_status == "offline":
-            s1_host = cfg.get("serverhost1", "").strip() if isinstance(cfg, dict) else ""
-            s1_port = cfg.get("port1") if isinstance(cfg, dict) else None
-            s1_full = f"{s1_host}:{s1_port}" if s1_host and s1_port and ":" not in s1_host else s1_host
-
-            s2_host = cfg.get("serverhost2", "").strip() if isinstance(cfg, dict) else ""
-            s2_port = cfg.get("port2") if isinstance(cfg, dict) else None
-            s2_full = f"{s2_host}:{s2_port}" if s2_host and s2_port and ":" not in s2_host else s2_host
-
-            if s1_full and cfg.get("mountpoint1"):
-                payload["mountpoint"] = cfg.get("mountpoint1")
-                payload["state"] = "offline"
-                payload["enabled"] = bool(cfg.get("server1_enabled"))
-                asyncio.create_task(_send_status_to_caster(s1_full, payload, "S1", serial))
-
-            if s2_full and cfg.get("mountpoint2"):
-                payload["mountpoint"] = cfg.get("mountpoint2")
-                payload["state"] = "offline"
-                payload["enabled"] = bool(cfg.get("server2_enabled"))
-                asyncio.create_task(_send_status_to_caster(s2_full, payload, "S2", serial))
-
-            return
-
-        # Notify S1 if changed
-        if status_change["server1"]["changed"] and cfg.get("server1_enabled"):
-            s1_host = cfg.get("serverhost1", "").strip()
-            s1_port = cfg.get("port1")
-            s1_full = f"{s1_host}:{s1_port}" if s1_host and s1_port and ":" not in s1_host else s1_host
-            s1_mp = cfg.get("mountpoint1", "").strip()
-            if s1_full and s1_mp:
-                s1_info = status_change["server1"]["new"]
-                payload["mountpoint"] = s1_mp
-                payload["state"] = s1_info.get("state", "offline")
-                payload["enabled"] = s1_info.get("enabled", False)
-                asyncio.create_task(_send_status_to_caster(s1_full, payload, "S1", serial))
-
-        # Notify S2 if changed
-        if status_change["server2"]["changed"] and cfg.get("server2_enabled"):
-            s2_host = cfg.get("serverhost2", "").strip()
-            s2_port = cfg.get("port2")
-            s2_full = f"{s2_host}:{s2_port}" if s2_host and s2_port and ":" not in s2_host else s2_host
-            s2_mp = cfg.get("mountpoint2", "").strip()
-            if s2_full and s2_mp:
-                s2_info = status_change["server2"]["new"]
-                payload["mountpoint"] = s2_mp
-                payload["state"] = s2_info.get("state", "offline")
-                payload["enabled"] = s2_info.get("enabled", False)
-                asyncio.create_task(_send_status_to_caster(s2_full, payload, "S2", serial))
+            host = cfg.get(f"serverhost{server_id}", "").strip()
+            port = cfg.get(f"port{server_id}")
+            target = f"{host}:{port}" if host and port and ":" not in host else host
+            mountpoint = cfg.get(f"mountpoint{server_id}")
+            if not offline:
+                mountpoint = cfg.get(f"mountpoint{server_id}", "").strip()
+            if target and mountpoint:
+                payload = {
+                    "mountpoint": mountpoint,
+                    "state": current.get("state", "offline"),
+                    "enabled": current.get("enabled", False),
+                }
+                schedule_background(_send_status_to_caster(target, payload, f"S{server_id}", serial))
 
     except Exception as e:
         logger.error(f"[CASTER SYNC] Error notifying casters for '{serial}': {e}")

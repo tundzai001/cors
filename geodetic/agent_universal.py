@@ -5892,6 +5892,12 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
     async with command_execution_lock:
         await _process_command(source, data, agent, gnss_reader, mqtt_client)
 
+def _write_license_key(license_key: str) -> None:
+    fd = os.open(LICENSE_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as license_file:
+        license_file.write(license_key)
+
+
 async def _process_command(source: str, data: dict, agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
     global current_state, rtcm_stream_active_flag, active_auto_base_task, active_auto_base_client
     if not isinstance(data, dict):
@@ -6012,9 +6018,7 @@ async def _process_command(source: str, data: dict, agent: AgentManager, gnss_re
                 license_key = str(payload["license_key"]).strip()
                 if not is_valid_license_key(license_key, MACHINE_SERIAL):
                     raise ValueError("Invalid device token format")
-                fd = os.open(LICENSE_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w") as f:
-                    f.write(license_key)
+                await asyncio.to_thread(_write_license_key, license_key)
                 current_state = "REBOOTING"
                 _record_command_result(command, source, "success", "license deployed; rebooting", command_id)
                 await send_status(agent, mqtt_client)
@@ -6415,8 +6419,7 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
     auth_token = ""
     if os.path.exists(LICENSE_PATH):
         try:
-            with open(LICENSE_PATH, "r") as f:
-                auth_token = f.read().strip()
+            auth_token = (await asyncio.to_thread(Path(LICENSE_PATH).read_text, encoding="utf-8")).strip()
         except Exception as e:
             logging.error(f"Error reading license key: {e}")
             
@@ -6454,7 +6457,7 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
 
         except asyncio.CancelledError:
             logging.info("websocket_task cancelled")
-            break
+            raise
         except asyncio.TimeoutError:
             _telemetry_inc("reconnect", "websocket")
             logging.warning("WebSocket connection timeout. Retrying in 10s...")
@@ -7444,7 +7447,8 @@ async def main():
     # ========== Lock File Check ==========
     if not cleanup_lock_file():
         logging.error("Lock file issue. Another agent instance may be running. Exiting.")
-        if IS_WINDOWS: input("Press Enter to exit.")
+        if IS_WINDOWS:
+            await asyncio.to_thread(input, "Press Enter to exit.")
         sys.exit(1)
     
     if not create_lock_file():
@@ -7565,6 +7569,8 @@ async def main():
         try:
             await task
         except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
             logging.info("Startup Auto Base task cancelled")
 
     active_auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
@@ -7580,6 +7586,7 @@ async def main():
         )
     except asyncio.CancelledError:
         logging.info("Tasks cancelled - shutting down gracefully")
+        raise
     finally:
         logging.info("="*60)
         logging.info("Main loop interrupted. Starting cleanup...")
@@ -7620,7 +7627,7 @@ async def main():
                     "cleanup": True
                 })
                 mqtt_client.publish(f"pi/devices/{MACHINE_SERIAL}/status", offline_msg, qos=1, retain=True)
-                time.sleep(0.5) # Give it a moment to send
+                await asyncio.sleep(0.5)  # Give MQTT time to send
             except Exception as e:
                 logging.error(f"Failed to send final offline status: {e}")
 

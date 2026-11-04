@@ -292,7 +292,7 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
     if (!isOpen || !sources) return null;
 
     // Get domains from by_domain
-    const domains = Object.keys(sources.by_domain || {}).sort();
+    const domains = Object.keys(sources.by_domain || {}).sort((a, b) => a.localeCompare(b));
 
     // Filter sources based on selected domain
     let displayedSources = sources.all || [];

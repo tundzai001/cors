@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import time
 from typing import Any, Optional
@@ -177,8 +178,9 @@ class SatelliteService:
             if snapshot["published_at_utc"] >= self._status_snapshot.get("published_at_utc", ""):
                 self._status_snapshot = snapshot
                 try:
-                    with open(self._status_cache_file, "w", encoding="utf-8") as target:
-                        json.dump(snapshot, target)
+                    await asyncio.to_thread(
+                        Path(self._status_cache_file).write_text, json.dumps(snapshot), encoding="utf-8"
+                    )
                 except OSError as exc:
                     logger.debug("Could not cache independent GNSS status: %s", exc)
         except Exception as exc:
@@ -265,7 +267,7 @@ class SatelliteService:
 
             # Try to load disk cache on cold boot
             if not self._cached_payload and not force_refresh:
-                disk_data = self._load_disk_cache()
+                disk_data = await asyncio.to_thread(self._load_disk_cache)
                 cached_constellations = disk_data.get("constellations") if isinstance(disk_data, dict) else None
                 if isinstance(cached_constellations, dict) and set(CONSTELLATIONS_CONFIG).issubset(cached_constellations):
                     self._cached_payload = disk_data
@@ -291,8 +293,11 @@ class SatelliteService:
                             self._identifiers = identifiers
                             self._identifier_text = metadata.text
                             try:
-                                with open(self._identifiers_cache_file, "w", encoding="utf-8") as cache:
-                                    json.dump({"sinex": metadata.text}, cache)
+                                await asyncio.to_thread(
+                                    Path(self._identifiers_cache_file).write_text,
+                                    json.dumps({"sinex": metadata.text}),
+                                    encoding="utf-8",
+                                )
                             except OSError as exc:
                                 logger.debug("Could not cache IGS identifiers: %s", exc)
                     except Exception as exc:
@@ -321,7 +326,7 @@ class SatelliteService:
                     payload = self._normalize_codes(payload)
                     self._cached_payload = payload
                     self._last_fetch_monotonic = now
-                    self._save_disk_cache(payload)
+                    await asyncio.to_thread(self._save_disk_cache, payload)
                     return payload
 
             except Exception as exc:

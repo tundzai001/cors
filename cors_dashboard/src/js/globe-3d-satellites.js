@@ -422,7 +422,7 @@
             });
             if (this.stationCardMode === 'station' && this.stationCard && this.detailCardEl?.style.display === 'block') {
                 const liveIds = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(this.stationCard.item.device || {})
-                    .map(sat => sat.id || `${sat.system}:${sat.prn}`).sort() || [];
+                    .map(sat => sat.id || `${sat.system}:${sat.prn}`).sort((a, b) => String(a).localeCompare(String(b))) || [];
                 const signature = liveIds.join('|');
                 if (signature !== this.stationCardRtcmSignature) {
                     this.stationCardRtcmSignature = signature;
@@ -881,7 +881,7 @@
                 </div>
             `;
 
-            this.stationCardRtcmSignature = liveRtcmSatellites.map(sat => sat.id || `${sat.system}:${sat.prn}`).sort().join('|');
+            this.stationCardRtcmSignature = liveRtcmSatellites.map(sat => sat.id || `${sat.system}:${sat.prn}`).sort((a, b) => String(a).localeCompare(String(b))).join('|');
             this.detailCardEl.style.display = 'block';
             document.getElementById('globe-card-close').onclick = () => this.closeDetailCard();
             document.getElementById('globe-reset-view-btn').onclick = () => this.globe.focusVietnam(true);

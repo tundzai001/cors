@@ -235,13 +235,13 @@ const getMapEffectiveStatus = (device) => {
 };
 const getLockedServers = device => {
     const policy = device?.server_config_lock || {};
-    if (Array.isArray(policy.locked_servers)) return [...policy.locked_servers].sort();
+    if (Array.isArray(policy.locked_servers)) return [...policy.locked_servers].sort((a, b) => a - b);
     return [1, 2].filter(sid => policy[`server${sid}_enabled`] === false);
 };
 const isDeviceLockApplied = device => {
     const desired = getLockedServers(device);
     const reported = device?.system_info?.device_lock?.locked_servers;
-    return !device?.system_info?.device_lock?.all && Array.isArray(reported) && JSON.stringify([...reported].sort()) === JSON.stringify(desired);
+    return !device?.system_info?.device_lock?.all && Array.isArray(reported) && JSON.stringify([...reported].sort((a, b) => a - b)) === JSON.stringify(desired);
 };
 const removeServiceServers = (config, removedServers) => Object.fromEntries(
     Object.entries(config).filter(([key]) => {

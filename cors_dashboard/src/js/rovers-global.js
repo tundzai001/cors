@@ -457,7 +457,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const uniqueHosts = Array.from(new Set(sources.map(s => String(s.host || '').trim()).filter(Boolean))).sort();
+        const uniqueHosts = Array.from(new Set(sources.map(s => String(s.host || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
         if (hostFilter) {
             const prev = hostFilter.value || 'all';
             hostFilter.innerHTML = '<option value="all">Tất cả host</option>'
@@ -3273,9 +3273,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 scrollTop: container.scrollTop,
                 scrollLeft: container.querySelector('.table-responsive')?.scrollLeft || 0,
             };
-            const domains = Object.keys(data.by_domain || {}).sort();
+            const domains = Object.keys(data.by_domain || {}).sort((a, b) => a.localeCompare(b));
             const sources = data.all || [];
-            const hostOptions = Object.keys(data.by_host || {}).sort();
+            const hostOptions = Object.keys(data.by_host || {}).sort((a, b) => a.localeCompare(b));
 
             let html = `
                 <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">

@@ -1828,21 +1828,19 @@ async def get_server_logs(
     """
     if current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được xem log máy chủ")
-    log_file = 'app.log'
-    if not os.path.exists(log_file):
-        return {"logs": ["Log file not found."]}
+    def tail_log():
+        from collections import deque
+
+        with open("app.log", encoding="utf-8", errors="ignore") as log:
+            return list(deque(log, maxlen=max(1, lines)))
 
     try:
-        # Tail-style read to avoid loading entire log file into memory.
-        from collections import deque as _deque
-        with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-            last_lines = list(_deque(f, maxlen=max(1, lines)))
-
-            # Filter theo level nếu cần (INFO, ERROR, WARNING)
-            if level and level != 'ALL':
-                last_lines = [line for line in last_lines if level in line]
-
-            return {"logs": [line.strip() for line in last_lines]}
+        last_lines = await asyncio.to_thread(tail_log)
+        if level and level != "ALL":
+            last_lines = [line for line in last_lines if level in line]
+        return {"logs": [line.strip() for line in last_lines]}
+    except FileNotFoundError:
+        return {"logs": ["Log file not found."]}
     except Exception as e:
         return {"logs": [f"Error reading log file: {str(e)}"]}
 

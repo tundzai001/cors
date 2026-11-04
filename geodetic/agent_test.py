@@ -3016,8 +3016,9 @@ async def process_command(source: str, data: dict, agent: AgentManager, gnss_rea
         
         elif command == "DEPLOY_LICENSE":
             if payload.get("license_key"):
-                with open(LICENSE_PATH, "w") as f:
-                    f.write(payload["license_key"])
+                await asyncio.to_thread(
+                    Path(LICENSE_PATH).write_text, payload["license_key"], encoding="utf-8"
+                )
                 current_state = "REBOOTING"
                 await send_status(agent, mqtt_client)
                 await asyncio.sleep(2)
@@ -3389,7 +3390,7 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
 
         except asyncio.CancelledError:
             logging.info("websocket_task cancelled")
-            break
+            raise
         except asyncio.TimeoutError:
             logging.warning("WebSocket connection timeout. Retrying in 10s...")
             await asyncio.sleep(10)
@@ -4008,7 +4009,8 @@ async def main():
     # ========== Lock File Check ==========
     if not cleanup_lock_file():
         logging.error("Lock file issue. Another agent instance may be running. Exiting.")
-        if IS_WINDOWS: input("Press Enter to exit.")
+        if IS_WINDOWS:
+            await asyncio.to_thread(input, "Press Enter to exit.")
         sys.exit(1)
     
     if not create_lock_file():
@@ -4112,6 +4114,7 @@ async def main():
         await asyncio.gather(status_task, ws_task, auto_base_task, mem_guard_task)
     except asyncio.CancelledError:
         logging.info("Tasks cancelled - shutting down gracefully")
+        raise
     finally:
         logging.info("="*60)
         logging.info("Main loop interrupted. Starting cleanup...")
@@ -4146,7 +4149,7 @@ async def main():
                     "cleanup": True
                 })
                 mqtt_client.publish(f"pi/devices/{MACHINE_SERIAL}/status", offline_msg, qos=1, retain=True)
-                time.sleep(0.5) # Give it a moment to send
+                await asyncio.sleep(0.5)  # Give MQTT time to send
             except Exception as e:
                 logging.error(f"Failed to send final offline status: {e}")
 

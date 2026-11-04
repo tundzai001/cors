@@ -15,6 +15,7 @@ import paho.mqtt.client as mqtt
 from sqlalchemy import select
 
 from . import schemas
+from .background_tasks import schedule_background
 from .websocket import manager
 from .database import settings, device_session_scope
 from . import crud, models
@@ -341,7 +342,7 @@ def _mqtt_ingress_key(topic: str, payload: bytes) -> tuple[str, str]:
 
 
 def _start_mqtt_ingress_drain() -> None:
-    asyncio.create_task(_drain_mqtt_ingress())
+    schedule_background(_drain_mqtt_ingress())
 
 
 def _drain_mqtt_control_acks() -> None:
@@ -461,7 +462,7 @@ def _enqueue_external_command(topic: str, payload: bytes) -> None:
 
 
 def _start_external_command_drain() -> None:
-    asyncio.create_task(_drain_external_commands())
+    schedule_background(_drain_external_commands())
 
 
 async def _drain_external_commands() -> None:
@@ -569,7 +570,7 @@ def on_message(client, userdata, msg):
     if msg.topic == "pi/decoder/esp_base/sync_request":
         if main_loop and main_loop.is_running():
             from .esp_base_manager import resync_decoder_workers
-            main_loop.call_soon_threadsafe(lambda: asyncio.create_task(resync_decoder_workers()))
+            main_loop.call_soon_threadsafe(lambda: schedule_background(resync_decoder_workers()))
         return
 
     if msg.topic.startswith("ntrip/rtcm/"):
@@ -1315,7 +1316,7 @@ def start_mqtt_loop():
         mqtt_client.loop_start()
         
         # 🔥 START BATCH SYNC CHECKER TASK
-        asyncio.create_task(batch_sync_checker())
+        schedule_background(batch_sync_checker())
         
         logging.info("✓ MQTT Loop + Batch Sync Checker Started.")
     except Exception as e:

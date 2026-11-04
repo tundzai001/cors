@@ -1268,7 +1268,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             const activeSatellites = getVisibleSatellites(satellites, plot.maxAgeMs);
 
             // Tạo hash cấu trúc (Chỉ phụ thuộc số lượng và loại PRN - Không chứa giá trị SNR để tránh giật hình)
-            const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort().join('|');
+            const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort((a, b) => a.localeCompare(b)).join('|');
 
             // Cập nhật text Stats
             let totalSnr = 0;
@@ -1590,7 +1590,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                             "aux": { label: "🔧 Hiệu chỉnh & Phụ trợ", color: "#adb5bd" },
                         };
                         const grouped = {};
-                        rtcmMessageTypes.sort().forEach(type => {
+                        rtcmMessageTypes.sort((a, b) => Number(a) - Number(b)).forEach(type => {
                             const info = rtcmDescriptions[type] || { name: `RTCM ${type}`, desc: "Bản tin RTCM khác", category: "aux" };
                             const cat = info.category;
                             if (!grouped[cat]) grouped[cat] = [];

@@ -11,7 +11,7 @@ const jsx = [
     'dashboard-live.js', 'dashboard-detail.js', 'stations-map.js',
     'homepage-enterprise.v2.js', 'enterprise-station-detail.js',
     'blog-system.js', 'api-docs.js', 'advanced-features.js',
-    'base-location-map.js', 'caster-modals.js',
+    'base-location-map.js',
     'dashboard-widgets.js', 'satellite-sky-view.js',
 ];
 const css = [

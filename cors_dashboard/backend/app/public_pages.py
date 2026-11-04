@@ -1,5 +1,6 @@
 """Public station and blog SEO responses."""
 
+import asyncio
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,8 +48,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
         return HTMLResponse(content="<h1>System Error: Frontend missing</h1>", status_code=500)
 
     try:
-        with open(index_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
+        html_content = await asyncio.to_thread(index_path.read_text, encoding="utf-8")
 
         if device:
             # 1. DATA EXTRACTION
@@ -151,8 +151,7 @@ async def get_blog_post_seo(slug: str):
     page_url = f"https://base.aitogy.com/blog/{published_slug}"
 
     try:
-        with open(index_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
+        html_content = await asyncio.to_thread(index_path.read_text, encoding="utf-8")
 
         html_content = page_metadata(
             html_content, title=meta["title"], description=meta["desc"],
@@ -196,7 +195,7 @@ async def get_public_pages(request: Request):
     index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
     if request.url.path == "/blog":
         return HTMLResponse(page_metadata(
-            index_path.read_text(encoding="utf-8"),
+            await asyncio.to_thread(index_path.read_text, encoding="utf-8"),
             title="Kiến thức GNSS/RTK | Hệ thống Base Aitogy",
             description="Hướng dẫn kết nối, vận hành trạm Base và kiến thức định vị GNSS/RTK từ Aitogy.",
             url="https://base.aitogy.com/blog",
