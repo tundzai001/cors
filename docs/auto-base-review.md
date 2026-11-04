@@ -174,3 +174,26 @@ is required to audit a real CORS session. Fixed M3/M6 packets are checked agains
 both production decoders by `check_projection_audit.py`, including the actual
 ESP32 report serialization and its JSON memory budget. These fixtures do not
 prove which parameters an earlier unrecorded CORS packet contained.
+
+## Navigation drafts and province display
+
+An active Auto Base workflow takes precedence over the saved Survey-In method
+when the form opens. CORS host, port, username/password, source list, selected
+mountpoint and manual projection are retained separately for each station in
+this tab's JavaScript memory. They are not written to browser persistent storage;
+reloading the page clears these drafts. Switching stations or remounting the form
+does not send receiver commands. Late source-list replies are ignored after a
+station/input change or unmount.
+
+The review UI independently asks the existing `/api/coordinates/auto-base-location`
+endpoint for the province when it is missing from the report, even if CORS 1025
+already supplied the projection. Replies must echo the exact submitted raw LLH.
+The returned province is displayed and included in an approved Fixed LLA report;
+its provincial L0/k0 does not replace the projection selected by the CORS session.
+Loading, mismatched replies, lookup errors and outside-boundary results are
+shown explicitly. Province identification and projection selection are separate.
+
+ESP32 workflow progress merging owns its destination JSON keys. Borrowing keys
+from a temporary ArduinoJson document caused an ASan-reproduced use-after-free
+at serialization, which can corrupt status JSON/UTF-8. The host regression checks
+repeated nested reports containing Vietnamese text with ASan/UBSan enabled.

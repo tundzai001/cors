@@ -73,17 +73,24 @@ assert(find(tree, node => node.props.role === 'status' && text(node).includes('C
 console.log('PASS: live GGA/Float, reject unverified success, update completed coordinates, accessible result');
 
 (async () => {
+    context.window.apiFetch = async (url, options) => {
+        assert.equal(url, '/api/coordinates/auto-base-location');
+        const input_coord = JSON.parse(options.body);
+        return {ok:true,json:async()=>({input_coord,state:'resolved',province_code:'01',province_name:'Thành phố Hà Nội',l0_deg:105,k0:0.9999})};
+    };
     const candidate = {lat:'21.084990131093591',lon:'105.78665745895107',alt:'-8.1155038587749004'};
     device = {serial:'ESP_REVIEW',detected_chip_type:'Unicorecomm',status:'online',
         system_info:{auto_base_review_supported:true},
         base_config:{base_setup_method:'SURVEY_IN',survey_in_duration:120},
         auto_base_progress:{phase:'ready_for_review',fixed_samples_only:true,sample_count:56,
             averaged_coord:candidate,conversion_report:{transform_applied:true,
-                output_coord:candidate,calculated_coord:candidate,projected_coord:{north:2331863,east:581515,h:17},
+                input_coord:{lat:'21.084988050505846',lon:'105.78666048577483',alt:'-9.7167894736842086'},output_coord:candidate,calculated_coord:candidate,projected_coord:{north:2331863,east:581515,h:17},
                 projection_source:'rtcm1025',processor:'esp32',k0:'0.9996',
                 rtcm1025:{raw_l0:'9545454545',raw_k0:660000000,l0_deg:'104.999999995',k0:'0.9996',projection_type:1,frame_hex:'d30019',frame_bytes:31}}}};
     render();
     assert(text(tree).includes('Kết quả Auto Base — chờ kiểm tra'), 'Review must remain visible after restoring saved Survey-In');
+    await new Promise(resolve=>setImmediate(resolve)); render();
+    assert(text(tree).includes('Thành phố Hà Nội'), 'Province must resolve even with projection supplied by 1025');
     const resultNode = find(tree,node=>typeof node.type === 'function' && node.props.report?.processor === 'esp32');
     assert(resultNode, 'Projection result component must render');
     const auditText = text(resultNode.type(resultNode.props));
@@ -104,8 +111,35 @@ console.log('PASS: live GGA/Float, reject unverified success, update completed c
     assert.equal(configured.payload.params.altitude_reference,'ELLIPSOID');
     assert.equal(configured.payload.params.coordinate_source,'AUTO_CORS');
     assert.equal(configured.payload.params.conversion_report.output_coord.alt,candidate.alt);
+    assert.equal(configured.payload.params.conversion_report.province_code,'01');
+    assert.equal(configured.payload.params.conversion_report.k0,'0.9996', 'Province lookup must not replace CORS projection with provincial k0');
     assert(!configured.payload.auto_cors, 'Approval must apply LLH, not start another sampling session');
     console.log('PASS: Survey-In restoration retains review; approval directly submits full-precision local LLH as Fixed LLA');
+    const draftDevice = {serial:'DRAFT_A',detected_chip_type:'Unicorecomm',status:'online',base_config:{base_setup_method:'SURVEY_IN',survey_in_duration:120},system_info:{auto_base_review_supported:true}};
+    device=draftDevice; render();
+    const field = id=>find(tree,node=>node.props.id===id);
+    field('base-method-DRAFT_A').props.onChange({target:{value:'AUTO_CORS'}}); render();
+    for (const [key,value] of [['host','caster-A'],['user','user-A'],['password','secret-A']]) {
+        field(`cors-${key}-DRAFT_A`).props.onChange({target:{value}}); render();
+    }
+    context.window.ApiRoutes={devices:{corsMountpoints:()=>'/mock-cors'}};
+    context.window.apiFetch=async()=>({ok:true,json:async()=>({sources:[{mountpoint:'VRS.105M6'}]})});
+    context.window.showSuccess=()=>{};
+    await find(tree,node=>node.type==='button' && text(node).includes('Kết nối Base & Lấy danh sách')).props.onClick(); render();
+    device={...draftDevice,status:'auto_setup_averaging',auto_base_progress:{phase:'averaging'}}; render();
+    device={...draftDevice,serial:'DRAFT_B'}; render();
+    field('base-method-DRAFT_B').props.onChange({target:{value:'AUTO_CORS'}}); render();
+    assert.equal(field('cors-host-DRAFT_B').props.value,'');
+    assert.equal(field('cors-password-DRAFT_B').props.value,'');
+    device={...draftDevice,status:'auto_setup_averaging',auto_base_progress:{phase:'averaging'}}; render();
+    assert.equal(field('base-method-DRAFT_A').props.value,'AUTO_CORS');
+    assert.equal(field('cors-host-DRAFT_A').props.value,'caster-A');
+    assert.equal(field('cors-user-DRAFT_A').props.value,'user-A');
+    assert.equal(field('cors-password-DRAFT_A').props.value,'secret-A');
+    assert.equal(field('cors-mountpoint-DRAFT_A').props.value,'VRS.105M6');
+    device={...device,system_info:{...device.system_info,base_startup:{state:'configured'}}}; render();
+    assert.equal(field('cors-host-DRAFT_A').props.value,'caster-A', 'Startup telemetry must not clear draft');
+    console.log('PASS: active Auto Base wins over saved Survey-In; CORS fields and mountpoint survive A/B/A without station leakage');
     device = {serial: 'LTE_TEST', detected_chip_type: 'Unicorecomm', is_lte: true, status: 'sleep',
         base_config: {base_setup_method: 'FIXED_LLA', coords: {lat: '18.3863077210', lon: '105.5089184600', alt: '49.92'}}};
     render();

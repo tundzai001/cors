@@ -506,6 +506,8 @@ const GnssConfigVerification = ({ device, disabled }) => {
     </section>;
 };
 
+// Keep per-station form drafts across navigation in this tab; credentials stay in memory.
+const autoBaseDrafts = new Map();
 const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, onStopAutoBase, onReadBaseStatus, disabled }) {
     const knownChips = ['Ublox', 'Unicorecomm'];
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
@@ -534,7 +536,45 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const fixedStreak = autoProgress.fixed_streak || 0;
     const fixedStreakReq = autoProgress.fixed_streak_required || 5;
     const autoFixedResult = ['ready_for_review', 'completed'].includes(autoProgress.phase) && autoProgress.fixed_samples_only === true;
-    const conversionReport = autoProgress.conversion_report || device.base_config?.conversion_report || {};
+    const reportedConversion = autoProgress.conversion_report || device.base_config?.conversion_report || {};
+    const locationInput = reportedConversion.input_coord || autoProgress.raw_coord;
+    const locationKey = `${device.serial}:${['lat','lon','alt'].map(key => locationInput?.[key] ?? '').join(':')}`;
+    const [provinceLookup, setProvinceLookup] = useState(null);
+    const reportedProvince = reportedConversion.location?.province_name || reportedConversion.province_name;
+    useEffect(() => {
+        if (!autoFixedResult || reportedProvince) return;
+        const keys = ['lat','lon','alt'];
+        if (!keys.every(key => locationInput?.[key] != null && typeof locationInput[key] !== 'boolean'
+            && String(locationInput[key]).trim() !== '' && Number.isFinite(Number(locationInput[key])))) return;
+        if (typeof window.apiFetch !== 'function') return;
+        let active = true;
+        const point = Object.fromEntries(keys.map(key => [key, Number(locationInput[key])]));
+        setProvinceLookup({key:locationKey, state:'loading'});
+        (async () => {
+            try {
+                const response = await window.apiFetch('/api/coordinates/auto-base-location', {
+                    method:'POST', body:JSON.stringify(point)
+                });
+                if (!response.ok) throw new Error('Máy chủ chưa trả được tỉnh/thành.');
+                const location = await response.json();
+                if (!keys.every(key => Number(location.input_coord?.[key]) === point[key]))
+                    throw new Error('Phản hồi vị trí không khớp tọa độ của phiên này.');
+                if (active) setProvinceLookup({key:locationKey, state:'done', location});
+            } catch (error) {
+                if (active) setProvinceLookup({key:locationKey, state:'error', error:error.message});
+            }
+        })();
+        return () => { active = false; };
+    }, [locationKey, autoFixedResult, reportedProvince]);
+    const resolvedLocation = provinceLookup?.key === locationKey ? provinceLookup.location : null;
+    // Province identification is independent of the selected CORS/manual projection.
+    const conversionReport = resolvedLocation ? {...reportedConversion, location:resolvedLocation,
+        province_code:resolvedLocation.province_code, province_name:resolvedLocation.province_name} : reportedConversion;
+    const provinceLabel = conversionReport.location?.province_name || conversionReport.province_name
+        || (provinceLookup?.key === locationKey && provinceLookup.state === 'loading' ? 'Đang tra tỉnh/thành từ tọa độ…'
+            : provinceLookup?.key === locationKey && provinceLookup.error ? provinceLookup.error
+            : resolvedLocation?.state === 'outside_boundaries' ? 'Tọa độ nằm ngoài vùng dữ liệu tỉnh/thành'
+            : 'Chưa có kết quả tra tỉnh/thành');
     const supportsAutoBaseReview = device.system_info?.auto_base_review_supported === true;
     const autoResultText = autoFixedResult
         ? `Đã lấy ${autoProgress.sample_count || 0} mẫu RTK Fixed. Xem tọa độ trước khi áp dụng Fixed LLA.`
@@ -552,7 +592,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [altitudeReference, setAltitudeReference] = useState('ELLIPSOID');
     const [fixedAccuracyM, setFixedAccuracyM] = useState('0.01'); // Meters, matching the API and receiver configuration.
 
-    // CORS connection for Auto Base (kept in this form only; never read from .env)
+    // CORS connection for Auto Base (per-station tab memory; never read from .env)
     const [corsHost, setCorsHost] = useState('');
     const [projectionMeridian, setProjectionMeridian] = useState('');
     const [projectionScale, setProjectionScale] = useState('');
@@ -563,6 +603,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const [selectedMountpoint, setSelectedMountpoint] = useState('');
     const [isLoadingCorsSources, setIsLoadingCorsSources] = useState(false);
     const [corsLookupError, setCorsLookupError] = useState('');
+    const draftOwnerRef = useRef({serial:null, savedMethod:null});
+    const skipDraftSaveRef = useRef(false);
+    const corsRequestRef = useRef(0);
 
     // Survey-In Params
     const [svinDuration, setSvinDuration] = useState('300'); // Giây
@@ -668,24 +711,36 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
 
     useEffect(() => {
-        // 1. Reset về giá trị mặc định khi đổi thiết bị
+        const switched = draftOwnerRef.current.serial !== device.serial;
+        const savedMethod = device.base_config?.base_setup_method;
+        const methodChanged = draftOwnerRef.current.savedMethod !== savedMethod;
+        if (switched) {
+            skipDraftSaveRef.current = true;
+            ++corsRequestRef.current;
+            const draft = autoBaseDrafts.get(device.serial);
+            setCorsHost(draft?.host || '');
+            setCorsPort(draft?.port || '2101');
+            setCorsUsername(draft?.username || '');
+            setCorsPassword(draft?.password || '');
+            setCorsSources(draft?.sources || []);
+            setSelectedMountpoint(draft?.mountpoint || '');
+            setProjectionMeridian(draft?.meridian || '');
+            setProjectionScale(draft?.scale || '');
+            setCorsLookupError('');
+            setIsLoadingCorsSources(false);
+            setMethod(isAutoSetupActive ? 'AUTO_CORS' : draft?.method || savedMethod || 'FIXED_LLA');
+        } else if (isAutoSetupActive) setMethod('AUTO_CORS');
+        else if (methodChanged && savedMethod) setMethod(savedMethod);
+        draftOwnerRef.current = {serial:device.serial, savedMethod};
+        // Reload receiver configuration without clearing this station's CORS draft.
+
         setManualChip(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
-        setMethod('FIXED_LLA');
         setLatitude('');
         setLongitude('');
         setAltitude('');
         setCoordinatePasteNotice(null);
         setAltitudeReference('ELLIPSOID');
         setFixedAccuracyM('0.01');
-        setCorsHost('');
-        setProjectionMeridian('');
-        setProjectionScale('');
-        setCorsPort('2101');
-        setCorsUsername('');
-        setCorsPassword('');
-        setCorsSources([]);
-        setSelectedMountpoint('');
-        setCorsLookupError('');
         setSvinDuration('300');
         setSvinAccuracyM('3.00');
         setInterferenceDetectionEnabled(true);
@@ -697,13 +752,6 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         // 2. Load config từ DB (nếu có)
         if (device.base_config) {
             const config = device.base_config;
-
-            // Set Method: Ưu tiên cấu hình đã lưu trong DB. Chỉ dùng AUTO_CORS nếu chưa có cấu hình và đang thực sự chạy Auto Base.
-            if (config.base_setup_method) {
-                setMethod(config.base_setup_method);
-            } else if (isAutoSetupActive) {
-                setMethod('AUTO_CORS');
-            }
 
             // Load Fixed Params
             const coords = config.coords || (
@@ -749,7 +797,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 }
             }
         }
-    }, [device.serial, device.detected_chip_type, device.base_config?.base_setup_method, device.system_info?.base_startup?.state]);
+    }, [device.serial, device.detected_chip_type, device.base_config?.base_setup_method, device.system_info?.base_startup?.state, isAutoSetupActive]);
+
+    useEffect(() => {
+        if (skipDraftSaveRef.current) { skipDraftSaveRef.current = false; return; }
+        autoBaseDrafts.set(device.serial, {method, host:corsHost, port:corsPort,
+            username:corsUsername, password:corsPassword, sources:corsSources,
+            mountpoint:selectedMountpoint, meridian:projectionMeridian, scale:projectionScale});
+    }, [device.serial, method, corsHost, corsPort, corsUsername, corsPassword,
+        corsSources, selectedMountpoint, projectionMeridian, projectionScale]);
+    useEffect(() => () => { ++corsRequestRef.current; }, [device.serial]);
 
     const handleDecimalInputChange = (setter, maxDecimals) => (e) => {
         const value = e.target.value.replace(',', '.');
@@ -821,6 +878,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     };
 
     const handleCorsFieldChange = (setter) => (e) => {
+        ++corsRequestRef.current;
+        setIsLoadingCorsSources(false);
         setter(e.target.value);
         setCorsSources([]);
         setSelectedMountpoint('');
@@ -836,6 +895,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             return;
         }
 
+        const request = ++corsRequestRef.current;
         setIsLoadingCorsSources(true);
         setCorsLookupError('');
         try {
@@ -844,6 +904,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 body: JSON.stringify({ host, port, username, password: corsPassword })
             });
             const data = await response.json().catch(() => ({}));
+            if (request !== corsRequestRef.current) return;
             if (!response.ok) {
                 throw new Error(data.detail || 'Không thể đọc danh sách mountpoint từ Base.');
             }
@@ -863,11 +924,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 window.showSuccess(`Đã tải ${sources.length} mountpoint từ Base.`);
             }
         } catch (error) {
+            if (request !== corsRequestRef.current) return;
             setCorsSources([]);
             setSelectedMountpoint('');
             setCorsLookupError(error.message);
         } finally {
-            setIsLoadingCorsSources(false);
+            if (request === corsRequestRef.current) setIsLoadingCorsSources(false);
         }
     };
 
@@ -1377,7 +1439,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                             : 'Kết quả từ phiên cũ đã tự áp dụng. Các phiên mới sẽ chờ bạn xác nhận.'}</p>
                                         <div className="small text-break mb-2">Base liên kết: {conversionReport.source?.host || 'Chưa có dữ liệu'}
                                             {conversionReport.source?.mountpoint ? ` / ${conversionReport.source.mountpoint}` : ''}</div>
-                                        <div className="small mb-2">Tỉnh/thành: {conversionReport.location?.province_name || conversionReport.province_name || 'Chưa xác định'}
+                                        <div className="small mb-2" role="status">Tỉnh/thành: {provinceLabel}
                                             {conversionReport.location?.state === 'projection_selection_required' && ' · Có nhiều vùng kinh tuyến trục cũ'}</div>
                                         <div className="table-responsive">
                                             <table className="table table-sm small mb-2" style={{minWidth: '640px'}}>
