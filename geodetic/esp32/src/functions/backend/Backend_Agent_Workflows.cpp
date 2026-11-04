@@ -74,7 +74,7 @@ void BackendAgent::setWorkflowProgress(const String &phase, const uint8_t step,
         if (deserializeJson(extra, details) == DeserializationError::Ok
             && extra.is<JsonObject>()) {
             for (JsonPairConst pair : extra.as<JsonObjectConst>()) {
-                progress[pair.key().c_str()] = pair.value();
+                progress[String(pair.key().c_str())] = pair.value();
             }
         }
     }
