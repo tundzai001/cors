@@ -502,7 +502,8 @@ int loopNtripRover() {
         }
     }
     xSemaphoreGive(rtcmBufferMutex);
-    return bytesRead > 0 ? bytesRead : 200;
+    // Return status, not byte count: a valid 504-byte read must not look like failure.
+    return 200;
 }
 
 void stopNtripRover() {

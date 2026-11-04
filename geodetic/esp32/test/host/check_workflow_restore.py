@@ -115,11 +115,14 @@ int main() {
     assert(agent.restoreWorkflowBase(config.as<JsonObjectConst>()));
     assert(agent.baseStartupState_ == "awaiting_configuration" && !agent.baseStartupConfigured());
     client.data = {0xd3,0,1,0x66};
-    assert(loopNtripRover() == 4);
+    assert(loopNtripRover() == 200);
     assert(roverBytesReceived == 4 && roverBytesWritten == 4 && Serial1.data.size() == 4);
+    client.data = std::vector<uint8_t>(504, 0xd3);
+    assert(loopNtripRover() == 200 && roverSessionActive && roverSessionAuthenticated);
+    assert(roverBytesReceived == 508 && roverBytesWritten == 508 && Serial1.data.size() == 508);
     client.data = {0xd3,0,2,0x55}; Serial1.shortWrite = true;
-    assert(loopNtripRover() == 504 && roverBytesReceived == 8 && roverBytesWritten == 7);
-    assert(strcmp(roverLastError, "GNSS UART did not accept all CORS bytes") == 0 && releases == 2);
+    assert(loopNtripRover() == 504 && roverBytesReceived == 512 && roverBytesWritten == 511);
+    assert(strcmp(roverLastError, "GNSS UART did not accept all CORS bytes") == 0 && releases == 3);
     client.up = false;
     assert(loopNtripRover() == 504 && !roverSessionAuthenticated);
 }
