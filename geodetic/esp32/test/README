@@ -68,3 +68,6 @@ NTRIP reconnect status and transition-only logging:
 
 Workflow Base-mode restoration and CORS-to-UART delivery:
   python3 -B test/host/check_workflow_restore.py
+
+Run `python3 geodetic/esp32/test/host/check_nvs_inventory.py` for real JSON field values, nested secret masking and pagination.
+Run `python3 geodetic/esp32/test/host/check_wifi_nvs.py` for Wi-Fi NVS reuse and missing-key persistence.

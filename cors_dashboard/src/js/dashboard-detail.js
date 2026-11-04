@@ -410,6 +410,24 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
         { id: 'unused_wifi', title: 'Wi-Fi cấu hình cũ', detail: 'Danh sách mạng phụ và mật khẩu AP đã bỏ.' },
         { id: 'auto_base_history', title: 'Lịch sử Auto Base', detail: 'Kết quả cũ; giữ cấu hình Base và Survey-In.' },
     ];
+    const savedFieldLabels = {
+        WIFI_SSID: 'Tên mạng Wi-Fi', WIFI_PASS: 'Mật khẩu Wi-Fi',
+        CONNECTION_TYPE: 'Kiểu kết nối', APN: 'APN mạng di động',
+        MQTT_SERVER: 'Máy chủ MQTT', MQTT_PORT: 'Cổng MQTT', MQTT_USER: 'Tài khoản MQTT',
+        NTRIP_SERVER: 'Máy chủ NTRIP mặc định', NTRIP_PORT: 'Cổng NTRIP mặc định',
+        NTRIP_MPT: 'Mountpoint mặc định', DEVICE_NAME: 'Tên trạm', DEVICE_SERIAL: 'Mã thiết bị',
+        BASE_JSON: 'Cấu hình Base', SERVICE_JSON: 'Cấu hình NTRIP',
+        PROGRESS_JSON: 'Kết quả Auto Base', SURVEY_RESULT: 'Kết quả Survey-In',
+        CMD_RESULT: 'Kết quả lệnh gần nhất', LICENSE_KEY: 'Khóa kích hoạt',
+        base_setup_method: 'Chế độ Base', survey_in_duration: 'Thời gian Survey-In (giây)',
+        survey_in_accuracy: 'Độ chính xác Survey-In (m)', 'coords.lat': 'Vĩ độ Base',
+        'coords.lon': 'Kinh độ Base', 'coords.alt': 'Độ cao Base (m)',
+        'gnss_options.output_mode': 'Chế độ bản tin', 'gnss_options.msm_level': 'Mức RTCM MSM',
+        serverhost1: 'Máy chủ S1', port1: 'Cổng S1', mountpoint1: 'Mountpoint S1',
+        username1: 'Tài khoản S1', password1: 'Mật khẩu S1',
+        serverhost2: 'Máy chủ S2', port2: 'Cổng S2', mountpoint2: 'Mountpoint S2',
+        username2: 'Tài khoản S2', password2: 'Mật khẩu S2',
+    };
     return <section className="info-section mt-3" aria-label="Bộ nhớ ESP32" aria-busy={!!pending}>
         <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
             <h6 className="mb-0">Bộ nhớ ESP32</h6>
@@ -458,7 +476,7 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
                 {pending && <p role="status" className="text-info">Đang đọc NVS từ ESP32…</p>}
                 {failed && <p role="alert" className="text-danger">{notice}</p>}
                 {inventory && <>
-                    <p className="small text-muted">{inventory.total} mục · Hiển thị {inventory.entries.length ? inventory.offset + 1 : 0}–{inventory.offset + inventory.entries.length} · Dung lượng là dữ liệu giá trị, chưa gồm phần quản lý NVS.</p>
+                    <p className="small text-muted">{inventory.total} {inventory.fields_expanded ? 'trường đã lưu' : 'mục'} · Hiển thị {inventory.entries.length ? inventory.offset + 1 : 0}–{inventory.offset + inventory.entries.length} · {inventory.fields_expanded ? 'Wi-Fi và cấu hình trạm hiển thị trước. JSON được tách thành từng trường.' : 'Dung lượng là dữ liệu giá trị, chưa gồm phần quản lý NVS.'}</p>
                     {inventory.unavailable_partitions?.length > 0 && <p className="text-warning small">Một vùng nhớ chưa đọc được; bảng hiện các vùng khả dụng.</p>}
                     <p className="small text-muted d-md-none">Vuốt ngang để xem đủ các cột.</p>
                     <div className="table-responsive" tabIndex={0} role="region" aria-label="Danh sách mục NVS">
@@ -466,10 +484,10 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
                             <caption className="visually-hidden">Dữ liệu NVS đã đọc từ thiết bị, giá trị bí mật được che</caption>
                             <thead><tr><th scope="col">Vùng lưu</th><th scope="col">Nhóm / Mục</th><th scope="col">Kiểu</th><th scope="col">Dung lượng</th><th scope="col">Giá trị</th></tr></thead>
                             <tbody>{inventory.entries.map((entry, index) => <tr key={`${entry.partition}:${entry.namespace}:${entry.key}:${index}`}>
-                                <td>{entry.partition === 'nvs' ? 'Cấu hình kết nối' : 'Dữ liệu trạm'}</td>
-                                <th scope="row"><div className="small text-muted">{entry.namespace}</div><code>{entry.key}</code></th>
+                                <td>{['myPrefs', 'backend'].includes(entry.namespace) ? 'Cấu hình đã lưu' : 'Dữ liệu hệ thống'}</td>
+                                <th scope="row"><div>{savedFieldLabels[entry.field || entry.key] || savedFieldLabels[entry.key] || entry.key}</div><div className="small text-muted">{entry.namespace} · {entry.key}</div>{entry.field && <code>{entry.field}</code>}</th>
                                 <td>{entry.type || '—'}</td><td>{entry.bytes == null ? '—' : `${entry.bytes} B`}</td>
-                                <td className="esp-nvs-value">{entry.error || (entry.redacted ? 'Đã che' : entry.value === '' ? '(trống)' : entry.value ?? 'Đã lưu')}</td>
+                                <td className="esp-nvs-value">{entry.error || (entry.redacted ? entry.bytes === 0 ? '(trống)' : 'Đã lưu · Nội dung được che' : entry.value === '' ? '(trống)' : entry.value ?? 'Đã lưu')}{entry.truncated && <span className="small text-muted d-block">Chỉ hiển thị 96 ký tự đầu.</span>}</td>
                             </tr>)}</tbody>
                         </table>
                     </div>

@@ -4,6 +4,8 @@
 #include "functions/backend/Storage_Status.h"
 #include <Preferences.h>
 #include <ArduinoJson.h>
+#include <nvs.h>
+#include <memory>
 
 namespace {
 bool connectWifi(const String &ssid, const String &password, bool (*validateConnection)()) {
@@ -25,11 +27,15 @@ bool setupWiFi(bool (*validateConnection)()) {
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     // Upgrade only: select a working old profile before retiring the list.
-    Preferences legacy;
     String profiles;
-    if (legacy.begin("wifi_config", true)) {
-        profiles = legacy.getString("profiles", "");
-        legacy.end();
+    nvs_handle_t legacy;
+    if (nvs_open("wifi_config", NVS_READONLY, &legacy) == ESP_OK) {
+        size_t length = 0;
+        if (nvs_get_str(legacy, "profiles", nullptr, &length) == ESP_OK && length > 0 && length <= 3072) {
+            std::unique_ptr<char[]> value(new char[length]);
+            if (nvs_get_str(legacy, "profiles", value.get(), &length) == ESP_OK) profiles = value.get();
+        }
+        nvs_close(legacy);
     }
     if (!profiles.isEmpty()) {
         DynamicJsonDocument doc(3072);
@@ -49,8 +55,11 @@ bool setupWiFi(bool (*validateConnection)()) {
     if (!store.begin("myPrefs", true)) return false;
     const String ssid = store.getString("WIFI_SSID", WIFI_SSID);
     const String password = store.getString("WIFI_PASS", WIFI_PASSWORD);
+    const bool savedCredentials = store.isKey("WIFI_SSID") && store.isKey("WIFI_PASS");
     store.end();
     const bool connected = connectWifi(ssid, password, validateConnection);
+    if (connected && !savedCredentials && !saveMigratedWifi(ssid, password))
+        Serial.println("[WIFI] Da ket noi; LOI luu cau hinh vao NVS.");
     if (!connected) Serial.println("[WIFI] Khong ket noi duoc mang da cau hinh.");
     return connected;
 }

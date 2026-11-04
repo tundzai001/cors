@@ -6,6 +6,7 @@
 #include <esp_partition.h>
 #include <esp_ota_ops.h>
 #include <type_traits>
+#include <memory>
 
 namespace {
 size_t obsoleteWifiKeys() {
@@ -106,7 +107,7 @@ bool saveMigratedWifi(const String &ssid, const String &password) {
 namespace {
 bool readableNvsValue(const nvs_entry_info_t &entry) {
     if (strcmp(entry.namespace_name, "myPrefs") && strcmp(entry.namespace_name, "backend")) return false;
-    // Unknown values, JSON, blobs and secrets never leave the device.
+    // Raw values use an allowlist. Known configuration JSON is expanded below.
     for (const char *key : {"DEVICE_SERIAL", "DEVICE_NAME", "SENSOR_TYPE", "CONNECTION_TYPE",
                            "GNSS_MDL_TYPE", "WIFI_SSID", "APN", "MQTT_SERVER", "MQTT_PORT",
                            "BACKEND_HOST", "BACKEND_PORT", "NTRIP_SERVER", "NTRIP_PORT",
@@ -115,6 +116,59 @@ bool readableNvsValue(const nvs_entry_info_t &entry) {
         if (!strcmp(entry.key, key)) return true;
     }
     return false;
+}
+
+bool configurationNamespace(const nvs_entry_info_t &entry) {
+    return !strcmp(entry.namespace_name, "myPrefs") || !strcmp(entry.namespace_name, "backend");
+}
+
+bool configurationJson(const nvs_entry_info_t &entry) {
+    if (!configurationNamespace(entry) || entry.type != NVS_TYPE_STR) return false;
+    for (const char *key : {"BASE_JSON", "SERVICE_JSON", "PROGRESS_JSON", "CMD_RESULT", "SURVEY_RESULT"})
+        if (!strcmp(entry.key, key)) return true;
+    return false;
+}
+
+bool secretField(String path) {
+    path.toLowerCase();
+    return path.indexOf("pass") >= 0 || path.indexOf("token") >= 0
+        || path.indexOf("secret") >= 0 || path.indexOf("license") >= 0
+        || path.indexOf("auth") >= 0 || path.indexOf("api_key") >= 0;
+}
+
+void appendConfigurationFields(JsonArray entries, uint32_t offset, uint32_t &total,
+                               const char *partition, const nvs_entry_info_t &entry,
+                               JsonVariantConst value, const String &path, bool secret = false) {
+    secret = secret || secretField(path);
+    if (value.is<JsonObjectConst>() && value.size()) {
+        for (JsonPairConst field : value.as<JsonObjectConst>())
+            appendConfigurationFields(entries, offset, total, partition, entry, field.value(),
+                                      path.isEmpty() ? String(field.key().c_str()) : path + "." + field.key().c_str(), secret);
+        return;
+    }
+    if (value.is<JsonArrayConst>() && value.size()) {
+        size_t index = 0;
+        for (JsonVariantConst item : value.as<JsonArrayConst>())
+            appendConfigurationFields(entries, offset, total, partition, entry, item,
+                                      path + "[" + String(index++) + "]", secret);
+        return;
+    }
+    if (total++ < offset || entries.size() >= 6) return;
+    JsonObject row = entries.createNestedObject();
+    row["partition"] = String(partition);
+    row["namespace"] = String(entry.namespace_name);
+    row["key"] = String(entry.key);
+    row["field"] = path;
+    row["type"] = "JSON";
+    row["bytes"] = measureJson(value);
+    row["redacted"] = secret;
+    if (!secret) {
+        String text;
+        if (value.is<const char *>()) text = value.as<String>();
+        else serializeJson(value, text);
+        row["value"] = text.substring(0, 96);
+        row["truncated"] = text.length() > 96;
+    }
 }
 
 void describeNvsEntry(JsonObject row, const char *partition, const nvs_entry_info_t &entry) {
@@ -180,25 +234,50 @@ bool readNvsInventory(uint32_t offset, const String &commandId, String &output, 
     doc["sampled_at_ms"] = millis();
     JsonArray entries = doc.createNestedArray("entries");
     uint32_t total = 0;
-    for (const char *partition : {"nvs", "agent_state"}) {
-        nvs_stats_t stats{};
-        const esp_err_t status = nvs_get_stats(partition, &stats);
-        if (status != ESP_OK) {
-            if (!strcmp(partition, "nvs")) { error = "Cannot inspect NVS"; return false; }
-            JsonArray unavailable = doc["unavailable_partitions"].isNull()
-                ? doc.createNestedArray("unavailable_partitions") : doc["unavailable_partitions"].as<JsonArray>();
-            unavailable.add(partition);
-            continue;
-        }
-        for (auto iterator = nvs_entry_find(partition, nullptr, NVS_TYPE_ANY); iterator;
-             iterator = nvs_entry_next(iterator)) {
-            nvs_entry_info_t entry;
-            nvs_entry_info(iterator, &entry);
-            if (total >= offset && entries.size() < 6)
-                describeNvsEntry(entries.createNestedObject(), partition, entry);
-            ++total;
+    // Show saved Wi-Fi first, then application configuration, then SDK internals.
+    for (int priority = 0; priority < 3; ++priority) {
+        for (const char *partition : {"nvs", "agent_state"}) {
+            nvs_stats_t stats{};
+            const esp_err_t status = nvs_get_stats(partition, &stats);
+            if (status != ESP_OK) {
+                if (!strcmp(partition, "nvs")) { error = "Cannot inspect NVS"; return false; }
+                JsonArray unavailable = doc["unavailable_partitions"].isNull()
+                    ? doc.createNestedArray("unavailable_partitions") : doc["unavailable_partitions"].as<JsonArray>();
+                if (priority == 0) unavailable.add(partition);
+                continue;
+            }
+            for (auto iterator = nvs_entry_find(partition, nullptr, NVS_TYPE_ANY); iterator;
+                 iterator = nvs_entry_next(iterator)) {
+                nvs_entry_info_t entry;
+                nvs_entry_info(iterator, &entry);
+                const bool wifi = configurationNamespace(entry) && !strncmp(entry.key, "WIFI_", 5);
+                const int entryPriority = wifi ? 0 : configurationNamespace(entry) ? 1 : 2;
+                if (entryPriority != priority) continue;
+                if (configurationJson(entry)) {
+                    nvs_handle_t handle;
+                    if (nvs_open_from_partition(partition, entry.namespace_name, NVS_READONLY, &handle) == ESP_OK) {
+                        size_t length = 0;
+                        if (nvs_get_str(handle, entry.key, nullptr, &length) == ESP_OK && length <= 8192) {
+                            std::unique_ptr<char[]> text(new char[length]);
+                            DynamicJsonDocument config(12288);
+                            if (nvs_get_str(handle, entry.key, text.get(), &length) == ESP_OK
+                                && deserializeJson(config, text.get()) == DeserializationError::Ok) {
+                                appendConfigurationFields(entries, offset, total, partition, entry,
+                                                          config.as<JsonVariantConst>(), String());
+                                nvs_close(handle);
+                                continue;
+                            }
+                        }
+                        nvs_close(handle);
+                    }
+                }
+                if (total >= offset && entries.size() < 6)
+                    describeNvsEntry(entries.createNestedObject(), partition, entry);
+                ++total;
+            }
         }
     }
+    doc["fields_expanded"] = true;
     doc["total"] = total;
     doc["has_more"] = offset + entries.size() < total;
     if (doc.overflowed()) { error = "NVS inventory page exceeds memory limit"; return false; }

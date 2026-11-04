@@ -86,15 +86,19 @@ firmware mới mới gửi các trường bộ nhớ và xử lý hai lệnh tr�
 ## Bảng dữ liệu NVS
 
 Trong System Monitor, bấm **Kiểm tra NVS** để đọc từ thiết bị và mở bảng.
-Mỗi trang tối đa 6 mục, gồm phân vùng, namespace, key, kiểu, dung lượng giá trị
-và nội dung được phép hiển thị. Dùng Trước/Sau để xem trang khác, Kiểm tra lại
+Mỗi trang tối đa 6 trường, gồm tên cấu hình, key, trường con, kiểu, dung lượng
+và giá trị đã đọc trực tiếp từ NVS. Wi-Fi được hiển thị trước, tiếp theo là
+cấu hình ứng dụng, cuối cùng là dữ liệu hệ thống. Dùng Trước/Sau để xem trang khác, Kiểm tra lại
 để đọc từ đầu. Trên điện thoại có thể vuốt ngang bảng. Escape/Đóng đóng bảng.
 
 Firmware liệt kê hai phân vùng `nvs` và `agent_state` bằng handle chỉ đọc.
-Chỉ giá trị key thuộc danh sách cho phép ở namespace cấu hình mới được gửi.
-Mật khẩu/license/token, JSON và blob chỉ hiển thị metadata, không gửi nội dung.
-Chuỗi cho phép dài hơn 96 byte chỉ hiện thông báo; không cấp phát để đọc toàn
-bộ giá trị. Mỗi trang có command ID và thời điểm đọc; các trang là các lần đọc
+Giá trị đơn dùng danh sách cho phép. BASE_JSON, SERVICE_JSON, PROGRESS_JSON,
+CMD_RESULT và SURVEY_RESULT được tách thành từng trường con để xem mode, tọa độ,
+Survey-In, máy chủ, cổng và mountpoint. Trường chứa mật khẩu/token/license/auth
+được che ngay trên thiết bị; blob và key chưa được nhận diện chỉ gửi metadata.
+Giá trị trường JSON dài hơn 96 ký tự có cờ truncated; UI báo rõ bị rút gọn.
+JSON gốc chỉ được đọc khi không quá 8192 byte; lỗi đọc/parse giữ cách xem metadata.
+Dung lượng của trường JSON là độ dài giá trị JSON, không phải một key NVS riêng. Mỗi trang có command ID và thời điểm đọc; các trang là các lần đọc
 riêng nên nếu dữ liệu thay đổi trong lúc xem, hãy kiểm tra lại từ đầu.
 
 Lệnh dùng lại `CHECK_STORAGE_STATUS` với payload `{"inspect":true,"offset":0}`.
@@ -107,5 +111,12 @@ snapshot. Không có API ghi/xóa key tùy ý trong bảng này.
 
 Đã kiểm tra phân trang, che giá trị bí mật, đọc metadata, đóng handle/iterator,
 phân vùng không khả dụng, phân quyền/offset và giao diện desktop/390 px bằng
-fixture. Các thử nghiệm không tạo thêm file check trong repository. Chưa đo
-trên ESP32 thật hoặc triển khai lên web vận hành.
+fixture. Kiểm tra host: `check_nvs_inventory.py` xác nhận tách trường, phân trang
+và che bí mật; `check_wifi_nvs.py` xác nhận đọc cấu hình đã lưu và chỉ lưu cặp
+mặc định khi thiếu key và kết nối thành công. Chưa đo trên ESP32 thật hoặc
+triển khai lên web vận hành.
+
+Wi-Fi hiện lưu tại myPrefs/WIFI_SSID và myPrefs/WIFI_PASS. Khi thiếu các key này,
+firmware chỉ lưu cặp mặc định sau khi đã kết nối thành công và kiểm tra đọc lại.
+Vùng wifi_config cũ được dò bằng native NVS chỉ đọc: không tồn tại là trạng thái
+bình thường, không còn tạo log Preferences NOT_FOUND.
