@@ -148,3 +148,15 @@ assert.equal(plotReader(angleDevice,angleData,true,146).satellites[0].has_geomet
 assert.equal(plotReader({...angleDevice,gnss_satellites:{...angleDevice.gnss_satellites,payload_b64:'bad'}},angleData,true,102).satellites[0].has_geometry,false);
 assert.equal(rtcmSat.has_geometry,false,'do not mutate decoder telemetry');
 console.log('PASS: RTCM membership/CNO/time unchanged; NAV-SAT angles joined by constellation+PRN only; invalid/expired/missing angles ignored');
+
+const inputBefore=JSON.stringify(angleData);
+const chipBefore=JSON.stringify(angleDevice);
+assert.equal(plotReader(angleDevice,{satellites:{}},true,102).satellites.length,0,'fresh NAV-SAT alone never creates RTCM observations');
+assert.equal(plotReader(angleDevice,angleData,false,102).satellites.length,0,'offline never shows decoded observations');
+const detached=plotReader(angleDevice,angleData,true,102).satellites;
+detached[0].azimuth=12;
+assert.equal(JSON.stringify(angleData),inputBefore,'angle join never mutates RTCM store');
+assert.equal(JSON.stringify(angleDevice),chipBefore,'angle join never mutates chip snapshot');
+const expired=plotReader(angleDevice,{satellites:{old:{...rtcmSat,lastSeen:1e12-8000}}},true,102).satellites;
+assert.equal(satelliteContext.counts(expired,7000).rtcm,0,'fresh chip angles never revive expired RTCM');
+console.log('PASS: NAV-SAT-only, offline, input isolation and expired RTCM remain separate');

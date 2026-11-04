@@ -398,3 +398,8 @@ The edge monitor prefers SEC-SIG on modern firmware, never MON-RF fallback. Warn
 The archive also retains earlier MON-RF samples when a firmware upgrade switches diagnostics to SEC-SIG. The 24-hour expiry and 20,000-row cap apply across sources.
 
 Updated reports use `window_mode="fixed"`, `window_started_at` and `window_ends_at`. Periods last 600 seconds, anchored to the first accepted sample. A subsequent accepted sample starts the next period (skipping empty periods after gaps), resets the live counts and timeline, and leaves the 24-hour archive intact. UI progress follows the period clock while data is fresh; it does not generate samples or restart a period before Pi reports it. Older agents retain their rolling-window presentation.
+
+
+### Independent satellite diagnostics
+
+The reception panel reads C/N₀, tracking and `svUsed` only from fresh UBX-NAV-SAT. The sky plot and signal bars use only fresh decoded RTCM observations (7-second window). NAV-SAT joins by normalized constellation/PRN to supply angles only; it must not add RTCM members, overwrite RTCM C/N₀, refresh RTCM timestamps, or mutate either input store. The source comparison table shows each source separately, including missing entries, and does not imply the snapshots share a navigation epoch. A receiver-used count is not an RTCM-exported count.

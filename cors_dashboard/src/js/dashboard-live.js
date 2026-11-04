@@ -603,10 +603,14 @@ function isDeviceStaleOffline(device, nowMs = Date.now()) {
     return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
 }
 
-function ReceptionOverview({device, live}) {
+function ReceptionOverview({device, live, data}) {
     const historyRef = useRef({serial:null, samples:[]});
     const [paused, setPaused] = useState(false);
     const current = getReceptionSample(device, live);
+    const receiver = getReceiverSatellites(device, live);
+    const decoded = getVisibleSatellites(getSatellitePlotSource(device, data, live).satellites, 7000);
+    const chipRows = receiver?.satellites || [];
+    const keys = [...new Set([...chipRows, ...decoded].map(getSatelliteKey))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
     const history = historyRef.current;
     if (history.serial !== device.serial) {
         history.serial = device.serial;
@@ -624,11 +628,11 @@ function ReceptionOverview({device, live}) {
     const end = samples[samples.length-1]?.at || Date.now()/1000;
     return <div className="border rounded-3 p-3 mb-3" aria-label="Chất lượng thu GNSS">
         <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-            <div><h6 className="mb-1">Chất lượng thu GNSS</h6><span className="small text-muted">10 phút khi mở màn hình · C/N₀ từ chip</span></div>
+            <div><h6 className="mb-1">Chất lượng thu từ chip · NAV-SAT</h6><span className="small text-muted">10 phút khi mở màn hình · Độc lập với luồng RTCM</span></div>
             <button className="btn btn-sm btn-outline-secondary" style={{minHeight:44}} aria-pressed={paused} onClick={()=>setPaused(value=>!value)}>{paused ? 'Tiếp tục cập nhật' : 'Tạm dừng biểu đồ'}</button>
         </div>
         <div className="row g-2 mb-3">
-            {[[format(latest?.median),'C/N₀ trung vị · dB-Hz'],[latest?.tracking ?? '—','Vệ tinh đang bám'],[latest?.used ?? '—','Được dùng định vị'],[comparison ? comparison.lost : '—','Không còn bám so với mẫu trước']].map(([value,label])=><div className="col-6 col-xl-3" key={label}><div className="border rounded p-2 h-100"><strong className="fs-4 d-block font-monospace">{value}</strong><span className="small text-muted">{label}</span></div></div>)}
+            {[[format(latest?.median),'C/N₀ trung vị · dB-Hz'],[latest?.tracking ?? '—','Chip đang bám · NAV-SAT'],[latest?.used ?? '—','Chip báo đang dùng · NAV-SAT'],[comparison ? comparison.lost : '—','Không còn bám so với mẫu trước']].map(([value,label])=><div className="col-6 col-xl-3" key={label}><div className="border rounded p-2 h-100"><strong className="fs-4 d-block font-monospace">{value}</strong><span className="small text-muted">{label}</span></div></div>)}
         </div>
         <p className={`small mb-2 ${drop ? 'text-warning' : 'text-muted'}`} role="status">{!latest ? 'Đang chờ mẫu vệ tinh mới từ chip.' : paused ? 'Đã tạm dừng biểu đồ.' : comparison?.delta != null ? `${drop ? 'C/N₀ giảm' : 'Biến động C/N₀'}: ${comparison.delta>0 ? '+' : ''}${format(comparison.delta)} dB-Hz · đối chiếu ${comparison.matched} vệ tinh trùng nhau.` : 'Đang thu mẫu để đối chiếu cùng vệ tinh.'}</p>
         {samples.length > 1 && <>
@@ -648,8 +652,21 @@ function ReceptionOverview({device, live}) {
             const rows=latest.satellites.filter(sat=>sat.system===system);
             return rows.length ? <span className="border rounded px-2 py-1 small" key={system}>{label} <strong>{rows.length}</strong> · {(rows.reduce((sum,sat)=>sum+sat.cno,0)/rows.length).toFixed(1)} dB-Hz TB</span> : null;
         })}</div>}
+        <details className="border rounded p-2 mb-2">
+            <summary className="small py-2" style={{minHeight:44}}>Đối chiếu hai nguồn vệ tinh · NAV-SAT / RTCM</summary>
+            <div className="row g-2 mb-2">
+                <div className="col-sm-6"><div className="border rounded p-2 h-100"><strong className="d-block">Chip · NAV-SAT</strong><span className="small">{current ? `${current.tracking} đang bám · ${current.used} chip đang dùng` : 'Chưa có mẫu chip mới'}</span><div className="small text-muted">{receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Không dùng dữ liệu quá 45 giây'}</div></div></div>
+                <div className="col-sm-6"><div className="border rounded p-2 h-100"><strong className="d-block">Giải mã luồng RTCM</strong><span className="small">{decoded.length} vệ tinh có C/N₀ trong 7 giây gần nhất</span><div className="small text-muted">Không suy ra vệ tinh chip đang dùng từ RTCM.</div></div></div>
+            </div>
+            <p className="small text-muted">Hai nguồn cập nhật độc lập. Dấu — là chưa có dữ liệu ở nguồn tương ứng, không kết luận mất vệ tinh.</p>
+            <div className="table-responsive" tabIndex={0} role="region" aria-label="Danh sách vệ tinh theo nguồn" style={{maxHeight:360,overflow:"auto"}}><table className="table table-sm small" style={{minWidth:460}}><caption className="visually-hidden">C/N₀ và trạng thái lấy riêng từng nguồn; chưa đồng bộ epoch</caption><thead><tr><th>Vệ tinh</th><th>NAV-SAT · dB-Hz</th><th>Chip đang dùng</th><th>RTCM · dB-Hz</th></tr></thead><tbody>{keys.map(key=>{
+                const chip=chipRows.find(sat=>getSatelliteKey(sat)===key), rtcm=decoded.find(sat=>getSatelliteKey(sat)===key);
+                const sat=chip || rtcm;
+                return <tr key={key}><th scope="row" className="text-nowrap">{systems.find(([system])=>system===getSatelliteSystem(sat))?.[1] || getSatelliteSystem(sat)} {getNormalizedPrn(sat)}</th><td>{chip ? chip.snr : '—'}</td><td>{chip ? chip.used_in_solution ? 'Có' : 'Không' : '—'}</td><td>{rtcm ? rtcm.snr : '—'}</td></tr>;
+            })}</tbody></table></div>
+        </details>
         <p className="small text-muted mb-0">NAV-SAT chưa tách C/N₀ từng băng. Vệ tinh không còn bám có thể do khuất trời; C/N₀ giảm chưa xác nhận có nhiễu.</p>
-        {samples.length > 0 && <details className="mt-2"><summary className="small py-2" style={{minHeight:44}}>Xem số liệu chất lượng thu</summary><div className="table-responsive"><table className="table table-sm small"><thead><tr><th>Thời điểm</th><th>C/N₀ · dB-Hz</th><th>Đang bám</th><th>Được dùng</th></tr></thead><tbody>{samples.slice(-20).reverse().map(sample=><tr key={sample.at}><td>{new Date(sample.at*1000).toLocaleTimeString('vi-VN')}</td><td>{format(sample.median)}</td><td>{sample.tracking}</td><td>{sample.used}</td></tr>)}</tbody></table></div></details>}
+        {samples.length > 0 && <details className="mt-2"><summary className="small py-2" style={{minHeight:44}}>Xem số liệu chất lượng thu</summary><div className="table-responsive"><table className="table table-sm small"><thead><tr><th>Thời điểm</th><th>C/N₀ · dB-Hz</th><th>Chip đang bám</th><th>Chip đang dùng</th></tr></thead><tbody>{samples.slice(-20).reverse().map(sample=><tr key={sample.at}><td>{new Date(sample.at*1000).toLocaleTimeString('vi-VN')}</td><td>{format(sample.median)}</td><td>{sample.tracking}</td><td>{sample.used}</td></tr>)}</tbody></table></div></details>}
     </div>;
 }
 
@@ -735,7 +752,7 @@ function RfMonitorOverview({model}) {
     </div>;
 }
 
-function RfDiagnostics({device, live}) {
+function RfDiagnostics({device, live, data}) {
     const esp32 = device.system_info?.gnss_rf_supported === false || /^esp_/i.test(device.serial || '');
     const [, refreshClock] = useState(0);
     useEffect(() => {
@@ -777,7 +794,7 @@ function RfDiagnostics({device, live}) {
     </section>;
     return <section className="card mt-3" aria-label="Chẩn đoán nhiễu GNSS">
         <div className="card-body">
-            <ReceptionOverview key={device.serial} device={device} live={live} />
+            <ReceptionOverview key={device.serial} device={device} live={live} data={data} />
             <RfMonitorOverview model={automatic} />
             <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                 <h6 className="mb-0">Chẩn đoán nhiễu GNSS</h6>
@@ -1811,14 +1828,15 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                     Đang chờ dữ liệu vệ tinh từ decoder RTCM. Có danh sách bản tin chưa đồng nghĩa đã đủ dữ liệu vị trí quỹ đạo để vẽ biểu đồ.
                 </div>
             )}
-            {!/^MONITOR_/i.test(String(device.serial || '')) && ['Ublox','Unicorecomm'].includes(device.detected_chip_type) && <RfDiagnostics key={`${device.serial}:${device.detected_chip_type}`} device={device} live={liveDataAvailable} />}
+            {!/^MONITOR_/i.test(String(device.serial || '')) && ['Ublox','Unicorecomm'].includes(device.detected_chip_type) && <RfDiagnostics key={`${device.serial}:${device.detected_chip_type}`} device={device} live={liveDataAvailable} data={safeNmeaData} />}
 
             <div className="sky-grid">
                 <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div className="panel-header" style={{ flexShrink: 0 }}>
                         <i className="bi bi-radar"></i><span>Sky View</span>
-                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} có tín hiệu · <span data-no-translate>RTCM</span></span>
+                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} giải mã · <span data-no-translate>RTCM</span></span>
                     </div>
+                    <div className="small text-muted px-3 pb-1">Danh sách và C/N₀ từ RTCM; NAV-SAT chỉ bổ sung góc cho vệ tinh trùng PRN.</div>
                     <div className="small text-muted px-3 pb-1" data-no-translate>G GPS · R GLONASS · E Galileo · C BeiDou · J QZSS · S SBAS</div>
                     <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
@@ -1831,9 +1849,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
                 <div className="sky-panel signals-panel">
                     <div className="panel-header">
-                        <i className="bi bi-bar-chart-fill"></i><span>Signal Strength (SNR)</span>
+                        <i className="bi bi-bar-chart-fill"></i><span>C/N₀ giải mã từ RTCM</span>
                         <div className="ms-auto d-flex gap-2">
-                            <span className="badge bg-secondary">{satStats.total} có tín hiệu</span>
+                            <span className="badge bg-secondary">{satStats.total} giải mã RTCM</span>
                         </div>
                     </div>
                     <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
