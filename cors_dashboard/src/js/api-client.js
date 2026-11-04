@@ -180,13 +180,9 @@
         try {
             let did = localStorage.getItem('cors_device_id');
             if (!did) {
-                if (window.crypto && window.crypto.getRandomValues) {
-                    const arr = new Uint8Array(12);
-                    window.crypto.getRandomValues(arr);
-                    did = 'dev_' + Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
-                } else {
-                    did = 'dev_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
-                }
+                const arr = new Uint8Array(12);
+                window.crypto.getRandomValues(arr);
+                did = 'dev_' + Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
                 localStorage.setItem('cors_device_id', did);
             }
             return did;

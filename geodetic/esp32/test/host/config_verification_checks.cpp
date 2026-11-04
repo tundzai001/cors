@@ -112,7 +112,8 @@ int main() {
     const std::string header = "#UNILOGLIST,66,GPS,FINE,2203,447089000,0,0,18,33;\r\n";
     std::vector<UnicoreConfigVerification::Log> logs;
     std::string list = packet(header + "< 3\r\n< RTCM1094 COM1 1\r\n< LOG COM2 RTCM1097 ONTIME 1\r\n< BESTNAVA COM1 ONCE\r\n");
-    assert(UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
+    const std::vector<char> packetBytes(list.begin(), list.end());
+    assert(UnicoreConfigVerification::parseLogs(packetBytes.data(), packetBytes.size(), logs));
     assert(logs.size() == 3 && logs[0].port == 1 && logs[1].port == 2 && logs[2].period == 0);
     for (const std::string &body : {
             header + "< 2\r\n< RTCM1094 COM1 1\r\n", // Truncated rows.

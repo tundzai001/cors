@@ -8,7 +8,7 @@ const source = fs.readFileSync(
   'utf8'
 );
 const frontendRoot = path.join(__dirname, '..', 'cors_dashboard', 'frontend');
-const authAssetVersion = '20261104-auth-recovery-v4';
+const authAssetVersion = '20261104-device-id-v1';
 
 function assertAuthAssetCacheKeys() {
   for (const page of ['index.html', 'users.html', 'security.html', 'operations.html', 'rovers-global.html', 'zalo.html']) {

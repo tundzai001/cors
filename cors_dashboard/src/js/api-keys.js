@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         streams: [{stream_id: 's1', host: 'caster.example.com', port: 2101, mountpoint: 'BASE_DEMO', enabled: true}],
         ntrip_status: {server1: {connected: true, bps: 1250}}, ntrip_connected: true,
         bps: 1250, is_provisioned: true,
-        service_config: {server1_enabled: true, serverhost1: 'caster.example.com', port1: 2101, mountpoint1: 'BASE_DEMO', username1: 'demo', password1: 'MAT_KHAU_MINH_HOA'}
+        service_config: {server1_enabled: true, serverhost1: 'caster.example.com', port1: 2101, mountpoint1: 'BASE_DEMO', username1: 'demo', password1: null}
     };
 
     function syncExpiry() {

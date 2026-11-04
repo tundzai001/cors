@@ -107,7 +107,7 @@ void parseNmeaSentence(const String &rawSentence) {
     }
     if (fieldCount == 0) return;
 
-    const size_t typeLength = strlen(fields[0]);
+    const size_t typeLength = strnlen(fields[0], copyLength);
     if (typeLength < 3) return;
     const char *type = fields[0] + typeLength - 3;
 
@@ -381,8 +381,7 @@ GnssTelemetrySnapshot getGnssTelemetrySnapshot() {
     copy = telemetry;
     portEXIT_CRITICAL(&telemetryMux);
     if (copy.lastGgaMs == 0 || millis() - copy.lastGgaMs > 15000UL) {
-        strncpy(copy.fixStatus, "NO_FIX", sizeof(copy.fixStatus) - 1);
-        copy.fixStatus[sizeof(copy.fixStatus) - 1] = '\0';
+        setFixStatus(copy.fixStatus, sizeof(copy.fixStatus), 0);
     }
     return copy;
 }

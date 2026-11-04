@@ -32,7 +32,8 @@ class Finding:
 def read_source(repo: Path, relative_path: str, revision: str | None) -> str:
     if revision:
         completed = subprocess.run(
-            ["git", "-C", str(repo), "show", f"{revision}:{relative_path}"],
+            ["git", "-C", str(repo), "show", "--no-ext-diff", "--no-textconv",
+             "--end-of-options", f"{revision}:{relative_path}"],
             check=False,
             capture_output=True,
             text=True,

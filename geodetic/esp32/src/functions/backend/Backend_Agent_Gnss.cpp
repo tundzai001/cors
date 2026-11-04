@@ -55,7 +55,8 @@ bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &co
     names.reserve(expectedLogs.size());
     for (JsonVariantConst item : expectedLogs) {
         const char *name = item.as<const char *>();
-        if (!name || std::strlen(name) < 2 || std::strlen(name) > 23 || name[0] < 'A' || name[0] > 'Z') {
+        const size_t length = name ? strnlen(name, 24) : 0;
+        if (length < 2 || length == 24 || name[0] < 'A' || name[0] > 'Z') {
             error = "Invalid Unicore output name"; return false;
         }
         for (const char *c = name; *c; ++c)

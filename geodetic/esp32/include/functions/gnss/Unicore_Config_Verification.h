@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include <vector>
 
 namespace UnicoreConfigVerification {
@@ -22,20 +23,23 @@ inline uint8_t comparisonPort(uint8_t configured, const std::vector<Log> &logs) 
 
 inline bool parseLogs(const char *text, size_t length, std::vector<Log> &logs) {
     logs.clear();
-    if (!text || length > 4096 || std::strlen(text) != length || std::strncmp(text, "#UNILOGLIST,", 12)) return false;
-    const char *cursor = std::strchr(text, ';'), *end = std::strrchr(text, '*');
-    const bool hasChecksum = end != nullptr;
+    if (!text || length < 12 || length > 4096) return false;
+    const std::string_view input(text, length);
+    if (input.find('\0') != input.npos || input.substr(0, 12) != "#UNILOGLIST,") return false;
+    const size_t separator = input.find(';'), checksum = input.rfind('*');
+    if (separator == input.npos) return false;
+    const char *cursor = text + separator;
+    const bool hasChecksum = checksum != input.npos;
+    const char *end = text + (hasChecksum ? checksum : length);
     if (hasChecksum) {
         if (!validUnicoreLogChecksum(text, length)) return false;
     } else {
-        if (length < 2 || (std::strcmp(text + length - 2, "\n\n")
-            && (length < 4 || std::strcmp(text + length - 4, "\r\n\r\n")))) return false;
-        end = text + length;
+        if (input.substr(length - 2) != "\n\n" && input.substr(length - 4) != "\r\n\r\n") return false;
         for (const char *c = text; c < end; ++c)
             if ((static_cast<unsigned char>(*c) < 32 && *c != '\r' && *c != '\n' && *c != '\t')
                 || static_cast<unsigned char>(*c) >= 127) return false;
     }
-    if (!cursor || !end || cursor >= end) return false;
+    if (cursor >= end) return false;
     ++cursor;
     long count = -1;
     while (cursor < end) {
@@ -70,11 +74,12 @@ inline bool parseLogs(const char *text, size_t length, std::vector<Log> &logs) {
         const bool portFirst = std::strncmp(tokens[start], "COM", 3) == 0;
         const char *port = tokens[start + (portFirst ? 0 : 1)];
         const char *name = tokens[start + (portFirst ? 1 : 0)];
-        if (std::strlen(port) != 4 || std::strncmp(port, "COM", 3) || port[3] < '1' || port[3] > '3'
-            || std::strlen(name) < 2 || name[0] < 'A' || name[0] > 'Z') return false;
+        if (strnlen(port, sizeof(tokens[0])) != 4 || std::strncmp(port, "COM", 3) || port[3] < '1' || port[3] > '3'
+            || strnlen(name, sizeof(tokens[0])) < 2 || name[0] < 'A' || name[0] > 'Z') return false;
         for (const char *c = name; *c; ++c) if (!(*c >= 'A' && *c <= 'Z') && !(*c >= '0' && *c <= '9')) return false;
         Log log;
-        std::strcpy(log.name, name);
+        static_assert(sizeof(log.name) == sizeof(tokens[0]));
+        std::memcpy(log.name, name, sizeof(log.name));
         log.port = port[3] - '0';
         const char *trigger = tokens[start + 2];
         if (!std::strcmp(trigger, "ONCE")) {

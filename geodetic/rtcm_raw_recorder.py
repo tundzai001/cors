@@ -123,7 +123,8 @@ def utc_stamp(ts: float | None = None) -> str:
 
 
 def safe_name(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())[:120] or "mountpoint"
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())[:120]
+    return name if name not in {"", ".", ".."} else "mountpoint"
 
 
 @dataclass
