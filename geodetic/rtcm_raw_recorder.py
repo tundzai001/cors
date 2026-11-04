@@ -454,6 +454,17 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def write_run_metadata(output: Path, payload: dict) -> None:
+    metadata = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output, delete=False)
+    temporary_path = Path(metadata.name)
+    try:
+        with metadata:
+            json.dump(payload, metadata, ensure_ascii=False, indent=2)
+        temporary_path.replace(output / "run.json")
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 async def main() -> None:
     args = parse_args()
     stop_event = asyncio.Event()
@@ -482,27 +493,14 @@ async def main() -> None:
 
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output, delete=False) as metadata:
-        temporary_path = Path(metadata.name)
-        try:
-            json.dump(
-                {
-                    "host": args.host,
-                    "port": args.port,
-                    "mountpoints": mountpoints,
-                    "started_at": time.time(),
-                    "duration_hours": args.duration_hours,
-                    "file_format": "one_raw_rtcm_byte_file_per_mountpoint_txt_extension",
-                },
-                metadata,
-                ensure_ascii=False,
-                indent=2,
-            )
-            metadata.close()
-            temporary_path.replace(output / "run.json")
-        finally:
-            metadata.close()
-            temporary_path.unlink(missing_ok=True)
+    await asyncio.to_thread(write_run_metadata, output, {
+        "host": args.host,
+        "port": args.port,
+        "mountpoints": mountpoints,
+        "started_at": time.time(),
+        "duration_hours": args.duration_hours,
+        "file_format": "one_raw_rtcm_byte_file_per_mountpoint_txt_extension",
+    })
 
     print(f"Recording {len(mountpoints)} mountpoint(s) into {output.resolve()}", flush=True)
     stop_at = time.time() + args.duration_hours * 3600
