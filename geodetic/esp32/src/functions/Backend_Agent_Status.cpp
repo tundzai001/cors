@@ -27,31 +27,7 @@ String BackendAgent::buildLwtPayload() const {
     return output;
 }
 
-String BackendAgent::buildStatusPayload() {
-    if (satelliteReadback_.length() && millis() - satelliteReadbackMs_ > 45000UL)
-        satelliteReadback_ = static_cast<const char *>(nullptr);
-    if (receiverInfoMs_ && millis() - receiverInfoMs_ > 45000UL) {
-        versionReadback_ = versionReadbackError_ = static_cast<const char *>(nullptr);
-        receiverInfoMs_ = 0;
-    }
-    // Inventory is an on-demand snapshot, not permanent telemetry overhead.
-    if (nvsInventory_.length() > 2 && millis() - nvsInventoryMs_ >= 60000UL)
-        nvsInventory_ = static_cast<const char *>(nullptr);
-    if (gnssVerification_.length() && millis() - gnssVerificationMs_ >= 60000UL)
-        gnssVerification_ = static_cast<const char *>(nullptr);
-    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (receiverInfoMs_ ? versionReadback_.length() + 768 : 0) + (satelliteReadback_.length() ? satelliteReadback_.length() + 256 : 0)
-                            + (nvsInventory_.length() > 2 ? 3072 : 0)
-                            + (gnssVerification_.length() ? VERIFICATION_DOCUMENT_SIZE : 0));
-    DynamicJsonDocument serviceDoc(CONFIG_DOCUMENT_SIZE);
-    deserializeJson(serviceDoc, serviceConfig_);
-    const JsonObjectConst service = serviceDoc.as<JsonObjectConst>();
-    const bool server1Active = licenseValid_ && provisioned_ && !isServerLocked(1)
-        && effectiveStreamActive(service, 1, controlPlaneFailOpen_);
-    const bool server2Active = licenseValid_ && provisioned_ && !isServerLocked(2)
-        && effectiveStreamActive(service, 2, controlPlaneFailOpen_);
-    const bool anyStream = server1Active || server2Active;
-    const bool onDemand = jsonBool(service, "stream_on_demand", false);
-
+String BackendAgent::statusForPayload(bool anyStream, bool onDemand) const {
     String status = agentState_;
     if (stationLock_.all) {
         status = "locked";
@@ -64,12 +40,12 @@ String BackendAgent::buildStatusPayload() {
         else status = "online";
     }
 
-    const GnssTelemetrySnapshot gnss = getGnssTelemetrySnapshot();
-    const unsigned long nowMs = millis();
-    const bool gnssOk = gnss.hasData && nowMs - gnss.lastDataMs <= 15000UL;
-    const int32_t signal = isWifiConnection() ? WiFi.RSSI() : modem.getSignalQuality();
-    const String timestamp = epochString();
+    return status;
+}
 
+void BackendAgent::appendStatusFields(JsonDocument &doc, const String &status,
+                                      const GnssTelemetrySnapshot &gnss, uint32_t nowMs,
+                                      const String &timestamp) const {
     doc["serial"] = serialNumber_;
     doc["name"] = deviceName_;
     doc["status"] = status;
@@ -99,6 +75,10 @@ String BackendAgent::buildStatusPayload() {
     copyJsonObject(doc, "base_config", baseConfig_);
     copyJsonObject(doc, "service_config", serviceConfig_);
     copyJsonObject(doc, "auto_base_progress", autoBaseProgress_);
+}
+
+void BackendAgent::appendAutoBaseProgress(JsonDocument &doc,
+                                          const GnssTelemetrySnapshot &gnss) const {
     JsonObject progress = doc["auto_base_progress"].as<JsonObject>();
     if (!progress.isNull() && progress.size() > 0) {
         if (progress["phase"] == "completed" && !(progress["fixed_samples_only"] | false)) {
@@ -115,7 +95,10 @@ String BackendAgent::buildStatusPayload() {
         current["lon"] = gnss.longitude;
         current["alt"] = gnss.altitude;
     }
+}
 
+void BackendAgent::appendSystemInfo(JsonDocument &doc, uint32_t nowMs,
+                                    const String &timestamp) const {
     JsonObject system = doc.createNestedObject("system_info");
     system["auto_base_review_supported"] = true;
     system["gnss_rf_supported"] = false;
@@ -130,6 +113,20 @@ String BackendAgent::buildStatusPayload() {
             system["gnss_verification"]["age_seconds"] = (millis() - gnssVerificationMs_) / 1000UL;
         }
     }
+    appendStartupInfo(system);
+    JsonObject survey = appendSurveyInfo(system, nowMs);
+    appendReceiverReadback(system, survey);
+    appendResourceInfo(system, timestamp);
+    JsonObject deviceLock = system.createNestedObject("device_lock");
+    deviceLock["scoped"] = true;
+    deviceLock["all"] = stationLock_.all;
+    JsonArray lockedServers = deviceLock.createNestedArray("locked_servers");
+    for (uint8_t id = 1; id <= 2; ++id) {
+        if (isServerLocked(id)) lockedServers.add(id);
+    }
+}
+
+void BackendAgent::appendStartupInfo(JsonObject system) const {
     JsonObject startup = system.createNestedObject("base_startup");
     startup["state"] = baseStartupState_;
     if (!baseStartupError_.isEmpty()) startup["error"] = baseStartupError_;
@@ -138,6 +135,9 @@ String BackendAgent::buildStatusPayload() {
         if (deserializeJson(savedSurvey, surveyInResult_) == DeserializationError::Ok)
             system["survey_in_result"].set(savedSurvey.as<JsonObjectConst>());
     }
+}
+
+JsonObject BackendAgent::appendSurveyInfo(JsonObject system, uint32_t nowMs) const {
     JsonObject survey = system.createNestedObject("survey_in_status");
     survey["state"] = surveyInMonitoring_
         ? (receiverBaseReadbackMs_ > 0 && nowMs - receiverBaseReadbackMs_ <= 45000UL
@@ -154,6 +154,10 @@ String BackendAgent::buildStatusPayload() {
         survey["readback_age_seconds"] = receiverBaseReadbackMs_ > 0
             ? static_cast<uint32_t>(nowMs - receiverBaseReadbackMs_) / 1000UL : UINT32_MAX;
     }
+    return survey;
+}
+
+void BackendAgent::appendReceiverReadback(JsonObject system, JsonObject survey) const {
     if (receiverBaseReadback_.length() > 2) {
         DynamicJsonDocument readbackDoc(1024);
         if (deserializeJson(readbackDoc, receiverBaseReadback_) == DeserializationError::Ok
@@ -171,6 +175,9 @@ String BackendAgent::buildStatusPayload() {
                 : 0;
         }
     }
+}
+
+void BackendAgent::appendResourceInfo(JsonObject system, const String &timestamp) const {
     JsonObject cpu = system.createNestedObject("cpu");
     cpu["usage_percent"] = 0.0;
     cpu["frequency_mhz"] = ESP.getCpuFreqMHz();
@@ -212,14 +219,10 @@ String BackendAgent::buildStatusPayload() {
     system["uptime_seconds"] = millis() / 1000UL;
     system["timestamp"] = timestamp.toInt();
     system["auth_license_bypass"] = false;
-    JsonObject deviceLock = system.createNestedObject("device_lock");
-    deviceLock["scoped"] = true;
-    deviceLock["all"] = stationLock_.all;
-    JsonArray lockedServers = deviceLock.createNestedArray("locked_servers");
-    for (uint8_t id = 1; id <= 2; ++id) {
-        if (isServerLocked(id)) lockedServers.add(id);
-    }
+}
 
+void BackendAgent::appendGnssStatus(JsonDocument &doc, const GnssTelemetrySnapshot &gnss,
+                                    uint32_t nowMs) const {
     JsonObject nmeaHealth = doc.createNestedObject("nmea_health");
     JsonObject typeCounts = nmeaHealth.createNestedObject("type_counts");
     typeCounts["GGA"] = gnss.ggaCount;
@@ -316,7 +319,10 @@ String BackendAgent::buildStatusPayload() {
     parserDebug["rtcm_valid_packets"] = gnss.rtcmFrames;
     parserDebug["rtcm_decoder"] = false;
     parserDebug["nmea_valid_packets"] = gnss.nmeaSentences;
+}
 
+void BackendAgent::appendNtripStatus(JsonDocument &doc, const JsonObjectConst &service,
+                                     bool server1Active, bool server2Active) const {
     JsonObject ntripStats = doc.createNestedObject("ntrip_stats");
     ntripStats["rtcm_input_bps"] = getRtcmInputBps();
     ntripStats["server1_bps"] = ntripServerBps(1);
@@ -377,7 +383,12 @@ String BackendAgent::buildStatusPayload() {
     stream2["connected"] = ntripServerConnected(2);
     stream2["bps"] = ntripServerBps(2);
     stream2["mountpoint"] = jsonString(service, "mountpoint2");
+}
 
+void BackendAgent::appendTransportStatus(JsonDocument &doc, const GnssTelemetrySnapshot &gnss,
+                                         uint32_t nowMs, int32_t signal) const {
+    const bool gnssOk = gnss.hasData && nowMs - gnss.lastDataMs <= 15000UL;
+    JsonObject system = doc["system_info"];
     JsonObject antenna = doc.createNestedObject("antenna_status");
     antenna["state"] = gnssOk ? "OK" : "FAULT";
     if (!gnssOk) antenna["message"] = "Không nhận được dữ liệu GNSS trong 15 giây";
@@ -408,6 +419,46 @@ String BackendAgent::buildStatusPayload() {
     doc["rssi_dbm"] = signal;
     doc["free_heap_bytes"] = ESP.getFreeHeap();
     doc["uptime_s"] = millis() / 1000UL;
+}
+
+String BackendAgent::buildStatusPayload() {
+    if (satelliteReadback_.length() && millis() - satelliteReadbackMs_ > 45000UL)
+        satelliteReadback_ = static_cast<const char *>(nullptr);
+    if (receiverInfoMs_ && millis() - receiverInfoMs_ > 45000UL) {
+        versionReadback_ = versionReadbackError_ = static_cast<const char *>(nullptr);
+        receiverInfoMs_ = 0;
+    }
+    // Inventory is an on-demand snapshot, not permanent telemetry overhead.
+    if (nvsInventory_.length() > 2 && millis() - nvsInventoryMs_ >= 60000UL)
+        nvsInventory_ = static_cast<const char *>(nullptr);
+    if (gnssVerification_.length() && millis() - gnssVerificationMs_ >= 60000UL)
+        gnssVerification_ = static_cast<const char *>(nullptr);
+    DynamicJsonDocument doc(STATUS_DOCUMENT_SIZE + (receiverInfoMs_ ? versionReadback_.length() + 768 : 0) + (satelliteReadback_.length() ? satelliteReadback_.length() + 256 : 0)
+                            + (nvsInventory_.length() > 2 ? 3072 : 0)
+                            + (gnssVerification_.length() ? VERIFICATION_DOCUMENT_SIZE : 0));
+    DynamicJsonDocument serviceDoc(CONFIG_DOCUMENT_SIZE);
+    deserializeJson(serviceDoc, serviceConfig_);
+    const JsonObjectConst service = serviceDoc.as<JsonObjectConst>();
+    const bool server1Active = licenseValid_ && provisioned_ && !isServerLocked(1)
+        && effectiveStreamActive(service, 1, controlPlaneFailOpen_);
+    const bool server2Active = licenseValid_ && provisioned_ && !isServerLocked(2)
+        && effectiveStreamActive(service, 2, controlPlaneFailOpen_);
+    const bool anyStream = server1Active || server2Active;
+    const bool onDemand = jsonBool(service, "stream_on_demand", false);
+
+    const String status = statusForPayload(anyStream, onDemand);
+
+    const GnssTelemetrySnapshot gnss = getGnssTelemetrySnapshot();
+    const unsigned long nowMs = millis();
+    const int32_t signal = isWifiConnection() ? WiFi.RSSI() : modem.getSignalQuality();
+    const String timestamp = epochString();
+
+    appendStatusFields(doc, status, gnss, nowMs, timestamp);
+    appendAutoBaseProgress(doc, gnss);
+    appendSystemInfo(doc, nowMs, timestamp);
+    appendGnssStatus(doc, gnss, nowMs);
+    appendNtripStatus(doc, service, server1Active, server2Active);
+    appendTransportStatus(doc, gnss, nowMs, signal);
 
     String payload;
     serializeJson(doc, payload);

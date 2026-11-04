@@ -200,52 +200,59 @@ void BackendAgentWebsocket::connectNow() {
     }
 }
 
+bool BackendAgentWebsocket::readFrame(uint8_t &opcode, String &payload) {
+    const uint8_t first = rx_[0];
+    const uint8_t second = rx_[1];
+    const bool masked = (second & 0x80) != 0;
+    uint64_t payloadLength = second & 0x7F;
+    size_t headerLength = 2;
+
+    if (payloadLength == 126) {
+        if (rx_.size() < 4) return false;
+        payloadLength = (static_cast<uint64_t>(rx_[2]) << 8) | rx_[3];
+        headerLength = 4;
+    } else if (payloadLength == 127) {
+        if (rx_.size() < 10) return false;
+        payloadLength = 0;
+        for (uint8_t i = 0; i < 8; ++i) {
+            payloadLength = (payloadLength << 8) | rx_[2 + i];
+        }
+        headerLength = 10;
+    }
+
+    opcode = first & 0x0F;
+    // Reject unsupported fragmentation instead of dispatching partial commands.
+    // Server frames must be unmasked and carry no unnegotiated RSV flags.
+    if (masked || (first & 0x70) || !(first & 0x80)
+        || (opcode != 1 && opcode != 2 && opcode != 8 && opcode != 9 && opcode != 10)
+        || (opcode >= 8 && (payloadLength > 125 || (opcode == 8 && payloadLength == 1)))
+        || ((second & 0x7F) == 126 && payloadLength < 126)
+        || ((second & 0x7F) == 127 && payloadLength < 65536)) {
+        disconnect(false);
+        return false;
+    }
+    if (payloadLength > 32768) {
+        disconnect(false);
+        return false;
+    }
+    if (rx_.size() < headerLength + payloadLength) return false;
+
+    payload.reserve(static_cast<size_t>(payloadLength));
+    const size_t payloadOffset = headerLength;
+    for (size_t i = 0; i < payloadLength; ++i) {
+        uint8_t byte = rx_[payloadOffset + i];
+        payload += static_cast<char>(byte);
+    }
+    rx_.erase(rx_.begin(), rx_.begin() + payloadOffset + payloadLength);
+
+    return true;
+}
+
 void BackendAgentWebsocket::parseFrames() {
     while (rx_.size() >= 2 && connected_) {
-        const uint8_t first = rx_[0];
-        const uint8_t second = rx_[1];
-        const bool masked = (second & 0x80) != 0;
-        uint64_t payloadLength = second & 0x7F;
-        size_t headerLength = 2;
-
-        if (payloadLength == 126) {
-            if (rx_.size() < 4) return;
-            payloadLength = (static_cast<uint64_t>(rx_[2]) << 8) | rx_[3];
-            headerLength = 4;
-        } else if (payloadLength == 127) {
-            if (rx_.size() < 10) return;
-            payloadLength = 0;
-            for (uint8_t i = 0; i < 8; ++i) {
-                payloadLength = (payloadLength << 8) | rx_[2 + i];
-            }
-            headerLength = 10;
-        }
-
-        const uint8_t opcode = first & 0x0F;
-        // Reject unsupported fragmentation instead of dispatching partial commands.
-        // Server frames must be unmasked and carry no unnegotiated RSV flags.
-        if (masked || (first & 0x70) || !(first & 0x80)
-            || (opcode != 1 && opcode != 2 && opcode != 8 && opcode != 9 && opcode != 10)
-            || (opcode >= 8 && (payloadLength > 125 || (opcode == 8 && payloadLength == 1)))
-            || ((second & 0x7F) == 126 && payloadLength < 126)
-            || ((second & 0x7F) == 127 && payloadLength < 65536)) {
-            disconnect(false);
-            return;
-        }
-        if (payloadLength > 32768) {
-            disconnect(false);
-            return;
-        }
-        if (rx_.size() < headerLength + payloadLength) return;
-
+        uint8_t opcode = 0;
         String payload;
-        payload.reserve(static_cast<size_t>(payloadLength));
-        const size_t payloadOffset = headerLength;
-        for (size_t i = 0; i < payloadLength; ++i) {
-            uint8_t byte = rx_[payloadOffset + i];
-            payload += static_cast<char>(byte);
-        }
-        rx_.erase(rx_.begin(), rx_.begin() + payloadOffset + payloadLength);
+        if (!readFrame(opcode, payload)) return;
 
         if (opcode == 0x8) {
             sendControl(0x8, nullptr, 0);

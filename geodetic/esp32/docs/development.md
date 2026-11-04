@@ -104,3 +104,38 @@ UART ownership and reply validation live with receiver operations. MQTT
 routing returns early for non-legacy topics and rejected inputs; its five-second
 reconnect backoff and subscription topics remain unchanged. Host checks for
 codec vectors and MQTT dispatch are documented in `test/README`.
+
+## Selective upstream cleanup — 4 November 2026
+
+Reviewed `long-in-aitogy/esp32-um-ubx-base/develop` at
+`9f1433fed8dad32abdbac937f0b2bbbc9185a4f7`. The CORS port adopts the status
+section extraction from `9eca28c`/`30e144b`, stream-command helpers from
+`c6ea725`/`e4da8f5`, and the WebSocket frame-reader separation from `cd51797`.
+Existing CORS field contents, status ordering, GNSS quality units, NVS and
+verification reports, frame validation and transport behavior are retained.
+Auto Base datum conversion, M3/M6 support and review-before-apply are unchanged.
+
+The main status builder drops from 386 to 43 lines, stream dispatch from 92 to
+24, and the WebSocket dispatch loop from 60 to 19. This is separation of
+responsibilities, not an overall source-line reduction. No directory migration
+or new runtime dependency is introduced.
+
+The port also fixes dynamic JSON key ownership in stream/service configuration:
+pass `String` keys directly so ArduinoJson copies them. Passing a temporary or
+local string's `c_str()` links memory that can expire before serialization.
+The native sanitizer exposed this in both the previous CORS stream handler and
+the upstream helper. Consequently, before/after JSON equivalence is checked for
+status; stream commands use explicit expected outcomes under sanitizers.
+
+The Unicore query extraction in `74502f6` was not adopted: it changes when the
+inner receive loop stops after a complete response. Legacy bootstrap length
+changes and broad command/startup decomposition were also left out of this port.
+
+Verification: `test/host/check_status_stream.py` executes 144 status cases and
+44 stream commands using the actual implementation and ArduinoJson;
+`test/host/check_websocket_frames.py` covers partial/coalesced input, header
+validation, the 32 KB limit, ping/close and command delivery. Both support an
+optional previous firmware root. The same WebSocket checks pass before and
+after extraction; all status JSON matches the pre-refactor snapshot. Existing
+Auto Base, mixed GNSS stream and MQTT dispatch checks and the PlatformIO build
+are the remaining regression gates. Hardware behavior has not been measured.

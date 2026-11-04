@@ -33,6 +33,7 @@ private:
 
     void connectNow();
 
+    bool readFrame(uint8_t &opcode, String &payload);
     void parseFrames();
 
     void sendControl(uint8_t opcode, const uint8_t *payload, size_t length);

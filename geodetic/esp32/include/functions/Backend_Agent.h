@@ -12,6 +12,7 @@
 #include <freertos/task.h>
 
 class BackendAgentWebsocket;
+struct GnssTelemetrySnapshot;
 
 // Device agent for backend commands, status, provisioning and base workflows.
 // Receiver coordinates come from NMEA/readback; CORS datum frames are session-scoped.
@@ -163,6 +164,24 @@ private:
     void pollGnssStatus();
     void markStatusDirty() { statusDirty_ = true; }
 
+    String statusForPayload(bool anyStream, bool onDemand) const;
+    void appendStatusFields(JsonDocument &doc, const String &status,
+                            const GnssTelemetrySnapshot &gnss, uint32_t nowMs,
+                            const String &timestamp) const;
+    void appendAutoBaseProgress(JsonDocument &doc,
+                                const GnssTelemetrySnapshot &gnss) const;
+    void appendSystemInfo(JsonDocument &doc, uint32_t nowMs,
+                          const String &timestamp) const;
+    void appendStartupInfo(JsonObject system) const;
+    JsonObject appendSurveyInfo(JsonObject system, uint32_t nowMs) const;
+    void appendReceiverReadback(JsonObject system, JsonObject survey) const;
+    void appendResourceInfo(JsonObject system, const String &timestamp) const;
+    void appendGnssStatus(JsonDocument &doc, const GnssTelemetrySnapshot &gnss,
+                          uint32_t nowMs) const;
+    void appendNtripStatus(JsonDocument &doc, const JsonObjectConst &service,
+                           bool server1Active, bool server2Active) const;
+    void appendTransportStatus(JsonDocument &doc, const GnssTelemetrySnapshot &gnss,
+                               uint32_t nowMs, int32_t signal) const;
     String buildStatusPayload();
     String buildLwtPayload() const;
     String statusTopic() const;
