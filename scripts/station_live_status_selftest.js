@@ -85,6 +85,19 @@ assert(relayNodes.some(node => node.props.className === 'status-bar sleep'), 'Sl
 assert(relayNodes.some(node => node.props.className === 'server-status-item sleep'), 'Sleeping relay output tile must use the same blue state');
 console.log('PASS: actual relay card renders matching sleep classes for rail and S1');
 
+for (const phase of ['auto_setup_rover', 'auto_setup_wait_fix', 'auto_setup_averaging', 'auto_setup_base']) {
+  const configuring = {...live, serial:'esp_TEST', status:phase, timestamp:Date.now()/1000,
+    service_config:{server1_enabled:true,serverhost1:'caster',port1:2101,mountpoint1:'BASE'},
+    ntrip_status:{server1:{connected:false,bps:0}}};
+  assert.equal(status(configuring), phase, 'Auto Base remains reachable with source output paused');
+  const nodes = allNodes(window.DeviceListItem({device:configuring,currentUser:{role:'admin'}}));
+  assert(nodes.some(node=>node.props.className === `status-bar ${phase}`));
+  assert(!nodes.some(node=>node.props.className === 'status-bar offline'));
+  assert(nodes.some(node=>node.props.className === 'badge bg-info'));
+  assert.equal(status({...configuring,timestamp:Date.now()/1000-240}), 'offline', 'Stale Auto Base must still go offline');
+}
+console.log('PASS: all Auto Base stages keep their card status while paused S1 and real stale offline remain distinct');
+
 // Offline takes precedence over saved sleep/output telemetry on every surface.
 const staleSleep = { ...sleepingRelay, status: 'sleep', timestamp: Date.now() / 1000 - 240 };
 assert.equal(status(staleSleep), 'offline');

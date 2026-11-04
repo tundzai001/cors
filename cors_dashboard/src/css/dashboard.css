@@ -434,6 +434,14 @@ body.dashboard-fixed-layout > main.container-fluid {
     width: 3px;
 }
 
+.dashboard-device-card .status-bar.auto_setup_rover,
+.dashboard-device-card .status-bar.auto_setup_wait_fix,
+.dashboard-device-card .status-bar.auto_setup_averaging,
+.dashboard-device-card .status-bar.auto_setup_base {
+    background: var(--bs-info, #0dcaf0);
+    box-shadow: none;
+}
+
 .dashboard-device-card .status-bar.online,
 .dashboard-device-card .status-bar.sleep,
 .dashboard-device-card .status-bar.awaiting_license,

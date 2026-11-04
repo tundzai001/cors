@@ -215,6 +215,7 @@ const getMapEffectiveStatus = (device) => {
     const isVirtual = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
 
     if (statusForOps === 'starting') return 'starting';
+    if (['auto_setup_rover', 'auto_setup_wait_fix', 'auto_setup_averaging', 'auto_setup_base'].includes(statusForOps)) return statusForOps;
 
     if (!['online', 'streaming', 'sleep', 'starting'].includes(statusForOps)) {
         const anyServerSleeping = Boolean(streamState.server1?.sleep || streamState.server2?.sleep);
