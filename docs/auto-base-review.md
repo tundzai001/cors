@@ -2,8 +2,11 @@
 
 Auto Base now measures a candidate position. It does not install that candidate.
 The operator starts one sampling workflow, reviews the raw and resulting LLH,
-then uses the result to fill Fixed LLA. Submitting Fixed LLA sends the receiver
-configuration. The receiver readback is compared with the saved coordinates;
+then explicitly approves the calculated LLH with the Fixed LLA apply button.
+The review panel stays visible independently of the currently selected method,
+including a restored Survey-In configuration. Approval submits candidate LLH and
+its conversion report through the normal Fixed LLA configuration path; it does
+not restart sampling or repeat the coordinate transformation. The receiver readback is compared with the saved coordinates;
 matching coordinates show success, actual differences show horizontal/height
 errors, and missing or stale readbacks remain unverified.
 

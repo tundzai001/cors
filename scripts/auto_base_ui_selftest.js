@@ -73,6 +73,26 @@ assert(find(tree, node => node.props.role === 'status' && text(node).includes('C
 console.log('PASS: live GGA/Float, reject unverified success, update completed coordinates, accessible result');
 
 (async () => {
+    const candidate = {lat:'21.084990131093591',lon:'105.78665745895107',alt:'-8.1155038587749004'};
+    device = {serial:'ESP_REVIEW',detected_chip_type:'Unicorecomm',status:'online',
+        system_info:{auto_base_review_supported:true},
+        base_config:{base_setup_method:'SURVEY_IN',survey_in_duration:120},
+        auto_base_progress:{phase:'ready_for_review',fixed_samples_only:true,sample_count:56,
+            averaged_coord:candidate,conversion_report:{transform_applied:true,
+                output_coord:candidate,calculated_coord:candidate,projected_coord:{north:2331863,east:581515,h:17}}}};
+    render();
+    assert(text(tree).includes('Kết quả Auto Base — chờ kiểm tra'), 'Review must remain visible after restoring saved Survey-In');
+    const approve = find(tree,node=>node.type === 'button' && text(node).includes('Duyệt và áp dụng LLH'));
+    assert(approve && !approve.props.disabled);
+    await approve.props.onClick({preventDefault(){}});
+    assert.equal(configured.serial,'ESP_REVIEW');
+    assert.equal(configured.payload.params.base_setup_method,'FIXED_LLA');
+    assert.deepEqual(JSON.parse(JSON.stringify(configured.payload.params.coords)),candidate);
+    assert.equal(configured.payload.params.altitude_reference,'ELLIPSOID');
+    assert.equal(configured.payload.params.coordinate_source,'AUTO_CORS');
+    assert.equal(configured.payload.params.conversion_report.output_coord.alt,candidate.alt);
+    assert(!configured.payload.auto_cors, 'Approval must apply LLH, not start another sampling session');
+    console.log('PASS: Survey-In restoration retains review; approval directly submits full-precision local LLH as Fixed LLA');
     device = {serial: 'LTE_TEST', detected_chip_type: 'Unicorecomm', is_lte: true, status: 'sleep',
         base_config: {base_setup_method: 'FIXED_LLA', coords: {lat: '18.3863077210', lon: '105.5089184600', alt: '49.92'}}};
     render();

@@ -849,9 +849,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         }
     };
 
-    const handleSubmit = async (e) => {
+    const handleSubmit = async (e, approvedCoords = null) => {
         e.preventDefault();
-        if (disabled) return;
+        if (disabled || (approvedCoords && (isAutoSetupActive || !autoFixedResult))) return;
+        if (approvedCoords && !['lat', 'lon', 'alt'].every(key =>
+            approvedCoords[key] != null && String(approvedCoords[key]).trim() !== '' && Number.isFinite(Number(approvedCoords[key])))) {
+            window.showError('Kết quả Auto Base thiếu LLH hợp lệ. Cần lấy lại tọa độ.');
+            return;
+        }
+        const submittedMethod = approvedCoords ? 'FIXED_LLA' : method;
         setIsSubmitting(true);
 
         try {
@@ -859,11 +865,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 ? manualChip
                 : device.detected_chip_type;
 
-            let params = { base_setup_method: method };
+            let params = { base_setup_method: submittedMethod };
 
-            if (method === 'FIXED_LLA') {
-                const latStr = String(latitude).trim();
-                const lonStr = String(longitude).trim();
+            if (submittedMethod === 'FIXED_LLA') {
+                const latStr = String(approvedCoords ? approvedCoords.lat : latitude).trim();
+                const lonStr = String(approvedCoords ? approvedCoords.lon : longitude).trim();
                 const latNum = parseFloat(latStr);
                 const lonNum = parseFloat(lonStr);
                 if (!latStr || !lonStr || isNaN(latNum) || isNaN(lonNum)) {
@@ -874,14 +880,14 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 params.coords = {
                     lat: finalChipType === 'Ublox' ? chipCoordinate(latStr, 9) : latStr,
                     lon: finalChipType === 'Ublox' ? chipCoordinate(lonStr, 9) : lonStr,
-                    alt: finalChipType === 'Ublox' ? chipCoordinate(String(altitude).trim() || '0', 4) : String(altitude).trim() || '0'
+                    alt: finalChipType === 'Ublox' ? chipCoordinate(String(approvedCoords ? approvedCoords.alt : altitude).trim() || '0', 4) : String(approvedCoords ? approvedCoords.alt : altitude).trim() || '0'
                 };
                 if (finalChipType === 'Ublox') {
                     setLatitude(params.coords.lat);
                     setLongitude(params.coords.lon);
                     setAltitude(params.coords.alt);
                 }
-                params.altitude_reference = finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
+                params.altitude_reference = approvedCoords || finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
                 const candidate = autoProgress.averaged_coord;
                 if (autoFixedResult && candidate && ['lat', 'lon', 'alt'].every(key =>
                     Math.abs(Number(params.coords[key]) - Number(candidate[key])) <= (key === 'alt' ? 0.00011 : 1.01e-9))) {
@@ -890,11 +896,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 }
                 // Preserve decimal meters through the API and UBX encoding.
                 params.accuracy = String(fixedAccuracyM).trim().replace(',', '.') || '0.01';
-            } else if (method === 'SURVEY_IN') {
+            } else if (submittedMethod === 'SURVEY_IN') {
                 params.survey_in_duration = parseInt(svinDuration);
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
                 params.survey_in_accuracy = parseFloat(svinAccuracyM);
-            } else if (method === 'AUTO_CORS') {
+            } else if (submittedMethod === 'AUTO_CORS') {
                 const port = Number(corsPort);
                 if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
                     window.showError('Vui lòng nhập đủ thông tin kết nối Base.');
@@ -955,7 +961,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 params: params
             };
 
-            if (method === 'AUTO_CORS') {
+            if (submittedMethod === 'AUTO_CORS') {
                 payload.auto_cors = {
                     ip: corsHost.trim(),
                     port: Number(corsPort),
@@ -1339,7 +1345,53 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 </div>
             </div>
 
-            {method !== 'AUTO_CORS' && <Vn2000Result report={conversionReport} />}
+                        {Boolean(autoFixedResult && autoProgress.averaged_coord) && (
+                            <>
+                                <div className="col-12" role="status" aria-live="polite">
+                                    <div className="border rounded p-3">
+                                        <h3 className="h6">Kết quả Auto Base — chờ kiểm tra</h3>
+                                        <p className="small mb-2">{autoProgress.phase === 'ready_for_review'
+                                            ? 'Chưa áp dụng tọa độ này vào máy.'
+                                            : 'Kết quả từ phiên cũ đã tự áp dụng. Các phiên mới sẽ chờ bạn xác nhận.'}</p>
+                                        <div className="small text-break mb-2">Base liên kết: {conversionReport.source?.host || 'Chưa có dữ liệu'}
+                                            {conversionReport.source?.mountpoint ? ` / ${conversionReport.source.mountpoint}` : ''}</div>
+                                        <div className="small mb-2">Tỉnh/thành: {conversionReport.location?.province_name || conversionReport.province_name || 'Chưa xác định'}
+                                            {conversionReport.location?.state === 'projection_selection_required' && ' · Có nhiều vùng kinh tuyến trục cũ'}</div>
+                                        <div className="table-responsive">
+                                            <table className="table table-sm small mb-2" style={{minWidth: '640px'}}>
+                                                <caption className="visually-hidden">Đối chiếu LLH gốc và kết quả Auto Base</caption>
+                                                <thead><tr><th scope="col">Tọa độ</th><th scope="col">LLH gốc</th><th scope="col">LLH sau tính</th><th scope="col">Gửi máy</th></tr></thead>
+                                                <tbody>{[['lat', 'Vĩ độ (°)'], ['lon', 'Kinh độ (°)'], ['alt', 'h ellipsoid (m)']].map(([key, label]) => (
+                                                    <tr key={key}><th scope="row">{label}</th>
+                                                        <td className="font-monospace">{conversionReport.input_coord?.[key] == null ? 'Chưa có dữ liệu' : String(conversionReport.input_coord[key])}</td>
+                                                        <td className="font-monospace text-break">{(conversionReport.calculated_coord || autoProgress.calculated_coord)?.[key] ?? 'Chưa lưu'}</td>
+                                                        <td className="font-monospace">{autoProgress.averaged_coord?.[key] == null ? 'Chưa có dữ liệu' : key === 'alt' ? autoProgress.averaged_coord[key] : formatCoord10(autoProgress.averaged_coord[key])}</td></tr>
+                                                ))}</tbody>
+                                            </table>
+                                        </div>
+                                        <Vn2000Result report={conversionReport} />
+                                        <div className="small">{conversionReport.transform_applied
+                                            ? `Đã tính LLH địa phương qua VN-2000 ${projectionLabel(conversionReport)}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg, conversionReport)}°; k₀ ${displayProjectionScale(conversionReport)}.`
+                                            : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.'}</div>
+                                        {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
+                                        {conversionReport.transform_applied && <details className="small mt-2"><summary>Tham số chuyển đổi</summary>
+                                            <p className="mb-1">Nguồn 7 tham số: {conversionReport.parameter_source === 'rtcm1021' ? 'RTCM 1021' : 'Chưa xác nhận'};
+                                                {' '}hiệu chỉnh: {conversionReport.residual_source === 'rtcm1023' ? 'RTCM 1023' : 'Không có'};
+                                                {' '}phép chiếu: {conversionReport.projection_source === 'rtcm1025' ? 'RTCM 1025' : conversionReport.projection_source === 'manual' ? 'Nhập thủ công' : 'Danh mục máy chủ'}.</p>
+                                            <dl className="mb-0">{Object.entries(conversionReport.parameters || {}).map(([key, value]) => <div key={key} className="d-flex gap-2"><dt>{key}</dt><dd className="font-monospace mb-0 text-break">{String(value)}</dd></div>)}</dl>
+                                        </details>}
+                                    </div>
+                                </div>
+                                <div className="col-12">
+                                    <button type="button" className="btn btn-primary w-100" style={{minHeight:44}} disabled={disabled || isSubmitting || isAutoSetupActive}
+                                        onClick={event => handleSubmit(event, autoProgress.averaged_coord)}>
+                                        {isSubmitting ? 'Đang gửi cấu hình Fixed LLA…' : 'Duyệt và áp dụng LLH vào Base (Fixed LLA)'}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+
+            {method !== 'AUTO_CORS' && !autoFixedResult && <Vn2000Result report={conversionReport} />}
             <div className="mb-3">
                 {device.system_info?.survey_in_result?.bestpos && savedMethod !== 'SURVEY_IN' && (() => {
                     const saved = window.CorsReceiverCoordinates?.fromReceiver(device.system_info.survey_in_result.bestpos);
@@ -1528,51 +1580,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 )}
                             </div>
                         </div>
-                        {Boolean(autoFixedResult && autoProgress.averaged_coord) && (
-                            <>
-                                <div className="col-12" role="status" aria-live="polite">
-                                    <div className="border rounded p-3">
-                                        <h3 className="h6">Kết quả Auto Base — chờ kiểm tra</h3>
-                                        <p className="small mb-2">{autoProgress.phase === 'ready_for_review'
-                                            ? 'Chưa áp dụng tọa độ này vào máy.'
-                                            : 'Kết quả từ phiên cũ đã tự áp dụng. Các phiên mới sẽ chờ bạn xác nhận.'}</p>
-                                        <div className="small text-break mb-2">Base liên kết: {conversionReport.source?.host || 'Chưa có dữ liệu'}
-                                            {conversionReport.source?.mountpoint ? ` / ${conversionReport.source.mountpoint}` : ''}</div>
-                                        <div className="small mb-2">Tỉnh/thành: {conversionReport.location?.province_name || conversionReport.province_name || 'Chưa xác định'}
-                                            {conversionReport.location?.state === 'projection_selection_required' && ' · Có nhiều vùng kinh tuyến trục cũ'}</div>
-                                        <div className="table-responsive">
-                                            <table className="table table-sm small mb-2" style={{minWidth: '640px'}}>
-                                                <caption className="visually-hidden">Đối chiếu LLH gốc và kết quả Auto Base</caption>
-                                                <thead><tr><th scope="col">Tọa độ</th><th scope="col">LLH gốc</th><th scope="col">LLH sau tính</th><th scope="col">Gửi máy</th></tr></thead>
-                                                <tbody>{[['lat', 'Vĩ độ (°)'], ['lon', 'Kinh độ (°)'], ['alt', 'h ellipsoid (m)']].map(([key, label]) => (
-                                                    <tr key={key}><th scope="row">{label}</th>
-                                                        <td className="font-monospace">{conversionReport.input_coord?.[key] == null ? 'Chưa có dữ liệu' : String(conversionReport.input_coord[key])}</td>
-                                                        <td className="font-monospace text-break">{(conversionReport.calculated_coord || autoProgress.calculated_coord)?.[key] ?? 'Chưa lưu'}</td>
-                                                        <td className="font-monospace">{autoProgress.averaged_coord?.[key] == null ? 'Chưa có dữ liệu' : key === 'alt' ? autoProgress.averaged_coord[key] : formatCoord10(autoProgress.averaged_coord[key])}</td></tr>
-                                                ))}</tbody>
-                                            </table>
-                                        </div>
-                                        <Vn2000Result report={conversionReport} />
-                                        <div className="small">{conversionReport.transform_applied
-                                            ? `Đã tính LLH địa phương qua VN-2000 ${projectionLabel(conversionReport)}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg, conversionReport)}°; k₀ ${displayProjectionScale(conversionReport)}.`
-                                            : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.'}</div>
-                                        {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
-                                        {conversionReport.transform_applied && <details className="small mt-2"><summary>Tham số chuyển đổi</summary>
-                                            <p className="mb-1">Nguồn 7 tham số: {conversionReport.parameter_source === 'rtcm1021' ? 'RTCM 1021' : 'Chưa xác nhận'};
-                                                {' '}hiệu chỉnh: {conversionReport.residual_source === 'rtcm1023' ? 'RTCM 1023' : 'Không có'};
-                                                {' '}phép chiếu: {conversionReport.projection_source === 'rtcm1025' ? 'RTCM 1025' : conversionReport.projection_source === 'manual' ? 'Nhập thủ công' : 'Danh mục máy chủ'}.</p>
-                                            <dl className="mb-0">{Object.entries(conversionReport.parameters || {}).map(([key, value]) => <div key={key} className="d-flex gap-2"><dt>{key}</dt><dd className="font-monospace mb-0 text-break">{String(value)}</dd></div>)}</dl>
-                                        </details>}
-                                    </div>
-                                </div>
-                                <div className="col-12">
-                                    <button type="button" className="btn btn-outline-primary" disabled={disabled || isSubmitting || isAutoSetupActive}
-                                        onClick={() => { const coords = autoProgress.averaged_coord; if (!coords) return; setLatitude(activeChip === 'Ublox' ? chipCoordinate(coords.lat, 9) : coords.lat); setLongitude(activeChip === 'Ublox' ? chipCoordinate(coords.lon, 9) : coords.lon); setAltitude(coords.alt); setMethod('FIXED_LLA'); setAltitudeReference('ELLIPSOID'); }}>
-                                        Kiểm tra và dùng kết quả cho Fixed LLA
-                                    </button>
-                                </div>
-                            </>
-                        )}
+
                     </div>
                 ) : method === 'FIXED_LLA' ? (
                     <div className="row g-3">
