@@ -282,7 +282,7 @@ class SatelliteService:
                 constellations_data: dict[str, list[dict[str, Any]]] = {}
                 total_count = 0
 
-                async with httpx.AsyncClient(verify=False, timeout=12.0) as client:
+                async with httpx.AsyncClient(timeout=12.0) as client:
                     try:
                         metadata = await client.get(IGS_METADATA_URL)
                         metadata.raise_for_status()

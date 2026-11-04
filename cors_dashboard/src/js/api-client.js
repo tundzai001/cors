@@ -62,8 +62,11 @@
 
         // During bootstrap there is no mounted homepage root yet. Reload once
         // after clearing the stale token so initializeCorsApp enters guest mode.
-        const target = isPublicRoute() ? window.location.href : '/';
-        window.location.replace(target);
+        if (isPublicRoute()) {
+            window.location.reload();
+        } else {
+            window.location.replace('/');
+        }
     }
 
     function isSessionInvalidated() {

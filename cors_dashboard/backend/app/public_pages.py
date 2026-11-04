@@ -52,7 +52,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
 
         if device:
             # 1. DATA EXTRACTION
-            station_name = device.name or token
+            station_name = device.name or device.serial
             status_text = "Online" if device.status == "online" else "Offline"
 
             # Extract Coordinates
@@ -65,7 +65,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
             # 2. BUILD DYNAMIC SEO TAGS
             title = f"Trạm Base {station_name} | Hệ thống Base Aitogy"
             page_url = f"https://base.aitogy.com{canonical_path}"
-            desc = f"Trạm Base {station_name} ({serial}) tại {lat}, {lon}. Trạng thái: {status_text}. Theo dõi tín hiệu vệ tinh GPS/GLONASS/BDS và độ trễ RTK thời gian thực."
+            desc = f"Trạm Base {station_name} ({slug or device.serial}) tại {lat}, {lon}. Trạng thái: {status_text}. Theo dõi tín hiệu vệ tinh GPS/GLONASS/BDS và độ trễ RTK thời gian thực."
 
             # 3. BUILD DEEP JSON-LD (Schema.org)
             json_ld = {
@@ -73,7 +73,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
                 "@type": "Place",
                 "name": f"GNSS Base Station {station_name}",
                 "description": desc,
-                "identifier": serial,
+                "identifier": slug or device.serial,
                 "geo": {
                     "@type": "GeoCoordinates",
                     "latitude": lat,
@@ -137,16 +137,18 @@ async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_d
     return Response(content=xml_content, media_type="application/xml")
 
 @router.get("/blog/{slug}")
-async def get_blog_post_seo(slug: str, request: Request):
+async def get_blog_post_seo(slug: str):
     """
     Renders index.html with server-side SEO for individual blog posts.
     Each technical article becomes a landing page for Google Search.
     """
     index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
 
-    meta = BLOG_METADATA.get(slug)
-    if meta is None:
+    published_slug = next((key for key in BLOG_METADATA if key == slug), None)
+    if published_slug is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy bài viết")
+    meta = BLOG_METADATA[published_slug]
+    page_url = f"https://base.aitogy.com/blog/{published_slug}"
 
     try:
         with open(index_path, "r", encoding="utf-8") as f:
@@ -154,7 +156,7 @@ async def get_blog_post_seo(slug: str, request: Request):
 
         html_content = page_metadata(
             html_content, title=meta["title"], description=meta["desc"],
-            url=f"https://base.aitogy.com/blog/{quote(slug, safe='')}"
+            url=page_url
         )
 
         # Article Schema
@@ -167,7 +169,7 @@ async def get_blog_post_seo(slug: str, request: Request):
             "description": meta['desc'],
             "author": {"@type": "Organization", "name": "Aitogy"},
             "publisher": {"@type": "Organization", "name": "Aitogy", "logo": "https://base.aitogy.com/assets/img/aitogy.png"},
-            "mainEntityOfPage": {"@type": "WebPage", "@id": f"https://base.aitogy.com/blog/{slug}"}
+            "mainEntityOfPage": {"@type": "WebPage", "@id": page_url}
         }
         breadcrumb_schema = {
             "@context": "https://schema.org",

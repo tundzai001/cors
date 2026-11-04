@@ -5,6 +5,7 @@ import re
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from urllib.parse import quote
 from xml.etree import ElementTree
 
 from fastapi import FastAPI
@@ -72,6 +73,20 @@ class PublicSeoTests(unittest.TestCase):
             self.assertIn(f"https://base.aitogy.com/blog/{slug}", urls)
         self.assertNotIn("https://base.aitogy.com/coverage", urls)
         self.assertNotIn("https://base.aitogy.com/network-status", urls)
+
+    def test_seo_does_not_execute_markup_from_station_or_blog_path(self):
+        payload = '</script><script>alert(1)</script>'
+        device = SimpleNamespace(name=payload, serial="internal-id", status="online", base_config={})
+        with patch.object(public_pages.crud, "get_device_by_serial", AsyncMock(return_value=device)):
+            response = self.client.get("/station/script.script.alert.1.script")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(payload, response.text)
+        schema = re.findall(r'<script type="application/ld\+json">(.*?)</script>', response.text, re.S)[-1]
+        self.assertEqual(json.loads(schema)["name"], f"GNSS Base Station {payload}")
+
+        response = self.client.get(f"/blog/{quote(payload, safe='')}")
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn(payload, response.text)
 
     def test_index_redirect_preserves_map_query(self):
         for query in ("", "?view=map", "?view=map&station=ha.noi"):

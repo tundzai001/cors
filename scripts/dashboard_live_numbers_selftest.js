@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const source = fs.readFileSync(process.argv[2] || path.join(__dirname, '../cors_dashboard/src/js/dashboard-live.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/dashboard-live.js'), 'utf8');
 const helperStart = source.indexOf('function formatTelemetryNumber(');
 const helper = helperStart < 0 ? '' : source.slice(helperStart, source.indexOf('function getLeaflet(', helperStart));
 const satellitesCode=source.slice(source.indexOf('function getSatelliteSystem('),source.indexOf('function isDeviceStaleOffline('));

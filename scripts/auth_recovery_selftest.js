@@ -4,17 +4,16 @@ const path = require('path');
 const vm = require('vm');
 
 const source = fs.readFileSync(
-  path.join(__dirname, '..', 'cors_dashboard', 'frontend', 'js', 'api-client.js'),
+  path.join(__dirname, '..', 'cors_dashboard', 'frontend', 'js', 'dist', 'api-client.min.js'),
   'utf8'
 );
 const frontendRoot = path.join(__dirname, '..', 'cors_dashboard', 'frontend');
-const authAssetVersion = '20260731-auth-recovery-v3';
+const authAssetVersion = '20261104-auth-recovery-v4';
 
 function assertAuthAssetCacheKeys() {
   for (const page of ['index.html', 'users.html', 'security.html', 'operations.html', 'rovers-global.html', 'zalo.html']) {
     const html = fs.readFileSync(path.join(frontendRoot, page), 'utf8');
-    assert(html.includes(`/js/api-client.js?v=${authAssetVersion}`), `${page} has stale api-client cache key`);
-    assert(html.includes(`/js/nav-manager.js?v=${authAssetVersion}`), `${page} has stale nav-manager cache key`);
+    assert(html.includes(`/assets/js/dist/api-client.min.js?v=${authAssetVersion}`), `${page} has stale api-client cache key`);
   }
 
   const indexHtml = fs.readFileSync(path.join(frontendRoot, 'index.html'), 'utf8');
@@ -34,16 +33,16 @@ function storage(initial = {}) {
 async function staleTokenOnLandingReloadsAsGuest() {
   const localStorage = storage({ access_token: 'stale' });
   const sessionStorage = storage();
-  let replacedWith = null;
+  let reloads = 0;
   const window = {
     location: {
       pathname: '/',
       origin: 'https://example.test',
-      href: 'https://example.test/',
-      replace: value => { replacedWith = value; }
+      reload: () => { reloads += 1; }
     },
     history: { replaceState() {} },
     dispatchEvent() {},
+    addEventListener() {},
     ApiRoutes: { auth: { me: '/api/auth/me' } }
   };
   const context = {
@@ -52,6 +51,8 @@ async function staleTokenOnLandingReloadsAsGuest() {
     sessionStorage,
     CustomEvent: class CustomEvent {},
     AbortController,
+    document: { hidden: true, addEventListener() {} },
+    setInterval() {},
     URL,
     setTimeout,
     clearTimeout,
@@ -65,7 +66,7 @@ async function staleTokenOnLandingReloadsAsGuest() {
   );
   assert.strictEqual(localStorage.getItem('access_token'), null);
   assert.strictEqual(sessionStorage.getItem('access_token'), null);
-  assert.strictEqual(replacedWith, 'https://example.test/');
+  assert.strictEqual(reloads, 1);
 }
 
 assertAuthAssetCacheKeys();

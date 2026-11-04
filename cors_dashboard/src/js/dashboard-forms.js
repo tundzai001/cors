@@ -550,7 +550,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         let active = true;
         const point = Object.fromEntries(keys.map(key => [key, Number(locationInput[key])]));
         setProvinceLookup({key:locationKey, state:'loading'});
-        (async () => {
+        void (async () => {
             try {
                 const response = await window.apiFetch('/api/coordinates/auto-base-location', {
                     method:'POST', body:JSON.stringify(point)

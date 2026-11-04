@@ -317,7 +317,7 @@ class IonosphereService:
                 return self._cached_compact
 
             try:
-                async with httpx.AsyncClient(verify=False, timeout=22.0) as client:
+                async with httpx.AsyncClient(timeout=22.0) as client:
                     items = await self._fetch_catalog(client)
 
                     # Iterate up to 3 latest entries in reverse order so if the very newest file is
