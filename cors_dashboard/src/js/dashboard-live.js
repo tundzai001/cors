@@ -76,6 +76,7 @@ function getDashboardPosition(device, data) {
 }
 
 function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
+    if (device.detected_chip_type === 'Unicorecomm') return null;
     const snapshot = device.gnss_satellites;
     if (!live || snapshot?.source !== 'ubx_nav_sat' || typeof snapshot.payload_b64 !== 'string'
         || snapshot.payload_b64.length > 2060 || typeof snapshot.age_seconds !== 'number') return null;
@@ -603,6 +604,21 @@ function isDeviceStaleOffline(device, nowMs = Date.now()) {
     return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
 }
 
+function UnicoreReceptionOverview({device, live, data}) {
+    const satellites = getVisibleSatellites(getSatellitePlotSource(device, data, live).satellites, 7000);
+    const values = satellites.map(sat => Number(sat.snr)).filter(value => Number.isFinite(value) && value > 0).sort((a,b) => a-b);
+    const median = values.length ? (values[Math.floor(values.length/2)] + values[Math.floor((values.length-1)/2)]) / 2 : null;
+    return <section className="border rounded-3 p-3 mb-3" aria-label="Chất lượng tín hiệu Unicore">
+        <h6 className="mb-1">Chất lượng tín hiệu · Unicore</h6>
+        <p className="small text-muted mb-3">C/N₀ giải mã từ luồng RTCM · Mẫu trong 7 giây gần nhất</p>
+        {values.length ? <div className="row g-2">
+            <div className="col-6"><div className="border rounded p-2 h-100"><strong className="fs-4 d-block font-monospace">{median.toFixed(1)}</strong><span className="small text-muted">C/N₀ trung vị · dB-Hz</span></div></div>
+            <div className="col-6"><div className="border rounded p-2 h-100"><strong className="fs-4 d-block font-monospace">{values.length}</strong><span className="small text-muted">Vệ tinh có C/N₀ · RTCM</span></div></div>
+        </div> : <p className="small text-muted mb-0" role="status">{live ? 'Chưa nhận được C/N₀ từ luồng RTCM.' : 'Thiết bị ngoại tuyến; chưa có mẫu C/N₀ mới.'}</p>}
+        {values.length > 0 && <p className="small text-muted mt-2 mb-0">RTCM không cho biết vệ tinh nào đang được chip dùng để tính vị trí.</p>}
+    </section>;
+}
+
 function ReceptionOverview({device, live, data}) {
     const historyRef = useRef({serial:null, samples:[]});
     const [paused, setPaused] = useState(false);
@@ -734,7 +750,7 @@ function RfMonitorOverview({model}) {
                     <tbody>{samples.map(([offset,level,delta,matched,changed,minimum,maximum],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta} dB-Hz`}</td><td className="text-nowrap">{minimum == null ? '—' : `${minimum} / ${maximum} dB-Hz`}</td><td>{delta === null || matched == null ? '—' : `${changed} / ${matched}`}</td></tr>)}</tbody></table></div>
                 <p className="small text-muted d-sm-none mb-1">Vuốt ngang để xem đủ các cột.</p>
                 <p className="small text-muted mb-0">C/N₀ giảm: trung vị giảm từ 3 dB-Hz trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc. {report?.quality_comparisons || 0} cặp mẫu đủ dữ liệu đối chiếu.</p>
-                <p className="small text-muted mb-0">Trung vị bằng 0 vẫn có thể có vệ tinh tăng hoặc giảm. Cùng epoch NAV-SAT hoặc thiếu dữ liệu: không tính Δ.</p>
+                <p className="small text-muted mb-0">Trung vị bằng 0 vẫn có thể có vệ tinh tăng hoặc giảm. Cùng thời điểm dữ liệu hoặc thiếu mẫu: không tính Δ.</p>
             </details>
         </> : <p className="small text-muted mb-0">Chưa có lịch sử từng mẫu. Số đếm phía trên vẫn cập nhật khi nhận báo cáo.</p>}
         <details className="mt-3 border-top pt-2"><summary className="py-2" style={{minHeight:44}}>Lịch sử 24 giờ</summary>
@@ -794,7 +810,8 @@ function RfDiagnostics({device, live, data}) {
     </section>;
     return <section className="card mt-3" aria-label="Chẩn đoán nhiễu GNSS">
         <div className="card-body">
-            <ReceptionOverview key={device.serial} device={device} live={live} data={data} />
+            {unicore ? <UnicoreReceptionOverview key={device.serial} device={device} live={live} data={data} />
+                : <ReceptionOverview key={device.serial} device={device} live={live} data={data} />}
             <RfMonitorOverview model={automatic} />
             <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                 <h6 className="mb-0">Chẩn đoán nhiễu GNSS</h6>
@@ -1836,7 +1853,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                         <i className="bi bi-radar"></i><span>Sky View</span>
                         <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} giải mã · <span data-no-translate>RTCM</span></span>
                     </div>
-                    <div className="small text-muted px-3 pb-1">Danh sách và C/N₀ từ RTCM; NAV-SAT chỉ bổ sung góc cho vệ tinh trùng PRN.</div>
+                    <div className="small text-muted px-3 pb-1">{device.detected_chip_type === 'Ublox'
+                        ? 'Danh sách và C/N₀ từ RTCM; NAV-SAT chỉ bổ sung góc cho vệ tinh trùng PRN.'
+                        : 'Danh sách và C/N₀ từ RTCM; biểu đồ vị trí cần thêm góc phương vị và độ cao.'}</div>
                     <div className="small text-muted px-3 pb-1" data-no-translate>G GPS · R GLONASS · E Galileo · C BeiDou · J QZSS · S SBAS</div>
                     <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
