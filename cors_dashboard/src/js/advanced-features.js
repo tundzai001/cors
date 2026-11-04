@@ -36,7 +36,7 @@ window.ActivityFeed = React.memo(function ActivityFeed({ maxItems = 10 }) {
             }
         }
         
-        fetchHistory();
+        void fetchHistory();
     }, [maxItems]);
     
     // ✅ 2. LISTEN FOR REAL-TIME EVENTS (GIỮ NGUYÊN CODE CŨ)
@@ -216,7 +216,7 @@ window.ActivityHeatmap = React.memo(function ActivityHeatmap({
             }
         }
         
-        fetchHeatmap();
+        void fetchHeatmap();
     }, []);
     
     // Calculate max value for color scaling

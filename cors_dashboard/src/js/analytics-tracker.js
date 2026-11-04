@@ -34,13 +34,13 @@
             });
             if (response.ok && sentView === viewId) recorded = true;
         } catch (_) { /* Analytics never interrupts page use. Retry on the next signal. */ }
-        finally { pending = false; if (pagePath() !== path) signal(); }
+        finally { pending = false; if (pagePath() !== path) void signal(); }
     }
     for (const method of ['pushState', 'replaceState']) {
         const original = history[method];
         history[method] = function (...args) {
             const result = original.apply(this, args);
-            signal();
+            void signal();
             return result;
         };
     }
@@ -49,5 +49,5 @@
     window.addEventListener('online', signal);
     document.addEventListener('visibilitychange', signal);
     setInterval(signal, 30000);
-    signal();
+    void signal();
 })();

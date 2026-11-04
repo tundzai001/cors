@@ -43,16 +43,16 @@
         <div class="ops-toolbar">
             <div class="input-group input-group-sm" style="max-width: 360px;">
                 <span class="input-group-text"><i class="bi bi-search"></i></span>
-                <input type="search" id="user-search" class="form-control ops-input" placeholder="Search username, name, role">
+                <input type="search" id="user-search" aria-label="Tìm tài khoản theo tên, tên đăng nhập hoặc vai trò" class="form-control ops-input" placeholder="Search username, name, role">
             </div>
             <div class="d-flex gap-2 flex-wrap">
-                <select id="role-filter" class="form-select form-select-sm ops-input" style="width: 160px;">
+                <select id="role-filter" aria-label="Lọc theo vai trò" class="form-select form-select-sm ops-input" style="width: 160px;">
                     <option value="">All roles</option>
                     <option value="admin">Admin</option>
                     <option value="coordinator">Coordinator</option>
                     <option value="viewer">Viewer</option>
                 </select>
-                <select id="status-filter" class="form-select form-select-sm ops-input" style="width: 150px;">
+                <select id="status-filter" aria-label="Lọc theo trạng thái tài khoản" class="form-select form-select-sm ops-input" style="width: 150px;">
                     <option value="">All status</option>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
@@ -187,7 +187,7 @@
                             <h6 class="fw-bold mb-2">Mountpoint Access</h6>
                             <div class="input-group input-group-sm mb-2">
                                 <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                <input type="text" class="form-control ops-input" id="search-extra-mps" placeholder="Filter mountpoints">
+                                <input type="text" class="form-control ops-input" id="search-extra-mps" aria-label="Lọc mountpoint được cấp quyền" placeholder="Filter mountpoints">
                             </div>
                             <div id="extra-mps-checklist" class="ops-card-body border rounded" style="max-height: 220px; overflow: auto;">
                                 <div class="ops-empty-state"><span class="spinner-border spinner-border-sm"></span><span>Loading mountpoints</span></div>
