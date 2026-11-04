@@ -13,6 +13,11 @@ def _catalog():
     return features
 
 
+@lru_cache(maxsize=1)
+def _projections():
+    return json.loads((DATA / 'coordinate_provinces.json').read_text(encoding='utf-8'))
+
+
 def _in_ring(x, y, ring):
     inside = False
     for a, b in zip(ring, ring[1:] + ring[:1]):
@@ -40,10 +45,12 @@ def resolve_location(lat, lon, alt):
         result['state'] = 'boundary_ambiguous' if matches else 'outside_boundaries'
         return result
     province = matches[0]
-    # Auto Base uses six-degree UTM zones; province TM-3 catalogs are unrelated.
-    zone = min(60, int((lon + 180) // 6) + 1)
-    meridian = zone * 6 - 183
-    options = [dict(region=f"UTM {zone}N", l0_deg=meridian, k0=0.9996, zone_width_deg=6)]
+    # The reference allows local provincial L0/k0 or RTCM 1025, not an inferred UTM zone.
+    options = [dict(region=p['name'], l0_deg=p['central_meridian'], k0=0.9999, zone_width_deg=3)
+               for p in _projections() if p['current_code'] == province['code']]
     result.update(province_code=province['code'], province_name=province['fullName'], projection_options=options,
-                  state='resolved', l0_deg=meridian, k0=0.9996, zone_width_deg=6, utm_zone=zone)
+                  state='projection_ambiguous')
+    meridians = {p['l0_deg'] for p in options}
+    if len(meridians) == 1:
+        result.update(state='resolved', l0_deg=meridians.pop(), k0=0.9999, zone_width_deg=3)
     return result

@@ -9,6 +9,11 @@ let index = 0, changed = false, tree;
 const React = {
     memo: component => component,
     createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
+    useRef(initial) {
+        const slot = index++;
+        if (!(slot in slots)) slots[slot] = {current: initial};
+        return slots[slot];
+    },
     useState(initial) {
         const slot = index++;
         if (!(slot in slots)) slots[slot] = initial;
@@ -53,21 +58,21 @@ async function submit() {
     return sent.at(-1).params.accuracy;
 }
 (async () => {
-    for (const [meters, centimeters] of [[0.005, '0.5'], [0.0123, '1.23'], [0.05, '5'], [0.1, '10'], [1, '100']]) {
+    for (const meters of [0.005, 0.0123, 0.05, 0.1, 1]) {
         device = { serial: `TEST_${meters}`, detected_chip_type: 'Ublox', base_config: {
             base_setup_method: 'FIXED_LLA', accuracy: meters, coords: { lat: '20', lon: '105', alt: '2' } } };
         render();
-        assert.equal(accuracyInput().props.value, centimeters, 'Load stored meters as centimeters');
+        assert.equal(accuracyInput().props.value, String(meters), 'Load stored accuracy in meters');
         assert(Math.abs(await submit() - meters) < 1e-12, 'Saving existing accuracy must preserve its value');
     }
     const field = accuracyInput();
     assert(find(tree, node => node.type === 'label' && node.props.htmlFor === field.props.id));
     assert(find(tree, node => node.props.id === field.props['aria-describedby']));
-    field.props.onChange({ target: { value: '5' } });
+    field.props.onChange({ target: { value: '0.05' } });
     render();
-    assert.equal(await submit(), 0.05, '5 cm must send 0.05 m');
-    accuracyInput().props.onChange({ target: { value: '0.5' } });
+    assert.equal(Number(await submit()), 0.05, '0.05 m must send 0.05 m');
+    accuracyInput().props.onChange({ target: { value: '0.005' } });
     render();
-    assert.equal(await submit(), 0.005, '0.5 cm must preserve the old 5 mm setting');
-    console.log('PASS: base accuracy centimeters, stored-value round trips, decimal input and accessible help');
+    assert.equal(Number(await submit()), 0.005, '0.005 m must preserve the 5 mm setting');
+    console.log('PASS: base accuracy meters, stored-value round trips, decimal input and accessible help');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -87,10 +87,20 @@ int main(int argc, char **argv) {
     assert(decoded.count1021 == 1 && decoded.count1023 == 1 && decoded.count1025 == 1);
     assert(transformVn2000(21.08499, 105.786656, -8.0624, decoded, result));
     auto wrongZone = decoded; wrongZone.scale = 0.9999;
-    assert(!transformVn2000(21, 105, 0, wrongZone, result));
+    assert(transformVn2000(21, 105, 0, wrongZone, result));
     auto invalid = decoded; invalid.centralMeridianDeg = 0;
     assert(!transformVn2000(21, 105, 0, invalid, result));
     assert(!transformVn2000(NAN, 105, 0, decoded, result));
+    // Both projection widths and the optional shifts must follow the reference chain.
+    for (double scale : {0.9996, 0.9999}) {
+        auto shifted = decoded;
+        shifted.scale = scale;
+        shifted.resN = 0.25; shifted.resE = -0.75; shifted.resHS = 1.5;
+        assert(transformVn2000(21.08499, 105.786656, -8.0624, shifted, result));
+        std::cout << std::setprecision(16) << result.north << ' ' << result.east << ' ' << result.h << ' '
+            << result.latitude << ' ' << result.longitude << ' ' << result.altitude << ' ';
+    }
+    assert(transformVn2000(21.08499, 105.786656, -8.0624, decoded, result));
     std::cout << std::setprecision(16) << result.north << ' ' << result.east << ' ' << result.h << ' '
         << result.latitude << ' ' << result.longitude << ' ' << result.altitude << '\n';
     session.reset();
@@ -109,9 +119,20 @@ with tempfile.TemporaryDirectory(prefix='esp-vn2000-') as directory:
                     '-I' + str(root / 'include'), str(root / 'src/functions/Backend_Agent_Projection.cpp'),
                     str(path / 'check.cpp'), '-o', str(path / 'check')], check=True)
     actual = [float(value) for value in subprocess.check_output([str(path / 'check'), str(path / 'frames.bin'), str(path / 'short.bin')], text=True).split()]
-    for index, (cpp, python) in enumerate(zip(actual, expected)):
-        tolerance = 1e-9 if index in (3, 4) else 0.0001
-        assert abs(cpp - python) < tolerance, (index, cpp, python)
+    expected_cases = []
+    for scale in (0.9996, 0.9999):
+        shifted = namespace['RTCMDatum']()
+        for message, packet in zip((1021, 1023, 1025), frames):
+            namespace[f'_decode_type{message}'](packet, shifted)
+        shifted.k0 = scale
+        shifted.resN, shifted.resE, shifted.resHS = 0.25, -0.75, 1.5
+        expected_cases.append(namespace['_transform_itrf_to_vn2000_neh_and_llh'](21.08499, 105.786656, -8.0624, shifted))
+    expected_cases.append(expected)
+    assert len(actual) == 18
+    for case, values in enumerate(expected_cases):
+        for index, (cpp, python) in enumerate(zip(actual[case * 6:case * 6 + 6], values)):
+            tolerance = 1e-9 if index in (3, 4) else 0.0001
+            assert abs(cpp - python) < tolerance, (case, index, cpp, python)
 print('PASS: CRC/truncation/fragmentation/reset checks; ESP32 NEh and LLH agree with Python within 0.1 mm / 1e-9 degrees')
 
 # Operator's software reference: fixed 7 parameters, M6.

@@ -18,6 +18,7 @@ import os
 import re
 import time
 import secrets
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,31 @@ def _normalize_auto_cors_config(payload: dict) -> dict:
     if not 1 <= port <= 65535:
         raise ValueError("Base port must be between 1 and 65535")
 
-    return {
+    result = {
         "ip": host,
         "port": port,
         "user": user,
         "password": password,
         "mountpoint": mountpoint,
     }
+    enabled = raw_config.get('enable_itrf_vn2000_transform', True)
+    if not isinstance(enabled, bool):
+        raise ValueError('enable_itrf_vn2000_transform must be a boolean')
+    result['enable_itrf_vn2000_transform'] = enabled
+    if (raw_config.get('l0_deg') is None) != (raw_config.get('k0') is None):
+        raise ValueError('Manual projection requires both l0_deg and k0')
+    for key, low, high in (('l0_deg', 100, 112), ('k0', 0.999, 1.001),
+                           ('resN', -1e6, 1e6), ('resE', -1e6, 1e6), ('resHS', -1e6, 1e6)):
+        if raw_config.get(key) is None:
+            continue
+        try:
+            value = float(raw_config[key])
+        except (TypeError, ValueError):
+            raise ValueError(f'Invalid {key}') from None
+        if isinstance(raw_config[key], bool) or not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(f'Invalid {key}')
+        result[key] = value
+    return result
 
 
 def _with_runtime_sync_flags(devices: list[models.Device]) -> list[models.Device]:
@@ -434,7 +453,6 @@ async def configure_chip_endpoint(
                     "command": "TRIGGER_AUTO_BASE",
                     "payload": {
                         "review_only": True,
-                        "enable_itrf_vn2000_transform": auto_cors_config["ip"] == "14.238.1.125",
                         **auto_cors_config,
                         "timeout": 3600,
                         "samples": 60,

@@ -385,7 +385,7 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     rawLongitude /= longitudes.size();
     rawAltitude /= altitudes.size();
 
-    const bool enableTransform = host == "14.238.1.125";
+    const bool enableTransform = jsonBool(payload, "enable_itrf_vn2000_transform", true);
     setAgentState("auto_setup_base");
     DynamicJsonDocument location(2048);
     Vn2000Datum datum;
@@ -397,7 +397,13 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     datum = ntripRoverDatum();
     stopNtripRover();
     xSemaphoreGive(tcpStreamMutex);
-    if (autoBaseLocationQueue_) {
+    if (enableTransform && !datum.has1021) {
+        finish(false, false, "missing RTCM 1021 from this CORS session"); return false;
+    }
+    const bool manualProjection = !payload["l0_deg"].isNull() && !payload["k0"].isNull();
+    // Location lookup is only a fallback for missing projection parameters.
+    const bool needsLocation = enableTransform && !datum.has1025 && !manualProjection;
+    if (needsLocation && autoBaseLocationQueue_) {
         xQueueReset(autoBaseLocationQueue_);
         const String requestId = statusBootId_ + ":" + String(millis());
         StaticJsonDocument<384> requestDoc;
@@ -416,9 +422,9 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
                 && acceptAutoBaseLocationReply(received.as<JsonObjectConst>(), requestId,
                     rawLatitude, rawLongitude, rawAltitude, location)) { located = true; break; }
         }
-    } else error = "location reply queue could not be allocated";
+    } else if (needsLocation) error = "location reply queue could not be allocated";
     if (workflowCancelRequested_) { finish(false, true, "cancelled by user"); return false; }
-    if (!located) {
+    if (needsLocation && !located) {
         location.clear();
         location["state"] = "lookup_failed";
         location["reason"] = error;
@@ -428,9 +434,12 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     Vn2000Result result;
     result.latitude = rawLatitude; result.longitude = rawLongitude; result.altitude = rawAltitude;
     if (enableTransform) {
-        if (!datum.has1021) { finish(false, false, "missing RTCM 1021 from this CORS session"); return false; }
         if (datum.has1025) projectionSource = "rtcm1025";
-        else {
+        else if (manualProjection) {
+            datum.centralMeridianDeg = coordinateNumber(payload["l0_deg"]);
+            datum.scale = coordinateNumber(payload["k0"]);
+            projectionSource = "manual";
+        } else {
             datum.centralMeridianDeg = coordinateNumber(location["l0_deg"]);
             datum.scale = coordinateNumber(location["k0"]);
             if (!std::isfinite(datum.centralMeridianDeg) || !std::isfinite(datum.scale)) {
@@ -438,8 +447,12 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
             }
             projectionSource = "server_catalog";
         }
-        if (fabs(datum.scale - 0.9996) > 1e-9) {
-            finish(false, false, "requires 6-degree projection (k0=0.9996); select an M6 mountpoint, not M3"); return false;
+        for (const char *key : {"resN", "resE", "resHS"}) {
+            const double value = payload[key].isNull() ? 0 : coordinateNumber(payload[key]);
+            if (!std::isfinite(value)) { finish(false, false, "invalid CORS shift"); return false; }
+            if (!strcmp(key, "resN")) datum.resN = value;
+            else if (!strcmp(key, "resE")) datum.resE = value;
+            else datum.resHS = value;
         }
         if (!transformVn2000(rawLatitude, rawLongitude, rawAltitude, datum, result)) {
             finish(false, false, "VN2000 conversion failed; no candidate coordinates were installed"); return false;
@@ -484,7 +497,8 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     if (datum.count1023) counts["1023"] = datum.count1023;
     if (datum.count1025) counts["1025"] = datum.count1025;
     if (enableTransform) {
-        report["zone_width_deg"] = 6;
+        if (fabs(datum.scale - 0.9999) < 1e-9) report["zone_width_deg"] = 3;
+        else if (fabs(datum.scale - 0.9996) < 1e-9) report["zone_width_deg"] = 6;
         report["central_meridian_deg"] = datumParameterText(datum.centralMeridianDeg);
         report["k0"] = datumParameterText(datum.scale);
         JsonObject projected = report.createNestedObject("projected_coord");
@@ -494,6 +508,7 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
         parameters["rX"] = datumParameterText(datum.rX); parameters["rY"] = datumParameterText(datum.rY); parameters["rZ"] = datumParameterText(datum.rZ);
         parameters["kT"] = datumParameterText(datum.kT);
         parameters["resB"] = datumParameterText(datum.resB); parameters["resL"] = datumParameterText(datum.resL); parameters["resH"] = datumParameterText(datum.resH);
+        parameters["resN"] = datumParameterText(datum.resN); parameters["resE"] = datumParameterText(datum.resE); parameters["resHS"] = datumParameterText(datum.resHS);
     }
     if (progress.overflowed()) { finish(false, false, "Auto Base report exceeds memory capacity"); return false; }
     if (!restorePreviousBase() || !restartConfiguredNtrip()) {

@@ -19,6 +19,7 @@ const STATUS_TEXT_MAP = {
     'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu & Tính trung bình (10 số sau dấu phẩy)',
     'auto_setup_base': 'Bước 4/4: Hoàn thiện kết quả Auto Base'
 };
+const projectionLabel = report => Math.abs(Number(report?.k0) - 0.9999) <= 1e-9 ? 'múi 3°' : isSixDegreeReport(report) ? 'múi 6°' : 'phép chiếu tùy chọn';
 const isSixDegreeReport = report => Number.isFinite(Number(report?.k0)) && Math.abs(Number(report.k0) - 0.9996) <= 1e-9;
 // Show the nominal VN M6 zone constants when RTCM's quantized values decode a few nanodegrees off.
 const displayMeridian = (value, report) => {
@@ -37,8 +38,7 @@ const Vn2000Result = ({ report }) => {
     const hasNeh = neh && ['north', 'east', 'h'].every(key =>
         neh[key] !== null && neh[key] !== '' && Number.isFinite(Number(neh[key])));
     return <section className="border rounded p-3 mb-3" aria-label="Kết quả VN-2000 NEh">
-        <h3 className="h6 mb-2">VN-2000 — NEh · {isSixDegreeReport(report) ? 'múi 6°' : 'khác múi 6°'}</h3>
-        {!isSixDegreeReport(report) && <p className="small text-warning">Kết quả cũ không dùng chuẩn múi 6° (k₀ = 0.9996). Cần lấy lại từ mountpoint M6.</p>}
+        <h3 className="h6 mb-2">VN-2000 — NEh · {projectionLabel(report)}</h3>
         {hasNeh ? <dl className="row g-2 small mb-2">
             {[['north', 'N — Northing (m)'], ['east', 'E — Easting (m)'], ['h', 'h — Độ cao ellipsoid (m)']].map(([key, label]) => (
                 <div className="col-sm-4" key={key}><dt className="text-muted fw-normal">{label}</dt>
@@ -532,6 +532,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
     // CORS connection for Auto Base (kept in this form only; never read from .env)
     const [corsHost, setCorsHost] = useState('');
+    const [projectionMeridian, setProjectionMeridian] = useState('');
+    const [projectionScale, setProjectionScale] = useState('');
     const [corsPort, setCorsPort] = useState('2101');
     const [corsUsername, setCorsUsername] = useState('');
     const [corsPassword, setCorsPassword] = useState('');
@@ -654,6 +656,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         setAltitudeReference('ELLIPSOID');
         setFixedAccuracyM('0.01');
         setCorsHost('');
+        setProjectionMeridian('');
+        setProjectionScale('');
         setCorsPort('2101');
         setCorsUsername('');
         setCorsPassword('');
@@ -959,6 +963,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     password: corsPassword,
                     mountpoint: selectedMountpoint
                 };
+                if (projectionMeridian.trim() || projectionScale) {
+                    const l0 = Number(projectionMeridian);
+                    const k0 = Number(projectionScale);
+                    if (!projectionMeridian.trim() || !projectionScale || !Number.isFinite(l0) || l0 < 100 || l0 > 112) {
+                        window.showError('Nhập đủ kinh tuyến trục và hệ số k₀ hợp lệ.');
+                        return;
+                    }
+                    payload.auto_cors.l0_deg = l0;
+                    payload.auto_cors.k0 = k0;
+                }
                 delete params.auto_cors;
             }
 
@@ -1481,12 +1495,28 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </div>
                             </div>
                         </div>
+                        <div className="col-12">
+                            <details className="mb-2">
+                                <summary>Phép chiếu khi nguồn không gửi RTCM 1025</summary>
+                                <div className="row g-3 mt-1">
+                                    <div className="col-sm-6">
+                                        <label className="form-label" htmlFor={`auto-l0-${device.serial}`}>Kinh tuyến trục L₀ (độ)</label>
+                                        <input id={`auto-l0-${device.serial}`} type="number" step="any" min="100" max="112" className="form-control" value={projectionMeridian} onChange={e => setProjectionMeridian(e.target.value)} disabled={disabled || isAutoSetupStatus} />
+                                    </div>
+                                    <div className="col-sm-6">
+                                        <label className="form-label" htmlFor={`auto-k0-${device.serial}`}>Hệ số k₀</label>
+                                        <select id={`auto-k0-${device.serial}`} className="form-select" value={projectionScale} onChange={e => setProjectionScale(e.target.value)} disabled={disabled || isAutoSetupStatus}>
+                                            <option value="">Theo nguồn / tỉnh</option>
+                                            <option value="0.9999">0.9999 — múi 3°</option>
+                                            <option value="0.9996">0.9996 — múi 6°</option>
+                                        </select>
+                                    </div>
+                                    <div className="col-12 small text-muted">Có RTCM 1025 sẽ ưu tiên tham số của nguồn. Để trống cả hai để tra theo tỉnh khi thiếu bản tin này.</div>
+                                </div>
+                            </details>
+                        </div>
                         <div className="col-12 small text-info" role="status">
-                            {corsHost.trim() === '14.238.1.125'
-                                ? 'Lần lấy mẫu tiếp theo: LLH trung bình → VN-2000 NEh múi 6° → LLH để đặt Base. Chọn mountpoint M6.'
-                                : corsHost.trim()
-                                    ? 'Lần lấy mẫu tiếp theo: giữ LLH trung bình, không chuyển qua VN-2000.'
-                                    : 'Chỉ IP 14.238.1.125 sử dụng chuyển đổi qua VN-2000 NEh. Các nguồn khác giữ LLH trung bình.'}
+                            LLH trung bình → VN-2000 NEh → LLH địa phương. Dùng tham số RTCM 1021/1023 và phép chiếu RTCM 1025 hoặc theo tỉnh.
                         </div>
                         <div className="col-12">
                             <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
@@ -1524,19 +1554,19 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         </div>
                                         <Vn2000Result report={conversionReport} />
                                         <div className="small">{conversionReport.transform_applied
-                                            ? `Đã tính LLH địa phương qua VN-2000 ${isSixDegreeReport(conversionReport) ? 'múi 6°' : 'khác múi 6°'}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg, conversionReport)}°; k₀ ${displayProjectionScale(conversionReport)}.`
+                                            ? `Đã tính LLH địa phương qua VN-2000 ${projectionLabel(conversionReport)}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg, conversionReport)}°; k₀ ${displayProjectionScale(conversionReport)}.`
                                             : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.'}</div>
                                         {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
                                         {conversionReport.transform_applied && <details className="small mt-2"><summary>Tham số chuyển đổi</summary>
                                             <p className="mb-1">Nguồn 7 tham số: {conversionReport.parameter_source === 'rtcm1021' ? 'RTCM 1021' : 'Chưa xác nhận'};
                                                 {' '}hiệu chỉnh: {conversionReport.residual_source === 'rtcm1023' ? 'RTCM 1023' : 'Không có'};
-                                                {' '}phép chiếu: {conversionReport.projection_source === 'rtcm1025' ? 'RTCM 1025' : 'Danh mục máy chủ'}.</p>
+                                                {' '}phép chiếu: {conversionReport.projection_source === 'rtcm1025' ? 'RTCM 1025' : conversionReport.projection_source === 'manual' ? 'Nhập thủ công' : 'Danh mục máy chủ'}.</p>
                                             <dl className="mb-0">{Object.entries(conversionReport.parameters || {}).map(([key, value]) => <div key={key} className="d-flex gap-2"><dt>{key}</dt><dd className="font-monospace mb-0 text-break">{String(value)}</dd></div>)}</dl>
                                         </details>}
                                     </div>
                                 </div>
                                 <div className="col-12">
-                                    <button type="button" className="btn btn-outline-primary" disabled={disabled || isSubmitting || isAutoSetupActive || (conversionReport.transform_applied && !isSixDegreeReport(conversionReport))}
+                                    <button type="button" className="btn btn-outline-primary" disabled={disabled || isSubmitting || isAutoSetupActive}
                                         onClick={() => { const coords = autoProgress.averaged_coord; if (!coords) return; setLatitude(activeChip === 'Ublox' ? chipCoordinate(coords.lat, 9) : coords.lat); setLongitude(activeChip === 'Ublox' ? chipCoordinate(coords.lon, 9) : coords.lon); setAltitude(coords.alt); setMethod('FIXED_LLA'); setAltitudeReference('ELLIPSOID'); }}>
                                         Kiểm tra và dùng kết quả cho Fixed LLA
                                     </button>

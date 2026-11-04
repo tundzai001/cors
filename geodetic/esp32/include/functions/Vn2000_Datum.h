@@ -8,6 +8,7 @@ struct Vn2000Datum {
     uint32_t count1021 = 0, count1023 = 0, count1025 = 0;
     double dX = 0, dY = 0, dZ = 0, rX = 0, rY = 0, rZ = 0, kT = 1;
     double resB = 0, resL = 0, resH = 0;
+    double resN = 0, resE = 0, resHS = 0;
     double centralMeridianDeg = 0, scale = 0;
     double falseEasting = 500000, falseNorthing = 0;
 };

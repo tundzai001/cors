@@ -16,61 +16,45 @@ collecting Rover samples. Candidate results persist locally across restarts.
 
 ## Location and conversion
 
-Python sends its sampled LLH to `POST /api/coordinates/auto-base-location` on its
-configured backend origin. The server identifies the current province using the
-existing 34-province GeoJSON. Auto Base uses six-degree UTM zones (k0=0.9996):
-zone 48 has central meridian 105 degrees; zone 49 has central meridian 111
-degrees. Server fallback selects the zone by longitude, independently of
-province mergers. The historical TM-3 catalog remains unchanged for the
-coordinate conversion tool and is not used by this Auto Base workflow.
+The calculation follows the supplied `ITRF2vn2000.txt`: decode the current
+session's RTCM 1021 seven parameters and optional 1023 central-four residuals;
+convert ITRF LLH to ECEF, transform to VN2000 BLH, project to NEh, apply optional
+`resN/resE/resHS`, then run the reference inverse projection and fixed national
+inverse seven parameters to obtain local LLH. This is not a national geoid model.
 
-The Python agent no longer contains province tables or performs external
-reverse geocoding. It preserves LLH as reported by the receiver for ordinary
-casters. The configure routes enable the existing ITRF/VN-2000/local-LLH chain
-only when the submitted host is exactly `14.238.1.125`. Other hosts, including
-`vngeonet.vn`, retain averaged LLH without a datum conversion.
-This host policy is explicit; arbitrary caster addresses are not reference-frame
-identification. Raw LLH remains preserved in the report.
+Conversion defaults to enabled for every caster host. An explicit boolean
+`enable_itrf_vn2000_transform: false` preserves raw averaged receiver LLH.
+No IP address determines the reference-frame policy. Missing session 1021
+parameters fail conversion rather than silently using a default datum.
 
-Transformation parameters are isolated to the active correction session and
-counted only from CRC-valid RTCM frames. Conversion requires that session's
-1021 parameters. It uses 1025 projection parameters when available, otherwise a
-server-provided six-degree projection or explicit six-degree override. A
-1025/manual scale different from 0.9996 fails with an instruction to select an
-M6 mountpoint; it is never silently treated as M6. Unresolved
-projection, invalid output, and failed conversions produce errors instead of
-silently substituting raw LLH. 1023 residual processing and forward/inverse
-formulas retain the existing algorithm derived from `ITRF2vn2000.txt`; this
-change is not a new accuracy certification or a national height/geoid model.
+Projection priority is current-session RTCM 1025, then a complete explicit
+`l0_deg`/`k0` pair, then a server provincial catalog lookup. Both M3 (0.9999) and
+M6 (0.9996) are supported; the provided scale is never replaced by an inferred
+UTM zone. The form offers optional manual L0/k0 for sources without 1025.
+The backend identifies the province from the boundary snapshot and returns a
+TM-3 provincial projection only when all matching historical regions share one
+central meridian. Merged provinces with different meridians return options and
+require manual selection or RTCM 1025 instead of guessing.
+
+Python and ESP32 skip the backend lookup entirely when 1025 or manual parameters
+are present, and when conversion is explicitly disabled. Python uses the existing
+HTTP endpoint only for fallback. ESP32 uses the existing correlated MQTT/WebSocket
+ACK and waits at most 30 seconds only when fallback is needed. Request/boot/device
+and echoed LLH checks remain in place. Lookup failure cannot block a conversion
+that already has its projection parameters.
 
 The report contains input/output LLH, source mountpoint without credentials,
 province, projection source, received message counts and parameters. Results
 matching the submitted Fixed LLA retain that report in the saved configuration.
 The obsolete APPLY_VN2000_PROVINCE shortcut no longer writes Python receivers.
 
-ESP32 uses the same review contract and the same exact-IP policy. Its portable
-1021/1023/1025 decoder reads only CRC-valid frames from the temporary rover CORS
+ESP32 uses the same review contract and projection priority. Its portable
+1021/1023/1025 decoder reads CRC-valid frames from the temporary rover CORS
 socket, preserves fragmented input, and resets parameters at each new session.
-There is no built-in province table or nearest-meridian fallback. The obsolete
-APPLY_VN2000_PROVINCE command no longer writes the ESP32 receiver either.
-
-After averaging, ESP32 stops the rover socket and places a correlated location
-request in its status progress. The backend resolves the province/UTM context
-and returns it in the existing MQTT/WebSocket control ACK. The device checks
-its serial and boot ID, then passes bounded replies through a one-element RTOS
-queue to the workflow, where the request ID and echoed LLH must match. The
-workflow waits at most 30 seconds and observes cancellation. No separate HTTP
-port, TLS connection or extra GSM socket is required. Lookup failure blocks
-VNGEONET conversion; ordinary casters can still return averaged LLH with the
-lookup failure recorded.
-
-For VNGEONET, the ESP32 requires session 1021 parameters and either valid 1025
-six-degree projection parameters or a server UTM fallback. It retains the
-reference central-four 1023 residual algorithm and inverse local-LLH constants,
-and reports both VN-2000 NEh and the final LLH. Projection 1025 records with a
-nonzero natural-origin latitude are not used by the TM formula. GGA heights use
-h=H+N; missing/invalid N or non-metre units make the sample unusable. Neither
-this height convention nor the datum transformation supplies national geoid H.
+Projection 1025 records with a nonzero natural-origin latitude are not used by
+the current TM formula. GGA heights use h=H+N; invalid or missing N or non-metre
+units make samples unusable. The obsolete APPLY_VN2000_PROVINCE shortcut does
+not write either receiver implementation.
 
 The previous Base coordinates (including numeric strings from the UI) are
 restored before publishing `ready_for_review`. Reports fit the existing

@@ -6,6 +6,11 @@ let index = 0, changed = false, tree;
 const React = {
     memo: value => value,
     createElement: (type, props, ...children) => ({type, props: props || {}, children: children.flat(Infinity)}),
+    useRef(initial) {
+        const slot = index++;
+        if (!(slot in slots)) slots[slot] = {current: initial};
+        return slots[slot];
+    },
     useState(initial) {
         const slot = index++;
         if (!(slot in slots)) slots[slot] = initial;
@@ -52,14 +57,19 @@ assert(text(tree).includes('$GNGGA,live,5*00'));
 assert(text(tree).includes('RTK FLOAT'));
 device = {...device, status: 'online', auto_base_progress: {phase: 'completed', sample_count: 54, updated_at: 1}};
 render();
-assert(text(tree).includes('Kết quả cũ chưa được xác nhận RTK Fixed'));
+assert(!text(tree).includes('Kết quả Auto Base — chờ kiểm tra'));
 assert(!text(tree).includes('Auto Base hoàn tất:'));
-device = {...device, auto_base_progress: {phase: 'completed', fixed_samples_only: true,
+device = {...device, auto_base_progress: {phase: 'ready_for_review', fixed_samples_only: true, conversion_report: {transform_applied: true, k0: 0.9999, central_meridian_deg: 105, projected_coord: {north: 2300000, east: 580000, h: 25}},
     sample_count: 60, updated_at: 2, averaged_coord: {lat: 21.123456789, lon: 105.123456789, alt: 12}}};
 render();
-assert(text(tree).includes('Auto Base hoàn tất: 60 mẫu RTK Fixed.'));
-assert(find(tree, node => node.type === 'input' && node.props.readOnly && String(node.props.value).startsWith('21.123456789')));
-assert(find(tree, node => node.props.role === 'status' && text(node).includes('Auto Base hoàn tất')));
+assert(text(tree).includes('Kết quả Auto Base — chờ kiểm tra'));
+assert(text(tree).includes('múi 3°'));
+assert(!text(tree).includes('Cần lấy lại từ mountpoint M6'));
+assert.equal(find(tree, node => node.type === 'button' && text(node).includes('Fixed LLA')).props.disabled, false);
+assert(find(tree, node => node.props.id === 'auto-l0-ESP_TEST'));
+assert(find(tree, node => node.props.id === 'auto-k0-ESP_TEST'));
+assert(text(tree).includes('21.123456789'));
+assert(find(tree, node => node.props.role === 'status' && text(node).includes('Chưa áp dụng tọa độ')));
 console.log('PASS: live GGA/Float, reject unverified success, update completed coordinates, accessible result');
 
 (async () => {

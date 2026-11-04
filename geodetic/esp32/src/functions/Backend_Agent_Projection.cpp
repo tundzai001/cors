@@ -147,6 +147,10 @@ bool transformItrfToVn2000(double latitudeDeg, double longitudeDeg, double heigh
     const double centralMeridianRad = centralMeridianDeg * 3.14159265358979323846 / 180.0;
     blhToUtm(centralMeridianRad, scale, latitudeRad, longitudeRad,
              transformedHeight, northing, easting, datum.falseEasting, datum.falseNorthing);
+    northing += datum.resN;
+    easting += datum.resE;
+    transformedHeight += datum.resHS;
+    vnHeight = transformedHeight;
     utmToBlh(centralMeridianRad, scale, northing, easting, transformedHeight,
              latitudeRad, longitudeRad, datum.falseEasting, datum.falseNorthing);
 
@@ -178,7 +182,8 @@ bool transformVn2000(double latitude, double longitude, double altitude,
     if (!datum.has1021 || !std::isfinite(latitude) || !std::isfinite(longitude) || !std::isfinite(altitude)
         || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180
         || !std::isfinite(datum.centralMeridianDeg) || datum.centralMeridianDeg < 100 || datum.centralMeridianDeg > 112
-        || !std::isfinite(datum.scale) || fabs(datum.scale - 0.9996) > 1e-9) return false;
+        || !std::isfinite(datum.scale) || datum.scale < 0.999 || datum.scale > 1.001
+        || !std::isfinite(datum.resN) || !std::isfinite(datum.resE) || !std::isfinite(datum.resHS)) return false;
     return transformItrfToVn2000(latitude, longitude, altitude, datum.centralMeridianDeg, datum.scale,
         result.latitude, result.longitude, result.altitude, result.north, result.east, result.h, datum)
         && std::isfinite(result.north) && std::isfinite(result.east) && std::isfinite(result.h)

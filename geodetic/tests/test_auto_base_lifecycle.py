@@ -331,9 +331,9 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(receiver.closed)
 
     async def test_auto_base_failure_never_saves_a_completed_coordinate(self):
-        for apply_error, review_only, host, k0 in ((None, False, 'other.example', 0.9996), (RuntimeError('receiver still Rover'), False, 'other.example', 0.9996), (None, True, 'vngeonet.vn', 0.9996), (None, True, '14.238.1.125', 0.9996), (None, True, '14.238.1.125', 0.9999)):
+        for apply_error, review_only, host, k0, has1025 in ((None, False, 'other.example', 0.9996, False), (RuntimeError('receiver still Rover'), False, 'other.example', 0.9996, False), (None, True, 'vngeonet.vn', 0.9996, True), (None, True, 'other-m3.example', 0.9999, False), (None, True, '14.238.1.125', 0.9999, False)):
             with self.subTest(apply_error=apply_error, review_only=review_only, host=host, k0=k0):
-                expected_failure = apply_error or (host == '14.238.1.125' and k0 != 0.9996)
+                expected_failure = apply_error
                 now = [1000.0]
                 reader = SimpleNamespace(pause=Mock(), resume=Mock(), inject_rtcm=Mock())
                 client = SimpleNamespace(start=Mock(), stop=Mock(), join=Mock())
@@ -345,10 +345,10 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
                 phases = []
                 scope = dict(Decimal=Decimal, ROUND_DOWN=ROUND_DOWN, AgentManager=object, GNSSReader=object, mqtt=SimpleNamespace(Client=object),
                     time=SimpleNamespace(time=lambda: now[0]), math=math, logging=logging, copy=copy,
-                    DATUM_LOCK=threading.RLock(), _resolve_auto_base_location=lambda *args: {},
+                    DATUM_LOCK=threading.RLock(), _resolve_auto_base_location=Mock(side_effect=AssertionError('Unnecessary backend lookup')),
                     RTCMDatum=lambda: SimpleNamespace(l0=math.radians(105), k0=0.9996,
-                        rtcm1021_update=True, rtcm1023_update=False, rtcm1025_update=False,
-                        **dict.fromkeys(("dX", "dY", "dZ", "rX", "rY", "rZ", "kT", "resB", "resL", "resH"), 0)),
+                        rtcm1021_update=True, rtcm1023_update=False, rtcm1025_update=has1025,
+                        **dict.fromkeys(("dX", "dY", "dZ", "rX", "rY", "rZ", "kT", "resB", "resL", "resH", "resN", "resE", "resHS"), 0)),
                     _is_valid_vn2000_projection_params=lambda datum: True,
                     _transform_itrf_to_vn2000_neh_and_llh=Mock(return_value=(2300000, 580000, 25, 20.100000000123456, 105.10000000098765, 2.1000123456789)),
                     active_auto_base_client=None, _cleanup_inject_queue=Mock(),
@@ -377,7 +377,7 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
                 scope['_apply_base_mode_to_chip'].assert_awaited_once_with('Ublox', 'USB', 1.0, 2.0, 3.0, reader)
                 if not expected_failure:
                     candidate = agent.config['auto_base_candidate']
-                    converted = host == '14.238.1.125'
+                    converted = host != '14.238.1.125'
                     self.assertEqual(candidate['averaged_coord']['lat'], '20.100000000' if converted else '20.000000000')
                     self.assertEqual(candidate['transform_applied'], converted)
                     if converted:
@@ -386,8 +386,13 @@ class AutoBaseTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(candidate['averaged_coord']['lon'], '105.100000000')
                         self.assertEqual(candidate['averaged_coord']['alt'], '2.1000')
                     self.assertEqual(scope['_transform_itrf_to_vn2000_neh_and_llh'].called, converted)
+                    if converted:
+                        used = scope['_transform_itrf_to_vn2000_neh_and_llh'].call_args.args[-1]
+                        self.assertEqual(used.k0, 0.9996 if has1025 else k0)
+                        self.assertEqual(candidate['conversion_report']['projection_source'], 'rtcm1025' if has1025 else 'manual')
                     self.assertEqual(candidate['conversion_report']['projected_coord'],
                         {'north': 2300000, 'east': 580000, 'h': 25} if converted else None)
+                scope['_resolve_auto_base_location'].assert_not_called()
                 self.assertFalse(agent.config['auto_base_setup']['enabled'])
                 self.assertIsNone(scope['active_auto_base_client'])
                 self.assertTrue(client.stop.called)
