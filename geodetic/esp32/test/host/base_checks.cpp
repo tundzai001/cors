@@ -205,6 +205,15 @@ int main(int argc, char **argv) {
         const std::string line(command.begin(), command.end());
         assert(line.find(" COM2 1\r\n") != std::string::npos);
     }
+    for (double latitude : {21.084990131093591, -21.084990131093591, 21.0849901310}) {
+        const auto commands = commandListToBytes(buildBaseFixedLlaCommand(latitude, 105.78665745895107,
+            12.5, 0.01, GnssSensorType::Unicore, uart));
+        const std::string wire(commands.begin(), commands.end());
+        const std::string expected = latitude < 0
+            ? "mode base -21.0849901310 105.7866574589 12.5000\r\n"
+            : "mode base 21.0849901310 105.7866574589 12.5000\r\n";
+        assert(wire.find(expected) != std::string::npos);
+    }
     uart.ports = {"UART1"};
     uart.outputMode = OutputMode::RtcmOnly;
     for (const auto type : {GnssSensorType::Ublox, GnssSensorType::Unicore}) {

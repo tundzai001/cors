@@ -107,14 +107,14 @@ console.log('PASS: live GGA/Float, reject unverified success, update completed c
     await approve.props.onClick({preventDefault(){}});
     assert.equal(configured.serial,'ESP_REVIEW');
     assert.equal(configured.payload.params.base_setup_method,'FIXED_LLA');
-    assert.deepEqual(JSON.parse(JSON.stringify(configured.payload.params.coords)),candidate);
+    assert.deepEqual(JSON.parse(JSON.stringify(configured.payload.params.coords)),{...candidate,lat:"21.0849901310",lon:"105.7866574589"});
     assert.equal(configured.payload.params.altitude_reference,'ELLIPSOID');
     assert.equal(configured.payload.params.coordinate_source,'AUTO_CORS');
     assert.equal(configured.payload.params.conversion_report.output_coord.alt,candidate.alt);
     assert.equal(configured.payload.params.conversion_report.province_code,'01');
     assert.equal(configured.payload.params.conversion_report.k0,'0.9996', 'Province lookup must not replace CORS projection with provincial k0');
     assert(!configured.payload.auto_cors, 'Approval must apply LLH, not start another sampling session');
-    console.log('PASS: Survey-In restoration retains review; approval directly submits full-precision local LLH as Fixed LLA');
+    console.log('PASS: Survey-In restoration retains review; approval submits 10-decimal UM coordinates and retains full-precision calculations');
     const draftDevice = {serial:'DRAFT_A',detected_chip_type:'Unicorecomm',status:'online',base_config:{base_setup_method:'SURVEY_IN',survey_in_duration:120},system_info:{auto_base_review_supported:true}};
     device=draftDevice; render();
     const field = id=>find(tree,node=>node.props.id===id);

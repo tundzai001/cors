@@ -37,7 +37,7 @@ String datumParameterText(double value) {
 
 // Device output quantization is kept separate from all datum calculations.
 String receiverCoordinateText(double value, unsigned digits) {
-    const double factor = digits == 9 ? 1e9 : 1e4;
+    const double factor = digits == 10 ? 1e10 : digits == 9 ? 1e9 : 1e4;
     double scaled = value * factor;
     const double integer = std::round(scaled);
     // Correct binary representation noise at an exact device-grid boundary.
@@ -521,8 +521,8 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     }
     DynamicJsonDocument progress(CONFIG_DOCUMENT_SIZE);
     JsonObject averaged = progress.createNestedObject("averaged_coord");
-    averaged["lat"] = sensorType_ == "Ublox" ? receiverCoordinateText(result.latitude, 9) : datumParameterText(result.latitude);
-    averaged["lon"] = sensorType_ == "Ublox" ? receiverCoordinateText(result.longitude, 9) : datumParameterText(result.longitude);
+    averaged["lat"] = receiverCoordinateText(result.latitude, sensorType_ == "Ublox" ? 9 : 10);
+    averaged["lon"] = receiverCoordinateText(result.longitude, sensorType_ == "Ublox" ? 9 : 10);
     averaged["alt"] = sensorType_ == "Ublox" ? receiverCoordinateText(result.altitude, 4) : datumParameterText(result.altitude);
     JsonObject raw = progress.createNestedObject("raw_coord");
     raw["lat"] = datumParameterText(rawLatitude); raw["lon"] = datumParameterText(rawLongitude); raw["alt"] = datumParameterText(rawAltitude);

@@ -16,7 +16,7 @@ const STATUS_TEXT_MAP = {
     'starting': 'ĐANG KHỞI CHẠY',
     'auto_setup_rover': 'Bước 1/4: Đặt chip sang ROVER (mở NMEA GGA)',
     'auto_setup_wait_fix': 'Bước 2/4: Gửi GGA lên Caster & Chờ RTK Fix',
-    'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu & Tính trung bình (10 số sau dấu phẩy)',
+    'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu RTK Fixed & Tính trung bình',
     'auto_setup_base': 'Bước 4/4: Hoàn thiện kết quả Auto Base'
 };
 const projectionLabel = report => Math.abs(Number(report?.k0) - 0.9999) <= 1e-9 ? 'múi 3°' : isSixDegreeReport(report) ? 'múi 6°' : 'phép chiếu tùy chọn';
@@ -760,8 +760,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     : null
             );
             if (coords) {
-                setLatitude(activeChip === 'Ublox' && coords.lat != null ? chipCoordinate(coords.lat, 9) : coords.lat ?? '');
-                setLongitude(activeChip === 'Ublox' && coords.lon != null ? chipCoordinate(coords.lon, 9) : coords.lon ?? '');
+                setLatitude(coords.lat != null ? chipCoordinate(coords.lat, activeChip === 'Ublox' ? 9 : 10) : coords.lat ?? '');
+                setLongitude(coords.lon != null ? chipCoordinate(coords.lon, activeChip === 'Ublox' ? 9 : 10) : coords.lon ?? '');
                 setAltitude(coords.alt ?? '');
                 setAltitudeReference(config.altitude_reference === 'ELLIPSOID' || device.detected_chip_type === 'Ublox'
                     ? 'ELLIPSOID' : 'LEGACY');
@@ -827,8 +827,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
     const formatCoord10 = (val) => {
         if (val === null || val === undefined || val === '') return '';
-        if (activeChip === 'Ublox') return chipCoordinate(val, 9);
-        return String(val);
+        return chipCoordinate(val, activeChip === 'Ublox' ? 9 : 10);
     };
 
     const formatAlt10 = (val) => {
@@ -843,8 +842,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             const coords = window.CorsCoordinateClipboard?.parse(event.clipboardData?.getData('text/plain') || '');
             if (!coords) return; // A normal numeric paste still belongs to the focused field.
             event.preventDefault();
-            setLatitude(activeChip === 'Ublox' ? chipCoordinate(coords.lat, 9) : coords.lat);
-            setLongitude(activeChip === 'Ublox' ? chipCoordinate(coords.lon, 9) : coords.lon);
+            setLatitude(chipCoordinate(coords.lat, activeChip === 'Ublox' ? 9 : 10));
+            setLongitude(chipCoordinate(coords.lon, activeChip === 'Ublox' ? 9 : 10));
             setAltitude(activeChip === 'Ublox' ? chipCoordinate(coords.alt, 4) : coords.alt);
             setAltitudeReference('ELLIPSOID');
             setCoordinatePasteNotice({ error: false, message: 'Đã điền vĩ độ, kinh độ WGS 84 và độ cao h. Kiểm tra tọa độ rồi bấm áp dụng.' });
@@ -962,8 +961,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     return;
                 }
                 params.coords = {
-                    lat: finalChipType === 'Ublox' ? chipCoordinate(latStr, 9) : latStr,
-                    lon: finalChipType === 'Ublox' ? chipCoordinate(lonStr, 9) : lonStr,
+                    lat: chipCoordinate(latStr, finalChipType === 'Ublox' ? 9 : 10),
+                    lon: chipCoordinate(lonStr, finalChipType === 'Ublox' ? 9 : 10),
                     alt: finalChipType === 'Ublox' ? chipCoordinate(String(approvedCoords ? approvedCoords.alt : altitude).trim() || '0', 4) : String(approvedCoords ? approvedCoords.alt : altitude).trim() || '0'
                 };
                 if (finalChipType === 'Ublox') {
@@ -1680,7 +1679,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <input
                                 id={`base-latitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
-                                value={latitude} onChange={handleDecimalInputChange(setLatitude, activeChip === 'Ublox' ? 9 : undefined)}
+                                value={latitude} onChange={handleDecimalInputChange(setLatitude, activeChip === 'Ublox' ? 9 : 10)}
                                 onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : ''}`}
                                 disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 21.028511"
@@ -1691,7 +1690,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <input
                                 id={`base-longitude-${device.serial}`}
                                 type="text" inputMode="decimal" className="form-control"
-                                value={longitude} onChange={handleDecimalInputChange(setLongitude, activeChip === 'Ublox' ? 9 : undefined)}
+                                value={longitude} onChange={handleDecimalInputChange(setLongitude, activeChip === 'Ublox' ? 9 : 10)}
                                 onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : ''}`}
                                 disabled={disabled || isSubmitting}
                                 required placeholder="Ví dụ: 105.854167"
@@ -1701,7 +1700,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             Ublox: vĩ độ và kinh độ tối đa 9 chữ số sau dấu . hoặc , — không nhận chữ số thứ 10.
                         </div>}
                         {activeChip === 'Unicorecomm' && <div id={`base-unicore-precision-${device.serial}`} className="col-12 form-text mt-1">
-                            Unicorecomm: dùng 10 chữ số sau dấu . hoặc , cho vĩ độ và kinh độ; giữ nguyên chữ số khi gửi xuống chip.
+                            Unicorecomm: vĩ độ và kinh độ gửi xuống chip có 10 chữ số thập phân; cắt phần dư, không làm tròn. Phép tính giữ đủ độ chính xác.
                         </div>}
                         <div className="col-md-6">
                             <label htmlFor={`base-altitude-${device.serial}`} className="form-label">{activeChip === 'Ublox' || altitudeReference === 'ELLIPSOID' ? 'Độ cao h ellipsoid (mét)' : 'Độ cao theo cấu hình chip (mét)'}</label>

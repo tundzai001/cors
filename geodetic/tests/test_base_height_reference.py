@@ -88,13 +88,18 @@ class BaseHeightTests(unittest.TestCase):
                 receiver.__exit__ = Mock(return_value=False)
                 async def no_wait(_):
                     pass
-                scope = {'Decimal': __import__('decimal').Decimal, 'GNSSReader': object, 'DEFAULT_BAUDRATE': 115200, 'logging': logging,
+                scope = {'Decimal': __import__('decimal').Decimal, 'ROUND_DOWN': __import__('decimal').ROUND_DOWN, 'GNSSReader': object, 'DEFAULT_BAUDRATE': 115200, 'logging': logging,
                          'asyncio': SimpleNamespace(sleep=no_wait), 'serial_port_lock': threading.Lock(),
                          'serial': SimpleNamespace(Serial=Mock(return_value=receiver)),
                          '_runtime_serial_baud': lambda **kw: 115200}
                 exec(compile(ast.Module(body=[node], type_ignores=[]), filename, 'exec'), scope)
                 asyncio.run(scope[node.name]('Unicorecomm', 'TEST', 20, 106, 30, None))
                 self.assert_ellipsoid([call.args[0] for call in receiver.write.call_args_list])
+                if filename == 'agent_universal.py':
+                    receiver.write.reset_mock()
+                    asyncio.run(scope[node.name]('Unicorecomm', 'TEST', -21.084990131093591, 105.78665745895107, 30, None))
+                    self.assertIn(b'MODE BASE -21.0849901310 105.7866574589 30.0\r\n',
+                                  [call.args[0] for call in receiver.write.call_args_list])
 
 
 class LteOutputProfileTests(unittest.TestCase):

@@ -9,6 +9,17 @@
 namespace UnicoreConfigVerification {
 struct Log { char name[24] = {}; uint8_t port = 0; double period = 0; };
 
+// An unspecified current port can only be resolved from an unambiguous log list.
+inline uint8_t comparisonPort(uint8_t configured, const std::vector<Log> &logs) {
+    if (configured >= 1 && configured <= 3) return configured;
+    uint8_t port = 0;
+    for (const auto &log : logs) {
+        if (log.port < 1 || log.port > 3 || (port && port != log.port)) return 0;
+        port = log.port;
+    }
+    return port;
+}
+
 inline bool parseLogs(const char *text, size_t length, std::vector<Log> &logs) {
     logs.clear();
     if (!text || length > 4096 || std::strlen(text) != length || std::strncmp(text, "#UNILOGLIST,", 12)) return false;

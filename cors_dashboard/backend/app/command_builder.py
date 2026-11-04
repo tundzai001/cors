@@ -3,7 +3,7 @@ import base64
 import math
 import re
 import time
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 UBLOX_SAVE_CONFIG = b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab'
 
@@ -535,9 +535,9 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         commands.append(b'unlogall\r\n')
         commands.append(b'$DELAY_1000$')
         
-        # BƯỚC 2: Set fixed position - GIỮ NGUYÊN FORMAT NGƯỜI DÙNG NHẬP
-        lat_str = format(lat, 'f')
-        lon_str = format(lon, 'f')
+        # Quantize only the receiver output, never datum calculations.
+        lat_str = format(lat.quantize(Decimal('0.0000000001'), rounding=ROUND_DOWN), '.10f')
+        lon_str = format(lon.quantize(Decimal('0.0000000001'), rounding=ROUND_DOWN), '.10f')
         alt_str = format(alt, 'f')
 
         # MODE BASE otherwise interprets altitude using the receiver's undulation.

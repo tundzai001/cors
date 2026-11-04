@@ -136,6 +136,18 @@ int main() {
     assert(!UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
     list = counted + "binary";
     assert(!UnicoreConfigVerification::parseLogs(list.c_str(), list.size(), logs));
+    logs.clear();
+    assert(UnicoreConfigVerification::comparisonPort(0, logs) == 0);
+    UnicoreConfigVerification::Log single;
+    single.port = 1;
+    logs.push_back(single);
+    logs.push_back(single);
+    assert(UnicoreConfigVerification::comparisonPort(0, logs) == 1);
+    assert(UnicoreConfigVerification::comparisonPort(3, logs) == 3);
+    single.port = 2;
+    logs.push_back(single);
+    assert(UnicoreConfigVerification::comparisonPort(0, logs) == 0);
+    assert(UnicoreConfigVerification::comparisonPort(1, logs) == 1);
     puts("PASS: Fixed LLA/accuracy mismatch, reordered values, missing/duplicate keys, wrong layer and bounded parsing");
     puts("PASS: UM CRC and checksum-free lists, port/period/trigger parsing, truncated/duplicate entries and invalid values");
 }

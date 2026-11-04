@@ -70,7 +70,6 @@ bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &co
     details["kind"] = "Unicorecomm";
     details["expected_logs"].set(expectedLogs);
     JsonArray comparedPorts = details.createNestedArray("compare_ports");
-    if (GNSS_UNICORE_PORT >= 1 && GNSS_UNICORE_PORT <= 3) comparedPorts.add(String("COM") + GNSS_UNICORE_PORT);
     JsonObject fixedDetails = details.createNestedObject("fixed");
     JsonObject expectedPosition = fixedDetails.createNestedObject("expected");
     expectedPosition["mode"] = "Fixed";
@@ -123,9 +122,15 @@ bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &co
         if (log.period > 0) observed["period"] = log.period;
         else observed["period"] = nullptr;
     }
-    if (GNSS_UNICORE_PORT < 1 || GNSS_UNICORE_PORT > 3) {
+    const uint8_t comparePort = logsRead ? UnicoreConfigVerification::comparisonPort(GNSS_UNICORE_PORT, logs) : 0;
+    if (comparePort) {
+        comparedPorts.add(String("COM") + comparePort);
+        details["port_source"] = GNSS_UNICORE_PORT >= 1 && GNSS_UNICORE_PORT <= 3 ? "firmware_config" : "log_list_unique";
+    } else if (logsRead) {
         logsRead = false;
-        result["note"] = "Chưa xác định số cổng COM nối GNSS để đối chiếu bản tin UM.";
+        result["note"] = logs.empty()
+            ? "Danh sách bản tin UM trống; chưa xác định cổng để đối chiếu."
+            : "UM có bản tin trên nhiều cổng COM; cần khai báo cổng nối GNSS để đối chiếu.";
     }
     if (logsRead) {
         for (const String &name : names) {
@@ -133,11 +138,11 @@ bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &co
             group["checked"] = group["checked"].as<unsigned>() + 1;
             bool matches = false;
             for (const auto &log : logs)
-                if (log.port == GNSS_UNICORE_PORT && name == log.name && std::abs(log.period - 1) <= 1e-6) matches = true;
+                if (log.port == comparePort && name == log.name && std::abs(log.period - 1) <= 1e-6) matches = true;
             if (!matches) group["mismatched"] = group["mismatched"].as<unsigned>() + 1;
         }
         for (const auto &log : logs) {
-            if (log.port != GNSS_UNICORE_PORT || log.period == 0) continue;
+            if (log.port != comparePort || log.period == 0) continue;
             bool expected = false;
             for (const String &name : names) if (name == log.name) expected = true;
             if (!expected) {

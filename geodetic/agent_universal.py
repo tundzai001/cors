@@ -6829,8 +6829,8 @@ async def _apply_base_mode_to_chip(chip_type: str, port: str, lat: float, lon: f
                 ser.flush()
                 _verify_ublox_values(ser,keys)
             elif chip_type in ("Unicorecomm", "RTCM3_Source"):
-                # Use higher precision for command string to avoid rounding
-                base_cmd = f"MODE BASE {Decimal(repr(lat)):f} {Decimal(repr(lon)):f} {Decimal(repr(alt)):f}\r\n".encode("ascii")
+                # Truncate latitude/longitude at the receiver boundary, preserving calculation precision.
+                base_cmd = f"MODE BASE {Decimal(repr(lat)).quantize(Decimal('0.0000000001'), rounding=ROUND_DOWN):.10f} {Decimal(repr(lon)).quantize(Decimal('0.0000000001'), rounding=ROUND_DOWN):.10f} {Decimal(repr(alt)):f}\r\n".encode("ascii")
                 # Auto Base supplies ellipsoidal h; Unicore's default is geoid-based altitude.
                 ser.write(b"CONFIG UNDULATION 0.0\r\n")
                 ser.flush()
@@ -7383,9 +7383,10 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
 
     calculated_coord = {"lat": repr(avg_lat), "lon": repr(avg_lon), "alt": repr(avg_alt)}
     final_coord = dict(calculated_coord)
-    if chip_type == 'Ublox':
+    if chip_type in ('Ublox', 'Unicorecomm'):
         # Quantize only the receiver command, never the transformation inputs/report.
-        for key, digits in (('lat', 9), ('lon', 9), ('alt', 4)):
+        fields = (('lat', 9), ('lon', 9), ('alt', 4)) if chip_type == 'Ublox' else (('lat', 10), ('lon', 10))
+        for key, digits in fields:
             final_coord[key] = format(Decimal(calculated_coord[key]).quantize(
                 Decimal(1).scaleb(-digits), rounding=ROUND_DOWN), f'.{digits}f')
 

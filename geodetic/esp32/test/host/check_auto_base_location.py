@@ -68,6 +68,9 @@ int main(int argc, char **argv) {
     assert(coordinateNumber(audit["kT"]) == 1.00000008613);
     assert(coordinateNumber(audit["north"]) == 2331863.611694837);
     assert(receiverCoordinateText(21.084990039, 9) == "21.084990039");
+    assert(receiverCoordinateText(21.084990131093591, 10) == "21.0849901310");
+    assert(receiverCoordinateText(-105.78665745895107, 10) == "-105.7866574589");
+    assert(receiverCoordinateText(21.0849901310, 10) == "21.0849901310");
     assert(receiverCoordinateText(-8.0624567, 4) == "-8.0624");
 
     std::ifstream file(argv[1]);

@@ -25,6 +25,13 @@ class FixedCoordinatePrecisionTests(unittest.TestCase):
         commands = builder.build_base_fixed_lla_command('Unicorecomm', '20,1234567890', '106,9876543210', '30,0000000000', .01)
         self.assertIn(b'mode base 20.1234567890 106.9876543210 30.0000000000\r\n', commands)
 
+    def test_unicore_truncates_excess_digits_toward_zero_only_on_output(self):
+        for lat, lon in (('21.084990131093591', '105.78665745895107'),
+                         ('-21.084990131099999', '-105.786657458999999')):
+            commands = builder.build_base_fixed_lla_command('Unicorecomm', lat, lon, '30', .01)
+            sign = '-' if lat.startswith('-') else ''
+            self.assertIn(f'mode base {sign}21.0849901310 {sign}105.7866574589 30\r\n'.encode(), commands)
+
     def test_ublox_quantizes_exact_decimal_without_float_residue(self):
         for coords in (('20.1234567890', '106.9876543210', '-30.1234567890'),
                        ('-20.0000000010', '-106.0000000990', '30.0001000000'),
