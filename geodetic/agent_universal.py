@@ -1055,6 +1055,7 @@ class EllipPara:
 @dataclass
 class RTCMDatum:
     rtcm1025_update: bool = False
+    projection_1025: dict = field(default_factory=dict)
     k0: float = 0.9999
     to_zone: int = 3
     l0: float = 105.0 * 0.017453292519943295
@@ -2055,7 +2056,7 @@ def _decode_type1025(buff: bytes, datum: RTCMDatum):
     if i + 184 > len(buff) * 8 + 24:
         return
     i += 8  # station id
-    i += 6  # projection type
+    projection_type = _rtcm_getbitu(buff, i, 6); i += 6
     _ = _rtcm_getbits(buff, i, 34); i += 34  # latitude of natural origin
     lon_no = _rtcm_getbits(buff, i, 35); i += 35  # longitude of natural origin
     sno = _rtcm_getbitu(buff, i, 30); i += 30
@@ -2082,10 +2083,18 @@ def _decode_type1025(buff: bytes, datum: RTCMDatum):
     datum.false_easting = float(fe) * 0.001
     datum.false_northing = float(fn) * 0.001
     datum.rtcm1025_update = True
+    datum.projection_1025 = {
+        'raw_l0': str(lon_no), 'raw_k0': sno, 'projection_type': projection_type,
+        'l0_deg': repr(l0_deg_raw), 'k0': repr(k0),
+        'false_easting': repr(datum.false_easting), 'false_northing': repr(datum.false_northing),
+        'frame_hex': buff[:32].hex(), 'frame_bytes': len(buff), 'frame_truncated': len(buff) > 32,
+    }
     logging.info(
-        "RTCM1025 datum updated: "
+        "RTCM1025 datum updated: processor=python_agent; "
+        f"LoNO={lon_no}, SNO={sno}, PT={projection_type}, "
         f"L0_deg={math.degrees(datum.l0)!r}, k0={datum.k0!r}, "
-        f"FE={datum.false_easting!r}, FN={datum.false_northing!r}"
+        f"FE={datum.false_easting!r}, FN={datum.false_northing!r}, "
+        f"frame_bytes={len(buff)}, hex={datum.projection_1025['frame_hex']}"
     )
 
 def _update_datum_from_rtcm_packet(packet: bytes, datum=None):
@@ -7397,6 +7406,9 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
         "parameter_source": "rtcm1021" if datum_snapshot.rtcm1021_update else "not_used",
         "residual_source": "rtcm1023" if datum_snapshot.rtcm1023_update else "none",
         "rtcm1025_used": projection_source == "rtcm1025",
+        "processor": "python_agent",
+        "zone_width_source": "inferred_from_k0",
+        "rtcm1025": dict(datum_snapshot.projection_1025),
         "location": location,
         "projection_source": projection_source,
         "zone_width_deg": (3 if abs(datum_snapshot.k0 - 0.9999) < 1e-9 else

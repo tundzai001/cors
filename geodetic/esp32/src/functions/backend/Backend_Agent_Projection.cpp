@@ -1,6 +1,7 @@
 #include "functions/backend/Vn2000_Datum.h"
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 
 // Portable RTCM datum decoder and the same LLH/NEh/local-LLH chain as Python.
 namespace {
@@ -279,15 +280,21 @@ void Vn2000Session::decode(size_t length) {
         next.has1023 = bits.ok;
     } else if (message == 1025) {
         ++datum_.count1025;
-        bits.skip(8 + 6);
+        bits.skip(8);
+        next.projectionType = bits.u(6);
         const int64_t originLatitude = bits.s(34);
-        next.centralMeridianDeg = double(bits.s(35)) * 1.1e-8;
-        next.scale = (double(bits.u(30)) * 0.00001 + 993000.0) * 0.000001;
+        next.projectionLongitudeRaw = bits.s(35);
+        next.projectionScaleRaw = bits.u(30);
+        next.centralMeridianDeg = double(next.projectionLongitudeRaw) * 1.1e-8;
+        next.scale = (double(next.projectionScaleRaw) * 0.00001 + 993000.0) * 0.000001;
         next.falseEasting = double(bits.u(36)) * 0.001;
         next.falseNorthing = double(bits.s(35)) * 0.001;
         if (originLatitude != 0 || next.centralMeridianDeg < 100 || next.centralMeridianDeg > 112
             || next.scale < 0.999 || next.scale > 1.001) return;
         next.has1025 = bits.ok;
+        next.projectionFrameBytes = length;
+        for (size_t i = 0; i < length && i < 32; ++i)
+            snprintf(next.projectionFrameHex + i * 2, 3, "%02x", frame_[i]);
     } else return;
     if (!bits.ok) return;
     next.count1021 = datum_.count1021;

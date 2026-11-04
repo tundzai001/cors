@@ -150,3 +150,27 @@ A short UART write aborts the workflow with a UART-specific error. A closed
 CORS socket logs the counters. UART acceptance does not prove the GNSS receiver
 has decoded the corrections or reached RTK FIX; the GGA fix status remains the
 receiver's evidence for that.
+
+## Projection provenance and RTCM 1025 evidence
+
+The UI identifies the selected projection source (`rtcm1025`, `manual`, or
+`server_catalog`). Its 3°/6° label is inferred from k0=0.9999/0.9996; the label
+does not identify a province and is not a separate zone-width field decoded
+from 1025. Existing priority remains RTCM 1025, then manual L0/k0, then the
+server province catalog when 1025 is absent.
+
+Both ESP32 and the Python agent include `processor`, `zone_width_source`, and
+`rtcm1025` evidence in the conversion report. Evidence includes raw signed
+35-bit LoNO, unsigned 30-bit SNO, projection type, decoded L0/k0, false offsets,
+frame byte length and the first 32 bytes in hex. The ordinary 31-byte 1025 frame
+is retained in full; a longer frame is explicitly marked truncated. The UI
+shows decoded and selected values separately, with the formulas used. Logs also
+record raw fields and hex. This permits checking the original packet rather
+than treating the source label as proof of a correct decoder.
+
+Older reports are not reconstructed: the UI explicitly says that original raw
+fields/frame were not saved. A new Auto Base run on updated firmware or agent
+is required to audit a real CORS session. Fixed M3/M6 packets are checked against
+both production decoders by `check_projection_audit.py`, including the actual
+ESP32 report serialization and its JSON memory budget. These fixtures do not
+prove which parameters an earlier unrecorded CORS packet contained.

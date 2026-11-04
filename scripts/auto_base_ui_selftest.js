@@ -79,9 +79,22 @@ console.log('PASS: live GGA/Float, reject unverified success, update completed c
         base_config:{base_setup_method:'SURVEY_IN',survey_in_duration:120},
         auto_base_progress:{phase:'ready_for_review',fixed_samples_only:true,sample_count:56,
             averaged_coord:candidate,conversion_report:{transform_applied:true,
-                output_coord:candidate,calculated_coord:candidate,projected_coord:{north:2331863,east:581515,h:17}}}};
+                output_coord:candidate,calculated_coord:candidate,projected_coord:{north:2331863,east:581515,h:17},
+                projection_source:'rtcm1025',processor:'esp32',k0:'0.9996',
+                rtcm1025:{raw_l0:'9545454545',raw_k0:660000000,l0_deg:'104.999999995',k0:'0.9996',projection_type:1,frame_hex:'d30019',frame_bytes:31}}}};
     render();
     assert(text(tree).includes('Kết quả Auto Base — chờ kiểm tra'), 'Review must remain visible after restoring saved Survey-In');
+    const resultNode = find(tree,node=>typeof node.type === 'function' && node.props.report?.processor === 'esp32');
+    assert(resultNode, 'Projection result component must render');
+    const auditText = text(resultNode.type(resultNode.props));
+    assert(auditText.includes('660000000') && auditText.includes('9545454545') && auditText.includes('ESP32'));
+    assert(auditText.includes('CORS · RTCM 1025') && auditText.includes('suy theo k₀'));
+    const legacyText = text(resultNode.type({report:{...resultNode.props.report,rtcm1025:undefined}}));
+    assert(legacyText.includes('Báo cáo cũ chưa lưu trường thô') && !legacyText.includes('660000000'));
+    for (const [source,label] of [['manual','Nhập L₀/k₀ thủ công'],['server_catalog','Danh mục tỉnh trên máy chủ']]) {
+        const sourceText = text(resultNode.type({report:{...resultNode.props.report,projection_source:source,rtcm1025:undefined}}));
+        assert(sourceText.includes(label) && !sourceText.includes('Đối chiếu giải mã RTCM 1025'));
+    }
     const approve = find(tree,node=>node.type === 'button' && text(node).includes('Duyệt và áp dụng LLH'));
     assert(approve && !approve.props.disabled);
     await approve.props.onClick({preventDefault(){}});

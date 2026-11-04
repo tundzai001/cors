@@ -71,3 +71,4 @@ Workflow Base-mode restoration and CORS-to-UART delivery:
 
 Run `python3 geodetic/esp32/test/host/check_nvs_inventory.py` for real JSON field values, nested secret masking and pagination.
 Run `python3 geodetic/esp32/test/host/check_wifi_nvs.py` for Wi-Fi NVS reuse and missing-key persistence.
+Run `python3 geodetic/esp32/test/host/check_projection_audit.py` for fixed M3/M6 RTCM1025 packets in both decoders, raw evidence preservation and report memory/serialization.

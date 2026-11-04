@@ -37,6 +37,9 @@ const Vn2000Result = ({ report }) => {
     const neh = report.projected_coord;
     const hasNeh = neh && ['north', 'east', 'h'].every(key =>
         neh[key] !== null && neh[key] !== '' && Number.isFinite(Number(neh[key])));
+    const decoded = report.rtcm1025;
+    const hasDecoded = decoded && decoded.raw_k0 != null && decoded.raw_l0 != null;
+    const projectionSource = {rtcm1025:'CORS · RTCM 1025', manual:'Nhập L₀/k₀ thủ công', server_catalog:'Danh mục tỉnh trên máy chủ', not_used:'Không chuyển đổi'}[report.projection_source] || 'Báo cáo chưa lưu nguồn phép chiếu';
     return <section className="border rounded p-3 mb-3" aria-label="Kết quả VN-2000 NEh">
         <h3 className="h6 mb-2">VN-2000 — NEh · {projectionLabel(report)}</h3>
         {hasNeh ? <dl className="row g-2 small mb-2">
@@ -46,6 +49,25 @@ const Vn2000Result = ({ report }) => {
             ))}
         </dl> : <p className="small text-muted mb-2">Phiên cũ chưa lưu NEh. Cần lấy lại kết quả Auto Base để hiển thị đủ N, E, h.</p>}
         <div className="small text-muted">Kinh tuyến trục: {displayMeridian(report.central_meridian_deg, report)}°; k₀: {displayProjectionScale(report)}.</div>
+        <p className="small mt-2 mb-1">Nguồn phép chiếu đang dùng: <strong>{projectionSource}</strong>.</p>
+        <p className="small text-muted mb-0">Nhãn múi 3°/6° suy theo k₀ (0.9999/0.9996), không phải tỉnh được nhận diện. Ưu tiên RTCM 1025; nếu thiếu thì dùng nhập tay, sau đó danh mục tỉnh.</p>
+        {(hasDecoded || report.projection_source === 'rtcm1025') && <details className="small mt-2">
+            <summary className="py-2" style={{minHeight:44}}>Đối chiếu giải mã RTCM 1025</summary>
+            {hasDecoded ? <>
+                <p className="mb-2">Bộ giải mã: {report.processor === 'esp32' ? 'ESP32' : report.processor === 'python_agent' ? 'Agent Python trên Pi' : 'Chưa ghi nhận'} · {decoded.frame_bytes ?? '—'} byte.</p>
+                <dl className="row g-2 mb-2">
+                    {[
+                        ['Giá trị LoNO thô', decoded.raw_l0], ['Giá trị SNO thô', decoded.raw_k0],
+                        ['L₀ giải mã (°)', decoded.l0_deg], ['k₀ giải mã', decoded.k0],
+                        ['L₀ đang dùng (°)', report.central_meridian_deg], ['k₀ đang dùng', report.k0],
+                        ['Mã loại phép chiếu trong 1025', decoded.projection_type],
+                        ['False Easting (m)', decoded.false_easting], ['False Northing (m)', decoded.false_northing],
+                    ].map(([label,value]) => <div className="col-sm-6" key={label}><dt className="text-muted fw-normal">{label}</dt><dd className="font-monospace text-break mb-0">{value == null ? 'Chưa ghi nhận' : String(value)}</dd></div>)}
+                </dl>
+                <p className="text-break mb-2">L₀ = LoNO × 1.1e−8 độ; k₀ = (SNO × 0.00001 + 993000) × 0.000001.</p>
+                {decoded.frame_hex && <><div>Khung RTCM 1025 gốc (hex){decoded.frame_truncated ? ' · chỉ lưu 32 byte đầu' : ''}:</div><code className="d-block text-break" data-no-translate>{decoded.frame_hex}</code></>}
+            </> : <p className="text-warning mb-0" role="status">Báo cáo cũ chưa lưu trường thô và khung 1025 gốc. Cần lấy lại Auto Base bằng firmware/agent mới để đối chiếu; chưa thể xác nhận decoder chỉ từ nhãn múi chiếu.</p>}
+        </details>}
     </section>;
 };
 const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {

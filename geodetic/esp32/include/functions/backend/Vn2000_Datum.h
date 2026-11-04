@@ -11,6 +11,11 @@ struct Vn2000Datum {
     double resN = 0, resE = 0, resHS = 0;
     double centralMeridianDeg = 0, scale = 0;
     double falseEasting = 500000, falseNorthing = 0;
+    uint8_t projectionType = 0;
+    int64_t projectionLongitudeRaw = 0;
+    uint32_t projectionScaleRaw = 0;
+    uint16_t projectionFrameBytes = 0;
+    char projectionFrameHex[65] = {};
 };
 
 class Vn2000Session {

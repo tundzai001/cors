@@ -550,6 +550,28 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     report["location"].set(location.as<JsonObjectConst>());
     report["province_code"] = location["province_code"]; report["province_name"] = location["province_name"];
     report["projection_source"] = projectionSource;
+    report["processor"] = "esp32";
+    report["zone_width_source"] = "inferred_from_k0";
+    Serial.printf("[AUTO BASE][PROJECTION] processor=esp32; source=%s; L0=%.17g; k0=%.17g\n",
+                  projectionSource.c_str(), datum.centralMeridianDeg, datum.scale);
+    if (datum.has1025) {
+        Serial.printf("[AUTO BASE][RTCM1025] LoNO=%lld; SNO=%lu; PT=%u; bytes=%u; hex=%s%s\n",
+                      static_cast<long long>(datum.projectionLongitudeRaw),
+                      static_cast<unsigned long>(datum.projectionScaleRaw),
+                      static_cast<unsigned>(datum.projectionType), static_cast<unsigned>(datum.projectionFrameBytes),
+                      datum.projectionFrameHex, datum.projectionFrameBytes > 32 ? " (truncated)" : "");
+        JsonObject decoded = report.createNestedObject("rtcm1025");
+        decoded["raw_l0"] = String(static_cast<long long>(datum.projectionLongitudeRaw));
+        decoded["raw_k0"] = datum.projectionScaleRaw;
+        decoded["projection_type"] = datum.projectionType;
+        decoded["l0_deg"] = datumParameterText(datum.centralMeridianDeg);
+        decoded["k0"] = datumParameterText(datum.scale);
+        decoded["false_easting"] = datumParameterText(datum.falseEasting);
+        decoded["false_northing"] = datumParameterText(datum.falseNorthing);
+        decoded["frame_hex"] = String(datum.projectionFrameHex);
+        decoded["frame_bytes"] = datum.projectionFrameBytes;
+        decoded["frame_truncated"] = datum.projectionFrameBytes > 32;
+    }
     report["parameter_source"] = enableTransform ? "rtcm1021" : "not_used";
     report["residual_source"] = enableTransform && datum.has1023 ? "rtcm1023" : "none";
     report["rtcm1025_used"] = enableTransform && datum.has1025;
