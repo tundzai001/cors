@@ -109,33 +109,35 @@ def collect_reapable_server_streams(
 ) -> Tuple[Tuple[Optional[int], str], ...]:
     """Resolve session-reaper targets without mixing aggregate server state."""
 
+    return tuple(_iter_reapable_server_streams(config, legacy_active_mountpoint))
+
+
+def _iter_reapable_server_streams(config, legacy_active_mountpoint):
     cfg = config if isinstance(config, Mapping) else {}
     active_streams = active_on_demand_server_streams(cfg)
     if has_per_server_stream_state(cfg):
-        return tuple(
-            (state.server_id, state.mountpoint)
-            for state in active_streams
-            if state.mountpoint
-        )
+        yield from ((state.server_id, state.mountpoint) for state in active_streams if state.mountpoint)
+        return
 
     active_mountpoint = normalize_mountpoint(legacy_active_mountpoint)
     if not active_mountpoint:
-        return ()
+        return
 
     for state in active_streams:
         if state.mountpoint == active_mountpoint:
-            return ((state.server_id, active_mountpoint),)
+            yield state.server_id, active_mountpoint
+            return
 
     legacy_state = get_server_stream_state(cfg, 1)
     if not (legacy_state.on_demand and legacy_state.active):
-        return ()
+        return
 
     resolved_server_id: Optional[int] = None
     for server_id in service_server_ids(cfg):
         if normalize_mountpoint(cfg.get(f"mountpoint{server_id}")) == active_mountpoint:
             resolved_server_id = server_id
             break
-    return ((resolved_server_id, active_mountpoint),)
+    yield resolved_server_id, active_mountpoint
 
 
 def apply_stream_control_state(

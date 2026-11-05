@@ -469,6 +469,11 @@ async def _drain_external_commands() -> None:
     global external_command_drain_scheduled
     while not IS_SHUTTING_DOWN:
         with mqtt_ingress_lock:
+            handler = external_command_handler
+            if handler is None:
+                external_command_pending.clear()
+                external_command_drain_scheduled = False
+                return
             batch = []
             while external_command_pending and len(batch) < EXTERNAL_COMMAND_CONCURRENCY:
                 _, envelope = external_command_pending.popitem()
@@ -476,15 +481,13 @@ async def _drain_external_commands() -> None:
             if not batch:
                 external_command_drain_scheduled = False
                 return
-        if external_command_handler:
-            results = await asyncio.gather(
-                *(external_command_handler(topic, payload) for topic, payload in batch),
-                return_exceptions=True,
-            )
-            for result in results:
-                if isinstance(result, Exception):
-                    logging.error("External MQTT command worker failed: %s", result)
-        await asyncio.sleep(0)
+        results = await asyncio.gather(
+            *(handler(topic, payload) for topic, payload in batch),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                logging.error("External MQTT command worker failed: %s", result)
     with mqtt_ingress_lock:
         external_command_drain_scheduled = False
 
@@ -523,7 +526,6 @@ async def _drain_mqtt_ingress() -> None:
         for result in results:
             if isinstance(result, Exception):
                 logging.error("MQTT ingress worker error: %s", result)
-        await asyncio.sleep(0)
 
     with mqtt_ingress_lock:
         mqtt_ingress_drain_scheduled = False

@@ -752,15 +752,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     function updateLiveClocks() {
         const nowSec = Math.floor(Date.now() / 1000);
         document.querySelectorAll('.live-clock').forEach(el => {
-            const startedAt = parseInt(el.dataset.startedAt || 0);
+            const startedAt = Number.parseInt(el.dataset.startedAt || 0);
             if (startedAt > 0) {
                 const currentUptime = Math.max(0, nowSec - startedAt);
                 el.textContent = formatDuration(currentUptime);
             }
         });
         document.querySelectorAll('.live-countdown').forEach(el => {
-            const initialRemaining = parseInt(el.dataset.remainingSeconds || 0);
-            const fetchedAt = parseInt(el.dataset.fetchedAt || 0);
+            const initialRemaining = Number.parseInt(el.dataset.remainingSeconds || 0);
+            const fetchedAt = Number.parseInt(el.dataset.fetchedAt || 0);
             if (initialRemaining > 0 && fetchedAt > 0) {
                 const elapsed = nowSec - fetchedAt;
                 const newRemaining = Math.max(0, initialRemaining - elapsed);
@@ -2427,7 +2427,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // === HANDLE EDIT ROVER (LOGIC MỚI) ===
     function handleEditRover(e) {
-        const id = parseInt(e.currentTarget.dataset.id);
+        const id = Number.parseInt(e.currentTarget.dataset.id);
         const username = e.currentTarget.dataset.username;
         
         let rover = allRovers.find(r => r.id === id);
@@ -2633,8 +2633,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 show_position: document.getElementById('edit-show-position').checked,
                 target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value),
                 rtcm_cycle_enabled: document.getElementById('edit-rtcm-cycle-enabled')?.checked || false,
-                rtcm_disconnect_interval_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-interval')?.value || 300),
-                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10),
+                rtcm_disconnect_interval_seconds: Number.parseInt(document.getElementById('edit-rtcm-disconnect-interval')?.value || 300),
+                rtcm_disconnect_duration_seconds: Number.parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10),
                 is_shared_with_managers: document.getElementById('edit-is-shared')?.checked || false
             };
             if (String(currentUser?.role || '').toLowerCase() === 'admin') {
@@ -2644,7 +2644,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (newPass) payload.password = newPass;
             if (newExpiry !== null) payload.expiry_days = newExpiry;
             const maxConn = document.getElementById('edit-max-connections')?.value;
-            if (maxConn) payload.max_connections = parseInt(maxConn);
+            if (maxConn) payload.max_connections = Number.parseInt(maxConn);
 
             try {
                 const submitBtn = e.target.querySelector('button[type="submit"]');
@@ -2695,7 +2695,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // === HANDLE DELETE ROVER (MODAL MỚI) ===
     async function handleDeleteRover(e) {
         const btn = e.currentTarget;
-        const id = parseInt(btn.dataset.id);
+        const id = Number.parseInt(btn.dataset.id);
         const username = btn.dataset.username || btn.dataset.user;
         
         let rover = allRovers.find(r => r.id === id);
@@ -2911,11 +2911,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 selected_serials: selectedSerials,
                 mountpoint_override: mpOverride,
                 target_casters: targetCasters,
-                max_connections: parseInt(document.getElementById('new-max-connections')?.value || 1),
+                max_connections: Number.parseInt(document.getElementById('new-max-connections')?.value || 1),
                 show_position: document.getElementById('new-show-position').checked,
                 rtcm_cycle_enabled: document.getElementById('new-rtcm-cycle-enabled').checked,
-                rtcm_disconnect_interval_seconds: parseInt(document.getElementById('new-rtcm-disconnect-interval').value || 300),
-                rtcm_disconnect_duration_seconds: parseInt(document.getElementById('new-rtcm-disconnect-duration').value || 10),
+                rtcm_disconnect_interval_seconds: Number.parseInt(document.getElementById('new-rtcm-disconnect-interval').value || 300),
+                rtcm_disconnect_duration_seconds: Number.parseInt(document.getElementById('new-rtcm-disconnect-duration').value || 10),
                 is_shared_with_managers: document.getElementById('new-is-shared')?.checked || false
             };
 
@@ -3594,8 +3594,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         mountpoint: document.getElementById('create-mp-name').value.trim(),
                         password: document.getElementById('create-mp-password').value.trim(),
                         identifier: document.getElementById('create-mp-identifier').value.trim(),
-                        latitude: parseFloat(document.getElementById('create-mp-lat').value) || 0,
-                        longitude: parseFloat(document.getElementById('create-mp-lon').value) || 0,
+                        latitude: Number.parseFloat(document.getElementById('create-mp-lat').value) || 0,
+                        longitude: Number.parseFloat(document.getElementById('create-mp-lon').value) || 0,
                         auth_required: document.getElementById('create-mp-auth').checked,
                         gga_required: document.getElementById('create-mp-gga').checked,
                         show_position: document.getElementById('create-mp-showpos').checked,

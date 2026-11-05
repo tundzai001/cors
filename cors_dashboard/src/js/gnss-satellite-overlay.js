@@ -204,7 +204,7 @@
         getRtcmSatelliteKey(satObj) {
             const system = RTCM_SYSTEM_ALIASES[String(satObj?.constellationKey || satObj?.system || satObj?.navSystem || '').toLowerCase()];
             if (satObj?.code && /[?#]/.test(String(satObj.code))) return null;
-            let prn = parseInt(String(satObj?.code || satObj?.prn || '').replace(/\D/g, ''), 10);
+            let prn = Number.parseInt(String(satObj?.code || satObj?.prn || '').replace(/\D/g, ''), 10);
             if (!Number.isFinite(prn)) return null;
             if (system === 'qzss' && prn >= 1 && prn <= 10) {
                 prn += 192;

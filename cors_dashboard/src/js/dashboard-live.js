@@ -405,8 +405,8 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords, rtcmOnly = false
             console.warn('[Map] No coords provided');
             return;
         }
-        const lat = parseFloat(coords.lat);
-        const lon = parseFloat(coords.lon);
+        const lat = Number.parseFloat(coords.lat);
+        const lon = Number.parseFloat(coords.lon);
 
         if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
 
@@ -450,7 +450,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords, rtcmOnly = false
     }, []);
 
     // Hiển thị placeholder nếu chưa có tọa độ
-    if (!coords || !coords.lat || (parseFloat(coords.lat) === 0 && parseFloat(coords.lon) === 0)) {
+    if (!coords || !coords.lat || (Number.parseFloat(coords.lat) === 0 && Number.parseFloat(coords.lon) === 0)) {
         console.warn('[Map] No valid coords - showing placeholder');
         return (
             <div className="d-flex align-items-center justify-content-center p-4 text-danger border rounded bg-dark"
@@ -486,7 +486,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords, rtcmOnly = false
             <div style={{ position: 'relative' }}>
                 <div ref={mapContainerRef} style={{ width: '100%', height: '300px', borderRadius: '8px', border: '2px solid #444', background: '#222', zIndex: 0 }} />
             </div>
-            <div className="mt-2 small text-muted">Lat: {parseFloat(coords.lat).toFixed(8)} | Lon: {parseFloat(coords.lon).toFixed(8)}</div>
+            <div className="mt-2 small text-muted">Lat: {Number.parseFloat(coords.lat).toFixed(8)} | Lon: {Number.parseFloat(coords.lon).toFixed(8)}</div>
         </div>
     );
 });
@@ -1301,7 +1301,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 Object.keys(constellationNames).forEach(system => {
                     if (groupedSats[system]) {
                         // Bắt chước phần mềm u-center: Phải sắp xếp cố định theo số PRN thay vì SNR để cột không bị đảo lộn vị trí!
-                        const sats = groupedSats[system].sort((a, b) => parseFloat(a.prn) - parseFloat(b.prn));
+                        const sats = groupedSats[system].sort((a, b) => Number.parseFloat(a.prn) - Number.parseFloat(b.prn));
                         const groupDiv = document.createElement('div');
                         groupDiv.className = 'constellation-group';
 

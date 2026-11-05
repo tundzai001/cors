@@ -359,5 +359,5 @@
         } catch (_) { $('converter').setAttribute('aria-busy', 'false'); $('retry').disabled = false; $('retry').hidden = false; status('Không tải được danh mục. Kiểm tra kết nối và thử lại.', true); }
     }
     $('retry').addEventListener('click', initialize);
-    initialize();
+    void initialize();
 })();

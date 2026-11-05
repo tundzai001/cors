@@ -342,5 +342,5 @@
     document.addEventListener('visibilitychange', reportSessionPresence);
     window.addEventListener('online', reportSessionPresence);
     window.addEventListener('pageshow', reportSessionPresence);
-    reportSessionPresence();
+    void reportSessionPresence();
 })();

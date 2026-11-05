@@ -317,7 +317,7 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
             const groupedFinal = {};
             for (const sys of Object.keys(groupedSats)) {
                 groupedFinal[sys] = Array.from(groupedSats[sys].values())
-                    .sort((a, b) => parseFloat(a.prn) - parseFloat(b.prn));
+                    .sort((a, b) => Number.parseFloat(a.prn) - Number.parseFloat(b.prn));
             }
 
             const totalSats = allSats.length;

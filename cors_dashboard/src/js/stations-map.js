@@ -1493,7 +1493,7 @@
                                 step="0.05"
                                 value={ionosphereOpacity}
                                 onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
+                                    const val = Number.parseFloat(e.target.value);
                                     setIonosphereOpacity(val);
                                     window.IonosphereOverlay?.setOpacity(val);
                                 }}

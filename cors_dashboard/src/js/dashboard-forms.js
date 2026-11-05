@@ -953,8 +953,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             if (submittedMethod === 'FIXED_LLA') {
                 const latStr = String(approvedCoords ? approvedCoords.lat : latitude).trim();
                 const lonStr = String(approvedCoords ? approvedCoords.lon : longitude).trim();
-                const latNum = parseFloat(latStr);
-                const lonNum = parseFloat(lonStr);
+                const latNum = Number.parseFloat(latStr);
+                const lonNum = Number.parseFloat(lonStr);
                 if (!latStr || !lonStr || isNaN(latNum) || isNaN(lonNum)) {
                     window.showError('Vui lòng nhập vĩ độ và kinh độ hợp lệ.');
                     setIsSubmitting(false);
@@ -980,9 +980,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 // Preserve decimal meters through the API and UBX encoding.
                 params.accuracy = String(fixedAccuracyM).trim().replace(',', '.') || '0.01';
             } else if (submittedMethod === 'SURVEY_IN') {
-                params.survey_in_duration = parseInt(svinDuration);
+                params.survey_in_duration = Number.parseInt(svinDuration);
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
-                params.survey_in_accuracy = parseFloat(svinAccuracyM);
+                params.survey_in_accuracy = Number.parseFloat(svinAccuracyM);
             } else if (submittedMethod === 'AUTO_CORS') {
                 const port = Number(corsPort);
                 if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
@@ -2241,18 +2241,18 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 ...formState,
                 stream_on_demand: derivedGlobalOnDemand,
                 stream_active: derivedGlobalActive,
-                ntrip_version1: parseInt(formState.ntrip_version1, 10),
-                ntrip_version2: parseInt(formState.ntrip_version2, 10),
-                port1: formState.port1 ? parseInt(formState.port1, 10) : null,
-                port2: formState.port2 ? parseInt(formState.port2, 10) : null,
-                command_port: formState.command_port ? parseInt(formState.command_port, 10) : null,
-                rtcmntripversion1: parseInt(formState.rtcmntripversion1, 10) === 2 ? 2 : 1,
-                rtcmport1: formState.rtcmport1 ? parseInt(formState.rtcmport1, 10) : null,
-                reconnectioninterval: parseInt(formState.reconnectioninterval, 10)
+                ntrip_version1: Number.parseInt(formState.ntrip_version1, 10),
+                ntrip_version2: Number.parseInt(formState.ntrip_version2, 10),
+                port1: formState.port1 ? Number.parseInt(formState.port1, 10) : null,
+                port2: formState.port2 ? Number.parseInt(formState.port2, 10) : null,
+                command_port: formState.command_port ? Number.parseInt(formState.command_port, 10) : null,
+                rtcmntripversion1: Number.parseInt(formState.rtcmntripversion1, 10) === 2 ? 2 : 1,
+                rtcmport1: formState.rtcmport1 ? Number.parseInt(formState.rtcmport1, 10) : null,
+                reconnectioninterval: Number.parseInt(formState.reconnectioninterval, 10)
             };
             for (const sid of serverIds) {
-                payload[`ntrip_version${sid}`] = parseInt(formState[`ntrip_version${sid}`] || 1, 10);
-                payload[`port${sid}`] = formState[`port${sid}`] ? parseInt(formState[`port${sid}`], 10) : null;
+                payload[`ntrip_version${sid}`] = Number.parseInt(formState[`ntrip_version${sid}`] || 1, 10);
+                payload[`port${sid}`] = formState[`port${sid}`] ? Number.parseInt(formState[`port${sid}`], 10) : null;
             }
             if (isLteStation) {
                 delete payload.command_host;
@@ -2569,7 +2569,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                                 name="ntrip_version1"
                                                 id="ntrip_v1_1"
                                                 value="1"
-                                                checked={parseInt(formState.ntrip_version1) === 1}
+                                                checked={Number.parseInt(formState.ntrip_version1) === 1}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v1_1">
@@ -2585,7 +2585,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                                 name="ntrip_version1"
                                                 id="ntrip_v1_2"
                                                 value="2"
-                                                checked={parseInt(formState.ntrip_version1) === 2}
+                                                checked={Number.parseInt(formState.ntrip_version1) === 2}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v1_2">
@@ -2717,7 +2717,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                                 name="ntrip_version2"
                                                 id="ntrip_v2_1"
                                                 value="1"
-                                                checked={parseInt(formState.ntrip_version2) === 1}
+                                                checked={Number.parseInt(formState.ntrip_version2) === 1}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v2_1">
@@ -2733,7 +2733,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                                 name="ntrip_version2"
                                                 id="ntrip_v2_2"
                                                 value="2"
-                                                checked={parseInt(formState.ntrip_version2) === 2}
+                                                checked={Number.parseInt(formState.ntrip_version2) === 2}
                                                 onChange={handleChange}
                                             />
                                             <label className="form-check-label" htmlFor="ntrip_v2_2">
@@ -2852,7 +2852,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             {[1, 2].map(version => <div className="form-check" key={version}>
                                                 <input type="radio" className="form-check-input" name={`ntrip_version${sid}`}
                                                     id={`ntrip_v${sid}_${version}`} value={version}
-                                                    checked={parseInt(formState[`ntrip_version${sid}`] || 1, 10) === version} onChange={handleChange} />
+                                                    checked={Number.parseInt(formState[`ntrip_version${sid}`] || 1, 10) === version} onChange={handleChange} />
                                                 <label className="form-check-label" htmlFor={`ntrip_v${sid}_${version}`}>
                                                     <strong>Version {version}.0</strong><br />
                                                     <small className="text-muted">{version === 1 ? 'SOURCE command (Legacy)' : 'HTTP POST (Modern)'}</small>
@@ -2962,7 +2962,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             id="rtcmntripversion1_v1"
                                             name="rtcmntripversion1"
                                             value="1"
-                                            checked={parseInt(formState.rtcmntripversion1, 10) === 1}
+                                            checked={Number.parseInt(formState.rtcmntripversion1, 10) === 1}
                                             onChange={handleChange}
                                         />
                                         <label className="btn btn-outline-secondary" htmlFor="rtcmntripversion1_v1">NTRIP v1</label>
@@ -2972,7 +2972,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             id="rtcmntripversion1_v2"
                                             name="rtcmntripversion1"
                                             value="2"
-                                            checked={parseInt(formState.rtcmntripversion1, 10) === 2}
+                                            checked={Number.parseInt(formState.rtcmntripversion1, 10) === 2}
                                             onChange={handleChange}
                                         />
                                         <label className="btn btn-outline-secondary" htmlFor="rtcmntripversion1_v2">NTRIP v2</label>

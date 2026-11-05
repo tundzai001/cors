@@ -15,8 +15,8 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
             return;
         }
 
-        const lat = parseFloat(coords.lat);
-        const lon = parseFloat(coords.lon);
+        const lat = Number.parseFloat(coords.lat);
+        const lon = Number.parseFloat(coords.lon);
         if (Number.isNaN(lat) || Number.isNaN(lon) || (lat === 0 && lon === 0)) return;
 
         const leaflet = getLeaflet ? getLeaflet() : null;
@@ -51,7 +51,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    if (!coords || !coords.lat || (parseFloat(coords.lat) === 0 && parseFloat(coords.lon) === 0)) {
+    if (!coords || !coords.lat || (Number.parseFloat(coords.lat) === 0 && Number.parseFloat(coords.lon) === 0)) {
         return (
             <div className="d-flex align-items-center justify-content-center p-4 text-danger border rounded bg-dark"
                 style={{ height: '250px', border: '2px solid red' }}>
@@ -86,7 +86,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
             <div style={{ position: 'relative' }}>
                 <div ref={mapContainerRef} style={{ width: '100%', height: '300px', borderRadius: '8px', border: '2px solid #444', background: '#222', zIndex: 0 }} />
             </div>
-            <div className="mt-2 small text-muted">Lat: {parseFloat(coords.lat).toFixed(8)} | Lon: {parseFloat(coords.lon).toFixed(8)}</div>
+            <div className="mt-2 small text-muted">Lat: {Number.parseFloat(coords.lat).toFixed(8)} | Lon: {Number.parseFloat(coords.lon).toFixed(8)}</div>
         </div>
     );
 });

@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.addEventListener('cors:analytics-refresh',load);
     refresh.addEventListener('click',load);
     days.addEventListener('change',load);
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden)load();});
-    setInterval(()=>{if(!document.hidden)load();},30000);
-    load();
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden) void load();});
+    setInterval(()=>{if(!document.hidden) void load();},30000);
+    void load();
 });

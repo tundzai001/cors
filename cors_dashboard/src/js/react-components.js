@@ -239,7 +239,7 @@ const CasterConfigModal = memo(function CasterConfigModal() {
                         <div className="mb-3">
                             <label className="form-label">Admin Port (TCP)</label>
                             <input type="number" className="form-control" value={config.port}
-                                onChange={e => setConfig({ ...config, port: parseInt(e.target.value) })} />
+                                onChange={e => setConfig({ ...config, port: Number.parseInt(e.target.value) })} />
                         </div>
                     </div>
                     <div className="modal-footer border-secondary">
@@ -732,8 +732,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                 );
                 if (coords && coords.lat && coords.lon) {
                     validCorsKeys.add(device.serial);
-                    const lat = parseFloat(coords.lat);
-                    const lon = parseFloat(coords.lon);
+                    const lat = Number.parseFloat(coords.lat);
+                    const lon = Number.parseFloat(coords.lon);
                     bounds.push([lat, lon]);
 
                     const displayName = device.name || 'Unknown Device';
@@ -984,8 +984,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
         const calcDist = (d) => {
             const coords = getDeviceCoords(d);
             return window.getDistanceMeters
-                ? window.getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon))
-                : getDistanceMeters(lat, lon, parseFloat(coords.lat), parseFloat(coords.lon));
+                ? window.getDistanceMeters(lat, lon, Number.parseFloat(coords.lat), Number.parseFloat(coords.lon))
+                : getDistanceMeters(lat, lon, Number.parseFloat(coords.lat), Number.parseFloat(coords.lon));
         };
 
         // Tìm trạm gần nhất trong 1 danh sách
@@ -1037,8 +1037,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             const drawLine = (target, color, label) => {
                 if (!target) return null;
                 const tCoords = getDeviceCoords(target.device);
-                const tLat = parseFloat(tCoords.lat);
-                const tLon = parseFloat(tCoords.lon);
+                const tLat = Number.parseFloat(tCoords.lat);
+                const tLon = Number.parseFloat(tCoords.lon);
                 const distKm = (target.dist / 1000).toFixed(2);
                 const stationName = target.device.name || target.device.serial;
 
@@ -1073,11 +1073,11 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             const allBounds = leaflet.latLngBounds([[lat, lon]]);
             if (nearestConnected) {
                 const cCoords = getDeviceCoords(nearestConnected.device);
-                allBounds.extend([parseFloat(cCoords.lat), parseFloat(cCoords.lon)]);
+                allBounds.extend([Number.parseFloat(cCoords.lat), Number.parseFloat(cCoords.lon)]);
             }
             if (nearestOffline) {
                 const oCoords = getDeviceCoords(nearestOffline.device);
-                allBounds.extend([parseFloat(oCoords.lat), parseFloat(oCoords.lon)]);
+                allBounds.extend([Number.parseFloat(oCoords.lat), Number.parseFloat(oCoords.lon)]);
             }
             map.flyToBounds(allBounds, { padding: [60, 60], maxZoom: 14, duration: 1.5 });
         }
@@ -1116,8 +1116,8 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             const data = await response.json();
 
             if (data && data.length > 0) {
-                const lat = parseFloat(data[0].lat);
-                const lon = parseFloat(data[0].lon);
+                const lat = Number.parseFloat(data[0].lat);
+                const lon = Number.parseFloat(data[0].lon);
                 findNearestFromCoords(lat, lon, data[0].display_name);
             } else {
                 if (window.showError) window.showError(`Không tìm thấy địa danh: "${query}". Vui lòng thử nhập kèm Tên Huyện, Tỉnh.`);

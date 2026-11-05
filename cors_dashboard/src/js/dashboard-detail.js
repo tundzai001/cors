@@ -130,7 +130,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                 username: newUsername,
                 password: newPassword,
                 mountpoint_allow: targetMp,
-                expiry_days: parseInt(expiryDays)
+                expiry_days: Number.parseInt(expiryDays)
             };
 
             const response = await window.apiFetch(`/api/bases/${device.serial}/rovers`, {
