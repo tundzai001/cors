@@ -429,7 +429,7 @@
         document.getElementById('otp-status-text').textContent = 'Đang chạy';
 
         syncSystemControls();
-        otpCycle();
+        otpCycle().catch(error => console.error('otpCycle failed:', error));
     }
 
     function stopOtpStream() {
@@ -460,7 +460,7 @@
             if (state.otpAnimFrame) { cancelAnimationFrame(state.otpAnimFrame); state.otpAnimFrame = null; }
         } else if (!document.hidden && state.otpStreaming) {
             // Resume immediately with a new code
-            otpCycle();
+            otpCycle().catch(error => console.error('otpCycle failed:', error));
         }
     }
 
@@ -731,10 +731,10 @@
             const edit = event.target.closest('[data-edit]');
             const revoke = event.target.closest('[data-revoke]');
             if (edit) openEditor(edit.dataset.edit);
-            if (revoke) revokeBinding(revoke.dataset.revoke);
+            if (revoke) revokeBinding(revoke.dataset.revoke).catch(error => console.error('revokeBinding failed:', error));
         });
         document.getElementById('zalo-system-toggle').addEventListener('change', event => {
-            setSystemEnabled(event.target.checked);
+            setSystemEnabled(event.target.checked).catch(error => console.error('setSystemEnabled failed:', error));
         });
         document.getElementById('zalo-system-refresh').addEventListener('click', () => loadSystemState());
         document.getElementById('cors-check-toggle').addEventListener('change', event => updateCorsCheck(event.target.checked));
@@ -751,7 +751,7 @@
             stopOtpStream();
         }
         state.polling = window.setInterval(() => {
-            if (!document.hidden && !document.getElementById('binding-modal').classList.contains('show')) loadBindings({ silent: true });
+            if (!document.hidden && !document.getElementById('binding-modal').classList.contains('show')) loadBindings({ silent: true }).catch(error => console.error('loadBindings failed:', error));
         }, 5000);
 
         syncSystemControls();

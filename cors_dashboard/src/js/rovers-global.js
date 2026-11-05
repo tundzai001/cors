@@ -115,7 +115,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (bulkToolbarMobile) bulkToolbarMobile.classList.add('d-none');
         }
 
-        initData();
+        initData().catch(error => console.error('initData failed:', error));
 
     } catch (e) {
         console.error("Initialization error:", e);
@@ -202,7 +202,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Periodic sync (every 5s for smoother status updates)
             setInterval(syncData, 5000);
             document.addEventListener('visibilitychange', () => {
-                if (!document.hidden) syncData();
+                if (!document.hidden) syncData().catch(error => console.error('syncData failed:', error));
             });
 
             // Live-tick for connection durations (every 1s)
@@ -437,7 +437,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         ));
     }
 
-    async function renderAdminLiveMountpoints(prefix = '') {
+    function renderAdminLiveMountpoints(prefix = '') {
         const box = document.getElementById(`${prefix}admin-live-mountpoints-box`);
         const list = document.getElementById(`${prefix}admin-live-mountpoints-list`);
         const searchInput = document.getElementById(`${prefix}live-mp-search`);
@@ -481,7 +481,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         applyLiveMpFilter(prefix);
     }
 
-    async function renderCoordinatorExtraMountpoints(prefix = '') {
+    function renderCoordinatorExtraMountpoints(prefix = '') {
         const box = document.getElementById(`${prefix}admin-live-mountpoints-box`);
         const list = document.getElementById(`${prefix}admin-live-mountpoints-list`);
         const searchInput = document.getElementById(`${prefix}live-mp-search`);
@@ -1762,7 +1762,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         toInput.value = localDateValue(today);
         form.addEventListener('submit', event => {
             event.preventDefault();
-            refreshRoverActivity();
+            refreshRoverActivity().catch(error => console.error('refreshRoverActivity failed:', error));
         });
         document.getElementById('rover-activity-receiver-filter')?.addEventListener('input', filterRoverActivityMachines);
         const accountInput = document.getElementById('rover-activity-account-filter');
@@ -1805,7 +1805,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (choice) selectRoverActivityAccount(choice.dataset.roverActivityAccount);
         });
         document.getElementById('tab-rover-activity')?.addEventListener('shown.bs.tab', () => {
-            if (!roverActivityDaily.length) refreshRoverActivity();
+            if (!roverActivityDaily.length) refreshRoverActivity().catch(error => console.error('refreshRoverActivity failed:', error));
             else requestAnimationFrame(() => roverActivityMap?.invalidateSize());
         });
     }
@@ -1982,7 +1982,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const longitude = hasPosition ? String(position.lon) : '';
                     const ended = Boolean(session.ended_at);
                     const points = Array.isArray(session.points) ? session.points : [];
-                    const currentFixQuality = session.current_fix_quality == null ? NaN : Number(session.current_fix_quality);
+                    const currentFixQuality = session.current_fix_quality == null ? Number.NaN : Number(session.current_fix_quality);
                     const currentFixLabel = Number.isFinite(currentFixQuality)
                         ? roverFixQualityLabel(currentFixQuality)
                         : 'Chưa có dữ liệu';
@@ -2125,10 +2125,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body.setAttribute('aria-busy', 'false');
                 body.querySelector('#rover-history-filter')?.addEventListener('submit', event => {
                     event.preventDefault();
-                    handleRoverHistory({ currentTarget: { dataset: { username, date: body.querySelector('#rover-history-date')?.value || '', page: '1' } } });
+                    handleRoverHistory({ currentTarget: { dataset: { username, date: body.querySelector('#rover-history-date')?.value || '', page: '1' } } }).catch(error => console.error('handleRoverHistory failed:', error));
                 });
                 body.querySelector('#rover-history-clear-date')?.addEventListener('click', () => {
-                    handleRoverHistory({ currentTarget: { dataset: { username, date: '', page: '1' } } });
+                    handleRoverHistory({ currentTarget: { dataset: { username, date: '', page: '1' } } }).catch(error => console.error('handleRoverHistory failed:', error));
                 });
                 body.querySelectorAll('.rover-history-page-button').forEach(button => {
                     button.addEventListener('click', () => handleRoverHistory({ currentTarget: { dataset: button.dataset } }));
@@ -2680,7 +2680,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 modalInstance.hide();
 
                 patchEditedRoverRow(updatedRover);
-                fetchCasterUsers();
+                fetchCasterUsers().catch(error => console.error('fetchCasterUsers failed:', error));
 
             } catch (err) {
                 showToast(err.message, 'danger');
@@ -3234,8 +3234,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         });
                         if (!res.ok) throw new Error('Mở khóa thất bại');
                         showToast(`Đã mở khóa tài khoản ${username}`, 'success');
-                        renderBlocklistMapping(); // Refresh this tab
-                        syncData(); // Refresh main list
+                        renderBlocklistMapping().catch(error => console.error('renderBlocklistMapping failed:', error)); // Refresh this tab
+                        syncData().catch(error => console.error('syncData failed:', error)); // Refresh main list
                     } catch (err) {
                         showToast(err.message, 'danger');
                         btn.disabled = false;
@@ -3510,10 +3510,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Action: Copy
             container.querySelectorAll('.copy-mp').forEach(btn => {
-                btn.onclick = () => {
+                btn.onclick = async () => {
                     const mp = btn.dataset.mp;
-                    navigator.clipboard.writeText(mp);
-                    showToast(`Đã copy: ${mp}`, 'success');
+                    try {
+                        await navigator.clipboard.writeText(mp);
+                        showToast(`Đã copy: ${mp}`, 'success');
+                    } catch (error) {
+                        showToast(`Không thể sao chép mountpoint: ${error.message}`, 'danger');
+                    }
                 };
             });
 
@@ -3574,7 +3578,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (!res.ok) throw new Error((await res.json())?.detail || 'Lỗi khi xóa');
                         showToast('Đã xóa Mountpoint thành công', 'warning');
                         await fetchCasterSources({ force: true });
-                        loadAndRenderMountpoints();
+                        loadAndRenderMountpoints().catch(error => console.error('loadAndRenderMountpoints failed:', error));
                     } catch (err) {
                         showToast(err.message, 'danger');
                         btn.disabled = false;
@@ -3622,7 +3626,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         }
                         createForm.reset();
                         await fetchCasterSources({ force: true });
-                        loadAndRenderMountpoints();
+                        loadAndRenderMountpoints().catch(error => console.error('loadAndRenderMountpoints failed:', error));
                     } catch (err) {
                         showToast(err.message, 'danger');
                     } finally {

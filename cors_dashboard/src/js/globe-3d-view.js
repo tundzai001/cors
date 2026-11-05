@@ -506,7 +506,7 @@
 
                 const pos = this.satelliteLayer?.satelliteMeshes.get(sat.key)?.mesh.userData.lastCalculated || {};
                 const altStr = Number.isFinite(pos.altKm) ? `${Math.round(pos.altKm).toLocaleString()} km` : '20,000 km';
-                const cleanName = (sat.name || '').replace(/\(.*?\)/g, '').trim();
+                const cleanName = (sat.name || '').replace(/\([^()\r\n\u2028\u2029]*\)/g, '').trim();
 
                 this.hoverTooltipEl.innerHTML = `
                     <div class="tooltip-title" style="color:${cfg.hex}">

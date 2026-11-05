@@ -54,7 +54,7 @@ function getNormalizedPrn(sat) {
     // Handle string PRNs from RTCM decoder (e.g. "G01", "R07", "E12", "C14")
     const match = prnStr.match(/^[A-Z]?(\d+)$/);
     const prn = match ? Number(match[1]) : Number(prnRaw);
-    if (isNaN(prn)) return prnStr; // fallback to raw string
+    if (Number.isNaN(prn)) return prnStr; // fallback to raw string
     const sys = getSatelliteSystem(sat);
     if (sys === 'ru' && prn >= 65 && prn <= 96) return prn - 64;
     if (sys === 'eu' && prn >= 301 && prn <= 336) return prn - 300;
@@ -248,9 +248,9 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 let az = Number(satData.azimuth);
                 let el = Number(satData.elevation);
                 const snr = Number(satData.snr);
-                if (isNaN(snr) || snr === 0) continue;
-                if (isNaN(az)) az = 0;
-                if (isNaN(el)) el = 0;
+                if (Number.isNaN(snr) || snr === 0) continue;
+                if (Number.isNaN(az)) az = 0;
+                if (Number.isNaN(el)) el = 0;
 
                 const azRad = (az * Math.PI) / 180;
                 const dist = radius * (90 - el) / 90;

@@ -19,6 +19,7 @@ UART1/UART2 are receiver UARTs; USB is for a direct u-blox USB connection.
 
 from __future__ import annotations
 
+import math
 import argparse
 import base64
 import json
@@ -121,11 +122,11 @@ def valid_nmea(line: str) -> bool:
     return nmea_checksum(body) == checksum[:2].upper()
 
 
-def nmea_coord(raw: str, hemisphere: str, degrees_digits: int) -> float | None:
+def nmea_coord(raw: str, hemisphere: str) -> float | None:
     if not raw or not hemisphere:
         return None
     value = float(raw)
-    degrees = int(value / 100 if degrees_digits == 2 else value / 100)
+    degrees = int(value / 100)
     minutes = value - degrees * 100
     result = degrees + minutes / 60.0
     if hemisphere in {"S", "W"}:
@@ -215,8 +216,8 @@ class SerialMonitor:
         }.get(fix_quality, "OTHER")
 
         try:
-            lat = nmea_coord(fields[2], fields[3], 2)
-            lon = nmea_coord(fields[4], fields[5], 3)
+            lat = nmea_coord(fields[2], fields[3])
+            lon = nmea_coord(fields[4], fields[5])
             alt = float(fields[9]) if fields[9] else None
             if alt is not None and len(fields) > 11 and fields[11]:
                 # GGA altitude is MSL; add geoid separation to get ellipsoidal h.
@@ -595,9 +596,9 @@ def self_test() -> None:
     assert valid_nmea(line.decode("ascii").strip())
     fields = body.split(",")
     assert int(fields[6]) == RTK_FIXED
-    assert nmea_coord(fields[2], fields[3], 2) == 22.25
-    assert nmea_coord(fields[4], fields[5], 3) == 103.8
-    assert float(fields[9]) + float(fields[11]) == 155.0
+    assert math.isclose(nmea_coord(fields[2], fields[3]), 22.25)
+    assert math.isclose(nmea_coord(fields[4], fields[5]), 103.8)
+    assert math.isclose(float(fields[9]) + float(fields[11]), 155.0)
     print("self-test: OK")
 
 

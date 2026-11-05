@@ -1511,16 +1511,16 @@
             result = result.replace(/^Từ ngày$/iu, 'From').replace(/^Đến ngày$/iu, 'To');
             result = result.replace(/(^|[^\p{L}\p{N}])còn\s+(\d+)\s+ngày(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} days remaining`);
             result = result.replace(/KHỞI ĐỘNG LẠI/g, 'RESTARTING');
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+trực tuyến\s+·\s+([0-9,]+)\s+ngoại tuyến\s+·\s+([0-9,]+)\s+chưa đồng bộ(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, online, offline, unsynced) => `${prefix}${online} online · ${offline} offline · ${unsynced} unsynced`);
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+hoạt động\s+·\s+([0-9,]+)\s+sắp hết hạn\s+·\s+([0-9,]+)\s+bị khóa(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, active, expiring, blocked) => `${prefix}${active} active · ${expiring} expiring soon · ${blocked} blocked`);
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+nghiêm trọng\s+·\s+([0-9,]+)\s+cảnh báo(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, critical, warnings) => `${prefix}${critical} critical · ${warnings} warnings`);
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+máy chủ caster(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} Caster ${Number(count.replace(/,/g, '')) === 1 ? 'server' : 'servers'}`);
-            result = result.replace(/(^|[^\p{L}\p{N}])Đã gia hạn\s+([0-9,]+)\s+Rover(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} Rover${Number(count.replace(/,/g, '')) === 1 ? '' : 's'} renewed`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+trực tuyến\s+·\s+([0-9,]{1,32})\s+ngoại tuyến\s+·\s+([0-9,]{1,32})\s+chưa đồng bộ(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, online, offline, unsynced) => `${prefix}${online} online · ${offline} offline · ${unsynced} unsynced`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+hoạt động\s+·\s+([0-9,]{1,32})\s+sắp hết hạn\s+·\s+([0-9,]{1,32})\s+bị khóa(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, active, expiring, blocked) => `${prefix}${active} active · ${expiring} expiring soon · ${blocked} blocked`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+nghiêm trọng\s+·\s+([0-9,]{1,32})\s+cảnh báo(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, critical, warnings) => `${prefix}${critical} critical · ${warnings} warnings`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+máy chủ caster(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} Caster ${Number(count.replace(/,/g, '')) === 1 ? 'server' : 'servers'}`);
+            result = result.replace(/(^|[^\p{L}\p{N}])Đã gia hạn\s+([0-9,]{1,32})\s+Rover(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} Rover${Number(count.replace(/,/g, '')) === 1 ? '' : 's'} renewed`);
             result = result.replace(/(^|[^\p{L}\p{N}])Đã tải\s+(\d+)\s+mountpoint từ Base\.(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}Loaded ${count} mountpoint${Number(count) === 1 ? '' : 's'} from Base.`);
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+mountpoint đã tải\.\s*Chọn đúng MP rồi mới áp dụng Auto Base\.(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} mountpoint${Number(count) === 1 ? '' : 's'} loaded. Select the correct mountpoint before applying Auto Base.`);
             result = result.replace(/(^|[^\p{L}\p{N}])Cập nhật\s+(\d{1,2}:\d{2}(?::\d{2})?)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, time) => `${prefix}Updated at ${time}`);
             result = result.replace(/(^|[^\p{L}\p{N}])Ngày\s+(\d{4}-\d{2}-\d{2})\s+·\s+đang tải danh sách receiver…(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, date) => `${prefix}Date ${date} · Loading the receiver list…`);
-            result = result.replace(/(^|[^\p{L}\p{N}])Chặn\s+(.+?)\s+\((\d+)\s+trạm hiện tại\)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, username, count) => `${prefix}Block ${username} (${count} current station${Number(count) === 1 ? '' : 's'})`);
+            result = result.replace(/^(\s*)Chặn\s+(\S(?:.*?\S)?)\s+\((\d+)\s+trạm hiện tại\)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, username, count) => `${prefix}Block ${username} (${count} current station${Number(count) === 1 ? '' : 's'})`);
         } else {
             // Vietnamese revoke text must not match the English weekday Thu.
             result = result.replace(/Thu hồi/giu, value => protect(value));
@@ -1531,20 +1531,20 @@
             });
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+days\s+remaining(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}Còn ${count} ngày`);
             result = result.replace(/RESTARTING/g, 'KHỞI ĐỘNG LẠI');
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+online\s+·\s+([0-9,]+)\s+offline\s+·\s+([0-9,]+)\s+unsynced(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, online, offline, unsynced) => `${prefix}${online} trực tuyến · ${offline} ngoại tuyến · ${unsynced} chưa đồng bộ`);
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+active\s+·\s+([0-9,]+)\s+expiring soon\s+·\s+([0-9,]+)\s+blocked(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, active, expiring, blocked) => `${prefix}${active} hoạt động · ${expiring} sắp hết hạn · ${blocked} bị khóa`);
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+critical\s+·\s+([0-9,]+)\s+warnings(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, critical, warnings) => `${prefix}${critical} nghiêm trọng · ${warnings} cảnh báo`);
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+Caster\s+servers?(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} máy chủ caster`);
-            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]+)\s+Rovers?\s+renewed(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}Đã gia hạn ${count} Rover`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+online\s+·\s+([0-9,]{1,32})\s+offline\s+·\s+([0-9,]{1,32})\s+unsynced(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, online, offline, unsynced) => `${prefix}${online} trực tuyến · ${offline} ngoại tuyến · ${unsynced} chưa đồng bộ`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+active\s+·\s+([0-9,]{1,32})\s+expiring soon\s+·\s+([0-9,]{1,32})\s+blocked(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, active, expiring, blocked) => `${prefix}${active} hoạt động · ${expiring} sắp hết hạn · ${blocked} bị khóa`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+critical\s+·\s+([0-9,]{1,32})\s+warnings(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, critical, warnings) => `${prefix}${critical} nghiêm trọng · ${warnings} cảnh báo`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+Caster\s+servers?(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} máy chủ caster`);
+            result = result.replace(/(^|[^\p{L}\p{N}])([0-9,]{1,32})\s+Rovers?\s+renewed(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}Đã gia hạn ${count} Rover`);
             result = result.replace(/(^|[^\p{L}\p{N}])Loaded\s+(\d+)\s+mountpoints?\s+from Base\.(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}Đã tải ${count} mountpoint từ Base.`);
             result = result.replace(/(^|[^\p{L}\p{N}])(\d+)\s+mountpoints?\s+loaded\.\s*Select the correct mountpoint before applying Auto Base\.(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, count) => `${prefix}${count} mountpoint đã tải. Chọn đúng MP rồi mới áp dụng Auto Base.`);
             result = result.replace(/(^|[^\p{L}\p{N}])Updated at\s+(\d{1,2}:\d{2}(?::\d{2})?)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, time) => `${prefix}Cập nhật ${time}`);
             result = result.replace(/(^|[^\p{L}\p{N}])Date\s+(\d{4}-\d{2}-\d{2})\s+·\s+Loading the receiver list…(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, date) => `${prefix}Ngày ${date} · đang tải danh sách receiver…`);
-            result = result.replace(/(^|[^\p{L}\p{N}])Block\s+(.+?)\s+\((\d+)\s+current stations?\)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, username, count) => `${prefix}Chặn ${username} (${count} trạm hiện tại)`);
+            result = result.replace(/^(\s*)Block\s+(\S(?:.*?\S)?)\s+\((\d+)\s+current stations?\)(?=$|[^\p{L}\p{N}])/giu, (_match, prefix, username, count) => `${prefix}Chặn ${username} (${count} trạm hiện tại)`);
         }
         result = applyTranslationPlan(result, longTranslationPlans[direction]);
-        if (direction === 'en') result = result.replace(/\s+thành công(!?)(?=$|[^\p{L}\p{N}])/giu, ' successfully$1');
-        else result = result.replace(/\s+successfully(!?)(?=$|[^\p{L}\p{N}])/giu, ' thành công$1');
+        if (direction === 'en') result = result.replace(/(?<!\s)\s+thành công(!?)(?=$|[^\p{L}\p{N}])/giu, ' successfully$1');
+        else result = result.replace(/(?<!\s)\s+successfully(!?)(?=$|[^\p{L}\p{N}])/giu, ' thành công$1');
         result = result.replace(numericPattern, (_match, prefix, count, unit) => {
             if (direction === 'vi') return `${prefix}${count} ${enNumericUnits.get(unit.toLowerCase())}`;
             const [singular, plural] = viNumericUnits[unit.toLowerCase()];
@@ -1553,7 +1553,7 @@
         result = result.replace(/(^|[^\p{L}\p{N}])(RTK\s+(?:CỐ ĐỊNH|FIXED|PHA ĐỘNG|FLOAT)|3D|FLOAT)(?=$|[^\p{L}\p{N}])/giu,
             (_match, prefix, term) => `${prefix}${protect(GNSS_FIX_TERMS[term.replace(/\s+/gu, ' ').trim().toLowerCase()])}`);
         result = applyTranslationPlan(result, shortTranslationPlans[direction]);
-        if (direction === 'en') result = result.replace(/\s+\?/g, '?');
+        if (direction === 'en') result = result.replace(/(?<!\s)\s+\?/g, '?');
         return result.replace(/\uE000(\d+)\uE001/gu, (_match, index) => protectedValues[Number(index)] ?? '');
     }
 

@@ -26,10 +26,11 @@ const React = {
   createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
 };
 const projections = [];
+const document = { visibilityState: 'hidden', addEventListener() {}, removeEventListener() {} };
 const window = { MapboxGlobeView: { setProjection: value => projections.push(value) }, Globe3DView: { getSurfaceView: () => null } };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/vngeonet-stations.min.js'), 'utf8'), { window });
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/stations-map.min.js'), 'utf8'), {
-  React, window, console, navigator: {}, document: { visibilityState: 'hidden', addEventListener() {}, removeEventListener() {} }, AbortController, fetch: async () => ({ ok: true, json: async () => [] }), Date, setTimeout: () => 1, clearTimeout, setInterval: () => 1, clearInterval() {},
+  React, window, console, navigator: {}, document, AbortController, fetch: async () => ({ ok: true, json: async () => ({ map_status_enabled: true }) }), Date, setTimeout: () => 1, clearTimeout, setInterval: () => 1, clearInterval() {},
 });
 function collect(tree, nodes = []) {
   if (Array.isArray(tree)) tree.forEach(node => collect(node, nodes));
@@ -84,12 +85,8 @@ nodes.find(node => node.props['aria-controls'] === 'station-map-filters').props.
 nodes = render();
 assert.ok(nodes.find(node => node.props.id === 'station-map-filters'));
 assert.equal(nodes.filter(node => node.props.id === 'coverage-toggle').length, 1, 'coverage has a single visible 20 km control');
-assert.equal(nodes.find(node => node.props.id === 'vngeonet-toggle').props.checked, true, 'VNGEONET is shown on first visit');
-nodes.find(node => node.props.id === 'vngeonet-toggle').props.onChange({ target: { checked: false } });
-nodes = render();
-assert.equal(nodes.find(node => node.props.id === 'vngeonet-toggle').props.checked, false);
-nodes.find(node => node.props.id === 'vngeonet-toggle').props.onChange({ target: { checked: true } });
-nodes = render();
+assert.ok(!nodes.some(node => node.props.id === 'vngeonet-toggle'),
+  'VNGEONET stays hidden until the service enables it');
 
 assert.equal(nodes.find(node => node.props.id === 'coverage-toggle').props.checked, false, 'coverage is disabled by default');
 assert.equal(nodes.filter(node => node.props.id === 'ionosphere-toggle').length, 1,
@@ -107,101 +104,110 @@ assert.equal(projections.length, 7, 'projection toggles reuse the native map');
 console.log('PASS: single Mapbox for 2D/3D, stable containers, orbit controls, no duplicate filters');
 
 // Exercise effect ownership, including React's cleanup-before-setup ordering.
-hooks.length = 0; runEffects = true;
-let attachments = 0, detachments = 0, leafletMaps = 0, nativeMounted = false, mapOptions;
-const fallbackMaps = [];
-const fallbackGroups = [];
-const layerSnapshots = [];
-window.MapboxGlobeView = {
-  attach(host, options) { attachments++; nativeMounted = true; mapOptions = options; },
-  detach() { detachments++; nativeMounted = false; },
-  setActive() {}, updateStations() {}, updateLayers(state) { layerSnapshots.push(state); }, setMeasureEnabled() {},
-  setProjection(value) { projections.push(value); },
-};
-window.CorsDashboardShared = { getLeaflet: () => ({
-  map() {
-    assert.equal(nativeMounted, false, 'Mapbox is removed before constructing fallback');
-    leafletMaps++;
-    const map = { setView(center, zoom) { this.center = center; this.zoom = zoom; return this; }, on() {}, remove() { this.removed = true; }, hasLayer() { return false; }, removeLayer() {}, setMaxBounds() {}, setMinZoom() {} };
-    fallbackMaps.push(map); return map;
-  },
-  tileLayer(url) { return { addTo() { this.active = true; return this; }, url }; },
-  latLng() {}, latLngBounds() {},
-  marker: () => ({ bindPopup() { return this; }, addTo() { return this; } }), divIcon() {},
-  circleMarker: (coords, options) => ({ coords, options,
-    bindTooltip(text) { this.tooltip = text; return this; },
-    bindPopup(html) { this.popup = html; return this; },
-    addTo(group) { group.markers.push(this); return this; },
-  }),
-  layerGroup: () => {
-    const group = { markers: [], addTo() { fallbackGroups.push(this); return this; }, clearLayers() { this.markers = []; } };
-    return group;
-  },
-}) };
-function commit() {
-  let nodes;
-  for (let pass = 0; pass < 8; pass++) {
-    dirty = false; pendingEffects = []; nodes = render();
-    nodes.filter(node => node.props.ref).forEach(node => { node.props.ref.current ||= {}; });
-    pendingEffects.forEach(item => effects[item.index]?.cleanup?.());
-    pendingEffects.forEach(item => { effects[item.index] = { deps: item.deps, cleanup: item.callback() }; });
-    if (!dirty) return nodes;
+async function testMapLifecycle() {
+  document.visibilityState = 'visible';
+  hooks.length = 0; runEffects = true;
+  let attachments = 0, detachments = 0, leafletMaps = 0, nativeMounted = false, mapOptions;
+  const fallbackMaps = [];
+  const fallbackGroups = [];
+  const layerSnapshots = [];
+  window.MapboxGlobeView = {
+    attach(host, options) { attachments++; nativeMounted = true; mapOptions = options; },
+    detach() { detachments++; nativeMounted = false; },
+    setActive() {}, updateStations() {}, updateLayers(state) { layerSnapshots.push(state); }, setMeasureEnabled() {},
+    setProjection(value) { projections.push(value); },
+  };
+  window.CorsDashboardShared = { getLeaflet: () => ({
+    map() {
+      assert.equal(nativeMounted, false, 'Mapbox is removed before constructing fallback');
+      leafletMaps++;
+      const map = { setView(center, zoom) { this.center = center; this.zoom = zoom; return this; }, on() {}, remove() { this.removed = true; }, hasLayer() { return false; }, removeLayer() {}, setMaxBounds() {}, setMinZoom() {} };
+      fallbackMaps.push(map); return map;
+    },
+    tileLayer(url) { return { addTo() { this.active = true; return this; }, url }; },
+    latLng() {}, latLngBounds() {},
+    marker: () => ({ bindPopup() { return this; }, addTo() { return this; } }), divIcon() {},
+    circleMarker: (coords, options) => ({ coords, options,
+      bindTooltip(text) { this.tooltip = text; return this; },
+      bindPopup(html) { this.popup = html; return this; },
+      addTo(group) { group.markers.push(this); return this; },
+    }),
+    layerGroup: () => {
+      const group = { markers: [], addTo() { fallbackGroups.push(this); return this; }, clearLayers() { this.markers = []; } };
+      return group;
+    },
+  }) };
+  function commit() {
+    let nodes;
+    for (let pass = 0; pass < 8; pass++) {
+      dirty = false; pendingEffects = []; nodes = render();
+      nodes.filter(node => node.props.ref).forEach(node => { node.props.ref.current ||= {}; });
+      pendingEffects.forEach(item => effects[item.index]?.cleanup?.());
+      pendingEffects.forEach(item => { effects[item.index] = { deps: item.deps, cleanup: item.callback() }; });
+      if (!dirty) return nodes;
+    }
+    throw new Error('effect updates did not settle');
   }
-  throw new Error('effect updates did not settle');
-}
-nodes = commit();
-assert.equal(attachments, 1);
-assert.equal(leafletMaps, 0, 'successful native mount does not initialize hidden Leaflet');
-mapOptions.onReady(); nodes = commit();
-assert.equal(layerSnapshots.at(-1).referenceStations.length, 65, 'React passes reference stations to the native layer');
-nodes.find(node => node.props['aria-controls'] === 'station-map-filters').props.onClick(); nodes = commit();
-nodes.find(node => node.props.id === 'vngeonet-toggle').props.onChange({ target: { checked: false } }); nodes = commit();
-assert.equal(layerSnapshots.at(-1).referenceStations.length, 0);
-nodes.find(node => node.props.id === 'vngeonet-toggle').props.onChange({ target: { checked: true } }); nodes = commit();
-assert.equal(layerSnapshots.at(-1).referenceStations.length, 65);
-nodes.find(node => node.props['aria-controls'] === 'station-map-search').props.onClick(); nodes = commit();
-const searchInput = () => nodes.find(node => node.props.placeholder === 'Find station / serial / mountpoint');
-searchInput().props.onChange({ target: { value: 'hnoi' } }); nodes = commit();
-assert.equal(layerSnapshots.at(-1).referenceStations.length, 1, 'Search includes reference station codes');
-assert.equal(layerSnapshots.at(-1).referenceStations[0].code, 'HNOI');
-searchInput().props.onChange({ target: { value: '' } }); nodes = commit();
+  nodes = commit();
+  assert.equal(attachments, 1);
+  assert.equal(leafletMaps, 0, 'successful native mount does not initialize hidden Leaflet');
+  await new Promise(resolve => setImmediate(resolve));
+  mapOptions.onReady(); nodes = commit();
+  assert.equal(layerSnapshots.at(-1).referenceStations.length, 65, 'React passes reference stations to the native layer');
+  nodes.find(node => node.props['aria-controls'] === 'station-map-filters').props.onClick(); nodes = commit();
+  nodes.find(node => node.props.id === 'vngeonet-toggle').props.onChange({ target: { checked: false } }); nodes = commit();
+  assert.equal(layerSnapshots.at(-1).referenceStations.length, 0);
+  nodes.find(node => node.props.id === 'vngeonet-toggle').props.onChange({ target: { checked: true } }); nodes = commit();
+  assert.equal(layerSnapshots.at(-1).referenceStations.length, 65);
+  nodes.find(node => node.props['aria-controls'] === 'station-map-search').props.onClick(); nodes = commit();
+  const searchInput = () => nodes.find(node => node.props.placeholder === 'Find station / serial / mountpoint');
+  searchInput().props.onChange({ target: { value: 'hnoi' } }); nodes = commit();
+  assert.equal(layerSnapshots.at(-1).referenceStations.length, 1, 'Search includes reference station codes');
+  assert.equal(layerSnapshots.at(-1).referenceStations[0].code, 'HNOI');
+  searchInput().props.onChange({ target: { value: '' } }); nodes = commit();
 
-for (let cycle = 0; cycle < 3; cycle++) {
-  nodes.find(node => node.props['data-action'] === 'toggle-globe').props.onClick(); nodes = commit();
-}
-assert.equal(attachments, 1, 'projection changes do not remount Mapbox');
-assert.equal(detachments, 0);
-assert.equal(leafletMaps, 0);
-mapOptions.onFailure({ view: { lat: 21, lng: 105, zoom: 10 } }); nodes = commit();
-assert.equal(detachments, 1);
-assert.equal(leafletMaps, 1, 'failure initializes Leaflet once');
-assert.deepEqual(Array.from(fallbackMaps[0].center), [21, 105]);
-assert.equal(fallbackMaps[0].zoom, 10, 'fallback preserves camera');
-const vngeonetGroup = fallbackGroups.find(group => group.markers.length === 65);
-assert.ok(vngeonetGroup, 'Leaflet fallback renders all VNGEONET reference markers');
-assert(vngeonetGroup.markers[0].tooltip.includes('VNGEONET'));
-assert(vngeonetGroup.markers[0].popup.includes('RTCM từng trạm: chưa công bố'));
-assert(vngeonetGroup.markers[0].popup.includes('CORS Cục'));
-const helpers = {Date, escapeHtml: value => String(value || '').replaceAll('<', '&lt;')};
-const mapSource = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/stations-map.js'), 'utf8');
-vm.runInNewContext(mapSource.slice(mapSource.indexOf('    function referenceNetworkMeta'), mapSource.indexOf('    function provincePopupHtml')), helpers);
-assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000}).label, 'Online');
-assert.equal(helpers.referenceNetworkMeta({status: 'offline', checked_at: Date.now()/1000}).label, 'Đang báo lỗi');
-assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 76}).label, 'Chưa xác định', 'Old website health must not stay green');
-assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 600, valid_until: Date.now()/1000 + 300}).label, 'Online', 'RTCM cache stays valid for its configured interval');
-assert.equal(helpers.referenceNetworkMeta({status: 'online', checked_at: Date.now()/1000 - 600, valid_until: Date.now()/1000 - 1}).label, 'Chưa xác định', 'Expired RTCM evidence must not stay green');
-assert.equal(helpers.referenceCheckLabel({rtcm_check_enabled:true, rtcm_check_interval_seconds:900}), 'Dữ liệu RTCM · kiểm tra mỗi 15 phút');
-assert.equal(helpers.referenceCheckLabel({rtcm_check_enabled:false, web_check_interval_seconds:45}), 'Trang dịch vụ · kiểm tra mỗi 45 giây');
-const referencePopup = helpers.referenceStationPopup({code: 'TEST', lat: 21, lon: 105, serviceHealth: {status: 'offline', checked_at: Date.now()/1000, reason: '<error>'}});
-assert(!referencePopup.includes('error'), 'Public popup does not disclose probe details');
-assert(referencePopup.includes('Đang báo lỗi'), 'Public status stays visible');
-const onlinePopup = helpers.referenceStationPopup({code:'THOA', lat:19.762069101, lon:105.778061405, serviceHealth:{status:'online',checked_at:Date.now()/1000,reason:'Trang dịch vụ Cục có form đăng nhập bình thường'}});
-assert(!onlinePopup.includes('form đăng nhập'), 'Login-form details never appear in the public popup');
-assert(onlinePopup.includes('Online'));
+  for (let cycle = 0; cycle < 3; cycle++) {
+    nodes.find(node => node.props['data-action'] === 'toggle-globe').props.onClick(); nodes = commit();
+  }
+  assert.equal(attachments, 1, 'projection changes do not remount Mapbox');
+  assert.equal(detachments, 0);
+  assert.equal(leafletMaps, 0);
+  mapOptions.onFailure({ view: { lat: 21, lng: 105, zoom: 10 } }); nodes = commit();
+  assert.equal(detachments, 1);
+  assert.equal(leafletMaps, 1, 'failure initializes Leaflet once');
+  assert.deepEqual(Array.from(fallbackMaps[0].center), [21, 105]);
+  assert.equal(fallbackMaps[0].zoom, 10, 'fallback preserves camera');
+  const vngeonetGroup = fallbackGroups.find(group => group.markers.length === 65);
+  assert.ok(vngeonetGroup, 'Leaflet fallback renders all VNGEONET reference markers');
+  assert(vngeonetGroup.markers[0].tooltip.includes('VNGEONET'));
+  assert(vngeonetGroup.markers[0].popup.includes('RTCM từng trạm: chưa công bố'));
+  assert(vngeonetGroup.markers[0].popup.includes('CORS Cục'));
+  const helpers = {Date, escapeHtml: value => String(value || '').replaceAll('<', '&lt;')};
+  const mapSource = fs.readFileSync(path.join(__dirname, '../cors_dashboard/src/js/stations-map.js'), 'utf8');
+  vm.runInNewContext(mapSource.slice(mapSource.indexOf('    function referenceNetworkMeta'), mapSource.indexOf('    function provincePopupHtml')), helpers);
+  assert.equal(helpers.referenceNetworkMeta({map_status_enabled: true, status: 'online', checked_at: Date.now()/1000}).label, 'Online');
+  assert.equal(helpers.referenceNetworkMeta({map_status_enabled: true, status: 'offline', checked_at: Date.now()/1000}).label, 'Đang báo lỗi');
+  assert.equal(helpers.referenceNetworkMeta({map_status_enabled: true, status: 'online', checked_at: Date.now()/1000 - 76}).label, 'Chưa xác định', 'Old website health must not stay green');
+  assert.equal(helpers.referenceNetworkMeta({map_status_enabled: true, status: 'online', checked_at: Date.now()/1000 - 600, valid_until: Date.now()/1000 + 300}).label, 'Online', 'RTCM cache stays valid for its configured interval');
+  assert.equal(helpers.referenceNetworkMeta({map_status_enabled: true, status: 'online', checked_at: Date.now()/1000 - 600, valid_until: Date.now()/1000 - 1}).label, 'Chưa xác định', 'Expired RTCM evidence must not stay green');
+  assert.equal(helpers.referenceCheckLabel({rtcm_check_enabled:true, rtcm_check_interval_seconds:900}), 'Dữ liệu RTCM · kiểm tra mỗi 15 phút');
+  assert.equal(helpers.referenceCheckLabel({rtcm_check_enabled:false, web_check_interval_seconds:45}), 'Trang dịch vụ · kiểm tra mỗi 45 giây');
+  const referencePopup = helpers.referenceStationPopup({code: 'TEST', lat: 21, lon: 105, serviceHealth: {map_status_enabled: true, status: 'offline', checked_at: Date.now()/1000, reason: '<error>'}});
+  assert(!referencePopup.includes('error'), 'Public popup does not disclose probe details');
+  assert(referencePopup.includes('Đang báo lỗi'), 'Public status stays visible');
+  const onlinePopup = helpers.referenceStationPopup({code:'THOA', lat:19.762069101, lon:105.778061405, serviceHealth:{map_status_enabled:true,status:'online',checked_at:Date.now()/1000,reason:'Trang dịch vụ Cục có form đăng nhập bình thường'}});
+  assert(!onlinePopup.includes('form đăng nhập'), 'Login-form details never appear in the public popup');
+  assert(onlinePopup.includes('Online'));
 
-assert.ok(fallbackMaps[0].__tiles.hybrid.url.includes('google.com/vt/lyrs=y'), 'fallback uses original Google hybrid');
-assert.ok(nodes.some(node => node.props.className === 'station-map-flat-layer'));
-commit(); assert.equal(leafletMaps, 1, 'fallback does not retry native automatically');
-effects.forEach(effect => effect?.cleanup?.());
-assert.ok(fallbackMaps[0].removed, 'unmount disposes fallback');
-console.log('PASS: effect lifecycle uses one native map and mounts Google only after failure');
+  assert.ok(fallbackMaps[0].__tiles.hybrid.url.includes('google.com/vt/lyrs=y'), 'fallback uses original Google hybrid');
+  assert.ok(nodes.some(node => node.props.className === 'station-map-flat-layer'));
+  commit(); assert.equal(leafletMaps, 1, 'fallback does not retry native automatically');
+  effects.forEach(effect => effect?.cleanup?.());
+  assert.ok(fallbackMaps[0].removed, 'unmount disposes fallback');
+  console.log('PASS: effect lifecycle uses one native map and mounts Google only after failure');
+}
+
+testMapLifecycle().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

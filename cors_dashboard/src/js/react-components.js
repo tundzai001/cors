@@ -194,7 +194,7 @@ const CasterConfigModal = memo(function CasterConfigModal() {
     // Hàm mở modal (gắn vào window để gọi từ console hoặc nút khác)
     useEffect(() => {
         window.openCasterConfig = () => {
-            fetchConfig();
+            void fetchConfig();
             setIsOpen(true);
         };
     }, []);
@@ -232,13 +232,13 @@ const CasterConfigModal = memo(function CasterConfigModal() {
                     <div className="modal-body">
                         <p className="text-muted small">Cấu hình địa chỉ Caster dùng để tạo/xóa Rover qua giao thức TCP Admin.</p>
                         <div className="mb-3">
-                            <label className="form-label">Caster Host / IP</label>
-                            <input type="text" className="form-control" value={config.host}
+                            <label className="form-label" htmlFor="caster-config-host">Caster Host / IP</label>
+                            <input id="caster-config-host" type="text" className="form-control" value={config.host}
                                 onChange={e => setConfig({ ...config, host: e.target.value })} />
                         </div>
                         <div className="mb-3">
-                            <label className="form-label">Admin Port (TCP)</label>
-                            <input type="number" className="form-control" value={config.port}
+                            <label className="form-label" htmlFor="caster-config-port">Admin Port (TCP)</label>
+                            <input id="caster-config-port" type="number" className="form-control" value={config.port}
                                 onChange={e => setConfig({ ...config, port: Number.parseInt(e.target.value) })} />
                         </div>
                     </div>
@@ -359,9 +359,13 @@ const CasterSourcesModal = memo(function CasterSourcesModal() {
                                                             <button
                                                                 type="button"
                                                                 className="btn btn-sm btn-outline-success ms-2 copy-mp-btn"
-                                                                onClick={() => {
-                                                                    navigator.clipboard.writeText(src.mountpoint);
-                                                                    window.showSuccess(`Copied: ${src.mountpoint}`);
+                                                                onClick={async () => {
+                                                                    try {
+                                                                        await navigator.clipboard.writeText(src.mountpoint);
+                                                                        window.showSuccess(`Copied: ${src.mountpoint}`);
+                                                                    } catch (error) {
+                                                                        window.showError(`Không thể sao chép mountpoint: ${error.message}`);
+                                                                    }
                                                                 }}
                                                                 title="Copy mountpoint">
                                                                 📋
@@ -645,7 +649,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             }
         };
 
-        fetchRoverClients();
+        void fetchRoverClients();
         const timer = setInterval(fetchRoverClients, 10000);
 
         return () => {
@@ -1199,7 +1203,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                                 value={searchLocationQuery}
                                 onChange={(e) => setSearchLocationQuery(e.target.value)}
                                 onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSearchLocation();
+                                    if (e.key === 'Enter') void handleSearchLocation();
                                 }}
                                 style={{ borderRadius: '8px 0 0 8px' }}
                             />

@@ -957,6 +957,11 @@ const DetailsPanel = memo(function DetailsPanel({
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [tempName, setTempName] = useState('');
+    const nameInputRef = useRef(null);
+
+    useEffect(() => {
+        if (isEditingName) nameInputRef.current?.focus();
+    }, [isEditingName]);
     const [userSelectedTab, setUserSelectedTab] = useState(false);
     const [isSystemPanelOpen, setIsSystemPanelOpen] = useState(false);
     const lastSerialRef = useRef(null);
@@ -1263,7 +1268,8 @@ const DetailsPanel = memo(function DetailsPanel({
                                     if (e.key === 'Enter') handleSaveName();
                                     if (e.key === 'Escape') setIsEditingName(false);
                                 }}
-                                autoFocus
+                                ref={nameInputRef}
+                                aria-label="Tên trạm"
                             />
                             <button
                                 className="btn btn-success"

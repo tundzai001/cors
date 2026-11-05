@@ -139,11 +139,7 @@ class ZaloBotService(
         chat_id = self._get_chat_id(update)
         sender_id = self._get_sender_id(update)
         chat_type = self._get_chat_type(update)
-        principal = await zalo_repository.resolve_principal(chat_id, sender_id, chat_type)
-        if principal.is_linked:
-            return principal
-
-        return principal
+        return await zalo_repository.resolve_principal(chat_id, sender_id, chat_type)
 
     @staticmethod
     def _principal_payload(principal: ZaloPrincipal) -> Dict[str, Any]:

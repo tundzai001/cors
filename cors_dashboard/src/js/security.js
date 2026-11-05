@@ -605,7 +605,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body: JSON.stringify({ ip_address: ip })
             });
             showSuccess(`IP ${ip} blocked`);
-            loadSecurityData();
+            loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         } catch (error) {}
     };
     
@@ -622,7 +622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body: JSON.stringify({ ip_address: ip })
             });
             showSuccess(`IP ${ip} unblocked`);
-            loadSecurityData();
+            loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         } catch (error) {}
     }
 
@@ -644,7 +644,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             showSuccess(`IP ${ip} blacklisted`);
             ipToBlockInput.value = '';
-            loadSecurityData();
+            loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         } catch (error) {}
     }
 
@@ -664,7 +664,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body: JSON.stringify({ session_id: sessionId })
             });
             showSuccess(`Đã ngắt phiên làm việc của "${username}"`);
-            loadSecurityData();
+            loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         } catch (error) {
             showError(`Không thể ngắt phiên: ${error.message}`);
         }
@@ -689,7 +689,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 })
             });
             showSuccess(`Đã chặn riêng máy tính này. Các máy khác trong mạng ${publicIp} vẫn dùng bình thường.`);
-            loadSecurityData();
+            loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         } catch (error) {
             showError(`Không thể chặn máy: ${error.message}`);
         }
@@ -709,7 +709,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body: JSON.stringify({ device_id: deviceId })
             });
             showSuccess('Đã bỏ chặn máy tính');
-            loadSecurityData();
+            loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         } catch (error) {
             showError(`Không thể bỏ chặn: ${error.message}`);
         }
@@ -730,7 +730,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body: JSON.stringify({})
             });
             showSuccess(res?.message || 'Đã đăng xuất tất cả các máy khác');
-            loadSecurityData();
+            loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         } catch (error) {
             showError(`Lỗi: ${error.message}`);
         }
@@ -763,7 +763,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('active-sessions-badge').textContent = 'Đang tải…';
         document.getElementById('sessions-prev').disabled = true;
         document.getElementById('sessions-next').disabled = true;
-        loadSecurityData();
+        loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
     }
     document.getElementById('sessions-active-tab').addEventListener('click', () => selectSessions('active'));
     document.getElementById('sessions-history-tab').addEventListener('click', () => selectSessions('history'));
@@ -783,11 +783,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     highlightSection(window.location.hash);
     refreshBtn.addEventListener('click', () => {
         window.dispatchEvent(new CustomEvent('cors:analytics-refresh'));
-        loadSecurityData(true);
+        loadSecurityData(true).catch(error => console.error('loadSecurityData failed:', error));
     });
     document.body.addEventListener('click', (e) => {
         if (e.target.closest('.unblock-btn')) {
-            handleUnblockIp(e.target.closest('.unblock-btn').dataset.ip);
+            handleUnblockIp(e.target.closest('.unblock-btn').dataset.ip).catch(error => console.error('handleUnblockIp failed:', error));
             return;
         }
 
@@ -797,7 +797,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const user = revokeBtn.dataset.username;
             const localIp = revokeBtn.dataset.localIp;
             const device = revokeBtn.dataset.device;
-            handleRevokeSession(sid, user, localIp, device);
+            handleRevokeSession(sid, user, localIp, device).catch(error => console.error('handleRevokeSession failed:', error));
             return;
         }
 
@@ -808,14 +808,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             const name = blockDevBtn.dataset.deviceName;
             const localIp = blockDevBtn.dataset.localIp;
             const ip = blockDevBtn.dataset.ip;
-            handleBlockDevice(did, user, name, localIp, ip);
+            handleBlockDevice(did, user, name, localIp, ip).catch(error => console.error('handleBlockDevice failed:', error));
             return;
         }
 
         const unblockDevBtn = e.target.closest('.unblock-device-btn');
         if (unblockDevBtn) {
             const did = unblockDevBtn.dataset.deviceId;
-            handleUnblockDevice(did);
+            handleUnblockDevice(did).catch(error => console.error('handleUnblockDevice failed:', error));
             return;
         }
     });
@@ -859,7 +859,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (securityDataInterval) {
             clearInterval(securityDataInterval);
         }
-        loadSecurityData();
+        loadSecurityData().catch(error => console.error('loadSecurityData failed:', error));
         securityDataInterval = setInterval(loadSecurityData, POLLING_INTERVAL_MS);
     }
 
@@ -1013,5 +1013,5 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.addEventListener('beforeunload', stopPolling);
     }
     
-    init();
+    init().catch(error => console.error('init failed:', error));
 });

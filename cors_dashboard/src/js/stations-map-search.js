@@ -128,7 +128,7 @@
             /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
             /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
             /[?&](?:q|query|ll)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
-            /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/
+            /(?<![\d.-])(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/
         ];
         for (const pattern of patterns) {
             const match = decoded.match(pattern);
@@ -165,7 +165,7 @@
     function getLocalFallback(query) {
         const normalized = normalizeSearchText(query)
             .replace(/^(?:thanh pho|thi xa|thi tran|tinh|tp|tx)\s+/, '')
-            .replace(/\s+(?:viet nam|vietnam|vn)$/, '');
+            .replace(/ (?:viet nam|vietnam|vn)$/, '');
         let bestItem = null;
         let longestMatchLen = 0;
         for (const candidate of LOCAL_FALLBACKS) {

@@ -6,7 +6,7 @@
             if (!position?.isBaseFixed || config?.base_setup_method !== 'FIXED_LLA') return null;
             const saved = config.coords || config;
             const number = value => (typeof value === 'number' || (typeof value === 'string' && value.trim()))
-                ? Number(String(value).replace(',', '.')) : NaN;
+                ? Number(String(value).replace(',', '.')) : Number.NaN;
             const [lat, lon, alt] = [saved.lat, saved.lon, saved.alt].map(number);
             const height = chip === 'Ublox' || config.altitude_reference === 'ELLIPSOID'
                 ? number(position.alt) : number(position.heightMsl);

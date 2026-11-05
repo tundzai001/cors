@@ -366,7 +366,7 @@
                     if (active) setVngeonetHealth({status: 'unknown', reason: 'Mất cập nhật trạng thái Cục'});
                 } finally { clearTimeout(timeout); pending = false; }
             }
-            refresh();
+            refresh().catch(error => console.error('refresh failed:', error));
             const interval = setInterval(refresh, 30000);
             document.addEventListener('visibilitychange', refresh);
             return () => { active = false; controller?.abort(); clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
@@ -430,7 +430,7 @@
                 }
             };
 
-            fetchRoverClients();
+            fetchRoverClients().catch(error => console.error('fetchRoverClients failed:', error));
             const timer = setInterval(fetchRoverClients, 10000);
             return () => {
                 isMounted = false;
