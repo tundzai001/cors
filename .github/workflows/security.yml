@@ -66,4 +66,5 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8
         with:
           args: >-
+            -Dproject.settings=.sonarcloud.properties
             -Dsonar.sca.pythonBinary=${{ steps.python.outputs.python-path }}
