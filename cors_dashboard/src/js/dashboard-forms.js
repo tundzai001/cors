@@ -151,16 +151,18 @@ const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDepl
                 {canManageLicense ? authMessage : 'Trạm này đang cần Access Token để mở khóa. Vui lòng liên hệ admin để được cấp token và mở khóa trạm.'}
             </div>
             <div className="mb-3">
-                <label className="form-label">Serial Number của Pi</label>
+                <label htmlFor="pi-license-serial" className="form-label">Serial Number của Pi</label>
                 <div className="input-group">
-                    <input type="text" className="form-control" value={device.serial} readOnly />
+                    <input id="pi-license-serial" type="text" className="form-control" value={device.serial} readOnly />
                     <button
                         className="btn btn-outline-secondary"
                         type="button"
                         title="Sao chép Serial"
                         onClick={() => {
-                            navigator.clipboard.writeText(device.serial);
-                            window.showSuccess('Đã sao chép Serial!');
+                            navigator.clipboard.writeText(device.serial).then(
+                                () => window.showSuccess('Đã sao chép Serial!'),
+                                () => window.showError?.("Không thể sao chép vào bộ nhớ tạm.")
+                            );
                         }}
                     >
                         <i className="bi bi-clipboard"></i>
@@ -812,7 +814,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         const value = e.target.value.replace(',', '.');
         if (maxDecimals !== undefined && (value.split('.')[1] || '').length > maxDecimals) return;
         // Cho phép nhập số thập phân âm/dương
-        if (/^-?[0-9]*\.?[0-9]*$/.test(value)) {
+        if (/^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]*)?$/.test(value)) {
             setter(value);
             setCoordinatePasteNotice(null);
         }
@@ -955,7 +957,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 const lonStr = String(approvedCoords ? approvedCoords.lon : longitude).trim();
                 const latNum = Number.parseFloat(latStr);
                 const lonNum = Number.parseFloat(lonStr);
-                if (!latStr || !lonStr || isNaN(latNum) || isNaN(lonNum)) {
+                if (!latStr || !lonStr || Number.isNaN(latNum) || Number.isNaN(lonNum)) {
                     window.showError('Vui lòng nhập vĩ độ và kinh độ hợp lệ.');
                     setIsSubmitting(false);
                     return;
@@ -1095,8 +1097,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <span>Không thể nhận diện loại chip (hiện tại là: <strong>{device.detected_chip_type}</strong>). Vui lòng chọn thủ công.</span>
                         )}
                     </div>
-                    <label className="form-label fw-bold">Xác nhận Loại Chip</label>
-                    <select
+                    <label htmlFor="base-manual-chip" className="form-label fw-bold">Xác nhận Loại Chip</label>
+                    <select id="base-manual-chip"
                         className="form-select"
                         value={manualChip}
                         onChange={(e) => setManualChip(e.target.value)}
@@ -1190,18 +1192,20 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             {/* Realtime Raw GGA Box */}
                             <div className="mb-3">
                                 <div className="d-flex justify-content-between align-items-center mb-1">
-                                    <label className="form-label small fw-bold mb-0 text-info">
+                                    <span className="form-label small fw-bold mb-0 text-info">
                                         <i className="bi bi-terminal me-1"></i>
                                         Bản tin NMEA GGA trực tiếp từ Chip Rover:
-                                    </label>
+                                    </span>
                                     {rawGgaSentence && (
                                         <button
                                             type="button"
                                             className="btn btn-outline-info btn-sm py-0 px-2"
                                             style={{ fontSize: '0.75rem' }}
                                             onClick={() => {
-                                                navigator.clipboard.writeText(rawGgaSentence);
-                                                window.showToast?.('Đã sao chép bản tin GGA!');
+                                                navigator.clipboard.writeText(rawGgaSentence).then(
+                                                    () => window.showToast?.('Đã sao chép bản tin GGA!'),
+                                                    () => window.showError?.("Không thể sao chép vào bộ nhớ tạm.")
+                                                );
                                             }}
                                         >
                                             <i className="bi bi-clipboard me-1"></i>Copy GGA
@@ -1745,8 +1749,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             * Chế độ này thiết bị sẽ tự đo trung bình cộng vị trí. Phù hợp thiết lập trạm tạm thời.
                         </div>
                         <div className="col-md-6">
-                            <label className="form-label">Thời gian khảo sát (giây)</label>
-                            <input
+                            <label htmlFor="base-survey-duration" className="form-label">Thời gian khảo sát (giây)</label>
+                            <input id="base-survey-duration"
                                 type="number" className="form-control"
                                 value={svinDuration} onChange={(e) => setSvinDuration(e.target.value)}
                                 required
@@ -1757,8 +1761,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             {activeChip === 'Unicorecomm' ? (
                                 <div className="form-text mt-4">UM tự lấy trung bình theo thời gian. Kết quả cần được kiểm tra trước khi dùng làm tọa độ cố định.</div>
                             ) : <>
-                            <label className="form-label fw-bold">Giới hạn sai số (m)</label>
-                            <input
+                            <label htmlFor="base-survey-accuracy" className="form-label fw-bold">Giới hạn sai số (m)</label>
+                            <input id="base-survey-accuracy"
                                 type="number" step="0.01" className="form-control"
                                 value={svinAccuracyM} onChange={(e) => setSvinAccuracyM(e.target.value)}
                                 required placeholder="Ví dụ: 3.0"
@@ -1836,9 +1840,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 </>}
                             </div>}
                             <div className="gnss-output-policy__summary" style={isLteStation ? {gridColumn: '1 / -1'} : undefined}>
-                                <label className="gnss-output-policy__label gnss-output-policy__label--accent">
+                                <span className="gnss-output-policy__label gnss-output-policy__label--accent">
                                     <i className="bi bi-info-circle me-1"></i>Thông tin Hệ vệ tinh & Bản tin RTCM
-                                </label>
+                                </span>
                                 <div className="gnss-output-policy__info" style={isLteStation ? {height: 'auto'} : undefined}>
                                     <div>
                                         <div className="gnss-output-policy__section-title">
@@ -2167,6 +2171,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             <input
                 type={visiblePasswords[name] ? 'text' : 'password'}
                 className="form-control"
+                id={name}
                 name={name}
                 aria-label={label}
                 value={formState[name]}
@@ -2388,7 +2393,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                         </div>
                         {showS1StreamToggle && (
                             <div className="col-md-6">
-                                <label className="form-label">Server 1: Chế độ stream</label>
+                                <span className="form-label">Server 1: Chế độ stream</span>
                                 {canManageStationMode ? (
                                     <div className="form-check form-switch pt-2">
                                         <input
@@ -2417,7 +2422,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
                         {showS2StreamToggle && (
                             <div className="col-md-6">
-                                <label className="form-label">Server 2: Chế độ stream</label>
+                                <span className="form-label">Server 2: Chế độ stream</span>
                                 {canManageStationMode ? (
                                     <div className="form-check form-switch pt-2">
                                         <input
@@ -2472,8 +2477,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                     </div>
                                     <div className="row g-3">
                                         <div className="col-md-8">
-                                            <label className="form-label">Command Host / IP</label>
-                                            <input
+                                            <label htmlFor="command_host" className="form-label">Command Host / IP</label>
+                                            <input id="command_host"
                                                 type="text"
                                                 className="form-control"
                                                 name="command_host"
@@ -2483,8 +2488,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             />
                                         </div>
                                         <div className="col-md-4">
-                                            <label className="form-label">Command Port</label>
-                                            <input
+                                            <label htmlFor="command_port" className="form-label">Command Port</label>
+                                            <input id="command_port"
                                                 type="number"
                                                 className="form-control"
                                                 name="command_port"
@@ -2494,12 +2499,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             />
                                         </div>
                                         <div className="col-md-6">
-                                            <label className="form-label">Command Password</label>
+                                            <label htmlFor="command_pass" className="form-label">Command Password</label>
                                             {renderPasswordInput('command_pass', 'mật khẩu Command')}
                                         </div>
                                         <div className="col-md-6">
-                                            <label className="form-label">Command Mountpoint</label>
-                                            <input
+                                            <label htmlFor="command_mp" className="form-label">Command Mountpoint</label>
+                                            <input id="command_mp"
                                                 type="text"
                                                 className="form-control"
                                                 name="command_mp"
@@ -2558,9 +2563,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
                                 {/* NTRIP Version Selection */}
                                 <div className="mb-3 p-3 bg-dark rounded border border-secondary">
-                                    <label className="form-label fw-bold text-info">
+                                    <span className="form-label fw-bold text-info">
                                         <i className="bi bi-gear-fill me-2"></i>NTRIP Protocol Version
-                                    </label>
+                                    </span>
                                     <div className="d-flex gap-4">
                                         <div className="form-check">
                                             <input
@@ -2622,8 +2627,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-md-4">
-                                        <label className="form-label">Port</label>
-                                        <input
+                                        <label htmlFor="port1" className="form-label">Port</label>
+                                        <input id="port1"
                                             type="number"
                                             className="form-control"
                                             name="port1"
@@ -2634,11 +2639,11 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-md-6">
-                                        <label className="form-label">
+                                        <label htmlFor="username1" className="form-label">
                                             Username
                                             <small className="text-muted ms-1">(NTRIP Source Account)</small>
                                         </label>
-                                        <input
+                                        <input id="username1"
                                             type="text"
                                             className="form-control"
                                             name="username1"
@@ -2651,12 +2656,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         </small>
                                     </div>
                                     <div className="col-md-6">
-                                        <label className="form-label">Password</label>
+                                        <label htmlFor="password1" className="form-label">Password</label>
                                         {renderPasswordInput('password1', 'mật khẩu Caster 1')}
                                     </div>
                                     <div className="col-12">
-                                        <label className="form-label">Mountpoint</label>
-                                        <input
+                                        <label htmlFor="mountpoint1" className="form-label">Mountpoint</label>
+                                        <input id="mountpoint1"
                                             type="text"
                                             className="form-control"
                                             name="mountpoint1"
@@ -2706,9 +2711,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
 
                                 {/* NTRIP Version Selection */}
                                 <div className="mb-3 p-3 bg-dark rounded border border-secondary">
-                                    <label className="form-label fw-bold text-info">
+                                    <span className="form-label fw-bold text-info">
                                         <i className="bi bi-gear-fill me-2"></i>NTRIP Protocol Version
-                                    </label>
+                                    </span>
                                     <div className="d-flex gap-4">
                                         <div className="form-check">
                                             <input
@@ -2770,8 +2775,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-md-4">
-                                        <label className="form-label">Port</label>
-                                        <input
+                                        <label htmlFor="port2" className="form-label">Port</label>
+                                        <input id="port2"
                                             type="number"
                                             className="form-control"
                                             name="port2"
@@ -2782,11 +2787,11 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-md-6">
-                                        <label className="form-label">
+                                        <label htmlFor="username2" className="form-label">
                                             Username
                                             <small className="text-muted ms-1">(NTRIP Source Account)</small>
                                         </label>
-                                        <input
+                                        <input id="username2"
                                             type="text"
                                             className="form-control"
                                             name="username2"
@@ -2799,12 +2804,12 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         </small>
                                     </div>
                                     <div className="col-md-6">
-                                        <label className="form-label">Password</label>
+                                        <label htmlFor="password2" className="form-label">Password</label>
                                         {renderPasswordInput('password2', 'mật khẩu Caster 2')}
                                     </div>
                                     <div className="col-12">
-                                        <label className="form-label">Mountpoint</label>
-                                        <input
+                                        <label htmlFor="mountpoint2" className="form-label">Mountpoint</label>
+                                        <input id="mountpoint2"
                                             type="text"
                                             className="form-control"
                                             name="mountpoint2"
@@ -2884,7 +2889,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                             <small className="text-muted">Mặc định: "source" (NTRIP v1). Caster hiện đại có thể yêu cầu username riêng.</small>
                                         </div>
                                         <div className="col-md-6">
-                                            <label className="form-label">Password</label>{renderPasswordInput(`password${sid}`, `Mật khẩu Caster ${sid}`)}
+                                            <label htmlFor={`password${sid}`} className="form-label">Password</label>{renderPasswordInput(`password${sid}`, `Mật khẩu Caster ${sid}`)}
                                         </div>
                                         <div className="col-12">
                                             <label className="form-label" htmlFor={`mountpoint${sid}`}>Mountpoint</label>
@@ -2954,7 +2959,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                 </div>
 
                                 <div className="mb-3">
-                                    <label className="form-label d-block">NTRIP Version</label>
+                                    <span className="form-label d-block">NTRIP Version</span>
                                     <div className="btn-group" role="group" aria-label="RTCM NTRIP Version">
                                         <input
                                             type="radio"
@@ -2982,8 +2987,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                 {/* Connection Details */}
                                 <div className="row g-3">
                                     <div className="col-md-8">
-                                        <label className="form-label">Caster Host / IP</label>
-                                        <input
+                                        <label htmlFor="rtcmserver1" className="form-label">Caster Host / IP</label>
+                                        <input id="rtcmserver1"
                                             type="text"
                                             className="form-control"
                                             name="rtcmserver1"
@@ -2993,8 +2998,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-md-4">
-                                        <label className="form-label">Caster Port</label>
-                                        <input
+                                        <label htmlFor="rtcmport1" className="form-label">Caster Port</label>
+                                        <input id="rtcmport1"
                                             type="number"
                                             className="form-control"
                                             name="rtcmport1"
@@ -3004,8 +3009,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-12">
-                                        <label className="form-label">Mountpoint</label>
-                                        <input
+                                        <label htmlFor="rtcmmountpoint1" className="form-label">Mountpoint</label>
+                                        <input id="rtcmmountpoint1"
                                             type="text"
                                             className="form-control"
                                             name="rtcmmountpoint1"
@@ -3015,8 +3020,8 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-md-6">
-                                        <label className="form-label">Username</label>
-                                        <input
+                                        <label htmlFor="rtcmusername1" className="form-label">Username</label>
+                                        <input id="rtcmusername1"
                                             type="text"
                                             className="form-control"
                                             name="rtcmusername1"
@@ -3026,7 +3031,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                                         />
                                     </div>
                                     <div className="col-md-6">
-                                        <label className="form-label">Password</label>
+                                        <label htmlFor="rtcmpassword1" className="form-label">Password</label>
                                         {renderPasswordInput('rtcmpassword1', 'mật khẩu RTCM')}
                                     </div>
                                 </div>
