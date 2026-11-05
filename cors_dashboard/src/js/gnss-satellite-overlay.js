@@ -71,7 +71,7 @@
         }
 
         async fetchTle() {
-            if (this.tleRequest) return this.tleRequest;
+            if (this.tleRequest != null) return this.tleRequest;
             this.tleRequest = this._fetchTle();
             try {
                 return await this.tleRequest;
@@ -629,7 +629,7 @@
             }
 
             if (!this.rawSatellites.length) {
-                this.fetchTle();
+                void this.fetchTle();
             } else {
                 this.updateSatelliteMarkers();
             }
@@ -647,7 +647,7 @@
         attachToRenderer(renderFrame) {
             this.detachFromMap();
             this.renderFrame = renderFrame;
-            if (!this.rawSatellites.length) this.fetchTle();
+            if (!this.rawSatellites.length) void this.fetchTle();
             else this.updateSatelliteMarkers();
             this.tickTimer = setInterval(() => {
                 if (document.visibilityState !== 'hidden') this.propagateTick();

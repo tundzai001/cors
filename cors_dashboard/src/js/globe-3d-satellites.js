@@ -263,12 +263,12 @@
             const mgr = window.GnssSatelliteOverlay;
             this.unsubscribeOverlay = mgr?.subscribe(() => this._syncCatalog());
             this._syncCatalog();
-            if (!mgr?.rawSatellites?.length) this.loadCatalog();
+            if (!mgr?.rawSatellites?.length) void this.loadCatalog();
             this.tickTimer = setInterval(() => {
                 if (document.hidden || !this.active) return;
                 this._syncCatalog();
                 this.onOverlayTick();
-                if (Date.now() - this.lastCatalogFetch > 3600000) this.loadCatalog();
+                if (Date.now() - this.lastCatalogFetch > 3600000) void this.loadCatalog();
             }, 1000);
         }
 
@@ -294,7 +294,7 @@
                     const retry = document.createElement('button');
                     retry.type = 'button';
                     retry.textContent = 'Thử lại';
-                    retry.onclick = () => this.loadCatalog();
+                    retry.onclick = () => { void this.loadCatalog(); };
                     this.statusEl.appendChild(retry);
                 }
             } finally {
@@ -391,7 +391,7 @@
                         return;
                     }
                     const velocity = posVel.velocity;
-                    const speedKms = velocity ? Math.hypot(velocity.x, velocity.y, velocity.z) : NaN;
+                    const speedKms = velocity ? Math.hypot(velocity.x, velocity.y, velocity.z) : Number.NaN;
 
                     const pos3D = Math3D.latLonAltToVector3(lat, lon, altKm);
                     mesh.position.copy(pos3D);

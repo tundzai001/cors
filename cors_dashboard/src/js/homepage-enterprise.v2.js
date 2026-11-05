@@ -2156,7 +2156,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
         .replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-zA-Z0-9._-]+/g, '.')
         .replace(/\.{2,}/g, '.')
-        .replace(/^\.+|\.+$/g, '')
+        .replace(/^\.|\.$/g, '')
         .toLowerCase();
     const openStationMap = () => {
         if (typeof window.openPublicMap === 'function') {

@@ -109,7 +109,7 @@ function toStationSlug(value) {
         .replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-zA-Z0-9._-]+/g, '.')
         .replace(/\.{2,}/g, '.')
-        .replace(/^\.+|\.+$/g, '')
+        .replace(/^\.|\.$/g, '')
         .toLowerCase();
 }
 
@@ -563,7 +563,7 @@ window.switchView = function (viewName) {
                 if (homeComp && window.homepageRoot && globalState.currentView === 'homepage') {
                     renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
                 }
-            });
+            }).catch(error => console.error('Could not render the public page:', error));
         } else {
             window.homepageRoot.render(null);
         }
@@ -578,7 +578,7 @@ window.switchView = function (viewName) {
                 if (blogComp && window.blogRoot && globalState.currentView === 'blog') {
                     renderReactComponent(window.blogRoot, blogComp, { slug }, 'Blog component is not loaded');
                 }
-            });
+            }).catch(error => console.error('Could not render the public page:', error));
         } else {
             window.blogRoot.render(null);
         }
@@ -593,7 +593,7 @@ window.switchView = function (viewName) {
                     if (stationComp && window.enterpriseDetailRoot && globalState.currentView === 'station-detail') {
                         renderReactComponent(window.enterpriseDetailRoot, stationComp, { device }, 'Station detail component is not loaded');
                     }
-                });
+                }).catch(error => console.error('Could not render the public page:', error));
             }
         } else {
             window.enterpriseDetailRoot.render(null);
@@ -607,7 +607,7 @@ window.switchView = function (viewName) {
                 if (apiDocsComp && window.apiDocsRoot && globalState.currentView === 'api-docs') {
                     renderReactComponent(window.apiDocsRoot, apiDocsComp, {}, 'API docs component is not loaded');
                 }
-            });
+            }).catch(error => console.error('Could not render the public page:', error));
         } else {
             window.apiDocsRoot.render(null);
         }
@@ -1253,7 +1253,7 @@ function connectWebSocket() {
         updateConnectionStatus(true);
         wsReconnectAttempts = 0;
         lastStatusMetaBySerial.clear();
-        refreshDashboardSnapshot(socket);
+        void refreshDashboardSnapshot(socket);
         //console.log('✓ WebSocket connected');
     };
 
@@ -1946,7 +1946,7 @@ dismissAppPreloader();
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeCorsApp, { once: true });
 } else {
-    initializeCorsApp();
+    initializeCorsApp().catch(error => console.error('Could not initialize the dashboard:', error));
 }
 
 window.openPublicMap = async function() {

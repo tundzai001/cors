@@ -98,6 +98,22 @@ for (const phase of ['auto_setup_rover', 'auto_setup_wait_fix', 'auto_setup_aver
 }
 console.log('PASS: all Auto Base stages keep their card status while paused S1 and real stale offline remain distinct');
 
+let selectedSerial;
+let deletedSerial;
+const controls = allNodes(window.DeviceListItem({
+  device: {...live, timestamp: Date.now()/1000}, currentUser: {role: 'admin'}, isSelected: true,
+  onSelect: serial => { selectedSerial = serial; }, onDelete: serial => { deletedSerial = serial; },
+}));
+const select = controls.find(node => node.type === 'button' && node.props.className.includes('stretched-link'));
+const remove = controls.find(node => node.type === 'button' && node.props.title === 'Xóa trạm');
+assert.equal(select.props['aria-pressed'], true);
+select.props.onClick();
+assert.equal(selectedSerial, live.serial);
+assert.equal(deletedSerial, undefined);
+remove.props.onClick({stopPropagation() {}});
+assert.equal(deletedSerial, live.serial);
+console.log('PASS: native station selection and deletion are separate controls');
+
 // Offline takes precedence over saved sleep/output telemetry on every surface.
 const staleSleep = { ...sleepingRelay, status: 'sleep', timestamp: Date.now() / 1000 - 240 };
 assert.equal(status(staleSleep), 'offline');

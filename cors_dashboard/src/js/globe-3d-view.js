@@ -68,8 +68,8 @@
                 this._initThreeScene();
                 this._createStarfield();
                 this._createEarth();
-                this._loadWorldCountries();
-                this._loadVietnamBoundaries();
+                void this._loadWorldCountries();
+                void this._loadVietnamBoundaries();
                 if (window.Globe3DSatelliteLayer) {
                     this.satelliteLayer = new window.Globe3DSatelliteLayer(this);
                 }
@@ -376,9 +376,10 @@
             }
         }
 
-        focusVietnam(animate = true, distance = 7.8, center = { lat: 16, lng: 108 }) {
+        focusVietnam(animate = true, distance = 7.8, center) {
+            const { lat, lng } = center ?? { lat: 16, lng: 108 };
             const Math3D = window.Globe3DMath;
-            const normal = (Math3D?.latLonAltToVector3(center.lat, center.lng, 0) || new window.THREE.Vector3(-1.48, 1.38, -4.57)).normalize();
+            const normal = (Math3D?.latLonAltToVector3(lat, lng, 0) || new window.THREE.Vector3(-1.48, 1.38, -4.57)).normalize();
             const targetPos = normal.multiplyScalar(distance);
             const targetLook = new window.THREE.Vector3(0, 0, 0);
 

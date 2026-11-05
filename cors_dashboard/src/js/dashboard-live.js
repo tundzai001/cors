@@ -408,7 +408,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords, rtcmOnly = false
         const lat = Number.parseFloat(coords.lat);
         const lon = Number.parseFloat(coords.lon);
 
-        if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
+        if (Number.isNaN(lat) || Number.isNaN(lon) || (lat === 0 && lon === 0)) return;
 
         // Kiểm tra Leaflet đã load chưa
         const leaflet = getLeaflet();
@@ -1471,7 +1471,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     let accUnit = "m";
     let accColor = "#ff6b6b";
 
-    if (typeof acc === "number" && !isNaN(acc)) {
+    if (typeof acc === "number" && !Number.isNaN(acc)) {
         if (acc < 1) {
             accDisplayValue = (acc * 100).toFixed(1);
             accUnit = "cm";

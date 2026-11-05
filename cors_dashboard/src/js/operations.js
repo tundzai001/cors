@@ -363,6 +363,6 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         bindEvents();
-        refreshAll();
+        void refreshAll();
     });
 })();

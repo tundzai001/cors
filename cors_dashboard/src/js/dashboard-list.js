@@ -267,14 +267,14 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
     };
 
     return (
-        <div className={`device-card dashboard-device-card animate-fade-in-up ${isSelected ? 'active' : ''}`} style={{ animationDelay: `${index * 0.05}s` }} onClick={() => onSelect(device.serial)}>
+        <div className={`device-card dashboard-device-card animate-fade-in-up ${isSelected ? 'active' : ''}`} style={{ animationDelay: `${index * 0.05}s` }}>
             <div className={`status-bar ${metrics.statusColorClass}`}></div>
 
             <div className="dashboard-device-card__top d-flex justify-content-between align-items-start mb-1 ps-2">
                 <div className="flex-grow-1 pe-2">
-                    <div className="device-name" title={device.name || device.serial}>
+                    <button type="button" className="device-name stretched-link bg-transparent border-0 p-0 text-start" title={device.name || device.serial} aria-pressed={isSelected} onClick={() => onSelect(device.serial)}>
                         {device.name || device.serial}
-                    </div>
+                    </button>
                     {!metrics.hideStatusBadge && (
                         <div className="mt-1 d-flex align-items-center gap-1">
                             <span className={`badge ${metrics.statusBadgeClass}`}>
@@ -340,7 +340,7 @@ const DeviceListItem = memo(function DeviceListItem({ device, index = 0, isSelec
             )}
 
             {canDelete && (
-                <button className="btn btn-delete" onClick={handleDelete} title="Xóa trạm">
+                <button type="button" className="btn btn-delete" style={{ zIndex: 2 }} onClick={handleDelete} title="Xóa trạm">
                     <i className="bi bi-trash3"></i>
                 </button>
             )}

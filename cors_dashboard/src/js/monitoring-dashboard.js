@@ -158,10 +158,10 @@ function updateCharts(data) {
 
 function startMonitoringPolling() {
     stopMonitoringPolling();
-    fetchHealthData();
+    void fetchHealthData();
     refreshTimer = setInterval(() => {
         if (document.hidden) return;
-        fetchHealthData();
+        void fetchHealthData();
     }, MONITORING_POLL_INTERVAL_MS);
 }
 
