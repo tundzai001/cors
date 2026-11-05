@@ -184,11 +184,23 @@ class ZaloBotService(
             r"\1<redacted>",
             text,
         )
-        return re.sub(
-            r"(?i)((?:[A-Za-z0-9_]*password[A-Za-z0-9_]*|passwd|secret[A-Za-z0-9_]*|token[A-Za-z0-9_]*|pass|mk|s2_mk)\s*(?:=|\s)\s*)(\"[^\"]*\"|'[^']*'|\S+)",
-            r"\1<redacted>",
-            text,
-        )
+        value_pattern = re.compile(r"""(?:\s*=\s*|\s+)(?=\S)(?P<value>"[^"]*"|'[^']*'|\S+)""")
+        segments = []
+        cursor = 0
+        for key in re.finditer(r"[A-Za-z0-9_]+", text):
+            if key.start() < cursor:
+                continue
+            name = key[0].lower()
+            if not (any(part in name for part in ("password", "secret", "token"))
+                    or name.endswith(("passwd", "pass", "mk"))):
+                continue
+            value = value_pattern.match(text, key.end())
+            if value:
+                segments.append(text[cursor:value.start("value")])
+                segments.append("<redacted>")
+                cursor = value.end()
+        segments.append(text[cursor:])
+        return "".join(segments)
 
     @staticmethod
     def _safe_debug_value(value: Any, depth: int = 0) -> Any:

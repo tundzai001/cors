@@ -4,7 +4,7 @@
         if (!['lat', 'lon'].includes(axis)) throw new Error('Trục tọa độ không hợp lệ.');
         let text = String(value).trim().toUpperCase().replace(/−/g, '-').replace(/,/g, '.');
         const prefix = text.match(/^([NSEW])\s*/);
-        const suffix = text.match(/\s*([NSEW])$/);
+        const suffix = text.match(/([NSEW])$/);
         if (prefix && suffix) throw new Error('Chỉ ghi hướng N/S/E/W một lần.');
         const direction = prefix?.[1] || suffix?.[1];
         if (direction && !(axis === 'lat' ? 'NS' : 'EW').includes(direction)) {
@@ -47,7 +47,7 @@
         const total = Math.round(Math.abs(number) * 3600 * 1e6);
         const degrees = Math.floor(total / 3600e6);
         const minutes = Math.floor(total % 3600e6 / 60e6);
-        const seconds = (total % 60e6 / 1e6).toFixed(6).replace(/\.?0+$/, '');
+        const seconds = String(Number((total % 60e6 / 1e6).toFixed(6)));
         if (mode === 'dms') return `${degrees}°${String(minutes).padStart(2, '0')}′${seconds}″${axis === 'lat' ? number < 0 ? 'S' : 'N' : number < 0 ? 'W' : 'E'}`;
         if (mode !== 'packed_dms') throw new Error('Định dạng góc không hợp lệ.');
         const [whole, fraction] = seconds.split('.');
@@ -56,7 +56,7 @@
     function parsePair(value) {
         // Direction suffixes identify the axes even when latitude is pasted first.
         const text = String(value).trim();
-        const matches = [...text.matchAll(/([+-]?\d{1,3}(?:\s*°\s*|\s+|:)\d{1,2}(?:\s*['′’]\s*|\s+|:)\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*[NSEW])/gi)];
+        const matches = [...text.matchAll(/([+-]?\d{1,3}(?:\s*°\s*|\s+|:)\d{1,2}(?:\s*['′’]\s*|\s+|:)\d{1,2}(?:[.,]\d+)?(?:\s*["″”])?\s*[NSEW])/gi)];
         if (matches.length !== 2) return null;
         if (text.replace(matches[0][0], '').replace(matches[1][0], '').replace(/[\s,;]+/g, '')) return null;
         const result = {};

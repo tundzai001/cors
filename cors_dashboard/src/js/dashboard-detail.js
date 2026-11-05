@@ -79,6 +79,8 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
     }, [device.service_config]);
 
     // --- 2. TẢI DANH SÁCH ROVER ---
+    const roverFieldId = React.useId();
+
     const fetchRovers = async () => {
         try {
             setIsLoading(true);
@@ -95,7 +97,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
 
     useEffect(() => {
         if (device?.serial) {
-            fetchRovers();
+            void fetchRovers();
         }
     }, [device?.serial]);
 
@@ -148,7 +150,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
             // Reset form
             setNewUsername('');
             setNewPassword('');
-            fetchRovers(); // Reload list
+            void fetchRovers(); // Reload list
 
         } catch (error) {
             window.showError(error.message);
@@ -168,7 +170,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
             const response = await window.apiFetch(`/api/rovers/${roverId}`, { method: 'DELETE' });
             if (!response.ok) throw new Error("Xóa thất bại");
             window.showSuccess(`Đã xóa tài khoản '${username}'.`);
-            fetchRovers();
+            void fetchRovers();
         } catch (error) {
             window.showError(error.message);
         }
@@ -193,8 +195,8 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                 <form onSubmit={handleCreateRover}>
                     <div className="row g-3">
                         <div className="col-md-3">
-                            <label className="form-label small fw-bold">Tên đăng nhập</label>
-                            <input
+                            <label className="form-label small fw-bold" htmlFor={`${roverFieldId}-newUsername`}>Tên đăng nhập</label>
+                            <input id={`${roverFieldId}-newUsername`}
                                 type="text"
                                 className="form-control"
                                 value={newUsername}
@@ -203,8 +205,8 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                             />
                         </div>
                         <div className="col-md-3">
-                            <label className="form-label small fw-bold">Mật khẩu</label>
-                            <input
+                            <label className="form-label small fw-bold" htmlFor={`${roverFieldId}-newPassword`}>Mật khẩu</label>
+                            <input id={`${roverFieldId}-newPassword`}
                                 type="text"
                                 className="form-control"
                                 value={newPassword}
@@ -212,8 +214,8 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                             />
                         </div>
                         <div className="col-md-3">
-                            <label className="form-label small fw-bold">Quyền truy cập (Mountpoint)</label>
-                            <select
+                            <label className="form-label small fw-bold" htmlFor={`${roverFieldId}-selectedMountpoint`}>Quyền truy cập (Mountpoint)</label>
+                            <select id={`${roverFieldId}-selectedMountpoint`}
                                 className="form-select"
                                 value={selectedMountpoint}
                                 onChange={(e) => setSelectedMountpoint(e.target.value)}
@@ -228,8 +230,8 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                             </select>
                         </div>
                         <div className="col-md-3">
-                            <label className="form-label small fw-bold">Thời hạn sử dụng</label>
-                            <select
+                            <label className="form-label small fw-bold" htmlFor={`${roverFieldId}-expiryDays`}>Thời hạn sử dụng</label>
+                            <select id={`${roverFieldId}-expiryDays`}
                                 className="form-select"
                                 value={expiryDays}
                                 onChange={(e) => setExpiryDays(e.target.value)}
@@ -464,7 +466,7 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
             })}
         </>}
         <button type="button" className="btn btn-outline-primary w-100 mt-3" style={{ minHeight: 44 }} disabled={disabled || storage?.inventory_supported !== true}
-            onClick={() => { setInventory(null); setInventoryOpen(true); run(null, 0); }}>Kiểm tra NVS</button>
+            onClick={() => { setInventory(null); setInventoryOpen(true); void run(null, 0); }}>Kiểm tra NVS</button>
         {storage && storage.inventory_supported !== true && <p className="small text-muted mt-1">Cập nhật firmware để xem các mục đang lưu.</p>}
         <dialog ref={inventoryDialog} className="esp-nvs-dialog bg-dark text-light border border-secondary rounded" aria-labelledby="nvs-inventory-title"
             onCancel={() => setInventoryOpen(false)} onClose={() => setInventoryOpen(false)}>
@@ -495,7 +497,7 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
                 </>}
             </div>
             <div className="d-flex flex-wrap justify-content-between gap-2 p-3 border-top border-secondary">
-                <button type="button" className="btn btn-outline-primary" style={{ minHeight: 44 }} disabled={disabled} onClick={() => { setInventory(null); run(null, 0); }}>Kiểm tra lại</button>
+                <button type="button" className="btn btn-outline-primary" style={{ minHeight: 44 }} disabled={disabled} onClick={() => { setInventory(null); void run(null, 0); }}>Kiểm tra lại</button>
                 <div className="d-flex gap-2">
                     <button type="button" className="btn btn-outline-secondary" style={{ minHeight: 44 }} disabled={disabled || !inventory || inventory.offset === 0} onClick={() => run(null, Math.max(0, inventory.offset - inventory.page_size))}>Trước</button>
                     <button type="button" className="btn btn-outline-secondary" style={{ minHeight: 44 }} disabled={disabled || !inventory?.has_more} onClick={() => run(null, inventory.offset + inventory.page_size)}>Sau</button>
@@ -782,7 +784,7 @@ const StationOperationsPanel = memo(function StationOperationsPanel({ device, ca
     };
 
     useEffect(() => {
-        loadOps();
+        void loadOps();
     }, [device?.serial]);
 
     const applyTemplate = async () => {
@@ -792,7 +794,7 @@ const StationOperationsPanel = memo(function StationOperationsPanel({ device, ca
             body: JSON.stringify({ template_id: templateId, serials: [device.serial] })
         });
         window.showSuccess?.('Template applied');
-        await loadOps();
+        await void loadOps();
     };
 
     const locked = window.CorsDashboardShared.getLockedServers(device).length > 0 || device?.is_locked || device?.status === 'locked';
@@ -1112,7 +1114,7 @@ const DetailsPanel = memo(function DetailsPanel({
         }
 
         if (tempName !== device.name) {
-            window.handleRenameDevice(device.serial, tempName);
+            void window.handleRenameDevice(device.serial, tempName);
         }
         setIsEditingName(false);
     };
@@ -1433,7 +1435,7 @@ const DetailsPanel = memo(function DetailsPanel({
                                 <button className="btn btn-link text-warning p-0 ms-2" title="Chỉnh sửa Serial" onClick={() => {
                                     const newSerial = prompt('Nhập Serial mới cho trạm LTE này:', device.serial);
                                     if (newSerial && newSerial.trim() && newSerial.trim() !== device.serial) {
-                                        window.handleRenameSerial(device.serial, newSerial.trim());
+                                        void window.handleRenameSerial(device.serial, newSerial.trim());
                                     }
                                 }}>
                                     <i className="bi bi-pencil-square"></i>
