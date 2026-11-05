@@ -33,3 +33,17 @@ secret. Compatibility tests verify existing python-jose session tokens, session
 claims, expiry and rejection of incorrect keys or algorithms. The migration
 requires no token or session data rewrite. Unused desktop UI dependencies and the
 unused asyncio backport are no longer installed with the services.
+
+## Redis server advisory mapped to the Python client
+
+SonarCloud may attach CVE-2021-31294 to the PyPI dependency `redis==5.2.1`.
+This package is redis-py, the Python client (`import redis.asyncio`). It does
+not contain the Redis server or its primary/replica replication implementation.
+The CVE describes a Redis **server** assertion triggered by a replica sending a
+SET command, fixed in the server source in 2021. It is not a redis-py advisory.
+
+For this exact PyPI finding, record a **Safe** review with that component mismatch
+and the upstream reference: https://www.cve.org/CVERecord?id=CVE-2021-31294.
+This review does not verify or change the Redis server deployed separately; its
+version and server advisories must be assessed independently. Do not disable the
+rule or broadly exclude Redis from dependency scanning.

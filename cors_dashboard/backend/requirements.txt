@@ -13,7 +13,7 @@ bidict==0.23.1
 certifi==2026.10.23
 cffi==2.0.0
 charset-normalizer==3.4.3
-click==8.3.0
+click==8.5.0
 colorama==0.4.6
 cryptography==50.0.2
 docutils==0.22.2
@@ -29,7 +29,6 @@ idna==3.20
 itsdangerous==2.2.0
 Jinja2==3.1.6
 mako==1.4.3
-markdown2==2.5.4
 MarkupSafe==3.0.2
 multidict==6.6.4
 nest-asyncio==1.6.0
