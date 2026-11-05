@@ -33,23 +33,86 @@ const displayMeridian = (value, report) => {
 };
 const displayProjectionScale = report => isSixDegreeReport(report) ? '0.9996' : report?.k0 ?? 'Chưa có dữ liệu';
 const Vn2000Result = ({ report }) => {
+    const sourceKey = JSON.stringify([report?.projected_coord, report?.central_meridian_deg, report?.k0, report?.rtcm1025]);
+    const [preview, setPreview] = useState(null);
+    const [meridian, setMeridian] = useState('');
+    const [scale, setScale] = useState('0.9999');
+    const [calculating, setCalculating] = useState(false);
+    const [error, setError] = useState('');
+    const requestRef = useRef(0);
+    useEffect(() => {
+        ++requestRef.current;
+        setPreview(null); setError(''); setCalculating(false);
+        setMeridian(report?.central_meridian_deg == null ? '' : displayMeridian(report.central_meridian_deg, report));
+        setScale(isSixDegreeReport(report) ? '0.9996' : '0.9999');
+        return () => { ++requestRef.current; };
+    }, [sourceKey]);
     if (!report?.transform_applied) return null;
-    const neh = report.projected_coord;
+    const displayed = preview?.sourceKey === sourceKey ? preview : report;
+    const neh = displayed.projected_coord;
     const hasNeh = neh && ['north', 'east', 'h'].every(key =>
-        neh[key] !== null && neh[key] !== '' && Number.isFinite(Number(neh[key])));
+        neh[key] != null && neh[key] !== '' && Number.isFinite(Number(neh[key])));
     const decoded = report.rtcm1025;
     const hasDecoded = decoded && decoded.raw_k0 != null && decoded.raw_l0 != null;
     const projectionSource = {rtcm1025:'CORS · RTCM 1025', manual:'Nhập L₀/k₀ thủ công', server_catalog:'Danh mục tỉnh trên máy chủ', not_used:'Không chuyển đổi'}[report.projection_source] || 'Báo cáo chưa lưu nguồn phép chiếu';
-    return <section className="border rounded p-3 mb-3" aria-label="Kết quả VN-2000 NEh">
-        <h3 className="h6 mb-2">VN-2000 — NEh · {projectionLabel(report)}</h3>
+    async function reproject() {
+        if (calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112) return;
+        const request = ++requestRef.current;
+        setCalculating(true); setError('');
+        try {
+            const response = await window.apiFetch('/api/coordinates/reproject-display', {
+                method: 'POST', body: JSON.stringify({
+                    ...report.projected_coord,
+                    source: { l0_deg: Number(report.central_meridian_deg), k0: Number(report.k0),
+                        false_easting: Number(report.rtcm1025?.false_easting ?? 500000),
+                        false_northing: Number(report.rtcm1025?.false_northing ?? 0) },
+                    target_l0_deg: Number(meridian), target_k0: Number(scale)
+                })
+            });
+            const data = await response.json();
+            if (request !== requestRef.current) return;
+            if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Không tính được múi hiển thị. Kiểm tra L₀ và dữ liệu gốc.');
+            setPreview({ ...data, projected_coord: { ...data.projected_coord, h: report.projected_coord.h }, sourceKey });
+        } catch (error) {
+            if (request === requestRef.current) setError(error.message);
+        } finally {
+            if (request === requestRef.current) setCalculating(false);
+        }
+    }
+    return <section className="border rounded p-3 mb-3" aria-label="Kết quả VN-2000 NEh" aria-busy={calculating}>
+        <h3 className="h6 mb-2">VN-2000 — NEh · {projectionLabel(displayed)}</h3>
         {hasNeh ? <dl className="row g-2 small mb-2">
             {[['north', 'N — Northing (m)'], ['east', 'E — Easting (m)'], ['h', 'h — Độ cao ellipsoid (m)']].map(([key, label]) => (
                 <div className="col-sm-4" key={key}><dt className="text-muted fw-normal">{label}</dt>
                     <dd className="font-monospace text-break mb-0">{String(neh[key])}</dd></div>
             ))}
         </dl> : <p className="small text-muted mb-2">Phiên cũ chưa lưu NEh. Cần lấy lại kết quả Auto Base để hiển thị đủ N, E, h.</p>}
-        <div className="small text-muted">Kinh tuyến trục: {displayMeridian(report.central_meridian_deg, report)}°; k₀: {displayProjectionScale(report)}.</div>
-        <p className="small mt-2 mb-1">Nguồn phép chiếu đang dùng: <strong>{projectionSource}</strong>.</p>
+        <div className="small text-muted" role="status" aria-live="polite">Kinh tuyến trục: {displayMeridian(displayed.central_meridian_deg, displayed)}°; k₀: {displayProjectionScale(displayed)}.{preview?.sourceKey === sourceKey && ' Kết quả hiển thị đã tính lại.'}</div>
+        {hasNeh && <div className="border-top mt-3 pt-3">
+            <div className="d-flex flex-wrap align-items-end gap-2">
+                <label className="small">Múi hiển thị
+                    <select className="form-select mt-1" style={{minHeight:44}} value={scale} disabled={calculating}
+                        onChange={event => setScale(event.target.value)}>
+                        <option value="0.9999">3° · k₀ = 0.9999</option>
+                        <option value="0.9996">6° · k₀ = 0.9996</option>
+                    </select>
+                </label>
+                <label className="small">Kinh tuyến trục L₀ (°)
+                    <input type="number" min="100" max="112" step="any" className="form-control mt-1" style={{minHeight:44,maxWidth:220}}
+                        value={meridian} disabled={calculating} onChange={event => setMeridian(event.target.value)} />
+                </label>
+                <button type="button" className="btn btn-outline-info" style={{minHeight:44}}
+                    disabled={calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112} onClick={reproject}>
+                    {calculating && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}
+                    {calculating ? 'Đang tính…' : 'Tính lại N/E/h'}
+                </button>
+                {preview?.sourceKey === sourceKey && <button type="button" className="btn btn-outline-secondary" style={{minHeight:44}} disabled={calculating}
+                    onClick={() => { setPreview(null); setError(''); }}>Xem kết quả gốc</button>}
+            </div>
+            <p className="small text-muted mt-2 mb-0">Chỉ đổi N/E hiển thị; giữ nguyên h, LLH và cấu hình Base. Không lấy mẫu lại.</p>
+            {error && <p className="small text-danger mt-2 mb-0" role="alert">{error}</p>}
+        </div>}
+        <p className="small mt-2 mb-1">Nguồn phép chiếu gốc: <strong>{projectionSource}</strong>.</p>
         <p className="small text-muted mb-0">Nhãn múi 3°/6° suy theo k₀ (0.9999/0.9996), không phải tỉnh được nhận diện. Ưu tiên RTCM 1025; nếu thiếu thì dùng nhập tay, sau đó danh mục tỉnh.</p>
         {(hasDecoded || report.projection_source === 'rtcm1025') && <details className="small mt-2">
             <summary className="py-2" style={{minHeight:44}}>Đối chiếu giải mã RTCM 1025</summary>
@@ -59,7 +122,7 @@ const Vn2000Result = ({ report }) => {
                     {[
                         ['Giá trị LoNO thô', decoded.raw_l0], ['Giá trị SNO thô', decoded.raw_k0],
                         ['L₀ giải mã (°)', decoded.l0_deg], ['k₀ giải mã', decoded.k0],
-                        ['L₀ đang dùng (°)', report.central_meridian_deg], ['k₀ đang dùng', report.k0],
+                        ['L₀ kết quả gốc (°)', report.central_meridian_deg], ['k₀ kết quả gốc', report.k0],
                         ['Mã loại phép chiếu trong 1025', decoded.projection_type],
                         ['False Easting (m)', decoded.false_easting], ['False Northing (m)', decoded.false_northing],
                     ].map(([label,value]) => <div className="col-sm-6" key={label}><dt className="text-muted fw-normal">{label}</dt><dd className="font-monospace text-break mb-0">{value == null ? 'Chưa ghi nhận' : String(value)}</dd></div>)}
@@ -342,6 +405,7 @@ const GnssReadbackDetails = ({ details }) => {
             </table>
         </div>
         <h6>Cổng và bản tin đầu ra</h6>
+        <p className="small text-muted">Đang xem {selected}. Cổng đối chiếu: {details.compare_ports?.join(', ') || 'Chưa chọn'}.</p>
         <div className="table-responsive border rounded">
             <table className="table table-sm align-middle mb-0 small">
                 <caption className="visually-hidden">Các cổng đầu ra được đọc trực tiếp từ chip</caption>
@@ -398,7 +462,7 @@ const GnssReadbackDetails = ({ details }) => {
                     if (enabledOnly && actual?.period == null && !expected) return null;
                     return <tr key={name}><th scope="row" className="fw-normal">{name}</th>
                         <td className={compare && ((!expected && actual?.period > 0) || (expected && actual?.period !== 1)) ? 'text-danger-emphasis' : ''}>{!actual ? 'Không có trong danh sách' : actual.period == null ? 'Một lần' : `${actual.period} giây`}</td>
-                        <td>{expected ? '1 giây' : compare ? 'Không bật' : 'Không đặt'}</td></tr>;
+                        <td>{expected ? '1 giây' : compare ? 'Không bật' : 'Không đối chiếu'}</td></tr>;
                 })}</tbody>
             </table>
             {logNames.length === 0 && <div className="small text-muted p-2">Chip không liệt kê log trên cổng này.</div>}
@@ -411,9 +475,11 @@ const GnssConfigVerification = ({ device, disabled }) => {
     const [result, setResult] = useState(null);
     const [expired, setExpired] = useState(false);
     const [notice, setNotice] = useState('');
+    const [comparisonPort, setComparisonPort] = useState('COM1');
     const requestRef = useRef(0);
     const info = device.system_info || {};
     const report = info.gnss_verification;
+    const selectComparisonPort = device.detected_chip_type === 'Unicorecomm' && info.gnss_verification_uart1 === true;
     const action = device.last_command_result;
     const configSnapshot = JSON.stringify(device.base_config || {});
     const offline = device.status === 'offline' || !!window.CorsDashboardShared?.isDeviceStaleOffline?.(device);
@@ -453,7 +519,7 @@ const GnssConfigVerification = ({ device, disabled }) => {
         const request = ++requestRef.current;
         setResult(null); setExpired(false); setNotice(''); setPending({ id: null });
         try {
-            const response = await window.DeviceApi.sendCommand(device.serial, 'VERIFY_GNSS_CONFIG', {});
+            const response = await window.DeviceApi.sendCommand(device.serial, 'VERIFY_GNSS_CONFIG', selectComparisonPort ? { port: comparisonPort } : {});
             const data = await response.json();
             if (request !== requestRef.current) return;
             if (!response.ok || !data.command_id) throw new Error(data.detail || 'Không gửi được yêu cầu xác minh.');
@@ -464,6 +530,13 @@ const GnssConfigVerification = ({ device, disabled }) => {
         }
     }
     return <section className="border-top border-secondary mt-3 pt-3" aria-label="Xác minh cấu hình" aria-busy={!!pending}>
+        {selectComparisonPort && <label className="d-inline-flex align-items-center gap-2 me-2 mb-2 small">
+            Cổng đối chiếu
+            <select className="form-select form-select-sm w-auto" style={{ minHeight: 44 }} value={comparisonPort} disabled={!!pending}
+                onChange={event => { setComparisonPort(event.target.value); setResult(null); setNotice(''); }}>
+                {['COM1', 'COM2', 'COM3'].map(port => <option key={port} value={port}>{port}</option>)}
+            </select>
+        </label>}
         <button type="button" className="btn btn-outline-info" style={{ minHeight: 44 }} disabled={blocked} onClick={verify}>
             {pending && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}
             {pending ? 'Đang xác minh…' : 'Xác minh cấu hình'}
@@ -523,6 +596,32 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
     const autoProgress = device?.auto_base_progress || {};
     const isAutoSetupActive = isAutoSetupStatus || ACTIVE_AUTO_BASE_PHASES.includes(autoProgress.phase);
+    const [isStoppingAutoBase, setIsStoppingAutoBase] = useState(false);
+    useEffect(() => {
+        if (!isAutoSetupActive) setIsStoppingAutoBase(false);
+    }, [isAutoSetupActive]);
+    useEffect(() => { setIsStoppingAutoBase(false); }, [device.serial]);
+    useEffect(() => {
+        if (!isStoppingAutoBase) return;
+        const timer = setTimeout(() => {
+            setIsStoppingAutoBase(false);
+            window.showError?.('Chưa nhận được xác nhận dừng Auto Base. Kiểm tra kết nối rồi thử lại.');
+        }, 45000);
+        return () => clearTimeout(timer);
+    }, [isStoppingAutoBase]);
+    async function stopAutoBase() {
+        if (disabled || isStoppingAutoBase || !onStopAutoBase) return;
+        const ok = await window.CorsUI?.confirmAction?.({
+            title: 'Dừng Auto Base',
+            message: 'Dừng lấy mẫu và khôi phục cấu hình Base trước phiên này?',
+            confirmText: 'Dừng Auto Base', confirmVariant: 'danger'
+        });
+        if (!ok) return;
+        setIsStoppingAutoBase(true);
+        try { await onStopAutoBase(device.serial); }
+        catch { setIsStoppingAutoBase(false); }
+    }
+
     const autoSamplesCollected = Number(autoProgress.samples_collected || 0);
     const autoSamplesTarget = Number(autoProgress.samples_target || 0);
     const autoProgressPercent = autoSamplesTarget > 0
@@ -1128,22 +1227,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 {isAutoSetupActive && onStopAutoBase && (
                                     <button
                                         type="button"
-                                        className="btn btn-outline-danger btn-sm py-0 px-2 fw-bold"
-                                        style={{ fontSize: '0.75rem' }}
-                                        onClick={async () => {
-                                            const ok = await window.CorsUI?.confirmAction?.({
-                                                title: 'Dừng Auto Base',
-                                                message: 'Bạn có chắc chắn muốn dừng quy trình Auto Base và đưa trạm về trạng thái bình thường?',
-                                                confirmText: 'Dừng Auto Base',
-                                                confirmVariant: 'danger'
-                                            });
-                                            if (ok) {
-                                                await onStopAutoBase(device.serial);
-                                            }
-                                        }}
+                                        className="btn btn-outline-danger btn-sm fw-bold"
+                                        style={{ minHeight:44 }} disabled={disabled || isStoppingAutoBase} onClick={stopAutoBase}
                                     >
-                                        <i className="bi bi-stop-circle-fill me-1"></i>
-                                        Dừng Auto Base
+                                        {isStoppingAutoBase ? <span className="spinner-border spinner-border-sm me-1" aria-hidden="true" /> : <i className="bi bi-stop-circle-fill me-1" aria-hidden="true" />}
+                                        {isStoppingAutoBase ? 'Đang dừng…' : 'Dừng Auto Base'}
                                     </button>
                                 )}
                                 {/* Fix Quality Badge */}
@@ -1908,6 +1996,13 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     </div>
                 )}
 
+                {!disabled && isAutoSetupActive && onStopAutoBase && (
+                    <button type="button" className="btn btn-outline-danger mt-4 w-100" style={{minHeight:44}}
+                        disabled={isStoppingAutoBase} onClick={stopAutoBase}>
+                        {isStoppingAutoBase ? <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" /> : <i className="bi bi-stop-circle-fill me-2" aria-hidden="true" />}
+                        {isStoppingAutoBase ? 'Đang dừng…' : 'Dừng Auto Base'}
+                    </button>
+                )}
                 {!disabled && (
                     <button
                         type="submit"

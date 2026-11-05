@@ -2,6 +2,7 @@
 #include "functions/backend/Backend_Agent_Internal.h"
 #include "functions/gnss/Ublox_Readback.h"
 #include "functions/gnss/Unicore_Readback.h"
+#include "functions/gnss/Unicore_Config_Verification.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -22,6 +23,37 @@ double configNumber(JsonVariantConst value, double fallback) {
         return end != text && *end == '\0' && std::isfinite(number) ? number : double(NAN);
     }
     return value.is<double>() ? value.as<double>() : double(NAN);
+}
+
+bool confirmSavedFixedPosition(JsonObjectConst base, JsonObjectConst readback, bool ublox, String &error) {
+    const auto reject = [&](const char *message) { error = message; return false; };
+    if (readback["state"] != "ok" || readback["mode_kind"] != "base")
+        return reject("Receiver mode does not match startup configuration");
+    JsonObjectConst coords = base["coords"].as<JsonObjectConst>();
+    if (coords.isNull()) coords = base;
+    const double fixedLatitude = configNumber(coords["lat"], NAN);
+    const double fixedLongitude = configNumber(coords["lon"], NAN);
+    const double fixedAltitude = configNumber(coords["alt"], NAN);
+    if (!std::isfinite(fixedLatitude) || !std::isfinite(fixedLongitude) || !std::isfinite(fixedAltitude))
+        return reject("Saved Fixed LLA coordinates or accuracy are invalid");
+    double lat = 0, lon = 0, height = 0;
+    if (ublox) {
+        const JsonObjectConst position = readback["bestpos"].as<JsonObjectConst>();
+        if (position["state"] != "ok" || position["position_type"] != "FIXEDPOS")
+            return reject("Receiver has not confirmed the saved fixed position");
+        lat = configNumber(position["lat"], NAN);
+        lon = configNumber(position["lon"], NAN);
+        height = configNumber(position["alt"], NAN);
+    } else {
+        const String mode = readback["mode_raw"] | String();
+        if (!UnicoreConfigVerification::parseFixedMode(mode.c_str(), lat, lon, height))
+            return reject("Receiver has not confirmed the saved fixed position");
+    }
+    if (!std::isfinite(lat) || !std::isfinite(lon) || !std::isfinite(height)
+        || std::abs(lat-fixedLatitude) > 1e-8 || std::abs(lon-fixedLongitude) > 1e-8
+        || std::abs(height-fixedAltitude) > 0.002)
+        return reject("Receiver fixed coordinates do not match the saved coordinates");
+    return true;
 }
 }
 
@@ -97,8 +129,6 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     options.gal = systems["gal"] | true; options.bds = systems["bds"] | true;
     options.qzss = systems["qzss"] | true; options.sbas = systems["sbas"] | true;
     CommandList commands;
-    double fixedLatitude = 0, fixedLongitude = 0, fixedAltitude = 0;
-    bool ellipsoid = detected == GnssSensorType::Ublox;
     if (restoreFixed) {
         JsonObjectConst coords = base["coords"].as<JsonObjectConst>();
         if (coords.isNull()) coords = base;
@@ -108,13 +138,11 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
             || std::abs(lat) > 90 || std::abs(lon) > 180 || alt < -12000 || alt > 100000
             || !std::isfinite(accuracy) || accuracy < 0.0001 || accuracy > 10000)
             return fail("Saved Fixed LLA coordinates or accuracy are invalid");
-        fixedLatitude = lat; fixedLongitude = lon; fixedAltitude = alt;
         if (detected == GnssSensorType::Unicore) {
             const String reference = base["altitude_reference"] | "LEGACY";
             if (reference != "ELLIPSOID" && reference != "LEGACY")
                 return fail("Unsupported saved altitude reference");
             if (reference == "ELLIPSOID") {
-                ellipsoid = true;
                 const String zero = "config undulation 0.0\r\n";
                 commands.push_back(Command(zero.begin(), zero.end()));
             }
@@ -147,30 +175,23 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     deserializeJson(readback, receiverBaseReadback_.c_str());
     const String expected = restoreFixed ? "base" : "survey_in";
     if (String(readback["mode_kind"] | "") != expected) return fail("Receiver mode does not match startup configuration");
-    if (restoreFixed) {
-        const JsonObjectConst position = readback["bestpos"].as<JsonObjectConst>();
-        if (position["state"] != "ok" || position["position_type"] != "FIXEDPOS")
-            return fail("Receiver has not confirmed the saved fixed position");
-        double lat = 0, lon = 0, height = 0;
-        if (detected == GnssSensorType::Ublox) {
-            lat = position["lat"].as<double>(); lon = position["lon"].as<double>(); height = position["alt"].as<double>();
-        } else {
-            const String raw = position["raw"] | String();
-            const int separator = raw.indexOf(';');
-            double undulation = 0;
-            char datum[16] = {};
-            if (separator < 0 || std::sscanf(raw.c_str()+separator+1,
-                    "%*[^,],%*[^,],%lf,%lf,%lf,%lf,%15[^,]", &lat, &lon, &height, &undulation, datum) != 5
-                    || std::strcmp(datum, "WGS84") != 0)
-                return fail("Receiver fixed-coordinate readback is invalid");
-            if (ellipsoid) height += undulation;
-        }
-        if (!std::isfinite(lat) || !std::isfinite(lon) || !std::isfinite(height)
-            || std::abs(lat-fixedLatitude) > 1e-8 || std::abs(lon-fixedLongitude) > 1e-8
-            || std::abs(height-fixedAltitude) > 0.002)
-            return fail("Receiver fixed coordinates do not match the saved coordinates");
-    }
+    if (restoreFixed && !confirmSavedFixedPosition(base, readback.as<JsonObjectConst>(),
+            detected == GnssSensorType::Ublox, error)) return fail(error);
     Serial.printf("[GNSS][STARTUP] %s; chip=%s\n", baseStartupState_.c_str(), sensorType_.c_str());
     markStatusDirty();
     return true;
+}
+
+void BackendAgent::reconcileBaseStartupReadback(JsonObjectConst readback) {
+    // Only recover a pending position confirmation, never command or persistence failures.
+    if (baseStartupState_ != "error"
+        || baseStartupError_ != "Receiver has not confirmed the saved fixed position") return;
+    DynamicJsonDocument config(CONFIG_DOCUMENT_SIZE);
+    if (deserializeJson(config, baseConfig_.c_str()) != DeserializationError::Ok
+        || config["base_setup_method"] != "FIXED_LLA") return;
+    String error;
+    if (!confirmSavedFixedPosition(config.as<JsonObjectConst>(), readback, sensorType_ == "Ublox", error)) return;
+    baseStartupState_ = "fixed_restored";
+    baseStartupError_.clear();
+    markStatusDirty();
 }

@@ -109,6 +109,7 @@ class IntegrationApiKeyTests(unittest.IsolatedAsyncioTestCase):
             "schemas": SimpleNamespace(redact_config_secrets=lambda value: value),
             "normalize_station_snapshot": normalize_station_snapshot, "PUBLIC_MAP_CACHE_TTL_SECONDS": 30,
             "_device_total_bps": lambda device: device.bps,
+            "crud": SimpleNamespace(is_blocked_device_serial=lambda serial: False),
         }
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), namespace)
         old_timestamp = int(time.time()) - 1000

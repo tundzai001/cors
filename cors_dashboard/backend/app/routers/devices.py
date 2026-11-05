@@ -208,6 +208,11 @@ async def send_generic_command(
                 expected = command_builder.build_ublox_verification_payload(device.base_config or {}, route_to_uart1=embedded, receiver_profile=profile)
             else:
                 expected = command_builder.build_unicore_verification_payload(device.base_config or {}, current_port=embedded)
+                selected_port = command.payload.get("port")
+                if selected_port is not None:
+                    if not embedded or selected_port not in ("COM1", "COM2", "COM3"):
+                        raise ValueError("Cổng đối chiếu phải là COM1, COM2 hoặc COM3 trên ESP32.")
+                    expected["port"] = selected_port
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         command_id = secrets.token_urlsafe(18)

@@ -552,6 +552,22 @@
     },
     {
       "type": "APIRoute",
+      "path": "/api/coordinates/auto-base-location",
+      "methods": [
+        "POST"
+      ],
+      "name": "auto_base_location"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/coordinates/reproject-display",
+      "methods": [
+        "POST"
+      ],
+      "name": "reproject_display"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/gnss/satellites/tle",
       "methods": [
         "GET"
@@ -653,6 +669,22 @@
         "POST"
       ],
       "name": "sync_admin_caster_sources"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/admin/caster-sources/restore",
+      "methods": [
+        "POST"
+      ],
+      "name": "restore_admin_caster_source"
+    },
+    {
+      "type": "APIRoute",
+      "path": "/api/admin/caster-sources",
+      "methods": [
+        "PUT"
+      ],
+      "name": "update_admin_caster_source"
     },
     {
       "type": "APIRoute",
@@ -1340,22 +1372,6 @@
     },
     {
       "type": "APIRoute",
-      "path": "/station/{rest_of_path:path}",
-      "methods": [
-        "GET"
-      ],
-      "name": "serve_spa"
-    },
-    {
-      "type": "APIRoute",
-      "path": "/blog/{rest_of_path:path}",
-      "methods": [
-        "GET"
-      ],
-      "name": "serve_spa"
-    },
-    {
-      "type": "APIRoute",
       "path": "/blog",
       "methods": [
         "GET"
@@ -1380,7 +1396,7 @@
     },
     {
       "type": "APIRoute",
-      "path": "/index.html",
+      "path": "/",
       "methods": [
         "GET"
       ],
@@ -1388,11 +1404,11 @@
     },
     {
       "type": "APIRoute",
-      "path": "/",
+      "path": "/index.html",
       "methods": [
         "GET"
       ],
-      "name": "serve_index"
+      "name": "redirect_index"
     },
     {
       "type": "APIRoute",
@@ -1441,7 +1457,6 @@
       {
         "allow_origins": [
           "https://base.aitogy.com",
-          "http://118.70.171.179:8000",
           "http://127.0.0.1:8000",
           "http://localhost:8000",
           "http://127.0.0.1:8082",

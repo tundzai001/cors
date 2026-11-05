@@ -10,6 +10,16 @@
 namespace UnicoreConfigVerification {
 struct Log { char name[24] = {}; uint8_t port = 0; double period = 0; };
 
+// MODE reports the configured Fixed LLA values, in the same units sent by mode base.
+inline bool parseFixedMode(const char *mode, double &lat, double &lon, double &alt) {
+    if (!mode || std::strncmp(mode, "MODE BASE ", 10) != 0) return false;
+    int end = 0;
+    if (std::sscanf(mode + 10, "%lf %lf %lf %n", &lat, &lon, &alt, &end) != 3
+        || !end || mode[10 + end] != '\0') return false;
+    return std::isfinite(lat) && std::isfinite(lon) && std::isfinite(alt)
+        && std::abs(lat) <= 90 && std::abs(lon) <= 180 && alt >= -12000 && alt <= 100000;
+}
+
 // An unspecified current port can only be resolved from an unambiguous log list.
 inline uint8_t comparisonPort(uint8_t configured, const std::vector<Log> &logs) {
     if (configured >= 1 && configured <= 3) return configured;

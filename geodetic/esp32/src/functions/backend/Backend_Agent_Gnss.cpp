@@ -39,17 +39,33 @@ bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &co
     double wanted[3];
     size_t coordinate = 0;
     for (const char *key : {"lat", "lon", "alt"}) {
-        const String value = payload["coords"][key].as<String>();
-        char *end = nullptr;
-        wanted[coordinate++] = std::strtod(value.c_str(), &end);
-        if (value.isEmpty() || end == value.c_str() || *end || !std::isfinite(wanted[coordinate - 1])) {
+        const JsonVariantConst input = payload["coords"][key];
+        double value = NAN;
+        if (input.is<const char *>()) {
+            const char *text = input.as<const char *>();
+            char *end = nullptr;
+            value = std::strtod(text, &end);
+            if (end == text || *end) value = NAN;
+        } else if (!input.is<bool>() && input.is<double>()) {
+            value = input.as<double>();
+        }
+        if (!std::isfinite(value)) {
             error = "Invalid Unicore verification coordinates"; return false;
         }
+        wanted[coordinate++] = value;
     }
     if (std::abs(wanted[0]) > 90 || std::abs(wanted[1]) > 180 || wanted[2] < -12000 || wanted[2] > 100000
         || (reference != "LEGACY" && reference != "ELLIPSOID")
         || expectedLogs.isNull() || !expectedLogs.size() || expectedLogs.size() > 64) {
         error = "Invalid Unicore verification expectation"; return false;
+    }
+    const String requestedPort = payload["port"] | "CURRENT";
+    uint8_t selectedPort = 0;
+    if (requestedPort != "CURRENT") {
+        if (requestedPort != "COM1" && requestedPort != "COM2" && requestedPort != "COM3") {
+            error = "Invalid Unicore comparison port"; return false;
+        }
+        selectedPort = requestedPort[3] - '0';
     }
     std::vector<String> names;
     names.reserve(expectedLogs.size());
@@ -88,25 +104,21 @@ bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &co
         groups["fixed"]["checked"] = 1;
         groups["fixed"]["mismatched"] = 1;
     } else if (positionRead) {
-        DynamicJsonDocument position(1024);
-        positionRead = UnicoreReadback::readBestPosition(position.to<JsonObject>(), modeError)
-            && String(position["position_type"] | "") == "FIXEDPOS";
+        double lat = 0, lon = 0, alt = 0;
+        positionRead = UnicoreConfigVerification::parseFixedMode(mode.c_str(), lat, lon, alt);
         if (positionRead) {
-            const double height = position["height_msl"].as<double>()
-                + (reference == "ELLIPSOID" ? position["undulation"].as<double>() : 0);
             JsonObject positionDetails = actualPosition.createNestedObject("self_position");
-            positionDetails["lat"] = position["latitude"];
-            positionDetails["lon"] = position["longitude"];
-            positionDetails["alt"] = height;
-            actualPosition["height_msl"] = position["height_msl"];
-            actualPosition["undulation"] = position["undulation"];
-            actualPosition["datum"] = "WGS84";
-            actualPosition["position_type"] = position["position_type"];
-            const bool matches = std::abs(position["latitude"].as<double>() - wanted[0]) <= 1e-9
-                && std::abs(position["longitude"].as<double>() - wanted[1]) <= 1e-9
-                && std::abs(height - wanted[2]) <= 0.0001;
+            positionDetails["lat"] = lat;
+            positionDetails["lon"] = lon;
+            positionDetails["alt"] = alt;
+            actualPosition["coordinate_source"] = "MODE";
+            const bool matches = std::abs(lat - wanted[0]) <= 1e-9
+                && std::abs(lon - wanted[1]) <= 1e-9
+                && std::abs(alt - wanted[2]) <= 0.0001;
             groups["fixed"]["checked"] = 1;
             groups["fixed"]["mismatched"] = matches ? 0 : 1;
+        } else {
+            modeError = "Unicore MODE has no valid Fixed LLA coordinates";
         }
     }
     if (!positionRead) { groups["fixed"]["unread"] = 1; result["mode_error"] = modeError; }
@@ -123,10 +135,10 @@ bool BackendAgent::verifyUnicoreConfig(JsonObjectConst payload, const String &co
         if (log.period > 0) observed["period"] = log.period;
         else observed["period"] = nullptr;
     }
-    const uint8_t comparePort = logsRead ? UnicoreConfigVerification::comparisonPort(GNSS_UNICORE_PORT, logs) : 0;
+    const uint8_t comparePort = logsRead ? UnicoreConfigVerification::comparisonPort(selectedPort ? selectedPort : GNSS_UNICORE_PORT, logs) : 0;
     if (comparePort) {
         comparedPorts.add(String("COM") + comparePort);
-        details["port_source"] = GNSS_UNICORE_PORT >= 1 && GNSS_UNICORE_PORT <= 3 ? "firmware_config" : "log_list_unique";
+        details["port_source"] = selectedPort ? "user_selection" : GNSS_UNICORE_PORT >= 1 && GNSS_UNICORE_PORT <= 3 ? "firmware_config" : "log_list_unique";
     } else if (logsRead) {
         logsRead = false;
         result["note"] = logs.empty()
@@ -358,6 +370,7 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
             Serial.printf("[GNSS][READBACK][ERROR] UBX: %s\n", error.c_str());
             doc["error"] = error;
         }
+        reconcileBaseStartupReadback(doc.as<JsonObjectConst>());
         receiverBaseReadback_.clear(); serializeJson(doc, receiverBaseReadback_);
         receiverBaseReadbackMs_ = millis(); markStatusDirty();
         return success;
@@ -405,6 +418,7 @@ bool BackendAgent::refreshReceiverReadback(String &error) {
         surveyInReadbackHasPosition_ = false;
         readbackDoc["error"] = error;
     }
+    reconcileBaseStartupReadback(readbackDoc.as<JsonObjectConst>());
     receiverBaseReadback_.clear();
     serializeJson(readbackDoc, receiverBaseReadback_);
     receiverBaseReadbackMs_ = millis();

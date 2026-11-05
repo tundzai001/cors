@@ -149,3 +149,39 @@ class AutoBaseLocationRequest(BaseModel):
 def auto_base_location(request: AutoBaseLocationRequest):
     from .auto_base_location import resolve_location
     return resolve_location(float(request.lat), float(request.lon), float(request.alt))
+
+
+class DisplayProjection(BaseModel):
+    l0_deg: FiniteFloat = Field(ge=100, le=112)
+    k0: FiniteFloat = Field(ge=0.999, le=1.001)
+    false_easting: FiniteFloat = Field(default=500000, ge=-1e8, le=1e8)
+    false_northing: FiniteFloat = Field(default=0, ge=-1e8, le=1e8)
+
+    def crs(self):
+        return CRS.from_dict(dict(proj='tmerc', lat_0=0, lon_0=self.l0_deg, k_0=self.k0,
+                                  x_0=self.false_easting, y_0=self.false_northing,
+                                  ellps='WGS84', units='m'))
+
+
+class ReprojectionRequest(BaseModel):
+    north: FiniteFloat = Field(ge=-2e7, le=2e7)
+    east: FiniteFloat = Field(ge=-2e7, le=2e7)
+    h: FiniteFloat
+    source: DisplayProjection
+    target_l0_deg: FiniteFloat = Field(ge=100, le=112)
+    target_k0: Literal[0.9999, 0.9996]
+
+
+@router.post('/reproject-display')
+def reproject_display(request: ReprojectionRequest):
+    """Change only the map projection of an existing VN-2000 result; no datum or receiver writes."""
+    target = request.source.model_copy(update=dict(l0_deg=request.target_l0_deg, k0=request.target_k0))
+    try:
+        operation = Transformer.from_crs(request.source.crs(), target.crs(), always_xy=True)
+        east, north = operation.transform(request.east, request.north, errcheck=True)
+        if not math.isfinite(north) or not math.isfinite(east):
+            raise ValueError('Non-finite projected coordinates')
+    except (ProjError, ValueError) as exc:
+        raise HTTPException(422, 'Không tính được múi hiển thị. Kiểm tra tọa độ gốc và L₀/k₀.') from exc
+    return dict(projected_coord=dict(north=north, east=east, h=request.h),
+                central_meridian_deg=target.l0_deg, k0=target.k0)

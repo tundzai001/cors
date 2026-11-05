@@ -1092,11 +1092,15 @@ async function handleConfigureChip(serial, payload) {
 
 async function handleStopAutoBase(serial) {
     try {
-        await apiFetch(`/api/devices/${serial}/command`, {
+        const response = await apiFetch(`/api/devices/${serial}/command`, {
             method: 'POST',
             body: JSON.stringify({ command: 'STOP_AUTO_BASE', payload: {} })
         });
-        showSuccess('Đã dừng quy trình Auto Base.');
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(typeof data.detail === 'string' ? data.detail : 'Không gửi được lệnh dừng.');
+        }
+        showSuccess('Đã gửi lệnh dừng; đang chờ thiết bị xác nhận.');
     } catch (e) {
         showError(`Lỗi dừng Auto Base: ${e.message}`);
         throw e;

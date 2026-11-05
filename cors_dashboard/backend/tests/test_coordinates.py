@@ -15,6 +15,31 @@ class CoordinateTests(unittest.TestCase):
         return self.client.post('/api/coordinates/convert', json={
             'source': source, 'target': target, 'points': points})
 
+    def test_display_reprojection_changes_only_ne_and_keeps_original(self):
+        from copy import deepcopy
+        from pyproj import Proj
+        source = dict(l0_deg=105, k0=0.9996, false_easting=500000, false_northing=0)
+        east, north = Proj(proj='tmerc', ellps='WGS84', lon_0=105, k_0=.9996, x_0=500000)(105.8, 21.08)
+        payload = dict(north=north, east=east, h=-7.993264563381672, source=source,
+                       target_l0_deg=105.75, target_k0=.9999)
+        original = deepcopy(payload)
+        response = self.client.post('/api/coordinates/reproject-display', json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        expected_east, expected_north = Proj(proj='tmerc', ellps='WGS84', lon_0=105.75, k_0=.9999, x_0=500000)(105.8, 21.08)
+        self.assertAlmostEqual(result['projected_coord']['north'], expected_north, places=6)
+        self.assertAlmostEqual(result['projected_coord']['east'], expected_east, places=6)
+        self.assertEqual(result['projected_coord']['h'], payload['h'])
+        self.assertEqual(payload, original)
+        reverse = dict(**result['projected_coord'], source=dict(source, l0_deg=105.75, k0=.9999),
+                       target_l0_deg=105, target_k0=.9996)
+        restored = self.client.post('/api/coordinates/reproject-display', json=reverse).json()['projected_coord']
+        self.assertAlmostEqual(restored['north'], north, places=6)
+        self.assertAlmostEqual(restored['east'], east, places=6)
+        self.assertEqual(restored['h'], payload['h'])
+        for invalid in ({'target_k0': 1}, {'target_l0_deg': 0}, {'north': None}):
+            self.assertEqual(self.client.post('/api/coordinates/reproject-display', json={**payload, **invalid}).status_code, 422)
+
     def test_catalog_and_parameters(self):
         data = self.client.get('/api/coordinates/catalog').json()
         self.assertEqual(len(data['provinces34']), 34)

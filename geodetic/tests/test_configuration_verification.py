@@ -286,6 +286,19 @@ class ConfigurationVerificationTests(unittest.IsolatedAsyncioTestCase):
                             else builder.build_unicore_verification_payload(self.config, current_port=embedded))
                 self.assertEqual(sent['payload'], expected)
                 self.assertEqual(result['command_id'], sent['command_id'])
+        device.detected_chip_type = 'Unicorecomm'
+        cache['test']['system_info']['gnss_verification_uart1'] = True
+        for port in ('COM1', 'COM2', 'COM3'):
+            command.payload['port'] = port
+            await scope['send_generic_command']('test', command, None, user)
+            sent = dispatch.await_args.args[1]['payload']
+            self.assertEqual(sent['port'], port)
+            self.assertEqual(sent['coords'], builder.build_unicore_verification_payload(self.config)['coords'])
+        command.payload['port'] = 'COM9'
+        with self.assertRaises(HTTPException) as invalid:
+            await scope['send_generic_command']('test', command, None, user)
+        self.assertEqual(invalid.exception.status_code, 400)
+        command.payload.pop('port')
         dispatch.reset_mock()
         auth.has_permission = lambda *_: False
         with self.assertRaises(HTTPException) as error:
