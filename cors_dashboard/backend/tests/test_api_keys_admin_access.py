@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
-from jose import jwt
+import jwt
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
