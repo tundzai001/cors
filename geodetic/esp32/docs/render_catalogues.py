@@ -187,6 +187,7 @@ def _story(source, sheet):
 
 
 def render(source, output):
+    output = _resolve_asset(ROOT, output)
     sheet = styles()
     story, title = _story(source, sheet)
 
@@ -215,12 +216,23 @@ def render(source, output):
     print(output)
 
 
+def _output_directory(value):
+    """Map CLI choices to fixed output paths, never to user-supplied paths."""
+    if value == "docs":
+        return ROOT
+    if value == "preview":
+        return _resolve_asset(ROOT, ROOT / "preview")
+    raise ValueError("Output directory must be docs or preview")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--font-dir", help="Directory containing the four DejaVu TTF fonts")
-    parser.add_argument("--output-dir", type=Path, default=ROOT)
+    parser.add_argument("--output-dir", choices=("docs", "preview"), default="docs",
+                        help="Write PDFs to docs or docs/preview")
     args = parser.parse_args()
     fonts(args.font_dir)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _output_directory(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     for source in sorted(ROOT.glob("Catalogue-*.md")):
-        render(source, args.output_dir / source.with_suffix(".pdf").name)
+        render(source, output_dir / source.with_suffix(".pdf").name)
