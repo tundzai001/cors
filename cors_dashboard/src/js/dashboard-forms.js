@@ -32,7 +32,9 @@ const displayMeridian = (value, report) => {
     return String(value);
 };
 const displayProjectionScale = report => isSixDegreeReport(report) ? '0.9996' : report?.k0 ?? 'Chưa có dữ liệu';
-const Vn2000Result = ({ report }) => {
+const formatReportCoordinate = (value, key) => value == null || !Number.isFinite(Number(value))
+    ? 'Chưa có dữ liệu' : Number(value).toFixed(key === 'alt' ? 4 : 10);
+const Vn2000Result = ({ report, onReviewChange }) => {
     const sourceKey = JSON.stringify([report?.projected_coord, report?.central_meridian_deg, report?.k0, report?.rtcm1025]);
     const [preview, setPreview] = useState(null);
     const [meridian, setMeridian] = useState('');
@@ -53,63 +55,83 @@ const Vn2000Result = ({ report }) => {
     const hasNeh = neh && ['north', 'east', 'h'].every(key =>
         neh[key] != null && neh[key] !== '' && Number.isFinite(Number(neh[key])));
     const decoded = report.rtcm1025;
+    const canRecalculate = !onReviewChange || (report.input_coord && report.parameters && report.parameter_source === 'rtcm1021');
     const hasDecoded = decoded && decoded.raw_k0 != null && decoded.raw_l0 != null;
     const projectionSource = {rtcm1025:'CORS · RTCM 1025', manual:'Nhập L₀/k₀ thủ công', server_catalog:'Danh mục tỉnh trên máy chủ', not_used:'Không chuyển đổi'}[report.projection_source] || 'Báo cáo chưa lưu nguồn phép chiếu';
     async function reproject() {
-        if (calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112) return;
+        if (!canRecalculate || calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112) return;
         const request = ++requestRef.current;
         setCalculating(true); setError('');
+        onReviewChange?.({ pending: true });
+        const offsets = { false_easting: Number(decoded?.false_easting ?? 500000),
+            false_northing: Number(decoded?.false_northing ?? 0) };
         try {
-            const response = await window.apiFetch('/api/coordinates/reproject-display', {
-                method: 'POST', body: JSON.stringify({
+            const response = await window.apiFetch(onReviewChange ? '/api/coordinates/recalculate-auto-base' : '/api/coordinates/reproject-display', {
+                method: 'POST', body: JSON.stringify(onReviewChange ? {
+                    input_coord: report.input_coord, parameters: report.parameters,
+                    apply_residual: report.residual_source === 'rtcm1023',
+                    projection: { l0_deg: Number(meridian), k0: Number(scale), ...offsets }
+                } : {
                     ...report.projected_coord,
-                    source: { l0_deg: Number(report.central_meridian_deg), k0: Number(report.k0),
-                        false_easting: Number(report.rtcm1025?.false_easting ?? 500000),
-                        false_northing: Number(report.rtcm1025?.false_northing ?? 0) },
+                    source: { l0_deg: Number(report.central_meridian_deg), k0: Number(report.k0), ...offsets },
                     target_l0_deg: Number(meridian), target_k0: Number(scale)
                 })
             });
             const data = await response.json();
             if (request !== requestRef.current) return;
             if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Không tính được múi hiển thị. Kiểm tra L₀ và dữ liệu gốc.');
-            setPreview({ ...data, projected_coord: { ...data.projected_coord, h: report.projected_coord.h }, sourceKey });
+            setPreview({ ...data, sourceKey });
+            onReviewChange?.({ result: data });
         } catch (error) {
             if (request === requestRef.current) setError(error.message);
         } finally {
             if (request === requestRef.current) setCalculating(false);
         }
     }
+    function changeProjection(setter, value) {
+        setter(value);
+        if (onReviewChange) setPreview(null);
+        onReviewChange?.({ pending: true });
+    }
+    function resetProjection() {
+        setPreview(null); setError('');
+        setMeridian(displayMeridian(report.central_meridian_deg, report));
+        setScale(isSixDegreeReport(report) ? '0.9996' : '0.9999');
+        onReviewChange?.(null);
+    }
     return <section className="border rounded p-3 mb-3" aria-label="Kết quả VN-2000 NEh" aria-busy={calculating}>
         <h3 className="h6 mb-2">VN-2000 — NEh · {projectionLabel(displayed)}</h3>
         {hasNeh ? <dl className="row g-2 small mb-2">
             {[['north', 'N — Northing (m)'], ['east', 'E — Easting (m)'], ['h', 'h — Độ cao ellipsoid (m)']].map(([key, label]) => (
                 <div className="col-sm-4" key={key}><dt className="text-muted fw-normal">{label}</dt>
-                    <dd className="font-monospace text-break mb-0">{String(neh[key])}</dd></div>
+                    <dd className="font-monospace text-break mb-0">{Number(neh[key]).toFixed(4)}</dd></div>
             ))}
         </dl> : <p className="small text-muted mb-2">Phiên cũ chưa lưu NEh. Cần lấy lại kết quả Auto Base để hiển thị đủ N, E, h.</p>}
-        <div className="small text-muted" role="status" aria-live="polite">Kinh tuyến trục: {displayMeridian(displayed.central_meridian_deg, displayed)}°; k₀: {displayProjectionScale(displayed)}.{preview?.sourceKey === sourceKey && ' Kết quả hiển thị đã tính lại.'}</div>
+        <div className="small text-muted" role="status" aria-live="polite">Kinh tuyến trục: {displayMeridian(displayed.central_meridian_deg, displayed)}° · k₀: {displayProjectionScale(displayed)}.{preview?.sourceKey === sourceKey && (onReviewChange ? ' Đã tính lại NEh và LLH.' : ' Đã đổi múi N/E.')}</div>
         {hasNeh && <div className="border-top mt-3 pt-3">
             <div className="d-flex flex-wrap align-items-end gap-2">
-                <label className="small">Múi hiển thị
+                <label className="small">{onReviewChange ? 'Múi tính tọa độ' : 'Múi hiển thị'}
                     <select className="form-select mt-1" style={{minHeight:44}} value={scale} disabled={calculating}
-                        onChange={event => setScale(event.target.value)}>
+                        onChange={event => changeProjection(setScale, event.target.value)}>
                         <option value="0.9999">3° · k₀ = 0.9999</option>
                         <option value="0.9996">6° · k₀ = 0.9996</option>
                     </select>
                 </label>
                 <label className="small">Kinh tuyến trục L₀ (°)
                     <input type="number" min="100" max="112" step="any" className="form-control mt-1" style={{minHeight:44,maxWidth:220}}
-                        value={meridian} disabled={calculating} onChange={event => setMeridian(event.target.value)} />
+                        value={meridian} disabled={calculating} onChange={event => changeProjection(setMeridian, event.target.value)} />
                 </label>
                 <button type="button" className="btn btn-outline-info" style={{minHeight:44}}
-                    disabled={calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112} onClick={reproject}>
+                    disabled={!canRecalculate || calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112} onClick={reproject}>
                     {calculating && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}
-                    {calculating ? 'Đang tính…' : 'Tính lại N/E/h'}
+                    {calculating ? 'Đang tính…' : onReviewChange ? 'Tính lại NEh và LLH' : 'Đổi múi N/E'}
                 </button>
-                {preview?.sourceKey === sourceKey && <button type="button" className="btn btn-outline-secondary" style={{minHeight:44}} disabled={calculating}
-                    onClick={() => { setPreview(null); setError(''); }}>Xem kết quả gốc</button>}
+                {(onReviewChange || preview?.sourceKey === sourceKey) && <button type="button" className="btn btn-outline-secondary" style={{minHeight:44}} disabled={calculating}
+                    onClick={resetProjection}>Dùng kết quả gốc</button>}
             </div>
-            <p className="small text-muted mt-2 mb-0">Chỉ đổi N/E hiển thị; giữ nguyên h, LLH và cấu hình Base. Không lấy mẫu lại.</p>
+            <p className="small text-muted mt-2 mb-0">{!canRecalculate ? 'Phiên này thiếu tham số RTCM để tính lại.' : onReviewChange
+                ? 'Dùng lại mẫu RTK Fixed của phiên này. Kiểm tra LLH mới trước khi áp dụng vào Base.'
+                : 'Đổi múi để xem N/E của tọa độ đã lưu.'}</p>
             {error && <p className="small text-danger mt-2 mb-0" role="alert">{error}</p>}
         </div>}
         <p className="small mt-2 mb-1">Nguồn phép chiếu gốc: <strong>{projectionSource}</strong>.</p>
@@ -671,6 +693,22 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     // Province identification is independent of the selected CORS/manual projection.
     const conversionReport = resolvedLocation ? {...reportedConversion, location:resolvedLocation,
         province_code:resolvedLocation.province_code, province_name:resolvedLocation.province_name} : reportedConversion;
+    const reviewKey = JSON.stringify([device.serial, autoProgress.phase, autoProgress.updated_at,
+        autoProgress.averaged_coord, reportedConversion]);
+    const [projectionReview, setProjectionReview] = useState(null);
+    const currentReview = projectionReview?.key === reviewKey ? projectionReview : null;
+    const recalculated = currentReview?.result;
+    const reviewCoords = recalculated?.calculated_coord || autoProgress.averaged_coord;
+    const reviewReport = recalculated ? {
+        ...conversionReport,
+        calculated_coord: Object.fromEntries(Object.entries(recalculated.calculated_coord).map(([key, value]) => [key, String(value)])),
+        projected_coord: Object.fromEntries(Object.entries(recalculated.projected_coord).map(([key, value]) => [key, String(value)])),
+        central_meridian_deg: String(recalculated.central_meridian_deg),
+        k0: String(recalculated.k0),
+        projection_source: 'manual',
+        rtcm1025_used: false,
+        zone_width_deg: recalculated.k0 === 0.9999 ? 3 : 6
+    } : conversionReport;
     const provinceLabel = conversionReport.location?.province_name || conversionReport.province_name
         || (provinceLookup?.key === locationKey && provinceLookup.state === 'loading' ? 'Đang tra tỉnh/thành từ tọa độ…'
             : provinceLookup?.key === locationKey && provinceLookup.error ? provinceLookup.error
@@ -931,6 +969,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         return chipCoordinate(val, activeChip === 'Ublox' ? 9 : 10);
     };
 
+    const formatApprovedAltitude = (value, chip) => chip === 'Ublox'
+        ? chipCoordinate(value, 4) : Number(value).toFixed(4);
+
     const formatAlt10 = (val) => {
         if (val === null || val === undefined || val === '') return '';
         if (activeChip === 'Ublox') return chipCoordinate(val, 4);
@@ -1035,7 +1076,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
     const handleSubmit = async (e, approvedCoords = null) => {
         e.preventDefault();
-        if (disabled || (approvedCoords && (isAutoSetupActive || !autoFixedResult))) return;
+        if (disabled || (approvedCoords && (isAutoSetupActive || !autoFixedResult || currentReview?.pending))) return;
         if (approvedCoords && !['lat', 'lon', 'alt'].every(key =>
             approvedCoords[key] != null && String(approvedCoords[key]).trim() !== '' && Number.isFinite(Number(approvedCoords[key])))) {
             window.showError('Kết quả Auto Base thiếu LLH hợp lệ. Cần lấy lại tọa độ.');
@@ -1064,7 +1105,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 params.coords = {
                     lat: chipCoordinate(latStr, finalChipType === 'Ublox' ? 9 : 10),
                     lon: chipCoordinate(lonStr, finalChipType === 'Ublox' ? 9 : 10),
-                    alt: finalChipType === 'Ublox' ? chipCoordinate(String(approvedCoords ? approvedCoords.alt : altitude).trim() || '0', 4) : String(approvedCoords ? approvedCoords.alt : altitude).trim() || '0'
+                    alt: approvedCoords ? formatApprovedAltitude(approvedCoords.alt, finalChipType)
+                        : finalChipType === 'Ublox' ? chipCoordinate(String(altitude).trim() || '0', 4) : String(altitude).trim() || '0'
                 };
                 if (finalChipType === 'Ublox') {
                     setLatitude(params.coords.lat);
@@ -1073,9 +1115,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 }
                 params.altitude_reference = approvedCoords || finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
                 const candidate = autoProgress.averaged_coord;
-                if (autoFixedResult && candidate && ['lat', 'lon', 'alt'].every(key =>
-                    Math.abs(Number(params.coords[key]) - Number(candidate[key])) <= (key === 'alt' ? 0.00011 : 1.01e-9))) {
-                    params.conversion_report = { ...conversionReport, output_coord: { ...params.coords } };
+                if (approvedCoords || (autoFixedResult && candidate && ['lat', 'lon', 'alt'].every(key =>
+                    Math.abs(Number(params.coords[key]) - Number(candidate[key])) <= (key === 'alt' ? 0.00011 : 1.01e-9)))) {
+                    params.conversion_report = { ...(approvedCoords ? reviewReport : conversionReport), output_coord: { ...params.coords } };
                     params.coordinate_source = 'AUTO_CORS';
                 }
                 // Preserve decimal meters through the API and UBX encoding.
@@ -1538,15 +1580,16 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                                 <thead><tr><th scope="col">Tọa độ</th><th scope="col">LLH gốc</th><th scope="col">LLH sau tính</th><th scope="col">Gửi máy</th></tr></thead>
                                                 <tbody>{[['lat', 'Vĩ độ (°)'], ['lon', 'Kinh độ (°)'], ['alt', 'h ellipsoid (m)']].map(([key, label]) => (
                                                     <tr key={key}><th scope="row">{label}</th>
-                                                        <td className="font-monospace">{conversionReport.input_coord?.[key] == null ? 'Chưa có dữ liệu' : String(conversionReport.input_coord[key])}</td>
-                                                        <td className="font-monospace text-break">{(conversionReport.calculated_coord || autoProgress.calculated_coord)?.[key] ?? 'Chưa lưu'}</td>
-                                                        <td className="font-monospace">{autoProgress.averaged_coord?.[key] == null ? 'Chưa có dữ liệu' : key === 'alt' ? autoProgress.averaged_coord[key] : formatCoord10(autoProgress.averaged_coord[key])}</td></tr>
+                                                        <td className="font-monospace">{formatReportCoordinate(conversionReport.input_coord?.[key], key)}</td>
+                                                        <td className="font-monospace text-break">{formatReportCoordinate((reviewReport.calculated_coord || autoProgress.calculated_coord)?.[key], key)}</td>
+                                                        <td className="font-monospace">{currentReview?.pending ? 'Chờ tính lại' : reviewCoords?.[key] == null ? 'Chưa có dữ liệu' : key === 'alt' ? formatApprovedAltitude(reviewCoords[key], activeChip) : formatCoord10(reviewCoords[key])}</td></tr>
                                                 ))}</tbody>
                                             </table>
                                         </div>
-                                        <Vn2000Result report={conversionReport} />
+                                        <Vn2000Result key={reviewKey} report={conversionReport}
+                                            onReviewChange={value => setProjectionReview(value && { ...value, key: reviewKey })} />
                                         <div className="small">{conversionReport.transform_applied
-                                            ? `Đã tính LLH địa phương qua VN-2000 ${projectionLabel(conversionReport)}. Kinh tuyến trục ${displayMeridian(conversionReport.central_meridian_deg, conversionReport)}°; k₀ ${displayProjectionScale(conversionReport)}.`
+                                            ? `LLH địa phương qua VN-2000 ${projectionLabel(reviewReport)} · L₀ ${displayMeridian(reviewReport.central_meridian_deg, reviewReport)}° · k₀ ${displayProjectionScale(reviewReport)}.`
                                             : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.'}</div>
                                         {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
                                         {conversionReport.transform_applied && <details className="small mt-2"><summary>Tham số chuyển đổi</summary>
@@ -1558,8 +1601,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                     </div>
                                 </div>
                                 <div className="col-12">
-                                    <button type="button" className="btn btn-primary w-100" style={{minHeight:44}} disabled={disabled || isSubmitting || isAutoSetupActive}
-                                        onClick={event => handleSubmit(event, autoProgress.averaged_coord)}>
+                                    <button type="button" className="btn btn-primary w-100" style={{minHeight:44}} disabled={disabled || isSubmitting || isAutoSetupActive || Boolean(currentReview?.pending)}
+                                        onClick={event => handleSubmit(event, reviewCoords)}>
                                         {isSubmitting ? 'Đang gửi cấu hình Fixed LLA…' : 'Duyệt và áp dụng LLH vào Base (Fixed LLA)'}
                                     </button>
                                 </div>

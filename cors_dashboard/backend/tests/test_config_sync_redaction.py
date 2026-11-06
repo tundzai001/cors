@@ -14,6 +14,15 @@ compare = scope['_compare_configs']
 
 
 class ConfigSyncRedactionTests(unittest.TestCase):
+    def test_province_lookup_echo_does_not_override_base_coordinate_comparison(self):
+        target = {'coords': {'lat': '21.0849895913'},
+                  'conversion_report': {'location': {'input_coord': {'lat': 21.084987718254386}}}}
+        agent = {'coords': {'lat': '21.0849895913'},
+                 'conversion_report': {'location': {'input_coord': {'lat': 21.08498772}}}}
+        self.assertEqual(compare(agent, target, 'Base'), (True, []))
+        agent['coords']['lat'] = '21.0849995913'
+        self.assertIn('[Base.coords.lat]', compare(agent, target, 'Base')[1][0])
+
     def test_nested_list_objects_ignore_json_key_order(self):
         db = {'conversion_report': {'location': {'projection_options': [
             {'k0': 0.9999, 'l0_deg': 105, 'region': 'Hà Nội'}]}}}

@@ -560,6 +560,14 @@
     },
     {
       "type": "APIRoute",
+      "path": "/api/coordinates/recalculate-auto-base",
+      "methods": [
+        "POST"
+      ],
+      "name": "recalculate_auto_base"
+    },
+    {
+      "type": "APIRoute",
       "path": "/api/coordinates/reproject-display",
       "methods": [
         "POST"

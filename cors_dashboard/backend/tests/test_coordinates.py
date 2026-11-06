@@ -40,6 +40,32 @@ class CoordinateTests(unittest.TestCase):
         for invalid in ({'target_k0': 1}, {'target_l0_deg': 0}, {'north': None}):
             self.assertEqual(self.client.post('/api/coordinates/reproject-display', json={**payload, **invalid}).status_code, 422)
 
+    def test_auto_base_recalculates_both_results_from_the_original_sample(self):
+        payload = dict(input_coord=dict(lat=21.084988, lon=105.7866608046, alt=-9.7862),
+                       parameters=dict(dX=192.604, dY=37.189, dZ=111.134,
+                                       rX=.0234, rY=-.02762, rZ=.01152, kT=1.00000008613,
+                                       resB=9.55082951785786e-9, resL=1.090830782496456e-9,
+                                       resH=1.75275, resN=0, resE=0, resHS=0),
+                       apply_residual=True)
+
+        def calculate(k0):
+            response = self.client.post('/api/coordinates/recalculate-auto-base',
+                                        json=dict(payload, projection=dict(l0_deg=105, k0=k0)))
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()
+
+        original, alternate = calculate(.9996), calculate(.9999)
+        self.assertAlmostEqual(original['projected_coord']['north'], 2331863.6117, places=3)
+        self.assertAlmostEqual(original['calculated_coord']['alt'], -8.0624, places=4)
+        self.assertNotEqual(original['projected_coord']['east'], alternate['projected_coord']['east'])
+        self.assertEqual(original['projected_coord']['h'], alternate['projected_coord']['h'])
+        for field in ('lat', 'lon', 'alt'):
+            self.assertAlmostEqual(original['calculated_coord'][field], alternate['calculated_coord'][field], places=7)
+        payload['parameters']['resN'] = 1000
+        original, alternate = calculate(.9996), calculate(.9999)
+        self.assertNotAlmostEqual(original['calculated_coord']['lat'], alternate['calculated_coord']['lat'], places=7)
+        self.assertEqual(original['projected_coord']['h'], alternate['projected_coord']['h'])
+
     def test_catalog_and_parameters(self):
         data = self.client.get('/api/coordinates/catalog').json()
         self.assertEqual(len(data['provinces34']), 34)

@@ -172,6 +172,70 @@ class ReprojectionRequest(BaseModel):
     target_k0: Literal[0.9999, 0.9996]
 
 
+class AutoBaseDatum(BaseModel):
+    dX: FiniteFloat
+    dY: FiniteFloat
+    dZ: FiniteFloat
+    rX: FiniteFloat
+    rY: FiniteFloat
+    rZ: FiniteFloat
+    kT: FiniteFloat = Field(gt=0)
+    resB: FiniteFloat
+    resL: FiniteFloat
+    resH: FiniteFloat
+    resN: FiniteFloat
+    resE: FiniteFloat
+    resHS: FiniteFloat
+
+
+class AutoBaseRecalculation(BaseModel):
+    input_coord: AutoBaseLocationRequest
+    parameters: AutoBaseDatum
+    projection: DisplayProjection
+    apply_residual: bool
+
+
+def _coordinate_frame(lon, lat, height, x, y, z, rx, ry, rz, scale):
+    operation = Transformer.from_pipeline(
+        '+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad '
+        '+step +proj=cart +ellps=WGS84 '
+        f'+step +proj=helmert +convention=coordinate_frame +x={x} +y={y} +z={z} '
+        f'+rx={rx} +ry={ry} +rz={rz} +s={(scale - 1) * 1e6} '
+        '+step +inv +proj=cart +ellps=WGS84 '
+        '+step +proj=unitconvert +xy_in=rad +xy_out=deg'
+    )
+    return operation.transform(lon, lat, height, errcheck=True)
+
+
+@router.post('/recalculate-auto-base')
+def recalculate_auto_base(request: AutoBaseRecalculation):
+    """ITRF2vn2000.txt: llh2NEH followed by vn20002llh using the selected projection."""
+    point, datum, projection = request.input_coord, request.parameters, request.projection
+    try:
+        lon, lat, h = _coordinate_frame(point.lon, point.lat, point.alt,
+            datum.dX, datum.dY, datum.dZ, datum.rX, datum.rY, datum.rZ, datum.kT)
+        if request.apply_residual:
+            lon += math.degrees(datum.resL)
+            lat += math.degrees(datum.resB)
+            h += datum.resH
+        geographic = CRS.from_epsg(4326)
+        projected = projection.crs()
+        east, north = Transformer.from_crs(geographic, projected, always_xy=True).transform(lon, lat, errcheck=True)
+        east += datum.resE
+        north += datum.resN
+        h += datum.resHS
+        lon, lat = Transformer.from_crs(projected, geographic, always_xy=True).transform(east, north, errcheck=True)
+        lon, lat, alt = _coordinate_frame(lon, lat, h, -191.90441429, -39.30318279, -111.45032835,
+                                         -0.00928836, 0.01975479, -0.00427372, 1.000000252906278)
+        if not all(map(math.isfinite, (east, north, h, lat, lon, alt))) or not -1000 <= alt <= 100000:
+            raise ValueError('Invalid Auto Base coordinates')
+    except (ProjError, ValueError) as exc:
+        raise HTTPException(422, 'Không tính được NEh và LLH từ dữ liệu phiên Auto Base.') from exc
+    return dict(projected_coord=dict(north=north, east=east, h=h),
+                calculated_coord=dict(lat=lat, lon=lon, alt=alt),
+                central_meridian_deg=projection.l0_deg, k0=projection.k0)
+
+
 @router.post('/reproject-display')
 def reproject_display(request: ReprojectionRequest):
     """Change only the map projection of an existing VN-2000 result; no datum or receiver writes."""
