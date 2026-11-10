@@ -126,9 +126,9 @@ async def _device_casters(device, mountpoint):
 
 
 async def sync_esp_mountpoint(device, username):
-    """Provision the new SOURCE on each enabled caster before changing ESP32 config."""
+    """Sync the default S1 identity; additional destinations remain user-configured."""
     config = crud.normalize_service_config(device.service_config)
-    slots = [slot for slot in (1, 2) if config.get(f"serverhost{slot}")
+    slots = [slot for slot in (1,) if config.get(f"serverhost{slot}")
              and str(config.get(f"server{slot}_enabled", True)).lower() in {"true", "1", "yes", "on"}]
     changed = [slot for slot in slots if config.get(f"mountpoint{slot}") != username]
     if not changed:
