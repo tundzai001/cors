@@ -166,6 +166,17 @@ async def sync_esp_mountpoint(device, username):
     patch = {f"mountpoint{slot}": username for slot in changed}
     payload = schemas.service_config_deployment_payload(device.version, {**config, **patch}, patch)
     await send_command_to_pi(device.serial, {"command": "DEPLOY_SERVICE_CONFIG", "payload": payload})
+    # Keep the desired DB config aligned with the command. Otherwise the next
+    # health report is marked unsynced and cannot replace the old mountpoint.
+    async with mqtt_handler.mqtt_db_write_lock:
+        async with device_session_scope() as db:
+            current = await crud.get_device_for_update(db, device.serial)
+            if current is None:
+                return True
+            current.service_config = {**crud.normalize_service_config(current.service_config), **patch}
+            current.is_synced = False
+            await db.commit()
+            await mqtt_handler.cache_device_metadata(current)
     _set_esp_setup_status(device.serial, "source", "waiting_health", mountpoint=username)
     # Health tiếp theo xác nhận cấu hình trước khi đồng bộ tài khoản theo nguồn mới.
     return True
