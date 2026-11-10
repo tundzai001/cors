@@ -393,9 +393,8 @@ bool BackendAgent::executeAutoBaseCommand(JsonObject payload, String &error, Str
         success = false;
         error = "unsupported CORS source mode";
     } else if (!hasConnection && sourceMode == "nearest" && autoApply) {
-        // UI can request nearest mode before the backend knows the device's
-        // position. Switch the receiver to Rover first; the backend manager
-        // will select a source from the fresh GGA and send the full profile.
+        // A nearest request without connection fields uses the firmware boot
+        // profile. The local scheduler starts the same workflow when online.
         sensorType_ = sensorType;
         DynamicJsonDocument savedConfig(CONFIG_DOCUMENT_SIZE);
         if (deserializeJson(savedConfig, baseConfig_.c_str()) != DeserializationError::Ok
@@ -433,12 +432,12 @@ bool BackendAgent::executeAutoBaseCommand(JsonObject payload, String &error, Str
             baseStartupError_.clear();
             setAgentState("auto_setup_rover");
             DynamicJsonDocument progress(CONFIG_DOCUMENT_SIZE);
-            progress["note"] = "Rover mode is active; waiting for the backend to provision the AutoNearest account.";
+            progress["note"] = "Rover mode is active; waiting for the local AutoNearest workflow.";
             String progressJson;
             serializeJson(progress, progressJson);
             setWorkflowProgress("awaiting_source", 0, 4, progressJson);
             markStatusDirty();
-            detail = "Rover mode active; waiting for backend nearest-CORS selection";
+            detail = "Rover mode active; local AutoNearest is pending";
         }
     } else if (!hasConnection) {
         success = false;

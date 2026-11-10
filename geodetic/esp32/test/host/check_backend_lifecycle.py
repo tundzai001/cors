@@ -84,6 +84,7 @@ bool BackendAgent::saveStatePreferences(){++saves;return true;}
 String BackendAgent::buildStatusPayload(){return "{\"online\":true}";}
 String BackendAgent::buildLwtPayload()const{return "{\"online\":false}";}
 bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType){++initialized;baseStartupAttempted_=true;return true;}
+void BackendAgent::maybeStartBootAutoBase(){}
 void BackendAgent::pollGnssStatus(){++polls;}
 void BackendAgent::handleCommand(const String&,const String&){++commands;}
 '''

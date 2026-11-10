@@ -3,6 +3,9 @@
 #include "functions/gnss/Ublox_Readback.h"
 #include "functions/gnss/Unicore_Readback.h"
 #include "functions/gnss/Unicore_Config_Verification.h"
+#include "hardware/Connection_type.h"
+#include "hardware/Sim_handler.h"
+#include "hardware/Wifi_handler.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -126,4 +129,27 @@ void BackendAgent::reconcileBaseStartupReadback(JsonObjectConst readback) {
     baseStartupState_ = "fixed_restored";
     baseStartupError_.clear();
     markStatusDirty();
+}
+
+void BackendAgent::maybeStartBootAutoBase() {
+    if (baseStartupState_ != "awaiting_auto_base" || stationLock_.all
+        || !licenseValid_ || workflowActive()) return;
+    // Backend/MQTT availability is unrelated to the direct caster connection.
+    if (isGsmConnection() ? !modem.isGprsConnected() : WiFi.status() != WL_CONNECTED) return;
+    DynamicJsonDocument request(CONFIG_DOCUMENT_SIZE);
+    request["source_mode"] = "nearest";
+    request["auto_apply"] = true;
+    request["startup_auto"] = true;
+    request["startup_boot_id"] = statusBootId_;
+    request["enable_itrf_vn2000_transform"] = false;
+    request["timeout"] = 3600;
+    request["samples"] = 60;
+    String error, detail;
+    Serial.println("[AUTO BASE][BOOT] Starting local AutoNearest; backend not required.");
+    if (!executeAutoBaseCommand(request.as<JsonObject>(), error, detail)) {
+        baseStartupState_ = "error";
+        baseStartupError_ = error;
+        Serial.printf("[AUTO BASE][BOOT][ERROR] %s\n", error.c_str());
+        markStatusDirty();
+    }
 }

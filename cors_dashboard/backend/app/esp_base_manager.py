@@ -32,7 +32,6 @@ SYNC_INTERVAL_SECONDS = 15.0
 MQTT_DECODER_TOPIC = "pi/decoder/esp_base"
 MQTT_SYNC_REQUEST_TOPIC = "pi/decoder/esp_base/sync_request"
 _stopped_decoder_serials: set[str] = set()
-_auto_base_started_boots: dict[str, str] = {}
 _synced_esp_rover_passwords: dict[tuple, str] = {}
 
 
@@ -541,86 +540,12 @@ async def resync_decoder_workers() -> None:
     await sync_esp_base_rovers()
 
 
-async def start_pending_auto_base_workflows() -> None:
-    """Provision AutoNearest after a fresh ESP boot status, before the rover connects."""
-    async with device_session_scope() as devices_db:
-        result = await devices_db.execute(select(models.Device).where(models.Device.serial.ilike('esp_%')))
-        devices = result.scalars().all()
-        for device in devices:
-            system = device.system_info if isinstance(device.system_info, dict) else {}
-            startup = system.get('base_startup') if isinstance(system.get('base_startup'), dict) else {}
-            if startup.get('state') != 'awaiting_auto_base' or device.is_locked or not device.is_provisioned:
-                continue
-            device_status = str(device.status or '').casefold()
-            # A pending startup has no SOURCE stream yet and may report sleep.
-            if (device_status not in {'online', 'streaming', 'sleep'} and not device_status.startswith('auto_setup')) \
-                    or int(device.timestamp or 0) < int(time.time()) - 90:
-                continue
-            from .station_runtime import latest_device_telemetry_cache
-            snapshots = (mqtt_handler.device_telemetry_cache.get(device.serial) or {},
-                         latest_device_telemetry_cache.get(device.serial) or {})
-            live = max(snapshots, key=lambda item: float(item.get("server_received_at") or item.get("timestamp") or 0))
-            boot_id = str(live.get('status_boot_id') or '').strip()
-            if not boot_id:
-                continue
-            config = device.base_config if isinstance(device.base_config, dict) else {}
-            request_id = str(config.get('auto_base_request_id') or '')
-            start_key = f'{boot_id}:{request_id}'
-            if _auto_base_started_boots.get(device.serial) == start_key:
-                continue
-            if (str(config.get('auto_base_started_boot_id') or '') == boot_id
-                    and str(config.get('auto_base_started_request_id') or '') == request_id):
-                _auto_base_started_boots[device.serial] = start_key
-                continue
-            sensor_type = str(device.detected_chip_type or '').strip()
-            if sensor_type not in {'Ublox', 'Unicorecomm'}:
-                continue
-            if not device.user_id:
-                _set_esp_setup_status(device.serial, "auto_nearest", "waiting_assignment", boot_id=boot_id,
-                                      detail="Gán người quản lý cho trạm để bắt đầu Auto Base.")
-                continue
-            if system.get("auto_base_firmware_profile") is not True:
-                _set_esp_setup_status(device.serial, "auto_nearest", "retrying", boot_id=boot_id,
-                                      detail="Cần cập nhật firmware hỗ trợ cấu hình caster tích hợp.")
-                continue
-            auto_base_config = {
-                **config,
-                'base_setup_method': 'AUTO_CORS',
-                'auto_cors_source_mode': 'nearest',
-                'mode': 'BASE',
-            }
-            command = {
-                'command': 'TRIGGER_AUTO_BASE',
-                'payload': {
-                    'source_mode': 'nearest',
-                    'auto_apply': True,
-                    'startup_auto': True,
-                    'startup_boot_id': boot_id,
-                    'startup_request_id': request_id,
-                    'auto_base_config': auto_base_config,
-                    'enable_itrf_vn2000_transform': False,
-                    'timeout': 3600,
-                    'samples': 60,
-                    'sensor_type': sensor_type,
-                },
-            }
-            try:
-                await send_command_to_pi(device.serial, command)
-                _auto_base_started_boots[device.serial] = start_key
-                _set_esp_setup_status(device.serial, "auto_nearest", "sent", boot_id=boot_id)
-                logger.info('[AUTO BASE] Started AutoNearest for %s using firmware configuration', device.serial)
-            except Exception as exc:
-                _set_esp_setup_status(device.serial, "auto_nearest", "delivery_retry", boot_id=boot_id)
-                logger.warning('[AUTO BASE] Could not start workflow for %s: %s', device.serial, exc)
-
-
 async def esp_base_manager_task() -> None:
     """Background loop running every 15s."""
     logger.info("[ESP BASE MANAGER] Started background supervisor task")
     while True:
         try:
             await sync_esp_base_rovers()
-            await start_pending_auto_base_workflows()
             await sync_prefix7_bases()
         except Exception as e:
             logger.error(f"[ESP BASE MANAGER] Error in sync loop: {e}", exc_info=True)
