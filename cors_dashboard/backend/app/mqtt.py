@@ -745,7 +745,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
         
         message_type = topic_parts[-1]
         serial = topic_parts[2]
-        if crud.is_blocked_device_serial(serial):
+        if crud.is_blocked_device_serial(serial) or device_was_deleted(serial):
             return
         
         # ==================== 1. XỬ LÝ NMEA DATA ====================
@@ -860,8 +860,8 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
         if message_type in ["status", "status_update"]:
             metadata = None
 
-            # A retained snapshot cannot register a station that no longer exists.
-            # Live heartbeats still allow discovery of valid device identities.
+            # Live heartbeats can discover valid identities, but a station
+            # explicitly deleted during this server run must stay deleted.
             if is_retained:
                 try:
                     metadata = await get_device_metadata(serial)
@@ -1135,6 +1135,9 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     try:
                         # Single-writer section: avoids pool exhaustion under reconnect storms.
                         async with mqtt_db_write_lock:
+                            if device_was_deleted(serial):
+                                logging.info("Skipping MQTT status write after deletion: %s", serial)
+                                return
                             if is_retained:
                                 current_metadata = device_metadata_cache.get(serial) or {}
                                 if current_metadata.get("exists") is False:

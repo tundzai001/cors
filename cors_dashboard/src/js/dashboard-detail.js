@@ -935,6 +935,7 @@ function EspSetupProgress({ device, offline, tokenConfirmed }) {
     const startup = device.system_info?.base_startup || {};
     const survey = device.system_info?.survey_in_status || {};
     const auth = device.system_info?.auth_status || {};
+    const licenseBypass = auth.license_bypass === true || device.system_info?.auth_license_bypass === true;
     const name = device.name || '';
     const actualSource = startup.state === 'awaiting_auto_base' ? '' :
         progress.source_mountpoint || progress.conversion_report?.source?.mountpoint;
@@ -942,24 +943,34 @@ function EspSetupProgress({ device, offline, tokenConfirmed }) {
         || (survey.state && survey.state !== 'not_monitoring');
     const phase = startup.state === 'awaiting_auto_base' ? '' : progress.phase;
     const waiting = 'Đang chờ';
+    const offlineState = 'Ngoại tuyến';
     const ready = 'Đã xác nhận';
     const retrying = 'Đang thử lại';
+    const pauseWhenOffline = (status) => offline ? offlineState : status;
     const step = (label, status, detail) => ({ label, status, detail });
     const steps = [
         step('Health', offline ? 'Mất kết nối' : device.timestamp ? ready : waiting,
             offline ? 'Hiển thị trạng thái lần nhận gần nhất.' : 'Backend nhận trạng thái từ ESP32.'),
-        step('Token thiết bị', tokenConfirmed ? ready : auth.token_deployment_pending ? 'Đang đồng bộ' : waiting,
-            tokenConfirmed ? 'ESP32 và backend đã xác nhận token.' : 'Cần đăng ký hoặc kích hoạt thiết bị.'),
-        step('Mountpoint phát', source.mountpoint === name && source.state === 'ready' ? 'Đã cấu hình' :
-            source.state === 'retrying' ? retrying : ['registering', 'waiting_health'].includes(source.state) ? 'Đang đồng bộ' : waiting,
+        step('Token thiết bị',
+            tokenConfirmed ? ready : licenseBypass ? 'Đã bỏ qua' : pauseWhenOffline(auth.token_deployment_pending ? 'Đang đồng bộ' : waiting),
+            tokenConfirmed ? 'ESP32 và backend đã xác nhận token.'
+                : licenseBypass ? 'Trạm được miễn kiểm tra token.'
+                : offline ? 'Chưa xác nhận token trước khi mất kết nối.'
+                : 'Cần đăng ký hoặc kích hoạt thiết bị.'),
+        step('Mountpoint phát',
+            source.mountpoint === name && source.state === 'ready' ? 'Đã cấu hình'
+                : pauseWhenOffline(source.state === 'retrying' ? retrying : ['registering', 'waiting_health'].includes(source.state) ? 'Đang đồng bộ' : waiting),
             source.state === 'waiting_config' ? 'Chưa cấu hình caster phát.' : source.detail || name),
-        step('Tài khoản rover', rover.username === name && rover.state === 'ready' ? ready :
-            rover.state === 'partial' ? 'Đồng bộ một phần' : rover.state === 'retrying' ? retrying : waiting, name),
+        step('Tài khoản rover',
+            rover.username === name && rover.state === 'ready' ? ready
+                : pauseWhenOffline(rover.state === 'partial' ? 'Đồng bộ một phần' : rover.state === 'retrying' ? retrying : waiting),
+            name),
     ];
 
-    const nearestStatus = actualSource ? ready : nearest.state === 'sent' ? 'Đã gửi cấu hình' :
-        nearest.state === 'ready' ? 'Đã nạp cấu hình' :
-        ['retrying', 'delivery_retry'].includes(nearest.state) ? retrying : waiting;
+    const nearestStatus = actualSource ? ready
+        : pauseWhenOffline(nearest.state === 'sent' ? 'Đã gửi cấu hình'
+            : nearest.state === 'ready' ? 'Đã nạp cấu hình'
+            : ['retrying', 'delivery_retry'].includes(nearest.state) ? retrying : waiting);
     const nearestRequested = startup.state === 'awaiting_auto_base' || startup.state === 'auto_base_running'
         || !!nearest.state || !!actualSource;
     if (nearestRequested) {
@@ -993,9 +1004,23 @@ function EspSetupProgress({ device, offline, tokenConfirmed }) {
             phase === 'averaging' && progress.samples_target ? `${progress.samples_collected ?? 0}/${progress.samples_target} mẫu` : '',
         ].filter(Boolean).join(' · ');
     }
+    const baseTerminalStatuses = new Set(['Thất bại', 'Đã dừng', ready, 'Chờ duyệt tọa độ', 'Đã áp dụng Fixed LLA', 'Đã khôi phục Fixed LLA']);
+    if (offline && !baseTerminalStatuses.has(baseStatus)) {
+        if (baseStatus !== waiting) {
+            baseDetail = [baseStatus, baseDetail].filter(Boolean).join(' · ');
+        }
+        baseStatus = offlineState;
+    }
     steps.push(step('Thiết lập Base', baseStatus, baseDetail));
-    steps.push(step('Phát RTCM', !offline && device.ntrip_connected ? 'Đang phát' : waiting,
+    steps.push(step('Phát RTCM', !offline && device.ntrip_connected ? 'Đang phát' : pauseWhenOffline(waiting),
         !offline && device.ntrip_connected && source.mountpoint === name ? name : ''));
+
+    const statusClass = (status) => {
+        if (status === 'Thất bại' || status === 'Mất kết nối') return 'text-danger';
+        if (status === offlineState) return 'text-secondary';
+        if ([ready, 'Đã cấu hình', 'Đã áp dụng Fixed LLA', 'Đã khôi phục Fixed LLA', 'Đã bỏ qua'].includes(status)) return 'text-success';
+        return 'text-info';
+    };
 
     return (
         <section className="card bg-dark border-secondary mb-3" aria-label="Luồng hoạt động ESP32">
@@ -1006,7 +1031,7 @@ function EspSetupProgress({ device, offline, tokenConfirmed }) {
                         <li key={label} className="d-flex flex-wrap align-items-baseline gap-2 small py-1">
                             <span className="text-muted" aria-hidden="true">{index + 1}.</span>
                             <strong>{label}</strong>
-                            <span className={status === 'Thất bại' || status === 'Mất kết nối' ? 'text-danger' : 'text-info'}>{status}</span>
+                            <span className={statusClass(status)}>{status}</span>
                             {detail && <span className="text-muted text-break">{detail}</span>}
                         </li>
                     ))}

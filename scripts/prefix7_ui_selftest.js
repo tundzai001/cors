@@ -73,4 +73,8 @@ const survey = flow.type({...flow.props, device: {...managed, auto_base_progress
   phase: 'completed', mode: 'survey_in', reason: 'no_fixed_station_within_20_km'
 }}});
 assert.match(text(survey), /Đang Survey-In.*20 km/);
+const offlineFlow = text(flow.type({device: {...managed, status: 'offline', timestamp: 0, esp_setup: {}, auto_base_progress: {}}, offline: true, tokenConfirmed: false}));
+assert.match(offlineFlow, /Mất kết nối/);
+assert.match(offlineFlow, /Ngoại tuyến/);
+assert.doesNotMatch(offlineFlow, /Đang chờ/);
 console.log('PASS: managed ESP32 displays account, requested/selected source, samples and Survey-In fallback');
