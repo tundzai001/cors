@@ -16,8 +16,9 @@ class RoverRestoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(saved_rover_duration(SimpleNamespace(is_active=True, expires_at=4600)), 3600)
             self.assertEqual(saved_rover_duration(SimpleNamespace(is_active=True, expires_at=None)), 315360000)
             for active, expires in [(False, None), (True, 999)]:
+                rover = SimpleNamespace(is_active=active, expires_at=expires)
                 with self.assertRaises(ValueError):
-                    saved_rover_duration(SimpleNamespace(is_active=active, expires_at=expires))
+                    saved_rover_duration(rover)
 
     async def test_save_restores_missing_account_and_requires_confirmation(self):
         rover = models.RoverAccount(id=7, username='cp07', password='saved-secret', base_serial='',
@@ -44,8 +45,10 @@ class RoverRestoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('expires_at', update.await_args.args[2])
             update.reset_mock()
             caster.create_user.return_value = False
+            request = schemas.RoverUpdate()
+            devices_db = AsyncMock()
             with self.assertRaises(HTTPException) as error:
-                await update_rover(7, schemas.RoverUpdate(), db, AsyncMock(), admin)
+                await update_rover(7, request, db, devices_db, admin)
             self.assertEqual(error.exception.status_code, 502)
             update.assert_not_awaited()
 
@@ -67,6 +70,9 @@ class RoverRestoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(result, rover)
             self.assertEqual(caster.create_user.await_args.kwargs['expiry_seconds'], 315360000)
             caster.create_user.return_value = False
+            request = schemas.RoverUpdate()
+            auth_db = AsyncMock()
+            devices_db = AsyncMock()
             with self.assertRaises(HTTPException) as error:
-                await routes.sync_rover_by_username('cp07', schemas.RoverUpdate(), AsyncMock(), AsyncMock(), admin)
+                await routes.sync_rover_by_username('cp07', request, auth_db, devices_db, admin)
             self.assertEqual(error.exception.status_code, 502)

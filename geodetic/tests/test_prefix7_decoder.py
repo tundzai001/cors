@@ -153,7 +153,7 @@ class Prefix7DecoderTests(unittest.TestCase):
                     if call.args[0] == worker.topic_status]
         self.assertEqual(statuses[0], 'offline')
         self.assertIn('online', statuses, 'First validated frame must publish online without waiting for the rate window')
-        self.assertTrue(set(statuses) <= {'online', 'offline'})
+        self.assertLessEqual(set(statuses), {'online', 'offline'})
 
     def test_esp_decoder_uses_internal_identity_without_rover_position(self):
         worker = relay.MonitorWorker({'mountpoint': 'CUSTOM_BASE', 'serial': 'esp_test',

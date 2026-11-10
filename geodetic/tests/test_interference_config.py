@@ -14,7 +14,8 @@ def packets(blob):
     while offset < len(blob):
         size = int.from_bytes(blob[offset+4:offset+6], 'little') + 8
         packet = blob[offset:offset+size]
-        assert len(packet) == size and packet[:2] == b'\xb5\x62'
+        assert len(packet) == size
+        assert packet[:2] == b'\xb5\x62'
         assert packet == builder._ubx_packet(packet[2], packet[3], packet[6:-2]), 'checksum'
         yield packet
         offset += size

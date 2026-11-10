@@ -76,7 +76,7 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         self.reader.query_base = AsyncMock(side_effect=[TimeoutError('MON-VER timeout'), ValueError('VALGET'), self.pack(6,0x39,struct.pack('<II',0x80000000,0))])
         await self.s['_refresh_ubx_receiver_info'](self.reader)
         result = self.s['LAST_UBX_RECEIVER_INFO']
-        self.assertEqual(result['itfm_enabled'],True)
+        self.assertTrue(result['itfm_enabled'])
         self.assertIn('timeout',result['error'])
         self.reader.query_base = AsyncMock(side_effect=TimeoutError('timeout'))
         await self.s['_refresh_ubx_receiver_info'](self.reader)
@@ -361,8 +361,9 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         changed_header = unicore(body.replace('472312000', '472313000').format('FIXEDPOS'))
         await self.refresh([mode, changed_header])
         self.agent.save_config.assert_called_once()  # Header time must not rewrite saved config.
+        timeout_error = TimeoutError('BESTNAV timeout')
         with self.assertRaises(TimeoutError):
-            await self.refresh([mode, TimeoutError('BESTNAV timeout')])
+            await self.refresh([mode, timeout_error])
         self.assertEqual(self.system()['receiver_base_readback']['mode_kind'], 'survey_in')
         self.assertEqual(self.system()['survey_in_status']['state'], 'awaiting_readback')
         self.assertIn('survey_in_result', self.system())

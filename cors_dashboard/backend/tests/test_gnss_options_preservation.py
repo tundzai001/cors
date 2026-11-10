@@ -75,7 +75,7 @@ class TestGnssOptionsPreservation(unittest.TestCase):
         }
         cmd = command_builder.build_ublox_output_config_command(admin_opts)
         self.assertIsInstance(cmd, bytes)
-        self.assertTrue(len(cmd) > 0)
+        self.assertGreater(len(cmd), 0)
 
         # In rtcm_only mode, NMEA should be disabled in protocol keys (0x10780002 for USB)
         usb_nmea_key = command_builder.UBLOX_OUTPUT_PROTOCOL_KEYS["USB"]["NMEA"].to_bytes(4, "little")
@@ -149,7 +149,7 @@ class TestGnssOptionsPreservation(unittest.TestCase):
             coordinator_params["accuracy"],
             gnss_options,
         )
-        self.assertTrue(len(commands) > 0)
+        self.assertGreater(len(commands), 0)
         output_cmd = commands[1]
         usb_nmea_key = command_builder.UBLOX_OUTPUT_PROTOCOL_KEYS["USB"]["NMEA"].to_bytes(4, "little")
         self.assertIn(usb_nmea_key + b"\x00", output_cmd)

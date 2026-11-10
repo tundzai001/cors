@@ -110,12 +110,15 @@ class StationHostLockTests(unittest.IsolatedAsyncioTestCase):
         for changes in ({'server2_enabled': False}, {'serverhost2': 'other.test'}, {'port2': 9999},
                         {'mountpoint2': 'OTHER'}, {'server1_enabled': False}, {'serverhost1': 'other.test'},
                         {'server1_stream_active': False}, {'server2_stream_active': False}):
+            request = schemas.ServiceConfig(**changes)
             with self.subTest(changes=changes), self.assertRaises(HTTPException) as error:
-                await self.ns['configure_service_endpoint']('TEST', schemas.ServiceConfig(**changes), self.db, self.user)
+                await self.ns['configure_service_endpoint']('TEST', request, self.db, self.user)
             self.assertEqual(error.exception.status_code, 403)
+            request = schemas.ServiceConfig(**changes)
+            key = SimpleNamespace(created_by=1, id=1, edit_config=True, all_stations=True)
             with self.assertRaises(HTTPException):
-                await self.ns['configure_integration_station']('TEST', schemas.ServiceConfig(**changes), self.db,
-                    SimpleNamespace(created_by=1, id=1, edit_config=True, all_stations=True))
+                await self.ns['configure_integration_station']('TEST', request, self.db,
+                    key)
         with self.assertRaises(HTTPException):
             check_host_lock(self.device, {'target_host': 'other.test'})
         with self.assertRaises(HTTPException):

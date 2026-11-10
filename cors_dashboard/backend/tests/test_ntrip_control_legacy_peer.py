@@ -36,13 +36,16 @@ class LegacyCasterControlTests(unittest.IsolatedAsyncioTestCase):
         exec(compile(ast.Module(body=[function], type_ignores=[]), 'main.py', 'exec'), scope)
         check = scope['_require_ntrip_control_token']
         await check(SimpleNamespace(client=SimpleNamespace(host='192.0.2.73')), None)
+        untrusted_peer = SimpleNamespace(host='192.0.2.90')
+        forwarded_request = SimpleNamespace(client=untrusted_peer, headers={'x-forwarded-for': '192.0.2.73'})
         with self.assertRaises(HTTPException) as error:
-            await check(SimpleNamespace(client=SimpleNamespace(host='192.0.2.90'),
-                                        headers={'x-forwarded-for': '192.0.2.73'}), None)
+            await check(forwarded_request, None)
         self.assertEqual(error.exception.status_code, 503)
         scope['settings'].NTRIP_CONTROL_TOKEN = 'configured-token-' + 'x' * 32
+        configured_peer = SimpleNamespace(host='192.0.2.73')
+        missing_token_request = SimpleNamespace(client=configured_peer)
         with self.assertRaises(HTTPException) as error:
-            await check(SimpleNamespace(client=SimpleNamespace(host='192.0.2.73')), None)
+            await check(missing_token_request, None)
         self.assertEqual(error.exception.status_code, 401)
         await check(SimpleNamespace(client=SimpleNamespace(host='192.0.2.90')), scope['settings'].NTRIP_CONTROL_TOKEN)
 
