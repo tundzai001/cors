@@ -1778,6 +1778,7 @@ class RelayWorker(threading.Thread):
                 "server1_enabled": True,
                 "mountpoint1": self.cfg['target_mp'],
                 "serverhost1": self._target_host(),
+                "port1": self._target_port(),
                 "relay_source": {
                     "host": self._source_host(),
                     "port": self._source_port(),
