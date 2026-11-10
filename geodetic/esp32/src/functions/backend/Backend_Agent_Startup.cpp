@@ -131,7 +131,7 @@ void BackendAgent::reconcileBaseStartupReadback(JsonObjectConst readback) {
     markStatusDirty();
 }
 
-void BackendAgent::maybeStartBootAutoBase() {
+void BackendAgent::startBootAutoBaseWhenReady() {
     if (baseStartupState_ != "awaiting_auto_base" || stationLock_.all
         || !licenseValid_ || workflowActive()) return;
     // Backend/MQTT availability is unrelated to the direct caster connection.

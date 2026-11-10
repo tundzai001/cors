@@ -6,7 +6,7 @@ import tempfile
 root = Path(__file__).resolve().parents[2]
 source = (root / 'src/functions/backend/Backend_Agent_Startup.cpp').read_text()
 startup = source[source.index('bool BackendAgent::initializeBaseAtBoot('):source.index('bool BackendAgent::readStartupReceiverMode(')]
-local_start = source[source.index('void BackendAgent::maybeStartBootAutoBase('):]
+local_start = source[source.index('void BackendAgent::startBootAutoBaseWhenReady('):]
 shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')
 harness = r'''
 #include <cassert>
@@ -29,7 +29,7 @@ struct BackendAgent {
     bool saveStatePreferences() { ++saves; return saved; }
     void markStatusDirty() { dirty = true; }
     bool initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType);
-    void maybeStartBootAutoBase();
+    void startBootAutoBaseWhenReady();
     bool workflowActive() const { return active; }
     bool executeAutoBaseCommand(JsonObject request, String &error, String &) {
         ++queued;
@@ -74,20 +74,20 @@ int main() {
     assert(!failed.initializeBaseAtBoot(GnssSensorType::Ublox));
     assert(failed.baseStartupState_ == "error");
     // No MQTT client, backend or user assignment exists in this harness.
-    fresh.maybeStartBootAutoBase(); assert(fresh.queued == 0);
+    fresh.startBootAutoBaseWhenReady(); assert(fresh.queued == 0);
     WiFi.state = WL_CONNECTED;
-    fresh.maybeStartBootAutoBase(); assert(fresh.queued == 1);
-    fresh.maybeStartBootAutoBase(); assert(fresh.queued == 1);
-    fresh.active = false; fresh.maybeStartBootAutoBase(); assert(fresh.queued == 1);
+    fresh.startBootAutoBaseWhenReady(); assert(fresh.queued == 1);
+    fresh.startBootAutoBaseWhenReady(); assert(fresh.queued == 1);
+    fresh.active = false; fresh.startBootAutoBaseWhenReady(); assert(fresh.queued == 1);
     BackendAgent sim; sim.baseStartupState_ = "awaiting_auto_base";
-    gsm = true; sim.maybeStartBootAutoBase(); assert(sim.queued == 0);
-    modem.up = true; sim.maybeStartBootAutoBase(); assert(sim.queued == 1);
+    gsm = true; sim.startBootAutoBaseWhenReady(); assert(sim.queued == 0);
+    modem.up = true; sim.startBootAutoBaseWhenReady(); assert(sim.queued == 1);
     BackendAgent unlicensed; unlicensed.baseStartupState_ = "awaiting_auto_base";
-    unlicensed.licenseValid_ = false; unlicensed.maybeStartBootAutoBase(); assert(unlicensed.queued == 0);
+    unlicensed.licenseValid_ = false; unlicensed.startBootAutoBaseWhenReady(); assert(unlicensed.queued == 0);
     BackendAgent queueFailure; queueFailure.baseStartupState_ = "awaiting_auto_base";
-    queueFailure.queueOk = false; queueFailure.maybeStartBootAutoBase();
+    queueFailure.queueOk = false; queueFailure.startBootAutoBaseWhenReady();
     assert(queueFailure.baseStartupState_ == "error");
-    queueFailure.maybeStartBootAutoBase(); assert(queueFailure.queued == 1);
+    queueFailure.startBootAutoBaseWhenReady(); assert(queueFailure.queued == 1);
     BackendAgent unknown;
     assert(!unknown.initializeBaseAtBoot(GnssSensorType::Invalid));
     assert(!unknown.baseStartupAttempted_ && unknown.saves == 0);

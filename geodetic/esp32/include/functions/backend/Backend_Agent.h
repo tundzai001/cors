@@ -161,7 +161,7 @@ private:
     bool executeLicenseCommand(JsonObject payload, String &error, String &detail, bool &restartAfterCommand);
     bool executeServiceConfigCommand(JsonObject payload, String &error, String &detail);
     bool executeRawCommand(JsonDocument &doc, JsonObject payload, String &error, String &detail);
-    void maybeStartBootAutoBase();
+    void startBootAutoBaseWhenReady();
     bool executeAutoBaseCommand(JsonObject payload, String &error, String &detail);
     bool executeReferenceCheckCommand(JsonObject payload, String &error, String &detail);
     bool waitForAutoBaseFix(uint32_t timeoutSeconds, uint8_t fixedStreakRequired, bool &cancelled, String &failureReason, const String &sourceMountpoint);
