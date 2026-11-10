@@ -489,6 +489,8 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     }
 
     setWorkflowProgress("connect_caster", 1, 4);
+    Serial.printf("[AUTO BASE][CASTER] Connecting %s:%u/%s; AutoNearest=%s.\n",
+                  host.c_str(), port, mountpoint.c_str(), autoNearest ? "YES" : "NO");
     bool roverStarted = false;
     if (tcpStreamMutex
         && xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
@@ -500,13 +502,17 @@ bool BackendAgent::runAutoBaseWorkflow(JsonObject payload) {
     }
     if (!roverStarted) {
         const String reason = ntripRoverLastError();
+        Serial.printf("[AUTO BASE][CASTER][REJECT] %s\n", reason.c_str());
         if (payload["source_mode"] == "nearest" && reason == "ERROR - NO STATION WITHIN 20 KM"
             && !workflowCancelRequested_) {
+            Serial.println("[AUTO BASE][FALLBACK] Caster reports no station within 20 km; starting Survey-In.");
             DynamicJsonDocument survey(CONFIG_DOCUMENT_SIZE);
             survey.set(previousBase.as<JsonObjectConst>());
             survey["base_setup_method"] = "SURVEY_IN";
             const bool surveyStarted = restoreWorkflowBase(survey.as<JsonObjectConst>());
             if (surveyStarted && restartConfiguredNtrip()) {
+                Serial.printf("[AUTO BASE][SURVEY-IN] Started; target=%lu seconds; RTCM SOURCE restored.\n",
+                              static_cast<unsigned long>(surveyInTargetSeconds_));
                 setAgentState(normalAgentState());
                 setWorkflowProgress("completed", 4, 4,
                     "{\"mode\":\"survey_in\",\"reason\":\"no_fixed_station_within_20_km\"}");
