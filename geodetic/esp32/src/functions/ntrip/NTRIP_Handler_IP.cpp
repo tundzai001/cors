@@ -176,7 +176,7 @@ void stopEndpoint(uint8_t index) {
     clearEndpointState(endpoints[index]);
 }
 
-bool waitForNtripResponse(Client &client, String *statusLine = nullptr, bool rover = false, String *selectedMountpoint = nullptr) {
+bool waitForNtripResponse(Client &client, String *statusLine = nullptr, String *selectedMountpoint = nullptr) {
     String response;
     response.reserve(512);
     const uint32_t started = millis();
@@ -185,9 +185,9 @@ bool waitForNtripResponse(Client &client, String *statusLine = nullptr, bool rov
             const int value = client.read();
             if (value < 0) break;
             response += static_cast<char>(value);
-            if (response.endsWith("\r\n\r\n") || (rover && response == "ICY 200 OK\r\n")) break;
+            if (response.endsWith("\r\n\r\n") || response == "ICY 200 OK\r\n") break;
         }
-        if (response.indexOf("\r\n\r\n") >= 0 || (rover && response == "ICY 200 OK\r\n")) break;
+        if (response.indexOf("\r\n\r\n") >= 0 || response == "ICY 200 OK\r\n") break;
         delay(1);
     }
     if (statusLine) {
@@ -474,7 +474,7 @@ bool startNtripRover(const String &host, const uint16_t port, const String &user
     client.print(request);
 
     String responseLine;
-    if (!waitForNtripResponse(client, &responseLine, true, selectedMountpoint)) {
+    if (!waitForNtripResponse(client, &responseLine, selectedMountpoint)) {
         if (responseLine == "ERROR - NO STATION WITHIN 20 KM")
             roverLastError = "ERROR - NO STATION WITHIN 20 KM";
         else if (responseLine == "ERROR - FIXED STATION IN RANGE UNAVAILABLE")
