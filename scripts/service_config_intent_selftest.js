@@ -59,5 +59,18 @@ function input(tree, name) { return nodes(tree).find(node => node.type === 'inpu
   assert(text.includes('Đã kết nối Caster'), 'Authenticated caster indicator remains visible in sleep');
   assert(text.includes('Ngủ · chờ rover'), 'Sleep is shown separately from caster connection');
   assert.equal(input(tree, 'server1_stream_on_demand').props.checked, true);
+  props = { ...props, device: { ...props.device,
+    service_config: {...props.device.service_config, stream_on_demand: false,
+      server1_stream_on_demand: false, server1_stream_active: true},
+    ntrip_status: {server1: {connected: true, bps: 0, sleep: false}},
+    ntrip_stats: {rtcm_input_bps: 0} } };
+  assert(JSON.stringify(render()).includes('ESP không nhận được RTCM từ chip GNSS.'));
+  props.device = {...props.device, system_info: {base_startup: {state: 'awaiting_auto_base'}}};
+  assert(JSON.stringify(render()).includes('Đang chờ bắt đầu Auto Base.'));
+  props.device = {...props.device, system_info: {}, ntrip_stats: {}};
+  assert(JSON.stringify(render()).includes('Chưa xác định được nguyên nhân'));
+  props.device = {...props.device, ntrip_status: {server1: {connected: true, bps: 120}}};
+  assert(!JSON.stringify(render()).includes('Chưa xác định được nguyên nhân'));
+  console.log('PASS: zero-throughput reasons shown next to connected caster; positive throughput clears reason');
   console.log('PASS: sleep selection survives save and source refresh; caster-connected + sleeping badges coexist');
 })().catch(error => { console.error(error); process.exitCode = 1; });

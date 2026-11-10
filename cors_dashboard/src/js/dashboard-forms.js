@@ -2325,6 +2325,15 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             !toBool(telemetry.active, toBool(saved[`${key}_stream_active`], toBool(saved.stream_active)))
         );
         const casterError = device.ntrip_status?.[key]?.error;
+        const startup = device.system_info?.base_startup || {};
+        const workflow = device.auto_base_progress || {};
+        const runningAutoBase = /^auto_setup/.test(device.status || '');
+        const noDataReason = sleeping ? 'Đang chờ yêu cầu phát từ rover.'
+            : startup.state === 'error' ? (startup.error || 'Thiết lập Base thất bại; xem trạng thái GNSS.')
+            : startup.state === 'awaiting_auto_base' ? 'Đang chờ bắt đầu Auto Base.'
+            : runningAutoBase ? `Đang chạy Auto Base (${workflow.phase || 'đang xử lý'}); chưa phát RTCM Base.`
+            : device.ntrip_stats?.rtcm_input_bps === 0 ? 'ESP không nhận được RTCM từ chip GNSS.'
+            : 'Chưa xác định được nguyên nhân từ trạng thái thiết bị hiện tại.';
         return (
             <span className="d-inline-flex flex-wrap align-items-center gap-2 ms-2 small" role="status" aria-live="polite">
                 <span className={`badge text-bg-${enabled ? 'primary' : 'secondary'}`}>
@@ -2342,6 +2351,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 )}
                 {enabled && !pending && !offline && !telemetry.connected && !sleeping && casterError && (
                     <span className="text-danger text-break w-100" role="status">Caster: {casterError}</span>
+                )}
+                {enabled && !blockedServer(serverId) && !pending && !offline && telemetry.connected && !(telemetry.bps > 0) && (
+                    <span className="text-warning text-break w-100">{noDataReason}</span>
                 )}
             </span>
         );
