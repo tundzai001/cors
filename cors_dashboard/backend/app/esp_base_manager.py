@@ -552,7 +552,8 @@ async def start_pending_auto_base_workflows() -> None:
             if startup.get('state') != 'awaiting_auto_base' or device.is_locked or not device.is_provisioned:
                 continue
             device_status = str(device.status or '').casefold()
-            if (device_status not in {'online', 'streaming'} and not device_status.startswith('auto_setup')) \
+            # A pending startup has no SOURCE stream yet and may report sleep.
+            if (device_status not in {'online', 'streaming', 'sleep'} and not device_status.startswith('auto_setup')) \
                     or int(device.timestamp or 0) < int(time.time()) - 90:
                 continue
             from .station_runtime import latest_device_telemetry_cache
@@ -575,6 +576,8 @@ async def start_pending_auto_base_workflows() -> None:
             if sensor_type not in {'Ublox', 'Unicorecomm'}:
                 continue
             if not device.user_id:
+                _set_esp_setup_status(device.serial, "auto_nearest", "waiting_assignment", boot_id=boot_id,
+                                      detail="Gán người quản lý cho trạm để bắt đầu Auto Base.")
                 continue
             if system.get("auto_base_firmware_profile") is not True:
                 _set_esp_setup_status(device.serial, "auto_nearest", "retrying", boot_id=boot_id,
