@@ -1,21 +1,23 @@
 # Auto Base result review
 
-Auto Base now measures a candidate position. It does not install that candidate.
-The operator starts one sampling workflow, reviews the raw and resulting LLH,
-then explicitly approves the calculated LLH with the Fixed LLA apply button.
-The review panel stays visible independently of the currently selected method,
-including a restored Survey-In configuration. Approval submits candidate LLH and
-its conversion report through the normal Fixed LLA configuration path; it does
-not restart sampling or repeat the coordinate transformation. The receiver readback is compared with the saved coordinates;
-matching coordinates show success, actual differences show horizontal/height
-errors, and missing or stale readbacks remain unverified.
+Auto Base has two source modes. In nearest mode, the ESP32 enters Rover first
+and reports its GGA position. The backend selects the nearest eligible CORS
+source from the device owner's visible Rover accounts and sends that NTRIP
+profile to the device. After RTK_FIXED quality and sample checks pass, firmware
+applies Fixed LLA and verifies receiver readback automatically. A failed check
+does not install the candidate. In manual mode, the operator enters the NTRIP
+profile, reviews the raw and resulting LLH, then approves it with the Fixed LLA
+apply button. Receiver readback is compared with saved coordinates; matching
+coordinates show success, actual differences show horizontal/height errors,
+and missing or stale readbacks remain unverified.
 
-The Python workflow stops its temporary correction connection and restores the
-previous Base position after sampling, errors, or cancellation. A restore marker
-survives an interrupted run. If restoration fails, the candidate is not reported
-as ready. Stations with no previous fixed coordinates remain in Rover mode until
-Fixed LLA is applied. Auto Base still temporarily interrupts Base operation while
-collecting Rover samples. Candidate results persist locally across restarts.
+The firmware workflow stops its temporary correction connection and restores
+the previous Base position after sampling errors or cancellation. A new or
+unconfigured station remains in Rover mode while the backend waits for GGA and
+selects a CORS source. If restoration or receiver verification fails, the
+candidate is not reported as applied. Auto Base temporarily interrupts Base
+operation while collecting Rover samples. Reports persist locally across
+restarts.
 
 ## Location and conversion
 
@@ -66,11 +68,12 @@ fails or the report exceeds memory capacity, the workflow reports failure and
 does not publish a ready candidate.
 
 Deploy the server, generated frontend assets and matching agent together.
-Agents advertise `system_info.auto_base_review_supported`. Configure routes reject
-Auto Base for older agents with HTTP 409; the form explains the required update.
-Old agents do not implement the review contract. HTML asset revisions were
-updated to invalidate cached forms/readback logic. This work does not update
-running stations automatically.
+Agents advertise `system_info.auto_base_review_supported` and
+`system_info.auto_base_nearest_supported`. Configure routes reject unsupported
+Auto Base modes for older agents with HTTP 409; the form explains the required
+update. HTML asset revisions are updated with the matching UI. Existing running
+stations need a reboot or a nearest-mode request to enter Rover and start the
+new selection flow.
 
 ## Verification
 
@@ -140,8 +143,8 @@ UI preference is 1800 seconds), with saved accuracy and output options; Fixed LL
 restores its saved coordinates. A receiver mode readback must confirm the
 restored mode before source publishing resumes. If restoration/readback fails,
 the Base startup state becomes an error and source streams remain blocked.
-An unconfigured receiver may remain Rover for candidate review, but cannot
-publish a Base stream until configured.
+An unconfigured receiver remains in Rover while awaiting a nearest-source
+selection; successful auto-apply configures Fixed LLA before Base output resumes.
 
 Rover diagnostics distinguish `cors_rx` (raw caster bytes), `uart_tx` (bytes
 accepted by the ESP32 UART driver), and `rtcm_frames` (CRC-valid RTCM frames).

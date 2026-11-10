@@ -34,6 +34,13 @@ const context = vm.createContext({React, window, console, setInterval: () => 1, 
 const statusOverrides = window.CorsDashboardShared;
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/dashboard-shared.min.js'), 'utf8'), context);
 Object.assign(window.CorsDashboardShared, statusOverrides);
+assert.equal(window.CorsDashboardShared.isReadonly4gBase({
+    serial: 'esp_9896E5124B00', name: '71232', service_config: {mountpoint1: '71232'},
+}), false, 'Managed ESP32 with a numeric mountpoint stays editable');
+assert.equal(window.CorsDashboardShared.isReadonly4gBase({
+    serial: 'MONITOR_71232', service_config: {mountpoint1: '71232'},
+}), true, 'Caster-only monitor stays read-only');
+
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../cors_dashboard/frontend/js/dist/dashboard-list.min.js'), 'utf8'), context);
 const station = (serial, status = 'online') => ({serial, name: serial, status, is_synced: true});
 let props = {devices: [station('1000000037a7201b'), station('LP_00E04C0CFB9E'), station('RELAY_ATG_DT'),

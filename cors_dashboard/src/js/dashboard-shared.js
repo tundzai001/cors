@@ -179,7 +179,9 @@ const getOfflineInfo = (device, nowMs = Date.now()) => {
 
 const isReadonly4gBase = (device) => {
     const config = device?.service_config || {};
-    return /^MONITOR_7/i.test(String(device?.serial || '')) ||
+    const serial = String(device?.serial || '').trim();
+    if (/^esp_/i.test(serial)) return false;
+    return /^MONITOR_7/i.test(serial) ||
         ['mountpoint1', 'active_mountpoint', 'mountpoint', 'source_mountpoint', 'mountpoint2']
             .some(key => String(config[key] || '').trim().replace(/^\//, '').startsWith('7'));
 };

@@ -42,8 +42,9 @@ class MetadataLookupCancellationTests(unittest.IsolatedAsyncioTestCase):
         self.get = self.scope['get_device_metadata']
 
     async def test_handshake_timeout_keeps_query_alive_and_populates_cache(self):
+        lookup = self.get('LP_TEST')
         with self.assertRaises(asyncio.TimeoutError):
-            await asyncio.wait_for(self.get('LP_TEST'), timeout=0.01)
+            await asyncio.wait_for(lookup, timeout=0.01)
         self.assertEqual(self.cancelled, 0, 'Handshake timeout must not cancel SQL or connection cleanup')
         self.gate.set()
         metadata = await self.get('LP_TEST')

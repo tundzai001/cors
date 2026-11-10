@@ -101,9 +101,11 @@ class LicenseFailureTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_license_route_rejects_blocked_pi(self):
         from app import main, schemas
         db = SimpleNamespace(add=Mock(), commit=AsyncMock())
+        request = schemas.LicenseRequest(serial='PI_0bd46c72e7be')
+        admin = SimpleNamespace(id=1, role='admin')
         with self.assertRaises(HTTPException) as raised:
-            await main.generate_pi_license(schemas.LicenseRequest(serial='PI_0bd46c72e7be'), db,
-                                           SimpleNamespace(id=1, role='admin'))
+            await main.generate_pi_license(request, db,
+                                           admin)
         self.assertEqual(raised.exception.status_code, 400)
         db.add.assert_not_called()
         db.commit.assert_not_awaited()
@@ -117,9 +119,11 @@ class LicenseFailureTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status=expected_status):
                 db = SimpleNamespace(commit=AsyncMock(side_effect=error), rollback=AsyncMock())
                 with patch.object(main.crud, 'get_device_by_serial', AsyncMock(return_value=device)):
+                    request = schemas.LicenseRequest(serial=device.serial)
+                    admin = SimpleNamespace(id=1, role='admin')
                     with self.assertRaises(HTTPException) as raised:
                         await main.generate_pi_license(
-                            schemas.LicenseRequest(serial=device.serial), db, SimpleNamespace(id=1, role='admin'))
+                            request, db, admin)
                 self.assertEqual(raised.exception.status_code, expected_status)
                 db.rollback.assert_awaited_once()
 

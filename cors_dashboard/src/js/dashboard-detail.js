@@ -926,6 +926,96 @@ const ConfiguredRelayPowerControl = memo(function ConfiguredRelayPowerControl({ 
 // =========================================
 // === COMPONENT CHÍNH: DetailsPanel ===
 // =========================================
+function EspSetupProgress({ device, offline, tokenConfirmed }) {
+    const setup = device.esp_setup || {};
+    const source = setup.source || {};
+    const rover = setup.rover || {};
+    const nearest = setup.auto_nearest || {};
+    const progress = device.auto_base_progress || {};
+    const startup = device.system_info?.base_startup || {};
+    const survey = device.system_info?.survey_in_status || {};
+    const auth = device.system_info?.auth_status || {};
+    const name = device.name || '';
+    const actualSource = startup.state === 'awaiting_auto_base' ? '' :
+        progress.source_mountpoint || progress.conversion_report?.source?.mountpoint;
+    const useSurvey = progress.mode === 'survey_in' || ['survey_started', 'survey_resumed'].includes(startup.state)
+        || (survey.state && survey.state !== 'not_monitoring');
+    const phase = startup.state === 'awaiting_auto_base' ? '' : progress.phase;
+    const waiting = 'Đang chờ';
+    const ready = 'Đã xác nhận';
+    const retrying = 'Đang thử lại';
+    const step = (label, status, detail) => ({ label, status, detail });
+    const steps = [
+        step('Health', offline ? 'Mất kết nối' : device.timestamp ? ready : waiting,
+            offline ? 'Hiển thị trạng thái lần nhận gần nhất.' : 'Backend nhận trạng thái từ ESP32.'),
+        step('Token thiết bị', tokenConfirmed ? ready : auth.token_deployment_pending ? 'Đang đồng bộ' : waiting,
+            tokenConfirmed ? 'ESP32 và backend đã xác nhận token.' : 'Cần đăng ký hoặc kích hoạt thiết bị.'),
+        step('Mountpoint phát', source.mountpoint === name && source.state === 'ready' ? 'Đã cấu hình' :
+            source.state === 'retrying' ? retrying : ['registering', 'waiting_health'].includes(source.state) ? 'Đang đồng bộ' : waiting,
+            source.state === 'waiting_config' ? 'Chưa cấu hình caster phát.' : source.detail || name),
+        step('Tài khoản rover', rover.username === name && rover.state === 'ready' ? ready :
+            rover.state === 'partial' ? 'Đồng bộ một phần' : rover.state === 'retrying' ? retrying : waiting, name),
+    ];
+
+    const nearestStatus = actualSource ? ready : nearest.state === 'sent' ? 'Đã gửi cấu hình' :
+        nearest.state === 'ready' ? 'Đã nạp cấu hình' :
+        ['retrying', 'delivery_retry'].includes(nearest.state) ? retrying : waiting;
+    const nearestRequested = startup.state === 'awaiting_auto_base' || startup.state === 'auto_base_running'
+        || !!nearest.state || !!actualSource;
+    if (nearestRequested) {
+        steps.push(step('AutoNearest', nearestStatus,
+            [nearest.caster, nearest.requested_mountpoint && `MP đầu vào ${nearest.requested_mountpoint}`, nearest.detail].filter(Boolean).join(' · ')));
+    }
+
+    let baseStatus = waiting;
+    let baseDetail = '';
+    if (phase === 'failed' || startup.state === 'error') {
+        baseStatus = 'Thất bại';
+        baseDetail = progress.reason || startup.error || 'Chưa thiết lập được Base.';
+    } else if (phase === 'stopped') {
+        baseStatus = 'Đã dừng';
+    } else if (useSurvey) {
+        baseStatus = survey.state === 'base_ready' ? ready : 'Đang Survey-In';
+        const seconds = survey.elapsed_seconds ?? survey.elapsed_since_ack_seconds;
+        baseDetail = [
+            progress.reason === 'no_fixed_station_within_20_km' && 'Ngoài vùng trạm cố định 20 km.',
+            seconds != null && survey.target_seconds ? `${seconds}/${survey.target_seconds} giây` : '',
+        ].filter(Boolean).join(' ');
+    } else {
+        baseStatus = ({
+            set_rover: 'Đang vào Rover', wait_gga: 'Đang chờ GGA', connect_caster: 'Đang kết nối caster',
+            wait_fix: 'Đang chờ RTK FIX',
+            averaging: 'Đang lấy mẫu', resolving_location: 'Đang xử lý tọa độ',
+            ready_for_review: 'Chờ duyệt tọa độ', completed: 'Đã áp dụng Fixed LLA',
+        })[phase] || (startup.state === 'fixed_restored' ? 'Đã khôi phục Fixed LLA' : waiting);
+        baseDetail = [
+            actualSource && `Nguồn RTCM ${actualSource}`,
+            phase === 'averaging' && progress.samples_target ? `${progress.samples_collected ?? 0}/${progress.samples_target} mẫu` : '',
+        ].filter(Boolean).join(' · ');
+    }
+    steps.push(step('Thiết lập Base', baseStatus, baseDetail));
+    steps.push(step('Phát RTCM', !offline && device.ntrip_connected ? 'Đang phát' : waiting,
+        !offline && device.ntrip_connected && source.mountpoint === name ? name : ''));
+
+    return (
+        <section className="card bg-dark border-secondary mb-3" aria-label="Luồng hoạt động ESP32">
+            <div className="card-body p-3">
+                <h3 className="h6 mb-3">Luồng hoạt động ESP32</h3>
+                <ol className="list-unstyled mb-0" aria-live="polite" aria-atomic="false">
+                    {steps.map(({ label, status, detail }, index) => (
+                        <li key={label} className="d-flex flex-wrap align-items-baseline gap-2 small py-1">
+                            <span className="text-muted" aria-hidden="true">{index + 1}.</span>
+                            <strong>{label}</strong>
+                            <span className={status === 'Thất bại' || status === 'Mất kết nối' ? 'text-danger' : 'text-info'}>{status}</span>
+                            {detail && <span className="text-muted text-break">{detail}</span>}
+                        </li>
+                    ))}
+                </ol>
+            </div>
+        </section>
+    );
+}
+
 const DetailsPanel = memo(function DetailsPanel({
     device,
     currentUser,
@@ -1413,6 +1503,9 @@ const DetailsPanel = memo(function DetailsPanel({
                 )}
             </div>
             <div className="details-panel-scroll dashboard-detail-body card-body overflow-auto flex-grow-1 p-3">
+                {/^esp_/i.test(String(device.serial || '').trim()) && (
+                    <EspSetupProgress device={device} offline={staleOffline} tokenConfirmed={tokenConfirmed} />
+                )}
                 {/* HIỂN THỊ TIẾN ĐỘ CẤU HÌNH (CONFIG STATUS) */}
                 {device?.system_info?.config_status && !['done', 'success', 'idle'].includes(device.system_info.config_status.state) && (
                     <div className={`alert ${device.system_info.config_status.state === 'error' ? 'alert-danger' : 'alert-info'} mb-3`}>

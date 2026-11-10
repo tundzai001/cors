@@ -249,10 +249,23 @@ async def ui_status_broadcast_worker_task():
                         continue
                     if message.get("_drop_if_device_missing") and mqtt_handler.device_metadata_is_missing(serial):
                         continue
+                    # Đồng bộ caster tại điểm nhận chung của MQTT, WebSocket và thông báo hết hạn heartbeat.
+                    # Dùng trạng thái trong bản tin mới vì dữ liệu DB có thể chưa ghi xong.
+                    try:
+                        async with device_session_scope() as db:
+                            device = await crud.get_device_by_serial(db, serial)
+                            if device:
+                                await _on_device_status_update(device, data)
+                    except Exception as exc:
+                        logger.warning("[CASTER SYNC] Status sync failed for %s: %s", serial, exc)
                     outbound = message
                     if "_drop_if_device_missing" in message:
                         outbound = dict(message)
                         outbound.pop("_drop_if_device_missing", None)
+                    if serial.lower().startswith("esp_"):
+                        from .esp_base_manager import get_esp_setup_status
+                        outbound = {**outbound, "data": {**data, "esp_setup": get_esp_setup_status(
+                            serial, str(data.get("status_boot_id") or ""))}}
                     await ui_manager.broadcast(outbound)
             except Exception as exc:
                 logger.warning("UI status broadcast worker error: %s", exc)
@@ -297,19 +310,11 @@ async def pi_status_ingest_worker_task():
                     device_update_buffer.append(payload)
                 await enqueue_ui_broadcast({"type": "status_update", "data": payload})
 
-            # === CASTER STATUS SYNC: Detect per-server status changes ===
+            # Cập nhật bản tin gần nhất trong bộ nhớ trước khi ghi DB theo lô.
             if serial:
                 live_snapshot = dict(latest_device_telemetry_cache.get(str(serial)) or {})
                 live_snapshot.update(payload)
                 latest_device_telemetry_cache[str(serial)] = live_snapshot
-                try:
-                    async with device_session_scope() as db:
-                        device = await crud.get_device_by_serial(db, serial)
-                        if device:
-                            # Trigger status change detection (pass payload for rich ntrip_stream_state)
-                            await _on_device_status_update(device, payload)
-                except Exception as e:
-                    logger.warning(f"[CASTER SYNC] Error detecting status change for '{serial}': {e}")
 
         except Exception as e:
             logger.warning(f"PI status ingest worker error: {e}")

@@ -176,7 +176,7 @@ void stopEndpoint(uint8_t index) {
     clearEndpointState(endpoints[index]);
 }
 
-bool waitForNtripResponse(Client &client, String *statusLine = nullptr, bool rover = false) {
+bool waitForNtripResponse(Client &client, String *statusLine = nullptr, bool rover = false, String *selectedMountpoint = nullptr) {
     String response;
     response.reserve(512);
     const uint32_t started = millis();
@@ -195,6 +195,18 @@ bool waitForNtripResponse(Client &client, String *statusLine = nullptr, bool rov
         *statusLine = response.substring(0, end >= 0 ? end : 240);
         statusLine->trim();
         if (statusLine->isEmpty()) *statusLine = "No response from caster (timeout or closed connection)";
+    }
+    if (selectedMountpoint && response.endsWith("\r\n\r\n")) {
+        const char *header = "\r\nX-NTRIP-Selected-Mountpoint:";
+        const int field = response.indexOf(header);
+        if (field >= 0) {
+            const int start = field + strlen(header);
+            const int end = response.indexOf('\r', start);
+            if (end > start) {
+                *selectedMountpoint = response.substring(start, end);
+                selectedMountpoint->trim();
+            }
+        }
     }
     return response.indexOf("ICY 200 OK") >= 0
         || response.indexOf("HTTP/1.1 200 OK") >= 0
@@ -395,10 +407,12 @@ String ntripServerError(uint8_t serverId) {
 }
 
 bool startNtripRover(const String &host, const uint16_t port, const String &username,
-                    const String &password, String mountpoint, const uint8_t version) {
+                    const String &password, String mountpoint, const uint8_t version, String *selectedMountpoint,
+                    const String &receiverId) {
     if (host.isEmpty() || port == 0 || mountpoint.isEmpty()
         || !safeNtripField(host) || !safeNtripField(username)
-        || !safeNtripField(password) || !safeNtripField(mountpoint)) return false;
+        || !safeNtripField(password) || !safeNtripField(mountpoint)
+        || !safeNtripField(receiverId)) return false;
     while (mountpoint.startsWith("/")) mountpoint.remove(0, 1);
     if (mountpoint.isEmpty()) return false;
 
@@ -423,25 +437,58 @@ bool startNtripRover(const String &host, const uint16_t port, const String &user
 
     const String user = username.isEmpty() ? String("source") : username;
     const String auth = encodeBase64(user + ":" + password);
+    String agent = "NTRIP ESP32-Agent/" + String(AGENT_VERSION);
+    if (!receiverId.isEmpty()) agent += "/" + receiverId;
     String request;
     if (version == 2) {
         request = "GET /" + mountpoint + " HTTP/1.1\r\n"
                   "Host: " + host + ":" + String(port) + "\r\n"
                   "Ntrip-Version: Ntrip/2.0\r\n"
-                  "User-Agent: NTRIP ESP32-Agent/" + String(AGENT_VERSION) + "\r\n"
+                  "User-Agent: " + agent + "\r\n"
                   "Authorization: Basic " + auth + "\r\n"
                   "Accept: */*\r\n"
                   "Connection: Keep-Alive\r\n\r\n";
     } else {
         request = "GET /" + mountpoint + " HTTP/1.0\r\n"
-                  "User-Agent: NTRIP ESP32-Agent/" + String(AGENT_VERSION) + "\r\n"
+                  "User-Agent: " + agent + "\r\n"
                   "Authorization: Basic " + auth + "\r\n"
                   "Accept: */*\r\n"
                   "Connection: close\r\n\r\n";
     }
+    // AutoNearest có thể quyết định ngay từ yêu cầu, trước khi trả ICY.
+    const auto snapshot = getGnssTelemetrySnapshot();
+    if (snapshot.lastGga[0] != '\0' && snapshot.lastGgaMs != 0
+        && millis() - snapshot.lastGgaMs <= 3000UL) {
+        String gga = snapshot.lastGga;
+        gga.trim();
+        if (gga.indexOf('\r') < 0 && gga.indexOf('\n') < 0) {
+            request.remove(request.length() - 2);
+            request += "Ntrip-GGA: " + gga + "\r\n\r\n";
+        }
+    }
+    if (selectedMountpoint) {
+        selectedMountpoint->clear();
+        request.remove(request.length() - 2);
+        request += "X-NTRIP-Report-Selected: 1\r\n\r\n";
+    }
     client.print(request);
 
-    if (!waitForNtripResponse(client, nullptr, true)) {
+    String responseLine;
+    if (!waitForNtripResponse(client, &responseLine, true, selectedMountpoint)) {
+        if (responseLine == "ERROR - NO STATION WITHIN 20 KM")
+            roverLastError = "ERROR - NO STATION WITHIN 20 KM";
+        else if (responseLine == "ERROR - FIXED STATION IN RANGE UNAVAILABLE")
+            roverLastError = "ERROR - FIXED STATION IN RANGE UNAVAILABLE";
+        else if (responseLine == "ERROR - FIXED STATION CATALOG UNAVAILABLE")
+            roverLastError = "ERROR - FIXED STATION CATALOG UNAVAILABLE";
+        else if (responseLine == "ERROR - AUTONEAREST NOT ENABLED")
+            roverLastError = "ERROR - AUTONEAREST NOT ENABLED";
+        client.stop();
+        roverSessionActive = false;
+        return false;
+    }
+    if (selectedMountpoint && selectedMountpoint->isEmpty()) {
+        roverLastError = "Caster did not confirm the selected mountpoint";
         client.stop();
         roverSessionActive = false;
         return false;

@@ -58,9 +58,10 @@ class StationNamePreservationTests(unittest.IsolatedAsyncioTestCase):
     async def test_blank_provision_name_cannot_be_sent(self):
         with patch.object(crud, 'get_device_by_serial', AsyncMock(return_value=self.device)), \
              patch.object(devices, 'send_command_to_pi', AsyncMock()) as dispatch:
+            command = schemas.Command(command='PROVISION_DEVICE', payload={'name': ' '})
             with self.assertRaises(HTTPException) as error:
                 await devices.send_generic_command(self.serial,
-                    schemas.Command(command='PROVISION_DEVICE', payload={'name': ' '}), self.db, self.admin)
+                    command, self.db, self.admin)
         self.assertEqual(error.exception.status_code, 400)
         self.db.commit.assert_not_awaited()
         dispatch.assert_not_awaited()
@@ -92,9 +93,10 @@ class StationNamePreservationTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(crud, 'get_device_by_serial', AsyncMock(return_value=None)), \
              patch.object(devices, 'auto_deploy_device_token', AsyncMock()) as register, \
              patch.object(mqtt, 'device_telemetry_cache', {self.serial: {'status': 'online'}}):
+            command = schemas.Command(command='REBOOT', payload={})
             with self.assertRaises(HTTPException) as error:
                 await devices.send_generic_command(self.serial,
-                    schemas.Command(command='REBOOT', payload={}), self.db, self.admin)
+                    command, self.db, self.admin)
         self.assertEqual(error.exception.status_code, 404)
         register.assert_not_awaited()
 
@@ -103,8 +105,9 @@ class StationNamePreservationTests(unittest.IsolatedAsyncioTestCase):
              patch.object(devices, 'auto_deploy_device_token', AsyncMock()) as register, \
              patch.object(devices.auth, 'has_permission', side_effect=lambda user, permission: permission != devices.auth.Permission.MANAGE_LICENSE), \
              patch.object(mqtt, 'device_telemetry_cache', {self.serial: {'status': 'online'}}):
+            command = schemas.Command(command='PROVISION_DEVICE', payload={'name': 'Station'})
             with self.assertRaises(HTTPException) as error:
                 await devices.send_generic_command(self.serial,
-                    schemas.Command(command='PROVISION_DEVICE', payload={'name': 'Station'}), self.db, self.admin)
+                    command, self.db, self.admin)
         self.assertEqual(error.exception.status_code, 403)
         register.assert_not_awaited()

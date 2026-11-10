@@ -1097,9 +1097,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const startedAtText = formatDateTime(conn.started_at);
                 const clientIdText = conn.client_id ? String(conn.client_id) : 'N/A';
                 const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${escapeHtml(String(conn.server || '').split('.')[0])}]</span>` : '';
+                const requestedMp = String(conn.requested_mountpoint || conn.mountpoint || '');
+                const selectedMp = String(conn.selected_mountpoint || '');
+                const routed = selectedMp && selectedMp.toLowerCase() !== requestedMp.toLowerCase();
+                const receiverId = String(conn.receiver_id || '');
+                const deviceLabel = /^esp_/i.test(receiverId)
+                    ? `<span class="text-muted small">${escapeHtml(receiverId)} · </span>` : '';
+                const sourceLabel = routed
+                    ? `<span class="text-info small"> · RTCM từ ${escapeHtml(selectedMp)}</span>` : '';
                 currentRenderedConnectionKeys.add(getConnectionClockKey(conn));
                 return `<div class="rover-connection-row">
-                            <span class="rover-connection-mp">${escapeHtml(conn.mountpoint)}</span>
+                            <span class="rover-connection-mp">${deviceLabel}${escapeHtml(requestedMp)}${sourceLabel}</span>
                             ${serverLabel}
                             <span class="rover-connection-time">
                                 <i class="bi bi-clock me-1"></i>

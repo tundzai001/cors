@@ -152,8 +152,9 @@ class IntegrationApiKeyTests(unittest.IsolatedAsyncioTestCase):
                 await call
             self.assertEqual(error.exception.status_code, 403)
         key.revoked_at = 1
+        response = Response()
         with self.assertRaises(HTTPException) as error:
-            await reveal_api_key(1, self.password, Response(), db, admin)
+            await reveal_api_key(1, self.password, response, db, admin)
         self.assertEqual(error.exception.status_code, 404)
 
     async def test_legacy_key_import_preserves_existing_token_and_policy(self):
@@ -162,16 +163,19 @@ class IntegrationApiKeyTests(unittest.IsolatedAsyncioTestCase):
         db = SimpleNamespace(get=AsyncMock(return_value=key), commit=AsyncMock())
         admin = self.admin
         before = _key_metadata(key)
+        response = Response()
         with self.assertRaises(HTTPException) as error:
-            await reveal_api_key(1, self.password, Response(), db, admin)
+            await reveal_api_key(1, self.password, response, db, admin)
         self.assertEqual(error.exception.status_code, 409)
+        request = SavedApiKey(token="cors_wrong_token")
+        response = Response()
         with self.assertRaises(HTTPException) as error:
-            await save_existing_api_key(1, SavedApiKey(token="cors_wrong_token"), Response(), db, admin)
+            await save_existing_api_key(1, request, response, db, admin)
         self.assertEqual(error.exception.status_code, 422)
         self.assertIsNone(key.token_encrypted)
         db.commit.assert_not_awaited()
         result = await save_existing_api_key(1, SavedApiKey(token=token), Response(), db, admin)
-        self.assertEqual({**before, "has_saved_token": True}, result)
+        self.assertEqual(result, {**before, "has_saved_token": True})
         self.assertEqual(key.key_hash, hashlib.sha256(token.encode()).hexdigest())
         self.assertEqual(await reveal_api_key(1, self.password, Response(), db, admin), {"token": token, "expires_in": 30})
 

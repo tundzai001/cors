@@ -3,9 +3,12 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Dict
 
 from . import models
+from .crud import normalize_service_config, normalize_ntrip_status_payload
+from .rtcm_stream_state import get_server_stream_state, _as_bool
 from .background_tasks import schedule_background
 
 logger = logging.getLogger("app.main")
@@ -19,6 +22,8 @@ caster_status_notify_semaphore = asyncio.Semaphore(CASTER_STATUS_NOTIFY_CONCURRE
 
 device_status_cache: Dict[str, dict] = {}
 device_status_cache_lock = asyncio.Lock()
+_status_last_notify: Dict[str, float] = {}
+STATUS_REFRESH_SECONDS = 30.0
 
 def _extract_per_server_status(device: models.Device, payload: dict | None = None) -> dict:
     """
@@ -30,92 +35,47 @@ def _extract_per_server_status(device: models.Device, payload: dict | None = Non
     
     State mapping:
     - streaming: active=true && connected=true (đang push dữ liệu)
-    - sleep: active=false && on_demand=true (có thể wake)
-    - offline: Mọi trường hợp khác (không thể wake)
+    - sleep: agent blocks output (active=false && on_demand=true)
+    - starting: wake requested, waiting for the source connection
+    - offline: device unavailable, disabled output, or failed Always-On connection
     
     Returns: {
         "server1": {"enabled": bool, "state": "streaming|sleep|offline", "mountpoint": str},
         "server2": {...}
     }
     """
-    # 🔥 FIX: Robustly handle service_config type (handle list or string from migration)
-    raw_cfg = getattr(device, "service_config", None)
-    if isinstance(raw_cfg, dict):
-        cfg = raw_cfg
-    elif isinstance(raw_cfg, str):
-        import json
-        try: cfg = json.loads(raw_cfg)
-        except: cfg = {}
-    else:
-        cfg = {}
-
-    device_status = str(device.status or "").lower()
+    cfg = normalize_service_config(getattr(device, "service_config", None))
     payload = payload or {}
-
-    # Lấy ntrip_stream_state từ payload (nếu Agent gửi)
-    stream_state = payload.get("ntrip_stream_state", {})
-    has_stream_state = bool(stream_state)
-
-    def _get_server_state(server_id: int) -> str:
-        """Determine server state: streaming, sleep, or offline"""
-        # Device offline → cả hai server offline
-        if device_status == "offline":
-            return "offline"
-
-        server_key = f"server{server_id}"
-
-        # Ưu tiên sử dụng rich state từ Agent (nếu có)
-        if has_stream_state and server_key in stream_state:
-            state_info = stream_state[server_key]
-            enabled = bool(state_info.get("enabled", False))
-            if not enabled:
-                return "offline"
-
-            active = bool(state_info.get("active", False))
-            on_demand = bool(state_info.get("on_demand", False))
-            connected = bool(state_info.get("connected", False))
-
-            # streaming: active && connected
-            if active and connected:
-                return "streaming"
-            # sleep: not active && on_demand
-            elif not active and on_demand:
-                return "sleep"
-            else:
-                return "offline"
-
-        # Fallback: Use basic config fields nếu payload không có stream_state
-        enabled = bool(cfg.get(f"server{server_id}_enabled"))
-        if not enabled:
-            return "offline"
-
-        active = bool(cfg.get(f"server{server_id}_active"))
-        stream_on_demand = bool(cfg.get("stream_on_demand"))
-
-        # Không có per-server connected info → use basic logic
-        if active and bool(device.ntrip_connected):
-            return "streaming"
-        elif not active and stream_on_demand:
-            return "sleep"
-        else:
-            return "offline"
-
+    device_status = str(payload.get("status") or device.status or "").lower()
+    stream_state = payload.get("ntrip_stream_state") or {}
+    ntrip = normalize_ntrip_status_payload(payload) or (getattr(device, "ntrip_status", None) or {})
     result = {}
-
-    # S1 status
-    result["server1"] = {
-        "enabled": bool(cfg.get("server1_enabled")),
-        "state": _get_server_state(1),
-        "mountpoint": cfg.get("mountpoint1") or "",
-    }
-
-    # S2 status
-    result["server2"] = {
-        "enabled": bool(cfg.get("server2_enabled")),
-        "state": _get_server_state(2),
-        "mountpoint": cfg.get("mountpoint2") or "",
-    }
-
+    for sid in (1, 2):
+        key = f"server{sid}"
+        switch = get_server_stream_state(cfg, sid)
+        info = stream_state.get(key)
+        state = "offline"
+        if switch.enabled and device_status not in {"offline", "locked", "unprovisioned", "awaiting_license"}:
+            if isinstance(info, dict):
+                enabled = _as_bool(info.get("enabled"), switch.enabled)
+                active = _as_bool(info.get("active"), switch.active)
+                on_demand = _as_bool(info.get("on_demand"), switch.on_demand)
+                connected = _as_bool(info.get("connected"))
+                can_push = _as_bool(info.get("effective_can_push", info.get("can_push")), active or not on_demand)
+                if enabled and connected and can_push:
+                    state = "streaming"
+                elif enabled and on_demand:
+                    state = "starting" if active else "sleep"
+            else:
+                server = ntrip.get(key)
+                connected = _as_bool(server.get("connected")) if isinstance(server, dict) else (
+                    _as_bool(server) if server is not None else _as_bool(payload.get("ntrip_connected"), device.ntrip_connected))
+                if switch.can_push and connected:
+                    state = "streaming"
+                elif switch.on_demand:
+                    state = "starting" if switch.active else "sleep"
+        result[key] = {"enabled": switch.enabled, "state": state,
+                       "mountpoint": cfg.get(f"mountpoint{sid}") or ""}
     return result
 
 
@@ -154,24 +114,16 @@ async def _notify_casters_on_status_change(serial: str, device: models.Device, s
             except ValueError:
                 raw_cfg = None
         cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
-        offline = str(device.status or "").lower() == "offline"
 
         for server_id in (1, 2):
-            enabled = bool(cfg.get(f"server{server_id}_enabled"))
-            if offline:
-                current = {"state": "offline", "enabled": enabled}
-            else:
-                change = status_change[f"server{server_id}"]
-                if not change["changed"] or not enabled:
-                    continue
-                current = change["new"]
-
-            host = cfg.get(f"serverhost{server_id}", "").strip()
+            change = status_change[f"server{server_id}"]
+            if not change["changed"]:
+                continue
+            current = change["new"]
+            host = str(cfg.get(f"serverhost{server_id}") or "").strip()
             port = cfg.get(f"port{server_id}")
             target = f"{host}:{port}" if host and port and ":" not in host else host
-            mountpoint = cfg.get(f"mountpoint{server_id}")
-            if not offline:
-                mountpoint = cfg.get(f"mountpoint{server_id}", "").strip()
+            mountpoint = str(cfg.get(f"mountpoint{server_id}") or "").strip()
             if target and mountpoint:
                 payload = {
                     "mountpoint": mountpoint,
@@ -228,10 +180,15 @@ async def _send_status_to_caster(caster_host: str, status_payload: dict, server_
                 response.read()
 
         async with caster_status_notify_semaphore:
-            await asyncio.wait_for(
-                asyncio.to_thread(_post_status_sync),
-                timeout=4.0,
-            )
+            for attempt in range(3):
+                try:
+                    await asyncio.wait_for(asyncio.to_thread(_post_status_sync), timeout=4.0)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(0.25)
+
 
         state = status_payload.get('state', 'unknown')
         mp = status_payload.get('mountpoint', '?')
@@ -248,8 +205,8 @@ async def _send_status_to_caster(caster_host: str, status_payload: dict, server_
 
 async def _on_device_status_update(device: models.Device, payload: dict | None = None) -> None:
     """
-    Called when Agent sends device status via MQTT.
-    Detects per-server changes and notifies Casters.
+    Nhận trạng thái đã được chấp nhận từ MQTT, WebSocket hoặc hết hạn heartbeat.
+    Gửi thay đổi theo từng đầu ra; gửi lại định kỳ để caster phục hồi sau lỗi kết nối.
     
     Args:
         device: Device object from DB (để lấy config)
@@ -265,10 +222,12 @@ async def _on_device_status_update(device: models.Device, payload: dict | None =
     async with device_status_cache_lock:
         old_status = device_status_cache.get(serial, {})
 
-        # Compare if there's actual change
-        if old_status != new_status:
+        # Gửi khi trạng thái đổi hoặc đã đến hạn gửi lại.
+        refresh = time.monotonic() - _status_last_notify.get(serial, float("-inf")) >= STATUS_REFRESH_SECONDS
+        if old_status != new_status or refresh:
             # Detect what changed
-            status_change = _status_changed(old_status, new_status)
+            status_change = _status_changed({} if refresh else old_status, new_status)
+            _status_last_notify[serial] = time.monotonic()
 
             # Update cache
             device_status_cache[serial] = new_status

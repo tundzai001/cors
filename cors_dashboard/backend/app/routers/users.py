@@ -109,6 +109,13 @@ async def rename_device(
     if not request.name.strip():
         raise HTTPException(status_code=400, detail="Tên không được để trống")
 
+    if crud.is_mobile_base(serial):
+        from ..auto_cors_source import esp_rover_name
+        try:
+            esp_rover_name(device, request.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # 2. Cập nhật Database
     device.name = request.name.strip()
     await db.commit()

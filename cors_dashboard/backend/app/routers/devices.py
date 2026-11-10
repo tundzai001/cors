@@ -400,13 +400,32 @@ async def configure_chip_endpoint(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     auto_cors_config = None
+    auto_cors_auto_apply = False
+    auto_cors_await_source = False
+    source_mode = 'manual'
     if mode == "BASE" and method == "AUTO_CORS":
-        if not (device_in_db.system_info or {}).get('auto_base_review_supported'):
+        system_info = device_in_db.system_info if isinstance(device_in_db.system_info, dict) else {}
+        if not system_info.get('auto_base_review_supported'):
             raise HTTPException(status_code=409, detail='Cập nhật agent để lấy và duyệt kết quả Auto Base trước khi áp dụng Fixed LLA.')
-        try:
-            auto_cors_config = _normalize_auto_cors_config(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raw_auto_cors = payload.get('auto_cors') if isinstance(payload.get('auto_cors'), dict) else {}
+        source_mode = str(raw_auto_cors.get('source_mode') or 'manual').strip().lower()
+        if source_mode == 'nearest':
+            if not system_info.get('auto_base_nearest_supported'):
+                raise HTTPException(status_code=409, detail='Cập nhật agent ESP32 để tự chọn base CORS gần nhất.')
+            # Let the receiver enter Rover first. The periodic manager then
+            # selects the nearest eligible source from the fresh GGA position.
+            auto_cors_auto_apply = True
+            auto_cors_await_source = True
+            if isinstance(params, dict):
+                params['auto_cors_source_mode'] = 'nearest'
+                params['auto_base_request_id'] = secrets.token_hex(12)
+        elif source_mode == 'manual':
+            try:
+                auto_cors_config = _normalize_auto_cors_config(payload)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            raise HTTPException(status_code=400, detail='Nguồn CORS phải là manual hoặc nearest.')
 
     try:
         device_in_db.detected_chip_type = sensor_type
@@ -430,6 +449,19 @@ async def configure_chip_endpoint(
                     merged_base_config["gnss_options"] = gnss_options
                 if merged_base_config:
                     device_in_db.base_config = merged_base_config
+        elif method == 'AUTO_CORS' and source_mode == 'nearest':
+            saved_config = {
+                **existing_base_config,
+                **{key: value for key, value in params.items() if key != 'coords'},
+                'base_setup_method': 'AUTO_CORS',
+                'auto_cors_source_mode': 'nearest',
+                'mode': 'BASE',
+            }
+            saved_config.pop('auto_base_started_boot_id', None)
+            saved_config.pop('auto_base_started_request_id', None)
+            device_in_db.base_config = {
+                **saved_config,
+            }
         device_in_db.is_synced = False
 
         await db.commit()
@@ -454,14 +486,22 @@ async def configure_chip_endpoint(
 
         if mode == "BASE":
             if method == "AUTO_CORS":
+                auto_base_config = {
+                    **(params if isinstance(params, dict) else {}),
+                    "base_setup_method": "AUTO_CORS",
+                    "auto_cors_source_mode": source_mode,
+                    "mode": "BASE",
+                }
                 pi_command = {
                     "command": "TRIGGER_AUTO_BASE",
                     "payload": {
-                        "review_only": True,
-                        **auto_cors_config,
+                        "auto_apply": auto_cors_auto_apply,
+                        "source_mode": source_mode,
+                        **(auto_cors_config or {}),
                         "timeout": 3600,
                         "samples": 60,
                         "sensor_type": sensor_type,
+                        "auto_base_config": auto_base_config,
                     },
                     "original_config": {
                         "sensor_type": sensor_type,
@@ -518,13 +558,16 @@ async def configure_chip_endpoint(
             user_id=current_user.id,
             serial=serial
         )
-        return {
+        result = {
             "status": "command_sent_waiting_sync",
             "channel": response["channel"],
             "commands_sent": len(commands_to_send) if not pi_command else 1,
             "message": "Configuration saved to database and sent to device. Waiting for device to apply and confirm sync status...",
             "is_synced": False,
         }
+        if auto_cors_await_source:
+            result['auto_cors_selection'] = 'awaiting_gga'
+        return result
     except HTTPException as http_exc:
         logger.warning("Failed to send chip config command to %s: %s", serial, http_exc.detail)
         raise HTTPException(

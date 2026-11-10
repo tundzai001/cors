@@ -103,8 +103,9 @@ class CasterSourceInventoryTests(unittest.IsolatedAsyncioTestCase):
                 await caster_routes.restore_admin_caster_source(req, self.db, self.admin)
             self.assertEqual(error.exception.status_code, 502)
             caster.create_source.assert_not_awaited()
+            viewer = SimpleNamespace(role='viewer')
             with self.assertRaises(HTTPException) as error:
-                await caster_routes.restore_admin_caster_source(req, self.db, SimpleNamespace(role='viewer'))
+                await caster_routes.restore_admin_caster_source(req, self.db, viewer)
             self.assertEqual(error.exception.status_code, 403)
         self.assertEqual(len(await self.rows()), 1)
 
@@ -151,8 +152,9 @@ class CasterSourceInventoryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response['synced_hosts'], 1)
             self.assertEqual(response['results'], results)
             sync.assert_awaited_once()
+            viewer = SimpleNamespace(role='viewer')
             with self.assertRaises(HTTPException):
-                await caster_routes.sync_admin_caster_sources(current_user=SimpleNamespace(role='viewer'))
+                await caster_routes.sync_admin_caster_sources(current_user=viewer)
 
     async def test_list_reads_database_without_calling_caster(self):
         await store.save_sources(self.db, 'caster.test', 2101, [self.source], 100)
@@ -163,8 +165,9 @@ class CasterSourceInventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['all'][0]['mountpoint'], 'BASE')
         self.assertEqual(result['by_host']['empty.test'], [])
         self.assertEqual(result['last_synced_at'], 100)
+        viewer = SimpleNamespace(role='viewer')
         with self.assertRaises(HTTPException):
-            await caster_routes.get_admin_caster_sources(db=self.db, current_user=SimpleNamespace(role='viewer'))
+            await caster_routes.get_admin_caster_sources(db=self.db, current_user=viewer)
 
     async def test_create_delete_updates_saved_inventory_only_after_caster_success(self):
         request = schemas.CasterSourceCreateRequest(host='caster.test', identifier='Station', mountpoint='BASE', password='private')

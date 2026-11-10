@@ -28,7 +28,8 @@ Client& activeNtripClient();
 // datum frames are decoded separately for the current receive session.
 bool startNtripRover(const String &host, uint16_t port, const String &username,
                     const String &password, String mountpoint,
-                    uint8_t version = 1);
+                    uint8_t version = 1, String *selectedMountpoint = nullptr,
+                    const String &receiverId = String());
 int loopNtripRover();
 void stopNtripRover();
 bool ntripRoverActive();

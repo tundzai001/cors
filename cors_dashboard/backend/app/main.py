@@ -508,6 +508,56 @@ async def _require_ntrip_control_token(
         raise HTTPException(status_code=401, detail="Invalid NTRIP control token")
 
 
+@app.get("/api/ntrip/fixed-sources", dependencies=[Depends(_require_ntrip_control_token)])
+async def ntrip_fixed_sources(
+    host: str = Query(..., min_length=1),
+    port: int = Query(2101, ge=1, le=65535),
+    db: AsyncSession = Depends(get_db),
+):
+    from urllib.parse import urlsplit
+
+    from .auto_cors_source import _station_coords
+    from .mobile_base import is_readonly_base
+
+    hostname = host.strip().rstrip(".").casefold()
+    result = await db.execute(select(models.Device).where(
+        models.Device.is_provisioned.is_(True),
+        models.Device.is_locked.is_(False),
+    ))
+    sources = {}
+    ambiguous = set()
+    for device in result.scalars():
+        serial = str(device.serial or "").strip().upper()
+        # Thiết bị giám sát/relay có thể được tự tạo với is_provisioned=True.
+        if (crud.is_mobile_base(serial) or is_readonly_base(device)
+                or serial.startswith(("RELAY_", "MONITOR_", "MQTT_", "GEOTEK_LTE_"))
+                or "_LTE_" in serial):
+            continue
+        coords = _station_coords(device)
+        if coords is None:
+            continue
+        config = crud.normalize_service_config(device.service_config)
+        for index in (1, 2):
+            mountpoint = str(config.get(f"mountpoint{index}") or "").strip().lstrip("/")
+            enabled = str(config.get(f"server{index}_enabled", "")).strip().casefold()
+            server = str(config.get(f"serverhost{index}") or "").strip()
+            if not mountpoint or not server or enabled in {"false", "0", "off", "no"}:
+                continue
+            try:
+                target = urlsplit(server if "://" in server else f"//{server}")
+                target_port = target.port or int(config.get(f"port{index}") or 2101)
+            except ValueError:
+                continue
+            if (target.hostname or "").rstrip(".").casefold() != hostname or target_port != port:
+                continue
+            key = mountpoint.casefold()
+            if key in sources and sources[key]["serial"] != device.serial:
+                ambiguous.add(key)
+            sources[key] = {"mountpoint": mountpoint, "latitude": coords[0],
+                            "longitude": coords[1], "serial": device.serial}
+    return [source for key, source in sources.items() if key not in ambiguous]
+
+
 # === NTRIP WAKE STATION HTTP ENDPOINT ===
 @app.get("/api/ntrip/wake-listen", response_class=PlainTextResponse)
 @app.get("/api/ntrip/wake-station", response_class=PlainTextResponse)

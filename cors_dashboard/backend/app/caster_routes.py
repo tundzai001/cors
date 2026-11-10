@@ -143,8 +143,11 @@ async def get_caster_users(
                     active_sessions_map[user_key] = []
                 active_sessions_map[user_key].append({
                     "mountpoint": c.get("mountpoint"),
+                    "requested_mountpoint": c.get("requested_mountpoint"),
+                    "selected_mountpoint": c.get("selected_mountpoint"),
                     "uptime": int(c.get("uptime", 0) or 0),
                     "client_id": str(c.get("client_id", "") or "").strip(),
+                    "receiver_id": str(c.get("receiver_id", "") or "").strip(),
                     "last_update": last_update,
                 })
 
@@ -190,9 +193,12 @@ async def get_caster_users(
             started_at = last_update - uptime if uptime > 0 else None
             active_conns.append({
                 "mountpoint": ac.get("mountpoint"),
+                "requested_mountpoint": ac.get("requested_mountpoint"),
+                "selected_mountpoint": ac.get("selected_mountpoint"),
                 "uptime": uptime,
                 "duration_seconds": uptime,
                 "client_id": ac.get("client_id", ""),
+                "receiver_id": ac.get("receiver_id", ""),
                 "started_at": started_at,
                 "last_seen_at": last_update,
             })

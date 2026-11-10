@@ -256,14 +256,18 @@ class CasterClient:
             return None
         return coordinate if math.isfinite(coordinate) else None
 
-    async def get_users(self) -> List[dict]:
+    async def get_users(self, *, require_complete: bool = False) -> List[dict]:
         if not self.admin_user or not self.admin_password:
             logger.error("Caster usertable credentials are not configured")
+            if require_complete:
+                raise ValueError("Caster usertable credentials are not configured")
             return []
         cmd = f"GET /usertable HTTP/1.0/{self.admin_user}/mp1/{self.admin_password}/9999\r\n\r\n"
         try:
             response = await self._send_command(cmd)
 
+            if require_complete and ("USERTABLE 200 OK" not in response or "ENDUSERTABLE" not in response):
+                raise ValueError("Caster did not return a complete usertable")
             users = []
             for line in response.split('\n'):
                 if line.strip().startswith('STR;'):
@@ -283,7 +287,10 @@ class CasterClient:
                             "block_reason": __import__("urllib").parse.unquote(parts[13].strip()) if len(parts) > 13 else ""
                         })
             return users
-        except Exception: return []
+        except Exception:
+            if require_complete:
+                raise
+            return []
 
     async def get_user_remaining_seconds(self, username: str) -> Optional[int]:
         users = await self.get_users()
@@ -302,6 +309,8 @@ class CasterClient:
         rtcm_cycle_enabled: bool = False,
         rtcm_disconnect_interval_seconds: int = 300,
         rtcm_disconnect_duration_seconds: int = 10,
+        auto_nearest: bool | None = None,
+        auto_nearest_on_request: bool = False,
     ) -> bool:
         clean_mps = mountpoints.replace(";", ",").replace(" ", "").strip()
         show_pos_val = "1" if show_position else "0"
@@ -310,12 +319,16 @@ class CasterClient:
         safe_cycle_duration = max(1, int(rtcm_disconnect_duration_seconds or 10))
         # Định dạng dài (>= 15 parts) để hỗ trợ show_position + rtcm_cycle fields ở cuối.
         # GET /genuser HTTP/1.0/creator/username/password/mounts/expiry/max/status/maxclient/showpos/rtcm_cycle_enabled/rtcm_cycle_interval/rtcm_cycle_duration
+        nearest_mode = 2 if auto_nearest and auto_nearest_on_request else int(bool(auto_nearest))
+        nearest_suffix = "" if auto_nearest is None else f"/{nearest_mode}"
         cmd = (
             f"GET /genuser HTTP/1.0/{creator}/{username}/{password}/{clean_mps}/-1/-1/"
-            f"{expiry_seconds}/{max_users}/{show_pos_val}/{rtcm_cycle_val}/{safe_cycle_interval}/{safe_cycle_duration}\r\n\r\n"
+            f"{expiry_seconds}/{max_users}/{show_pos_val}/{rtcm_cycle_val}/{safe_cycle_interval}/{safe_cycle_duration}{nearest_suffix}\r\n\r\n"
         )
         response = await self._send_command(cmd)
-        return self._is_success_response(response)
+        return self._is_success_response(response) and (
+            auto_nearest is None or f"AutoNearest={nearest_mode}" in response
+        )
 
     async def toggle_show_pos(self, identifier: str, username: str, enabled: bool) -> bool:
         val = "1" if enabled else "0"
@@ -354,6 +367,8 @@ class CasterClient:
         if CLIENTTABLE_DEBUG:
             logger.info(f"[CASTER RAW] Response: {repr(response[:150])}")
 
+        from urllib.parse import unquote
+
         clients = []
         for line in response.splitlines():
             line = line.strip()
@@ -369,10 +384,14 @@ class CasterClient:
             if len(parts) < 8: continue
             
             try:
+                requested = next((unquote(part[len("RequestedMP="):]) for part in parts[15:]
+                                  if part.startswith("RequestedMP=")), None)
                 clients.append({
                     "username": parts[1].strip(),
                     "receiver_id": parts[2].strip(),
                     "mountpoint": parts[3].strip(),
+                    "requested_mountpoint": requested,
+                    "selected_mountpoint": parts[3].strip() if requested else None,
                     "latitude": self._parse_coordinate(parts[4]) if parts[4] else None,
                     "longitude": self._parse_coordinate(parts[5]) if parts[5] else None,
                     "status": int(parts[6]) if parts[6].isdigit() else 1,

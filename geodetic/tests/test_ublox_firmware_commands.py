@@ -31,8 +31,9 @@ class FirmwareCommandsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(profile['itfm'],version not in ('1.50','1.51'))
         for packet in ({},live('1.99'),dict(live(),timestamp=time.time()-121)):
             with self.assertRaises(ValueError): builder.select_ublox_profile(packet,{'gnss_valset_supported':True})
+        packet = live()
         with self.assertRaisesRegex(ValueError,'agent'):
-            builder.select_ublox_profile(live(),{})
+            builder.select_ublox_profile(packet,{})
         self.assertFalse(builder.select_ublox_profile(live('1.13'),{})['modern'])
 
     def values(self,commands):
@@ -188,7 +189,8 @@ class FirmwareCommandsTests(unittest.IsolatedAsyncioTestCase):
                        mqtt_handler=SimpleNamespace(device_telemetry_cache={}))
             exec(compile(ast.fix_missing_locations(ast.Module(body=[node],type_ignores=[])),str(path),'exec'),scope)
             request=SimpleNamespace(payload={'sensor_type':'Ublox','mode':'BASE','params':{'base_setup_method':'FIXED_LLA'}})
+            admin = SimpleNamespace(role='admin', id=1)
             with self.assertRaises(HTTPException) as error:
-                await scope['configure_chip_endpoint']('test',request,db,SimpleNamespace(role='admin',id=1))
+                await scope['configure_chip_endpoint']('test',request,db,admin)
             self.assertEqual(error.exception.status_code,409)
             db.commit.assert_not_awaited()

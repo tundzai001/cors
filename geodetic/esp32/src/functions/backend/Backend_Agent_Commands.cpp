@@ -360,6 +360,15 @@ bool BackendAgent::executeRawCommand(JsonDocument &doc, JsonObject payload, Stri
 bool BackendAgent::executeAutoBaseCommand(JsonObject payload, String &error, String &detail) {
     bool success = true;
     const String sensorType = payload["sensor_type"] | sensorType_;
+    const String sourceMode = payload["source_mode"] | String("manual");
+    const bool autoApply = payload["auto_apply"] | false;
+    if (sourceMode == "nearest" && payload["startup_auto"] == true) {
+        payload["ip"] = AUTO_BASE_CASTER_HOST;
+        payload["port"] = AUTO_BASE_CASTER_PORT;
+        payload["user"] = AUTO_BASE_CASTER_USER;
+        payload["password"] = AUTO_BASE_CASTER_PASSWORD;
+        payload["mountpoint"] = AUTO_BASE_CASTER_MOUNTPOINT;
+    }
     const int requestedPort = payload["port"] | 0;
     const bool hasConnection = !String(payload["ip"] | String()).isEmpty()
         && !String(payload["user"] | String()).isEmpty()
@@ -372,26 +381,112 @@ bool BackendAgent::executeAutoBaseCommand(JsonObject payload, String &error, Str
     } else if (sensorType != "Ublox" && sensorType != "Unicorecomm") {
         success = false;
         error = "select Ublox or Unicorecomm in CORS before starting auto base";
+    } else if (autoApply && sourceMode != "nearest") {
+        success = false;
+        error = "automatic apply is only supported for nearest CORS mode";
+    } else if (sourceMode != "manual" && sourceMode != "nearest") {
+        success = false;
+        error = "unsupported CORS source mode";
+    } else if (!hasConnection && sourceMode == "nearest" && autoApply) {
+        // UI can request nearest mode before the backend knows the device's
+        // position. Switch the receiver to Rover first; the backend manager
+        // will select a source from the fresh GGA and send the full profile.
+        sensorType_ = sensorType;
+        DynamicJsonDocument savedConfig(CONFIG_DOCUMENT_SIZE);
+        if (deserializeJson(savedConfig, baseConfig_.c_str()) != DeserializationError::Ok
+            || !savedConfig.is<JsonObject>()) savedConfig.to<JsonObject>();
+        JsonObject base = savedConfig.as<JsonObject>();
+        const JsonObjectConst requestedConfig = payload["auto_base_config"].as<JsonObjectConst>();
+        for (JsonPairConst item : requestedConfig) base[item.key()] = item.value();
+        base["base_setup_method"] = "AUTO_CORS";
+        base["auto_cors_source_mode"] = "nearest";
+        base["mode"] = "BASE";
+        base.remove("auto_base_started_boot_id");
+        base.remove("auto_base_started_request_id");
+        baseConfig_.clear();
+        serializeJson(savedConfig, baseConfig_);
+        if (!saveStatePreferences()) {
+            success = false;
+            error = "cannot save nearest CORS request";
+        }
+        bool streamsStopped = false;
+        if (success && tcpStreamMutex
+            && xSemaphoreTake(tcpStreamMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS * 4)) == pdTRUE) {
+            stopNtrip();
+            stopNtripRover();
+            xSemaphoreGive(tcpStreamMutex);
+            streamsStopped = true;
+        }
+        if (success && (!streamsStopped || !applyRoverMode())) {
+            success = false;
+            error = "cannot switch GNSS receiver to Rover mode";
+            restartConfiguredNtrip();
+        }
+        if (success) {
+            publishConfigState("base_config_state");
+            baseStartupState_ = "awaiting_auto_base";
+            baseStartupError_.clear();
+            setAgentState("auto_setup_rover");
+            DynamicJsonDocument progress(CONFIG_DOCUMENT_SIZE);
+            progress["note"] = "Rover mode is active; waiting for the backend to provision the AutoNearest account.";
+            String progressJson;
+            serializeJson(progress, progressJson);
+            setWorkflowProgress("awaiting_source", 0, 4, progressJson);
+            markStatusDirty();
+            detail = "Rover mode active; waiting for backend nearest-CORS selection";
+        }
     } else if (!hasConnection) {
         success = false;
         error = "missing or invalid CORS connection fields";
     } else {
         sensorType_ = sensorType;
+        if (sourceMode == "nearest") {
+            DynamicJsonDocument savedConfig(CONFIG_DOCUMENT_SIZE);
+            if (deserializeJson(savedConfig, baseConfig_.c_str()) != DeserializationError::Ok
+                || !savedConfig.is<JsonObject>()) savedConfig.to<JsonObject>();
+            JsonObject base = savedConfig.as<JsonObject>();
+            const JsonObjectConst requestedConfig = payload["auto_base_config"].as<JsonObjectConst>();
+            for (JsonPairConst item : requestedConfig) base[item.key()] = item.value();
+            base["base_setup_method"] = "AUTO_CORS";
+            base["auto_cors_source_mode"] = "nearest";
+            base["mode"] = "BASE";
+            if (payload["startup_auto"] == true && !String(payload["startup_boot_id"] | "").isEmpty()) {
+                base["auto_base_started_boot_id"] = payload["startup_boot_id"];
+                base["auto_base_started_request_id"] = payload["startup_request_id"] | String();
+            }
+            baseConfig_.clear();
+            serializeJson(savedConfig, baseConfig_);
+            if (!saveStatePreferences()) {
+                success = false;
+                error = "cannot save nearest CORS startup mode";
+            }
+            if (success) publishConfigState("base_config_state");
+        }
         String workflowPayload;
-        serializeJson(payload, workflowPayload);
-        if (!startWorkflow("auto_base", workflowPayload)) {
+        if (success) serializeJson(payload, workflowPayload);
+        if (success && !startWorkflow("auto_base", workflowPayload)) {
             success = false;
             error = "cannot start auto base workflow";
-        } else {
+        } else if (success) {
             DynamicJsonDocument progress(CONFIG_DOCUMENT_SIZE);
             progress["ntrip_host"] = payload["ip"];
             progress["ntrip_port"] = payload["port"];
             progress["mountpoint"] = payload["mountpoint"];
-            progress["note"] = "Collect RTK Fixed LLH; VNGEONET datum parameters are decoded per session and results wait for review.";
+            if (!String(payload["source_name"] | "").isEmpty()) progress["source_name"] = payload["source_name"];
+            if (!String(payload["source_serial"] | "").isEmpty()) progress["source_serial"] = payload["source_serial"];
+            if (!payload["source_distance_m"].isNull()) progress["source_distance_m"] = payload["source_distance_m"];
+            progress["note"] = autoApply
+                ? "Collect RTK Fixed LLH and apply Base coordinates after quality checks."
+                : "Collect RTK Fixed LLH; results wait for review.";
             String progressJson;
             serializeJson(progress, progressJson);
             setAgentState("auto_setup_queued");
             setWorkflowProgress("queued", 0, 4, progressJson);
+            if (sourceMode == "nearest") {
+                baseStartupState_ = "auto_base_running";
+                baseStartupError_.clear();
+                markStatusDirty();
+            }
             detail = "auto base workflow queued";
         }
     }
@@ -580,6 +675,25 @@ void BackendAgent::handleCommand(const String &source, const String &message) {
             detail = "base workflow stop requested";
         } else {
             setWorkflowProgress("stopped", 0, 4);
+            if (baseStartupState_ == "awaiting_auto_base") {
+                DynamicJsonDocument savedBase(CONFIG_DOCUMENT_SIZE);
+                deserializeJson(savedBase, baseConfig_);
+                JsonObjectConst base = savedBase.as<JsonObjectConst>();
+                JsonObjectConst coords = base["coords"].as<JsonObjectConst>();
+                if (coords.isNull()) coords = base;
+                const String method = base["base_setup_method"] | String();
+                const bool hasSavedBase = method == "SURVEY_IN"
+                    || (!coords["lat"].isNull() && !coords["lon"].isNull() && !coords["alt"].isNull());
+                if (hasSavedBase) {
+                    success = restoreWorkflowBase(base)
+                        && restartConfiguredNtrip();
+                    if (!success) error = "could not restore saved Base after stopping nearest-source wait";
+                } else {
+                    baseStartupState_ = "awaiting_configuration";
+                    baseStartupError_.clear();
+                    markStatusDirty();
+                }
+            }
                 setAgentState(normalAgentState());
             detail = "auto base stopped";
         }

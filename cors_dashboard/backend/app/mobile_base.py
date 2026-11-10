@@ -1,4 +1,4 @@
-"""Read-only Caster bases identified by a mountpoint beginning with 7."""
+"""Distinguish managed ESP32 devices from read-only caster sources."""
 import json
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,10 @@ def is_4g_mountpoint(mountpoint) -> bool:
 
 
 def is_readonly_base(device) -> bool:
-    if str(getattr(device, 'serial', '') or '').upper().startswith('MONITOR_7'):
+    serial = str(getattr(device, 'serial', '') or '').strip().upper()
+    if serial.startswith('ESP_'):
+        return False
+    if serial.startswith('MONITOR_7'):
         return True
     config = getattr(device, 'service_config', None) or {}
     if isinstance(config, str):

@@ -80,11 +80,31 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
         return fail("Saved Base configuration is invalid");
     JsonObject base = config.as<JsonObject>();
     const bool saved = base.size() > 0;
-    const String method = base["base_setup_method"] | String();
+    String method = base["base_setup_method"] | String();
     if (saved && method.isEmpty()) return fail("Saved Base mode is missing");
     if (stationLock_.all) {
         baseStartupState_ = "locked";
         markStatusDirty();
+        return true;
+    }
+    if (!saved) {
+        // Báo nhu cầu Auto Base qua health để backend cấp tài khoản AutoNearest.
+        base["base_setup_method"] = "AUTO_CORS";
+        base["auto_cors_source_mode"] = "nearest";
+        base["mode"] = "BASE";
+        JsonObject options = base.createNestedObject("gnss_options");
+        options["output_mode"] = "rtcm_only";
+        options["msm_level"] = "both";
+        method = "AUTO_CORS";
+    }
+    if (method == "AUTO_CORS" && base["auto_cors_source_mode"] != "manual") {
+        base["auto_cors_source_mode"] = "nearest";
+        baseConfig_.clear();
+        serializeJson(config, baseConfig_);
+        if (!saveStatePreferences()) return fail("Could not save Auto Base startup mode");
+        baseStartupState_ = "awaiting_auto_base";
+        markStatusDirty();
+        Serial.printf("[GNSS][STARTUP] awaiting nearest CORS; chip=%s\n", sensorType_.c_str());
         return true;
     }
     if (method == "AUTO_CORS") {
@@ -94,19 +114,13 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     }
     if (!method.isEmpty() && method != "FIXED_LLA" && method != "SURVEY_IN")
         return fail("Unsupported saved Base mode");
-    const bool replaceFixedWithSurveyIn = method == "FIXED_LLA";
-    if (!saved || replaceFixedWithSurveyIn) {
-        // A saved Fixed LLA belongs to the previous power session. Start a fresh
-        // Survey-In after reboot so stale coordinates are never sent again.
-        base["base_setup_method"] = "SURVEY_IN";
-        base["survey_in_duration"] = AUTO_SURVEY_IN_SECONDS;
-        base["survey_in_accuracy"] = 5;
-        base["mode"] = "BASE";
-        base.remove("coords");
-        base.remove("lat");
-        base.remove("lon");
-        base.remove("alt");
-        base.remove("accuracy");
+    if (method == "FIXED_LLA") {
+        if (!restoreWorkflowBase(JsonObjectConst(base)))
+            return fail(baseStartupError_.isEmpty() ? String("Saved Fixed LLA could not be restored") : baseStartupError_);
+        baseStartupState_ = "fixed_restored";
+        baseStartupError_.clear();
+        markStatusDirty();
+        return true;
     }
     // A mode readback cannot prove that the antenna has not moved.
     // Every Survey-In boot sends a fresh survey configuration.
@@ -115,11 +129,6 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     receiverRead = readStartupReceiverMode(detected, queryError);
     // Do not guess a mode when a receiver cannot be read reliably.
     if (!receiverRead) return fail(queryError.isEmpty() ? String("Receiver mode could not be read") : queryError);
-    if (!saved) {
-        JsonObject options = base.createNestedObject("gnss_options");
-        options["output_mode"] = "rtcm_only";
-        options["msm_level"] = "both";
-    }
     GnssOptions options;
     options.ports = {"UART1"};
     const JsonObjectConst output = base["gnss_options"].as<JsonObjectConst>();
@@ -143,9 +152,7 @@ bool BackendAgent::initializeBaseAtBoot(GnssCmdBuilder::GnssSensorType detected)
     surveyInResult_ = "{}";
     CommandList commands = buildBaseSurveyInCommand(static_cast<uint32_t>(duration), accuracy, detected, options);
     if (!commands.empty() && !writeGnssCommands(commands)) return fail("Receiver rejected startup configuration");
-    if (!saved || replaceFixedWithSurveyIn) {
-        baseConfig_.clear(); serializeJson(config, baseConfig_);
-    }
+    baseConfig_.clear(); serializeJson(config, baseConfig_);
     if (!saveStatePreferences()) return fail("Could not save Base configuration");
     baseStartupState_ = "survey_started";
     lastReceiverPollMs_ = 0;

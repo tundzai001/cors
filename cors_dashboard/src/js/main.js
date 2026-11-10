@@ -1064,9 +1064,10 @@ async function handleConfigureChip(serial, payload) {
             body: JSON.stringify({ command: 'CONFIGURE_CHIP', payload: payload })
         });
         if (!response.ok) {
-            const err = await response.json();
+            const err = await response.json().catch(() => ({}));
             throw new Error(err.detail || 'Cau hinh chip that bai');
         }
+        const result = await response.json().catch(() => ({}));
         const existingDev = (window.devices || []).find(d => d.serial === serial);
         const existingBase = existingDev?.base_config || {};
         updateGlobalDevices({
@@ -1075,6 +1076,7 @@ async function handleConfigureChip(serial, payload) {
                 ...existingBase,
                 ...(payload?.params || {}),
                 gnss_options: payload?.params?.gnss_options || existingBase.gnss_options,
+                ...(payload?.auto_cors?.source_mode ? {auto_cors_source_mode: payload.auto_cors.source_mode} : {}),
                 sensor_type: payload?.sensor_type,
                 mode: payload?.mode
             },
@@ -1083,7 +1085,9 @@ async function handleConfigureChip(serial, payload) {
                 last_raw_gga: null
             } : {})
         });
-        showSuccess('Đã gửi cấu hình GNSS! Giao diện sẽ tự cập nhật.');
+        showSuccess(result.auto_cors_selection === 'awaiting_gga'
+            ? 'Đã chuyển ESP32 sang Rover. Backend đang chờ vị trí GNSS để chọn CORS gần nhất.'
+            : 'Đã gửi cấu hình GNSS! Giao diện sẽ tự cập nhật.');
     } catch (e) {
         showError(`Lỗi cấu hình chip: ${e.message}`);
         throw e;

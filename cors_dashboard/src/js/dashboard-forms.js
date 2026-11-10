@@ -610,11 +610,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
 
     const [manualChip, setManualChip] = useState(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
-    const [method, setMethod] = useState('FIXED_LLA');
+    const [method, setMethod] = useState('AUTO_CORS');
     const activeChip = needsManualSelection ? manualChip : device.detected_chip_type;
     const isLteStation = !!device?.is_lte || String(device?.connection_type || '').toUpperCase() === 'LTE';
 
-    const ACTIVE_AUTO_BASE_PHASES = ['queued', 'starting', 'set_rover', 'wait_fix', 'averaging', 'resolving_location', 'set_base'];
+    const ACTIVE_AUTO_BASE_PHASES = ['queued', 'awaiting_source', 'starting', 'set_rover', 'wait_fix', 'averaging', 'resolving_location', 'set_base'];
     const isAutoSetupStatus = (device?.status || '').startsWith('auto_setup');
     const autoProgress = device?.auto_base_progress || {};
     const isAutoSetupActive = isAutoSetupStatus || ACTIVE_AUTO_BASE_PHASES.includes(autoProgress.phase);
@@ -715,8 +715,11 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             : resolvedLocation?.state === 'outside_boundaries' ? 'Tọa độ nằm ngoài vùng dữ liệu tỉnh/thành'
             : 'Chưa có kết quả tra tỉnh/thành');
     const supportsAutoBaseReview = device.system_info?.auto_base_review_supported === true;
+    const supportsAutoBaseNearest = device.system_info?.auto_base_nearest_supported === true;
     const autoResultText = autoFixedResult
-        ? `Đã lấy ${autoProgress.sample_count || 0} mẫu RTK Fixed. Xem tọa độ trước khi áp dụng Fixed LLA.`
+        ? autoProgress.auto_applied === true
+            ? `Đã tự áp dụng Fixed LLA sau ${autoProgress.sample_count || 0} mẫu RTK Fixed.`
+            : `Đã lấy ${autoProgress.sample_count || 0} mẫu RTK Fixed. Xem tọa độ trước khi áp dụng Fixed LLA.`
         : ['completed', 'unverified'].includes(autoProgress.phase)
         ? 'Kết quả cũ chưa được xác nhận RTK Fixed. Cần chạy lại Auto Base.'
         : autoProgress.phase === 'failed'
@@ -733,6 +736,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
     // CORS connection for Auto Base (per-station tab memory; never read from .env)
     const [corsHost, setCorsHost] = useState('');
+    const [corsSourceMode, setCorsSourceMode] = useState('nearest');
     const [projectionMeridian, setProjectionMeridian] = useState('');
     const [projectionScale, setProjectionScale] = useState('');
     const [corsPort, setCorsPort] = useState('2101');
@@ -858,6 +862,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             ++corsRequestRef.current;
             const draft = autoBaseDrafts.get(device.serial);
             setCorsHost(draft?.host || '');
+            setCorsSourceMode(draft?.sourceMode || device.base_config?.auto_cors_source_mode || 'nearest');
             setCorsPort(draft?.port || '2101');
             setCorsUsername(draft?.username || '');
             setCorsPassword(draft?.password || '');
@@ -867,7 +872,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             setProjectionScale(draft?.scale || '');
             setCorsLookupError('');
             setIsLoadingCorsSources(false);
-            setMethod(isAutoSetupActive ? 'AUTO_CORS' : draft?.method || savedMethod || 'FIXED_LLA');
+            setMethod(isAutoSetupActive ? 'AUTO_CORS' : draft?.method || savedMethod || 'AUTO_CORS');
         } else if (isAutoSetupActive) setMethod('AUTO_CORS');
         else if (methodChanged && savedMethod) setMethod(savedMethod);
         draftOwnerRef.current = {serial:device.serial, savedMethod};
@@ -940,10 +945,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
     useEffect(() => {
         if (skipDraftSaveRef.current) { skipDraftSaveRef.current = false; return; }
-        autoBaseDrafts.set(device.serial, {method, host:corsHost, port:corsPort,
+        autoBaseDrafts.set(device.serial, {method, sourceMode:corsSourceMode, host:corsHost, port:corsPort,
             username:corsUsername, password:corsPassword, sources:corsSources,
             mountpoint:selectedMountpoint, meridian:projectionMeridian, scale:projectionScale});
-    }, [device.serial, method, corsHost, corsPort, corsUsername, corsPassword,
+    }, [device.serial, method, corsSourceMode, corsHost, corsPort, corsUsername, corsPassword,
         corsSources, selectedMountpoint, projectionMeridian, projectionScale]);
     useEffect(() => () => { ++corsRequestRef.current; }, [device.serial]);
 
@@ -1127,14 +1132,27 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
                 params.survey_in_accuracy = Number.parseFloat(svinAccuracyM);
             } else if (submittedMethod === 'AUTO_CORS') {
-                const port = Number(corsPort);
-                if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
-                    window.showError('Vui lòng nhập đủ thông tin kết nối Base.');
-                    setIsSubmitting(false);
-                    return;
+                if (corsSourceMode === 'nearest') {
+                    if (!supportsAutoBaseNearest) {
+                        window.showError('Cần cập nhật agent ESP32 để tự chọn CORS gần nhất.');
+                        setIsSubmitting(false);
+                        return;
+                    }
+                } else {
+                    const port = Number(corsPort);
+                    if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
+                        window.showError('Vui lòng nhập đủ thông tin kết nối Base.');
+                        setIsSubmitting(false);
+                        return;
+                    }
+                    if (!selectedMountpoint) {
+                        window.showError('Vui lòng bấm "Kết nối Base & lấy mountpoint" rồi chọn một mountpoint.');
+                        setIsSubmitting(false);
+                        return;
+                    }
                 }
-                if (!selectedMountpoint) {
-                    window.showError('Vui lòng bấm "Kết nối Base & lấy mountpoint" rồi chọn một mountpoint.');
+                if ((projectionMeridian.trim() && !projectionScale) || (!projectionMeridian.trim() && projectionScale)) {
+                    window.showError('Nhập cả kinh tuyến trục và hệ số k₀, hoặc để trống cả hai.');
                     setIsSubmitting(false);
                     return;
                 }
@@ -1188,7 +1206,8 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             };
 
             if (submittedMethod === 'AUTO_CORS') {
-                payload.auto_cors = {
+                payload.auto_cors = corsSourceMode === 'nearest' ? { source_mode: 'nearest' } : {
+                    source_mode: 'manual',
                     ip: corsHost.trim(),
                     port: Number(corsPort),
                     user: corsUsername.trim(),
@@ -1409,7 +1428,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             {receiverOffline ? 'Thiết bị offline; trạng thái bên dưới là lần nhận gần nhất.' : ({
                                 pending: 'Thiết bị đang tự thiết lập Base sau khi bật nguồn…',
                                 awaiting_receiver: 'Đang chờ nhận diện GNSS để tự thiết lập Base…',
-                                survey_started: 'Tự động Survey-In 120 giây khi bật nguồn. Lệnh áp dụng từ UI dùng thời lượng đã chọn.',
+                                awaiting_auto_base: 'Đang chờ backend gửi cấu hình AutoNearest. ESP32 sẽ gửi GGA trực tiếp cho caster.',
+                                auto_base_running: 'ESP32 đang kết nối caster và thiết lập Base.',
+                                survey_started: 'Đang Survey-In 120 giây theo lựa chọn đã lưu. Cấu hình từ UI dùng thời lượng đã chọn.',
                                 survey_resumed: 'Đã tiếp tục phiên Survey-In đang có trên receiver, không bắt đầu lại.',
                                 fixed_restored: 'Đã khôi phục Fixed LLA đã lưu; không chạy Survey-In.',
                                 configured: 'Đã áp dụng cấu hình Base từ người dùng.',
@@ -1566,12 +1587,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <>
                                 <div className="col-12" role="status" aria-live="polite">
                                     <div className="border rounded p-3">
-                                        <h3 className="h6">Kết quả Auto Base — chờ kiểm tra</h3>
-                                        <p className="small mb-2">{autoProgress.phase === 'ready_for_review'
-                                            ? 'Chưa áp dụng tọa độ này vào máy.'
-                                            : 'Kết quả từ phiên cũ đã tự áp dụng. Các phiên mới sẽ chờ bạn xác nhận.'}</p>
-                                        <div className="small text-break mb-2">Base liên kết: {conversionReport.source?.host || 'Chưa có dữ liệu'}
+                                        <h3 className="h6">Kết quả Auto Base</h3>
+                                        <p className="small mb-2">{autoProgress.auto_applied === true
+                                            ? 'Fixed LLA đã được tự áp dụng sau khi receiver xác nhận tọa độ.'
+                                            : autoProgress.phase === 'ready_for_review'
+                                                ? 'Chưa áp dụng tọa độ này vào máy.'
+                                                : 'Kết quả đang chờ duyệt trên UI.'}</p>
+                                        <div className="small text-break mb-2">Base cấp cải chính: {conversionReport.source?.station_name || conversionReport.source?.host || 'Chưa có dữ liệu'}
                                             {conversionReport.source?.mountpoint ? ` / ${conversionReport.source.mountpoint}` : ''}</div>
+                                        {conversionReport.source?.distance_m != null && <div className="small text-muted mb-2">Cách thiết bị khoảng {(Number(conversionReport.source.distance_m) / 1000).toFixed(1)} km.</div>}
                                         <div className="small mb-2" role="status">Tỉnh/thành: {provinceLabel}
                                             {conversionReport.location?.state === 'projection_selection_required' && ' · Có nhiều vùng kinh tuyến trục cũ'}</div>
                                         <div className="table-responsive">
@@ -1600,12 +1624,12 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         </details>}
                                     </div>
                                 </div>
-                                <div className="col-12">
+                                {autoProgress.auto_applied !== true && <div className="col-12">
                                     <button type="button" className="btn btn-primary w-100" style={{minHeight:44}} disabled={disabled || isSubmitting || isAutoSetupActive || Boolean(currentReview?.pending)}
                                         onClick={event => handleSubmit(event, reviewCoords)}>
                                         {isSubmitting ? 'Đang gửi cấu hình Fixed LLA…' : 'Duyệt và áp dụng LLH vào Base (Fixed LLA)'}
                                     </button>
-                                </div>
+                                </div>}
                             </>
                         )}
 
@@ -1628,9 +1652,9 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     onChange={(e) => setMethod(e.target.value)}
                     disabled={disabled}
                 >
-                    <option value="AUTO_CORS">Tự động cấu hình Base từ Base liên kết</option>
-                    <option value="FIXED_LLA">Nhập tọa độ thủ công (Fixed Mode - Độ chính xác cao)</option>
+                    <option value="AUTO_CORS">Tự lấy tọa độ từ CORS gần nhất</option>
                     <option value="SURVEY_IN">Tự động khảo sát (Survey-In - Độ chính xác thấp)</option>
+                    <option value="FIXED_LLA">Nhập tọa độ thủ công (Fixed Mode - Độ chính xác cao)</option>
                 </select>
             </div>
 
@@ -1638,10 +1662,23 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 {method === 'AUTO_CORS' ? (
                     <div className="row g-3 auto-cors-config">
                         {!supportsAutoBaseReview && <div className="col-12"><div className="alert alert-warning small mb-0" role="status">
-                            Cần cập nhật agent để lấy kết quả Auto Base và duyệt trước khi áp dụng Fixed LLA.
+                            Cần cập nhật agent ESP32 để hỗ trợ đầy đủ luồng Auto Base.
+                        </div></div>}
+                        {!supportsAutoBaseNearest && <div className="col-12"><div className="alert alert-warning small mb-0" role="status">
+                            Agent này chưa hỗ trợ tự chuyển Rover và chọn trạm CORS gần nhất.
                         </div></div>}
                         <div className="col-12">
+                            <label htmlFor={`cors-source-mode-${device.serial}`} className="form-label fw-bold">Nguồn cải chính</label>
+                            <select id={`cors-source-mode-${device.serial}`} className="form-select"
+                                value={corsSourceMode} disabled={disabled || isAutoSetupActive}
+                                onChange={event => setCorsSourceMode(event.target.value)}>
+                                <option value="nearest">Tự chọn trạm CORS gần nhất trong danh sách của tôi</option>
+                                <option value="manual">Tự nhập IP, tài khoản và mountpoint</option>
+                            </select>
+                        </div>
+                        <div className="col-12">
                             <div className="auto-cors-config__panel p-3 rounded border border-info-subtle bg-dark-subtle">
+                                {corsSourceMode === 'manual' ? <>
                                 <div className="d-flex align-items-start gap-2 mb-3">
                                     <i className="bi bi-broadcast-pin text-info fs-5" aria-hidden="true"></i>
                                     <div>
@@ -1763,6 +1800,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                         </div>
                                     </div>
                                 </div>
+                                </> : <div className="alert alert-info small mb-0" role="status">
+                                    <div className="fw-bold mb-1">ESP32 sẽ vào Rover trước</div>
+                                    <div>Thiết bị gửi vị trí GNSS lên backend. Backend chọn trạm CORS gần nhất trong danh sách base bạn có quyền dùng, rồi gửi kết nối cải chính xuống ESP32. Khi đủ RTK_FIXED và mẫu hợp lệ, thiết bị tự áp dụng tọa độ Base.</div>
+                                </div>}
                             </div>
                         </div>
                         <div className="col-12">
@@ -1789,12 +1830,14 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             LLH trung bình → VN-2000 NEh → LLH địa phương. Dùng tham số RTCM 1021/1023 và phép chiếu RTCM 1025 hoặc theo tỉnh.
                         </div>
                         <div className="col-12">
-                            <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
+                                <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
                                 <i className="bi bi-robot me-2"></i>
-                                {autoFixedResult ? (
-                                    <span>Đã có kết quả. Kiểm tra tọa độ rồi chuyển sang Fixed LLA để áp dụng; lấy mẫu không tự ghi tọa độ mới vào máy.</span>
+                                {corsSourceMode === 'nearest' ? (
+                                    <span>ESP32 vào Rover, gửi vị trí lên backend, nhận cải chính từ trạm gần nhất, lấy mẫu RTK_FIXED rồi tự chuyển sang Fixed LLA.</span>
+                                ) : autoFixedResult ? (
+                                    <span>Đã có kết quả. Kiểm tra tọa độ rồi xác nhận áp dụng Fixed LLA.</span>
                                 ) : (
-                                    <span>Lấy mẫu RTK Fixed từ Base liên kết. Sau khi có kết quả, bạn kiểm tra và xác nhận áp dụng Fixed LLA.</span>
+                                    <span>Lấy mẫu RTK Fixed từ Base bạn nhập. Sau khi có kết quả, bạn kiểm tra và xác nhận áp dụng Fixed LLA.</span>
                                 )}
                             </div>
                         </div>
@@ -2050,7 +2093,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                     <button
                         type="submit"
                         className="btn btn-primary mt-4 w-100 base-config-submit"
-                        disabled={isSubmitting || isAutoSetupActive || isLoadingCorsSources || (method === 'AUTO_CORS' && (!selectedMountpoint || !supportsAutoBaseReview))}
+                        disabled={isSubmitting || isAutoSetupActive || isLoadingCorsSources || (method === 'AUTO_CORS' && (!supportsAutoBaseReview || (corsSourceMode === 'nearest' ? !supportsAutoBaseNearest : !selectedMountpoint)))}
                     >
                         {isSubmitting ? (
                             <>
@@ -2061,7 +2104,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                             <>
                                 <i className="bi bi-lightning-charge-fill me-2"></i>
                                 {method === 'AUTO_CORS'
-                                    ? (isAutoSetupActive ? 'Đang lấy tọa độ…' : autoFixedResult ? 'Lấy lại tọa độ Auto Base' : 'Lấy tọa độ Auto Base')
+                                    ? (isAutoSetupActive ? 'Đang lấy tọa độ…' : corsSourceMode === 'nearest' ? 'Chuyển Rover & tìm trạm gần nhất' : autoFixedResult ? 'Lấy lại tọa độ Auto Base' : 'Lấy tọa độ Auto Base')
                                     : 'Áp dụng cấu hình BASE'}
                             </>
                         )}
