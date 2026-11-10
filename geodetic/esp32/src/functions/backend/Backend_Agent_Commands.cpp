@@ -301,11 +301,16 @@ bool BackendAgent::executeServiceConfigCommand(JsonObject payload, String &error
                 service[activeKey] = globalActive;
             }
         }
-        serviceConfig_.clear();
-        serializeJson(serviceDoc, serviceConfig_);
-        detail = "service config deployed";
-        setupNTRIP();
-        connectNTRIP();
+        String updatedServiceConfig;
+        serializeJson(serviceDoc, updatedServiceConfig);
+        if (updatedServiceConfig != serviceConfig_) {
+            serviceConfig_ = updatedServiceConfig;
+            detail = "service config deployed";
+            setupNTRIP();
+            connectNTRIP();
+        } else {
+            detail = "service config unchanged; connections preserved";
+        }
         publishConfigState("service_config_state");
     }
     return success;
