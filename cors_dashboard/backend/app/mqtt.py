@@ -1086,9 +1086,15 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                 and reported_chip != 'UNKNOWN'
                 and reported_chip != metadata.get('detected_chip_type')
             )
+            boot_result_changed = (
+                not is_retained and crud.confirmed_boot_auto_base(data)
+                and ((metadata.get('base_config') or {}).get('base_setup_method') in ('SURVEY_IN', 'AUTO_CORS')
+                     or (metadata.get('base_config') or {}).get('coordinate_source') == 'AUTO_CORS')
+                and (metadata.get('base_config') or {}).get('auto_base_started_boot_id') != data.get('status_boot_id')
+            )
             
             # Điều kiện 1: Trạng thái Online/Offline thay đổi
-            if command_source_changed or device_lock_changed or chip_type_changed:
+            if command_source_changed or device_lock_changed or chip_type_changed or boot_result_changed:
                 should_write_db = True
             elif token_pending_state_changed:
                 should_write_db = True
@@ -1152,6 +1158,7 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                                 command_source_changed
                                 or device_lock_changed
                                 or chip_type_changed
+                                or boot_result_changed
                                 or token_pending_state_changed
                                 or (new_status and new_status != latest_known_status)
                                 or (now - latest_write_time) > DB_WRITE_INTERVAL

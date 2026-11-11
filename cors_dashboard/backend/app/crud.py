@@ -24,6 +24,36 @@ def _ensure_dict(val) -> dict:
     return {}
 
 
+def confirmed_boot_auto_base(data: dict) -> bool:
+    """Accept a completed local boot result only for the current boot."""
+    if not str(data.get('serial', '')).lower().startswith('esp_') or data.get('status') == 'offline':
+        return False
+    base = _ensure_dict(data.get('base_config'))
+    progress = _ensure_dict(data.get('auto_base_progress'))
+    boot = data.get('status_boot_id')
+    if not (boot and base.get('auto_base_started_boot_id') == boot
+            and progress.get('phase') == 'completed'
+            and progress.get('auto_applied') is True
+            and progress.get('receiver_write_completed') is True):
+        return False
+    if base.get('base_setup_method') == 'SURVEY_IN':
+        return (progress.get('mode') == 'survey_in'
+                and progress.get('reason') == 'no_fixed_station_within_20_km')
+    if base.get('base_setup_method') != 'FIXED_LLA' or progress.get('fixed_samples_only') is not True:
+        return False
+    coords = _ensure_dict(base.get('coords'))
+    result = _ensure_dict(progress.get('averaged_coord'))
+    try:
+        for key, limit in (('lat', 90), ('lon', 180), ('alt', 100000)):
+            left, right = float(coords[key]), float(result[key])
+            if not (math.isfinite(left) and math.isfinite(right)
+                    and abs(left) <= limit and abs(left - right) <= (0.001 if key == 'alt' else 1e-8)):
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
 def normalize_service_config(value) -> dict:
     if isinstance(value, str):
         try:
@@ -482,6 +512,8 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     existing_device = await get_device_for_update(db, serial)
 
     new_base_config = normalize_base_config(device_data.get("base_config", {}))
+    if confirmed_boot_auto_base(device_data) and device_data['base_config'].get('base_setup_method') == 'SURVEY_IN':
+        new_base_config = dict(device_data['base_config'])
     new_service_config = normalize_service_config(device_data.get("service_config"))
     new_system_info = _ensure_dict(device_data.get("system_info"))
     new_system_info = {
@@ -591,7 +623,12 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
 
     # ✅ KIỂM TRA BASE CONFIG
     # 🔥 FIX: Nếu đang OUT OF SYNC, không cho phép status từ device ghi đè Target Config trong DB
-    if is_out_of_sync:
+    current_base = _ensure_dict(existing_device.base_config)
+    boot_result = (confirmed_boot_auto_base(device_data)
+                   and (current_base.get('base_setup_method') in ('SURVEY_IN', 'AUTO_CORS')
+                        or current_base.get('coordinate_source') == 'AUTO_CORS')
+                   and current_base.get('auto_base_started_boot_id') != device_data.get('status_boot_id'))
+    if is_out_of_sync and not boot_result:
         if new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
             logger.debug(f"ℹ️ [{serial}] Config diff ignored: Waiting for sync to apply target config.")
     elif new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
