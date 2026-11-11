@@ -186,7 +186,7 @@ class FirmwareCommandsTests(unittest.IsolatedAsyncioTestCase):
             db=SimpleNamespace(commit=AsyncMock(),rollback=AsyncMock())
             scope=dict(crud=crud,HTTPException=HTTPException,command_builder=builder,
                        auth=SimpleNamespace(Role=SimpleNamespace(COORDINATOR='coordinator')),
-                       mqtt_handler=SimpleNamespace(device_telemetry_cache={}))
+                       mqtt_handler=SimpleNamespace(device_telemetry_cache={'test': {'status': 'offline'}}))
             exec(compile(ast.fix_missing_locations(ast.Module(body=[node],type_ignores=[])),str(path),'exec'),scope)
             request=SimpleNamespace(payload={'sensor_type':'Ublox','mode':'BASE','params':{'base_setup_method':'FIXED_LLA'}})
             admin = SimpleNamespace(role='admin', id=1)

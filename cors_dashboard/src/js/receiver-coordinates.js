@@ -17,7 +17,8 @@
             const dLon = ((actualLon - lon + 540) % 360) - 180;
             const dAlt = height - alt;
             // Allow one receiver encoding step, not the user-declared position accuracy.
-            const angularStep = chip === 'Ublox' ? 1e-9 : 1e-11;
+            // BESTNAVA reports fewer coordinate decimals than MODE BASE.
+            const angularStep = chip === 'Ublox' ? 1e-9 : 1e-8;
             const rad = Math.PI / 180;
             const haversine = Math.sin(dLat * rad / 2) ** 2
                 + Math.cos(lat * rad) * Math.cos(actualLat * rad) * Math.sin(dLon * rad / 2) ** 2;

@@ -44,6 +44,11 @@ assert.equal(helper.compareFixed(fixedPosition,{...fixedConfig,base_setup_method
 const umPosition = helper.fromReceiver({state:'ok',position_type:'FIXEDPOS',
     raw:'#BESTNAVA,97,GPS;SOL_COMPUTED,FIXEDPOS,21.33363526370,106.84699289030,30.0000,9.1240,WGS84,0*00000000'});
 assert.equal(helper.compareFixed(umPosition,{...fixedConfig,altitude_reference:'ELLIPSOID'},'Unicorecomm').matches,true);
+const roundedUm = {...umPosition, lat:'21.08498959', lon:'105.78665640', alt:'-7.9399'};
+const preciseUm = {base_setup_method:'FIXED_LLA',altitude_reference:'ELLIPSOID',
+    coords:{lat:'21.0849895914',lon:'105.7866563973',alt:'-7.9398844827'}};
+assert.equal(helper.compareFixed(roundedUm,preciseUm,'Unicorecomm').matches,true,
+    'BESTNAVA rounding must not report a false coordinate mismatch');
 assert.equal(helper.compareFixed(umPosition,{...fixedConfig,altitude_reference:'LEGACY',coords:{...fixedConfig.coords,alt:30}},'Unicorecomm').matches,true);
 assert.equal(helper.compareFixed(umPosition,{...fixedConfig,altitude_reference:'LEGACY'},'Unicorecomm').matches,false);
 console.log('PASS: fixed coordinate match, receiver quantization, real mismatch, missing data and UM height references');

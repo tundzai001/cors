@@ -773,6 +773,7 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
                 # The reconciler accepts WebSocket and drops that MQTT duplicate,
                 # so feed the same sync cache and online-device index here.
                 mqtt_handler.cache_agent_sync_inputs(serial, payload)
+                mqtt_handler.cache_websocket_status(serial, compact_payload, payload.get('system_info'))
                 reported_status = str(compact_payload.get("status") or "").strip().lower()
                 if reported_status:
                     mqtt_handler.device_status_cache[serial] = reported_status

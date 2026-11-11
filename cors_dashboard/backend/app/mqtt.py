@@ -102,6 +102,18 @@ def cache_agent_sync_inputs(serial: str, payload: dict) -> None:
             device_sync_cache[f"{serial}_service_config"] = service_config
 
 
+def cache_websocket_status(serial: str, status: dict, system_info=None) -> None:
+    """Expose accepted WebSocket telemetry to the same readers as MQTT."""
+    live = dict(device_telemetry_cache.get(serial) or {})
+    # A new heartbeat timestamp must not make an omitted MON-VER look fresh.
+    if 'gnss_receiver' not in status:
+        live.pop('gnss_receiver', None)
+    live.update(status)
+    if isinstance(system_info, dict):
+        live['system_info'] = system_info
+    device_telemetry_cache[serial] = live
+
+
 def _metadata_snapshot(device) -> dict:
     if not device:
         return {"exists": False, "cached_at": time.monotonic()}

@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import base64
 import math
 import re
@@ -116,6 +117,21 @@ def select_ublox_profile(telemetry: dict, capabilities: dict) -> dict:
     if not modern and not itfm:
         raise ValueError('Cập nhật agent để áp dụng cấu hình cho HPG 1.50/1.51 bằng VALSET/VALGET.')
     return dict(firmware='HPG '+versions[0], modern=modern, itfm=itfm)
+
+
+async def wait_for_ublox_profile(cache: dict, serial: str, capabilities: dict, timeout: float = 25) -> dict:
+    """Allow an online station to publish its first MON-VER after boot."""
+    deadline = time.monotonic() + timeout
+    while True:
+        live = cache.get(serial) or {}
+        actual_capabilities = live.get('system_info') or capabilities
+        try:
+            return select_ublox_profile(live, actual_capabilities)
+        except ValueError:
+            if (str(live.get('status') or '').lower() in ('offline', 'lost')
+                    or time.monotonic() >= deadline):
+                raise
+        await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
 
 
 def _ubx_tmode_entries(mode: bytes) -> dict[int, bytes]:

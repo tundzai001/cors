@@ -86,7 +86,7 @@ async def configure_chip_endpoint(
         live = mqtt_handler.device_telemetry_cache.get(serial) or {}
         capabilities = live.get('system_info') or device_in_db.system_info or {}
         try:
-            receiver_profile = command_builder.select_ublox_profile(live, capabilities)
+            receiver_profile = await command_builder.wait_for_ublox_profile(mqtt_handler.device_telemetry_cache, serial, capabilities)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

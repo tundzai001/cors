@@ -1061,8 +1061,9 @@ async function handleConfigureChip(serial, payload) {
     try {
         const response = await apiFetch(`/api/devices/${serial}/configure-chip`, {
             method: 'POST',
+            timeoutMs: 60000,
             body: JSON.stringify({ command: 'CONFIGURE_CHIP', payload: payload })
-        });
+        }, 0);
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
             throw new Error(err.detail || 'Cau hinh chip that bai');
