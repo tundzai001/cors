@@ -27,15 +27,6 @@ inline constexpr uint8_t GNSS_UNICORE_PORT = 0;
 inline constexpr int MUTEX_TIMEOUT_MS = 1500; // Thời gian tối đa để chờ mutex (ms)
 
 // ================= CẤU HÌNH KẾT NỐI =================
-// Giá trị mặc định khi chưa có cấu hình NVS hoặc sau lệnh reset phần tương ứng.
-// Sửa header/nạp firmware/reboot không ghi đè cấu hình đã lưu.
-// Muốn dùng lại mặc định mới: gửi lệnh xóa/reset cấu hình NVS tương ứng.
-// Tài khoản rover chung để ESP32 lấy cải chính trong luồng Auto Base.
-inline constexpr char AUTO_BASE_CASTER_HOST[] = "aitogy.click";
-inline constexpr uint16_t AUTO_BASE_CASTER_PORT = 2101;
-inline constexpr char AUTO_BASE_CASTER_USER[] = "aitogy";
-inline constexpr char AUTO_BASE_CASTER_PASSWORD[] = "aitogy";
-inline constexpr char AUTO_BASE_CASTER_MOUNTPOINT[] = "test";
 
 inline constexpr char CONNECTION_PREFERENCE[] = "4G"; // "4G" hoặc "WIFI".
 static_assert(std::string_view(CONNECTION_PREFERENCE) == "4G" || std::string_view(CONNECTION_PREFERENCE) == "WIFI",
@@ -44,15 +35,21 @@ static_assert(std::string_view(CONNECTION_PREFERENCE) == "4G" || std::string_vie
 inline constexpr char WIFI_SSID[] = "";
 inline constexpr char WIFI_PASSWORD[] = "";
 
-
 inline constexpr uint8_t TX_TO_MODEM_RX = 17;
 inline constexpr uint8_t RX_TO_MODEM_TX = 16;
 inline constexpr uint8_t MODEM_DC_PIN = 15;
 inline constexpr uint8_t MODEM_DTR_PIN = 4;
 
-inline constexpr char APN[] = "v-internet"; // APN cụ thể; "auto" để chọn theo nhà mạng
+inline constexpr char APN[] = "v-internet"; // Thay bằng APN của nhà mạng bạn
 inline constexpr char GPRS_USER[] = "";     // Thường để trống
 inline constexpr char GPRS_PASS[] = "";
+
+// Local AutoNearest profile.
+inline constexpr char AUTO_BASE_CASTER_HOST[] = "aitogy.click";
+inline constexpr uint16_t AUTO_BASE_CASTER_PORT = 2101;
+inline constexpr char AUTO_BASE_CASTER_USER[] = "aitogy";
+inline constexpr char AUTO_BASE_CASTER_PASSWORD[] = "aitogy";
+inline constexpr char AUTO_BASE_CASTER_MOUNTPOINT[] = "test";
 
 // ================= CẤU HÌNH NTRIP =================
 // Mã trạng thái nền của luồng gửi NTRIP; cộng 4 khi gửi được RTCM.

@@ -23,34 +23,36 @@ bool connectWifi(const String &ssid, const String &password, bool (*validateConn
 }
 }
 
-bool setupWiFi(bool (*validateConnection)()) {
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
+static bool tryLegacyWifi(bool (*validateConnection)()) {
     // Upgrade only: select a working old profile before retiring the list.
     String profiles;
     nvs_handle_t legacy;
     if (nvs_open("wifi_config", NVS_READONLY, &legacy) == ESP_OK) {
         size_t length = 0;
         if (nvs_get_str(legacy, "profiles", nullptr, &length) == ESP_OK && length > 0 && length <= 3072) {
-            std::unique_ptr<char[]> value(new char[length]);
+            auto value = std::make_unique<char[]>(length);
             if (nvs_get_str(legacy, "profiles", value.get(), &length) == ESP_OK) profiles = value.get();
         }
         nvs_close(legacy);
     }
-    if (!profiles.isEmpty()) {
-        DynamicJsonDocument doc(3072);
-        if (deserializeJson(doc, profiles) == DeserializationError::Ok && doc.is<JsonArray>()) {
-            for (JsonObjectConst profile : doc.as<JsonArrayConst>()) {
-                const String ssid = profile["ssid"] | "";
-                const String password = profile["password"] | "";
-                if (connectWifi(ssid, password, validateConnection)) {
-                    if (!saveMigratedWifi(ssid, password))
-                        Serial.println("[WIFI] Mang dang hoat dong; chua luu xong chuyen doi NVS.");
-                    return true;
-                }
-            }
-        }
+    if (profiles.isEmpty()) return false;
+    DynamicJsonDocument doc(3072);
+    if (deserializeJson(doc, profiles) != DeserializationError::Ok || !doc.is<JsonArray>()) return false;
+    for (JsonObjectConst profile : doc.as<JsonArrayConst>()) {
+        const String ssid = profile["ssid"] | "";
+        const String password = profile["password"] | "";
+        if (!connectWifi(ssid, password, validateConnection)) continue;
+        if (!saveMigratedWifi(ssid, password))
+            Serial.println("[WIFI] Mang dang hoat dong; chua luu xong chuyen doi NVS.");
+        return true;
     }
+    return false;
+}
+
+bool setupWiFi(bool (*validateConnection)()) {
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    if (tryLegacyWifi(validateConnection)) return true;
     Preferences store;
     if (!store.begin("myPrefs", true)) return false;
     const String ssid = store.getString("WIFI_SSID", WIFI_SSID);

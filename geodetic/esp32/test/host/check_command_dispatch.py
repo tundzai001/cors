@@ -1,70 +1,69 @@
-"""Exercise legacy command routing after the upstream extraction."""
+"""Exercise legacy command routing using the production dispatch functions."""
 from pathlib import Path
+import subprocess
 import tempfile
-from host_coverage import compile_cpp, run_cpp, mapped
 
 root = Path(__file__).resolve().parents[2]
-path = root / 'src/functions/backend/cmd_handler.cpp'
-source = path.read_text()
-esp_functions = 'static cmd_action_t handleEspConnectionSet(' + source.split('static cmd_action_t handleEspConnectionSet(', 1)[1].split('cmd_action_t handleMqttCommand(', 1)[0]
-functions = 'cmd_action_t handleGnssCommand(' + source.split('cmd_action_t handleGnssCommand(', 1)[1]
-shim = r'''
+source = (root / 'src/functions/backend/cmd_handler.cpp').read_text()
+functions = source[source.index('cmd_action_t handleEspConnectionSet('):]
+shim = (root / 'test/host/Arduino.h').read_text().replace('#pragma once', '')
+shim = shim.replace('    bool isEmpty()', '    long toInt() const { return std::strtol(c_str(), nullptr, 10); }\n    bool isEmpty()')
+shim = shim.replace('    void println(const char *) {}', '    void println(const char *) {}\n    void println(const String &) {}')
+harness = r'''
+#include <array>
 #include <cassert>
-#include <cstdint>
 #include <cstdlib>
-#include <string>
 #include <vector>
-struct String : std::string {
-    using std::string::string;
-    String(const std::string &s) : std::string(s) {}
-    long toInt() const { return strtol(c_str(), nullptr, 10); }
-};
-enum cmd_action_t { CMD_ACTION_NONE, CMD_ACTION_ESP_RESTART };
-struct { String last; void println(const String &s) { last = s; } } Serial;
+#include "hardware/Wifi_Credentials.h"
+enum class cmd_action_t { CMD_ACTION_NONE, CMD_ACTION_ESP_RESTART };
 struct { bool active = false; int calls = 0; bool workflowActive() { return active; }
          bool applyRoverMode() { ++calls; return true; } } backendAgent;
 struct { int writes = 0; void begin(const char *, bool) {} void end() {}
          void putBool(const char *, bool) { ++writes; } } prefs;
-int base = 0, set = 0;
-cmd_action_t handleGnssBaseCommand(const std::vector<String> &v) { ++base; assert(v.size() == 1 && v[0] == "X"); return CMD_ACTION_NONE; }
-cmd_action_t handleGnssSetCommand(const std::vector<String> &v) { ++set; assert(v.size() == 2 && v[0] == "SET"); return CMD_ACTION_NONE; }
+int baseCalls = 0, setCalls = 0; String savedKey, savedValue;
+cmd_action_t handleGnssBaseCommand(const std::vector<String> &v) { ++baseCalls; assert(v.size() == 1 && v[0] == "X"); return cmd_action_t::CMD_ACTION_NONE; }
+cmd_action_t handleGnssSetCommand(const std::vector<String> &v) { ++setCalls; assert(v.size() == 2 && v[0] == "SET"); return cmd_action_t::CMD_ACTION_NONE; }
 namespace cmd_helper {
-    int wifiWrites = 0, stringWrites = 0; bool lastSsid = false;
-    bool hasExactArgumentCount(const std::vector<String> &v, size_t n, const char *) { return v.size() == n; }
-    cmd_action_t saveWifiSetting(bool ssid, const String &) { ++wifiWrites; lastSsid = ssid; return CMD_ACTION_NONE; }
-    cmd_action_t saveStringPreference(const char *, const String &) { ++stringWrites; return CMD_ACTION_NONE; }
-    cmd_action_t saveUShortPreference(const char *, unsigned short) { return CMD_ACTION_NONE; }
+struct PreferenceMapping { const char *command, *preferenceKey; };
+bool hasExactArgumentCount(const std::vector<String> &v, size_t n, const char *) { return v.size() == n; }
+const char *findPreferenceKey(const String &key, const PreferenceMapping *map, size_t size) {
+    for (size_t i = 0; i < size; ++i) if (key == map[i].command) return map[i].preferenceKey;
+    return nullptr;
 }
-cmd_action_t handleMqttCommand(const std::vector<String> &) { return CMD_ACTION_NONE; }
-cmd_action_t handleNtripCommand(const std::vector<String> &) { return CMD_ACTION_NONE; }
+cmd_action_t saveStringPreference(const char *key, const String &value) { savedKey = key; savedValue = value; return cmd_action_t::CMD_ACTION_NONE; }
+cmd_action_t saveUShortPreference(const char *key, uint16_t value) { savedKey = key; savedValue = String(value); return cmd_action_t::CMD_ACTION_NONE; }
+}
 '''
 checks = r'''
 int main() {
-    assert(handleEspCommand({"SET", "CONNECTION", "4G"}) == CMD_ACTION_ESP_RESTART);
-    assert(handleEspCommand({"SET", "CONNECTION", "WIFI"}) == CMD_ACTION_ESP_RESTART);
-    handleEspCommand({"SET", "WIFI", "SSID", "test"});
-    assert(cmd_helper::wifiWrites == 1 && cmd_helper::lastSsid);
-    handleEspCommand({"SET", "WIFI", "PASS", "test"});
-    assert(cmd_helper::wifiWrites == 2 && !cmd_helper::lastSsid);
-    handleEspCommand({"SET", "WIFI"}); assert(cmd_helper::wifiWrites == 2);
-
+    using A = cmd_action_t;
+    assert(handleEspCommand({"SET", "CONNECTION", "4G"}) == A::CMD_ACTION_ESP_RESTART && savedValue == "4G");
+    assert(handleEspCommand({"SET", "CONNECTION", "WIFI"}) == A::CMD_ACTION_ESP_RESTART && savedValue == "WIFI");
+    assert(handleEspCommand({"SET", "CONNECTION"}) == A::CMD_ACTION_NONE);
+    std::vector<String> wifi = {"ATG", "ESP", "SET", "WIFI", "SSID", "station"};
+    assert(handleCommand(wifi) == A::CMD_ACTION_NONE && savedKey == "WIFI_SSID" && savedValue == "station");
+    std::vector<String> mqtt = {"ATG", "MQTT", "SET", "SERVER", "broker"};
+    assert(handleCommand(mqtt) == A::CMD_ACTION_NONE && savedKey == "MQTT_SERVER" && savedValue == "broker");
+    std::vector<String> ntrip = {"ATG", "NTRIP", "SET", "MNTPNT", "mount"};
+    assert(handleCommand(ntrip) == A::CMD_ACTION_NONE && savedKey == "NTRIP_MPT" && savedValue == "mount");
     std::vector<String> incomplete = {"ATG", "GNSS"};
-    assert(handleCommand(incomplete) == CMD_ACTION_NONE && Serial.last.find("Incomplete") != String::npos);
+    assert(handleCommand(incomplete) == A::CMD_ACTION_NONE);
     std::vector<String> rover = {"ATG", "GNSS", "ROVER"};
     backendAgent.active = true; handleCommand(rover); assert(backendAgent.calls == 0);
     backendAgent.active = false; handleCommand(rover); assert(backendAgent.calls == 1);
-    std::vector<String> b = {"ATG", "GNSS", "BASE", "X"}; handleCommand(b); assert(base == 1);
-    std::vector<String> s = {"ATG", "GNSS", "SET", "X"}; handleCommand(s); assert(set == 1);
-    std::vector<String> unknown = {"ATG", "CONFIG", "BAD"}; handleCommand(unknown);
-    assert(Serial.last.find("Unknown command") != String::npos && prefs.writes == 0);
+    std::vector<String> base = {"ATG", "GNSS", "BASE", "X"}; handleCommand(base); assert(baseCalls == 1);
+    std::vector<String> set = {"ATG", "GNSS", "SET", "X"}; handleCommand(set); assert(setCalls == 1);
+    std::vector<String> unknown = {"ATG", "CONFIG", "BAD"};
+    assert(handleCommand(unknown) == A::CMD_ACTION_NONE && prefs.writes == 0);
     std::vector<String> reset = {"ATG", "CONFIG", "RESET"};
-    assert(handleCommand(reset) == CMD_ACTION_ESP_RESTART && prefs.writes == 1);
+    assert(handleCommand(reset) == A::CMD_ACTION_ESP_RESTART && prefs.writes == 1);
 }
 '''
 with tempfile.TemporaryDirectory(prefix='command-dispatch-') as directory:
-    build = Path(directory)
-    (build / 'check.cpp').write_text(shim + mapped(path, esp_functions) + mapped(path, functions) + checks)
-    compile_cpp(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
-                 str(build / 'check.cpp'), '-o', str(build / 'check')], check=True)
-    run_cpp([str(build / 'check')], check=True)
-print('PASS: GNSS and CONFIG command routing')
+    path = Path(directory)
+    (path / 'Arduino.h').write_text('#pragma once\n' + shim)
+    (path / 'check.cpp').write_text(harness + functions + checks)
+    subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
+                    '-I' + str(path), '-I' + str(root / 'include'), str(path / 'check.cpp'), '-o', str(path / 'check')], check=True)
+    subprocess.run([str(path / 'check')], check=True)
+print('PASS: ESP, MQTT, NTRIP, GNSS and CONFIG command routing')

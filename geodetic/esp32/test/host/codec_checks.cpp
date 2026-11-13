@@ -11,7 +11,7 @@ int main() {
         {{"", ""}}, {{"f", "Zg=="}}, {{"fo", "Zm8="}}, {{"foo", "Zm9v"}},
         {{"foob", "Zm9vYg=="}}, {{"fooba", "Zm9vYmE="}}, {{"foobar", "Zm9vYmFy"}}
     }}) {
-        assert(encodeBase64(String(pair[0])) == pair[1]);
+        assert(encodeBase64(reinterpret_cast<const uint8_t *>(pair[0]), std::strlen(pair[0])) == pair[1]);
     }
     uint8_t decoded[3072] = {};
     for (size_t length : {1U, 2U, 3U, 16U, 255U, 256U, 3072U}) {

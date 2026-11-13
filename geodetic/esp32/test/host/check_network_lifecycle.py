@@ -1,82 +1,122 @@
-"""Exercise the complete Wi-Fi/SIM network manager with controlled routes and clock."""
+"""Exercise SIM fallback and recovery with production network functions."""
 from pathlib import Path
-import re
+import subprocess
 import tempfile
-from host_coverage import compile_cpp, run_cpp, mapped
+from host_coverage import compile_cpp, mapped, run_cpp
 
 root = Path(__file__).resolve().parents[2]
-source_path = root / 'src/hardware/Network_Manager.cpp'
-source = re.sub(r'^#include.*$', '', source_path.read_text(), flags=re.M)
+source = (root / 'src/main.cpp').read_text()
+start = source.index('static bool tryWifiFallback(bool protocolsRunning)\n{')
+end = source.index('/** @brief Implements settleModemBeforeNtrip.', start)
+functions = source[start:end]
+loop = source[source.index('void loop()\n{'):source.index('// Called with the shared modem mutex held once worker tasks are running.')]
 harness = r'''
 #include <Arduino.h>
 #include <cassert>
-#include <functional>
-enum class ConnectionType{WIFI,GSM};
-ConnectionType connectionType=ConnectionType::WIFI;
-bool isWifiConnection(){return connectionType==ConnectionType::WIFI;}
-bool isGsmConnection(){return connectionType==ConnectionType::GSM;}
-using SemaphoreHandle_t=void*;
-void *tcpStreamMutex=reinterpret_cast<void*>(1);
-constexpr unsigned MUTEX_TIMEOUT_MS=1500,LED_PIN=1,HIGH=1,LOW=0,WL_CONNECTED=3;
+#include <string>
+constexpr int WL_CONNECTED = 1;
+enum class ConnectionType { WIFI, GSM };
+ConnectionType connectionType = ConnectionType::GSM;
+bool wifiFallbackActive = false, wifiConnected = false, wifiOk = false, probeOk = true;
+bool mqttUp = false, ntripUp = false, networkOk = true, workflowActive = false;
+bool gprsUp = true, gsmOk = true, lockOk = true;
+int locks = 0, unlocks = 0;
+void *tcpStreamMutex = reinterpret_cast<void *>(1);
+constexpr int MUTEX_TIMEOUT_MS = 1500, LED_PIN = 1, HIGH = 1, LOW = 0;
 #define TCP_IP 1
 #define RTCM_COMMUNICATION_PROTOCOL TCP_IP
-uint32_t now=1000;unsigned locks=0,unlocks=0,stopped=0,configured=0,changed=0,maintains=0,wifiAttempts=0,probes=0;
-bool wifiUp=true,wifiOk=true,gsmOk=true,simOk=true,networkOk=true,gprsUp=true,probeOk=true;
-uint32_t millis(){return now;}void delay(unsigned ms){now+=ms;}
-unsigned pdMS_TO_TICKS(unsigned n){return n;}
-bool xSemaphoreTake(void*,unsigned){++locks;return true;}void xSemaphoreGive(void*){++unlocks;}
-void digitalWrite(unsigned,unsigned){}
-struct WifiClass {
-    static unsigned status(){return wifiUp?WL_CONNECTED:0;}
-    void disconnect(){wifiUp=false;}
-    String SSID(){return "test-network";}int RSSI(){return -55;}
-    struct Address{String toString(){return "192.0.2.1";}};
-    Address localIP(){return {};}
-} WiFi;
-using WiFiClass=WifiClass;
-struct {bool up=true;bool connected(){return up;}void disconnect(){up=false;}}mqtt;
-bool ntripUp=true;
-bool isNtripConnected(){return ntripUp;}
-void stopNtrip(){++stopped;ntripUp=false;}
-void setupNTRIP(){++configured;}void connectNTRIP(){ntripUp=true;}void setupMQTT(){}
-bool startSIM(){return simOk;}
-bool connectGSM(unsigned){if(gsmOk)gprsUp=true;return gsmOk;}
-bool probeMqttTransport(bool){++probes;return probeOk;}
-bool setupWiFi(std::function<bool()> validate={}){++wifiAttempts;wifiUp=wifiOk;return wifiOk&&(!validate||validate());}
-struct {bool isNetworkConnected(){return networkOk;}bool isGprsConnected(){return gprsUp;}void maintain(){++maintains;}}modem;
-struct {void onNetworkChanged(){++changed;}}backendAgent;
+int pdMS_TO_TICKS(int ms) { return ms; }
+bool xSemaphoreTake(void *, int) { if (!lockOk) return false; ++locks; return true; }
+void xSemaphoreGive(void *) { ++unlocks; }
+void vTaskDelay(int) {}
+void digitalWrite(int, int) {}
+uint32_t now = 1000, lastSimProbeMs = 0;
+int simRecoverySuccesses = 0, wifiAttempts = 0, probes = 0;
+std::string events;
+uint32_t millis() { return now; }
+bool isWifiConnection() { return connectionType == ConnectionType::WIFI; }
+bool isGsmConnection() { return connectionType == ConnectionType::GSM; }
+struct WiFiClass { static int status() { return wifiConnected ? WL_CONNECTED : 0; } };
+struct { void disconnect() { wifiConnected = false; events += 'D'; } } WiFi;
+struct { bool connected() { return mqttUp; } void disconnect() { mqttUp = false; events += 'M'; } } mqtt;
+struct { bool isNetworkConnected() { return networkOk; } bool isGprsConnected() { return gprsUp; } } modem;
+struct { void onNetworkChanged() { events += 'B'; } bool workflowActive() { return ::workflowActive; } } backendAgent;
+bool isNtripConnected() { return ntripUp; }
+void stopNtrip() { ntripUp = false; events += 'N'; }
+void setupMQTT() { events += 'Q'; }
+void setupNTRIP() { events += 'S'; }
+void connectNTRIP() { ntripUp = true; events += 'C'; }
+bool connectGSM(int) { if (gsmOk) gprsUp = true; return gsmOk; }
+bool probeMqttTransport(bool) { ++probes; return probeOk; }
+bool setupWiFi(bool (*validate)()) { ++wifiAttempts; wifiConnected = wifiOk; return wifiOk && validate(); }
+bool setupWiFi() { ++wifiAttempts; wifiConnected = wifiOk; return wifiOk; }
+static void activateNetwork(ConnectionType, bool);
+static void logNetworkStatus(bool = false);
 '''
 checks = r'''
-int main(){
-    NetworkManager::connect();assert(isWifiConnection()&&configured==1);
-    connectionType=ConnectionType::GSM;gprsUp=false;NetworkManager::connect();
-    assert(isGsmConnection()&&maintains==30&&gprsUp);
-    simOk=false;NetworkManager::connect();
-    assert(isWifiConnection()&&wifiFallbackActive&&changed>=1);
-    unsigned before=probes;NetworkManager::maintain();assert(probes==before);
-    now+=60000;probeOk=false;NetworkManager::maintain();assert(isWifiConnection()&&simRecoverySuccesses==0);
-    probeOk=true;now+=60000;NetworkManager::maintain();assert(isWifiConnection()&&simRecoverySuccesses==1);
-    now+=60000;NetworkManager::maintain();assert(isGsmConnection()&&!wifiFallbackActive&&!wifiUp);
-    gprsUp=false;wifiOk=false;unsigned previous=configured;
-    NetworkManager::maintain();assert(isGsmConnection()&&gprsUp&&configured==previous+1);
-    mqtt.up=false;ntripUp=false;NetworkManager::maintain();
-    now+=29000;before=wifiAttempts;NetworkManager::maintain();assert(wifiAttempts==before);
-    now+=1001;wifiOk=true;NetworkManager::maintain();
-    assert(isWifiConnection()&&wifiFallbackActive);
-    networkOk=false;now+=60000;NetworkManager::maintain();assert(isWifiConnection());
-    networkOk=true;wifiUp=false;now+=15000;NetworkManager::maintain();
-    assert(isGsmConnection()&&!wifiFallbackActive);
-    connectionType=ConnectionType::WIFI;wifiFallbackActive=false;wifiUp=false;before=wifiAttempts;
-    NetworkManager::maintain();assert(wifiAttempts==before+1&&wifiUp);
-    NetworkManager::checkInternetFallback();NetworkManager::logStatus();
-    tcpStreamMutex=nullptr;before=locks;NetworkManager::maintain();assert(locks==before);
-    assert(locks==unlocks);
+int main() {
+    checkSimInternetFallback();
+    now += 29999; checkSimInternetFallback(); assert(wifiAttempts == 0);
+    ++now; checkSimInternetFallback();
+    assert(wifiAttempts == 1 && isGsmConnection() && events.empty());
+    now += 30000; wifiOk = true; checkSimInternetFallback();
+    assert(isWifiConnection() && wifiFallbackActive && events == "MNBQSC");
+    now += 60000; probeOk = false; checkSimRecovery();
+    assert(isWifiConnection() && simRecoverySuccesses == 0);
+    now += 60000; probeOk = true; checkSimRecovery();
+    assert(isWifiConnection() && simRecoverySuccesses == 1);
+    now += 60000; checkSimRecovery();
+    assert(isGsmConnection() && !wifiFallbackActive && !wifiConnected && events == "MNBQSCMNBQSCD");
+
+    // Geodetic probes SIM even while a workflow is active; a lost Wi-Fi route
+    // can return to SIM after one successful probe.
+    assert(tryWifiFallback(true));
+    workflowActive = true; now += 60000;
+    const int before = probes;
+    checkSimRecovery(); assert(probes == before + 1 && isWifiConnection());
+    wifiConnected = false; networkOk = false; now += 15000;
+    checkSimRecovery(); assert(probes == before + 1 && isWifiConnection());
+    networkOk = true; now += 14999;
+    checkSimRecovery(); assert(probes == before + 1 && isWifiConnection());
+    ++now; checkSimRecovery();
+    assert(probes == before + 2 && isGsmConnection() && !wifiFallbackActive);
+
+    // A failed Wi-Fi probe must leave existing SIM sockets running.
+    workflowActive = false; mqttUp = ntripUp = true; wifiOk = false; events.clear();
+    assert(!tryWifiFallback(true));
+    assert(isGsmConnection() && mqttUp && ntripUp && events.empty());
+    wifiOk = true;
+    assert(tryWifiFallback(true));
+    assert(isWifiConnection() && !mqttUp && ntripUp && events == "MNBQSC");
+
+    // Run the production loop with failed and successful mutex acquisition.
+    connectionType = ConnectionType::GSM; wifiFallbackActive = false;
+    gprsUp = false; gsmOk = false; wifiOk = false; events.clear();
+    lockOk = false; const int oldLocks = locks; loop();
+    assert(locks == oldLocks && events.empty());
+    lockOk = true; loop();
+    assert(events == "N");
+    gsmOk = true; events.clear(); loop();
+    assert(gprsUp && events == "NSC");
+    connectionType = ConnectionType::WIFI; wifiFallbackActive = false;
+    wifiConnected = false; wifiOk = true; mqttUp = ntripUp = true; events.clear();
+    loop();
+    assert(wifiConnected && !mqttUp && !ntripUp && events == "MNB");
+    tcpStreamMutex = nullptr; const int oldUnlocks = unlocks; loop();
+    assert(unlocks == oldUnlocks && locks == unlocks);
 }
 '''
+# Supply only a stub for diagnostic logging; it is covered separately.
+log_start = functions.index('static void logNetworkStatus(bool force)')
+log_end = functions.index('/** @brief Implements checkSimInternetFallback.', log_start)
+functions = (mapped(root / 'src/main.cpp', functions[:log_start]) + 'static void logNetworkStatus(bool) {}\n\n' +
+             mapped(root / 'src/main.cpp', functions[log_end:]))
 with tempfile.TemporaryDirectory(prefix='network-lifecycle-') as directory:
     path = Path(directory)
-    (path / 'check.cpp').write_text(harness + mapped(source_path, source, stripped_includes=True) + checks)
-    compile_cpp(['c++','-std=c++17','-fsanitize=address,undefined','-I'+str(root/'test/host'),
-                 str(path/'check.cpp'),'-o',str(path/'check')],check=True)
-    run_cpp([str(path/'check')],check=True)
-print('PASS: complete network manager startup, SIM settling, fallback delay, recovery hysteresis, lost routes and lock balance')
+    shim = (root / 'test/host/Arduino.h').read_text().replace('    void println(const char *) {}', '    void println(const char *) {}\n    void println(const String &) {}')
+    (path / 'Arduino.h').write_text(shim)
+    (path / 'check.cpp').write_text(harness + functions + mapped(root / 'src/main.cpp', loop) + checks)
+    compile_cpp(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
+                    '-I' + str(path), str(path / 'check.cpp'), '-o', str(path / 'check')], check=True)
+    run_cpp([str(path / 'check')], check=True)
+print('PASS: SIM fallback, workflow recovery probes and lost Wi-Fi route')

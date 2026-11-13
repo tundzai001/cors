@@ -1,6 +1,6 @@
 #pragma once
 #define HOST_READBACK_TEST
-#include "../Arduino.h"
+#include "Arduino_base.h"
 #include <deque>
 #include <vector>
 #include <cstring>

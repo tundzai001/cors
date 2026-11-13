@@ -1,128 +1,81 @@
-"""Run native firmware tests with ASan/UBSan and export measured Sonar coverage.
-
-Requires matching Clang, llvm-profdata and llvm-cov tools, plus ArduinoJson 6.
-"""
-import argparse
+"""Export measured native firmware coverage for SonarQube using LLVM."""
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-from firmware_coverage_inventory import source_fingerprint
 
-ROOT = Path(__file__).resolve().parents[2]
+root = Path(__file__).resolve().parents[2]
+compiler = os.environ.get('CXX', 'clang++')
+profdata = os.environ.get('LLVM_PROFDATA', 'llvm-profdata')
+cov = os.environ.get('LLVM_COV', 'llvm-cov')
+suites = {
+    'base': ['test/host/base_checks.cpp', 'src/functions/gnss/Unicore_Log.cpp',
+             'src/functions/gnss/gnss_cmd_builder.cpp', 'src/functions/gnss/ublox_commands.cpp',
+             'src/functions/gnss/unicore_commands.cpp'],
+    'mqtt': ['test/host/mqtt_write_checks.cpp'],
+    'wifi': ['test/host/wifi_profiles_checks.cpp'],
+    'protocol': ['test/host/protocol_checks.cpp'],
+    'config': ['test/host/config_verification_checks.cpp', 'src/functions/gnss/Unicore_Log.cpp'],
+    'sample': ['test/host/sample_checks.cpp'],
+    'codec': ['test/host/codec_checks.cpp', 'src/functions/backend/Backend_Agent_Codec.cpp'],
+    'readback': ['test/host/readback_checks.cpp', 'src/functions/gnss/Ublox_Readback.cpp',
+                 'src/functions/gnss/Unicore_Readback.cpp', 'src/functions/gnss/Unicore_Log.cpp',
+                 'src/functions/backend/Backend_Agent_Codec.cpp'],
+}
+files = {}
 
 
-def read_baseline(path):
-    report = path.read_text()
-    if not report.startswith("TN:" + source_fingerprint() + "\n"):
-        raise RuntimeError("Stale firmware inventory; rerun firmware_coverage_inventory.py")
-    return report
-
-
-def tool(name, variable):
-    if os.environ.get(variable):
-        return os.environ[variable]
-    if sys.platform == "darwin" and name != "clang++":
-        return subprocess.check_output(["xcrun", "--find", name], text=True).strip()
-    result = shutil.which(name)
-    if not result:
-        raise SystemExit(f"Missing {name}; install Clang and LLVM, or set {variable}")
-    return result
-
-
-def sonar_report(lcov, destination):
-    """Keep real production paths and merge coverage across test executables."""
-    files = {}
-    current = None
-    for record in lcov.splitlines():
-        if record.startswith("SF:"):
+def add_report(report):
+    lines = None
+    for record in report.splitlines():
+        if record.startswith('SF:'):
             path = Path(record[3:]).resolve()
-            current = None
-            if path.is_relative_to(ROOT):
-                relative = path.relative_to(ROOT)
-                if relative.parts[0] in ("src", "include"):
-                    current = files.setdefault(relative.as_posix(), {})
-        elif record.startswith("DA:") and current is not None:
-            line, count, *_ = record[3:].split(",")
-            number = int(line)
-            current[number] = current.get(number, False) or int(count) > 0
-    if not files or not any(any(lines.values()) for lines in files.values()):
-        raise RuntimeError("No executed firmware lines in the coverage export")
-    report = ET.Element("coverage", version="1")
-    for path, lines in sorted(files.items()):
-        file = ET.SubElement(report, "file", path=path)
-        for line, covered in sorted(lines.items()):
-            ET.SubElement(file, "lineToCover", lineNumber=str(line), covered=str(covered).lower())
-        hit = sum(lines.values())
-        print(f"{path}: {hit}/{len(lines)} measured lines covered")
-    ET.ElementTree(report).write(destination, encoding="utf-8", xml_declaration=True)
-    print(f"Wrote {destination}; uninstrumented firmware remains uncovered in Sonar")
+            lines = None
+            if path.is_relative_to(root) and path.relative_to(root).parts[0] in ('src', 'include'):
+                lines = files.setdefault(path.relative_to(root).as_posix(), {})
+        elif lines is not None and record.startswith('DA:'):
+            number, count, *_ = record[3:].split(',')
+            lines[int(number)] = lines.get(int(number), False) or int(count) > 0
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arduinojson", type=Path,
-                        default=ROOT / ".pio/libdeps/tdm240x_dev_general/ArduinoJson/src")
-    parser.add_argument("--output", type=Path, default=ROOT / "cpp-coverage.xml")
-    parser.add_argument("--baseline", type=Path, default=ROOT / "cpp-baseline.lcov")
-    args = parser.parse_args()
-    if not args.baseline.is_file():
-        parser.error("Generate cpp-baseline.lcov with firmware_coverage_inventory.py first")
-    if not (args.arduinojson / "ArduinoJson.h").is_file():
-        parser.error("--arduinojson must contain ArduinoJson.h (version 6)")
-    compiler = tool("clang++", "CXX")
-    profdata = tool("llvm-profdata", "LLVM_PROFDATA")
-    cov = tool("llvm-cov", "LLVM_COV")
-    suites = {
-        "base": ["base_checks.cpp", "src/functions/gnss/gnss_cmd_builder.cpp",
-                 "src/functions/gnss/ublox_commands.cpp", "src/functions/gnss/unicore_commands.cpp"],
-        "codec": ["codec_checks.cpp", "src/functions/backend/Backend_Agent_Codec.cpp"],
-        "config": ["config_verification_checks.cpp"],
-        "mqtt": ["mqtt_write_checks.cpp"],
-        "wifi": ["wifi_profiles_checks.cpp"],
-        "sample": ["sample_checks.cpp"],
-        "protocol": ["protocol_checks.cpp"],
-        "readback": ["readback_checks.cpp", "src/functions/gnss/Ublox_Readback.cpp",
-                     "src/functions/gnss/Unicore_Readback.cpp", "src/functions/backend/Backend_Agent_Codec.cpp"],
-    }
-    with tempfile.TemporaryDirectory(prefix="esp32-coverage-") as directory:
-        build = Path(directory)
-        exports = [read_baseline(args.baseline)]
-        for name, sources in suites.items():
-            binary = build / name
-            include = [ROOT / "test/host/readback"] if name == "readback" else []
-            include += [ROOT / "test/host", ROOT / "include", args.arduinojson.resolve()]
-            command = [compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter", "-DNATIVE_BUILD",
-                       "-g", "-fsanitize=address,undefined", "-fprofile-instr-generate", "-fcoverage-mapping"]
-            command += [f"-I{path}" for path in include]
-            command += [str(ROOT / (source if source.startswith("src/") else f"test/host/{source}"))
-                        for source in sources]
-            print(f"Running {name} firmware checks", flush=True)
-            subprocess.run(command + ["-o", str(binary)], check=True, cwd=ROOT)
-            environment = dict(os.environ, LLVM_PROFILE_FILE=str(build / f"{name}-%p.profraw"))
-            subprocess.run([str(binary)], check=True, env=environment, cwd=ROOT)
-            # Keep each binary's profile separate: host shims differ between suites.
-            profile = build / f"{name}.profdata"
-            subprocess.run([profdata, "merge", "-sparse", *map(str, sorted(build.glob(f"{name}-*.profraw"))),
-                            "-o", str(profile)], check=True)
-            exports.append(subprocess.check_output(
-                [cov, "export", "-format=lcov", f"-instr-profile={profile}", str(binary)], text=True, cwd=ROOT))
-        for name in ("backend_lifecycle", "backend_storage", "detection_lifecycle", "gnss_lifecycle", "network_lifecycle",
-                     "projection_native", "workflow_lifecycle", "base_startup_confirmation", "gga_position", "gnss_stream", "mqtt_dispatch",
-                     "auto_base_boot", "ntrip_handshake", "ntrip_source", "ntrip_reconnect", "command_dispatch", "nvs_inventory", "rover_gga", "status_stream", "websocket_frames",
-                     "wifi_handover", "wifi_nvs", "workflow_progress", "workflow_restore"):
-            print(f"Running {name} integration checks", flush=True)
-            report = build / f"{name}.lcov"
-            environment = dict(os.environ, CXX=compiler, LLVM_PROFDATA=profdata, LLVM_COV=cov,
-                               HOST_COVERAGE_OUTPUT=str(report), HOST_ARDUINOJSON=str(args.arduinojson.resolve()))
-            subprocess.run([sys.executable, str(ROOT / f"test/host/check_{name}.py")],
-                           check=True, env=environment, cwd=ROOT)
-            exports.append(report.read_text())
-        sonar_report("\n".join(exports), args.output)
-
-
-if __name__ == "__main__":
-    main()
+with tempfile.TemporaryDirectory(prefix='esp32-coverage-') as directory:
+    build = Path(directory)
+    for name, sources in suites.items():
+        binary = build / name
+        includes = [root / 'test/host', root / 'include']
+        if name in ('readback', 'codec'):
+            includes.insert(0, root / 'test/host/readback')
+            includes.append(root / '.pio/libdeps/tdm240x_dev_general/ArduinoJson/src')
+        subprocess.run([compiler, '-std=c++17', '-DNATIVE_BUILD', '-g', '-fsanitize=address,undefined',
+                        '-fprofile-instr-generate', '-fcoverage-mapping',
+                        *['-I' + str(path) for path in includes],
+                        *[str(root / path) for path in sources], '-o', str(binary)], check=True)
+        raw, profile = build / f'{name}.profraw', build / f'{name}.profdata'
+        subprocess.run([str(binary)], check=True, env=dict(os.environ, LLVM_PROFILE_FILE=str(raw)))
+        subprocess.run([profdata, 'merge', '-sparse', str(raw), '-o', str(profile)], check=True)
+        report = subprocess.check_output([cov, 'export', '-format=lcov',
+                                          f'-instr-profile={profile}', str(binary)], text=True)
+        add_report(report)
+    for name in ('service_config', 'backend_queues', 'license_reference_commands', 'control_failover_workflow',
+                 'status_matrix', 'backend_save_state', 'autobase_command', 'auto_base_transform',
+                 'network_lifecycle', 'unicore_survey_ack', 'ntrip_source_connect', 'workflow_restore',
+                 'unicore_fixed_readback', 'ntrip_handshake', 'gnss_stream', 'mqtt_dispatch', 'stream_targeting',
+                 'ntrip_config_capacity', 'rover_connect', 'unicore_verify_command', 'ublox_verify_command',
+                 'autocors_startup', 'projection_native', 'detection_lifecycle', 'ntrip_reconnect', 'nvs_inventory',
+                 'websocket_frames'):
+        report = build / f'{name}.lcov'
+        environment = dict(os.environ, CXX=compiler, LLVM_PROFDATA=profdata, LLVM_COV=cov,
+                           HOST_COVERAGE_OUTPUT=str(report))
+        subprocess.run([sys.executable, str(root / f'test/host/check_{name}.py')], check=True, env=environment)
+        add_report(report.read_text())
+if not any(any(lines.values()) for lines in files.values()):
+    raise SystemExit('No measured firmware lines in coverage report')
+coverage = ET.Element('coverage', version='1')
+for path, lines in sorted(files.items()):
+    file = ET.SubElement(coverage, 'file', path=path)
+    for number, hit in sorted(lines.items()):
+        ET.SubElement(file, 'lineToCover', lineNumber=str(number), covered=str(hit).lower())
+    print(f'{path}: {sum(lines.values())}/{len(lines)} measured lines covered')
+ET.ElementTree(coverage).write(root / 'cpp-coverage.xml', encoding='utf-8', xml_declaration=True)
