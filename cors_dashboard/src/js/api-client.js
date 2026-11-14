@@ -49,8 +49,17 @@
     }
 
     function clearToken() {
-        localStorage.removeItem(ACCESS_TOKEN_KEY);
-        sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+        try {
+            localStorage.removeItem(ACCESS_TOKEN_KEY);
+            sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+        } catch (_) {}
+    }
+
+    async function logout() {
+        clearToken();
+        try {
+            await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        } catch (_) {}
     }
 
     function forceLogout(reason = 'session_expired') {
@@ -127,6 +136,7 @@
 
         try {
             const response = await fetch(url, {
+                credentials: 'same-origin',
                 ...fetchOptions,
                 headers: authHeaders(fetchOptions.headers),
                 signal: controller.signal
@@ -308,6 +318,7 @@
         hasToken,
         setToken,
         clearToken,
+        logout,
         forceLogout,
         isSessionInvalidated,
         isAuthWebSocketClose,

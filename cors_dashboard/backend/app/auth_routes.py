@@ -6,7 +6,7 @@ import time
 from urllib.parse import unquote
 from sqlalchemy import update, or_
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import auth, crud, models, schemas
@@ -22,6 +22,7 @@ login_router = APIRouter()
 @login_router.post("/api/auth/login", response_model=schemas.Token)
 async def login(
     request: Request,
+    response: Response = None,
     login_data: schemas.LoginRequest = Body(...),
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db)
@@ -168,7 +169,24 @@ async def login(
         ip=remote_ip
     )
 
+    if response is not None:
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=auth.IS_PRODUCTION,
+            samesite="lax",
+            max_age=int(expires_delta.total_seconds()),
+            path="/",
+        )
+
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@login_router.post("/api/auth/logout", status_code=204)
+async def logout(response: Response):
+    response.delete_cookie(key="access_token", path="/")
+    return None
 
 
 get_current_user_info_router = APIRouter()

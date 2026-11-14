@@ -49,7 +49,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 ACCESS_TOKEN_REMEMBER_ME_EXPIRE_MINUTES = 60 * 24 * 365 # 1 year
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 class SimpleRateLimiter:
     def __init__(self, max_requests: int = 5, window_seconds: int = 300):
@@ -209,8 +209,22 @@ def decode_token(token: str) -> dict:
         logger.warning(f"Token decode failed: {e}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ hoặc đã hết hạn", headers={"WWW-Authenticate": "Bearer"})
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: AsyncSession = Depends(get_auth_db)) -> models.User:
-    token = credentials.credentials
+async def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: AsyncSession = Depends(get_auth_db),
+) -> models.User:
+    token = None
+    if credentials is not None and getattr(credentials, "credentials", None):
+        token = credentials.credentials
+    elif request is not None and hasattr(request, "cookies") and "access_token" in request.cookies:
+        token = request.cookies["access_token"]
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token không hợp lệ hoặc không được cung cấp",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     payload = decode_token(token)
     username: str = payload.get("sub")
     if not username: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ")
