@@ -209,8 +209,46 @@
         </div>`;
     }
 
+    const PROVINCE_METADATA = {
+        '01': { region: 'Đồng bằng sông Hồng', type: 'Thành phố trực thuộc TW', wards: 126 },
+        '04': { region: 'Đông Bắc Bộ', type: 'Tỉnh', wards: 56 },
+        '08': { region: 'Đông Bắc Bộ', type: 'Tỉnh', wards: 124 },
+        '11': { region: 'Tây Bắc Bộ', type: 'Tỉnh', wards: 45 },
+        '12': { region: 'Tây Bắc Bộ', type: 'Tỉnh', wards: 38 },
+        '14': { region: 'Tây Bắc Bộ', type: 'Tỉnh', wards: 75 },
+        '15': { region: 'Tây Bắc Bộ', type: 'Tỉnh', wards: 99 },
+        '19': { region: 'Đông Bắc Bộ', type: 'Tỉnh', wards: 92 },
+        '20': { region: 'Đông Bắc Bộ', type: 'Tỉnh', wards: 65 },
+        '22': { region: 'Đông Bắc Bộ', type: 'Tỉnh', wards: 54 },
+        '24': { region: 'Đồng bằng sông Hồng', type: 'Tỉnh', wards: 99 },
+        '25': { region: 'Đông Bắc Bộ', type: 'Tỉnh', wards: 148 },
+        '31': { region: 'Đồng bằng sông Hồng', type: 'Thành phố trực thuộc TW', wards: 114 },
+        '33': { region: 'Đồng bằng sông Hồng', type: 'Tỉnh', wards: 104 },
+        '37': { region: 'Đồng bằng sông Hồng', type: 'Tỉnh', wards: 129 },
+        '38': { region: 'Bắc Trung Bộ', type: 'Tỉnh', wards: 166 },
+        '40': { region: 'Bắc Trung Bộ', type: 'Tỉnh', wards: 130 },
+        '42': { region: 'Bắc Trung Bộ', type: 'Tỉnh', wards: 69 },
+        '44': { region: 'Bắc Trung Bộ', type: 'Tỉnh', wards: 78 },
+        '46': { region: 'Bắc Trung Bộ', type: 'Thành phố trực thuộc TW', wards: 40 },
+        '48': { region: 'Duyên hải Nam Trung Bộ', type: 'Thành phố trực thuộc TW', wards: 94 },
+        '51': { region: 'Duyên hải Nam Trung Bộ', type: 'Tỉnh', wards: 96 },
+        '52': { region: 'Tây Nguyên', type: 'Tỉnh', wards: 135 },
+        '56': { region: 'Duyên hải Nam Trung Bộ', type: 'Tỉnh', wards: 65 },
+        '66': { region: 'Tây Nguyên', type: 'Tỉnh', wards: 102 },
+        '68': { region: 'Tây Nguyên', type: 'Tỉnh', wards: 124 },
+        '75': { region: 'Đông Nam Bộ', type: 'Tỉnh', wards: 95 },
+        '79': { region: 'Đông Nam Bộ', type: 'Thành phố trực thuộc TW', wards: 168 },
+        '80': { region: 'Đông Nam Bộ', type: 'Tỉnh', wards: 96 },
+        '82': { region: 'Đồng bằng sông Cửu Long', type: 'Tỉnh', wards: 102 },
+        '86': { region: 'Đồng bằng sông Cửu Long', type: 'Tỉnh', wards: 124 },
+        '91': { region: 'Đồng bằng sông Cửu Long', type: 'Tỉnh', wards: 102 },
+        '92': { region: 'Đồng bằng sông Cửu Long', type: 'Thành phố trực thuộc TW', wards: 103 },
+        '96': { region: 'Đồng bằng sông Cửu Long', type: 'Tỉnh', wards: 64 },
+    };
+
     function provincePopupHtml(feature, stations) {
         const p = feature.properties || {};
+        const meta = PROVINCE_METADATA[p.code] || {};
         const inProvince = stations.filter(s =>
             pointInGeometry([s.coords.lon, s.coords.lat], feature.geometry)
         );
@@ -220,17 +258,36 @@
 
         const areaStr = p.areaKm2 ? `${Number(p.areaKm2).toLocaleString('vi-VN')} km²` : '--';
         const postalStr = p.postalCodePrefix || '--';
+        const regionStr = meta.region || p.region || '--';
+        const unitTypeStr = meta.type || (p.fullName?.startsWith('Thành phố') ? 'Thành phố trực thuộc TW' : 'Tỉnh');
+        const wardsStr = meta.wards ? `${meta.wards} xã / phường` : '--';
+
+        const stationListHtml = inProvince.length > 0
+            ? `<div class="station-map-popup-bases mt-2 pt-2 border-top border-secondary border-opacity-25" style="max-height:85px;overflow-y:auto;font-size:0.72rem;">
+                <div class="fw-bold text-muted mb-1" style="font-size:0.68rem;">Danh sách trạm Base trong địa bàn:</div>
+                ${inProvince.map(s => {
+                    const statusColor = ['online', 'streaming'].includes(s.status) ? '#22c55e' : s.status === 'sleep' ? '#38bdf8' : '#ef4444';
+                    return `<span class="badge me-1 mb-1" style="background:rgba(255,255,255,0.08);color:#f8fafc;border:1px solid ${statusColor};">
+                        <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${statusColor};margin-right:4px;"></span>${escapeHtml(s.device.name || s.device.serial)}
+                    </span>`;
+                }).join('')}
+              </div>`
+            : '';
 
         return `
             <div class="station-map-popup">
                 <div class="station-map-popup-title">${escapeHtml(p.fullName || p.name || 'Tỉnh/Thành')}</div>
-                <div class="text-muted small">${escapeHtml(p.nameEn || '')}</div>
+                <div class="text-muted small mb-1">${escapeHtml(p.fullNameEn || p.nameEn || '')}</div>
                 <div class="station-map-popup-grid">
+                    <span class="station-map-popup-label">Cấp đơn vị</span><span class="station-map-popup-value">${escapeHtml(unitTypeStr)}</span>
+                    <span class="station-map-popup-label">Vùng địa lý</span><span class="station-map-popup-value">${escapeHtml(regionStr)}</span>
                     <span class="station-map-popup-label">Mã hành chính</span><span class="station-map-popup-value">${escapeHtml(p.code || '--')}</span>
                     <span class="station-map-popup-label">Mã bưu chính</span><span class="station-map-popup-value">${escapeHtml(postalStr)}</span>
                     <span class="station-map-popup-label">Diện tích</span><span class="station-map-popup-value">${escapeHtml(areaStr)}</span>
+                    <span class="station-map-popup-label">Xã / Phường</span><span class="station-map-popup-value">${escapeHtml(wardsStr)}</span>
                     <span class="station-map-popup-label">Trạm Base</span><span class="station-map-popup-value text-success font-monospace">${onlineCount} online / ${inProvince.length} tổng</span>
                 </div>
+                ${stationListHtml}
             </div>
         `;
     }
