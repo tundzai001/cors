@@ -1260,7 +1260,7 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                 f"STREAM_HINT: {stream_hint}",
                 f"MOUNTPOINT: {selected_mp}",
                 "Lắng nghe thành công",
-                f"OK bật trạm thành công ({wake_note}) {name}",
+                f"OK {wake_note} {name}",
             ]
             return PlainTextResponse("\n".join(response_lines))
 

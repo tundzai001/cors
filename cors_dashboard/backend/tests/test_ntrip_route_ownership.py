@@ -41,6 +41,8 @@ class RouteOwnershipTests(unittest.IsolatedAsyncioTestCase):
             scope.return_value.__aenter__.return_value = db
             response = await control._do_ntrip_wake('SinQuyen1', 'rover', 90, source_streaming=True)
         self.assertIn('STREAM_HINT: streaming', response.body.decode())
+        self.assertIn('OK đã ghép vào phiên đang hoạt động', response.body.decode())
+        self.assertNotIn('bật trạm thành công', response.body.decode())
         self.assertEqual(start.await_args.kwargs['serial'], 'live')
         self.assertTrue(start.await_args.kwargs['source_streaming'])
 
