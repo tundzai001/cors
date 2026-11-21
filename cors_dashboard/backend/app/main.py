@@ -605,7 +605,8 @@ async def ntrip_wake_station(
     if not mountpoint:
         return PlainTextResponse("ERROR: mountpoint is required", status_code=400)
 
-    return await _do_ntrip_wake(mountpoint, client_instance_id or "http-post", ttl_seconds, requested_address=address)
+    return await _do_ntrip_wake(mountpoint, client_instance_id or "http-post", ttl_seconds, requested_address=address,
+                                source_streaming=payload.get("source_streaming") is True)
 
 
 # === NTRIP STOP STATION HTTP ENDPOINT ===

@@ -26,6 +26,55 @@ class RouteOwnershipTests(unittest.IsolatedAsyncioTestCase):
             db.execute.return_value = rows(entries)
             self.assertEqual(await control._resolve_station_serial_by_mountpoint(db, 'SinQuyen2'), 'live')
 
+    async def test_streaming_backup_owns_lease_without_waking_old_station(self):
+        old = models.Device(serial='old', status='offline', service_config={'mountpoint1': 'SinQuyen1', 'server1_enabled': True})
+        live = models.Device(serial='live', status='online', service_config={'mountpoint2': 'SinQuyen1', 'server2_enabled': True},
+                             ntrip_status={'server2': {'connected': True}})
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [old, live]
+        db.execute.return_value = result
+        with patch.object(control, '_check_rover_blocked', AsyncMock(return_value=None)), \
+             patch.object(control, 'device_session_scope') as scope, \
+             patch.object(control.crud, 'get_device_by_serial', AsyncMock(return_value=live)), \
+             patch.object(control, '_ntrip_mqtt_start', AsyncMock(return_value={'wake_status': 'joined-existing', 'connected': True})) as start:
+            scope.return_value.__aenter__.return_value = db
+            response = await control._do_ntrip_wake('SinQuyen1', 'rover', 90, source_streaming=True)
+        self.assertIn('STREAM_HINT: streaming', response.body.decode())
+        self.assertEqual(start.await_args.kwargs['serial'], 'live')
+        self.assertTrue(start.await_args.kwargs['source_streaming'])
+
+    async def test_streaming_source_without_confirmed_owner_is_passive(self):
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        db.execute.return_value = result
+        with patch.object(control, '_check_rover_blocked', AsyncMock(return_value=None)), \
+             patch.object(control, 'device_session_scope') as scope, \
+             patch.object(control, '_ntrip_mqtt_start', AsyncMock()) as start:
+            scope.return_value.__aenter__.return_value = db
+            response = await control._do_ntrip_wake('SinQuyen1', 'rover', 90, source_streaming=True)
+        self.assertIn('CONTROL_MODE: passive', response.body.decode())
+        start.assert_not_awaited()
+
+    async def test_streaming_source_registers_lease_without_command_or_mountpoint_conflict(self):
+        device = models.Device(serial='live', status='online', ntrip_connected=True,
+                               service_config={'server1_enabled': True, 'mountpoint1': 'SinQuyen2',
+                                               'server2_enabled': True, 'mountpoint2': 'SinQuyen1',
+                                               'active_mountpoint': 'SinQuyen2'})
+        db = AsyncMock()
+        with patch.object(control, 'device_session_scope') as scope, \
+             patch.object(control.crud, 'get_device_by_serial', AsyncMock(return_value=device)), \
+             patch.object(control, '_count_active_mountpoint_sessions', AsyncMock(return_value=0)), \
+             patch.object(control, '_count_active_station_sessions', AsyncMock(return_value=1)), \
+             patch.object(control, '_upsert_rtcm_session', AsyncMock(return_value='lease')) as lease, \
+             patch.object(control, '_set_station_stream', AsyncMock()) as send:
+            scope.return_value.__aenter__.return_value = db
+            result = await control._ntrip_mqtt_start('live', 'SinQuyen1', 'rover', source_streaming=True)
+        self.assertEqual(result['wake_status'], 'joined-existing')
+        lease.assert_awaited_once()
+        send.assert_not_awaited()
+
     async def test_wake_refreshes_stale_owner_before_offline_gate(self):
         old = models.Device(serial='old', status='offline', service_config={'mountpoint1': 'SinQuyen2', 'server1_enabled': False})
         live = models.Device(serial='live', status='online', service_config={'mountpoint1': 'SinQuyen2', 'server1_enabled': True})
