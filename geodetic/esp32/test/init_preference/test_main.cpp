@@ -27,8 +27,8 @@ void setup()
   prefs.putString("NTRIP_AUTH_BASE_STATION", "12345");
   prefs.putString("MQTT_SERVER", "aitogy.asia");
   prefs.putInt("MQTT_PORT", 1883);
-  prefs.putString("MQTT_USER", "test-user");
-  prefs.putString("MQTT_PASS", "test-password");
+  prefs.putString("MQTT_USER", "mqttUser");
+  prefs.putString("MQTT_PASS", "MqttPassword123$%^");
   prefs.putString("TOPIC_SUB_CMD", "tdm2402/um980_base_001/cmd");
   prefs.putString("TOPIC_PUB_HEALTH", "tdm2402/um980_base_001/health");
 }

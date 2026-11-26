@@ -16,7 +16,7 @@ Hệ thống CORS xử lý hàng ngàn gói tin mỗi giây, do đó cơ chế x
 
 ### 1.2. Luồng Hot-path (`raw_data` & `nmea`)
 - **Tối ưu tốc độ:** Để tránh nghẽn cổ chai khi check Database hàng ngàn lần/giây, Backend **KHÔNG check token** đối với 2 topic `raw_data` và `nmea` qua MQTT. 
-- **Tin tưởng Broker:** Backend giao phó hoàn toàn việc bảo mật cho tài khoản MQTT. Cấu hình credentials qua secret store của deployment. Bất kỳ ai có tài khoản này đều có thể đẩy dữ liệu thẳng lên UI. Production cần dùng ACL trên MQTT Broker để giới hạn quyền từng client.
+- **Tin tưởng Broker:** Backend giao phó hoàn toàn việc bảo mật cho tài khoản MQTT (`mqttUser`/`MqttPassword123$%^`). Bất kỳ ai có tài khoản này đều có thể đẩy dữ liệu thẳng lên UI. Thực tế production cần dùng ACL (Access Control List) trên MQTT Broker để siết quyền từng Client.
 
 ---
 
@@ -26,7 +26,7 @@ MQTT đóng vai trò xương sống cho việc trao đổi cấu hình, gửi l�
 
 - **Broker**: `aitogy.click` 
 - **Port**: `1883`
-- **Xác thực**: Credentials do deployment quản lý; không lưu trong source hoặc tài liệu.
+- **Xác thực**:  `mqttUser` / `MqttPassword123$%^`
 
 ### 2.1. Các Topic Pi Publish (Gửi đi từ Pi)
 - `/cors/devices/{serial}/status`: Gửi Payload telemetry (Thông số phần cứng CPU/RAM, Trạng thái Fix, Số lượng vệ tinh). Cấu hình `QoS=1`, `Retain=True`.

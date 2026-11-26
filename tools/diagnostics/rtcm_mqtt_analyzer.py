@@ -1,4 +1,3 @@
-import os
 import paho.mqtt.client as mqtt
 from pyrtcm import RTCMReader
 from io import BytesIO
@@ -6,8 +5,8 @@ from io import BytesIO
 # --- Cấu hình MQTT ---
 MQTT_HOST = "aitogy.asia"
 MQTT_PORT = 1883  # Port mặc định (sửa lại nếu server của bạn dùng port khác, vd: 8883 cho TLS)
-MQTT_USER = os.getenv("MQTT_USERNAME", "").strip()
-MQTT_PASS = os.getenv("MQTT_PASSWORD", "").strip()
+MQTT_USER = "mqttUser"
+MQTT_PASS = "MqttPassword123$%^"
 MQTT_TOPIC = "device/860549070374009/upload"
 
 def on_connect(client, userdata, flags, rc, properties=None):

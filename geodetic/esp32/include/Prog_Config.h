@@ -64,8 +64,8 @@ inline constexpr char NTRIP_AUTH_BASE_STATION[] = "12345";
 
 inline constexpr char MQTT_SERVER[] = "aitogy.click";
 inline constexpr uint16_t MQTT_PORT = 1883;
-inline constexpr char MQTT_USER[] = "";
-inline constexpr char MQTT_PASS[] = "";
+inline constexpr char MQTT_USER[] = "mqttUser";
+inline constexpr char MQTT_PASS[] = "MqttPassword123$%^";
 
 // Firmware version and backend connection/status defaults.
 // Backend host and port can be overridden in Preferences.
