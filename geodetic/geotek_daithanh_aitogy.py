@@ -74,8 +74,8 @@ class ConfigManager:
                 "mqtt": {
                     "broker": "aitogy.click",
                     "port": 1883,
-                    "user": "mqttUser",
-                    "pass": "MqttPassword123$%^"
+                    "user": "",
+                    "pass": ""
                 },
                 "ntrip": {
                     "source_host": "rtkvietnam.vn",
@@ -337,8 +337,8 @@ def config_value(section, key, env_keys, default):
 # Global Settings (From Config)
 MQTT_BROKER = config_value("mqtt", "broker", ("MQTT_BROKER", "MQTT_HOST"), "aitogy.click")
 MQTT_PORT = int(config_value("mqtt", "port", ("MQTT_PORT",), 1883))
-MQTT_USER = config_value("mqtt", "user", ("MQTT_USERNAME",), "mqttUser")
-MQTT_PASS = config_value("mqtt", "pass", ("MQTT_PASSWORD",), "MqttPassword123$%^")
+MQTT_USER = config_value("mqtt", "user", ("MQTT_USERNAME",), "")
+MQTT_PASS = config_value("mqtt", "pass", ("MQTT_PASSWORD",), "")
 
 SOURCE_HOST = config_value("ntrip", "source_host", ("NTRIP_SOURCE_HOST",), "rtkvietnam.vn")
 SOURCE_PORT = int(config_value("ntrip", "source_port", ("NTRIP_SOURCE_PORT",), 1508))

@@ -305,8 +305,8 @@ else:
 DEFAULT_BACKEND_HOST = "aitogy.click"
 DEFAULT_MQTT_BROKER = "aitogy.click"
 DEFAULT_MQTT_PORT = 1883
-DEFAULT_MQTT_USERNAME = "mqttUser"
-DEFAULT_MQTT_PASSWORD = "MqttPassword123$%^"
+DEFAULT_MQTT_USERNAME = os.getenv("MQTT_USERNAME", "").strip()
+DEFAULT_MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "").strip()
 
 BACKEND_HOST = DEFAULT_BACKEND_HOST
 BACKEND_WS_HOST = os.getenv("BACKEND_WS_HOST", "base.aitogy.com").strip()

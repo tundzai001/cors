@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime
 import paho.mqtt.client as mqtt
@@ -5,8 +6,8 @@ import paho.mqtt.client as mqtt
 # Cấu hình MQTT
 MQTT_HOST = "aitogy.click"
 MQTT_PORT = 1883
-MQTT_USER = "mqttUser"
-MQTT_PASS = "MqttPassword123$%^"
+MQTT_USER = os.getenv("MQTT_USERNAME", "").strip()
+MQTT_PASS = os.getenv("MQTT_PASSWORD", "").strip()
 MQTT_TOPIC = "device/860549070087338/upload"
 
 last_msg_time = None

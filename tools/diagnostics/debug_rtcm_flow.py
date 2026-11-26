@@ -14,15 +14,15 @@ if hasattr(sys.stderr, 'reconfigure'):
 # --- Cấu hình MQTT (Nguồn RTCM) ---
 MQTT_HOST = "aitogy.click"
 MQTT_PORT = 1883
-MQTT_USER = "mqttUser"
-MQTT_PASS = "MqttPassword123$%^"
+MQTT_USER = os.getenv("MQTT_USERNAME", "").strip()
+MQTT_PASS = os.getenv("MQTT_PASSWORD", "").strip()
 MQTT_TOPIC = "device/860549070087338/upload"
 
 # --- Cấu hình NTRIP (Nơi nhận) ---
 NTRIP_HOST = "aitogy.com.vn"
 NTRIP_PORT = 2101
-NTRIP_USER = "aitogy"
-NTRIP_PASS = "aitogy"
+NTRIP_USER = os.getenv("NTRIP_USERNAME", "").strip()
+NTRIP_PASS = os.getenv("NTRIP_PASSWORD", "").strip()
 NTRIP_MP = "HT.VuQuang"
 
 # --- Thiết lập Logging ---
