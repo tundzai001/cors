@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+import inspect
 from datetime import datetime
 import time
 import re
@@ -611,61 +612,58 @@ async def _zalo_dispatch_admin_action(action, payload, context):
     handler = _ZALO_ADMIN_ACTION_HANDLERS.get(action)
     if handler is None:
         raise ValueError(f"Admin action không được hỗ trợ: {action}")
-    return await handler(context, payload)
+    result = handler(context, payload)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+def _zalo_search_key_score(key, needles, reward_long_identifier=False):
+    score = 0
+    for needle in needles:
+        if needle == key:
+            score += 10
+        if reward_long_identifier and len(needle) >= 10 and needle.isdigit() and needle == key:
+            score += 20
+        if len(needle) >= 3 and needle != key and key and needle in key:
+            score += 3
+    return score
 
 
 def _zalo_smart_search_station_score(device, needles):
     name_key = _zalo_search_key(device.name)
     serial_key = _zalo_search_key(device.serial)
-    score = 0
-    for needle in needles:
-        if needle == name_key:
-            score += 10
-        if needle == serial_key:
-            score += 10
-        if len(needle) >= 10 and needle.isdigit() and needle == serial_key:
-            score += 20
-        if len(needle) >= 3:
-            if needle != name_key and name_key and needle in name_key:
-                score += 3
-            if needle != serial_key and serial_key and needle in serial_key:
-                score += 3
-    return score
+    return _zalo_search_key_score(name_key, needles) + _zalo_search_key_score(
+        serial_key, needles, reward_long_identifier=True
+    )
 
 
 def _zalo_smart_search_rover_score(rover, needles):
     username_key = _zalo_search_key(rover.username)
-    score = 0
-    for needle in needles:
-        if needle == username_key:
-            score += 10
-        if len(needle) >= 10 and needle.isdigit() and needle == username_key:
-            score += 20
-        if len(needle) >= 3 and needle != username_key and username_key and needle in username_key:
-            score += 3
-    return score
+    return _zalo_search_key_score(username_key, needles, reward_long_identifier=True)
+
+
+def _zalo_top_unique_score(scores):
+    if not scores:
+        return None, -1
+    top_item, top_score = scores[0]
+    next_score = scores[1][1] if len(scores) > 1 else -1
+    return (top_item, top_score) if top_score > next_score else (None, top_score)
 
 
 def _zalo_smart_search_winner(device_scores, rover_scores):
     device_scores.sort(key=lambda item: -item[1])
     rover_scores.sort(key=lambda item: -item[1])
-    top_device = device_scores[0] if device_scores else None
-    top_rover = rover_scores[0] if rover_scores else None
-    second_device_score = device_scores[1][1] if len(device_scores) > 1 else -1
-    second_rover_score = rover_scores[1][1] if len(rover_scores) > 1 else -1
-    best_device_score = top_device[1] if top_device else -1
-    best_rover_score = top_rover[1] if top_rover else -1
-
+    top_device, best_device_score = _zalo_top_unique_score(device_scores)
+    top_rover, best_rover_score = _zalo_top_unique_score(rover_scores)
+    if best_device_score > best_rover_score:
+        return ('station', top_device) if top_device else None
+    if best_rover_score > best_device_score:
+        return ('rover', top_rover) if top_rover else None
     if best_device_score <= 0 and best_rover_score <= 0:
         return None
-    if best_device_score > best_rover_score:
-        return ('station', top_device[0]) if best_device_score > second_device_score else None
-    if best_rover_score > best_device_score:
-        return ('rover', top_rover[0]) if best_rover_score > second_rover_score else None
-    if best_device_score > second_device_score and best_rover_score <= second_rover_score:
-        return ('station', top_device[0])
-    if best_rover_score > second_rover_score and best_device_score <= second_device_score:
-        return ('rover', top_rover[0])
+    if bool(top_device) != bool(top_rover):
+        return ('station', top_device) if top_device else ('rover', top_rover)
     return None
 
 
@@ -724,7 +722,7 @@ def _zalo_resolve_smart_search(context, payload):
     )
 
 
-async def _zalo_admin_overview(context, payload):
+def _zalo_admin_overview(context, payload):
     online = sum(
         1 for item in context.visible_devices
         if str(item.status or "").lower() not in {"offline", "unknown"}
@@ -764,7 +762,7 @@ async def _zalo_admin_alerts(context, payload):
 
 
 
-async def _zalo_admin_stations(context, payload):
+def _zalo_admin_stations(context, payload):
     query = str(payload.get("query") or "").strip().lower()
     station_items = list(context.visible_devices)
     if query:
@@ -803,6 +801,27 @@ async def _zalo_admin_config_edit_context(context, payload):
 
 
 
+def _zalo_station_coordinates(coords, gga):
+    if not isinstance(coords, dict):
+        coords = {}
+    latitude = coords.get("lat", coords.get("latitude"))
+    longitude = coords.get("lon", coords.get("longitude"))
+    altitude = coords.get("alt", coords.get("altitude"))
+    return (
+        latitude if latitude is not None else gga.get("latitude"),
+        longitude if longitude is not None else gga.get("longitude"),
+        altitude if altitude is not None else gga.get("altitude"),
+    )
+
+
+def _zalo_station_status(status):
+    labels = {
+        "online": "Trực tuyến", "offline": "Ngoại tuyến", "sleep": "Đang nghỉ",
+        "unknown": "Chưa xác định", "awaiting_license": "Chờ cấp phép",
+    }
+    return labels.get(str(status or "").lower(), str(status or "Chưa xác định"))
+
+
 async def _zalo_admin_station(context, payload):
     device = await _zalo_find_device(
         context.devices_db, payload.get("station"), devices_list=context.visible_devices
@@ -813,18 +832,8 @@ async def _zalo_admin_station(context, payload):
     telemetry = _zalo_live_telemetry(device.serial)
     nmea = telemetry.get("nmea_data") if isinstance(telemetry.get("nmea_data"), dict) else {}
     gga = nmea.get("gga") if isinstance(nmea.get("gga"), dict) else {}
-    lat = lon = alt = None
-    if isinstance(coords, dict):
-        lat = coords.get("lat", coords.get("latitude"))
-        lon = coords.get("lon", coords.get("longitude"))
-        alt = coords.get("alt", coords.get("altitude"))
-    lat = lat if lat is not None else gga.get("latitude")
-    lon = lon if lon is not None else gga.get("longitude")
-    alt = alt if alt is not None else gga.get("altitude")
-    status_text = {
-        "online": "Trực tuyến", "offline": "Ngoại tuyến", "sleep": "Đang nghỉ",
-        "unknown": "Chưa xác định", "awaiting_license": "Chờ cấp phép",
-    }.get(str(device.status or "").lower(), str(device.status or "Chưa xác định"))
+    lat, lon, alt = _zalo_station_coordinates(coords, gga)
+    status_text = _zalo_station_status(device.status)
     lines = [
         f"📡 TRẠM {device.name or '-'}",
         f"• Serial: {device.serial}",
@@ -890,7 +899,7 @@ async def _zalo_admin_coord_set(context, payload):
         command="CONFIGURE_CHIP",
         payload={"sensor_type": sensor_type, "mode": "BASE", "params": params},
     )
-    result = await configure_chip_endpoint(device.serial, command, context.devices_db, context.execution_user)
+    await configure_chip_endpoint(device.serial, command, context.devices_db, context.execution_user)
 
     from app.mqtt import device_sync_cache, _compare_configs
     is_synced = False
@@ -926,7 +935,7 @@ async def _zalo_admin_config_set(context, payload):
     merged = dict(_device_service_config(device))
     merged.update({key: _zalo_parse_scalar(value) for key, value in changes.items()})
     service_payload = schemas.ServiceConfig(**merged)
-    result = await configure_service_endpoint(device.serial, service_payload, context.devices_db, context.execution_user)
+    await configure_service_endpoint(device.serial, service_payload, context.devices_db, context.execution_user)
 
     from app.mqtt import device_sync_cache, _compare_configs
     is_synced = False
@@ -954,7 +963,7 @@ async def _zalo_admin_station_lock(context, payload):
     device = await _zalo_find_device(
         context.devices_db, payload.get("station"), devices_list=context.visible_devices
     )
-    result = await lock_device(device.serial, context.devices_db, context.execution_user)
+    await lock_device(device.serial, context.devices_db, context.execution_user)
     return {"message": f"✅ Đã khóa cấu hình host của trạm {device.name or device.serial} thành công (Đang chờ trạm đồng bộ)."}
 
 
@@ -963,7 +972,7 @@ async def _zalo_admin_station_unlock(context, payload):
     device = await _zalo_find_device(
         context.devices_db, payload.get("station"), devices_list=context.visible_devices
     )
-    result = await unlock_device(device.serial, context.devices_db, context.execution_user)
+    await unlock_device(device.serial, context.devices_db, context.execution_user)
     return {"message": f"✅ Đã mở khóa cấu hình host của trạm {device.name or device.serial} thành công (Đang chờ trạm đồng bộ)."}
 
 
@@ -972,7 +981,7 @@ async def _zalo_admin_station_reset(context, payload):
     device = await _zalo_find_device(
         context.devices_db, payload.get("station"), devices_list=context.visible_devices
     )
-    result = await reset_pi_device(device.serial, context.devices_db, context.execution_user)
+    await reset_pi_device(device.serial, context.devices_db, context.execution_user)
     return {"message": f"✅ Đã gửi lệnh RESET tới trạm {device.name or device.serial} thành công."}
 
 
@@ -1019,27 +1028,32 @@ async def _zalo_admin_rovers(context, payload):
 
 
 
+async def _zalo_available_rover_mountpoints(context):
+    mountpoints: Set[str] = set()
+    for station in context.visible_devices:
+        config = station.service_config if isinstance(station.service_config, dict) else {}
+        for server_id in (1, 2):
+            mountpoint = str(config.get(f"mountpoint{server_id}") or "").strip()
+            if mountpoint:
+                mountpoints.add(mountpoint)
+    try:
+        sources = await get_admin_caster_sources(context.execution_user)
+        for source in sources.get("all", []):
+            mountpoint = str(source.get("mountpoint") or "").strip()
+            if mountpoint:
+                mountpoints.add(mountpoint)
+    except Exception as exc:
+        logger.warning("Zalo editor could not load live caster sources: %s", exc)
+    return mountpoints
+
+
 async def _zalo_admin_rover_edit_context(context, payload):
     rover = await _zalo_find_rover(
         context.auth_db, context.devices_db, payload.get("username"),
         allow_partial=True, rover_items=context.visible_rovers,
         device_items=context.visible_devices,
     )
-    available_mountpoints: Set[str] = set()
-    for station_item in context.visible_devices:
-        service_cfg = station_item.service_config if isinstance(station_item.service_config, dict) else {}
-        for server_id in (1, 2):
-            mountpoint = str(service_cfg.get(f"mountpoint{server_id}") or "").strip()
-            if mountpoint:
-                available_mountpoints.add(mountpoint)
-    try:
-        caster_sources = await get_admin_caster_sources(context.execution_user)
-        for source in caster_sources.get("all", []):
-            mountpoint = str(source.get("mountpoint") or "").strip()
-            if mountpoint:
-                available_mountpoints.add(mountpoint)
-    except Exception as exc:
-        logger.warning("Zalo editor could not load live caster sources: %s", exc)
+    available_mountpoints = await _zalo_available_rover_mountpoints(context)
     remaining_days = None
     if rover.expires_at:
         remaining_days = max(0, int((int(rover.expires_at) - int(time.time()) + 86399) // 86400))
@@ -1263,7 +1277,7 @@ async def _zalo_admin_rover_unblock(context, payload):
         username=rover.username,
         mountpoint=payload.get("mountpoint"),
     )
-    result = await unblock_caster_user(request, context.auth_db, context.devices_db, context.execution_user)
+    await unblock_caster_user(request, context.auth_db, context.devices_db, context.execution_user)
     return {"message": f"✅ Đã mở chặn rover {rover.username} thành công."}
 
 
@@ -1294,7 +1308,7 @@ _ZALO_ADMIN_ACTION_HANDLERS = {
 
 
 
-async def _zalo_admin_action(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _zalo_validate_action_permissions(action, payload):
     required_permission = _ZALO_ACTION_PERMISSIONS.get(action)
     granted_permissions = {
         str(value) for value in (payload.get("permissions") or [])
@@ -1303,39 +1317,57 @@ async def _zalo_admin_action(action: str, payload: Dict[str, Any]) -> Dict[str, 
         raise PermissionError("Tài khoản Zalo hiện tại không còn quyền thực hiện chức năng này")
     if action in _ZALO_WRITE_ACTIONS and not settings.ZALO_ENABLE_WRITE_ACTIONS:
         raise PermissionError("Các thao tác ghi từ Zalo đang bị tắt bởi cấu hình hệ thống")
+    return required_permission, granted_permissions
+
+
+async def _zalo_service_admin(auth_db):
+    service_admin = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
+    if not service_admin or service_admin.role != auth.Role.ADMIN:
+        raise RuntimeError("ZALO_BOT_ADMIN_USERNAME phải trỏ tới tài khoản web có role admin")
+    return service_admin
+
+
+async def _zalo_admin_context(
+    auth_db, devices_db, service_admin, payload, required_permission, granted_permissions
+):
+    actor_user_id = payload.get("actor_user_id")
+    actor_user = await auth_db.get(models.User, int(actor_user_id)) if actor_user_id else None
+    if actor_user_id and (not actor_user or not actor_user.is_active):
+        raise PermissionError("Tài khoản dashboard liên kết đã bị vô hiệu hóa")
+    execution_user = actor_user or service_admin
+    fresh_permissions = set(auth.get_user_permissions(execution_user))
+    if required_permission and required_permission not in fresh_permissions:
+        raise PermissionError("Tài khoản dashboard hiện tại không còn quyền thực hiện chức năng này")
+
+    visible_devices = await _ops_visible_devices(devices_db, auth_db, execution_user)
+    visible_rovers = await _ops_visible_rovers(auth_db, devices_db, execution_user)
+    can_view_rovers = auth.Permission.MANAGE_CASTER in granted_permissions
+    if not can_view_rovers:
+        visible_rovers = []
+    visible_devices, visible_rovers = _zalo_visible_scope(
+        actor_user, payload, visible_devices, visible_rovers
+    )
+    return _ZaloAdminContext(
+        auth_db=auth_db,
+        devices_db=devices_db,
+        execution_user=execution_user,
+        visible_devices=visible_devices,
+        visible_rovers=visible_rovers,
+        can_view_rovers=can_view_rovers,
+    )
+
+
+async def _zalo_admin_action(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    required_permission, granted_permissions = _zalo_validate_action_permissions(action, payload)
 
     async with auth_session_scope() as auth_db:
-        service_admin = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
-        if not service_admin or service_admin.role != auth.Role.ADMIN:
-            raise RuntimeError("ZALO_BOT_ADMIN_USERNAME phải trỏ tới tài khoản web có role admin")
+        service_admin = await _zalo_service_admin(auth_db)
 
         async with device_session_scope() as devices_db:
             try:
-                actor_user_id = payload.get("actor_user_id")
-                actor_user = await auth_db.get(models.User, int(actor_user_id)) if actor_user_id else None
-                if actor_user_id and (not actor_user or not actor_user.is_active):
-                    raise PermissionError("Tài khoản dashboard liên kết đã bị vô hiệu hóa")
-                execution_user = actor_user or service_admin
-                fresh_permissions = set(auth.get_user_permissions(execution_user))
-                if required_permission and required_permission not in fresh_permissions:
-                    raise PermissionError("Tài khoản dashboard hiện tại không còn quyền thực hiện chức năng này")
-
-                visible_devices = await _ops_visible_devices(devices_db, auth_db, execution_user)
-                visible_rovers = await _ops_visible_rovers(auth_db, devices_db, execution_user)
-                can_view_rovers = auth.Permission.MANAGE_CASTER in granted_permissions
-                if not can_view_rovers:
-                    visible_rovers = []
-
-                visible_devices, visible_rovers = _zalo_visible_scope(
-                    actor_user, payload, visible_devices, visible_rovers
-                )
-                context = _ZaloAdminContext(
-                    auth_db=auth_db,
-                    devices_db=devices_db,
-                    execution_user=execution_user,
-                    visible_devices=visible_devices,
-                    visible_rovers=visible_rovers,
-                    can_view_rovers=can_view_rovers,
+                context = await _zalo_admin_context(
+                    auth_db, devices_db, service_admin, payload,
+                    required_permission, granted_permissions,
                 )
                 return await _zalo_dispatch_admin_action(action, payload, context)
             except HTTPException as exc:
@@ -1445,11 +1477,11 @@ async def _initialize_runtime():
         logger.warning("Ghost device cleanup failed (non-critical)", exc_info=True)
 
 
-async def _accept_heartbeat_timeouts(devices, now, timeout):
+async def _accept_heartbeat_timeouts(devices, now, heartbeat_timeout):
     accepted = []
     payloads = {}
     for device in devices:
-        if await status_reconciler.is_fresh(device.serial, timeout, now=now):
+        if await status_reconciler.is_fresh(device.serial, heartbeat_timeout, now=now):
             continue
         decision = await status_reconciler.accept_offline(
             device.serial, source="heartbeat", received_at=now
@@ -1457,7 +1489,7 @@ async def _accept_heartbeat_timeouts(devices, now, timeout):
         if not decision.accepted:
             continue
         device.status = "offline"
-        device.offline_since = min(now, int(device.timestamp or now) + timeout)
+        device.offline_since = min(now, int(device.timestamp or now) + heartbeat_timeout)
         device.timestamp = now
         device.bps = 0
         device.ntrip_connected = False

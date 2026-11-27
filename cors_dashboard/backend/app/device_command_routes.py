@@ -41,6 +41,7 @@ from .mobile_base import require_editable_base
 
 router = APIRouter(dependencies=[Depends(require_editable_base)])
 DEVICE_NOT_FOUND = "Thiết bị không tồn tại"
+COORDINATOR_DEVICE_ACCESS_DENIED = "Bạn không có quyền quản lý thiết bị này."
 tools_router = APIRouter(dependencies=[Depends(require_editable_base)])
 
 
@@ -262,7 +263,7 @@ async def configure_service_endpoint(
 
     # 1. Kiểm tra quyền sở hữu (Nếu là COORDINATOR)
     if current_user.role == auth.Role.COORDINATOR and device_in_db.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị này.")
+        raise HTTPException(status_code=403, detail=COORDINATOR_DEVICE_ACCESS_DENIED)
 
     # 2. Kiểm tra MANAGE_STATION_MODE (Nếu thay đổi mode sleep/always-on toàn cục hoặc theo server)
     old_service_cfg = _device_service_config(device_in_db)
@@ -351,7 +352,7 @@ async def set_configured_relay_power(
     if not auth.has_permission(current_user, auth.Permission.MANAGE_STATION_MODE):
         raise HTTPException(status_code=403, detail="Bạn không có quyền bật/tắt trạm Relay.")
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị này.")
+        raise HTTPException(status_code=403, detail=COORDINATOR_DEVICE_ACCESS_DENIED)
 
     service_config = _device_service_config(device)
     agent_service_config = crud.normalize_service_config(
@@ -404,7 +405,7 @@ async def reset_pi_device(
         raise HTTPException(status_code=403, detail="Bạn không có quyền khởi động lại thiết bị.")
 
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị này.")
+        raise HTTPException(status_code=403, detail=COORDINATOR_DEVICE_ACCESS_DENIED)
 
     # 3. Gửi lệnh xuống thiết bị (Chỉ gửi khi đã qua cửa kiểm tra an ninh)
     try:
