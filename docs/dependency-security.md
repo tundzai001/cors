@@ -14,12 +14,16 @@ Action versions are pinned to immutable revisions.
 ## SonarCloud setup
 
 1. Store an analysis token in the repository Actions secret `SONAR_TOKEN`.
-2. In SonarCloud project `tundzai001_cors`, open **Administration > Analysis Method**
+2. In SonarCloud project `tundzai001-oss_cors`, open **Administration > Analysis Method**
    and disable **Automatic Analysis** before using CI-based analysis.
 3. Run **Dependency security and SonarCloud** in GitHub Actions.
 
 Fork pull requests can run the dependency audit, but do not receive the SonarCloud
 secret. A missing token fails the scan with an explicit setup message.
+
+CORS is analyzed in the free OSS organization `tundzai001-oss`, where custom
+quality profiles are available. This repository's security workflow analyzes
+only CORS. The old Sonar project retains its analysis history.
 
 ## Updating dependencies
 
