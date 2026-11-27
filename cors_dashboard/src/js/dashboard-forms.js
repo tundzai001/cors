@@ -707,7 +707,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
         k0: String(recalculated.k0),
         projection_source: 'manual',
         rtcm1025_used: false,
-        zone_width_deg: recalculated.k0 === 0.9999 ? 3 : 6
+        zone_width_deg: Math.abs(Number(recalculated.k0) - 0.9999) <= 1e-9 ? 3 : 6
     } : conversionReport;
     const provinceLabel = conversionReport.location?.province_name || conversionReport.province_name
         || (provinceLookup?.key === locationKey && provinceLookup.state === 'loading' ? 'Đang tra tỉnh/thành từ tọa độ…'
