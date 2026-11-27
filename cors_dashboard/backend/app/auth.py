@@ -209,16 +209,41 @@ def decode_token(token: str) -> dict:
         logger.warning(f"Token decode failed: {e}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ hoặc đã hết hạn", headers={"WWW-Authenticate": "Bearer"})
 
+
+def _access_token_from_request(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials],
+) -> Optional[str]:
+    if credentials is not None and getattr(credentials, "credentials", None):
+        return credentials.credentials
+    if request is not None and hasattr(request, "cookies"):
+        return request.cookies.get("access_token")
+    return None
+
+
+async def _touch_session(db: AsyncSession, session_id: str) -> None:
+    now = time.time()
+    if now - SESSION_LAST_ACTIVE_CACHE.get(session_id, 0) <= SESSION_ACTIVITY_INTERVAL_SECONDS:
+        return
+    try:
+        from sqlalchemy import update
+        await db.execute(
+            update(models.UserSession)
+            .where(models.UserSession.session_id == session_id)
+            .values(last_active_at=int(now))
+        )
+        await db.commit()
+        SESSION_LAST_ACTIVE_CACHE[session_id] = now
+    except Exception as e:
+        await db.rollback()
+        logger.debug(f"Could not update session activity: {e}")
+
 async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_auth_db),
 ) -> models.User:
-    token = None
-    if credentials is not None and getattr(credentials, "credentials", None):
-        token = credentials.credentials
-    elif request is not None and hasattr(request, "cookies") and "access_token" in request.cookies:
-        token = request.cookies["access_token"]
+    token = _access_token_from_request(request, credentials)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -249,20 +274,7 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is disabled")
 
     if sid:
-        now = time.time()
-        if now - SESSION_LAST_ACTIVE_CACHE.get(sid, 0) > SESSION_ACTIVITY_INTERVAL_SECONDS:
-            try:
-                from sqlalchemy import update
-                await db.execute(
-                    update(models.UserSession)
-                    .where(models.UserSession.session_id == sid)
-                    .values(last_active_at=int(now))
-                )
-                await db.commit()
-                SESSION_LAST_ACTIVE_CACHE[sid] = now
-            except Exception as e:
-                await db.rollback()
-                logger.debug(f"Could not update session activity: {e}")
+        await _touch_session(db, sid)
 
     return user
 

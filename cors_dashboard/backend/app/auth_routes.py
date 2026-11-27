@@ -19,6 +19,45 @@ logger = logging.getLogger("app.main")
 
 login_router = APIRouter()
 
+
+async def _authenticate_login_user(
+    auth_db: AsyncSession,
+    login_data: schemas.LoginRequest,
+    request: Request,
+) -> models.User:
+    user = await crud.get_user_by_username(auth_db, username=login_data.username)
+    if not user:
+        await auth.verify_password(
+            login_data.password,
+            auth.pwd_context.hash("dummy_password_12345")
+        )
+        logger.warning(
+            f"❌ Login failed: Unknown user '{login_data.username}' "
+            f"from {request.client.host}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+
+    if not await auth.verify_password(login_data.password, user.hashed_password):
+        logger.warning(
+            f"❌ Login failed: Wrong password for '{login_data.username}' "
+            f"from {request.client.host}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+
+    if not user.is_active:
+        logger.warning(f"❌ Login failed: Inactive account '{login_data.username}'")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled"
+        )
+    return user
+
 @login_router.post("/api/auth/login", response_model=schemas.Token)
 async def login(
     request: Request,
@@ -57,40 +96,7 @@ async def login(
     except HTTPException as e:
         raise e
 
-    user = await crud.get_user_by_username(auth_db, username=login_data.username)
-
-    if not user:
-        await auth.verify_password(
-            login_data.password,
-            auth.pwd_context.hash("dummy_password_12345")
-        )
-        logger.warning(
-            f"❌ Login failed: Unknown user '{login_data.username}' "
-            f"from {request.client.host}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
-
-    if not await auth.verify_password(login_data.password, user.hashed_password):
-        logger.warning(
-            f"❌ Login failed: Wrong password for '{login_data.username}' "
-            f"from {request.client.host}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
-
-    if not user.is_active:
-        logger.warning(
-            f"❌ Login failed: Inactive account '{login_data.username}'"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled"
-        )
+    user = await _authenticate_login_user(auth_db, login_data, request)
 
     logger.info(
         f"✅ Successful login: '{user.username}' (role: {user.role}) "
