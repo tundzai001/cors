@@ -456,10 +456,10 @@ async def get_vietnam_provinces(
             rows = []
         if not rows:
             return _get_provinces_summary()
-    return [dict(code=r['code'], name=r['name'], fullName=r['full_name'],
-                 nameEn=r.get('name_en'), codeName=r.get('code_name'),
-                 postalCodePrefix=r.get('postal_code_prefix'),
-                 lat=None, lon=None, dataset=dataset) for r in rows]
+    return [{'code':r['code'], 'name':r['name'], 'fullName':r['full_name'],
+                 'nameEn':r.get('name_en'), 'codeName':r.get('code_name'),
+                 'postalCodePrefix':r.get('postal_code_prefix'),
+                 'lat':None, 'lon':None, 'dataset':dataset} for r in rows]
 
 
 @get_public_map_stations_router.get("/api/public/vietnam-districts")
@@ -473,8 +473,8 @@ async def get_vietnam_districts(
         return []
     from .province_db_service import list_legacy_units
     rows = await list_legacy_units(db, 'district', province_code=province_code)
-    return [dict(code=r['code'], name=r['name'], fullName=r['full_name'],
-                 provinceCode=r['province_code'], lat=None, lon=None, dataset='legacy')
+    return [{'code':r['code'], 'name':r['name'], 'fullName':r['full_name'],
+                 'provinceCode':r['province_code'], 'lat':None, 'lon':None, 'dataset':'legacy'}
             for r in rows]
 
 
@@ -504,9 +504,9 @@ async def get_vietnam_wards(
         rows = [r for r in catalog(dataset) if r['type'] == 'ward'
                 and (not province_code or r['province_code'] == province_code)
                 and (not district_code or r['district_code'] == district_code)]
-    return [dict(code=r['code'], name=r['name'], fullName=r['full_name'],
-                 districtCode=r.get('district_code'), provinceCode=r['province_code'],
-                 lat=None, lon=None, dataset=dataset) for r in rows]
+    return [{'code':r['code'], 'name':r['name'], 'fullName':r['full_name'],
+                 'districtCode':r.get('district_code'), 'provinceCode':r['province_code'],
+                 'lat':None, 'lon':None, 'dataset':dataset} for r in rows]
 
 
 @get_public_map_stations_router.get("/api/public/search-administrative-units")

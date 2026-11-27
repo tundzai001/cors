@@ -412,16 +412,16 @@ def _ubx_navigation_quality(payload):
     if len(payload) != 92 or payload[20] > 5:
         raise ValueError("Invalid NAV-PVT payload")
     valid = bool(payload[21] & 1) and payload[20] in (2, 3, 4, 5) and not (payload[78] & 1)
-    return dict(source='ubx_nav_pvt', fix_valid=valid, fix_type=payload[20],
-                satellites=payload[23], pdop=struct.unpack_from('<H', payload, 76)[0] * 0.01,
-                hacc_m=struct.unpack_from('<I', payload, 40)[0] * 0.001 if valid else None)
+    return {'source':'ubx_nav_pvt', 'fix_valid':valid, 'fix_type':payload[20],
+                'satellites':payload[23], 'pdop':struct.unpack_from('<H', payload, 76)[0] * 0.01,
+                'hacc_m':struct.unpack_from('<I', payload, 40)[0] * 0.001 if valid else None}
 
 
 def _ubx_dop(payload):
     if len(payload) != 18:
         raise ValueError('Invalid NAV-DOP payload')
-    return dict(source='ubx_nav_dop', pdop=struct.unpack_from('<H', payload, 6)[0] * 0.01,
-                hdop=struct.unpack_from('<H', payload, 12)[0] * 0.01)
+    return {'source':'ubx_nav_dop', 'pdop':struct.unpack_from('<H', payload, 6)[0] * 0.01,
+                'hdop':struct.unpack_from('<H', payload, 12)[0] * 0.01}
 
 
 def _ubx_satellite_payload(payload):
@@ -431,7 +431,7 @@ def _ubx_satellite_payload(payload):
     known = [key for key in keys if key != (6, 255)]  # GLONASS may report an unassigned slot.
     if any(gnss > 7 or sv == 0 for gnss, sv in keys) or len(set(known)) != len(known):
         raise ValueError('Invalid NAV-SAT satellite identifiers')
-    return dict(source='ubx_nav_sat', payload_b64=base64.b64encode(payload).decode('ascii'))
+    return {'source':'ubx_nav_sat', 'payload_b64':base64.b64encode(payload).decode('ascii')}
 
 
 def _ubx_rf_payload(payload, message_id):
@@ -445,8 +445,8 @@ def _ubx_rf_payload(payload, message_id):
             span, resolution, center = struct.unpack_from('<III', payload, offset + 256)
             if not span or not resolution or not center:
                 raise ValueError('Invalid MON-SPAN frequencies')
-    return dict(source='ubx_mon_rf' if message_id == 0x38 else 'ubx_mon_span',
-                payload_b64=base64.b64encode(payload).decode('ascii'))
+    return {'source':'ubx_mon_rf' if message_id == 0x38 else 'ubx_mon_span',
+                'payload_b64':base64.b64encode(payload).decode('ascii')}
 
 
 def _ubx_security_payload(payload, message_id):
@@ -464,15 +464,15 @@ def _ubx_security_payload(payload, message_id):
             khz = value & 0xffffff
             if not khz or any(row['khz'] == khz for row in frequencies):
                 raise ValueError('Invalid SEC-SIG frequency')
-            frequencies.append(dict(khz=khz, jammed=bool(value & (1 << 24))))
-        result = dict(source='ubx_sec_sig', jam_enabled=bool(flags & 1), jam_state=jam,
-                      spoof_enabled=bool(flags & 8), spoof_state=spoof, frequencies=frequencies)
+            frequencies.append({'khz':khz, 'jammed':bool(value & (1 << 24))})
+        result = {'source':'ubx_sec_sig', 'jam_enabled':bool(flags & 1), 'jam_state':jam,
+                      'spoof_enabled':bool(flags & 8), 'spoof_state':spoof, 'frequencies':frequencies}
     elif message_id == 0x10:
         if len(payload) < 8 or payload[0] != 1 or payload[1] > 16 or len(payload) != 8 + payload[1] * 8:
             raise ValueError('Invalid SEC-SIGLOG payload')
-        result = dict(source='ubx_sec_siglog', events=[dict(
-            elapsed_seconds=int.from_bytes(payload[o:o+4], 'little'), detection=payload[o+4], event=payload[o+5])
-            for o in range(8, len(payload), 8)])
+        result = {'source':'ubx_sec_siglog', 'events':[{
+            'elapsed_seconds':int.from_bytes(payload[o:o+4], 'little'), 'detection':payload[o+4], 'event':payload[o+5]}
+            for o in range(8, len(payload), 8)]}
     else:
         raise ValueError('Unsupported security message')
     return dict(result, payload_b64=base64.b64encode(payload).decode('ascii'))
@@ -488,13 +488,13 @@ def _ubx_version_payload(payload):
     firmware = next((item[6:] for item in extensions if item.startswith('FWVER=')), None)
     protocol = next((item[8:] for item in extensions if item.startswith('PROTVER=')), None)
     model = next((item[4:] for item in extensions if item.startswith('MOD=')), None)
-    return dict(source='ubx_mon_ver', payload_b64=base64.b64encode(payload).decode('ascii'),
-                firmware=firmware, protocol=protocol, model=model,
-                itfm_supported=False if firmware in ('HPG 1.50', 'HPG 1.51') else None)
+    return {'source':'ubx_mon_ver', 'payload_b64':base64.b64encode(payload).decode('ascii'),
+                'firmware':firmware, 'protocol':protocol, 'model':model,
+                'itfm_supported':False if firmware in ('HPG 1.50', 'HPG 1.51') else None}
 
 
 async def _refresh_ubx_receiver_info(reader):
-    info = dict(source='ubx_mon_ver', itfm_enabled=None)
+    info = {'source':'ubx_mon_ver', 'itfm_enabled':None}
     try:
         packet = await reader.query_base(_ubx_packet(0x0a, 4), (0x0a, 4))
         info.update(_ubx_version_payload(_base_ubx_payload(packet, (0x0a, 4))))
@@ -551,13 +551,13 @@ def _unicore_rf_log(packet):
     if message == UNICORE_AGCA_MESSAGE:
         if any(not -1 <= value <= 255 for value in values):
             raise ValueError('Invalid Unicore AGC')
-        return dict(source='unicore_agca', values=values)
+        return {'source':'unicore_agca', 'values':values}
     pairs = 3 if message == '#FREQJAMSTATUSA' else 1
     ratios, flags = values[:pairs*2:2], values[1:pairs*2:2]
     if any(not 0 <= value <= 255 for value in values) or any(value not in (0, 1, 2) for value in flags):
         raise ValueError('Invalid Unicore CW indication')
-    return dict(source='unicore_freqjamstatusa' if pairs == 3 else 'unicore_jamstatusa',
-                ratios=ratios, flags=flags)
+    return {'source':'unicore_freqjamstatusa' if pairs == 3 else 'unicore_jamstatusa',
+                'ratios':ratios, 'flags':flags}
 
 
 def _rf_monitor_age(snapshot):
@@ -743,8 +743,8 @@ class GnssRfMonitor:
 
 def receiver_quality_status(now):
     # Explicit null clears stale data; legacy hacc is always millimetres.
-    status = dict(hacc=None, gnss_quality=None, gnss_dop=None, gnss_satellites=None, gnss_rf=None, gnss_spectrum=None, gnss_receiver=None,
-                  gnss_security=None, gnss_security_log=None)
+    status = {'hacc':None, 'gnss_quality':None, 'gnss_dop':None, 'gnss_satellites':None, 'gnss_rf':None, 'gnss_spectrum':None, 'gnss_receiver':None,
+                  'gnss_security':None, 'gnss_security_log':None}
     report = globals().get('AUTOMATIC_RF_REPORT')
     status['gnss_rf_monitor'] = dict(report, age_seconds=max(0, round(now - report['last_sample_at'], 1))) if report else None
     for field, key in [('gnss_receiver', 'LAST_UBX_RECEIVER_INFO'), ('gnss_rf', 'LAST_UBX_RF'), ('gnss_spectrum', 'LAST_UBX_SPECTRUM'),
@@ -760,7 +760,7 @@ def receiver_quality_status(now):
             status['gnss_rf']['last_error'] = dict(rf_error, age_seconds=round(error_age, 1))
         else:
             status['gnss_rf'] = dict(rf_error, source='ubx_mon_rf', state='read_error', age_seconds=round(error_age, 1))
-    unicore = dict(source='unicore_rf', agc=None, jamming=None)
+    unicore = {'source':'unicore_rf', 'agc':None, 'jamming':None}
     for field, key in [('agc', 'LAST_UNICORE_AGC'), ('jamming', 'LAST_UNICORE_JAM')]:
         reading = globals().get(key)
         age = now - float(globals().get(key + '_TS') or 0)
@@ -789,7 +789,7 @@ def receiver_quality_status(now):
     age = now - float(globals().get('LAST_GST_TS') or 0)
     if gst is not None and math.isfinite(gst) and gst > 0 and 0 <= age <= 15:
         status['hacc'] = round(gst * 1000)
-        status['gnss_quality'] = dict(hacc_m=float(gst), source='nmea_gst', age_seconds=round(age, 1))
+        status['gnss_quality'] = {'hacc_m':float(gst), 'source':'nmea_gst', 'age_seconds':round(age, 1)}
     return status
 
 
@@ -852,7 +852,7 @@ async def refresh_receiver_quality(agent, reader):
                 globals()['LAST_UBX_RF_ERROR'] = None
         except Exception as error:
             if message_id == 0x38:
-                failure = dict(error=(str(error) or type(error).__name__)[:160], error_kind='timeout' if isinstance(error, TimeoutError) else 'invalid_response' if isinstance(error, ValueError) else 'query_failed')
+                failure = {'error':(str(error) or type(error).__name__)[:160], 'error_kind':'timeout' if isinstance(error, TimeoutError) else 'invalid_response' if isinstance(error, ValueError) else 'query_failed'}
                 if packet:
                     failure['frame_b64'] = base64.b64encode(packet[:128]).decode('ascii')
                 globals()['LAST_UBX_RF_ERROR'] = failure
@@ -866,8 +866,8 @@ async def refresh_receiver_quality(agent, reader):
                 globals()[key] = _ubx_security_payload(_base_ubx_payload(packet, (0x27, message_id)), message_id)
                 globals()[key + '_TS'] = time.time()
             except Exception as error:
-                globals()[key] = dict(source='ubx_sec_sig' if message_id == 9 else 'ubx_sec_siglog',
-                                      error=(str(error) or type(error).__name__)[:160])
+                globals()[key] = {'source':'ubx_sec_sig' if message_id == 9 else 'ubx_sec_siglog',
+                                      'error':(str(error) or type(error).__name__)[:160]}
                 globals()[key + '_TS'] = time.time()
                 logging.warning('[GNSS][SEC %02X] %s', message_id, error)
     _update_automatic_rf_monitor()
@@ -2313,7 +2313,7 @@ def _resolve_auto_base_location(lat, lon, alt):
     # Province boundaries and projection regions belong to the server catalog.
     scheme = 'https' if BACKEND_WS_SCHEME == 'wss' else 'http'
     url = f'{scheme}://{BACKEND_WS_HOST}:{BACKEND_WS_PORT}/api/coordinates/auto-base-location'
-    coord = dict(lat=lat, lon=lon, alt=alt)
+    coord = {'lat':lat, 'lon':lon, 'alt':alt}
     request = urllib.request.Request(url, data=json.dumps(coord).encode('utf-8'),
                                     headers={'Content-Type': 'application/json'}, method='POST')
     with urllib.request.urlopen(request, timeout=15) as response:
@@ -3985,8 +3985,8 @@ class GNSSReader(threading.Thread):
         """Ask the owning UART thread; never open a second serial reader."""
         if not self.is_alive() or self._pause_event.is_set():
             raise RuntimeError("GNSS reader is not available")
-        request = dict(wire=wire, key=key, deadline=time.monotonic() + 4.0,
-                       reply=None, cancelled=False)
+        request = {'wire':wire, 'key':key, 'deadline':time.monotonic() + 4.0,
+                       'reply':None, 'cancelled':False}
         try:
             self._base_queries.put_nowait(request)
         except Full:
@@ -4729,9 +4729,9 @@ def _base_ubx_position(payload, *, survey=False, ready=False):
         lat, lon, height = _base_ecef_position(*(a * 0.01 + b * 0.0001 for a, b in zip(whole, hp)))
     if not all(math.isfinite(value) for value in (lat, lon, height)) or abs(lat) > 90 or abs(lon) > 180:
         raise ValueError("Invalid UBX base coordinates")
-    return dict(state='ok', message='UBX', position_type='FIXEDPOS' if ready else 'SURVEY-IN-ESTIMATE',
-                datum='WGS84', altitude_reference='ELLIPSOID',
-                lat=repr(lat), lon=repr(lon), alt=repr(height))
+    return {'state':'ok', 'message':'UBX', 'position_type':'FIXEDPOS' if ready else 'SURVEY-IN-ESTIMATE',
+                'datum':'WGS84', 'altitude_reference':'ELLIPSOID',
+                'lat':repr(lat), 'lon':repr(lon), 'alt':repr(height)}
 
 
 def _base_unicore_fields(packet):
@@ -4754,8 +4754,8 @@ async def refresh_receiver_base_status(agent, reader):
     """Read configuration and position without changing mode or enabling NMEA."""
     previous = getattr(agent, 'receiver_base_readback', {})
     chip = agent.detected_chip.get('type')
-    result = dict(chip=chip, revision=int(previous.get('revision', 0)) + 1, state='error',
-                  mode_kind='unknown')
+    result = {'chip':chip, 'revision':int(previous.get('revision', 0)) + 1, 'state':'error',
+                  'mode_kind':'unknown'}
     try:
         if chip not in ('Ublox', 'Unicorecomm') or reader is None:
             raise RuntimeError("Base readback requires a supported GNSS reader")
@@ -4812,16 +4812,16 @@ async def refresh_receiver_base_status(agent, reader):
                         lat_sigma, lon_sigma = map(float, fields[7:9])
                         if not all(math.isfinite(v) and 0 <= v <= 10000000 for v in (lat_sigma, lon_sigma)):
                             raise ValueError('Invalid BESTNAV standard deviations')
-                        globals()['LAST_RECEIVER_QUALITY'] = dict(
-                            source='unicore_bestnav_sigma', hacc_m=math.hypot(lat_sigma, lon_sigma))
+                        globals()['LAST_RECEIVER_QUALITY'] = {
+                            'source':'unicore_bestnav_sigma', 'hacc_m':math.hypot(lat_sigma, lon_sigma)}
                         globals()['LAST_RECEIVER_QUALITY_TS'] = time.time()
                     except ValueError:
                         pass  # Position remains useful when optional statistics are unavailable.
-                result['bestpos'] = dict(state='ok', message='BESTNAV', raw=raw,
-                                         solution_status=fields[0], position_type=fields[1],
-                                         latitude=lat, longitude=lon, height_msl=height)
+                result['bestpos'] = {'state':'ok', 'message':'BESTNAV', 'raw':raw,
+                                         'solution_status':fields[0], 'position_type':fields[1],
+                                         'latitude':lat, 'longitude':lon, 'height_msl':height}
             except Exception as error:
-                result['bestpos'] = dict(state='unavailable', error=str(error))
+                result['bestpos'] = {'state':'unavailable', 'error':str(error)}
                 raise
     except Exception as error:
         result['error'] = str(error)
@@ -4835,7 +4835,7 @@ async def refresh_receiver_base_status(agent, reader):
                  result.get('mode_raw'), position.get('position_type', 'unavailable'), result['revision'])
     if (result.get('mode_kind') == 'survey_in' and position.get('position_type') == 'FIXEDPOS'
             and position.get('state') == 'ok'):
-        saved = dict(chip=chip, bestpos=position, mode_raw=result['mode_raw'], recorded_at=int(time.time()))
+        saved = {'chip':chip, 'bestpos':position, 'mode_raw':result['mode_raw'], 'recorded_at':int(time.time())}
         previous_saved = agent.config.get('survey_in_result') or {}
         previous_position = previous_saved.get('bestpos') or {}
         if ({k: v for k, v in previous_position.items() if k != 'raw'}
@@ -4923,10 +4923,10 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
             or not 1 <= len(expected_logs) <= 64
             or any(not isinstance(name, str) or not re.fullmatch(r'[A-Z][A-Z0-9]{1,23}', name) for name in expected_logs)):
         raise ValueError('Invalid Unicore verification expectation')
-    groups = {name: dict(checked=0, mismatched=0, unread=0) for name in ('fixed', 'diagnostics', 'rtcm')}
-    details = dict(kind='Unicorecomm', fixed={'expected': {'mode': 'Fixed', 'self_position': dict(zip(('lat', 'lon', 'alt'), wanted_position))}},
-                   logs=[], expected_logs=expected_logs, compare_ports=[payload.get('port')])
-    result = dict(command_id=command_id, groups=groups, details=details)
+    groups = {name: {'checked':0, 'mismatched':0, 'unread':0} for name in ('fixed', 'diagnostics', 'rtcm')}
+    details = {'kind':'Unicorecomm', 'fixed':{'expected': {'mode': 'Fixed', 'self_position': dict(zip(('lat', 'lon', 'alt'), wanted_position))}},
+                   'logs':[], 'expected_logs':expected_logs, 'compare_ports':[payload.get('port')]}
+    result = {'command_id':command_id, 'groups':groups, 'details':details}
     try:
         _, mode = _base_unicore_fields(await reader.query_base(b'\r\nMODE\r\n', b'#MODE'))
         mode = mode.upper()
@@ -4957,7 +4957,7 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
     try:
         log_packet = await reader.query_base(b'\r\nUNILOGLIST\r\n', UNICORE_LOG_LIST_KEY)
         logs = _parse_unicore_loglist(log_packet)
-        details['logs'] = [dict(port=port, name=name, period=period) for (port, name), period in logs.items()]
+        details['logs'] = [{'port':port, 'name':name, 'period':period} for (port, name), period in logs.items()]
         details['logs_state'] = 'ok'
         port = payload.get('port')
         if port not in ('COM1', 'COM2', 'COM3'):
@@ -4994,9 +4994,9 @@ async def verify_receiver_configuration(agent, reader, payload, command_id):
     if agent.detected_chip['type'] == 'Unicorecomm':
         return await _verify_unicore_configuration(agent, reader, payload, command_id)
     expected, records = _gnss_verification_expected(payload)
-    groups = {name: dict(checked=0, mismatched=0, unread=0)
+    groups = {name: {'checked':0, 'mismatched':0, 'unread':0}
               for name in ('fixed', 'protocols', 'diagnostics', 'rtcm')}
-    result = dict(command_id=command_id, groups=groups)
+    result = {'command_id':command_id, 'groups':groups}
     inspection = payload.get('readback')
     details = None
     if inspection:
@@ -5013,8 +5013,8 @@ async def verify_receiver_configuration(agent, reader, payload, command_id):
             if len(port_records) != len(fields):
                 raise ValueError('Readback field/key count mismatch')
             jobs.append((port['name'], port_records))
-        details = dict(kind='Ublox', fields=fields, expected=inspection.get('expected', []),
-                       compare_ports=inspection.get('compare_ports', []), ports=[], fixed={})
+        details = {'kind':'Ublox', 'fields':fields, 'expected':inspection.get('expected', []),
+                       'compare_ports':inspection.get('compare_ports', []), 'ports':[], 'fixed':{}}
         result['details'] = details
     else:
         jobs = [(None, records[i:i + 40]) for i in range(0, len(records), 40)]
@@ -5038,9 +5038,9 @@ async def verify_receiver_configuration(agent, reader, payload, command_id):
         groups['fixed'].update(checked=1, mismatched=int(not matches))
         if details is not None:
             def describe(mode):
-                state = dict(mode={0: 'Rover', 1: 'Survey-In', 2: 'Fixed'}.get(mode[2], 'Unknown'),
-                             coordinate_type='LLA' if mode[3] & 1 else 'ECEF',
-                             accuracy_m=struct.unpack_from('<I', mode, 20)[0] * 0.0001)
+                state = {'mode':{0: 'Rover', 1: 'Survey-In', 2: 'Fixed'}.get(mode[2], 'Unknown'),
+                             'coordinate_type':'LLA' if mode[3] & 1 else 'ECEF',
+                             'accuracy_m':struct.unpack_from('<I', mode, 20)[0] * 0.0001}
                 if mode[2] == 2:
                     position = _base_ubx_position(mode, ready=True)
                     if mode[3] & 1:
@@ -5049,7 +5049,7 @@ async def verify_receiver_configuration(agent, reader, payload, command_id):
                         position.update(lat=f'{units[0] / 1e9:.9f}', lon=f'{units[1] / 1e9:.9f}', alt=f'{units[2] / 1e4:.4f}')
                     state.update(self_position=position)
                 return state
-            details['fixed'] = dict(actual=describe(actual), expected=describe(expected))
+            details['fixed'] = {'actual':describe(actual), 'expected':describe(expected)}
     except Exception as error:
         groups['fixed']['unread'] = 1
         result['mode_error'] = str(error)[:200]
@@ -5071,8 +5071,8 @@ async def verify_receiver_configuration(agent, reader, payload, command_id):
             values = None
             result['output_error'] = str(error)[:200]
         if details is not None:
-            port = dict(name=port_name, state='ok' if values is not None else 'unread',
-                        values=[values[key] for key, _ in chunk] if values is not None else None)
+            port = {'name':port_name, 'state':'ok' if values is not None else 'unread',
+                        'values':[values[key] for key, _ in chunk] if values is not None else None}
             if values is not None and 'PORT_ENABLED' in details['fields']:
                 port['enabled'] = port['values'][details['fields'].index('PORT_ENABLED')]
             if values is None:
@@ -5118,8 +5118,8 @@ def receiver_base_system_info(agent):
     result = copy.deepcopy(getattr(agent, 'receiver_base_readback', {}))
     checked_at = getattr(agent, 'receiver_base_readback_at', None)
     age = max(0, time.monotonic() - checked_at) if checked_at is not None else None
-    system = dict(gnss_valset_supported=True, gnss_verification_supported=True, gnss_verification_details_supported=True, gnss_verification_uart1=False,
-                  gnss_verification=None)
+    system = {'gnss_valset_supported':True, 'gnss_verification_supported':True, 'gnss_verification_details_supported':True, 'gnss_verification_uart1':False,
+                  'gnss_verification':None}
     verification = getattr(agent, 'gnss_verification', None)
     verified_at = getattr(agent, 'gnss_verification_at', None)
     if verification and verified_at is not None:
@@ -5137,7 +5137,7 @@ def receiver_base_system_info(agent):
     position = result.get('bestpos', {})
     ready = position.get('state') == 'ok' and position.get('position_type') == 'FIXEDPOS'
     fresh = age is not None and age <= 45 and result.get('state') == 'ok'
-    survey = dict(state='not_monitoring')
+    survey = {'state':'not_monitoring'}
     if monitoring:
         survey.update(state=('base_ready' if ready else 'waiting_base')
                       if fresh and position.get('state') == 'ok' else 'awaiting_readback',

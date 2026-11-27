@@ -10,6 +10,7 @@ from ..websocket import manager as ui_manager
 import logging
 
 logger = logging.getLogger(__name__)
+USER_NOT_FOUND = "User not found"
 
 # === HELPER: Coordinator-created viewer ownership ===
 async def _get_ownership_info(db: AsyncSession, creator_id: int) -> tuple[set[int], set[int]]:
@@ -80,7 +81,7 @@ async def get_user_details(user_id: int, db: AsyncSession = Depends(get_auth_db)
                            current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
     user = await crud.get_user_by_id(db, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
     if current_user.role != 'admin':
         if user.id != current_user.id:
             # Chỉ cho xem viewer do mình tạo
@@ -272,7 +273,7 @@ async def update_user(
     
     user_to_update = await crud.get_user_by_id(auth_db, user_id)
     if not user_to_update:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
 
     if current_user.role != 'admin':
         if user_to_update.id != current_user.id:
@@ -385,7 +386,7 @@ async def delete_user(
     # 1. Kiểm tra user tồn tại
     user = await crud.get_user_by_id(auth_db, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
     
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")

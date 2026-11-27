@@ -36,22 +36,22 @@ def catalog():
     for identifier in [*(f"EPSG:{code}" for code in EPSGS), "VN2000:ECEF"]:
         crs = get_crs(identifier)
         code = int(identifier.split(":")[1]) if identifier.startswith("EPSG:") else None
-        item = dict(id=identifier, name=crs.name, geographic=crs.is_geographic,
-                    geocentric=crs.is_geocentric,
-                    projection=None)
+        item = {'id':identifier, 'name':crs.name, 'geographic':crs.is_geographic,
+                    'geocentric':crs.is_geocentric,
+                    'projection':None}
         if code in TM3.values() or code in (32648, 32649, 3405, 3406):
             params = {p.name: p.value for p in crs.coordinate_operation.params}
-            item["projection"] = dict(
-                central_meridian=params["Longitude of natural origin"],
-                zone_width=3 if code in TM3.values() else 6,
-                scale_factor=params["Scale factor at natural origin"],
-            )
+            item["projection"] = {
+                'central_meridian':params["Longitude of natural origin"],
+                'zone_width':3 if code in TM3.values() else 6,
+                'scale_factor':params["Scale factor at natural origin"],
+            }
         if code in TM3.values():
             item["name"] = f"VN-2000 / TM-3 · kinh tuyến {item['projection']['central_meridian']:g}°"
         systems.append(item)
     return {
         "systems": systems,
-        "provinces34": [dict(code=p["Code"], name=p["Name"]) for p in provinces],
+        "provinces34": [{'code':p["Code"], 'name':p["Name"]} for p in provinces],
         "provinces63": [dict(**p, crs=f"EPSG:{TM3[p['central_meridian']]}") for p in legacy],
     }
 
@@ -158,9 +158,9 @@ class DisplayProjection(BaseModel):
     false_northing: FiniteFloat = Field(default=0, ge=-1e8, le=1e8)
 
     def crs(self):
-        return CRS.from_dict(dict(proj='tmerc', lat_0=0, lon_0=self.l0_deg, k_0=self.k0,
-                                  x_0=self.false_easting, y_0=self.false_northing,
-                                  ellps='WGS84', units='m'))
+        return CRS.from_dict({'proj':'tmerc', 'lat_0':0, 'lon_0':self.l0_deg, 'k_0':self.k0,
+                                  'x_0':self.false_easting, 'y_0':self.false_northing,
+                                  'ellps':'WGS84', 'units':'m'})
 
 
 class ReprojectionRequest(BaseModel):
@@ -231,15 +231,15 @@ def recalculate_auto_base(request: AutoBaseRecalculation):
             raise ValueError('Invalid Auto Base coordinates')
     except (ProjError, ValueError) as exc:
         raise HTTPException(422, 'Không tính được NEh và LLH từ dữ liệu phiên Auto Base.') from exc
-    return dict(projected_coord=dict(north=north, east=east, h=h),
-                calculated_coord=dict(lat=lat, lon=lon, alt=alt),
-                central_meridian_deg=projection.l0_deg, k0=projection.k0)
+    return {'projected_coord':{'north':north, 'east':east, 'h':h},
+                'calculated_coord':{'lat':lat, 'lon':lon, 'alt':alt},
+                'central_meridian_deg':projection.l0_deg, 'k0':projection.k0}
 
 
 @router.post('/reproject-display')
 def reproject_display(request: ReprojectionRequest):
     """Change only the map projection of an existing VN-2000 result; no datum or receiver writes."""
-    target = request.source.model_copy(update=dict(l0_deg=request.target_l0_deg, k0=request.target_k0))
+    target = request.source.model_copy(update={'l0_deg':request.target_l0_deg, 'k0':request.target_k0})
     try:
         operation = Transformer.from_crs(request.source.crs(), target.crs(), always_xy=True)
         east, north = operation.transform(request.east, request.north, errcheck=True)
@@ -247,5 +247,5 @@ def reproject_display(request: ReprojectionRequest):
             raise ValueError('Non-finite projected coordinates')
     except (ProjError, ValueError) as exc:
         raise HTTPException(422, 'Không tính được múi hiển thị. Kiểm tra tọa độ gốc và L₀/k₀.') from exc
-    return dict(projected_coord=dict(north=north, east=east, h=request.h),
-                central_meridian_deg=target.l0_deg, k0=target.k0)
+    return {'projected_coord':{'north':north, 'east':east, 'h':request.h},
+                'central_meridian_deg':target.l0_deg, 'k0':target.k0}

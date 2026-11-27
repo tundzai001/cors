@@ -57,19 +57,19 @@ def catalog(dataset):
 
     def add(unit, kind, province=None, district=None):
         parents = [parent.get('FullName') or parent['Name'] for parent in (district, province) if parent]
-        rows.append(dict(
-            type=kind, code=unit['Code'], name=unit['Name'],
-            full_name=unit.get('FullName') or unit['Name'],
-            province_code=province['Code'] if province else unit['Code'],
-            province_name=(province or unit).get('FullName'),
-            district_code=district['Code'] if district else None,
-            district_name=district.get('FullName') if district else None,
-            display_name=', '.join([unit.get('FullName') or unit['Name'], *parents]),
-            dataset=dataset, dataset_version=VERSIONS[dataset],
-            lat=None, lon=None, coordinate_source=None,
-            source='Cơ sở dữ liệu hành chính Việt Nam',
-            storage='bundled_catalogue',
-        ))
+        rows.append({
+            'type':kind, 'code':unit['Code'], 'name':unit['Name'],
+            'full_name':unit.get('FullName') or unit['Name'],
+            'province_code':province['Code'] if province else unit['Code'],
+            'province_name':(province or unit).get('FullName'),
+            'district_code':district['Code'] if district else None,
+            'district_name':district.get('FullName') if district else None,
+            'display_name':', '.join([unit.get('FullName') or unit['Name'], *parents]),
+            'dataset':dataset, 'dataset_version':VERSIONS[dataset],
+            'lat':None, 'lon':None, 'coordinate_source':None,
+            'source':'Cơ sở dữ liệu hành chính Việt Nam',
+            'storage':'bundled_catalogue',
+        })
 
     for province in provinces:
         add(province, 'province')

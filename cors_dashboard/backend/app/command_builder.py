@@ -119,7 +119,7 @@ def select_ublox_profile(telemetry: dict, capabilities: dict) -> dict:
     itfm = versions[0] not in ('1.50','1.51')
     if not modern and not itfm:
         raise ValueError('Cập nhật agent để áp dụng cấu hình cho HPG 1.50/1.51 bằng VALSET/VALGET.')
-    return dict(firmware='HPG '+versions[0], modern=modern, itfm=itfm)
+    return {'firmware':'HPG '+versions[0], 'modern':modern, 'itfm':itfm}
 
 
 async def wait_for_ublox_profile(cache: dict, serial: str, capabilities: dict, timeout: float = 25) -> dict:

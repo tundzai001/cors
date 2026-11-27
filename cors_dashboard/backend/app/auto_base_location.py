@@ -39,14 +39,14 @@ def resolve_location(lat, lon, alt):
         polygons = geometry['coordinates'] if geometry['type'] == 'MultiPolygon' else [geometry['coordinates']]
         if any(_in_ring(lon, lat, polygon[0]) and not any(_in_ring(lon, lat, hole) for hole in polygon[1:]) for polygon in polygons):
             matches.append(feature['properties'])
-    result = dict(input_coord=dict(lat=lat, lon=lon, alt=alt), source='administrative_boundaries_34',
-                  province_code=None, province_name=None, projection_options=[], l0_deg=None, k0=None)
+    result = {'input_coord':{'lat':lat, 'lon':lon, 'alt':alt}, 'source':'administrative_boundaries_34',
+                  'province_code':None, 'province_name':None, 'projection_options':[], 'l0_deg':None, 'k0':None}
     if len(matches) != 1:
         result['state'] = 'boundary_ambiguous' if matches else 'outside_boundaries'
         return result
     province = matches[0]
     # The reference allows local provincial L0/k0 or RTCM 1025, not an inferred UTM zone.
-    options = [dict(region=p['name'], l0_deg=p['central_meridian'], k0=0.9999, zone_width_deg=3)
+    options = [{'region':p['name'], 'l0_deg':p['central_meridian'], 'k0':0.9999, 'zone_width_deg':3}
                for p in _projections() if p['current_code'] == province['code']]
     result.update(province_code=province['code'], province_name=province['fullName'], projection_options=options,
                   state='projection_ambiguous')

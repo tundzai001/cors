@@ -42,9 +42,9 @@ def source_values(host: str, port: int, source: dict, observed_at: int) -> dict:
             data[key] = value if math.isfinite(value) else None
         except (TypeError, ValueError, OverflowError):
             data[key] = None
-    return dict(host=host.strip().lower(), port=int(port), mountpoint=mountpoint,
-                password=source.get('password') or None, source_data=data,
-                created_at=observed_at, last_seen_at=observed_at)
+    return {'host':host.strip().lower(), 'port':int(port), 'mountpoint':mountpoint,
+                'password':source.get('password') or None, 'source_data':data,
+                'created_at':observed_at, 'last_seen_at':observed_at}
 
 
 async def save_sources(db, host: str, port: int, sources: list[dict], observed_at: int):
