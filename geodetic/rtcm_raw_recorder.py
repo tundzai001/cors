@@ -139,12 +139,16 @@ class RecorderStats:
 
 class StationRawWriter:
     def __init__(self, base_dir: Path, mountpoint: str):
-        self.base_dir = base_dir
+        self.base_dir = base_dir.resolve()
         self.mountpoint = mountpoint
-        self.stream_dir = base_dir / safe_name(mountpoint)
+        self.stream_dir = (self.base_dir / safe_name(mountpoint)).resolve()
+        if not self.stream_dir.is_relative_to(self.base_dir):
+            raise ValueError("Mountpoint path escapes output directory")
         self.stream_dir.mkdir(parents=True, exist_ok=True)
-        self.path = self.stream_dir / f"{safe_name(self.mountpoint)}.txt"
-        self.event_path = self.stream_dir / f"{safe_name(self.mountpoint)}.events.jsonl"
+        self.path = (self.stream_dir / f"{safe_name(self.mountpoint)}.txt").resolve()
+        self.event_path = (self.stream_dir / f"{safe_name(self.mountpoint)}.events.jsonl").resolve()
+        if not self.path.is_relative_to(self.stream_dir) or not self.event_path.is_relative_to(self.stream_dir):
+            raise ValueError("Mountpoint file path escapes output directory")
         self.file = self.path.open("ab", buffering=1024 * 1024)
         self.event("file_open", file=self.path.name)
 

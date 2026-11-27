@@ -138,8 +138,8 @@ async def _notify_casters_on_status_change(serial: str, device: models.Device, s
 
 async def _send_status_to_caster(caster_host: str, status_payload: dict, server_label: str, serial: str) -> None:
     """
-    Gửi HTTP POST status to Caster.
-    endpoint: POST http://caster_host/api/station-status
+    Gửi HTTPS POST status to Caster.
+    endpoint: POST https://caster_host/api/station-status
     
     Payload: {
         "mountpoint": "HN01",
@@ -152,18 +152,21 @@ async def _send_status_to_caster(caster_host: str, status_payload: dict, server_
         import json as json_lib
 
         # 🔥 FILTER: Chỉ gửi sync status tới aitogy.com.vn hoặc aitogy.click
-        target_host_lower = str(caster_host or "").lower()
-        is_allowed_domain = "aitogy.com.vn" in target_host_lower or "aitogy.click" in target_host_lower
+        from urllib.parse import urlsplit
+
+        configured_url = str(caster_host or "").strip()
+        parsed = urlsplit(configured_url if "://" in configured_url else f"https://{configured_url}")
+        hostname = (parsed.hostname or "").lower()
+        is_allowed_domain = hostname == "aitogy.com.vn" or hostname.endswith(".aitogy.com.vn") or hostname == "aitogy.click" or hostname.endswith(".aitogy.click")
 
         if not is_allowed_domain:
             # logger.debug(f"[CASTER SYNC] Skipping unauthorized domain: {caster_host}")
             return
 
-        # Build URL (caster_host có thể là "aitogy.com.vn" hoặc "aitogy.com.vn:2101")
-        if "://" not in caster_host:
-            url = f"http://{caster_host}/api/station-status"
-        else:
-            url = f"{caster_host}/api/station-status"
+        if parsed.scheme != "https":
+            logger.warning("Skipping caster status sync because HTTPS is required")
+            return
+        url = parsed._replace(path="/api/station-status", query="", fragment="").geturl()
 
         payload_json = json_lib.dumps(status_payload).encode('utf-8')
         request = urllib.request.Request(
