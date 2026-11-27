@@ -183,9 +183,9 @@ def _resolve_requested_mountpoint(available: List[str], requested: Optional[str]
     if requested_norm is None:
         return available[0]
 
-    for mp in available:
-        if _normalize_mountpoint(mp) == requested_norm:
-            return mp
+    match = next((mp for mp in available if _normalize_mountpoint(mp) == requested_norm), None)
+    if match is not None:
+        return match
 
     raise HTTPException(
         status_code=400,
