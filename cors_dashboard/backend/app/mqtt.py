@@ -747,459 +747,446 @@ async def batch_sync_checker():
 # MAIN MESSAGE HANDLER (ĐàTỐI ƯU HÓA - KHÔNG MỞ DB MỖI MESSAGE)
 # ==============================================================================
 
+async def _handle_raw_data_message(serial, payload):
+    if payload.startswith(b"{"):
+        try:
+            data = json.loads(payload.decode("ascii"))
+            if data.get("type") == "rtcm_skyview_calculated":
+                _cache_rtcm_signal_snapshot(serial, data)
+                if _expects_nmea_skyview(serial):
+                    data = {**data, "satellites": []}
+                await manager.broadcast({"type": "rtcm_signal_update", "serial": serial, "data": data})
+                return
+            if data.get("type") == "rtcm_skyview":
+                decoded = rtcm_signal_decoder.decode_json(serial, data)
+                if decoded:
+                    _cache_rtcm_signal_snapshot(serial, decoded)
+                    await manager.broadcast({"type": "rtcm_signal_update", "serial": serial, "data": decoded})
+                return
+        except Exception:
+            pass
+    if payload.startswith(b"$"):
+        await _handle_raw_nmea(serial, payload)
+        return
+    await _handle_raw_rtcm(serial, payload)
+
+
+async def _handle_raw_nmea(serial, payload):
+    try:
+        line = payload.decode("ascii", errors="ignore")
+        parsed = parse_nmea_sentence(serial, line)
+        if not parsed:
+            return
+        live = device_telemetry_cache.setdefault(serial, {})
+        nmea_live = live.setdefault("nmea_data", {})
+        parsed_type = str(parsed.get("type") or "").upper()
+        nmea_live["last_nmea_ts"] = time.time()
+        if parsed_type == "GGA":
+            nmea_live["gga"] = parsed
+        elif parsed_type == "GSA":
+            nmea_live["gsa"] = parsed
+        elif parsed_type == "GSV":
+            nmea_live["satellites"] = parsed.get("satellites") or []
+            nmea_live["last_gsv_ts"] = nmea_live["last_nmea_ts"]
+        elif parsed_type:
+            nmea_live[parsed_type.lower()] = parsed
+        await manager.broadcast({"type": "nmea_update", "serial": serial, "data": parsed})
+    except Exception as exc:
+        logging.debug("NMEA parse error: %s", exc)
+
+
+async def _handle_raw_rtcm(serial, payload):
+    if not payload or payload[0] != 0xD3:
+        return
+    live = device_telemetry_cache.get(serial, {})
+    nmea_live = live.get("nmea_data", {})
+    last_gsv_ts = nmea_live.get("last_gsv_ts") or 0
+    if time.time() - last_gsv_ts < 60:
+        return
+    decoded = await rtcm_signal_decoder.decode(serial, payload)
+    if decoded:
+        _cache_rtcm_signal_snapshot(serial, decoded)
+        await manager.broadcast({"type": "rtcm_signal_update", "serial": serial, "data": decoded})
+
+
+def _decode_status_payload(topic, serial, payload):
+    try:
+        data = json.loads(payload.decode())
+        if not isinstance(data, dict):
+            logging.warning("⚠️ Received non-dict payload on topic %s: %s", topic, type(data))
+            return None
+        payload_serial = str(data.get("serial") or "").strip()
+        if payload_serial and payload_serial.upper() != serial.upper():
+            logging.warning("Rejected MQTT status serial mismatch: topic=%s payload=%s", serial, payload_serial)
+            return None
+        data["serial"] = serial
+        if isinstance(data.get("service_config"), (dict, list)):
+            data["service_config"] = schemas.strip_status_config_secrets(data["service_config"])
+        if "rtk_fix_status" not in data:
+            if data.get("status") in ["online", "sleep"]:
+                data["rtk_fix_status"] = "DGPS"
+                data["base_mode_active"] = bool(data.get("base_config"))
+            else:
+                data["rtk_fix_status"] = "NO_FIX"
+                data["base_mode_active"] = False
+        return data
+    except json.JSONDecodeError as exc:
+        logging.exception("❌ JSON decode error on topic %s: %s", topic, exc)
+    except UnicodeDecodeError as exc:
+        logging.exception("❌ Unicode decode error on topic %s: %s", topic, exc)
+    return None
+
+
+async def _accept_status_update(serial, data, is_retained):
+    metadata = None
+    if is_retained:
+        try:
+            metadata = await get_device_metadata(serial)
+            if not metadata.get("exists"):
+                logging.info("Ignoring retained ghost status for unknown serial: %s", serial)
+                return None
+        except Exception as exc:
+            logging.warning("Retained ghost-check failed for %s: %s", serial, exc)
+            return None
+    now = time.time()
+    decision = await status_reconciler.accept(
+        data, source="mqtt", retained=is_retained, received_at=now
+    )
+    if not decision.accepted:
+        logging.debug("Ignored MQTT status for %s: %s", serial, decision.reason)
+        return None
+    return decision.payload, metadata, now
+
+
+async def _load_status_metadata(serial, metadata):
+    if metadata is not None:
+        return metadata
+    try:
+        return await get_device_metadata(serial)
+    except Exception as exc:
+        logging.debug("Device metadata lookup failed for %s: %s", serial, exc)
+        return {"exists": False}
+
+
+def _prepare_status_sync(serial, data):
+    ntrip_stats = data.get("ntrip_stats")
+    if ntrip_stats and isinstance(ntrip_stats, dict):
+        data["bps"] = sum(
+            int(value or 0) for key, value in ntrip_stats.items()
+            if key.startswith("server") and key.endswith("_bps")
+        )
+    cache_agent_sync_inputs(serial, data)
+    command_source = data.get("command_source")
+    command_source_changed = False
+    if isinstance(command_source, dict):
+        system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
+        system_info["command_source"] = command_source
+        data["system_info"] = system_info
+        key = f"{serial}_command_source"
+        command_source_changed = device_sync_cache.get(key) != command_source
+        if command_source_changed:
+            device_sync_cache[key] = command_source
+    is_synced = device_sync_cache.get(serial, True)
+    sync_errors = device_sync_cache.get(f"{serial}_errors", [])[:]
+    agent_version = data.get("version")
+    if agent_version and not _version_matches(agent_version):
+        is_synced = False
+        message = f"Agent version {agent_version or '??'} != server {settings.APP_VERSION}"
+        if message not in sync_errors:
+            sync_errors.append(message)
+    return is_synced, sync_errors, command_source_changed
+
+
+def _apply_agent_license_state(serial, data, metadata, agent_token_fp, is_synced, sync_errors):
+    if not (metadata.get("exists") or crud.is_valid_serial(serial)):
+        return is_synced
+    agent_reported_status = str(data.get("status") or "").strip().lower()
+    license_bypass = bool(metadata.get("license_bypass"))
+    configured_token = str(metadata.get("device_token") or "").strip()
+    expected_fp = (
+        _fingerprint_token(configured_token)
+        if license_manager.is_compatible_device_token(configured_token, serial)
+        else None
+    )
+    license_state = evaluate_license_sync(
+        expected_fp, agent_token_fp, license_bypass=license_bypass
+    )
+    token_check_available = license_state.token_check_available
+    token_synced = license_state.token_synced
+    token_deployment_pending = bool(
+        metadata.get("token_deployment_pending")
+        and expected_fp
+        and not (token_check_available and token_synced)
+    )
+    needs_token_deploy = license_state.needs_token_deploy or (
+        token_deployment_pending and not license_bypass
+    )
+    if needs_token_deploy:
+        is_synced = False
+        if expected_fp:
+            sync_errors.append("Agent token is missing or does not match server token")
+        else:
+            sync_errors.append("Server token has not been issued to this agent")
+        data["status"] = "awaiting_license"
+        data["bps"] = 0
+        data["ntrip_connected"] = False
+        data["ntrip_status"] = {}
+        data["ntrip_stats"] = {}
+    system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
+    system_info["auth_status"] = {
+        "server_token_present": bool(expected_fp),
+        "token_required": bool(expected_fp),
+        "token_synced": token_synced if token_check_available else None,
+        "agent_token_present": bool(agent_token_fp) if token_check_available else None,
+        "needs_token_deploy": needs_token_deploy,
+        "license_bypass": license_bypass,
+        "agent_reported_status": agent_reported_status,
+        "token_check_available": token_check_available,
+        "token_deployment_pending": token_deployment_pending,
+    }
+    system_info["auth_license_bypass"] = license_bypass
+    data["system_info"] = system_info
+    if metadata.get("name"):
+        data["name"] = metadata["name"]
+    return is_synced
+
+
+def _set_offline_since(data, metadata, now):
+    status = str(data.get("status") or "").strip().lower()
+    if status == "offline":
+        if str(metadata.get("status") or "").strip().lower() == "offline":
+            data["offline_since"] = metadata.get("offline_since")
+            return
+        try:
+            previous_timestamp = int(metadata.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            previous_timestamp = 0
+        data["offline_since"] = (
+            min(int(now), previous_timestamp + 180)
+            if previous_timestamp > 0 and now - previous_timestamp > 180
+            else int(now)
+        )
+    elif status:
+        data["offline_since"] = None
+
+
+def _update_status_system_info(data):
+    system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
+    savings_stats = data.get("savings_stats")
+    if isinstance(savings_stats, dict) and savings_stats:
+        system_info["savings_stats"] = savings_stats
+    antenna_status = data.get("antenna_status")
+    if isinstance(antenna_status, dict) and antenna_status:
+        system_info["antenna_status"] = antenna_status
+    data["system_info"] = system_info
+
+
+def _enrich_status_from_metadata(serial, data, metadata):
+    data["is_synced"] = data.get("is_synced", True)
+    data["sync_errors"] = data.get("sync_errors", [])
+    cached_name = metadata.get("name") or device_name_cache.get(serial)
+    if cached_name:
+        data["name"] = cached_name
+    if data.get("name") and data.get("status") != "offline":
+        return
+    try:
+        if metadata.get("name"):
+            data["name"] = metadata["name"]
+        if data.get("status") == "offline":
+            for key in ("base_config", "service_config", "detected_chip_type"):
+                if not data.get(key) and metadata.get(key):
+                    data[key] = metadata[key]
+    except Exception:
+        pass
+
+
+def _update_live_status_cache(serial, data):
+    snapshot = dict(device_telemetry_cache.get(serial) or {})
+    if crud.is_mobile_base(serial) or str(serial or "").lower().startswith("esp_"):
+        incoming_rtcm = data.get("rtcm_stats")
+        existing_rtcm = snapshot.get("rtcm_stats")
+        if (not incoming_rtcm or incoming_rtcm.get("decoder") is False) and existing_rtcm and any(
+            key.isdigit() for key in existing_rtcm.keys()
+        ):
+            data["rtcm_stats"] = existing_rtcm
+        existing_nmea = snapshot.get("nmea_data") or {}
+        incoming_nmea = data.get("nmea_data")
+        if (not incoming_nmea or not incoming_nmea.get("satellites")) and existing_nmea.get("satellites"):
+            data.setdefault("nmea_data", {})["satellites"] = existing_nmea["satellites"]
+    snapshot.update(data)
+    device_telemetry_cache[serial] = snapshot
+
+
+async def _broadcast_status_update(serial, data, is_retained):
+    message = {
+        "type": "status_update",
+        "data": data,
+        "_drop_if_device_missing": bool(is_retained),
+    }
+    if status_broadcast_handler:
+        await status_broadcast_handler(message)
+    else:
+        await manager.broadcast(message)
+
+
+def _status_write_flags(serial, data, metadata, now, command_source_changed, is_retained):
+    last_write_time = device_write_cache.get(serial, 0)
+    last_known_status = device_status_cache.get(serial, "unknown")
+    new_status = data.get("status")
+    reported_system_info = data.get("system_info")
+    reported_auth_status = (
+        reported_system_info.get("auth_status")
+        if isinstance(reported_system_info, dict)
+        else None
+    )
+    token_pending_state_changed = bool(metadata.get("token_deployment_pending")) != bool(
+        isinstance(reported_auth_status, dict)
+        and reported_auth_status.get("token_deployment_pending")
+    )
+    reported_device_lock = (data.get("system_info") or {}).get("device_lock")
+    device_lock_changed = reported_device_lock != metadata.get("device_lock")
+    reported_chip = data.get("detected_chip_type")
+    chip_type_changed = (
+        new_status != "offline"
+        and bool(reported_chip)
+        and reported_chip != "UNKNOWN"
+        and reported_chip != metadata.get("detected_chip_type")
+    )
+    base_config = metadata.get("base_config") or {}
+    boot_result_changed = (
+        not is_retained
+        and crud.confirmed_boot_auto_base(data)
+        and (
+            base_config.get("base_setup_method") in ("SURVEY_IN", "AUTO_CORS")
+            or base_config.get("coordinate_source") == "AUTO_CORS"
+        )
+        and base_config.get("auto_base_started_boot_id") != data.get("status_boot_id")
+    )
+    should_write = any((command_source_changed, device_lock_changed, chip_type_changed, boot_result_changed))
+    if not should_write and token_pending_state_changed:
+        should_write = True
+    elif not should_write and new_status and new_status != last_known_status:
+        should_write = True
+        if last_known_status == "online" and new_status == "offline":
+            logging.warning("⚠️ DEVICE OFFLINE: %s", serial)
+        elif last_known_status == "offline" and new_status == "online":
+            logging.info("✓ Device back online: %s", serial)
+    elif not should_write and now - last_write_time > DB_WRITE_INTERVAL:
+        should_write = True
+        logging.debug("⏰ Heartbeat update for %s", serial)
+    return {
+        "should_write": should_write,
+        "command_source_changed": command_source_changed,
+        "device_lock_changed": device_lock_changed,
+        "chip_type_changed": chip_type_changed,
+        "boot_result_changed": boot_result_changed,
+        "token_pending_state_changed": token_pending_state_changed,
+        "new_status": new_status,
+    }
+
+
+def _mqtt_status_write_needed(serial, now, flags):
+    return bool(
+        flags["command_source_changed"]
+        or flags["device_lock_changed"]
+        or flags["chip_type_changed"]
+        or flags["boot_result_changed"]
+        or flags["token_pending_state_changed"]
+        or (flags["new_status"] and flags["new_status"] != device_status_cache.get(serial, "unknown"))
+        or now - device_write_cache.get(serial, 0) > DB_WRITE_INTERVAL
+    )
+
+
+def _prepare_device_db_status(data, now, is_synced, new_status):
+    db_data = data.copy()
+    db_data["timestamp"] = int(now)
+    db_data["is_synced"] = is_synced
+    if new_status == "offline":
+        for key in ("base_config", "service_config", "detected_chip_type"):
+            db_data.pop(key, None)
+    for key in ("bps", "base_coords", "gnss_stats", "sync_errors", "rtcm_stats"):
+        db_data.pop(key, None)
+    return db_data
+
+
+async def _write_device_status(serial, db_data):
+    async with device_session_scope() as session:
+        updated_device = await crud.update_or_create_device(session, device_data=db_data)
+        await session.commit()
+        if updated_device:
+            await cache_device_metadata(updated_device)
+    device_write_cache[serial] = time.time()
+    if db_data.get("status"):
+        device_status_cache[serial] = db_data["status"]
+
+
+async def _persist_device_status(serial, data, now, is_synced, flags, is_retained):
+    if not flags["should_write"]:
+        return
+    db_data = _prepare_device_db_status(data, now, is_synced, flags["new_status"])
+    for attempt in range(3):
+        try:
+            async with mqtt_db_write_lock:
+                if device_was_deleted(serial):
+                    logging.info("Skipping MQTT status write after deletion: %s", serial)
+                    return
+                if is_retained:
+                    current_metadata = device_metadata_cache.get(serial) or {}
+                    if current_metadata.get("exists") is False:
+                        logging.info("Skipping retained status write after deletion: %s", serial)
+                        return
+                if not _mqtt_status_write_needed(serial, now, flags):
+                    break
+                await _write_device_status(serial, db_data)
+            break
+        except Exception as db_error:
+            if attempt < 2:
+                await asyncio.sleep(0.5 * (2 ** attempt))
+            else:
+                logging.exception("❌ DB Write Failed for %s: %s", serial, db_error)
+
+
+async def _handle_status_update(serial, data, is_retained):
+    accepted = await _accept_status_update(serial, data, is_retained)
+    if accepted is None:
+        return
+    data, metadata, now = accepted
+    is_synced, sync_errors, command_source_changed = _prepare_status_sync(serial, data)
+    metadata = await _load_status_metadata(serial, metadata)
+    is_synced = _apply_agent_license_state(
+        serial, data, metadata, data.get("agent_token_fingerprint"), is_synced, sync_errors
+    )
+    _set_offline_since(data, metadata, now)
+    _update_status_system_info(data)
+    data["is_synced"] = is_synced
+    data["sync_errors"] = sync_errors
+    _enrich_status_from_metadata(serial, data, metadata)
+    _update_live_status_cache(serial, data)
+    await _broadcast_status_update(serial, data, is_retained)
+    flags = _status_write_flags(serial, data, metadata, now, command_source_changed, is_retained)
+    await _persist_device_status(serial, data, now, is_synced, flags, is_retained)
+
+
 async def handle_message_async(topic: str, payload: bytes, is_retained: bool = False):
     if IS_SHUTTING_DOWN:
         return
-        
     try:
-        topic_parts = topic.split('/')
+        topic_parts = topic.split("/")
         if len(topic_parts) != 4 or topic_parts[:2] != ["pi", "devices"]:
             return
-        
-        message_type = topic_parts[-1]
-        serial = topic_parts[2]
+        message_type, serial = topic_parts[-1], topic_parts[2]
         if crud.is_blocked_device_serial(serial) or device_was_deleted(serial):
             return
-        
-        # ==================== 1. XỬ LÝ NMEA DATA ====================
         if message_type == "raw_data":
-            if payload.startswith(b'{'):
-                try:
-                    data = json.loads(payload.decode('ascii'))
-                    if data.get("type") == "rtcm_skyview_calculated":
-                        # Preserve decoded packet statistics even when NMEA owns the skyview.
-                        _cache_rtcm_signal_snapshot(serial, data)
-                        if _expects_nmea_skyview(serial):
-                            data = {**data, "satellites": []}
-                        await manager.broadcast({
-                            "type": "rtcm_signal_update",
-                            "serial": serial,
-                            "data": data
-                        })
-                        return
-                    elif data.get("type") == "rtcm_skyview":
-                        decoded_rtcm = rtcm_signal_decoder.decode_json(serial, data)
-                        if decoded_rtcm:
-                            _cache_rtcm_signal_snapshot(serial, decoded_rtcm)
-                            await manager.broadcast({
-                                "type": "rtcm_signal_update",
-                                "serial": serial,
-                                "data": decoded_rtcm
-                            })
-                        return
-                except Exception:
-                    pass
-
-            # Optimize: If payload is NMEA, parse it immediately and return
-            if payload.startswith(b'$'):
-                try:
-                    line = payload.decode('ascii', errors='ignore')
-                    parsed_data = parse_nmea_sentence(serial, line)
-                    if parsed_data:
-                        live = device_telemetry_cache.setdefault(serial, {})
-                        nmea_live = live.setdefault("nmea_data", {})
-                        parsed_type = str(parsed_data.get("type") or "").upper()
-                        nmea_live["last_nmea_ts"] = time.time()
-                        if parsed_type == "GGA":
-                            nmea_live["gga"] = parsed_data
-                        elif parsed_type == "GSA":
-                            nmea_live["gsa"] = parsed_data
-                        elif parsed_type == "GSV":
-                            nmea_live["satellites"] = parsed_data.get("satellites") or []
-                            nmea_live["last_gsv_ts"] = nmea_live["last_nmea_ts"]
-                        elif parsed_type:
-                            nmea_live[parsed_type.lower()] = parsed_data
-                        await manager.broadcast({
-                            "type": "nmea_update",
-                            "serial": serial,
-                            "data": parsed_data
-                        })
-                except Exception as e:
-                    logging.debug(f"NMEA parse error: {e}")
-                return
-
-            # If payload is RTCM (0xD3), only skip decoding when NMEA GSV
-            # already provides skyview data. GGA/GSA-only streams still need
-            # RTCM decode to populate the skyview.
-            is_rtcm = len(payload) > 0 and payload[0] == 0xD3
-            if is_rtcm:
-                live = device_telemetry_cache.get(serial, {})
-                nmea_live = live.get("nmea_data", {})
-                last_gsv_ts = nmea_live.get("last_gsv_ts") or 0
-                has_nmea_skyview = (time.time() - last_gsv_ts) < 60
-                
-                if not has_nmea_skyview:
-                    decoded_rtcm = await rtcm_signal_decoder.decode(serial, payload)
-                    if decoded_rtcm:
-                        _cache_rtcm_signal_snapshot(serial, decoded_rtcm)
-                        await manager.broadcast({
-                            "type": "rtcm_signal_update",
-                            "serial": serial,
-                            "data": decoded_rtcm
-                        })
+            await _handle_raw_data_message(serial, payload)
             return
-
-        # ==================== 2. XỬ LÝ STATUS UPDATE ====================
-        try:
-            data = json.loads(payload.decode())
-            # 🔥 FIX: Đảm bảo data là dict, nếu là list hoặc kiểu khác thì bỏ qua
-            if not isinstance(data, dict):
-                logging.warning(f"⚠️ Received non-dict payload on topic {topic}: {type(data)}")
-                return
-
-            payload_serial = str(data.get("serial") or "").strip()
-            if payload_serial and payload_serial.upper() != serial.upper():
-                logging.warning("Rejected MQTT status serial mismatch: topic=%s payload=%s", serial, payload_serial)
-                return
-            data["serial"] = serial
-            if isinstance(data.get("service_config"), (dict, list)):
-                data["service_config"] = schemas.strip_status_config_secrets(data["service_config"])
-
-            if 'rtk_fix_status' not in data:
-                # Fallback: Dựa vào status cũ (nếu agent chưa update)
-                if data.get('status') in ['online', 'sleep']:
-                    data['rtk_fix_status'] = 'DGPS'
-                    data['base_mode_active'] = bool(data.get('base_config'))
-                else:
-                    data['rtk_fix_status'] = 'NO_FIX'
-                    data['base_mode_active'] = False
-        except json.JSONDecodeError as e:
-            logging.exception(f"❌ JSON decode error on topic {topic}: {e}")
+        data = _decode_status_payload(topic, serial, payload)
+        if data is None or message_type not in {"status", "status_update"}:
             return
-        except UnicodeDecodeError as e:
-            logging.exception(f"❌ Unicode decode error on topic {topic}: {e}")
-            return
+        await _handle_status_update(serial, data, is_retained)
+    except Exception as exc:
+        logging.exception("❌ Critical error in handle_message_async: %s", exc, exc_info=True)
 
-        if message_type in ["status", "status_update"]:
-            metadata = None
-
-            # Live heartbeats can discover valid identities, but a station
-            # explicitly deleted during this server run must stay deleted.
-            if is_retained:
-                try:
-                    metadata = await get_device_metadata(serial)
-                    if not metadata.get("exists"):
-                        logging.info(f"Ignoring retained ghost status for unknown serial: {serial}")
-                        return
-                except Exception as e:
-                    logging.warning(f"Retained ghost-check failed for {serial}: {e}")
-                    return
-
-            now = time.time()
-            # Reject duplicate/out-of-order dual-channel heartbeats before any
-            # DB lookup or enrichment work.
-            status_decision = await status_reconciler.accept(
-                data,
-                source="mqtt",
-                retained=is_retained,
-                received_at=now,
-            )
-            if not status_decision.accepted:
-                logging.debug("Ignored MQTT status for %s: %s", serial, status_decision.reason)
-                return
-            data = status_decision.payload
-            
-            # --- 2.1. TÍNH TOÁN BPS ---
-            ntrip_stats = data.get('ntrip_stats')
-            if ntrip_stats and isinstance(ntrip_stats, dict):
-                data['bps'] = sum(int(value or 0) for key, value in ntrip_stats.items() if key.startswith('server') and key.endswith('_bps'))
-            
-            # --- 2.2. LƯU CONFIG VÀO CACHE ĐỂ BATCH CHECKER DÙNG ---
-            # 🔥 QUAN TRỌNG: Lưu config vào cache để batch checker có thể so sánh
-            cache_agent_sync_inputs(serial, data)
-            command_source = data.get('command_source')
-            command_source_changed = False
-            if isinstance(command_source, dict):
-                system_info = data.get('system_info') if isinstance(data.get('system_info'), dict) else {}
-                system_info['command_source'] = command_source
-                data['system_info'] = system_info
-                command_cache_key = f"{serial}_command_source"
-                command_source_changed = device_sync_cache.get(command_cache_key) != command_source
-                if command_source_changed:
-                    device_sync_cache[command_cache_key] = command_source
-            
-            # --- 2.3. ĐỌC SYNC STATUS TỪ CACHE (KHÔNG MỞ DB) ---
-            # 🔥 THAY ĐỔI CHÍNH: Không check DB mỗi message nữa!
-            # Batch checker sẽ update cache mỗi 60s
-            raw_status = str(data.get("status") or "").strip().lower()
-            is_synced = device_sync_cache.get(serial, True)
-            sync_errors = device_sync_cache.get(f"{serial}_errors", [])[:]
-            agent_version = data.get("version")
-            if agent_version and not _version_matches(agent_version):
-                is_synced = False
-                err_msg = f"Agent version {agent_version or '??'} != server {settings.APP_VERSION}"
-                if err_msg not in sync_errors:
-                    sync_errors.append(err_msg)
-
-            agent_token_fp = data.get("agent_token_fingerprint")
-            if metadata is None:
-                try:
-                    metadata = await get_device_metadata(serial)
-                except Exception as e:
-                    metadata = {"exists": False}
-                    logging.debug("Device metadata lookup failed for %s: %s", serial, e)
-
-            # A discovered agent can hold a local token while no DB row exists.
-            # Its fingerprint alone cannot establish server-side registration.
-            if metadata.get("exists") or crud.is_valid_serial(serial):
-                agent_reported_status = raw_status
-                license_bypass = bool(metadata.get("license_bypass"))
-                configured_token = str(metadata.get("device_token") or "").strip()
-                expected_fp = (
-                    _fingerprint_token(configured_token)
-                    if license_manager.is_compatible_device_token(configured_token, serial)
-                    else None
-                )
-                license_state = evaluate_license_sync(
-                    expected_fp,
-                    agent_token_fp,
-                    license_bypass=license_bypass,
-                )
-                token_check_available = license_state.token_check_available
-                token_synced = license_state.token_synced
-                token_deployment_pending = bool(
-                    metadata.get("token_deployment_pending")
-                    and expected_fp
-                    and not (token_check_available and token_synced)
-                )
-                needs_token_deploy = license_state.needs_token_deploy or (
-                    token_deployment_pending and not license_bypass
-                )
-                if needs_token_deploy:
-                    is_synced = False
-                    if expected_fp:
-                        sync_errors.append("Agent token is missing or does not match server token")
-                    else:
-                        sync_errors.append("Server token has not been issued to this agent")
-                    data["status"] = "awaiting_license"
-                    data["bps"] = 0
-                    data["ntrip_connected"] = False
-                    data["ntrip_status"] = {}
-                    data["ntrip_stats"] = {}
-                system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
-                system_info["auth_status"] = {
-                    "server_token_present": bool(expected_fp),
-                    "token_required": bool(expected_fp),
-                    "token_synced": token_synced if token_check_available else None,
-                    "agent_token_present": bool(agent_token_fp) if token_check_available else None,
-                    "needs_token_deploy": needs_token_deploy,
-                    "license_bypass": license_bypass,
-                    "agent_reported_status": agent_reported_status,
-                    "token_check_available": token_check_available,
-                    "token_deployment_pending": token_deployment_pending,
-                }
-                system_info["auth_license_bypass"] = license_bypass
-                data["system_info"] = system_info
-                if metadata.get("name"):
-                    data["name"] = metadata["name"]
-
-            status_for_offline_time = str(data.get("status") or "").strip().lower()
-            if status_for_offline_time == "offline":
-                if str(metadata.get("status") or "").strip().lower() == "offline":
-                    data["offline_since"] = metadata.get("offline_since")
-                else:
-                    try:
-                        previous_timestamp = int(metadata.get("timestamp") or 0)
-                    except (TypeError, ValueError):
-                        previous_timestamp = 0
-                    data["offline_since"] = (
-                        min(int(now), previous_timestamp + 180)
-                        if previous_timestamp > 0 and now - previous_timestamp > 180
-                        else int(now)
-                    )
-            elif status_for_offline_time:
-                data["offline_since"] = None
-
-            # Ensure savings_stats and antenna_status are persisted in system_info JSONB
-            system_info = data.get("system_info") if isinstance(data.get("system_info"), dict) else {}
-            savings_stats = data.get("savings_stats")
-            if savings_stats and isinstance(savings_stats, dict):
-                system_info["savings_stats"] = savings_stats
-            antenna_status = data.get("antenna_status")
-            if antenna_status and isinstance(antenna_status, dict):
-                system_info["antenna_status"] = antenna_status
-            data["system_info"] = system_info
-
-            # --- CẬP NHẬT DATA ĐỂ GỬI UI ---
-            data['is_synced'] = is_synced
-            data['sync_errors'] = sync_errors
-            cached_name = metadata.get("name") or device_name_cache.get(serial)
-            if cached_name:
-                data['name'] = cached_name
-
-            # --- 2.4. BẢO VỆ TÊN & CONFIG TRẠM ---
-            # Bản tin LWT (offline) không kèm tên/config -> lấy từ DB trước khi broadcast
-            new_status = data.get('status')
-            if not data.get('name') or new_status == 'offline':
-                try:
-                    if metadata.get("name"):
-                        data['name'] = metadata["name"]
-                    if new_status == 'offline':
-                        if not data.get('base_config') and metadata.get("base_config"):
-                            data['base_config'] = metadata["base_config"]
-                        if not data.get('service_config') and metadata.get("service_config"):
-                            data['service_config'] = metadata["service_config"]
-                        if not data.get('detected_chip_type') and metadata.get("detected_chip_type"):
-                            data['detected_chip_type'] = metadata["detected_chip_type"]
-                except Exception:
-                    pass  # Không tên vẫn broadcast được, không chặn luồng
-
-            # --- 2.5. BROADCAST REAL-TIME TO UI ---
-            live_snapshot = dict(device_telemetry_cache.get(serial) or {})
-            if crud.is_mobile_base(serial) or str(serial or "").lower().startswith("esp_"):
-                incoming_rtcm = data.get("rtcm_stats")
-                existing_rtcm = live_snapshot.get("rtcm_stats")
-                if (not incoming_rtcm or incoming_rtcm.get("decoder") is False) and existing_rtcm and any(k.isdigit() for k in existing_rtcm.keys()):
-                    data["rtcm_stats"] = existing_rtcm
-                existing_nmea = live_snapshot.get("nmea_data") or {}
-                incoming_nmea = data.get("nmea_data")
-                if (not incoming_nmea or not incoming_nmea.get("satellites")) and existing_nmea.get("satellites"):
-                    data.setdefault("nmea_data", {})["satellites"] = existing_nmea["satellites"]
-            live_snapshot.update(data)
-            device_telemetry_cache[serial] = live_snapshot
-            status_message = {
-                "type": "status_update", 
-                "data": data,
-                # Main's coalescing boundary rechecks this after taking its
-                # queue lock, closing the delete-vs-retained-broadcast race.
-                "_drop_if_device_missing": bool(is_retained),
-            }
-            if status_broadcast_handler:
-                await status_broadcast_handler(status_message)
-            else:
-                await manager.broadcast(status_message)
-            
-            # --- 2.5. LOGIC QUYẾT ĐỊNH GHI DB ---
-            last_write_time = device_write_cache.get(serial, 0)
-            last_known_status = device_status_cache.get(serial, "unknown")
-            new_status = data.get("status")
-            reported_system_info = data.get("system_info")
-            reported_auth_status = (
-                reported_system_info.get("auth_status")
-                if isinstance(reported_system_info, dict)
-                else None
-            )
-            token_pending_state_changed = (
-                bool(metadata.get("token_deployment_pending"))
-                != bool(
-                    isinstance(reported_auth_status, dict)
-                    and reported_auth_status.get("token_deployment_pending")
-                )
-            )
-            
-            should_write_db = False
-            reported_device_lock = (data.get('system_info') or {}).get('device_lock')
-            device_lock_changed = reported_device_lock != metadata.get('device_lock')
-            # Detection can finish between heartbeats without changing online status.
-            # Persist it immediately so offline enrichment cannot restore an old chip.
-            reported_chip = data.get('detected_chip_type')
-            chip_type_changed = (
-                new_status != 'offline'
-                and bool(reported_chip)
-                and reported_chip != 'UNKNOWN'
-                and reported_chip != metadata.get('detected_chip_type')
-            )
-            boot_result_changed = (
-                not is_retained and crud.confirmed_boot_auto_base(data)
-                and ((metadata.get('base_config') or {}).get('base_setup_method') in ('SURVEY_IN', 'AUTO_CORS')
-                     or (metadata.get('base_config') or {}).get('coordinate_source') == 'AUTO_CORS')
-                and (metadata.get('base_config') or {}).get('auto_base_started_boot_id') != data.get('status_boot_id')
-            )
-            
-            # Điều kiện 1: Trạng thái Online/Offline thay đổi
-            if command_source_changed or device_lock_changed or chip_type_changed or boot_result_changed:
-                should_write_db = True
-            elif token_pending_state_changed:
-                should_write_db = True
-            elif new_status and new_status != last_known_status:
-                should_write_db = True
-                if last_known_status == "online" and new_status == "offline":
-                    logging.warning(f"⚠️ DEVICE OFFLINE: {serial}")
-                elif last_known_status == "offline" and new_status == "online":
-                    logging.info(f"✓ Device back online: {serial}")
-
-            # Điều kiện 2: Heartbeat (Quá thời gian chưa ghi)
-            elif (now - last_write_time) > DB_WRITE_INTERVAL:
-                should_write_db = True
-                logging.debug(f"⏰ Heartbeat update for {serial}")
-            
-            # --- 2.6. THỰC HIỆN GHI DB ---
-            if should_write_db:
-                # Chuẩn bị dữ liệu sạch cho DB
-                db_data = data.copy()
-                db_data['timestamp'] = int(now)
-                db_data['is_synced'] = is_synced
-                
-                # 🔥 PRESERVE CONFIG KHI DEVICE OFFLINE
-                # Nếu device offline, KHÔNG cập nhật config & chip_type
-                # Để tránh để config bị xóa khi device tạm ngoại tuyến
-                if new_status == 'offline':
-                    # Xóa config từ db_data để CRUD không cập nhật
-                    db_data.pop('base_config', None)
-                    db_data.pop('service_config', None)
-                    db_data.pop('detected_chip_type', None)
-                
-                # Loại bỏ các field tạm thời
-                fields_to_remove = [
-                    'bps', 'base_coords', 'gnss_stats', 'sync_errors', 'rtcm_stats'
-                ]
-                
-                for field in fields_to_remove:
-                    if field in db_data:
-                        del db_data[field]
-                
-                # Retry logic với exponential backoff
-                max_db_retries = 3
-                for attempt in range(max_db_retries):
-                    try:
-                        # Single-writer section: avoids pool exhaustion under reconnect storms.
-                        async with mqtt_db_write_lock:
-                            if device_was_deleted(serial):
-                                logging.info("Skipping MQTT status write after deletion: %s", serial)
-                                return
-                            if is_retained:
-                                current_metadata = device_metadata_cache.get(serial) or {}
-                                if current_metadata.get("exists") is False:
-                                    logging.info(
-                                        "Skipping retained status write after deletion: %s",
-                                        serial,
-                                    )
-                                    return
-                            latest_write_time = device_write_cache.get(serial, 0)
-                            latest_known_status = device_status_cache.get(serial, "unknown")
-                            still_needs_write = bool(
-                                command_source_changed
-                                or device_lock_changed
-                                or chip_type_changed
-                                or boot_result_changed
-                                or token_pending_state_changed
-                                or (new_status and new_status != latest_known_status)
-                                or (now - latest_write_time) > DB_WRITE_INTERVAL
-                            )
-                            if not still_needs_write:
-                                break
-                            async with device_session_scope() as session:
-                                updated_device = await crud.update_or_create_device(
-                                    session,
-                                    device_data=db_data
-                                )
-                                await session.commit()
-                                if updated_device:
-                                    await cache_device_metadata(updated_device)
-                            device_write_cache[serial] = time.time()
-                            if new_status:
-                                device_status_cache[serial] = new_status
-                        
-                        break # Success
-                    except Exception as db_error:
-                        if attempt < max_db_retries - 1:
-                            # Exponential backoff: 0.5s, 1s, 2s
-                            await asyncio.sleep(0.5 * (2 ** attempt))
-                        else:
-                            logging.exception(f"❌ DB Write Failed for {serial}: {db_error}")
-
-    except Exception as e:
-        logging.exception(f"❌ Critical error in handle_message_async: {e}", exc_info=True)
 
 # ==============================================================================
 # CONFIG COMPARISON (Giữ nguyên)
