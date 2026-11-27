@@ -4,6 +4,10 @@ import re
 from typing import Annotated, Any, List, Optional
 
 
+class HTTPErrorResponse(BaseModel):
+    detail: Any
+
+
 def redact_config_secrets(value: Any) -> Any:
     """Copy a config tree while removing credential-like values."""
     if isinstance(value, dict):

@@ -785,7 +785,7 @@ app.include_router(caster_router)
 
 from .station_scope import _rtcm_visible_serials
 
-@app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse, responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 503: {"description": "Service Unavailable"}})
+@app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse, responses={403: {"description": "Forbidden", "model": schemas.HTTPErrorResponse}, 404: {"description": "Not Found", "model": schemas.HTTPErrorResponse}, 409: {"description": "Conflict", "model": schemas.HTTPErrorResponse}, 503: {"description": "Service Unavailable", "model": schemas.HTTPErrorResponse}})
 async def activate_rtcm_station(
     serial: str,
     req: schemas.RTCMStationActivateRequest,

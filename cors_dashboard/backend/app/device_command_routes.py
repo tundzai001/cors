@@ -586,7 +586,7 @@ async def _deliver_device_lock_command(serial, command, locked, scoped, device):
     return True
 
 
-@router.post("/api/devices/{serial}/lock", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
+@router.post("/api/devices/{serial}/lock", responses={403: {"description": "Forbidden", "model": schemas.HTTPErrorResponse}, 404: {"description": "Not Found", "model": schemas.HTTPErrorResponse}, 409: {"description": "Conflict", "model": schemas.HTTPErrorResponse}})
 async def lock_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
