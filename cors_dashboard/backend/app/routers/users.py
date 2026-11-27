@@ -312,7 +312,7 @@ async def update_user(
     if assigned_serials is not None:
         target_role = update_dict.get('role', user_to_update.role)
         
-        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user nÃ y (chủ sở hữu)
+        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user này (chủ sở hữu)
         current_devices = await crud.get_devices_by_user_id(devices_db, user_id)
         
         # 2. Gỡ bỏ tất cả ownership trước (Reset về None)
@@ -332,7 +332,7 @@ async def update_user(
                     if device.user_id is not None:
                         affected_users.add(device.user_id)
                     device.user_id = user_id
-                    # Broadcast cập nhật UI: Trạm nÃ y đã có chủ mới
+                    # Broadcast cập nhật UI: Trạm này đã có chủ mới
                     await ui_manager.broadcast({
                         "type": "status_update",
                         "data": schemas.Device.from_orm(device).model_dump()

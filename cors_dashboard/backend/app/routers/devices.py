@@ -615,7 +615,7 @@ async def get_rovers_for_base(
         return _rover_response_list(visible_rovers, current_user)
     
     # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
-    raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm nÃ y.")
+    raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm này.")
 
 @router.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 502: {"description": "Bad Gateway"}})
 async def create_rover_for_base(
@@ -633,7 +633,7 @@ async def create_rover_for_base(
     )
 
     if not is_admin and not is_authorized_rover_editor:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tÃ i khoản Rover.")
+        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tài khoản Rover.")
 
     if not is_admin:
         if current_user.role == auth.Role.VIEWER:
@@ -683,7 +683,7 @@ async def create_rover_for_base(
     duration_seconds = 315360000 # 10 năm mặc định
     
     if rover_data.expiry_days > 0:
-        duration_seconds = rover_data.expiry_days * 86400  # 1 ngÃ y = 86400 giây
+        duration_seconds = rover_data.expiry_days * 86400  # 1 ngày = 86400 giây
 
     # 3. GỌI TCP ĐẾN NTRIP CASTER (Tạo trên toàn bộ Caster được cấu hình)
     hosts, config = _read_caster_config_from_env()
@@ -725,7 +725,7 @@ async def create_rover_for_base(
     if not created_any:
         raise HTTPException(status_code=502, detail="Không thể tạo tài khoản trên bất kỳ NTRIP Caster Server nào.")
 
-    # 4. Lưu vÃ o DB
+    # 4. Lưu vào DB
     new_rover = await crud.create_rover_account(
         db, 
         username=rover_data.username,
@@ -754,7 +754,7 @@ async def update_rover(
     # 1. Lấy thông tin Rover cũ
     rover = await crud.get_rover_by_id(db, rover_id)
     if not rover:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover.")
 
     # 2. Kiểm tra quyền
     has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
@@ -978,7 +978,7 @@ async def delete_rover(
     # 1. Lấy thông tin Rover
     rover_to_delete = await crud.get_rover_by_id(db, rover_id)
     if not rover_to_delete:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tÃ i khoản Rover.")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover.")
 
     # 2. Kiểm tra quyền
     has_perm = await crud.check_rover_management_permission(rover_to_delete, current_user, devices_db, db)
@@ -996,7 +996,7 @@ async def delete_rover(
             identifier=creator_username, 
             username=rover_to_delete.username
         )
-        logger.info(f"âœ“ Deleted Rover '{rover_to_delete.username}' from Caster via TCP")
+        logger.info(f"✓ Đã xóa Rover '{rover_to_delete.username}' khỏi Caster qua TCP")
     except Exception as e:
         logger.warning(f"Failed to delete rover from Caster (might be already deleted): {e}")
 

@@ -174,7 +174,7 @@ async def _get_map_station_items(
         return [normalize_station_snapshot(item) for item in public_data]
 
     except Exception as e:
-        logging.exception(f"â Œ Error fetching public map data: {e}")
+        logging.exception(f"❌ Error fetching public map data: {e}")
         return []
 
 

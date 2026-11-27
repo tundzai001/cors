@@ -323,12 +323,12 @@ async def pi_status_ingest_worker_task():
 
 
 async def check_device_heartbeats_with_retry():
-    """Heartbeat check với retry vÃ  backoff"""
+    """Kiểm tra heartbeat, thử lại khi gặp lỗi và tăng dần thời gian chờ."""
     HEARTBEAT_TIMEOUT = 300
     max_retries = 3
 
     while True:
-        await asyncio.sleep(60) # Check mỗi 60s lÃ  đủ, không cần 30s
+        await asyncio.sleep(60) # Kiểm tra mỗi 60 giây là đủ, không cần 30 giây
 
         for attempt in range(max_retries):
             try:

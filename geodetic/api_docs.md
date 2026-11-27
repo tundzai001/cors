@@ -75,7 +75,7 @@
 - **File**: main.py
 - **Function**: `block_ip_manually`
 - **Auth**: Requires Authentication
-- **Description**: Admin block thủ công một IP (lưu vÃ o database).
+- **Description**: Admin block thủ công một IP (lưu vào database).
 
 ### `GET` /api/admin/security/stats
 - **File**: main.py
@@ -99,13 +99,13 @@
 - **File**: main.py
 - **Function**: `get_system_settings`
 - **Auth**: Requires Authentication
-- **Description**: Lấy trạng thái hiện tại của các cÃ i đặt bảo mật.
+- **Description**: Lấy trạng thái hiện tại của các cài đặt bảo mật.
 
 ### `POST` /api/admin/settings
 - **File**: main.py
 - **Function**: `update_system_settings`
 - **Auth**: Requires Authentication
-- **Description**: Cập nhật cÃ i đặt bảo mật.
+- **Description**: Cập nhật cài đặt bảo mật.
 
 ### `POST` /api/auth/login
 - **File**: main.py

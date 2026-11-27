@@ -138,7 +138,7 @@ class User(AuthBase):
     can_create_rovers = Column(Boolean, default=False, nullable=False)  # Create/edit access (legacy column name)
     can_create_users = Column(Boolean, default=False, nullable=False)
     can_view_mobile_bases = Column(Boolean, default=False, nullable=False)  # Mobile 4G base (ESP) access
-    extra_mountpoints = Column(String, nullable=True) # Danh sÃ¡ch MP bÃ´Ì‰ sung (dÃ¢Ì u ; ngÄƒn caÌ ch)
+    extra_mountpoints = Column(String, nullable=True) # Danh sách MP bổ sung (các giá trị phân cách bằng dấu chấm phẩy)
     parent_id = Column(Integer, index=True, nullable=True) # ID của coordinator đã tạo ra viewer này
     allowed_bases = Column(String, nullable=True) # JSON array các serial trạm Base
     view_only_bases = Column(String, nullable=True)  # Coordinator stations with read-only access

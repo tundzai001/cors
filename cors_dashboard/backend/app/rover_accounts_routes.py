@@ -89,7 +89,7 @@ async def get_all_rovers_global(
 
     rovers = await crud.get_visible_rovers_for_user(db, devices_db, current_user)
 
-    # 3. LÃ m giÃ u dữ liệu (XỬ LÝ HIỂN THỊ NHIỀU TRẠM)
+    # 3. Làm giàu dữ liệu (XỬ LÝ HIỂN THỊ NHIỀU TRẠM)
     enriched_rovers = []
 
     # Cache devices để tránh query DB quá nhiều lần trong vòng lặp
@@ -99,7 +99,7 @@ async def get_all_rovers_global(
     for rover in rovers:
         rover_dict = schemas.RoverAccountResponse.from_orm(rover).model_dump()
 
-        # Xử lý base_serial có thể lÃ  "SN1,SN2"
+        # Xử lý base_serial có thể là "SN1,SN2"
         serials = (rover.base_serial or "").split(',')
         station_names = []
 
@@ -296,7 +296,7 @@ async def create_multi_base_rover(
     # 1. Kiểm tra quyền (như cũ)
     is_admin = current_user.role == auth.Role.ADMIN
     if not auth.can_edit_rovers(current_user):
-        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tÃ i khoản Rover.")
+        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tài khoản Rover.")
 
     # 2. Kiểm tra trùng (như cũ)
     existing = await crud.get_rover_by_username(db, request.username)
@@ -334,11 +334,11 @@ async def create_multi_base_rover(
         if not await crud.rover_mountpoints_within_scope(devices_db, current_user, selected_serials, target_mountpoints):
             raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
 
-    # 3. Xác định danh sÃ¡ch Mountpoint hợp lệ (Đặc biệt cho Coordinator)
+    # 3. Xác định danh sách Mountpoint hợp lệ (Đặc biệt cho Coordinator)
     if current_user.role == auth.Role.COORDINATOR:
         valid_mps = set()
 
-        # 1. MP từ cÃ¡c trạm vật lÃ½ được chọn
+        # 1. MP từ các trạm vật lý được chọn
         if request.selected_serials:
             for serial in request.selected_serials:
                 dev = await crud.get_device_by_serial(devices_db, serial)
@@ -349,12 +349,12 @@ async def create_multi_base_rover(
                     if sc.get('server2_enabled') and sc.get('mountpoint2'):
                         valid_mps.add(sc.get('mountpoint2'))
 
-        # 2. MP bổ sung được gÃ¡n rÃªng
+        # 2. MP bổ sung được gán riêng
         if current_user.extra_mountpoints:
             extras = [mp.strip() for mp in re.split(r'[;,\s]+', current_user.extra_mountpoints) if mp.strip()]
             valid_mps.update(extras)
 
-        # 3. Kiểm tra Mountpoint yÃªu cầu
+        # 3. Kiểm tra Mountpoint yêu cầu
         requested = [mp.strip() for mp in re.split(r'[;,\s]+', request.mountpoint_override) if mp.strip()]
         if not requested:
              raise HTTPException(status_code=400, detail="Mountpoint không được để trống.")
@@ -364,7 +364,7 @@ async def create_multi_base_rover(
                 raise HTTPException(status_code=403, detail=f"Mountpoint '{mp}' không thuộc quyền quản lý của bạn.")
 
     # 4. Nới lỏng yêu cầu chọn trạm:
-    # Nếu là Coordinator vÃ  đã có mountpoint_override (hợp lệ) thì khÃ´ng bắt buộc chọn trạm vật lÃ½.
+    # Nếu là Coordinator và đã có mountpoint_override (hợp lệ) thì không bắt buộc chọn trạm vật lý.
     if not selected_serials and not is_admin:
         if current_user.role != auth.Role.COORDINATOR or not target_mountpoints:
             raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm hoặc Mountpoint bổ sung.")

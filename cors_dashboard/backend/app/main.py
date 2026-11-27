@@ -263,19 +263,19 @@ async def log_system_event(
     serial: str = None,
     ip: str = None
 ):
-    """HÃ m helper để ghi log vÃ o DB từ bất kỳ đâu"""
+    """Hàm ghi nhật ký vào cơ sở dữ liệu từ mọi nơi"""
     icon_map = {
-        "success": "âœ…",
-        "error": "â Œ",
-        "warning": "âš ï¸ ",
-        "info": "â„¹ï¸ "
+        "success": "✅",
+        "error": "❌",
+        "warning": "⚠️ ",
+        "info": "ℹ️ "
     }
     try:
         log_entry = schemas.ActivityLogCreate(
             timestamp=int(time.time()),
             type=type,
             message=message,
-            icon=icon_map.get(type, "ðŸ“ "),
+            icon=icon_map.get(type, "📢 "),
             user_id=user_id,
             device_serial=serial,
             ip_address=ip
@@ -287,7 +287,7 @@ async def log_system_event(
             "data": {
                 "type": type,
                 "message": message,
-                "icon": icon_map.get(type, "ðŸ“ "),
+                "icon": icon_map.get(type, "📢 "),
                 "timestamp": int(time.time())
             }
         })
@@ -403,7 +403,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
         quiet_success_path = request.url.path in QUIET_REQUEST_LOG_PATHS
 
-        # Ghi log mÃ  không cần extra, vì filter sẽ tự thêm vÃ o
+        # Ghi log mà không cần extra, vì bộ lọc sẽ tự thêm vào
         if not quiet_success_path:
             logger.info(f"--> {request.method} {request.url.path}")
 
@@ -667,7 +667,7 @@ async def send_command_to_pi(serial: str, command: dict) -> dict:
 
 # --- CASTER CLIENT FACTORY ---
 
-# === ðŸ†• WEBSOCKET THEO DÕI KHÁCH TRUY CẬP (PUBLIC) ===
+# === 🆕 WEBSOCKET THEO DÕI KHÁCH TRUY CẬP (PUBLIC) ===
 @app.websocket("/ws/track-visitors")
 async def track_visitors_endpoint(websocket: WebSocket):
     client_ip = websocket.client.host
@@ -687,7 +687,7 @@ async def track_visitors_endpoint(websocket: WebSocket):
     except Exception:
         # Khi ngắt kết nối
         visitor_manager.disconnect(websocket, client_ip)
-        # ðŸ“¢ Báo lại cho Admin khi có người thoát
+        # 📢 Báo lại cho Admin khi có người thoát
         await ui_manager.broadcast({
             "type": "visitor_update",
             "count": visitor_manager.get_count(),
@@ -1115,7 +1115,7 @@ async def get_system_settings(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Lấy trạng thái hiện tại của các cÃ i đặt bảo mật."""
+    """Lấy trạng thái hiện tại của các cài đặt bảo mật."""
     if current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được xem cài đặt toàn hệ thống")
     settings_data = await crud.get_system_settings(db)
@@ -1128,7 +1128,7 @@ async def update_system_settings(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
 ):
-    """Cập nhật cÃ i đặt bảo mật."""
+    """Cập nhật cài đặt bảo mật."""
     if current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được thay đổi cài đặt toàn hệ thống")
 
@@ -1222,7 +1222,7 @@ async def block_ip_manually(
 ):
     if current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được quản lý danh sách chặn IP")
-    """Admin block thủ công một IP (lưu vÃ o database)."""
+    """Quản trị viên chặn thủ công một địa chỉ IP (lưu vào cơ sở dữ liệu)."""
     ip = request_data.get("ip_address")
     if not ip:
         raise HTTPException(status_code=400, detail="ip_address is required")
@@ -1235,7 +1235,7 @@ async def block_ip_manually(
     except ValueError:
         raise HTTPException(status_code=400, detail="Địa chỉ IP không hợp lệ hoặc là địa chỉ proxy nội bộ")
     await rate_limiter.block_ip(db, ip, reason=f"Manual by {current_user.username}")
-    logger.warning(f"âš ï¸ Admin '{current_user.username}' permanently blocked IP: {ip}")
+    logger.warning(f"⚠️ Quản trị viên '{current_user.username}' đã chặn vĩnh viễn IP: {ip}")
 
     return {"status": "blocked", "ip": ip}
 

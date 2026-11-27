@@ -4793,7 +4793,12 @@ async def refresh_receiver_base_status(agent, reader):
             mode = mode.upper()
             if not mode.startswith((UNICORE_BASE_MODE_PREFIX, 'MODE ROVER')):
                 raise ValueError("Unsupported Unicore operating mode")
-            kind = 'survey_in' if mode.startswith(f'{UNICORE_BASE_MODE_PREFIX} TIME') else 'base' if mode.startswith(UNICORE_BASE_MODE_PREFIX) else 'rover'
+            if mode.startswith(f'{UNICORE_BASE_MODE_PREFIX} TIME'):
+                kind = 'survey_in'
+            elif mode.startswith(UNICORE_BASE_MODE_PREFIX):
+                kind = 'base'
+            else:
+                kind = 'rover'
             result.update(state='ok', mode_kind=kind, mode_raw=mode)
             if kind == 'survey_in':
                 result['target_seconds'] = int(mode.split()[3])

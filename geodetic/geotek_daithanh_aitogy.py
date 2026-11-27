@@ -2218,7 +2218,7 @@ class RelayWorker(threading.Thread):
                 self.publish_status()
 
 # ==============================================================================
-# === MONITOR WORKER (DÃ nh cho tráº¡m Ä‘Ã£ cÃ³ sáºµn trÃªn server) ===
+# === MONITOR WORKER (Dành cho trạm đã có sẵn trên server) ===
 # ==============================================================================
 class MonitorWorker(threading.Thread):
     def __init__(self, station_config, mqtt_client):
@@ -3961,7 +3961,7 @@ def setup_mqtt(worker_map):
 # ==============================================================================
 if __name__ == "__main__":
     print("="*70)
-    print(" ðŸš€ NTRIP RELAY SYSTEM - WORKING VERSION")
+    print(" 🚀 NTRIP RELAY SYSTEM - WORKING VERSION")
     print("="*70)
     print(f" Source: {SOURCE_HOST}:{SOURCE_PORT}")
     print(f" Target: {TARGET_HOST}:{TARGET_PORT}")
@@ -4008,7 +4008,7 @@ if __name__ == "__main__":
             time.sleep(1)
             
         logging.info("="*70)
-        logging.info("ðŸš€ ALL WORKERS RUNNING")
+        logging.info("🚀 ALL WORKERS RUNNING")
         logging.info("="*70)
         
         last_gc = time.time()
@@ -4040,7 +4040,7 @@ if __name__ == "__main__":
                 last_gc = time.time()
     
     except KeyboardInterrupt:
-        print("\nðŸ›‘ Stopping...")
+        print("\n🛑 Stopping...")
         
         with WORKER_MAP_LOCK:
             active_snapshot = list(ACTIVE_WORKERS.values())
@@ -4053,4 +4053,4 @@ if __name__ == "__main__":
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
         
-        print("âœ… Done")
+        print("✅ Done")

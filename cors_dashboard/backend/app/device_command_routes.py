@@ -262,7 +262,7 @@ async def configure_service_endpoint(
 
     # 1. Kiểm tra quyền sở hữu (Nếu là COORDINATOR)
     if current_user.role == auth.Role.COORDINATOR and device_in_db.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị nÃ y.")
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý thiết bị này.")
 
     # 2. Kiểm tra MANAGE_STATION_MODE (Nếu thay đổi mode sleep/always-on toàn cục hoặc theo server)
     old_service_cfg = _device_service_config(device_in_db)
