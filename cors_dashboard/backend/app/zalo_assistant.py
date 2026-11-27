@@ -25,6 +25,7 @@ from .zalo_bot_identity import BOT_IDENTITIES, chat_bot_key, raw_chat_id
 
 LINK_ALPHABET = string.digits
 SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
+DEFAULT_TIMEZONE = "Asia/Saigon"
 
 
 def _now() -> int:
@@ -193,7 +194,7 @@ class ZaloAssistantRepository:
 
         if pref.quiet_start and pref.quiet_end:
             try:
-                timezone = ZoneInfo(str(pref.timezone or "Asia/Saigon"))
+                timezone = ZoneInfo(str(pref.timezone or DEFAULT_TIMEZONE))
             except ZoneInfoNotFoundError:
                 # Windows Python installations may not ship an IANA tzdata
                 # database. Vietnam has used UTC+7 without DST since 1975.
@@ -312,7 +313,7 @@ class ZaloAssistantRepository:
             if pref_rs.scalars().first() is None:
                 db.add(models.ZaloNotificationPreference(
                     binding_id=binding.id, enabled=True, min_severity="critical", scopes={},
-                    timezone="Asia/Saigon", critical_override=True, updated_at=now,
+                    timezone=DEFAULT_TIMEZONE, critical_override=True, updated_at=now,
                 ))
             await db.commit()
             await db.refresh(binding)
@@ -384,7 +385,7 @@ class ZaloAssistantRepository:
                     scopes={
                         "mode": binding.station_scope_mode,
                         "allowed_bases": list(binding.allowed_bases or []),
-                    }, timezone="Asia/Saigon",
+                    }, timezone=DEFAULT_TIMEZONE,
                     critical_override=True, updated_at=now,
                 ))
             else:
@@ -670,7 +671,7 @@ class ZaloAssistantRepository:
                 if pref is None:
                     pref = models.ZaloNotificationPreference(
                         binding_id=binding.id, enabled=True, min_severity="critical",
-                        scopes={"mode": "all"}, timezone="Asia/Saigon",
+                        scopes={"mode": "all"}, timezone=DEFAULT_TIMEZONE,
                         critical_override=True, updated_at=now,
                     )
                     db.add(pref)

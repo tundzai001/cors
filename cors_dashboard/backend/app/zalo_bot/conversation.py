@@ -13,6 +13,8 @@ from .common import (_COMMAND_DISPATCH, _NLP_INTENT_PATTERNS, _SyntheticContext,
                      _is_cors_status_question, _normalize_to_ascii)
 
 logger = logging.getLogger("app.zalo_bot_service")
+NEGATIVE_ANSWER = "không"
+BACK_COMMANDS = {"0", "quay lại", "quay lai", "back"}
 
 
 class ConversationMixin:
@@ -363,7 +365,7 @@ class ConversationMixin:
                     data.update({"enabled": True, "min_severity": "critical"})
                 elif lowered in {"2", "warning", "canh bao", "cảnh báo"}:
                     data.update({"enabled": True, "min_severity": "warning"})
-                elif lowered in {"3", "off", "tat", "tắt", "khong", "không"}:
+                elif lowered in {"3", "off", "tat", "tắt", "khong", NEGATIVE_ANSWER}:
                     data.update({"enabled": False, "min_severity": "critical"})
                 else:
                     await update.message.reply_text("Chọn 1, 2 hoặc 3 để mình đặt mức cảnh báo.")
@@ -423,7 +425,7 @@ class ConversationMixin:
                         "Nhập danh sách tên trạm hoặc username rover, cách nhau bằng dấu phẩy hoặc dấu chấm phẩy."
                     )
                     return
-                elif lowered in {"3", "none", "off", "tat", "tắt", "khong", "không"}:
+                elif lowered in {"3", "none", "off", "tat", "tắt", "khong", NEGATIVE_ANSWER}:
                     data["enabled"] = False
                     data["scopes"] = {"mode": "none"}
                     state["step"] = "quiet"
@@ -454,7 +456,7 @@ class ConversationMixin:
             if step == "quiet":
                 quiet_start = quiet_end = None
                 lowered = answer.lower()
-                if lowered in {"1", "khong", "không", "none", "no"}:
+                if lowered in {"1", "khong", NEGATIVE_ANSWER, "none", "no"}:
                     pass
                 elif lowered in {"2", "dem", "đêm", "night"}:
                     quiet_start, quiet_end = "22:00", "07:00"
@@ -563,7 +565,7 @@ class ConversationMixin:
             field = str(data.get("current_field") or "")
             current_value = data.get("changes", {}).get(field, data.get("current", {}).get(field))
             if step == "boolean_value":
-                if answer in {"0", "quay lại", "quay lai", "back"}:
+                if answer in BACK_COMMANDS:
                     state["step"] = "field"
                     await update.message.reply_text(self._format_editor_menu(flow, data))
                     return
@@ -586,7 +588,7 @@ class ConversationMixin:
                 return
             if step == "mountpoint_action":
                 current_mountpoints = self._split_list_value(current_value)
-                if answer in {"0", "quay lại", "quay lai", "back"}:
+                if answer in BACK_COMMANDS:
                     state["step"] = "field"
                     await update.message.reply_text(self._format_editor_menu(flow, data))
                     return
@@ -672,7 +674,7 @@ class ConversationMixin:
                 )
                 return
             if step == "value":
-                if answer.lower() in {"giữ", "giu", "back", "quay lại", "quay lai"}:
+                if answer.lower() in {"giữ", "giu", *BACK_COMMANDS}:
                     state["step"] = "field"
                     await update.message.reply_text(self._format_editor_menu(flow, data))
                     return

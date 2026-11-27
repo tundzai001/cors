@@ -1,5 +1,9 @@
 # geotek_aitogy_working.py
 RELAY_VERSION = "V2.4.2"
+RECEIVER_PORT_PATTERN = r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)"
+COMMAND_DELAY_PREFIX = b"$DELAY_"
+NTRIP_ICY_SUCCESS = b"ICY 200"
+NTRIP_HTTP_SUCCESS = b"200 OK"
 
 import json
 import logging
@@ -399,7 +403,7 @@ def read_http_header(sock, timeout=5):
             line_end = header_data.find(b"\r\n")
             if line_end >= 0:
                 first_line = header_data[:line_end].decode(errors="ignore")
-                if first_line.startswith("ICY 200"):
+                if first_line.startswith(NTRIP_ICY_SUCCESS.decode("ascii")):
                     blank_end = header_data.find(b"\r\n\r\n", line_end)
                     split_at = blank_end + 4 if blank_end >= 0 else line_end + 2
                     return header_data[:split_at], header_data[split_at:]
@@ -1249,7 +1253,7 @@ class RTCMSignalDecoder:
 rtcm_signal_decoder = RTCMSignalDecoder()
 
 def command_delay_seconds(command_bytes):
-    if command_bytes.startswith(b"$DELAY_") and command_bytes.endswith(b"$"):
+    if command_bytes.startswith(COMMAND_DELAY_PREFIX) and command_bytes.endswith(b"$"):
         try:
             return int(command_bytes.decode("ascii").split("_", 1)[1].strip("$")) / 1000.0
         except Exception:
@@ -1480,7 +1484,7 @@ def rewrite_command_port(command_bytes, nmea_port=None, rtcm_port=None, nmea_gga
     if not target_port:
         return command_bytes
 
-    if not re.fullmatch(r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)", target_port, flags=re.IGNORECASE):
+    if not re.fullmatch(RECEIVER_PORT_PATTERN, target_port, flags=re.IGNORECASE):
         logging.warning("Ignored invalid receiver port configuration")
         return command_bytes
 
@@ -1574,7 +1578,7 @@ def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
     lat, lon, alt = position
 
     rtcm_port = str(_first_value(runtime_cfg.get("rtcm_port"), runtime_cfg.get("sensor_port"), "com2")).strip() or "com2"
-    if not re.fullmatch(r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)", rtcm_port, flags=re.IGNORECASE):
+    if not re.fullmatch(RECEIVER_PORT_PATTERN, rtcm_port, flags=re.IGNORECASE):
         raise ValueError("Invalid Unicore RTCM port")
     commands = [
         b"FRESET\r\n",
@@ -1608,7 +1612,7 @@ def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
     selected = options["constellations"]
     if options["output_mode"] == "diagnostics_rtcm":
         nmea_port = str(runtime_cfg.get("nmea_port") or rtcm_port).strip()
-        if not re.fullmatch(r"(?:com(?:[1-9]|1[0-6])|uart(?:[1-9]|1[0-6])|usb)", nmea_port, flags=re.IGNORECASE):
+        if not re.fullmatch(RECEIVER_PORT_PATTERN, nmea_port, flags=re.IGNORECASE):
             raise ValueError("Invalid Unicore NMEA port")
         for system, messages in {
             "gps": ("gpgga", "gpgsa", "gpgsv", "gpgst"),
@@ -2019,7 +2023,7 @@ class RelayWorker(threading.Thread):
                 source_sock.sendall(source_request.encode())
                 
                 src_header, leftover = read_http_header(source_sock)
-                if b"200 OK" not in src_header and b"ICY 200" not in src_header:
+                if NTRIP_HTTP_SUCCESS not in src_header and NTRIP_ICY_SUCCESS not in src_header:
                     raise Exception("Source rejected")
                 self.source_connected = True
                 
@@ -2067,7 +2071,7 @@ class RelayWorker(threading.Thread):
                             )
                             target_sock.sendall(target_request.encode())
                             response, _ = read_http_header(target_sock, timeout=10)
-                            if not (b"ICY 200" in response or b"200 OK" in response):
+                            if not (NTRIP_ICY_SUCCESS in response or NTRIP_HTTP_SUCCESS in response):
                                 raise Exception(f"Target rejected: {response.decode(errors='ignore')[:100]}")
                             target_sock.settimeout(None)
                             self.is_connected = True
@@ -2898,7 +2902,7 @@ class MqttSourceWorker(threading.Thread):
         sock.sendall(target_request.encode())
         
         response = sock.recv(4096)
-        if not (b"ICY 200" in response or b"200 OK" in response):
+        if not (NTRIP_ICY_SUCCESS in response or NTRIP_HTTP_SUCCESS in response):
             raise Exception(f"Target rejected NTRIP connection: {response.decode(errors='ignore')[:100]}")
         
         self.log("SUCCESS", f"TARGET ACTIVE {server_key}: MQTT RTCM -> {target_mp}")
@@ -2925,7 +2929,7 @@ class MqttSourceWorker(threading.Thread):
 
         response = sock.recv(4096)
         self.log("INFO", f"COMMAND SOURCE handshake response: {response.decode(errors='ignore').strip()[:120]}")
-        if not (b"ICY 200" in response or b"200 OK" in response):
+        if not (NTRIP_ICY_SUCCESS in response or NTRIP_HTTP_SUCCESS in response):
             raise Exception(f"Command SOURCE rejected: {response.decode(errors='ignore')[:100]}")
 
         self.log("SUCCESS", f"COMMAND SOURCE ACTIVE: {command_mp}")
@@ -3211,7 +3215,7 @@ class MqttSourceWorker(threading.Thread):
                     self.publish_status()
                     
                     delay = command_delay_seconds(cmd_bytes)
-                    if cmd_bytes.startswith(b"$DELAY_"):
+                    if cmd_bytes.startswith(COMMAND_DELAY_PREFIX):
                         time.sleep(delay)
                         continue
                     if not self._send_command_with_ack(command_sock, cmd_bytes):
@@ -3261,7 +3265,7 @@ class MqttSourceWorker(threading.Thread):
             try:
                 cmd_bytes = cmd if isinstance(cmd, bytes) else cmd.encode('ascii')
                 
-                if b"$DELAY_" in cmd_bytes:
+                if COMMAND_DELAY_PREFIX in cmd_bytes:
                     ms = int(cmd_bytes.decode().split('_')[1].replace('$', ''))
                     time.sleep(ms / 1000.0)
                     continue

@@ -14,6 +14,7 @@ revision: str = "20260704_zalo_smart"
 down_revision: Union[str, Sequence[str], None] = "b274d596f264"
 branch_labels = None
 depends_on = None
+USER_ID_FOREIGN_KEY = "users.id"
 
 
 def upgrade() -> None:
@@ -28,7 +29,7 @@ def upgrade() -> None:
         sa.Column("chat_id", sa.String(), nullable=False),
         sa.Column("chat_type", sa.String(), nullable=False, server_default="private"),
         sa.Column("binding_type", sa.String(), nullable=False),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey(USER_ID_FOREIGN_KEY, ondelete="CASCADE"), nullable=True),
         sa.Column("sender_id", sa.String(), nullable=True),
         sa.Column("display_name", sa.String(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
@@ -47,7 +48,7 @@ def upgrade() -> None:
     op.create_table(
         "zalo_link_codes",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey(USER_ID_FOREIGN_KEY, ondelete="CASCADE"), nullable=False),
         sa.Column("code_hash", sa.String(), nullable=False, unique=True),
         sa.Column("created_at", sa.BigInteger(), nullable=False),
         sa.Column("expires_at", sa.BigInteger(), nullable=False),
@@ -81,7 +82,7 @@ def upgrade() -> None:
         sa.Column("code_hash", sa.String(), nullable=False, unique=True),
         sa.Column("chat_id", sa.String(), nullable=False),
         sa.Column("sender_id", sa.String(), nullable=False),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey(USER_ID_FOREIGN_KEY, ondelete="SET NULL"), nullable=True),
         sa.Column("action", sa.String(), nullable=False),
         sa.Column("risk_level", sa.String(), nullable=False, server_default="standard"),
         sa.Column("target_identifier", sa.String(), nullable=True),

@@ -13,6 +13,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from rapidfuzz import fuzz, process
 
+VIETNAM_REGION_NAME = 'Việt Nam'
+
 from .ionosphere_service import ionosphere_service
 from .zalo_cors_dialogue import cors_intent, static_reply, STATIC_INTENTS, DIAGNOSTIC_INTENTS
 
@@ -94,7 +96,7 @@ def _region_options(words):
 
 def region_for_question(question):
     options = region_options(question)
-    return options[0] if len(options) == 1 else ('Việt Nam', (102, 8, 110, 24))
+    return options[0] if len(options) == 1 else (VIETNAM_REGION_NAME, (102, 8, 110, 24))
 
 
 def is_region_only(question):
@@ -123,7 +125,7 @@ def ionosphere_observation(data, question, now=None):
             if all(math.isfinite(v) for v in (lon, lat, tec, anomaly)) and 0 <= tec <= 300:
                 candidates.append((lon, lat, tec, anomaly))
         cells = [p for p in candidates if west <= p[0] <= east and south <= p[1] <= north]
-        if not cells and candidates and name != 'Việt Nam':
+        if not cells and candidates and name != VIETNAM_REGION_NAME:
             lon, lat = (west + east) / 2, (south + north) / 2
             nearest = min(candidates, key=lambda p: (p[0]-lon)**2 + (p[1]-lat)**2)
             if abs(nearest[0]-lon) <= 5 and abs(nearest[1]-lat) <= 2.5:
@@ -228,7 +230,7 @@ def status_change_text(health):
 
 async def _fix_possible_report(health, question):
     name = region_for_question(question)[0]
-    heading = f'📍 {name}\n' if name != 'Việt Nam' else ''
+    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
     status = health.get('status')
     if status == 'offline':
         return (f'{heading}Nguồn Cục đang gián đoạn nên chưa thể trông chờ FIX bằng nguồn này. '
@@ -259,7 +261,7 @@ async def _cors_only_report(health, question, intent):
     """A public-source/atmosphere assessment, not a private station diagnosis."""
     words = _plain(question)
     name = region_for_question(question)[0]
-    heading = f'📍 {name}\n' if name != 'Việt Nam' else ''
+    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
     data, kp = await asyncio.gather(_latest_ionosphere(), geomagnetic_observation())
     observation = ionosphere_observation(data, question)
     value = kp['value'] if kp else None
@@ -294,7 +296,7 @@ async def _cors_only_report(health, question, intent):
         advice += ' Phần bản tin còn thiếu chưa đủ để nhận định điều kiện đo hiện tại.'
     if intent == 'forecast':
         headline += ' Đây là tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.'
-    scope = '\nAnh muốn xem điện ly ở tỉnh nào?' if name == 'Việt Nam' else ''
+    scope = '\nAnh muốn xem điện ly ở tỉnh nào?' if name == VIETNAM_REGION_NAME else ''
     return f'{heading}{headline}\n{magnetic}\n{atmosphere}\n\n{advice}{scope}'
 
 
@@ -314,7 +316,7 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
     if delivery_mode == 'cors_only':
         return await _cors_only_report(health, question, intent)
     name = region_for_question(question)[0]
-    heading = f'📍 {name}\n' if name != 'Việt Nam' else ''
+    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
     status = health.get('status')
     headline = {
         'online': 'CORS Cục đang hoạt động.',
@@ -331,7 +333,7 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
             return f'{heading}{headline} Nếu anh đang dùng nguồn này, chuyển sang nguồn dự phòng đã kiểm tra.'
         if status != 'online':
             return f'{heading}{headline} Anh đang dùng trạm hoặc mountpoint nào để mình khoanh vùng tiếp?'
-        if name == 'Việt Nam':
+        if name == VIETNAM_REGION_NAME:
             return f'{headline} Anh muốn kiểm tra khu vực hoặc trạm nào?'
         return (f'{heading}{headline} Nhưng mình chưa có số liệu RTCM/FIX tại khu vực này '
                 'để xác nhận độ ổn định.\nAnh đang dùng trạm hoặc mountpoint nào?')
@@ -409,9 +411,9 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
     else:
         decision = (f'{headline} Chưa có số liệu RTCM/FIX tại điểm đo để xác nhận ca đo ổn định.')
     advice = field_advice(status, value, words)
-    if name == 'Việt Nam' and advice == 'Anh đang dùng trạm hoặc mountpoint nào?':
+    if name == VIETNAM_REGION_NAME and advice == 'Anh đang dùng trạm hoặc mountpoint nào?':
         advice = 'Anh đang đo ở tỉnh nào?'
     if value is None:
         advice += '\nChỉ số địa từ đang tạm mất cập nhật.'
-    scope = '\nAnh đang đo ở tỉnh nào?' if name == 'Việt Nam' and '?' not in advice else ''
+    scope = '\nAnh đang đo ở tỉnh nào?' if name == VIETNAM_REGION_NAME and '?' not in advice else ''
     return f'{heading}{decision}\n{advice}{scope}'

@@ -24,6 +24,9 @@ from .operations_routes import (
 
 logger = logging.getLogger("app.main")
 router = APIRouter()
+UPDATED_AT_HEADER = "Cập nhật lúc"
+CREATED_AT_HEADER = "Ngày tạo"
+ACCOUNT_HEADER = "Tài khoản"
 
 
 @router.get("/api/ops/export/options")
@@ -116,7 +119,7 @@ async def export_ops_xlsx(
             "serial": ("Số sê-ri", lambda d: d.serial),
             "name": ("Tên trạm", lambda d: d.name),
             "status": ("Trạng thái", lambda d: d.status),
-            "updated_at": ("Cập nhật lúc", lambda d: when(d.timestamp)),
+            "updated_at": (UPDATED_AT_HEADER, lambda d: when(d.timestamp)),
             "version": ("Phiên bản", lambda d: d.version),
             "chip": ("Loại chip", lambda d: d.detected_chip_type),
             "coordinator": ("Điều phối viên", lambda d: coordinators.get(d.user_id, "")),
@@ -170,7 +173,7 @@ async def export_ops_xlsx(
             selected_rovers = [r for r in rovers if not rover_name or str(r.username).casefold() == rover_name.casefold()]
             if rover_name and not selected_rovers:
                 raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover")
-            headers = ["Tài khoản", "Số sê-ri Base", "Mountpoint", "Caster", "Hoạt động", "Kết nối tối đa", "Hết hạn", "Ngày tạo"]
+            headers = [ACCOUNT_HEADER, "Số sê-ri Base", "Mountpoint", "Caster", "Hoạt động", "Kết nối tối đa", "Hết hạn", CREATED_AT_HEADER]
             rows = [[r.username, r.base_serial, words(r.mountpoints), words(r.target_casters), r.is_active, r.max_connections, when(r.expires_at), when(r.created_at)] for r in selected_rovers]
             title = "DANH SÁCH ROVER"
         else:
@@ -183,18 +186,18 @@ async def export_ops_xlsx(
             sessions = result.scalars().all()
             if rover_name and not sessions:
                 raise HTTPException(status_code=404, detail="Rover này chưa có phiên được lưu")
-            headers = ["Tài khoản", "Caster", "Mountpoint", "Receiver", "Bắt đầu", "Cập nhật cuối", "Kết thúc", "Vĩ độ cuối", "Kinh độ cuối", "Ghi nhận vị trí", "Google Maps"]
+            headers = [ACCOUNT_HEADER, "Caster", "Mountpoint", "Receiver", "Bắt đầu", "Cập nhật cuối", "Kết thúc", "Vĩ độ cuối", "Kinh độ cuối", "Ghi nhận vị trí", "Google Maps"]
             rows = [[s.username, s.server, s.mountpoint, s.receiver_id, when(s.started_at), when(s.last_seen_at), when(s.ended_at), s.latitude if s.position_fix_quality == 4 else None, s.longitude if s.position_fix_quality == 4 else None, when(s.position_updated_at) if s.position_fix_quality == 4 else None, f"https://www.google.com/maps/search/?api=1&query={s.latitude},{s.longitude}" if s.position_fix_quality == 4 and s.latitude is not None and s.longitude is not None else ""] for s in sessions]
             title = "LỊCH SỬ PHIÊN ROVER"
         subtitle += f" · {len(rows)} dòng" + (f" · Rover {rover_name}" if rover_name else "")
     elif kind == "caster-users":
         data = await get_caster_users(auth_db=auth_db, devices_db=devices_db, current_user=current_user)
-        headers = ["Tài khoản", "Caster", "Mountpoint", "Kết nối", "Giới hạn", "Trong DB", "Bị chặn", "Cập nhật lúc"]
+        headers = [ACCOUNT_HEADER, "Caster", "Mountpoint", "Kết nối", "Giới hạn", "Trong DB", "Bị chặn", UPDATED_AT_HEADER]
         rows = [[u.username, u.server, words(u.mountpoints), u.nclient, u.maxclient, u.in_db, u.is_blocked, when(u.last_update)] for u in data.items]
         title = "ROVER TRÊN CASTER"
     elif kind == "blocklist":
         result = await auth_db.execute(select(models.RoverBlocklist).order_by(models.RoverBlocklist.blocked_at.desc()))
-        headers = ["Tài khoản", "Mountpoint", "Bị chặn lúc", "Người chặn", "Lý do"]
+        headers = [ACCOUNT_HEADER, "Mountpoint", "Bị chặn lúc", "Người chặn", "Lý do"]
         rows = [[item.username, item.mountpoint, when(item.blocked_at), item.blocked_by, item.reason] for item in result.scalars()]
         title = "DANH SÁCH ROVER BỊ CHẶN"
     elif kind in {"alerts", "resolved-alerts"}:
@@ -211,12 +214,12 @@ async def export_ops_xlsx(
         title = "200 SỰ KIỆN GẦN NHẤT"
     elif kind == "casters":
         summary = await get_ops_summary(auth_db=auth_db, devices_db=devices_db, current_user=current_user)
-        headers = ["Máy chủ", "Cổng", "Tài khoản", "Kết nối", "Lỗi", "Dữ liệu cũ", "Cập nhật lúc"]
+        headers = ["Máy chủ", "Cổng", ACCOUNT_HEADER, "Kết nối", "Lỗi", "Dữ liệu cũ", UPDATED_AT_HEADER]
         rows = [[c.get("host"), c.get("port"), c.get("users"), c.get("clients"), c.get("error"), c.get("stale"), when(c.get("last_update"))] for c in summary["casters"]]
         title = "TÌNH TRẠNG CASTER"
     elif kind == "users":
         users = await crud.get_all_users(auth_db)
-        headers = ["ID", "Tài khoản", "Họ tên", "Vai trò", "Hoạt động", "Số sê-ri trạm", "Quyền trạm", "Xem Rover", "Tạo Rover", "Tạo tài khoản", "Ngày tạo"]
+        headers = ["ID", ACCOUNT_HEADER, "Họ tên", "Vai trò", "Hoạt động", "Số sê-ri trạm", "Quyền trạm", "Xem Rover", "Tạo Rover", "Tạo tài khoản", CREATED_AT_HEADER]
         def assigned(value):
             if isinstance(value, str):
                 try:
@@ -233,7 +236,7 @@ async def export_ops_xlsx(
         title = "TÀI KHOẢN HỆ THỐNG"
     elif kind == "templates":
         settings_data = await crud.get_system_settings(auth_db)
-        headers = ["Tên mẫu", "Phần", "Thông số", "Giá trị", "Người tạo", "Ngày tạo"]
+        headers = ["Tên mẫu", "Phần", "Thông số", "Giá trị", "Người tạo", CREATED_AT_HEADER]
         def parameters(value, prefix=""):
             if isinstance(value, dict):
                 for key, nested in value.items():

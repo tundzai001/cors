@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 from ..mobile_base import require_editable_base
 
 router = APIRouter(dependencies=[Depends(require_editable_base)], tags=["Devices"])
+DEVICE_NOT_FOUND = "Device not found"
+VIEW_ONLY_STATION = "Trạm này chỉ được xem"
 
 
 def _normalize_auto_cors_config(payload: dict) -> dict:
@@ -192,9 +194,9 @@ async def send_generic_command(
         await auto_deploy_device_token(serial, db, current_user)
         device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+        raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
+        raise HTTPException(status_code=403, detail=VIEW_ONLY_STATION)
     if command.command == "VERIFY_GNSS_CONFIG":
         live_info = (mqtt_handler.device_telemetry_cache.get(serial) or {}).get("system_info")
         capabilities = live_info if isinstance(live_info, dict) else device.system_info or {}
@@ -266,9 +268,9 @@ async def start_base_reference_check(
 ):
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+        raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
+        raise HTTPException(status_code=403, detail=VIEW_ONLY_STATION)
     command = {
         "command": "TRIGGER_BASE_REFERENCE_CHECK",
         "payload": {
@@ -305,7 +307,7 @@ async def get_device_cors_mountpoints(
 ):
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+        raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
 
     host = request.host.strip()
     username = request.username.strip()
@@ -360,7 +362,7 @@ async def configure_chip_endpoint(
     if not device_in_db:
         raise HTTPException(status_code=404, detail="Device not found in database")
     if current_user.role == auth.Role.COORDINATOR and device_in_db.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
+        raise HTTPException(status_code=403, detail=VIEW_ONLY_STATION)
 
     payload = config_request.payload or {}
     sensor_type = payload.get("sensor_type")
@@ -1111,7 +1113,7 @@ async def set_device_license_bypass(
 ):
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+        raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
 
     payload = payload or {}
     enabled = bool(payload.get("enabled"))

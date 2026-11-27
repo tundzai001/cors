@@ -6,6 +6,9 @@ from sqlalchemy import Column, String, Integer, BigInteger, Boolean, JSON, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from .database import Base, AuthBase 
 
+USER_ID_FOREIGN_KEY = "users.id"
+ADMINISTRATIVE_UNIT_ID_FOREIGN_KEY = "administrative_units.id"
+
 class Device(Base):
     __tablename__ = "devices"
 
@@ -163,7 +166,7 @@ class UserSession(AuthBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String(64), unique=True, index=True, nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey(USER_ID_FOREIGN_KEY, ondelete="CASCADE"), index=True, nullable=False)
     username = Column(String, index=True, nullable=False)
     role = Column(String, nullable=False)
     ip_address = Column(String, nullable=False)
@@ -221,7 +224,7 @@ class ZaloChatBinding(AuthBase):
     chat_id = Column(String, unique=True, nullable=False, index=True)
     chat_type = Column(String, nullable=False, default="private")
     binding_type = Column(String, nullable=False, index=True)  # private, group_admin, group_public, cors_public
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey(USER_ID_FOREIGN_KEY, ondelete="CASCADE"), nullable=True, index=True)
     sender_id = Column(String, nullable=True, index=True)
     display_name = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, index=True)
@@ -237,7 +240,7 @@ class ZaloLinkCode(AuthBase):
     __tablename__ = "zalo_link_codes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey(USER_ID_FOREIGN_KEY, ondelete="CASCADE"), nullable=False, index=True)
     code_hash = Column(String, unique=True, nullable=False, index=True)
     created_at = Column(BigInteger, nullable=False)
     expires_at = Column(BigInteger, nullable=False, index=True)
@@ -272,7 +275,7 @@ class ZaloPendingAction(AuthBase):
     code_hash = Column(String, unique=True, nullable=False, index=True)
     chat_id = Column(String, nullable=False, index=True)
     sender_id = Column(String, nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey(USER_ID_FOREIGN_KEY, ondelete="SET NULL"), nullable=True, index=True)
     action = Column(String, nullable=False, index=True)
     risk_level = Column(String, nullable=False, default="standard")
     target_identifier = Column(String, nullable=True)
@@ -399,7 +402,7 @@ class Province(Base):
     postal_code_prefix = Column(String(255), nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
-    administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
+    administrative_unit_id = Column(Integer, ForeignKey(ADMINISTRATIVE_UNIT_ID_FOREIGN_KEY), nullable=True)
 
 
 class District(Base):
@@ -414,7 +417,7 @@ class District(Base):
     province_code = Column(String(20), ForeignKey("provinces.code"), nullable=True, index=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
-    administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
+    administrative_unit_id = Column(Integer, ForeignKey(ADMINISTRATIVE_UNIT_ID_FOREIGN_KEY), nullable=True)
 
     __table_args__ = (
         Index('ix_districts_province_name', 'province_code', 'name'),
@@ -435,7 +438,7 @@ class Ward(Base):
     province_code = Column(String(20), ForeignKey("provinces.code"), nullable=True, index=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
-    administrative_unit_id = Column(Integer, ForeignKey("administrative_units.id"), nullable=True)
+    administrative_unit_id = Column(Integer, ForeignKey(ADMINISTRATIVE_UNIT_ID_FOREIGN_KEY), nullable=True)
 
     __table_args__ = (
         Index('ix_wards_province_name', 'province_code', 'name'),

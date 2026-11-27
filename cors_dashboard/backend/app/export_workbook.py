@@ -7,6 +7,8 @@ import zipfile
 from datetime import datetime
 from xml.sax.saxutils import escape
 
+WORKSHEET_ROW_END = "</row>"
+
 
 def _text(value):
     if value is None:
@@ -112,11 +114,11 @@ def make_workbook(title, subtitle, headers, rows):
                 write(f'<row r="{number}" ht="{height}" customHeight="1">')
                 for index in range(1, len(headers) + 1):
                     write(_cell(f'{_column(index)}{number}', value if index == 1 else "", style))
-                write('</row>')
+                write(WORKSHEET_ROW_END)
             write('<row r="4" ht="30" customHeight="1">')
             for index, header in enumerate(headers, 1):
                 write(_cell(f'{_column(index)}4', header, 3))
-            write('</row>')
+            write(WORKSHEET_ROW_END)
             last_row = 4
             for last_row, values in enumerate(rows, 5):
                 style = 4 if last_row % 2 else 5
@@ -125,7 +127,7 @@ def make_workbook(title, subtitle, headers, rows):
                 write(f'<row r="{last_row}" ht="{height}" customHeight="1">')
                 for index, value in enumerate(values, 1):
                     write(_cell(f'{_column(index)}{last_row}', value, style))
-                write('</row>')
+                write(WORKSHEET_ROW_END)
             write('</sheetData>')
             write(f'<autoFilter ref="A4:{last_column}{last_row}"/>')
             if len(headers) > 1:

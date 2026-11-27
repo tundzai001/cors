@@ -18,6 +18,8 @@ from .. import auth, models
 from ..database import get_auth_db, get_db, settings
 
 router = APIRouter(tags=["API keys"])
+ADMIN_ACCESS_REQUIRED = "Admin access required"
+API_KEY_NOT_FOUND = "API key not found"
 
 
 STATION_FIELDS = frozenset({
@@ -113,7 +115,7 @@ def require_station_edit(key: models.ApiKey, serial: str) -> None:
 @router.get("/api/admin/api-keys/page", include_in_schema=False)
 async def api_keys_page(user: models.User = Depends(auth.get_current_user)):
     if user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Admin access required")
+        raise HTTPException(403, ADMIN_ACCESS_REQUIRED)
     return FileResponse(
         Path(__file__).resolve().parents[3] / "frontend" / "api-keys.html",
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
@@ -127,7 +129,7 @@ async def list_api_keys(
     user: models.User = Depends(auth.get_current_user),
 ):
     if user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Admin access required")
+        raise HTTPException(403, ADMIN_ACCESS_REQUIRED)
     result = await db.execute(select(models.ApiKey).order_by(models.ApiKey.id.desc()))
     return [_key_metadata(key) for key in result.scalars().all()]
 
@@ -141,7 +143,7 @@ async def create_api_key(
     user: models.User = Depends(auth.get_current_user),
 ):
     if user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Admin access required")
+        raise HTTPException(403, ADMIN_ACCESS_REQUIRED)
     policy = await _validate_policy(body, devices_db)
     if not policy["name"]:
         raise HTTPException(422, "Name is required")
@@ -169,14 +171,14 @@ async def reveal_api_key(
     user: models.User = Depends(auth.get_current_user),
 ):
     if user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Admin access required")
+        raise HTTPException(403, ADMIN_ACCESS_REQUIRED)
     if await reveal_rate_limiter.is_rate_limited(str(user.id)):
         raise HTTPException(429, "Thử quá nhiều lần. Vui lòng đợi một phút.")
     if not await auth.verify_password(body.password, user.hashed_password):
         raise HTTPException(400, "Mật khẩu quản trị viên không đúng.")
     key = await db.get(models.ApiKey, key_id)
     if key is None or key.revoked_at is not None:
-        raise HTTPException(404, "API key not found")
+        raise HTTPException(404, API_KEY_NOT_FOUND)
     if not key.token_encrypted:
         raise HTTPException(409, "Key cũ chỉ còn mã băm. Dán key đã lưu để bật xem lại.")
     try:
@@ -196,10 +198,10 @@ async def save_existing_api_key(
     user: models.User = Depends(auth.get_current_user),
 ):
     if user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Admin access required")
+        raise HTTPException(403, ADMIN_ACCESS_REQUIRED)
     key = await db.get(models.ApiKey, key_id)
     if key is None or key.revoked_at is not None:
-        raise HTTPException(404, "API key not found")
+        raise HTTPException(404, API_KEY_NOT_FOUND)
     if not secrets.compare_digest(hashlib.sha256(body.token.encode()).hexdigest(), key.key_hash):
         raise HTTPException(422, "Key không khớp với tích hợp này.")
     key.token_encrypted = _token_cipher().encrypt(body.token.encode()).decode()
@@ -217,7 +219,7 @@ async def update_api_key(
     user: models.User = Depends(auth.get_current_user),
 ):
     if user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Admin access required")
+        raise HTTPException(403, ADMIN_ACCESS_REQUIRED)
     key = await db.get(models.ApiKey, key_id)
     if key is None or key.revoked_at is not None:
         raise HTTPException(404, "Active API key not found")
@@ -237,10 +239,10 @@ async def revoke_api_key(
     user: models.User = Depends(auth.get_current_user),
 ):
     if user.role != auth.Role.ADMIN:
-        raise HTTPException(403, "Admin access required")
+        raise HTTPException(403, ADMIN_ACCESS_REQUIRED)
     key = await db.get(models.ApiKey, key_id)
     if key is None:
-        raise HTTPException(404, "API key not found")
+        raise HTTPException(404, API_KEY_NOT_FOUND)
     if key.revoked_at is None:
         key.revoked_at = int(time.time())
         await db.commit()

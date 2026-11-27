@@ -13,6 +13,8 @@ import httpx
 
 from .gnss_status_sources import QZSS_STATUS_URL, parse_qzss_status
 
+TLE_EPOCH_FORMAT = "%Y:%j:"
+
 logger = logging.getLogger("app.satellites")
 
 CACHE_TTL_SECONDS = 7200.0  # 2 hours (in compliance with CelesTrak usage policy)
@@ -120,7 +122,7 @@ class SatelliteService:
         rows = [(constellation, sat) for constellation, satellites in constellations.items() for sat in satellites]
         owners = {}
         now = datetime.now(timezone.utc)
-        epoch = now.strftime("%Y:%j:") + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
+        epoch = now.strftime(TLE_EPOCH_FORMAT) + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
         for norad, assignments in self._identifiers.items():
             for start, end, code in assignments:
                 if start <= epoch and (end == "0000:000:00000" or epoch < end):
@@ -147,7 +149,7 @@ class SatelliteService:
                 continue
             if date.tzinfo is None:
                 continue
-            epoch = date.strftime("%Y:%j:") + f"{date.hour * 3600 + date.minute * 60 + date.second:05d}"
+            epoch = date.strftime(TLE_EPOCH_FORMAT) + f"{date.hour * 3600 + date.minute * 60 + date.second:05d}"
             # A monthly table cannot override a later IGS reassignment.
             boundaries = [boundary for start, end, _ in self._identifiers.get(norad, []) for boundary in (start, end) if boundary != "0000:000:00000"]
             if date > datetime.now(timezone.utc) or (boundaries and max(boundaries) > epoch):
@@ -191,7 +193,7 @@ class SatelliteService:
         assignments = self._identifiers.get(line1[2:7].strip().lstrip("0"))
         if assignments:
             now = datetime.now(timezone.utc)
-            epoch = now.strftime("%Y:%j:") + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
+            epoch = now.strftime(TLE_EPOCH_FORMAT) + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
             for start, end, code in reversed(assignments):
                 if start <= epoch and (end == "0000:000:00000" or epoch < end):
                     if code.startswith(prefix):

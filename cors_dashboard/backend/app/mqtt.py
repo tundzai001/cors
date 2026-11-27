@@ -28,6 +28,7 @@ from . import license_manager
 
 # Serialize MQTT DB writes to avoid connection pool spikes under burst traffic.
 mqtt_db_write_lock = asyncio.Lock()
+ASYNCIO_LOOP_NOT_RUNNING = "asyncio loop is not running"
 
 
 def _fingerprint_token(token: str | None) -> str | None:
@@ -408,7 +409,7 @@ def _enqueue_mqtt_control_ack(topic: str, payload: bytes) -> None:
     if should_schedule:
         try:
             if not main_loop or not main_loop.is_running():
-                raise RuntimeError("asyncio loop is not running")
+                raise RuntimeError(ASYNCIO_LOOP_NOT_RUNNING)
             main_loop.call_soon_threadsafe(_drain_mqtt_control_acks)
         except RuntimeError:
             with mqtt_ingress_lock:
@@ -437,7 +438,7 @@ def _enqueue_mqtt_ingress(topic: str, payload: bytes, is_retained: bool) -> None
     if should_schedule:
         try:
             if not main_loop or not main_loop.is_running():
-                raise RuntimeError("asyncio loop is not running")
+                raise RuntimeError(ASYNCIO_LOOP_NOT_RUNNING)
             main_loop.call_soon_threadsafe(_start_mqtt_ingress_drain)
         except RuntimeError:
             with mqtt_ingress_lock:
@@ -466,7 +467,7 @@ def _enqueue_external_command(topic: str, payload: bytes) -> None:
     if should_schedule:
         try:
             if not main_loop or not main_loop.is_running():
-                raise RuntimeError("asyncio loop is not running")
+                raise RuntimeError(ASYNCIO_LOOP_NOT_RUNNING)
             main_loop.call_soon_threadsafe(_start_external_command_drain)
         except RuntimeError:
             with mqtt_ingress_lock:

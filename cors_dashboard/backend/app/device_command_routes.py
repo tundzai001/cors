@@ -40,6 +40,7 @@ logger = logging.getLogger("app.main")
 from .mobile_base import require_editable_base
 
 router = APIRouter(dependencies=[Depends(require_editable_base)])
+DEVICE_NOT_FOUND = "Thiết bị không tồn tại"
 tools_router = APIRouter(dependencies=[Depends(require_editable_base)])
 
 
@@ -344,7 +345,7 @@ async def set_configured_relay_power(
 ):
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
+        raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
     if not serial.strip().upper().startswith("RELAY_"):
         raise HTTPException(status_code=404, detail="Thiết bị không phải Relay cấu hình")
     if not auth.has_permission(current_user, auth.Permission.MANAGE_STATION_MODE):
@@ -396,7 +397,7 @@ async def reset_pi_device(
     # 1. Lấy thiết bị từ DB TRƯỚC để kiểm tra sự tồn tại
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
+        raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
 
     # 2. Phân quyền: Cần EDIT_SERVICE_CONFIG. Nếu là Coordinator thì phải là người sở hữu.
     if not auth.has_permission(current_user, auth.Permission.EDIT_SERVICE_CONFIG):
@@ -446,7 +447,7 @@ async def hard_reset_pi_device(
     # 1. Lấy thiết bị từ DB TRƯỚC để kiểm tra sự tồn tại
     device = await crud.get_device_by_serial(db, serial)
     if not device:
-        raise HTTPException(status_code=404, detail="Thiết bị không tồn tại")
+        raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
 
     # 3. Gửi lệnh xuống thiết bị (Chỉ gửi khi đã qua cửa kiểm tra an ninh)
     try:

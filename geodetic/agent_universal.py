@@ -1,5 +1,9 @@
 #agent_universal.py
 AGENT_VERSION = "V2.4.2"
+UNICORE_LOG_LIST_KEY = b'#UNILOGLIST'
+UNICORE_AGCA_MESSAGE = '#AGCA'
+UNICORE_BASE_MODE_PREFIX = 'MODE BASE'
+UNICORE_VERSION_COMMAND = b'version\r\n'
 
 import asyncio
 import copy
@@ -537,14 +541,14 @@ def _unicore_rf_log(packet):
     text, body = _base_unicore_fields(packet)
     message = text.split(',', 1)[0]
     fields = body.split(',')
-    count = {'#AGCA': 10, '#JAMSTATUSA': 5, '#FREQJAMSTATUSA': 9}.get(message)
+    count = {UNICORE_AGCA_MESSAGE: 10, '#JAMSTATUSA': 5, '#FREQJAMSTATUSA': 9}.get(message)
     if count is None or len(fields) != count:
         raise ValueError('Invalid Unicore RF fields')
-    numeric = fields if message == '#AGCA' else fields[1:]
+    numeric = fields if message == UNICORE_AGCA_MESSAGE else fields[1:]
     if any(not re.fullmatch(r'-?\d+', value.strip()) for value in numeric):
         raise ValueError('Invalid Unicore RF numbers')
     values = [int(value) for value in numeric]
-    if message == '#AGCA':
+    if message == UNICORE_AGCA_MESSAGE:
         if any(not -1 <= value <= 255 for value in values):
             raise ValueError('Invalid Unicore AGC')
         return dict(source='unicore_agca', values=values)
@@ -801,7 +805,7 @@ def _update_automatic_rf_monitor():
 async def refresh_receiver_quality(agent, reader):
     if agent.detected_chip.get('type') == 'Unicorecomm':
         try:
-            packet = await reader.query_base(b'\r\nAGCA\r\n', b'#AGCA')
+            packet = await reader.query_base(b'\r\nAGCA\r\n', UNICORE_AGCA_MESSAGE.encode('ascii'))
             globals()['LAST_UNICORE_AGC'] = _unicore_rf_log(packet)
             globals()['LAST_UNICORE_AGC_TS'] = time.time()
         except Exception as error:
@@ -1309,7 +1313,7 @@ def get_chip_info(port: str, baudrate: int) -> dict | None:
         pass
     
     unicore_test_commands = [
-        b'version\r\n',
+        UNICORE_VERSION_COMMAND,
         b'config version\r\n',
         b'config\r\n',
     ]
@@ -1351,7 +1355,7 @@ def find_chip_robustly():
             
             # === TEST UNICORECOMM FIRST ===
             unicore_commands = [
-                b'version\r\n',
+                UNICORE_VERSION_COMMAND,
                 b'config version\r\n',
                 b'config\r\n'
             ]
@@ -1457,7 +1461,7 @@ def find_chip_fallback():
                         ser.read(ser.in_waiting)
                     
                     # Test version command
-                    ser.write(b'version\r\n')
+                    ser.write(UNICORE_VERSION_COMMAND)
                     ser.flush()
                     response = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
                     if response:
@@ -3990,7 +3994,7 @@ class GNSSReader(threading.Thread):
         try:
             while request['reply'] is None:
                 if time.monotonic() >= request['deadline'] or self._stop_event.is_set():
-                    if key == b'#UNILOGLIST':
+                    if key == UNICORE_LOG_LIST_KEY:
                         logging.warning("[GNSS][VERIFY][UNILOGLIST] timeout; partial=%r",
                                         request.get('response_preview', b''))
                     raise TimeoutError(f"Receiver readback timeout: {key}")
@@ -4265,10 +4269,10 @@ class GNSSReader(threading.Thread):
             
             # Read-only Unicore replies share the RTCM stream, not the NMEA channel.
             elif buffer[0] == ord('#'):
-                if buffer.startswith(b'#UNILOGLIST,'):
+                if buffer.startswith(UNICORE_LOG_LIST_KEY + b','):
                     # Firmware may end the list with CRC32 or a blank line.
                     request = getattr(self, '_base_query', None)
-                    if request and request['key'] == b'#UNILOGLIST' and not request['cancelled']:
+                    if request and request['key'] == UNICORE_LOG_LIST_KEY and not request['cancelled']:
                         request['response_preview'] = bytes(buffer[:512])
                     trailer = re.search(rb'\*[0-9a-fA-F]{8}\r?\n|\r?\n\r?\n', buffer)
                     if trailer is None:
@@ -4278,7 +4282,7 @@ class GNSSReader(threading.Thread):
                         self.parse_errors += 1
                         continue
                     packet = bytes(buffer[:trailer.end()])
-                    self._deliver_base_reply(b'#UNILOGLIST', packet)
+                    self._deliver_base_reply(UNICORE_LOG_LIST_KEY, packet)
                     buffer = buffer[trailer.end():]
                     continue
                 end = buffer.find(b'\n')
@@ -4787,9 +4791,9 @@ async def refresh_receiver_base_status(agent, reader):
             result['query'] = 'MODE / BESTNAVA'
             _, mode = _base_unicore_fields(await reader.query_base(b'\r\nMODE\r\n', b'#MODE'))
             mode = mode.upper()
-            if not mode.startswith(('MODE BASE', 'MODE ROVER')):
+            if not mode.startswith((UNICORE_BASE_MODE_PREFIX, 'MODE ROVER')):
                 raise ValueError("Unsupported Unicore operating mode")
-            kind = 'survey_in' if mode.startswith('MODE BASE TIME') else 'base' if mode.startswith('MODE BASE') else 'rover'
+            kind = 'survey_in' if mode.startswith(f'{UNICORE_BASE_MODE_PREFIX} TIME') else 'base' if mode.startswith(UNICORE_BASE_MODE_PREFIX) else 'rover'
             result.update(state='ok', mode_kind=kind, mode_raw=mode)
             if kind == 'survey_in':
                 result['target_seconds'] = int(mode.split()[3])
@@ -4865,7 +4869,7 @@ def _gnss_verification_expected(payload):
 
 
 def _parse_unicore_loglist(packet):
-    if not packet.startswith(b'#UNILOGLIST,') or len(packet) > 4096:
+    if not packet.startswith(UNICORE_LOG_LIST_KEY + b',') or len(packet) > 4096:
         raise ValueError('Invalid UNILOGLIST header/size')
     if b'*' in packet:
         _, body = _base_unicore_fields(packet)
@@ -4927,9 +4931,9 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
         _, mode = _base_unicore_fields(await reader.query_base(b'\r\nMODE\r\n', b'#MODE'))
         mode = mode.upper()
         details['fixed']['actual'] = {'mode': mode}
-        if not mode.startswith(('MODE BASE', 'MODE ROVER')):
+        if not mode.startswith((UNICORE_BASE_MODE_PREFIX, 'MODE ROVER')):
             raise ValueError('Invalid Unicore MODE response')
-        if not mode.startswith('MODE BASE') or mode.startswith('MODE BASE TIME'):
+        if not mode.startswith(UNICORE_BASE_MODE_PREFIX) or mode.startswith(f'{UNICORE_BASE_MODE_PREFIX} TIME'):
             groups['fixed'].update(checked=1, mismatched=1)
         else:
             _, body = _base_unicore_fields(await reader.query_base(b'\r\nBESTNAVA\r\n', b'#BESTNAVA'))
@@ -4951,7 +4955,7 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
         result['mode_error'] = str(error)[:200]
     log_packet = b''
     try:
-        log_packet = await reader.query_base(b'\r\nUNILOGLIST\r\n', b'#UNILOGLIST')
+        log_packet = await reader.query_base(b'\r\nUNILOGLIST\r\n', UNICORE_LOG_LIST_KEY)
         logs = _parse_unicore_loglist(log_packet)
         details['logs'] = [dict(port=port, name=name, period=period) for (port, name), period in logs.items()]
         details['logs_state'] = 'ok'

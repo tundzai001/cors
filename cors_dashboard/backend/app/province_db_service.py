@@ -13,12 +13,13 @@ from . import models
 from .administrative_catalog import PREFIX, normalize, query_parts, matches_place, search_catalog
 
 logger = logging.getLogger("app.main")
+VIETNAM_UNITS_FILENAME = "vietnam_units.json"
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 SRC_GIS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src", "gis"))
-UNITS_JSON_PATH = os.path.join(DATA_DIR, "vietnam_units.json")
-if not os.path.exists(UNITS_JSON_PATH) and os.path.exists(os.path.join(SRC_GIS_DIR, "vietnam_units.json")):
-    UNITS_JSON_PATH = os.path.join(SRC_GIS_DIR, "vietnam_units.json")
+UNITS_JSON_PATH = os.path.join(DATA_DIR, VIETNAM_UNITS_FILENAME)
+if not os.path.exists(UNITS_JSON_PATH) and os.path.exists(os.path.join(SRC_GIS_DIR, VIETNAM_UNITS_FILENAME)):
+    UNITS_JSON_PATH = os.path.join(SRC_GIS_DIR, VIETNAM_UNITS_FILENAME)
 
 # Điểm đại diện của địa danh đã biết; không dùng làm tọa độ cho đơn vị con.
 KNOWN_COORDINATES = {
@@ -225,7 +226,7 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
             await db.flush()
 
         if not os.path.exists(UNITS_JSON_PATH):
-            logger.warning("vietnam_units.json not found at %s", UNITS_JSON_PATH)
+            logger.warning("%s not found at %s", VIETNAM_UNITS_FILENAME, UNITS_JSON_PATH)
             return {"provinces": 0, "districts": 0, "wards": 0}
 
         units = json.loads(await asyncio.to_thread(Path(UNITS_JSON_PATH).read_text, encoding="utf-8"))

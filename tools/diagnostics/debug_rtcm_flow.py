@@ -2,6 +2,8 @@ import asyncio
 import time
 import base64
 import logging
+
+FIRST_SAMPLE_LABEL = "lần đầu"
 import sys
 import os
 import paho.mqtt.client as mqtt
@@ -159,7 +161,7 @@ def on_message(client, userdata, msg, *args, **kwargs):
             nmea_str = payload.decode('utf-8', errors='ignore').strip()
             t_str = time.strftime('%H:%M:%S', time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
             prev_nmea = last_seen["mqtt"].get("NMEA", 0)
-            dt_str = f"{now - prev_nmea:.1f}s" if prev_nmea > 0 else "lần đầu"
+            dt_str = f"{now - prev_nmea:.1f}s" if prev_nmea > 0 else FIRST_SAMPLE_LABEL
             last_seen["mqtt"]["NMEA"] = now
             logging.info(f"[{t_str}] [MQTT NMEA] (cách {dt_str}) | {nmea_str[:80]}")
         except Exception:
@@ -184,7 +186,7 @@ def on_message(client, userdata, msg, *args, **kwargs):
                         if parsed_data:
                             msg_type = str(parsed_data.identity)
                             prev = last_seen["mqtt"].get(msg_type, 0)
-                            dt_str = f"{now - prev:.1f}s" if prev > 0 else "lần đầu"
+                            dt_str = f"{now - prev:.1f}s" if prev > 0 else FIRST_SAMPLE_LABEL
                             last_seen["mqtt"][msg_type] = now
                             idents.append(f"{msg_type} (cách {dt_str})")
                 if idents:
@@ -291,7 +293,7 @@ async def start_ntrip_monitor():
                                     if parsed_data:
                                         msg_type = str(parsed_data.identity)
                                         prev = last_seen["ntrip"].get(msg_type, 0)
-                                        dt_str = f"{now - prev:.1f}s" if prev > 0 else "lần đầu"
+                                        dt_str = f"{now - prev:.1f}s" if prev > 0 else FIRST_SAMPLE_LABEL
                                         last_seen["ntrip"][msg_type] = now
                                         idents.append(f"{msg_type} (cách {dt_str})")
                             if idents:

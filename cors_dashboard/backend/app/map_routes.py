@@ -13,6 +13,8 @@ import time
 from .administrative_catalog import name_matches_query, search_catalog, catalog
 
 from . import auth, crud, models, schemas
+
+PROVINCE_DATASET_PATTERN = '^(current|legacy)$'
 from .database import get_auth_db, get_db
 from .operations_routes import _device_total_bps
 from .status_reconciler import normalize_station_snapshot
@@ -435,7 +437,7 @@ async def get_world_countries_geojson():
 
 @get_public_map_stations_router.get("/api/public/vietnam-provinces")
 async def get_vietnam_provinces(
-    dataset: str = Query('current', pattern='^(current|legacy)$'),
+    dataset: str = Query('current', pattern=PROVINCE_DATASET_PATTERN),
     db: AsyncSession = Depends(get_db),
 ):
     """Read the upstream SQL columns; historical codes stay in a separate catalogue."""
@@ -463,7 +465,7 @@ async def get_vietnam_provinces(
 @get_public_map_stations_router.get("/api/public/vietnam-districts")
 async def get_vietnam_districts(
     province_code: str = Query(..., min_length=1, max_length=20),
-    dataset: str = Query('current', pattern='^(current|legacy)$'),
+    dataset: str = Query('current', pattern=PROVINCE_DATASET_PATTERN),
     db: AsyncSession = Depends(get_db),
 ):
     """The current two-tier model has no districts; expose historical districts explicitly."""
@@ -480,7 +482,7 @@ async def get_vietnam_districts(
 async def get_vietnam_wards(
     province_code: Optional[str] = Query(None, min_length=1, max_length=20),
     district_code: Optional[str] = Query(None, min_length=1, max_length=20),
-    dataset: str = Query('current', pattern='^(current|legacy)$'),
+    dataset: str = Query('current', pattern=PROVINCE_DATASET_PATTERN),
     db: AsyncSession = Depends(get_db),
 ):
     """Read wards without assuming optional GIS columns exist in the SQL import."""

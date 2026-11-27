@@ -19,6 +19,7 @@ from .caster_source_store import inventory_response, sync_configured_sources, lo
 
 logger = logging.getLogger("app.main")
 router = APIRouter()
+CASTER_NOT_CONFIGURED = "Chưa cấu hình Caster Server trong hệ thống"
 
 
 def _finite_coordinate(value):
@@ -259,7 +260,7 @@ async def sync_admin_caster_sources(
         raise HTTPException(status_code=403, detail="Chỉ ADMIN mới có quyền đồng bộ mountpoint")
     hosts, config = _read_caster_config_from_env()
     if not hosts:
-        raise HTTPException(status_code=400, detail="Chưa cấu hình Caster Server trong hệ thống")
+        raise HTTPException(status_code=400, detail=CASTER_NOT_CONFIGURED)
     results = await sync_configured_sources(hosts, config)
     return {'results': results, 'synced_hosts': sum(result['error'] is None for result in results)}
 
@@ -372,7 +373,7 @@ async def create_admin_caster_source(
     hosts, env_cfg = _read_caster_config_from_env()
     target_host = (req.host or (hosts[0] if hosts else None) or env_cfg.get("host") or settings.CASTER_HOST or "").strip()
     if not target_host:
-        raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
+        raise HTTPException(status_code=500, detail=CASTER_NOT_CONFIGURED)
     try:
         target_host = validate_caster_hosts([target_host])[0]
     except ValueError as exc:
@@ -419,7 +420,7 @@ async def delete_admin_caster_source(
     hosts, env_cfg = _read_caster_config_from_env()
     target_host = (req.host or (hosts[0] if hosts else None) or env_cfg.get("host") or settings.CASTER_HOST or "").strip()
     if not target_host:
-        raise HTTPException(status_code=500, detail="Chưa cấu hình Caster Server trong hệ thống")
+        raise HTTPException(status_code=500, detail=CASTER_NOT_CONFIGURED)
     try:
         target_host = validate_caster_hosts([target_host])[0]
     except ValueError as exc:
