@@ -54,6 +54,34 @@ async def _get_configure_chip_device(db, serial, current_user):
     return device
 
 
+async def _wait_for_chip_receiver_profile(serial, device, sensor_type, mode, method):
+    if sensor_type != "Ublox" or mode != "BASE" or method not in ("FIXED_LLA", "SURVEY_IN", "AUTO_CORS"):
+        return None
+    live = mqtt_handler.device_telemetry_cache.get(serial) or {}
+    capabilities = live.get("system_info") or device.system_info or {}
+    try:
+        return await command_builder.wait_for_ublox_profile(
+            mqtt_handler.device_telemetry_cache, serial, capabilities
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _prepare_auto_cors_config(payload, device, mode, method):
+    if mode != "BASE" or method != "AUTO_CORS":
+        return None
+    if not (device.system_info or {}).get("auto_base_review_supported"):
+        raise HTTPException(
+            status_code=409,
+            detail="Cập nhật agent để lấy và duyệt kết quả Auto Base trước khi áp dụng Fixed LLA.",
+        )
+    from .routers.devices import _normalize_auto_cors_config
+    try:
+        return _normalize_auto_cors_config(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 async def _prepare_chip_setup(serial, device, config_request):
     payload = config_request.payload
     sensor_type = payload.get("sensor_type")
@@ -69,29 +97,10 @@ async def _prepare_chip_setup(serial, device, config_request):
     if not sensor_type or not mode:
         raise HTTPException(status_code=400, detail="Missing required fields: sensor_type or mode")
 
-    receiver_profile = None
-    if sensor_type == "Ublox" and mode == "BASE" and method in ("FIXED_LLA", "SURVEY_IN", "AUTO_CORS"):
-        live = mqtt_handler.device_telemetry_cache.get(serial) or {}
-        capabilities = live.get("system_info") or device.system_info or {}
-        try:
-            receiver_profile = await command_builder.wait_for_ublox_profile(
-                mqtt_handler.device_telemetry_cache, serial, capabilities
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    auto_cors_config = None
-    if mode == "BASE" and method == "AUTO_CORS":
-        if not (device.system_info or {}).get("auto_base_review_supported"):
-            raise HTTPException(
-                status_code=409,
-                detail="Cập nhật agent để lấy và duyệt kết quả Auto Base trước khi áp dụng Fixed LLA.",
-            )
-        from .routers.devices import _normalize_auto_cors_config
-        try:
-            auto_cors_config = _normalize_auto_cors_config(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    receiver_profile = await _wait_for_chip_receiver_profile(
+        serial, device, sensor_type, mode, method
+    )
+    auto_cors_config = _prepare_auto_cors_config(payload, device, mode, method)
 
     return {
         "sensor_type": sensor_type,
@@ -654,6 +663,69 @@ async def unlock_device(
     return await lock_device(serial, db, current_user, schemas.StationHostLockRequest(locked_servers=[]))
 
 
+def _device_export_service_values(device):
+    service = device.service_config if isinstance(device.service_config, dict) else {}
+    return [
+        service.get("server1_enabled", False),
+        f"v{service.get('ntrip_version1', 1)}.0",
+        service.get("serverhost1", service.get("host1", "")),
+        service.get("port1", service.get("serverport1", "")),
+        service.get("mountpoint1", service.get("mp1", "")),
+        service.get("username1", service.get("user1", "source")),
+        service.get("server2_enabled", False),
+        f"v{service.get('ntrip_version2', 1)}.0",
+        service.get("serverhost2", service.get("host2", "")),
+        service.get("port2", service.get("serverport2", "")),
+        service.get("mountpoint2", service.get("mp2", "")),
+        service.get("username2", service.get("user2", "source")),
+        service.get("rtcm_enabled", False),
+        service.get("rtcmserver1", ""),
+        service.get("rtcmport1", ""),
+        service.get("rtcmmountpoint1", ""),
+        service.get("rtcmusername1", ""),
+    ]
+
+
+def _device_export_traffic(device):
+    status = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
+    server1 = status.get("server1") if isinstance(status.get("server1"), dict) else {}
+    server2 = status.get("server2") if isinstance(status.get("server2"), dict) else {}
+    server1_bps = int(server1.get("bps", 0) or 0)
+    server2_bps = int(server2.get("bps", 0) or 0)
+    server1_connected = bool(server1.get("connected", False))
+    server2_connected = bool(server2.get("connected", False))
+    if server1_bps == 0 and server2_bps == 0 and isinstance(device.ntrip_status, dict):
+        server1_bps = int(device.ntrip_status.get("server1_bps", 0) or 0)
+        server2_bps = int(device.ntrip_status.get("server2_bps", 0) or 0)
+        server1_connected = server1_connected or server1_bps > 0
+        server2_connected = server2_connected or server2_bps > 0
+    return server1_bps, server1_connected, server2_bps, server2_connected
+
+
+def _device_export_row(device, coordinator_map):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(device.timestamp)) if device.timestamp else "N/A"
+    coordinator = coordinator_map.get(int(device.user_id), "") if device.user_id else ""
+    base = device.base_config if isinstance(device.base_config, dict) else {}
+    coords = base.get("coords", {})
+    if not isinstance(coords, dict):
+        coords = {}
+    server1_bps, server1_connected, server2_bps, server2_connected = _device_export_traffic(device)
+    service_values = _device_export_service_values(device)
+    return [
+        device.serial, device.name, device.status, device.timestamp, timestamp,
+        server1_bps + server2_bps, device.detected_chip_type or "UNKNOWN", coordinator,
+        device.ntrip_connected,
+        base.get("base_setup_method", ""),
+        coords.get("lat", base.get("lat", "")),
+        coords.get("lon", base.get("lon", "")),
+        coords.get("alt", base.get("alt", "")),
+        base.get("accuracy", base.get("acc", "")),
+        *service_values[:6], server1_bps, server1_connected,
+        *service_values[6:12], server2_bps, server2_connected,
+        *service_values[12:],
+    ]
+
+
 @router.get("/api/devices/export/csv")
 async def export_devices_to_csv(
     db: AsyncSession = Depends(get_db),
@@ -727,132 +799,7 @@ async def export_devices_to_csv(
         coordinator_map = {int(row[0]): str(row[1]) for row in rs_users.all() if row and row[0] is not None}
 
     for device in devices:
-        # === THÔNG TIN CHUNG ===
-        human_time = time.strftime(
-            '%Y-%m-%d %H:%M:%S',
-            time.localtime(device.timestamp)
-        ) if device.timestamp else "N/A"
-
-        # Lấy tên Coordinator
-        coordinator_name = ""
-        if device.user_id:
-            coordinator_name = coordinator_map.get(int(device.user_id), "")
-
-        # === CẤU HÌNH BASE ===
-        base_config = device.base_config if isinstance(device.base_config, dict) else {}
-        coords = base_config.get('coords', {})
-        if not isinstance(coords, dict):
-            coords = {}
-        base_method = base_config.get('base_setup_method', '')
-        base_lat = coords.get('lat', base_config.get('lat', ''))
-        base_lon = coords.get('lon', base_config.get('lon', ''))
-        base_alt = coords.get('alt', base_config.get('alt', ''))
-        base_accuracy = base_config.get('accuracy', base_config.get('acc', ''))
-
-        # === CẤU HÌNH SERVICE ===
-        service_config = device.service_config if isinstance(device.service_config, dict) else {}
-
-        # --- SERVER 1 ---
-        s1_enabled = service_config.get('server1_enabled', False)
-        s1_version = service_config.get('ntrip_version1', 1)
-        s1_host = service_config.get('serverhost1', service_config.get('host1', ''))
-        s1_port = service_config.get('port1', service_config.get('serverport1', ''))
-        s1_mountpoint = service_config.get('mountpoint1', service_config.get('mp1', ''))
-        s1_username = service_config.get('username1', service_config.get('user1', 'source'))
-
-        # --- SERVER 2 ---
-        s2_enabled = service_config.get('server2_enabled', False)
-        s2_version = service_config.get('ntrip_version2', 1)
-        s2_host = service_config.get('serverhost2', service_config.get('host2', ''))
-        s2_port = service_config.get('port2', service_config.get('serverport2', ''))
-        s2_mountpoint = service_config.get('mountpoint2', service_config.get('mp2', ''))
-        s2_username = service_config.get('username2', service_config.get('user2', 'source'))
-
-        # --- RTCM CLIENT ---
-        rtcm_enabled = service_config.get('rtcm_enabled', False)
-        rtcm_server = service_config.get('rtcmserver1', '')
-        rtcm_port = service_config.get('rtcmport1', '')
-        rtcm_mountpoint = service_config.get('rtcmmountpoint1', '')
-        rtcm_username = service_config.get('rtcmusername1', '')
-
-        # === NTRIP STATUS (TRAFFIC HIỆN TẠI) ===
-        ntrip_status = device.ntrip_status
-        if not isinstance(ntrip_status, dict):
-            ntrip_status = {}
-
-        s1_status = ntrip_status.get('server1')
-        if not isinstance(s1_status, dict):
-            s1_status = {}
-
-        s1_bps = int(s1_status.get('bps', 0) or 0)
-        s1_connected = bool(s1_status.get('connected', False))
-        s2_status = ntrip_status.get('server2')
-        if not isinstance(s2_status, dict):
-            s2_status = {}
-
-        s2_bps = int(s2_status.get('bps', 0) or 0)
-        s2_connected = bool(s2_status.get('connected', False))
-
-        # Backward-compatible fallback for offline/legacy rows.
-        if s1_bps == 0 and s2_bps == 0 and isinstance(device.ntrip_status, dict):
-            s1_bps = int(device.ntrip_status.get('server1_bps', 0) or 0)
-            s2_bps = int(device.ntrip_status.get('server2_bps', 0) or 0)
-            s1_connected = s1_connected or (s1_bps > 0)
-            s2_connected = s2_connected or (s2_bps > 0)
-
-        total_bps = s1_bps + s2_bps
-
-        # ===================================================================
-        # TẠO HÀNG DỮ LIỆU
-        # ===================================================================
-        row = [
-            # Thông tin chung
-            device.serial,
-            device.name,
-            device.status,
-            device.timestamp,
-            human_time,
-            total_bps,  # Tổng traffic
-            device.detected_chip_type or "UNKNOWN",
-            coordinator_name,
-            device.ntrip_connected,
-
-            # Base config
-            base_method,
-            base_lat,
-            base_lon,
-            base_alt,
-            base_accuracy,
-
-            # Server 1
-            s1_enabled,
-            f"v{s1_version}.0",  # Format: v1.0 hoặc v2.0
-            s1_host,
-            s1_port,
-            s1_mountpoint,
-            s1_username,
-            s1_bps,
-            s1_connected,
-
-            # Server 2
-            s2_enabled,
-            f"v{s2_version}.0",
-            s2_host,
-            s2_port,
-            s2_mountpoint,
-            s2_username,
-            s2_bps,
-            s2_connected,
-
-            # RTCM Client
-            rtcm_enabled,
-            rtcm_server,
-            rtcm_port,
-            rtcm_mountpoint,
-            rtcm_username
-        ]
-
-        writer.writerow(row)
+        writer.writerow(_device_export_row(device, coordinator_map))
 
     # ===================================================================
     # TRẢ VỀ FILE CSV
@@ -912,14 +859,7 @@ async def get_device_history(
     }
 
 
-@tools_router.post("/api/devices/bulk-action", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
-async def bulk_device_action(
-    request: schemas.DeviceBulkActionRequest,
-    auth_db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
-):
-    action = str(request.action or "").strip().lower()
+def _validate_bulk_device_action(action, current_user):
     if action not in {"lock", "unlock", "reset"}:
         raise HTTPException(status_code=400, detail="action must be lock, unlock, or reset")
     if action in {"lock", "unlock"} and not auth.has_permission(current_user, auth.Permission.MANAGE_USERS):
@@ -928,6 +868,34 @@ async def bulk_device_action(
         raise HTTPException(status_code=403, detail="Only admin can lock or unlock stations")
     if action == "reset" and not auth.has_permission(current_user, auth.Permission.EDIT_SERVICE_CONFIG):
         raise HTTPException(status_code=403, detail="Missing permission for reset")
+
+
+async def _run_bulk_device_action(action, serial, device, db, current_user):
+    if action == "lock":
+        response = await lock_device(serial, db, current_user)
+        status = "hosts_locked"
+    elif action == "unlock":
+        response = await unlock_device(serial, db, current_user)
+        status = "hosts_unlocked"
+    else:
+        response = await send_command_to_pi(serial, {"command": "REBOOT_DEVICE", "payload": {}})
+        device.status = "rebooting"
+        status = "reset"
+    await db.commit()
+    await db.refresh(device)
+    await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+    return {"serial": serial, "status": status, "channel": response.get("channel", "unknown")}
+
+
+@tools_router.post("/api/devices/bulk-action", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
+async def bulk_device_action(
+    request: schemas.DeviceBulkActionRequest,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)),
+):
+    action = str(request.action or "").strip().lower()
+    _validate_bulk_device_action(action, current_user)
 
     visible = await _ops_visible_devices(devices_db, auth_db, current_user)
     visible_map = {d.serial: d for d in visible}
@@ -941,20 +909,7 @@ async def bulk_device_action(
             results.append({"serial": serial, "status": "skipped", "detail": "view only station"})
             continue
         try:
-            if action == "lock":
-                response = await lock_device(serial, devices_db, current_user)
-                status_text = "hosts_locked"
-            elif action == "unlock":
-                response = await unlock_device(serial, devices_db, current_user)
-                status_text = "hosts_unlocked"
-            else:
-                response = await send_command_to_pi(serial, {"command": "REBOOT_DEVICE", "payload": {}})
-                device.status = "rebooting"
-                status_text = "reset"
-            await devices_db.commit()
-            await devices_db.refresh(device)
-            await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
-            results.append({"serial": serial, "status": status_text, "channel": response.get("channel", "unknown")})
+            results.append(await _run_bulk_device_action(action, serial, device, devices_db, current_user))
         except Exception as exc:
             results.append({"serial": serial, "status": "error", "detail": str(exc)})
 
@@ -1019,6 +974,46 @@ async def create_device_config_template(
     return template
 
 
+async def _get_owned_device_template(auth_db, template_id, current_user):
+    settings_data = await crud.get_system_settings(auth_db)
+    templates = settings_data.get("device_config_templates", [])
+    template = next(
+        (item for item in templates if str(item.get("id")) == template_id), None
+    ) if isinstance(templates, list) else None
+    if template and current_user.role != auth.Role.ADMIN and template.get("created_by") != current_user.username:
+        template = None
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+
+def _apply_device_template(device, serial, template, request, current_user):
+    if request.apply_service_config:
+        try:
+            check_host_lock(device, template.get("service_config") or {}, is_admin=current_user.role == auth.Role.ADMIN)
+        except HTTPException as exc:
+            return {"serial": serial, "status": "skipped", "detail": exc.detail}
+    if request.apply_base_config and isinstance(template.get("base_config"), dict) and template.get("base_config"):
+        device.base_config = template["base_config"]
+    if request.apply_service_config and isinstance(template.get("service_config"), dict) and template.get("service_config"):
+        device.service_config = _preserve_relay_config_metadata(
+            serial, _device_service_config(device), {**_device_service_config(device), **template["service_config"]}
+        )
+    refresh_host_lock(device, device.service_config or {})
+    device.is_synced = False
+    return {"serial": serial, "status": "applied"}
+
+
+async def _broadcast_template_updates(devices_db, visible_map, results):
+    for result in results:
+        if result.get("status") != "applied":
+            continue
+        device = visible_map.get(result["serial"])
+        if device:
+            await devices_db.refresh(device)
+            await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+
+
 @tools_router.post("/api/devices/apply-template", responses={404: {"description": "Not Found"}})
 async def apply_device_config_template(
     request: schemas.DeviceApplyTemplateRequest,
@@ -1026,13 +1021,7 @@ async def apply_device_config_template(
     devices_db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_SERVICE_CONFIG)),
 ):
-    settings_data = await crud.get_system_settings(auth_db)
-    templates = settings_data.get("device_config_templates", [])
-    template = next((t for t in templates if str(t.get("id")) == request.template_id), None) if isinstance(templates, list) else None
-    if template and current_user.role != auth.Role.ADMIN and template.get("created_by") != current_user.username:
-        template = None
-    if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
+    template = await _get_owned_device_template(auth_db, request.template_id, current_user)
 
     visible = await _ops_visible_devices(devices_db, auth_db, current_user)
     visible_map = {d.serial: d for d in visible}
@@ -1046,28 +1035,9 @@ async def apply_device_config_template(
             results.append({"serial": serial, "status": "skipped", "detail": "view only station"})
             continue
         device = await crud.get_device_for_update(devices_db, serial)
-        if request.apply_service_config:
-            try:
-                check_host_lock(device, template.get("service_config") or {}, is_admin=current_user.role == auth.Role.ADMIN)
-            except HTTPException as exc:
-                results.append({"serial": serial, "status": "skipped", "detail": exc.detail})
-                continue
-        if request.apply_base_config and isinstance(template.get("base_config"), dict) and template.get("base_config"):
-            device.base_config = template["base_config"]
-        if request.apply_service_config and isinstance(template.get("service_config"), dict) and template.get("service_config"):
-            device.service_config = _preserve_relay_config_metadata(
-                serial, _device_service_config(device), {**_device_service_config(device), **template["service_config"]}
-            )
-        refresh_host_lock(device, device.service_config or {})
-        device.is_synced = False
-        results.append({"serial": serial, "status": "applied"})
+        results.append(_apply_device_template(device, serial, template, request, current_user))
     await devices_db.commit()
-
-    for serial in [r["serial"] for r in results if r.get("status") == "applied"]:
-        device = visible_map.get(serial)
-        if device:
-            await devices_db.refresh(device)
-            await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
+    await _broadcast_template_updates(devices_db, visible_map, results)
 
     await crud.log_system_event(
         db=devices_db,
