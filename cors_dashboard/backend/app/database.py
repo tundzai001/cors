@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     CASTER_HOST: str | None = None
     CASTER_PORT: int | None = None
     REDIS_URL: str | None = None
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = ""
     NTRIP_CONTROL_TOKEN: str = ""
     TRUSTED_PROXY_IPS: str = ""
     

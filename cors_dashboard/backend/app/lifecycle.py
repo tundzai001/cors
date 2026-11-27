@@ -90,18 +90,21 @@ async def lifespan(app: FastAPI):
         # ===================================================================
         try:
             async with auth_session_scope() as db_session:
-                admin_user = await crud.get_user_by_username(db_session, username="admin")
-                if not admin_user:
-                    logger.warning("Không tìm thấy người dùng 'admin' mặc định. Đang tiến hÃ nh tạo...")
-                    hashed_password = await auth.get_password_hash("Admin@123")
+                admin_username = settings.ADMIN_USERNAME.strip()
+                admin_password = settings.ADMIN_PASSWORD
+                admin_user = await crud.get_user_by_username(db_session, username=admin_username)
+                if not admin_user and admin_password:
+                    hashed_password = await auth.get_password_hash(admin_password)
                     await crud.create_user(
                         db=db_session,
-                        username="admin",
+                        username=admin_username,
                         hashed_password=hashed_password,
                         role=auth.Role.ADMIN,
                         full_name="Administrator"
                     )
-                    logger.info("âœ“ Đã tạo người dùng 'admin' mặc định thÃ nh công.")
+                    logger.info("Created bootstrap admin user from environment configuration.")
+                elif not admin_user:
+                    logger.warning("ADMIN_PASSWORD is unset; skipping bootstrap admin creation.")
         except Exception as e:
             logger.error(f"Failed to create default admin: {e}")
 
