@@ -573,6 +573,19 @@ async def delete_device_from_list(
     return {"status": "deleted", "serial": serial}
 
 
+async def _deliver_device_lock_command(serial, command, locked, scoped, device):
+    if locked and not scoped:
+        return False
+    try:
+        await send_command_to_pi(serial, command)
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            raise
+        return False
+    device.is_locked = False
+    return True
+
+
 @router.post("/api/devices/{serial}/lock", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
 async def lock_device(
     serial: str,
@@ -604,19 +617,8 @@ async def lock_device(
     locked = locked_server_ids(device.server_config_lock)
     scoped = supports_server_device_lock(device)
     config = dict(_device_service_config(device))
-    delivered = True
     command = {"command": "LOCK_DEVICE", "payload": {"locked_servers": locked}} if scoped else {"command": "UNLOCK_DEVICE", "payload": {}}
-    if locked and not scoped:
-        delivered = False
-    else:
-        try:
-            await send_command_to_pi(serial, command)
-        except HTTPException as exc:
-            if exc.status_code != 503:
-                raise
-            delivered = False
-        else:
-            device.is_locked = False
+    delivered = await _deliver_device_lock_command(serial, command, locked, scoped, device)
     await db.commit()
     await db.refresh(device)
     await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
