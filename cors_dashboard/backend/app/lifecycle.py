@@ -55,13 +55,21 @@ from .caster_cache import _get_all_caster_cache
 
 logger = logging.getLogger("app.main")
 
+GNSS_SYSTEM_LABELS = {
+    "gps": "GPS (Mỹ)",
+    "glonass": "GLONASS (Nga)",
+    "galileo": "Galileo (Châu Âu)",
+    "beidou": "BeiDou (Trung Quốc)",
+    "qzss": "QZSS (Nhật Bản)",
+    "unknown": "GNSS chưa phân loại",
+}
 GNSS_SYSTEM_NAMES = {
-    "us": "GPS (Mỹ)", "gps": "GPS (Mỹ)", "gp": "GPS (Mỹ)",
-    "ru": "GLONASS (Nga)", "glonass": "GLONASS (Nga)", "gl": "GLONASS (Nga)",
-    "eu": "Galileo (Châu Âu)", "galileo": "Galileo (Châu Âu)", "ga": "Galileo (Châu Âu)",
-    "cn": "BeiDou (Trung Quốc)", "beidou": "BeiDou (Trung Quốc)", "gb": "BeiDou (Trung Quốc)", "bd": "BeiDou (Trung Quốc)",
-    "jp": "QZSS (Nhật Bản)", "qzss": "QZSS (Nhật Bản)", "gq": "QZSS (Nhật Bản)", "qz": "QZSS (Nhật Bản)",
-    "un": "GNSS chưa phân loại", "gn": "GNSS chưa phân loại",
+    "us": GNSS_SYSTEM_LABELS["gps"], "gps": GNSS_SYSTEM_LABELS["gps"], "gp": GNSS_SYSTEM_LABELS["gps"],
+    "ru": GNSS_SYSTEM_LABELS["glonass"], "glonass": GNSS_SYSTEM_LABELS["glonass"], "gl": GNSS_SYSTEM_LABELS["glonass"],
+    "eu": GNSS_SYSTEM_LABELS["galileo"], "galileo": GNSS_SYSTEM_LABELS["galileo"], "ga": GNSS_SYSTEM_LABELS["galileo"],
+    "cn": GNSS_SYSTEM_LABELS["beidou"], "beidou": GNSS_SYSTEM_LABELS["beidou"], "gb": GNSS_SYSTEM_LABELS["beidou"], "bd": GNSS_SYSTEM_LABELS["beidou"],
+    "jp": GNSS_SYSTEM_LABELS["qzss"], "qzss": GNSS_SYSTEM_LABELS["qzss"], "gq": GNSS_SYSTEM_LABELS["qzss"], "qz": GNSS_SYSTEM_LABELS["qzss"],
+    "un": GNSS_SYSTEM_LABELS["unknown"], "gn": GNSS_SYSTEM_LABELS["unknown"],
 }
 
 

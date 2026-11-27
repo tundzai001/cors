@@ -19,8 +19,7 @@ from .database import auth_session_scope, device_session_scope, settings
 from .database import DatabaseBusyError
 from .command_dispatcher import send_command_to_pi
 from .caster_cache import _get_caster_cache
-from .caster_client import CasterClient
-from .runtime_config import _get_env_preferring_dotenv, _read_caster_config_from_env
+from .runtime_config import _get_env_preferring_dotenv
 from .station_config import _device_service_config
 from .rtcm_stream_state import (
     apply_stream_control_state,
@@ -165,7 +164,7 @@ def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[
                 logger.info("[RTCM ROUTE] Preferred host match, selected_server=%d", sid)
                 return sid
 
-    selected = sorted(candidates)[0]
+    selected = min(candidates)
     logger.info("[RTCM ROUTE] Selected fallback server %d", selected)
     return selected
 
@@ -416,7 +415,7 @@ async def _fetch_active_station_client_ids(db: AsyncSession, serial: str, now_ts
             models.RTCMStreamSession.expires_at > now_ts,
         )
     )
-    return sorted(set(str(row[0]) for row in result.all() if row and row[0]))
+    return sorted({str(row[0]) for row in result.all() if row and row[0]})
 
 
 def _build_ntrip_mqtt_client_id(client_instance_id: Optional[str]) -> str:
@@ -614,8 +613,10 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
                 if isinstance(raw_cfg, dict):
                     cfg = raw_cfg
                 elif isinstance(raw_cfg, str):
-                    try: cfg = json.loads(raw_cfg)
-                    except: cfg = {}
+                    try:
+                        cfg = json.loads(raw_cfg)
+                    except json.JSONDecodeError:
+                        cfg = {}
                 else:
                     cfg = {}
 
@@ -640,8 +641,10 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
                 if isinstance(raw_sys, dict):
                     sys_info = raw_sys
                 elif isinstance(raw_sys, str):
-                    try: sys_info = json.loads(raw_sys)
-                    except: sys_info = {}
+                    try:
+                        sys_info = json.loads(raw_sys)
+                    except json.JSONDecodeError:
+                        sys_info = {}
                 else:
                     sys_info = {}
 
@@ -676,7 +679,7 @@ async def _resolve_stop_serial(
         )
         .distinct()
     )
-    serials = sorted(set(str(r[0]) for r in active_rs.all() if r and r[0]))
+    serials = sorted({str(r[0]) for r in active_rs.all() if r and r[0]})
     if len(serials) == 1:
         return serials[0]
     if len(serials) > 1:
@@ -752,11 +755,11 @@ async def _ntrip_mqtt_stop(serial: str, client_instance_id: str, caster_host: Op
 async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
     try:
         data = json.loads(payload.decode("utf-8"))
-    except Exception as e:
-        logger.warning(f"[NTRIP MQTT] Invalid JSON on topic '{topic}': {e}")
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.warning("[NTRIP MQTT] Invalid JSON on topic '%s': %s", topic, e)
         return
 
-    if not (topic.endswith("/start") or topic.endswith("/stop")):
+    if not topic.endswith(("/start", "/stop")):
         logger.warning(f"[NTRIP MQTT] Unsupported topic '{topic}'. Use ntrip/rtcm/start or stop only")
         return
 
@@ -897,7 +900,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                     ]
 
             active_ids = {row[0] for row in active_rows}
-            for session_id in list(rtcm_keepalive_miss_counts):
+            for session_id in list(rtcm_keepalive_miss_counts):  # NOSONAR: entries are removed during iteration
                 if session_id not in active_ids:
                     rtcm_keepalive_miss_counts.pop(session_id, None)
             if not active_rows:
@@ -1001,8 +1004,8 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                 if mp_norm:
                     await _deactivate_idle_rtcm_mountpoint(serial, mp_norm)
 
-        except Exception as e:
-            logger.error(f"[RTCM] Keepalive task error: {e}", exc_info=True)
+        except Exception:
+            logger.exception("[RTCM] Keepalive task error")
 
 
 async def _rtcm_session_reaper_loop():
@@ -1218,8 +1221,10 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
                 cfg = raw_cfg
             elif isinstance(raw_cfg, str):
                 import json
-                try: cfg = json.loads(raw_cfg)
-                except: cfg = {}
+                try:
+                    cfg = json.loads(raw_cfg)
+                except json.JSONDecodeError:
+                    cfg = {}
             else:
                 cfg = {}
             selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
@@ -1294,8 +1299,10 @@ async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, r
                 cfg = raw_cfg
             elif isinstance(raw_cfg, str):
                 import json
-                try: cfg = json.loads(raw_cfg)
-                except: cfg = {}
+                try:
+                    cfg = json.loads(raw_cfg)
+                except json.JSONDecodeError:
+                    cfg = {}
             else:
                 cfg = {}
 
