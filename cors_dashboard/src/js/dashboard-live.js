@@ -49,10 +49,11 @@ function getGnssDop(device, data, live = true, now = Date.now() / 1000) {
     const hdop = rawHdop > 0 ? rawHdop : usable(gsa?.hdop) ?? usable(gga?.hdop);
     const pdop = rawPdop > 0 ? rawPdop : usable(gsa?.pdop) ?? usable(quality?.pdop);
     const timeOnly = quality?.source === 'ubx_nav_pvt' && quality.fix_type === 5;
-    return {hdop, pdop, timeOnly, rawHdop, rawPdop, source: timeOnly
-        ? 'Time-only: chip dùng tọa độ cố định, DOP vị trí không áp dụng.'
-        : readback ? `NAV-DOP · ${Math.floor(age)} giây`
-        : hdop !== null || pdop !== null ? 'GSA / GGA / NAV-PVT' : 'Chưa đọc được DOP từ chip'};
+    let source = 'Chưa đọc được DOP từ chip';
+    if (hdop !== null || pdop !== null) source = 'GSA / GGA / NAV-PVT';
+    if (readback) source = `NAV-DOP · ${Math.floor(age)} giây`;
+    if (timeOnly) source = 'Time-only: chip dùng tọa độ cố định, DOP vị trí không áp dụng.';
+    return {hdop, pdop, timeOnly, rawHdop, rawPdop, source};
 }
 
 function getDashboardPosition(device, data) {
@@ -168,9 +169,10 @@ function getAutomaticRfAssessment(device, live = true, now = Date.now() / 1000) 
     if (!live || age > 45 || report.current_severity == null)
         return {tone:'warning',title:'Tạm thiếu mẫu RF',report};
     if (report.sample_count < 3) return {tone:'info',title:'Đang thu mẫu',report};
-    return {tone:report.warning_samples ? 'warning' : 'info',report,
-        title:report.coincident_cno_drops ? 'Cảnh báo RF kèm C/N₀ giảm'
-            : report.warning_samples ? 'Có cảnh báo RF' : 'Không có cảnh báo trong các mẫu đã thu'};
+    let title = 'Không có cảnh báo trong các mẫu đã thu';
+    if (report.warning_samples) title = 'Có cảnh báo RF';
+    if (report.coincident_cno_drops) title = 'Cảnh báo RF kèm C/N₀ giảm';
+    return {tone:report.warning_samples ? 'warning' : 'info',report,title};
 }
 
 function getRfMonitorWindow(device, live = true, now = Date.now() / 1000) {
@@ -313,7 +315,9 @@ function getUnicoreRfDiagnostic(device, live = true, now = Date.now() / 1000) {
     let agc = fresh(snapshot.agc), jamming = fresh(snapshot.jamming);
     if (agc?.source !== 'unicore_agca' || !Array.isArray(agc.values) || agc.values.length !== 10
         || !agc.values.every(value => Number.isInteger(value) && value >= -1 && value <= 255)) agc = null;
-    const count = jamming?.source === 'unicore_freqjamstatusa' ? 3 : jamming?.source === 'unicore_jamstatusa' ? 1 : 0;
+    let count = 0;
+    if (jamming?.source === 'unicore_jamstatusa') count = 1;
+    if (jamming?.source === 'unicore_freqjamstatusa') count = 3;
     if (!count || !Array.isArray(jamming.ratios) || !Array.isArray(jamming.flags)
         || jamming.ratios.length !== count || jamming.flags.length !== count
         || !jamming.ratios.every(value => Number.isInteger(value) && value >= 0 && value <= 255)
@@ -333,10 +337,75 @@ function getRfReadError(device, rf, live = true, now = Date.now() / 1000) {
     return null;
 }
 
+function getSensitivityLabel(value) {
+    if (value === null) return 'Chưa đọc được';
+    return value ? 'Cao' : 'Thường';
+}
+
+function getInterferenceDesiredLabel(value) {
+    if (value === null) return 'Chưa có';
+    return value ? 'Bật' : 'Tắt';
+}
+
+function getInterferenceReadbackLabel(value) {
+    if (value === true) return 'Đang bật';
+    if (value === false) return 'Đang tắt';
+    return 'Chưa đọc được';
+}
+
+function renderSecurityLogEvents(securityLog) {
+    if (securityLog?.events) {
+        if (!securityLog.events.length) return <p className="small mb-1">Chip chưa ghi sự kiện.</p>;
+        return <ul className="small mb-1 ps-3">{securityLog.events.map((event,index)=><li key={index}>
+            {event.elapsed_seconds === 0xffffffff ? 'Hơn 45 ngày trước' : `${Math.floor(event.elapsed_seconds + securityLog.age_seconds)} giây trước`} · {['Tín hiệu mô phỏng','Tín hiệu bất thường','Lệch INS/GNSS','Tín hiệu GNSS đổi đột ngột','Nhiễu','Xác thực thất bại','Tín hiệu phát lại'][event.detection] || `Loại ${event.detection}`} · {['Bắt đầu','Kết thúc','Kích hoạt','Hết thời gian'][event.event] || `Trạng thái ${event.event}`}
+        </li>)}</ul>;
+    }
+    if (securityLog?.error) {
+        return <p className="small mb-1">Chưa đọc được nhật ký: <span data-no-translate>{securityLog.error}</span></p>;
+    }
+    return <p className="small mb-1">Đang chờ nhật ký mới.</p>;
+}
+
 function getRfBlockLabel(block, blocks, receiver = null) {
     const unique = blocks.filter(other => other.id === block.id).length === 1;
-    return unique && block.id === 0 ? 'L1' : unique && block.id === 1 ? (receiver?.model === 'ZED-F9P' && receiver?.firmware === 'HPG 1.51' ? 'L2' : 'L2/L5')
-        : `RF ${block.index + 1} (ID ${block.id})`;
+    if (unique && block.id === 0) return 'L1';
+    if (unique && block.id === 1) {
+        if (receiver?.model === 'ZED-F9P' && receiver?.firmware === 'HPG 1.51') return 'L2';
+        return 'L2/L5';
+    }
+    return `RF ${block.index + 1} (ID ${block.id})`;
+}
+
+function getRfFigureLabel(index, receiver) {
+    if (index === 0) return 'L1';
+    if (index === 1 && receiver?.model === 'ZED-F9P' && receiver?.firmware === 'HPG 1.51') return 'L2';
+    if (index === 1) return 'L2 / L5';
+    return `RF ${index}`;
+}
+
+function getRfDifferenceText(previous, difference) {
+    if (!previous) return 'Giữ mẫu hiện tại để so sánh thay đổi phổ.';
+    if (!difference) return 'Mốc khác mức khuếch đại; giữ mẫu mới để so sánh.';
+    const sign = difference.median > 0 ? '+' : '';
+    return `So với mốc: trung vị ${sign}${difference.median} mức thô · Đỉnh hiện tại ${difference.peak}/255`;
+}
+
+function getFixQualityValue(status) {
+    if (status === 'RTK_FIXED') return 5;
+    if (status === 'DGPS') return 3;
+    return 1;
+}
+
+function getGnssQualitySourceLabel(source) {
+    if (source === 'ubx_nav_pvt') return 'UBX-NAV-PVT';
+    if (source === 'unicore_bestnav_sigma') return 'Unicore BESTNAV (σ ngang tổng hợp)';
+    return 'NMEA GST (σ ngang tổng hợp)';
+}
+
+function getRfReadErrorReason(errorKind) {
+    if (errorKind === 'timeout') return 'Agent đã hỏi MON-RF nhưng không nhận được phản hồi đúng hạn.';
+    if (errorKind === 'invalid_response') return 'Có phản hồi nhưng bộ đọc từ chối dữ liệu RF.';
+    return 'Lần đọc MON-RF gần nhất bị lỗi.';
 }
 
 function getRfAssessment({live, rf, um, readError, receiver, security, unicore = false}) {
@@ -349,18 +418,21 @@ function getRfAssessment({live, rf, um, readError, receiver, security, unicore =
         if (!security.jam_enabled || !security.spoof_enabled || security.jam_state === 0 || security.spoof_state === 0) return unknown('Chip chưa có kết luận đầy đủ hoặc một bộ phát hiện đang tắt.', 'Xem riêng trạng thái nhiễu và giả mạo bên dưới; Pi tiếp tục thu mẫu.');
         return {tone:'info',title:'Chip chưa báo nhiễu hoặc giả mạo',reason:'SEC-SIG hiện không báo bất thường trong hai bộ phát hiện.',next:'Xem lịch sử để kiểm tra những thời điểm khác; trạng thái này không xác minh độ đúng tọa độ Base.'};
     }
-    if (readError) return unknown(readError.error_kind === 'timeout'
-        ? 'Agent đã hỏi MON-RF nhưng không nhận được phản hồi đúng hạn.'
-        : readError.error_kind === 'invalid_response' ? 'Có phản hồi nhưng bộ đọc từ chối dữ liệu RF.'
-        : 'Lần đọc MON-RF gần nhất bị lỗi.', 'Xem chi tiết lỗi đọc; chưa dùng riêng hình phổ để kết luận trạm sạch nhiễu.');
+    if (readError) return unknown(
+        getRfReadErrorReason(readError.error_kind),
+        'Xem chi tiết lỗi đọc; chưa dùng riêng hình phổ để kết luận trạm sạch nhiễu.'
+    );
     if (unicore || um) {
         if (!um?.jamming) return unknown(um?.agc ? 'UM mới có AGC; chưa có chỉ báo nhiễu CW.' : 'Chưa nhận được chỉ báo nhiễu CW từ UM.', 'AGC đơn lẻ không đủ để phân loại nhiễu. Cần phản hồi JAMSTATUS hoặc FREQJAMSTATUS.');
         const severity = Math.max(...um.jamming.flags);
-        return {tone: severity === 2 ? 'danger' : severity === 1 ? 'warning' : 'info',
-            title: severity === 2 ? 'Chip báo nhiễu CW mạnh' : severity === 1 ? 'Chip báo có nhiễu CW' : 'Chưa ghi nhận nhiễu CW',
-            reason:'Kết quả từ cờ cảnh báo CW của UM, không suy ra từ AGC hay hình phổ.',
-            next: severity ? 'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.'
-                : 'Kết quả chỉ áp dụng cho nhiễu CW lúc đọc; nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten.'};
+        const severityDetails = {
+            2: {tone: 'danger', title: 'Chip báo nhiễu CW mạnh'},
+            1: {tone: 'warning', title: 'Chip báo có nhiễu CW'},
+            0: {tone: 'info', title: 'Chưa ghi nhận nhiễu CW'},
+        }[severity] || {tone: 'info', title: 'Chưa ghi nhận nhiễu CW'};
+        let next = 'Kết quả chỉ áp dụng cho nhiễu CW lúc đọc; nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten.';
+        if (severity) next = 'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.';
+        return {...severityDetails, reason:'Kết quả từ cờ cảnh báo CW của UM, không suy ra từ AGC hay hình phổ.', next};
     }
     if (!rf) return unknown('Chưa có MON-RF hợp lệ. Có phổ MON-SPAN cũng chưa thay thế được trạng thái cảnh báo.',
         'Kiểm tra phản hồi MON-RF; giữ mẫu phổ để so sánh trước/sau khi đổi vị trí anten hoặc tắt thiết bị phát của mình.');
@@ -578,7 +650,9 @@ function getVisibleSatellites(satellites, maxAgeMs) {
         const key = getSatelliteKey(sat);
         const existing = visibleByKey.get(key);
         const best = !existing || snr > Number(existing.snr) ? sat : existing;
-        const geometry = hasSatellitePosition(sat) ? sat : hasSatellitePosition(existing) ? existing : null;
+        let geometry = null;
+        if (hasSatellitePosition(sat)) geometry = sat;
+        else if (hasSatellitePosition(existing)) geometry = existing;
         visibleByKey.set(key, geometry
             ? {...best, azimuth: geometry.azimuth, elevation: geometry.elevation, has_geometry: true} : best);
     });
@@ -602,6 +676,22 @@ function getDecodedSatelliteCounts(satellites, maxAgeMs) {
 
 function isDeviceStaleOffline(device, nowMs = Date.now()) {
     return window.CorsDashboardShared.isDeviceStaleOffline(device, nowMs);
+}
+
+function getReceptionStatus(latest, paused, comparison, drop, format) {
+    if (!latest) return 'Đang chờ mẫu vệ tinh mới từ chip.';
+    if (paused) return 'Đã tạm dừng biểu đồ.';
+    if (comparison?.delta != null) {
+        const change = drop ? 'C/N₀ giảm' : 'Biến động C/N₀';
+        const sign = comparison.delta > 0 ? '+' : '';
+        return `${change}: ${sign}${format(comparison.delta)} dB-Hz · đối chiếu ${comparison.matched} vệ tinh trùng nhau.`;
+    }
+    return 'Đang thu mẫu để đối chiếu cùng vệ tinh.';
+}
+
+function getSatelliteUsage(chip) {
+    if (!chip) return '—';
+    return chip.used_in_solution ? 'Có' : 'Không';
 }
 
 function UnicoreReceptionOverview({device, live, data}) {
@@ -650,7 +740,7 @@ function ReceptionOverview({device, live, data}) {
         <div className="row g-2 mb-3">
             {[[format(latest?.median),'C/N₀ trung vị · dB-Hz'],[latest?.tracking ?? '—','Chip đang bám · NAV-SAT'],[latest?.used ?? '—','Chip báo đang dùng · NAV-SAT'],[comparison ? comparison.lost : '—','Không còn bám so với mẫu trước']].map(([value,label])=><div className="col-6 col-xl-3" key={label}><div className="border rounded p-2 h-100"><strong className="fs-4 d-block font-monospace">{value}</strong><span className="small text-muted">{label}</span></div></div>)}
         </div>
-        <p className={`small mb-2 ${drop ? 'text-warning' : 'text-muted'}`} role="status">{!latest ? 'Đang chờ mẫu vệ tinh mới từ chip.' : paused ? 'Đã tạm dừng biểu đồ.' : comparison?.delta != null ? `${drop ? 'C/N₀ giảm' : 'Biến động C/N₀'}: ${comparison.delta>0 ? '+' : ''}${format(comparison.delta)} dB-Hz · đối chiếu ${comparison.matched} vệ tinh trùng nhau.` : 'Đang thu mẫu để đối chiếu cùng vệ tinh.'}</p>
+        <p className={`small mb-2 ${drop ? 'text-warning' : 'text-muted'}`} role="status">{getReceptionStatus(latest, paused, comparison, drop, format)}</p>
         {samples.length > 1 && <>
             <svg viewBox="0 0 640 150" role="img" aria-label="Diễn biến C/N₀ trung vị, thang 0 đến 60 dB-Hz; khoảng trống là thiếu mẫu" style={{width:'100%',maxHeight:200}}>
                 {[0,20,40,60].map(value=><g key={value}><line x1="30" x2="630" y1={130-value*2} y2={130-value*2} stroke="currentColor" opacity="0.12"/><text x="0" y={134-value*2} fill="currentColor" fontSize="11">{value}</text></g>)}
@@ -678,12 +768,40 @@ function ReceptionOverview({device, live, data}) {
             <div className="table-responsive" tabIndex={0} role="region" aria-label="Danh sách vệ tinh theo nguồn" style={{maxHeight:360,overflow:"auto"}}><table className="table table-sm small" style={{minWidth:460}}><caption className="visually-hidden">C/N₀ và trạng thái lấy riêng từng nguồn; chưa đồng bộ epoch</caption><thead><tr><th>Vệ tinh</th><th>NAV-SAT · dB-Hz</th><th>Chip đang dùng</th><th>RTCM · dB-Hz</th></tr></thead><tbody>{keys.map(key=>{
                 const chip=chipRows.find(sat=>getSatelliteKey(sat)===key), rtcm=decoded.find(sat=>getSatelliteKey(sat)===key);
                 const sat=chip || rtcm;
-                return <tr key={key}><th scope="row" className="text-nowrap">{systems.find(([system])=>system===getSatelliteSystem(sat))?.[1] || getSatelliteSystem(sat)} {getNormalizedPrn(sat)}</th><td>{chip ? chip.snr : '—'}</td><td>{chip ? chip.used_in_solution ? 'Có' : 'Không' : '—'}</td><td>{rtcm ? rtcm.snr : '—'}</td></tr>;
+                return <tr key={key}><th scope="row" className="text-nowrap">{systems.find(([system])=>system===getSatelliteSystem(sat))?.[1] || getSatelliteSystem(sat)} {getNormalizedPrn(sat)}</th><td>{chip ? chip.snr : '—'}</td><td>{getSatelliteUsage(chip)}</td><td>{rtcm ? rtcm.snr : '—'}</td></tr>;
             })}</tbody></table></div>
         </details>
         <p className="small text-muted mb-0">NAV-SAT chưa tách C/N₀ từng băng. Vệ tinh không còn bám có thể do khuất trời; C/N₀ giảm chưa xác nhận có nhiễu.</p>
         {samples.length > 0 && <details className="mt-2"><summary className="small py-2" style={{minHeight:44}}>Xem số liệu chất lượng thu</summary><div className="table-responsive"><table className="table table-sm small"><thead><tr><th>Thời điểm</th><th>C/N₀ · dB-Hz</th><th>Chip đang bám</th><th>Chip đang dùng</th></tr></thead><tbody>{samples.slice(-20).reverse().map(sample=><tr key={sample.at}><td>{new Date(sample.at*1000).toLocaleTimeString('vi-VN')}</td><td>{format(sample.median)}</td><td>{sample.tracking}</td><td>{sample.used}</td></tr>)}</tbody></table></div></details>}
     </div>;
+}
+
+function getRfWindowDescription(model, report, elapsed, hour) {
+    if (model.fixed) return `Đợt ${hour(report.window_started_at)} – ${hour(report.window_ends_at)}`;
+    if (elapsed < 600) return 'Đang mở rộng cửa sổ';
+    return 'Cửa sổ cuốn liên tục';
+}
+
+function getRfSampleSummary(report) {
+    if (report.warning_samples === report.sample_count) {
+        return 'Cảnh báo ở mọi lần đọc; chưa có mẫu không cảnh báo để so sánh.';
+    }
+    if (report.warning_samples) return 'Cảnh báo xuất hiện ở một phần các mẫu.';
+    return 'Các mẫu đã thu không có cảnh báo từ chip.';
+}
+
+function getRfQualitySummary(report) {
+    if (!report.quality_comparisons) return 'Chưa đủ dữ liệu đối chiếu C/N₀.';
+    if (report.coincident_cno_drops) {
+        return `${report.coincident_cno_drops} mẫu cảnh báo đi kèm C/N₀ giảm so với lần đọc trước.`;
+    }
+    return `Chưa thấy mức giảm C/N₀ đạt điều kiện trong ${report.quality_comparisons} cặp mẫu. Tín hiệu yếu sẵn từ đầu vẫn có thể không tạo ra mức giảm.`;
+}
+
+function formatRfDelta(delta) {
+    if (delta === null) return '—';
+    const sign = delta > 0 ? '+' : '';
+    return `${sign}${delta} dB-Hz`;
 }
 
 function RfMonitorOverview({model}) {
@@ -703,7 +821,7 @@ function RfMonitorOverview({model}) {
             <span className={`badge text-bg-${model.tone}`} style={{whiteSpace:'normal',textAlign:'left'}} role="status">{model.title}</span>
         </div>
         <div className="d-flex flex-wrap justify-content-between gap-2 small mb-2">
-            <span>{model.fixed ? `Đợt ${hour(report.window_started_at)} – ${hour(report.window_ends_at)}` : elapsed < 600 ? 'Đang mở rộng cửa sổ' : 'Cửa sổ cuốn liên tục'}</span>
+            <span>{getRfWindowDescription(model, report, elapsed, hour)}</span>
             <span className="font-monospace">{duration(elapsed)} / 10:00</span>
         </div>
         <div className="progress mb-2" style={{height:6}} role="progressbar" aria-label="Độ dài cửa sổ đã theo dõi" aria-valuenow={Math.floor(elapsed)} aria-valuemin={0} aria-valuemax={600} aria-valuetext={`${duration(elapsed)} trên 10 phút`}>
@@ -718,11 +836,8 @@ function RfMonitorOverview({model}) {
         {model.fixed && <p className="small text-muted mb-3">{elapsed >= 600 ? 'Đang chờ mẫu đầu tiên của đợt mới.' : `Còn ${duration(600-elapsed)} đến đợt tiếp theo.`} Kết quả được tính vào lịch sử 24 giờ.</p>}
         {report?.source === 'ubx_sec_sig' && <p className="small mb-3">Nhiễu: {report.jamming_samples ?? 0} mẫu · Giả mạo tín hiệu: {report.spoofing_samples ?? 0} mẫu</p>}
         {report?.sample_count >= 3 && <div className="small border-start border-3 ps-3 mb-3" role="status" aria-atomic="true">
-            <strong className="d-block">{report.warning_samples === report.sample_count ? 'Cảnh báo ở mọi lần đọc; chưa có mẫu không cảnh báo để so sánh.'
-                : report.warning_samples ? 'Cảnh báo xuất hiện ở một phần các mẫu.' : 'Các mẫu đã thu không có cảnh báo từ chip.'}</strong>
-            <span className="text-muted">{!report.quality_comparisons ? 'Chưa đủ dữ liệu đối chiếu C/N₀.'
-                : report.coincident_cno_drops ? `${report.coincident_cno_drops} mẫu cảnh báo đi kèm C/N₀ giảm so với lần đọc trước.`
-                : `Chưa thấy mức giảm C/N₀ đạt điều kiện trong ${report.quality_comparisons} cặp mẫu. Tín hiệu yếu sẵn từ đầu vẫn có thể không tạo ra mức giảm.`} Chưa xác định nguồn phát hoặc sai số tọa độ.</span>
+            <strong className="d-block">{getRfSampleSummary(report)}</strong>
+            <span className="text-muted">{getRfQualitySummary(report)} Chưa xác định nguồn phát hoặc sai số tọa độ.</span>
         </div>}
         {blocks.length > 0 && <details className="mb-3"><summary className="small py-2" style={{minHeight:44}}>Biến động từng khối RF trong 10 phút</summary>
             <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động từng khối RF"><table className="table table-sm small" style={{minWidth:520}}>
@@ -747,7 +862,7 @@ function RfMonitorOverview({model}) {
             <p className="small text-muted mb-2">Mỗi dấu là một lần đọc. Khoảng trống: không có mẫu. Vòng ngoài: C/N₀ giảm.</p>
             <details><summary className="small py-2" style={{minHeight:44}}>Xem mẫu và cách tính</summary>
                 <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động C/N₀ từng mẫu; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:600}}><caption className="visually-hidden">Các mẫu RF đã thu trong cửa sổ</caption><thead><tr><th>Thời điểm</th><th>RF</th><th>ΔC/N₀ trung vị</th><th>Thấp / cao nhất</th><th>Vệ tinh thay đổi</th></tr></thead>
-                    <tbody>{samples.map(([offset,level,delta,matched,changed,minimum,maximum],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta} dB-Hz`}</td><td className="text-nowrap">{minimum == null ? '—' : `${minimum} / ${maximum} dB-Hz`}</td><td>{delta === null || matched == null ? '—' : `${changed} / ${matched}`}</td></tr>)}</tbody></table></div>
+                    <tbody>{samples.map(([offset,level,delta,matched,changed,minimum,maximum],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{formatRfDelta(delta)}</td><td className="text-nowrap">{minimum == null ? '—' : `${minimum} / ${maximum} dB-Hz`}</td><td>{delta === null || matched == null ? '—' : `${changed} / ${matched}`}</td></tr>)}</tbody></table></div>
                 <p className="small text-muted d-sm-none mb-1">Vuốt ngang để xem đủ các cột.</p>
                 <p className="small text-muted mb-0">C/N₀ giảm: trung vị giảm từ 3 dB-Hz trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc. {report?.quality_comparisons || 0} cặp mẫu đủ dữ liệu đối chiếu.</p>
                 <p className="small text-muted mb-0">Trung vị bằng 0 vẫn có thể có vệ tinh tăng hoặc giảm. Cùng thời điểm dữ liệu hoặc thiếu mẫu: không tính Δ.</p>
@@ -833,11 +948,11 @@ function RfDiagnostics({device, live, data}) {
                 </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
                 {receiver?.itfm_supported === false ? <div className="small">
                     <p className="mb-1 text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</p>
-                    <p className="mb-1">Độ nhạy đã lưu: <strong>{device.base_config?.gnss_options?.jamming_sensitivity_high === false ? 'Thường' : 'Cao (mặc định)'}</strong> · Chip đọc lại: <strong>{receiver.jamming_sensitivity_high === null ? 'Chưa đọc được' : receiver.jamming_sensitivity_high ? 'Cao' : 'Thường'}</strong></p>
+                    <p className="mb-1">Độ nhạy đã lưu: <strong>{device.base_config?.gnss_options?.jamming_sensitivity_high === false ? 'Thường' : 'Cao (mặc định)'}</strong> · Chip đọc lại: <strong>{getSensitivityLabel(receiver.jamming_sensitivity_high)}</strong></p>
                     {receiver.sensitivity_error ? <p className="text-warning mb-0" data-no-translate>{receiver.sensitivity_error}</p> : receiver.jamming_sensitivity_high !== null && <p className={`mb-0 ${receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'text-success' : 'text-warning'}`}>{receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'Độ nhạy khớp cấu hình đã lưu.' : 'Độ nhạy chưa khớp cấu hình đã lưu.'}</p>}
                 </div> : <>
-                    <div>Cấu hình đã lưu: <strong>{interferenceConfig.desired === null ? 'Chưa có' : interferenceConfig.desired ? 'Bật' : 'Tắt'}</strong></div>
-                    <div>Chip đọc lại: <strong>{receiver?.itfm_enabled === true ? 'Đang bật' : receiver?.itfm_enabled === false ? 'Đang tắt' : 'Chưa đọc được'}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+                    <div>Cấu hình đã lưu: <strong>{getInterferenceDesiredLabel(interferenceConfig.desired)}</strong></div>
+                    <div>Chip đọc lại: <strong>{getInterferenceReadbackLabel(receiver?.itfm_enabled)}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
                     <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
                 </>}
                 {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
@@ -860,9 +975,7 @@ function RfDiagnostics({device, live, data}) {
                     {!security.frequencies.length && <p className="small text-muted mb-0">Chip chưa trả tần số đủ dữ liệu đánh giá.</p>}
                 </> : <p className="small mb-0" role="status">{security?.error ? <>Chưa đọc được SEC-SIG: <span data-no-translate>{security.error}</span></> : 'Đang chờ phản hồi SEC-SIG mới từ Pi.'}</p>}
                 <details className="mt-2"><summary className="py-2" style={{minHeight:44}}>Nhật ký sự kiện trên chip · SEC-SIGLOG</summary>
-                    {securityLog?.events ? securityLog.events.length ? <ul className="small mb-1 ps-3">{securityLog.events.map((event,index)=><li key={index}>
-                        {event.elapsed_seconds === 0xffffffff ? 'Hơn 45 ngày trước' : `${Math.floor(event.elapsed_seconds + securityLog.age_seconds)} giây trước`} · {['Tín hiệu mô phỏng','Tín hiệu bất thường','Lệch INS/GNSS','Tín hiệu GNSS đổi đột ngột','Nhiễu','Xác thực thất bại','Tín hiệu phát lại'][event.detection] || `Loại ${event.detection}`} · {['Bắt đầu','Kết thúc','Kích hoạt','Hết thời gian'][event.event] || `Trạng thái ${event.event}`}
-                    </li>)}</ul> : <p className="small mb-1">Chip chưa ghi sự kiện.</p> : <p className="small mb-1">{securityLog?.error ? <>Chưa đọc được nhật ký: <span data-no-translate>{securityLog.error}</span></> : 'Đang chờ nhật ký mới.'}</p>}
+                    {renderSecurityLogEvents(securityLog)}
                     <p className="small text-muted mb-0">Tối đa 16 sự kiện gần nhất; nhật ký chip xóa khi khởi động lại. Lịch sử thu mẫu tại Pi được giữ riêng trong 24 giờ.</p>
                 </details>
             </div>}
@@ -924,8 +1037,8 @@ function RfDiagnostics({device, live, data}) {
                     const frequency = bin => ((block.center + block.span * (bin - 127) / 256) / 1e6).toFixed(2);
                     const points = bins => bins.map((value, i) => `${i * 2},${255 - value}`).join(' ');
                     return <figure className="mb-2" key={index}>
-                        <figcaption className="small"><strong>{index === 0 ? 'L1' : index === 1 ? (receiver?.model === 'ZED-F9P' && receiver?.firmware === 'HPG 1.51' ? 'L2' : 'L2 / L5') : `RF ${index}`}</strong> · Tâm {(block.center / 1e6).toFixed(2)} MHz · Khuếch đại {block.pga} dB<br/>Mức phổ thô (0–255) · Bước {(block.resolution / 1e6).toFixed(2)} MHz</figcaption>
-                        <p className="small text-muted my-1">{previous ? difference ? `So với mốc: trung vị ${difference.median>0 ? '+' : ''}${difference.median} mức thô · Đỉnh hiện tại ${difference.peak}/255` : 'Mốc khác mức khuếch đại; giữ mẫu mới để so sánh.' : 'Giữ mẫu hiện tại để so sánh thay đổi phổ.'}</p>
+                        <figcaption className="small"><strong>{getRfFigureLabel(index, receiver)}</strong> · Tâm {(block.center / 1e6).toFixed(2)} MHz · Khuếch đại {block.pga} dB<br/>Mức phổ thô (0–255) · Bước {(block.resolution / 1e6).toFixed(2)} MHz</figcaption>
+                        <p className="small text-muted my-1">{getRfDifferenceText(previous, difference)}</p>
                         <svg viewBox="0 0 510 255" role="img" aria-label={`Phổ GNSS quanh ${block.center / 1e6} MHz, mức phổ thô 0 đến 255`}
                             style={{width:'100%',height:'auto',border:'1px solid var(--bs-border-color)',background:'var(--bs-tertiary-bg)'}}>
                             {[0,64,128,192,255].map(value => <g key={value}><line x1="0" x2="510" y1={255-value} y2={255-value} stroke="currentColor" opacity="0.12"/><text x="3" y={Math.max(12,251-value)} fontSize="12" fill="currentColor">{value}</text></g>)}
@@ -1091,8 +1204,8 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
             setMetrics(prev => ({
                 fixQuality: {
-                    value: gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1,
-                    history: [...prev.fixQuality.history, gga.fix_status === 'RTK_FIXED' ? 5 : gga.fix_status === 'DGPS' ? 3 : 1].slice(-30)
+                    value: getFixQualityValue(gga.fix_status),
+                    history: [...prev.fixQuality.history, getFixQualityValue(gga.fix_status)].slice(-30)
                 },
                 satellites: {
                     value: satCount,
@@ -1523,9 +1636,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             </div>
             <div className="alert alert-info mt-3" role="status">
                 {quality ? <div>
-                    Nguồn: {quality.source === 'ubx_nav_pvt' ? 'UBX-NAV-PVT'
-                        : quality.source === 'unicore_bestnav_sigma' ? 'Unicore BESTNAV (σ ngang tổng hợp)'
-                        : 'NMEA GST (σ ngang tổng hợp)'}
+                    Nguồn: {getGnssQualitySourceLabel(quality.source)}
                     {' · '}Đọc cách đây {Math.floor(quality.age_seconds)} giây.
                     {quality.hacc_m === null && ' Chip chưa báo độ chính xác hợp lệ.'}
                 </div> : <div>Chưa có số liệu độ chính xác còn hiệu lực từ chip.</div>}
