@@ -128,6 +128,14 @@ def _normalize_mountpoint(value: Optional[str]) -> Optional[str]:
     return normalize_stream_mountpoint(value)
 
 
+def _first_server_for_host(candidates: List[int], cfg: dict, host_key: str, allow_partial_match: bool) -> Optional[int]:
+    for sid in candidates:
+        host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
+        if host and (host_key in host or (allow_partial_match and host in host_key)):
+            return sid
+    return None
+
+
 def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[str], requested_address: Optional[str] = None) -> Optional[int]:
     mountpoint_norm = _normalize_mountpoint(mountpoint)
     if not mountpoint_norm:
@@ -149,20 +157,18 @@ def _resolve_preferred_server_id_for_mountpoint(cfg: dict, mountpoint: Optional[
     # CASE 1: Prioritize explicit address match (for newer casters)
     if requested_address:
         normalized_req_addr = requested_address.strip().lower()
-        for sid in candidates:
-            host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
-            if host and (normalized_req_addr in host or host in normalized_req_addr):
-                logger.info("[RTCM ROUTE] Explicit address match, selected_server=%d", sid)
-                return sid
+        selected = _first_server_for_host(candidates, cfg, normalized_req_addr, allow_partial_match=True)
+        if selected is not None:
+            logger.info("[RTCM ROUTE] Explicit address match, selected_server=%d", selected)
+            return selected
 
     # CASE 2: Fallback to .env preferred host (for older casters or missing address)
     if settings.ENABLE_PREFERRED_HOST and settings.PREFERRED_HOST_MARKER:
         marker = settings.PREFERRED_HOST_MARKER.strip().lower()
-        for sid in candidates:
-            host = str(cfg.get(f"serverhost{sid}", "") or "").strip().lower()
-            if host and marker in host:
-                logger.info("[RTCM ROUTE] Preferred host match, selected_server=%d", sid)
-                return sid
+        selected = _first_server_for_host(candidates, cfg, marker, allow_partial_match=False)
+        if selected is not None:
+            logger.info("[RTCM ROUTE] Preferred host match, selected_server=%d", selected)
+            return selected
 
     selected = min(candidates)
     logger.info("[RTCM ROUTE] Selected fallback server %d", selected)
@@ -900,7 +906,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                     ]
 
             active_ids = {row[0] for row in active_rows}
-            for session_id in list(rtcm_keepalive_miss_counts):  # NOSONAR: entries are removed during iteration
+            for session_id in rtcm_keepalive_miss_counts.copy():
                 if session_id not in active_ids:
                     rtcm_keepalive_miss_counts.pop(session_id, None)
             if not active_rows:
