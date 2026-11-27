@@ -1314,6 +1314,52 @@ async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_ad
         return PlainTextResponse(f"WAKE_STATUS: error\n{msg}", status_code=200)
 
 
+def _resolve_station_caster_host(device, mountpoint: str, requested_address: Optional[str]) -> Optional[str]:
+    raw_config = getattr(device, "service_config", None)
+    if isinstance(raw_config, dict):
+        config = raw_config
+    elif isinstance(raw_config, str):
+        try:
+            config = json.loads(raw_config)
+        except json.JSONDecodeError:
+            config = {}
+    else:
+        config = {}
+
+    server_id = _resolve_preferred_server_id_for_mountpoint(config, mountpoint, requested_address)
+    if server_id not in service_server_ids(config):
+        return requested_address
+    return str(config.get(f"serverhost{server_id}", "") or "").strip() or requested_address
+
+
+async def _force_stop_station_stream(db: AsyncSession, serial: str, target_host: Optional[str]) -> None:
+    async with rtcm_session_lock:
+        if target_host:
+            normalized_host = target_host.strip().lower()
+            result = await db.execute(
+                select(models.RTCMStreamSession.session_id, models.RTCMStreamSession.caster_host)
+                .where(models.RTCMStreamSession.serial == serial)
+            )
+            session_ids = [
+                session_id
+                for session_id, host in result.all()
+                if normalized_host in str(host or "").strip().lower()
+                or str(host or "").strip().lower() in normalized_host
+            ]
+            if session_ids:
+                await db.execute(
+                    delete(models.RTCMStreamSession).where(
+                        models.RTCMStreamSession.session_id.in_(session_ids)
+                    )
+                )
+        else:
+            await db.execute(
+                delete(models.RTCMStreamSession).where(models.RTCMStreamSession.serial == serial)
+            )
+        await db.commit()
+    await _set_station_stream(serial, active=False, requested_address=target_host)
+
+
 async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, requested_address: Optional[str] = None):
     """Xử lý ngắt/dừng trạm, trả về PlainTextResponse."""
     logger.info("[NTRIP Stop] Stop requested, force=%s", bool(force))
@@ -1331,56 +1377,10 @@ async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, r
             if not force and str(serial).lower().startswith("esp_") and _normalize_mountpoint(client_id) == _normalize_mountpoint(mountpoint):
                 return PlainTextResponse(f"STOP_STATUS: ok\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
 
-            # 🔥 Phân giải caster_host từ service_config của thiết bị nếu requested_address khớp một phần
-            selected_server_host = ""
-            raw_cfg = getattr(device, "service_config", None)
-            if isinstance(raw_cfg, dict):
-                cfg = raw_cfg
-            elif isinstance(raw_cfg, str):
-                import json
-                try:
-                    cfg = json.loads(raw_cfg)
-                except json.JSONDecodeError:
-                    cfg = {}
-            else:
-                cfg = {}
-
-            selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
-            if selected_server_id in service_server_ids(cfg):
-                selected_server_host = str(cfg.get(f"serverhost{selected_server_id}", "") or "").strip()
-
-            target_host = selected_server_host or requested_address
+            target_host = _resolve_station_caster_host(device, mountpoint, requested_address)
 
             if force:
-                # Force stop: xóa toàn bộ session của trạm này (và khớp host nếu có) và tắt luồng stream ngay lập tức
-                async with rtcm_session_lock:
-                    if target_host:
-                        norm_ch = target_host.strip().lower()
-                        # Lấy danh sách session để xóa theo caster_host
-                        stmt = select(models.RTCMStreamSession.session_id, models.RTCMStreamSession.caster_host).where(
-                            models.RTCMStreamSession.serial == serial
-                        )
-                        rs = await db.execute(stmt)
-                        to_delete = []
-                        for sid, host in rs.all():
-                            h_str = str(host or "").strip().lower()
-                            if norm_ch in h_str or h_str in norm_ch:
-                                to_delete.append(sid)
-
-                        if to_delete:
-                            await db.execute(
-                                delete(models.RTCMStreamSession).where(
-                                    models.RTCMStreamSession.session_id.in_(to_delete)
-                                )
-                            )
-                    else:
-                        await db.execute(
-                            delete(models.RTCMStreamSession).where(
-                                models.RTCMStreamSession.serial == serial
-                            )
-                        )
-                    await db.commit()
-                await _set_station_stream(serial, active=False, requested_address=target_host)
+                await _force_stop_station_stream(db, serial, target_host)
                 logger.info("[NTRIP Stop] Force stopped station stream")
             else:
                 await _ntrip_mqtt_stop(
