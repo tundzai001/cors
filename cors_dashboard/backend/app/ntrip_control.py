@@ -263,26 +263,9 @@ async def _set_station_stream(
     if is_4g_mountpoint(mountpoint) or str(serial or '').upper().startswith('MONITOR_7'):
         return  # Includes old leases still waiting for expiry after the upgrade.
     requested_mp_norm = _normalize_mountpoint(mountpoint) if mountpoint else None
-    try:
-        target_server_id = int(server_id) if server_id is not None else None
-    except (TypeError, ValueError):
-        target_server_id = None
-    if target_server_id is not None and target_server_id <= 0:
-        target_server_id = None
-
-    if target_server_id is None and requested_mp_norm and (bool(active) or requested_address):
-        # Tự động phân giải server_idx dựa vào cấu hình trạm
-        try:
-            async with device_session_scope() as db:
-                device = await crud.get_device_by_serial(db, serial)
-                if device:
-                    target_server_id = _resolve_preferred_server_id_for_mountpoint(
-                        _device_service_config(device),
-                        requested_mp_norm,
-                        requested_address,
-                    )
-        except Exception:
-            pass
+    target_server_id = await _resolve_stream_server_id(
+        serial, server_id, requested_mp_norm, requested_address, active
+    )
 
     payload = build_stream_control_payload(
         active=active,
@@ -299,6 +282,49 @@ async def _set_station_stream(
         },
     )
 
+    await _persist_stream_control_state(
+        serial, active, mountpoint, requested_mp_norm, requested_address, target_server_id
+    )
+
+
+async def _resolve_stream_server_id(
+    serial: str,
+    server_id: Optional[int],
+    mountpoint: Optional[str],
+    requested_address: Optional[str],
+    active: bool,
+) -> Optional[int]:
+    try:
+        target_server_id = int(server_id) if server_id is not None else None
+    except (TypeError, ValueError):
+        target_server_id = None
+    if target_server_id is not None and target_server_id <= 0:
+        target_server_id = None
+
+    if target_server_id is None and mountpoint and (bool(active) or requested_address):
+        # Tự động phân giải server_idx dựa vào cấu hình trạm
+        try:
+            async with device_session_scope() as db:
+                device = await crud.get_device_by_serial(db, serial)
+                if device:
+                    return _resolve_preferred_server_id_for_mountpoint(
+                        _device_service_config(device),
+                        mountpoint,
+                        requested_address,
+                    )
+        except Exception:
+            pass
+    return target_server_id
+
+
+async def _persist_stream_control_state(
+    serial: str,
+    active: bool,
+    mountpoint: Optional[str],
+    requested_mp_norm: Optional[str],
+    requested_address: Optional[str],
+    target_server_id: Optional[int],
+) -> None:
     # Keep DB service_config in sync with control-plane intent to avoid stale
     # stream_active/active_mountpoint values until the next agent status heartbeat.
     try:
