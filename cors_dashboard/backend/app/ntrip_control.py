@@ -703,56 +703,55 @@ async def _ntrip_mqtt_stop(serial: str, client_instance_id: str, caster_host: Op
     should_deactivate = False
     active_mountpoint_norm: Optional[str] = None
 
-    async with device_session_scope() as db:
-        async with rtcm_session_lock:
-            await db.execute(
-                delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
-            )
+    async with device_session_scope() as db, rtcm_session_lock:
+        await db.execute(
+            delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
+        )
 
-            active_sessions_rs = await db.execute(
-                select(
-                    models.RTCMStreamSession.session_id,
-                    models.RTCMStreamSession.mountpoint,
-                    models.RTCMStreamSession.caster_host
-                ).where(
-                    models.RTCMStreamSession.serial == serial,
-                    models.RTCMStreamSession.client_id == client_id,
-                    models.RTCMStreamSession.expires_at > now,
-                )
+        active_sessions_rs = await db.execute(
+            select(
+                models.RTCMStreamSession.session_id,
+                models.RTCMStreamSession.mountpoint,
+                models.RTCMStreamSession.caster_host
+            ).where(
+                models.RTCMStreamSession.serial == serial,
+                models.RTCMStreamSession.client_id == client_id,
+                models.RTCMStreamSession.expires_at > now,
             )
+        )
+        active_rows = [
+            (str(r[0]), str(r[1]), str(r[2] or ""))
+            for r in active_sessions_rs.all() if r and r[0] and r[1]
+        ]
+
+        if caster_host:
+            norm_ch = caster_host.strip().lower()
             active_rows = [
-                (str(r[0]), str(r[1]), str(r[2] or ""))
-                for r in active_sessions_rs.all() if r and r[0] and r[1]
+                r for r in active_rows
+                if norm_ch in r[2].lower() or r[2].lower() in norm_ch
             ]
 
-            if caster_host:
-                norm_ch = caster_host.strip().lower()
-                active_rows = [
-                    r for r in active_rows
-                    if norm_ch in r[2].lower() or r[2].lower() in norm_ch
-                ]
+        active_session_ids = [row[0] for row in active_rows]
 
-            active_session_ids = [row[0] for row in active_rows]
-
-            if active_session_ids:
-                await db.execute(
-                    delete(models.RTCMStreamSession).where(
-                        models.RTCMStreamSession.session_id.in_(active_session_ids)
-                    )
+        if active_session_ids:
+            await db.execute(
+                delete(models.RTCMStreamSession).where(
+                    models.RTCMStreamSession.session_id.in_(active_session_ids)
                 )
-                await db.commit()
+            )
+            await db.commit()
 
-            device = await crud.get_device_by_serial(db, serial)
-            active_mountpoint_norm = _normalize_mountpoint(_extract_active_mountpoint(device))
+        device = await crud.get_device_by_serial(db, serial)
+        active_mountpoint_norm = _normalize_mountpoint(_extract_active_mountpoint(device))
 
-            if active_mountpoint_norm:
-                remaining_for_active_mp = await _count_active_mountpoint_sessions(
-                    db,
-                    serial,
-                    active_mountpoint_norm,
-                    now,
-                )
-                should_deactivate = remaining_for_active_mp == 0
+        if active_mountpoint_norm:
+            remaining_for_active_mp = await _count_active_mountpoint_sessions(
+                db,
+                serial,
+                active_mountpoint_norm,
+                now,
+            )
+            should_deactivate = remaining_for_active_mp == 0
 
     if should_deactivate:
         await _set_station_stream(serial, active=False, requested_address=caster_host)
@@ -887,23 +886,22 @@ async def rtcm_ntrip_clienttable_keepalive_task():
 
         try:
             # 1. Fetch active sessions from DB
-            async with rtcm_session_lock:
-                async with device_session_scope() as db:
-                    rs = await db.execute(
-                        select(
-                            models.RTCMStreamSession.session_id,
-                            models.RTCMStreamSession.client_id,
-                            models.RTCMStreamSession.serial,
-                            models.RTCMStreamSession.mountpoint,
-                            models.RTCMStreamSession.caster_host,
-                            models.RTCMStreamSession.expires_at,
-                            models.RTCMStreamSession.created_at
-                        ).where(models.RTCMStreamSession.expires_at > now)
-                    )
-                    active_rows = [
-                        (str(r[0]), str(r[1]), str(r[2]), str(r[3]), str(r[4] or ""), int(r[5] or 0), int(r[6] or 0))
-                        for r in rs.all() if r and r[0]
-                    ]
+            async with rtcm_session_lock, device_session_scope() as db:
+                rs = await db.execute(
+                    select(
+                        models.RTCMStreamSession.session_id,
+                        models.RTCMStreamSession.client_id,
+                        models.RTCMStreamSession.serial,
+                        models.RTCMStreamSession.mountpoint,
+                        models.RTCMStreamSession.caster_host,
+                        models.RTCMStreamSession.expires_at,
+                        models.RTCMStreamSession.created_at
+                    ).where(models.RTCMStreamSession.expires_at > now)
+                )
+                active_rows = [
+                    (str(r[0]), str(r[1]), str(r[2]), str(r[3]), str(r[4] or ""), int(r[5] or 0), int(r[6] or 0))
+                    for r in rs.all() if r and r[0]
+                ]
 
             active_ids = {row[0] for row in active_rows}
             for session_id in rtcm_keepalive_miss_counts.copy():
@@ -963,14 +961,13 @@ async def rtcm_ntrip_clienttable_keepalive_task():
                     updated_ids.append(sid)
                     if found_on_host != target_host:
                         logger.info(f"[RTCM KEEPALIVE] User '{client_id}' switched from {target_host} to {found_on_host}. Updating session.")
-                        async with rtcm_session_lock:
-                            async with device_session_scope() as db:
-                                await db.execute(
-                                    update(models.RTCMStreamSession)
-                                    .where(models.RTCMStreamSession.session_id == sid)
-                                    .values(caster_host=found_on_host)
-                                )
-                                await db.commit()
+                        async with rtcm_session_lock, device_session_scope() as db:
+                            await db.execute(
+                                update(models.RTCMStreamSession)
+                                .where(models.RTCMStreamSession.session_id == sid)
+                                .values(caster_host=found_on_host)
+                            )
+                            await db.commit()
                 else:
                     miss_count = _record_rtcm_keepalive_miss(sid, primary_cache, now, created_at)
 
@@ -987,23 +984,22 @@ async def rtcm_ntrip_clienttable_keepalive_task():
 
             # 3. Update DB
             if updated_ids or expired_ids:
-                async with rtcm_session_lock:
-                    async with device_session_scope() as db:
-                        if updated_ids:
-                            # Batch update heartbeats
-                            await db.execute(
-                                update(models.RTCMStreamSession)
-                                .where(models.RTCMStreamSession.session_id.in_(updated_ids))
-                                .values(expires_at=keepalive_to, last_heartbeat_at=now)
-                            )
-                        if expired_ids:
-                            # Batch expire sessions
-                            await db.execute(
-                                update(models.RTCMStreamSession)
-                                .where(models.RTCMStreamSession.session_id.in_(expired_ids))
-                                .values(expires_at=now - 1)
-                            )
-                        await db.commit()
+                async with rtcm_session_lock, device_session_scope() as db:
+                    if updated_ids:
+                        # Batch update heartbeats
+                        await db.execute(
+                            update(models.RTCMStreamSession)
+                            .where(models.RTCMStreamSession.session_id.in_(updated_ids))
+                            .values(expires_at=keepalive_to, last_heartbeat_at=now)
+                        )
+                    if expired_ids:
+                        # Batch expire sessions
+                        await db.execute(
+                            update(models.RTCMStreamSession)
+                            .where(models.RTCMStreamSession.session_id.in_(expired_ids))
+                            .values(expires_at=now - 1)
+                        )
+                    await db.commit()
 
             # 4. Station Deactivation (On-Demand only)
             for serial, mp_norm in candidates_for_deactivation:
@@ -1020,55 +1016,54 @@ async def _rtcm_session_reaper_loop():
         now = int(time.time())
         stations_to_deactivate: Set[tuple[str, Optional[int], str]] = set()
 
-        async with rtcm_session_lock:
-            async with device_session_scope() as db:
-                expired_serials_rs = await db.execute(
-                    select(models.RTCMStreamSession.serial, models.RTCMStreamSession.mountpoint)
-                    .where(models.RTCMStreamSession.expires_at <= now)
-                    .distinct()
+        async with rtcm_session_lock, device_session_scope() as db:
+            expired_serials_rs = await db.execute(
+                select(models.RTCMStreamSession.serial, models.RTCMStreamSession.mountpoint)
+                .where(models.RTCMStreamSession.expires_at <= now)
+                .distinct()
+            )
+            expired_pairs = [
+                (str(r[0]), str(r[1]))
+                for r in expired_serials_rs.all()
+                if r and r[0] and r[1]
+            ]
+
+            if expired_pairs:
+                await db.execute(
+                    delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
                 )
-                expired_pairs = [
-                    (str(r[0]), str(r[1]))
-                    for r in expired_serials_rs.all()
-                    if r and r[0] and r[1]
-                ]
+                await db.commit()
 
-                if expired_pairs:
-                    await db.execute(
-                        delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
-                    )
-                    await db.commit()
-
-                    for serial, expired_mountpoint in expired_pairs:
-                        device = await crud.get_device_by_serial(db, serial)
-                        expired_mp_norm = _normalize_mountpoint(expired_mountpoint)
-                        for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
-                            if mountpoint_norm != expired_mp_norm:
-                                continue
-                            active_count = await _count_active_mountpoint_sessions(
-                                db,
-                                serial,
-                                mountpoint_norm,
-                                now,
-                            )
-                            if active_count == 0:
-                                stations_to_deactivate.add((serial, server_id, mountpoint_norm))
-
-                # Safety sweep: if stream is marked active but there are no sessions for active mountpoint,
-                # force stream off. This covers manual DB cleanup and stale state scenarios.
-                devices_rs = await db.execute(select(models.Device))
-                for device in devices_rs.scalars().all():
+                for serial, expired_mountpoint in expired_pairs:
+                    device = await crud.get_device_by_serial(db, serial)
+                    expired_mp_norm = _normalize_mountpoint(expired_mountpoint)
                     for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
-                        remaining_for_active_mp = await _count_active_mountpoint_sessions(
+                        if mountpoint_norm != expired_mp_norm:
+                            continue
+                        active_count = await _count_active_mountpoint_sessions(
                             db,
-                            str(device.serial),
+                            serial,
                             mountpoint_norm,
                             now,
                         )
-                        if remaining_for_active_mp == 0:
-                            stations_to_deactivate.add(
-                                (str(device.serial), server_id, mountpoint_norm)
-                            )
+                        if active_count == 0:
+                            stations_to_deactivate.add((serial, server_id, mountpoint_norm))
+
+            # Safety sweep: if stream is marked active but there are no sessions for active mountpoint,
+            # force stream off. This covers manual DB cleanup and stale state scenarios.
+            devices_rs = await db.execute(select(models.Device))
+            for device in devices_rs.scalars().all():
+                for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
+                    remaining_for_active_mp = await _count_active_mountpoint_sessions(
+                        db,
+                        str(device.serial),
+                        mountpoint_norm,
+                        now,
+                    )
+                    if remaining_for_active_mp == 0:
+                        stations_to_deactivate.add(
+                            (str(device.serial), server_id, mountpoint_norm)
+                        )
 
         for serial, server_id, mountpoint_norm in stations_to_deactivate:
             try:
