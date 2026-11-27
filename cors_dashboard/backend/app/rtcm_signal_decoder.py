@@ -372,7 +372,7 @@ class RTCMSignalDecoder:
         cuc = reader.read_int(16) * (2**-29)
         e = reader.read_uint(32) * (2**-33)
         cus = reader.read_int(16) * (2**-29)
-        sqrtA = reader.read_uint(32) * (2**-19)
+        semi_major_axis_sqrt = reader.read_uint(32) * (2**-19)
         toes = reader.read_uint(16) * 16.0
         cic = reader.read_int(16) * (2**-29)
         OMG0 = reader.read_int(32) * (2**-31) * math.pi
@@ -381,13 +381,13 @@ class RTCMSignalDecoder:
         crc = reader.read_int(16) * (2**-5)
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
-        if not 1 <= prn <= 32 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+        if not 1 <= prn <= 32 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
         
         sat_id = f"RTCM:us:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         self._ephemeris_data[serial][sat_id] = {
-            'A': sqrtA**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
+            'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
             'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2
@@ -465,7 +465,7 @@ class RTCMSignalDecoder:
         cuc = reader.read_int(18) * (2**-31)
         e = reader.read_uint(32) * (2**-33)
         cus = reader.read_int(18) * (2**-31)
-        sqrtA = reader.read_uint(32) * (2**-19)
+        semi_major_axis_sqrt = reader.read_uint(32) * (2**-19)
         toes = reader.read_uint(17) * 8.0
         cic = reader.read_int(18) * (2**-31)
         OMG0 = reader.read_int(32) * (2**-31) * math.pi
@@ -474,14 +474,14 @@ class RTCMSignalDecoder:
         crc = reader.read_int(18) * (2**-6)
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
-        if not 1 <= prn <= 63 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+        if not 1 <= prn <= 63 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
         
         sat_id = f"RTCM:cn:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         is_geo = (1 <= prn <= 5) or (59 <= prn <= 63)
         self._ephemeris_data[serial][sat_id] = {
-            'A': sqrtA**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
+            'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
             'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2, 'is_geo': is_geo
@@ -503,7 +503,7 @@ class RTCMSignalDecoder:
         cuc = reader.read_int(16) * (2**-29)
         e = reader.read_uint(32) * (2**-33)
         cus = reader.read_int(16) * (2**-29)
-        sqrtA = reader.read_uint(32) * (2**-19)
+        semi_major_axis_sqrt = reader.read_uint(32) * (2**-19)
         toes = reader.read_uint(16) * 16.0
         cic = reader.read_int(16) * (2**-29)
         OMG0 = reader.read_int(32) * (2**-31) * math.pi
@@ -513,13 +513,13 @@ class RTCMSignalDecoder:
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
         idot = reader.read_int(14) * (2**-43) * math.pi
-        if not 193 <= prn <= 202 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+        if not 193 <= prn <= 202 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
         
         sat_id = f"RTCM:jp:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         self._ephemeris_data[serial][sat_id] = {
-            'A': sqrtA**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
+            'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
             'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2
@@ -541,7 +541,7 @@ class RTCMSignalDecoder:
         cuc = reader.read_int(16) * (2**-29)
         e = reader.read_uint(32) * (2**-33)
         cus = reader.read_int(16) * (2**-29)
-        sqrtA = reader.read_uint(32) * (2**-19)
+        semi_major_axis_sqrt = reader.read_uint(32) * (2**-19)
         toes = reader.read_uint(14) * 60.0
         cic = reader.read_int(16) * (2**-29)
         OMG0 = reader.read_int(32) * (2**-31) * math.pi
@@ -550,13 +550,13 @@ class RTCMSignalDecoder:
         crc = reader.read_int(16) * (2**-5)
         omg = reader.read_int(32) * (2**-31) * math.pi
         OMGd = reader.read_int(24) * (2**-43) * math.pi
-        if not 1 <= prn <= 36 or not self._valid_kepler_ephemeris(sqrtA, e, toes):
+        if not 1 <= prn <= 36 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
         
         sat_id = f"RTCM:eu:{prn}"
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         self._ephemeris_data[serial][sat_id] = {
-            'A': sqrtA**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
+            'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
             'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2

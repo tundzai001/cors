@@ -3,11 +3,11 @@
 Revision ID: 20261018_user_mobile_base_access
 Revises: 20261009_api_key_reveal
 """
-from typing import Sequence, Union
+from typing import Sequence
 from alembic import op
 
 revision: str = "20261018_user_mobile_base_access"
-down_revision: Union[str, Sequence[str], None] = "20261009_api_key_reveal"
+down_revision: str | Sequence[str] | None = "20261009_api_key_reveal"
 branch_labels = None
 depends_on = None
 

@@ -4,15 +4,15 @@ Revision ID: 20261001_secure_device_tokens
 Revises: 20260927_offline_since
 Create Date: 2026-10-01
 """
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20261001_secure_device_tokens"
-down_revision: Union[str, Sequence[str], None] = "20260927_offline_since"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "20260927_offline_since"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

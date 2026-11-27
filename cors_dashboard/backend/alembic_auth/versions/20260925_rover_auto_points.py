@@ -1,12 +1,12 @@
 """Configure automatic RTK point capture per rover account."""
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20260925_rover_auto_points"
-down_revision: Union[str, Sequence[str], None] = "20260925_rover_fixed_points"
+down_revision: str | Sequence[str] | None = "20260925_rover_fixed_points"
 branch_labels = None
 depends_on = None
 

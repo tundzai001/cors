@@ -1,12 +1,12 @@
 """Record RTK fix quality with rover history positions."""
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20260925_rover_history_fix_quality"
-down_revision: Union[str, Sequence[str], None] = "20260924_coordinator_view_stations"
+down_revision: str | Sequence[str] | None = "20260924_coordinator_view_stations"
 branch_labels = None
 depends_on = None
 

@@ -1,12 +1,12 @@
 """Persist rover connection sessions and their latest complete position."""
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20260924_rover_session_history"
-down_revision: Union[str, Sequence[str], None] = "20260912_rover_page_access"
+down_revision: str | Sequence[str] | None = "20260912_rover_page_access"
 branch_labels = None
 depends_on = None
 

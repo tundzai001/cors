@@ -1,12 +1,12 @@
 """Default new Rover accounts to manual RTK point saving."""
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20260926_rover_auto_off"
-down_revision: Union[str, Sequence[str], None] = "20260925_rover_auto_points"
+down_revision: str | Sequence[str] | None = "20260925_rover_auto_points"
 branch_labels = None
 depends_on = None
 

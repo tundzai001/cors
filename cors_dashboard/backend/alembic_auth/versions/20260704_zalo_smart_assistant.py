@@ -4,14 +4,14 @@ Revision ID: 20260704_zalo_smart
 Revises: b274d596f264
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 import sqlalchemy as sa
 
 
 revision: str = "20260704_zalo_smart"
-down_revision: Union[str, Sequence[str], None] = "b274d596f264"
+down_revision: str | Sequence[str] | None = "b274d596f264"
 branch_labels = None
 depends_on = None
 USER_ID_FOREIGN_KEY = "users.id"

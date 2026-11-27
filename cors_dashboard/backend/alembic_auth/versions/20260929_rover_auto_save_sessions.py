@@ -1,12 +1,12 @@
 """Allow session history capture to be configured per Rover account."""
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20260929_rover_auto_save_sessions"
-down_revision: Union[str, Sequence[str], None] = "20260926_rover_auto_off"
+down_revision: str | Sequence[str] | None = "20260926_rover_auto_off"
 branch_labels = None
 depends_on = None
 

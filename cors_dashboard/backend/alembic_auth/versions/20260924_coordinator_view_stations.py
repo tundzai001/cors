@@ -1,12 +1,12 @@
 """Add separate read-only station scope for coordinators."""
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20260924_coordinator_view_stations"
-down_revision: Union[str, Sequence[str], None] = "20260924_rover_session_history"
+down_revision: str | Sequence[str] | None = "20260924_rover_session_history"
 branch_labels = None
 depends_on = None
 

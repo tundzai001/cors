@@ -4,15 +4,15 @@ Revision ID: 20261001_unique_rtcm_client_leases
 Revises: 20261001_secure_device_tokens
 Create Date: 2026-10-01
 """
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20261001_unique_rtcm_client_leases"
-down_revision: Union[str, Sequence[str], None] = "20261001_secure_device_tokens"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "20261001_secure_device_tokens"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

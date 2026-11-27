@@ -214,12 +214,12 @@ class IonosphereService:
             props = f.get("properties", {})
             tec = float(props.get("tec", 0.0))
             anomaly = float(props.get("anomaly", 0.0))
-            hmF2 = float(props.get("hmF2", 0.0))
+            hm_f2 = float(props.get("hmF2", 0.0))
             quality = int(props.get("quality_flag", 0))
 
             tecs.append(tec)
             anomalies.append(anomaly)
-            data_map[(lat, lon)] = (tec, anomaly, hmF2, quality)
+            data_map[(lat, lon)] = (tec, anomaly, hm_f2, quality)
 
             geojson_features.append({
                 "type": "Feature",
@@ -227,7 +227,7 @@ class IonosphereService:
                 "properties": {
                     "tec": round(tec, 1),
                     "anomaly": round(anomaly, 2),
-                    "hmF2": round(hmF2, 1),
+                    "hmF2": round(hm_f2, 1),
                 }
             })
 

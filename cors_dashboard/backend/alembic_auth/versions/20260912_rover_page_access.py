@@ -4,13 +4,13 @@ Revision ID: 20260912_rover_page_access
 Revises: 20260705_zalo_link_intent
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
 
 revision: str = "20260912_rover_page_access"
-down_revision: Union[str, Sequence[str], None] = "20260705_zalo_link_intent"
+down_revision: str | Sequence[str] | None = "20260705_zalo_link_intent"
 branch_labels = None
 depends_on = None
 

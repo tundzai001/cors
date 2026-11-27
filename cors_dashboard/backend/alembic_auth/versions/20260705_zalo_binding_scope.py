@@ -4,14 +4,14 @@ Revision ID: 20260705_zalo_scope
 Revises: 20260704_zalo_smart
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 import sqlalchemy as sa
 
 
 revision: str = "20260705_zalo_scope"
-down_revision: Union[str, Sequence[str], None] = "20260704_zalo_smart"
+down_revision: str | Sequence[str] | None = "20260704_zalo_smart"
 branch_labels = None
 depends_on = None
 

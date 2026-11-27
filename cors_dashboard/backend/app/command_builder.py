@@ -440,13 +440,13 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         message[8] = 1
         
         # Chuyển đổi duration và accuracy (ép kiểu float đề phòng dữ liệu là string)
-        svinMinDur_bytes = int(duration).to_bytes(4, byteorder='little')
-        svinAccLimit_bytes = int(float(accuracy) * 10000).to_bytes(4, byteorder='little')
+        svin_min_dur_bytes = int(duration).to_bytes(4, byteorder='little')
+        svin_acc_limit_bytes = int(float(accuracy) * 10000).to_bytes(4, byteorder='little')
         
         # Ghi vào vị trí đúng
         for i in range(4):
-            message[30 + i] = svinMinDur_bytes[i]
-            message[34 + i] = svinAccLimit_bytes[i]
+            message[30 + i] = svin_min_dur_bytes[i]
+            message[34 + i] = svin_acc_limit_bytes[i]
         
         # Tính checksum
         CK_A, CK_B = 0, 0
@@ -506,37 +506,37 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         multiplier = 10000000  # LLA multiplier
         
         # === XỬ LÝ LATITUDE ===
-        XOrLat_int = int(f_lat * multiplier)
-        XOrLat_hp_value = int(f_lat * multiplier * 100) - XOrLat_int * 100
-        XOrLat_hp_bytes = XOrLat_hp_value.to_bytes(1, byteorder='little', signed=True)
-        XOrLat_bytes = XOrLat_int.to_bytes(4, byteorder='little', signed=True)
+        x_or_lat_int = int(f_lat * multiplier)
+        x_or_lat_hp_value = int(f_lat * multiplier * 100) - x_or_lat_int * 100
+        x_or_lat_hp_bytes = x_or_lat_hp_value.to_bytes(1, byteorder='little', signed=True)
+        x_or_lat_bytes = x_or_lat_int.to_bytes(4, byteorder='little', signed=True)
         
         # === XỬ LÝ LONGITUDE ===
-        YOrLon_int = int(f_lon * multiplier)
-        YOrLon_hp_value = int(f_lon * multiplier * 100) - YOrLon_int * 100
-        YOrLon_hp_bytes = YOrLon_hp_value.to_bytes(1, byteorder='little', signed=True)
-        YOrLon_bytes = YOrLon_int.to_bytes(4, byteorder='little', signed=True)
+        y_or_lon_int = int(f_lon * multiplier)
+        y_or_lon_hp_value = int(f_lon * multiplier * 100) - y_or_lon_int * 100
+        y_or_lon_hp_bytes = y_or_lon_hp_value.to_bytes(1, byteorder='little', signed=True)
+        y_or_lon_bytes = y_or_lon_int.to_bytes(4, byteorder='little', signed=True)
         
         # === XỬ LÝ ALTITUDE ===
-        ZOrAlt_int = int(f_alt * 100)
-        ZOrAlt_hp_value = int(f_alt * 10000) - ZOrAlt_int * 100
-        ZOrAlt_hp_bytes = ZOrAlt_hp_value.to_bytes(1, byteorder='little', signed=True)
-        ZOrAlt_bytes = ZOrAlt_int.to_bytes(4, byteorder='little', signed=True)
+        z_or_alt_int = int(f_alt * 100)
+        z_or_alt_hp_value = int(f_alt * 10000) - z_or_alt_int * 100
+        z_or_alt_hp_bytes = z_or_alt_hp_value.to_bytes(1, byteorder='little', signed=True)
+        z_or_alt_bytes = z_or_alt_int.to_bytes(4, byteorder='little', signed=True)
         
         # Fixed Position Accuracy
-        fixedPosAcc_bytes = int(f_acc * 10000).to_bytes(4, byteorder='little')
+        fixed_pos_acc_bytes = int(f_acc * 10000).to_bytes(4, byteorder='little')
         
         # Ghi vào message
         for i in range(4):
-            message[10 + i] = XOrLat_bytes[i]
-            message[14 + i] = YOrLon_bytes[i]
-            message[18 + i] = ZOrAlt_bytes[i]
-            message[26 + i] = fixedPosAcc_bytes[i]
+            message[10 + i] = x_or_lat_bytes[i]
+            message[14 + i] = y_or_lon_bytes[i]
+            message[18 + i] = z_or_alt_bytes[i]
+            message[26 + i] = fixed_pos_acc_bytes[i]
         
         # Ghi HP bytes
-        message[22] = XOrLat_hp_bytes[0]
-        message[23] = YOrLon_hp_bytes[0]
-        message[24] = ZOrAlt_hp_bytes[0]
+        message[22] = x_or_lat_hp_bytes[0]
+        message[23] = y_or_lon_hp_bytes[0]
+        message[24] = z_or_alt_hp_bytes[0]
         
         # Tính checksum
         CK_A, CK_B = 0, 0
