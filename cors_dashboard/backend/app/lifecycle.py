@@ -55,6 +55,15 @@ from .caster_cache import _get_all_caster_cache
 
 logger = logging.getLogger("app.main")
 
+GNSS_SYSTEM_NAMES = {
+    "us": "GPS (Mỹ)", "gps": "GPS (Mỹ)", "gp": "GPS (Mỹ)",
+    "ru": "GLONASS (Nga)", "glonass": "GLONASS (Nga)", "gl": "GLONASS (Nga)",
+    "eu": "Galileo (Châu Âu)", "galileo": "Galileo (Châu Âu)", "ga": "Galileo (Châu Âu)",
+    "cn": "BeiDou (Trung Quốc)", "beidou": "BeiDou (Trung Quốc)", "gb": "BeiDou (Trung Quốc)", "bd": "BeiDou (Trung Quốc)",
+    "jp": "QZSS (Nhật Bản)", "qzss": "QZSS (Nhật Bản)", "gq": "QZSS (Nhật Bản)", "qz": "QZSS (Nhật Bản)",
+    "un": "GNSS chưa phân loại", "gn": "GNSS chưa phân loại",
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -105,8 +114,8 @@ async def lifespan(app: FastAPI):
                     logger.info("Created bootstrap admin user from environment configuration.")
                 elif not admin_user:
                     logger.warning("ADMIN_PASSWORD is unset; skipping bootstrap admin creation.")
-        except Exception as e:
-            logger.error(f"Failed to create default admin: {e}")
+        except Exception:
+            logger.exception("Failed to create default admin")
 
         # ===================================================================
         # BƯỚC 2.1: SYNC AUTH SESSION & BLOCKED DEVICE CACHE
@@ -115,8 +124,8 @@ async def lifespan(app: FastAPI):
             async with auth_session_scope() as db_session:
                 await auth.sync_auth_session_cache(db_session)
                 logger.info("✓ Auth session and blocked devices cache initialized")
-        except Exception as e:
-            logger.warning(f"Auth session cache init note: {e}")
+        except Exception:
+            logger.warning("Auth session cache init note", exc_info=True)
 
         # ===================================================================
         # BƯỚC 2.5: CLEANUP GHOST DEVICES (optional)
@@ -126,8 +135,8 @@ async def lifespan(app: FastAPI):
                 deleted_count = await crud.cleanup_ghost_devices(db)
                 if deleted_count > 0:
                     logger.info(f"ðŸ—‘ï¸  Cleaned up {deleted_count} ghost devices on startup")
-        except Exception as e:
-            logger.warning(f"Ghost device cleanup failed (non-critical): {e}")
+        except Exception:
+            logger.warning("Ghost device cleanup failed (non-critical)", exc_info=True)
 
         # ===================================================================
         # BƯỚC 3: START MQTT
@@ -207,8 +216,8 @@ async def lifespan(app: FastAPI):
 
                         break  # Success, thoát retry loop
 
-                    except Exception as e:
-                        logger.error(f"Heartbeat check failed (attempt {attempt+1}/{max_retries}): {e}")
+                    except Exception:
+                        logger.exception("Heartbeat check failed (attempt %s/%s)", attempt + 1, max_retries)
                         if attempt < max_retries - 1:
                             await asyncio.sleep(2 ** attempt)
 
@@ -221,8 +230,8 @@ async def lifespan(app: FastAPI):
                 try:
                     global_rate_limiter.cleanup()
                     logger.debug("Global rate limiter cleanup completed")
-                except Exception as e:
-                    logger.error(f"Global rate limiter cleanup error: {e}")
+                except Exception:
+                    logger.exception("Global rate limiter cleanup error")
 
         async def security_rate_limiter_cleanup_task():
             """Dọn dẹp dữ liệu cũ trong security rate limiter"""
@@ -232,21 +241,23 @@ async def lifespan(app: FastAPI):
                 try:
                     rate_limiter.cleanup_stale_data()
                     logger.debug("Security rate limiter cleanup completed")
-                except Exception as e:
-                    logger.error(f"Security rate limiter cleanup error: {e}")
+                except Exception:
+                    logger.exception("Security rate limiter cleanup error")
 
         # Tạo vÃ  track tất cả tasks
         # Tạo và track tất cả tasks
-        tasks.append(asyncio.create_task(check_device_heartbeats_with_retry()))
-        tasks.append(asyncio.create_task(global_rate_limiter_cleanup_task()))
-        tasks.append(asyncio.create_task(security_rate_limiter_cleanup_task()))
-        tasks.append(asyncio.create_task(periodic_buffer_flush()))
-        tasks.append(asyncio.create_task(rtcm_session_reaper_task()))
-        tasks.append(asyncio.create_task(rtcm_ntrip_clienttable_keepalive_task()))
-        tasks.append(asyncio.create_task(ui_broadcast_worker_task()))
-        tasks.append(asyncio.create_task(ui_status_broadcast_worker_task()))
-        tasks.append(asyncio.create_task(event_loop_watchdog_task()))
-        tasks.append(asyncio.create_task(memory_guard_task()))
+        tasks.extend([
+            asyncio.create_task(check_device_heartbeats_with_retry()),
+            asyncio.create_task(global_rate_limiter_cleanup_task()),
+            asyncio.create_task(security_rate_limiter_cleanup_task()),
+            asyncio.create_task(periodic_buffer_flush()),
+            asyncio.create_task(rtcm_session_reaper_task()),
+            asyncio.create_task(rtcm_ntrip_clienttable_keepalive_task()),
+            asyncio.create_task(ui_broadcast_worker_task()),
+            asyncio.create_task(ui_status_broadcast_worker_task()),
+            asyncio.create_task(event_loop_watchdog_task()),
+            asyncio.create_task(memory_guard_task()),
+        ])
         for _ in range(max(1, PI_INGEST_WORKER_COUNT)):
             tasks.append(asyncio.create_task(pi_status_ingest_worker_task()))
 
@@ -262,8 +273,8 @@ async def lifespan(app: FastAPI):
         from .nginx_security import nginx_security, nginx_security_loop, sync_security_bans
         try:
             await sync_security_bans(restore_application=True)
-        except Exception as exc:
-            logger.error("Could not restore persistent IP bans: %s", exc)
+        except Exception:
+            logger.exception("Could not restore persistent IP bans")
         if nginx_security.enabled:
             tasks.append(asyncio.create_task(nginx_security_loop()))
 
@@ -274,32 +285,30 @@ async def lifespan(app: FastAPI):
             async def _zalo_get_devices():
                 from .database import device_session_scope, auth_session_scope
                 from . import crud
-                async with device_session_scope() as devices_db:
-                    async with auth_session_scope() as auth_db:
-                        user = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
-                        if not user:
-                            return []
-                        devices = await _ops_visible_devices(devices_db, auth_db, user)
-                        return [{
-                            "serial": d.serial,
-                            "name": d.name,
-                            "status": getattr(d, "status", "unknown"),
-                            "latest_throughput_bps": getattr(d, "latest_throughput_bps", 0),
-                            "latitude": getattr(d, "latitude", 0),
-                            "longitude": getattr(d, "longitude", 0),
-                            "mountpoint": getattr(d, "mountpoint", "")
-                        } for d in devices]
+                async with device_session_scope() as devices_db, auth_session_scope() as auth_db:
+                    user = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
+                    if not user:
+                        return []
+                    devices = await _ops_visible_devices(devices_db, auth_db, user)
+                    return [{
+                        "serial": d.serial,
+                        "name": d.name,
+                        "status": getattr(d, "status", "unknown"),
+                        "latest_throughput_bps": getattr(d, "latest_throughput_bps", 0),
+                        "latitude": getattr(d, "latitude", 0),
+                        "longitude": getattr(d, "longitude", 0),
+                        "mountpoint": getattr(d, "mountpoint", "")
+                    } for d in devices]
 
             async def _zalo_get_alerts():
                 from .database import device_session_scope, auth_session_scope
                 from . import crud
-                async with auth_session_scope() as auth_db:
-                    async with device_session_scope() as devices_db:
-                        user = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
-                        if not user:
-                            return []
-                        alerts = await _build_ops_alerts(auth_db, devices_db, user)
-                        return alerts # it's already a list of dicts
+                async with auth_session_scope() as auth_db, device_session_scope() as devices_db:
+                    user = await crud.get_user_by_username(auth_db, settings.ZALO_BOT_ADMIN_USERNAME)
+                    if not user:
+                        return []
+                    alerts = await _build_ops_alerts(auth_db, devices_db, user)
+                    return alerts # it's already a list of dicts
 
             def _zalo_parse_scalar(value: Any) -> Any:
                 text_value = str(value).strip()
@@ -668,14 +677,6 @@ async def lifespan(app: FastAPI):
                 if not isinstance(satellites, list):
                     satellites = []
 
-                system_names = {
-                    "us": "GPS (Mỹ)", "gps": "GPS (Mỹ)", "gp": "GPS (Mỹ)",
-                    "ru": "GLONASS (Nga)", "glonass": "GLONASS (Nga)", "gl": "GLONASS (Nga)",
-                    "eu": "Galileo (Châu Âu)", "galileo": "Galileo (Châu Âu)", "ga": "Galileo (Châu Âu)",
-                    "cn": "BeiDou (Trung Quốc)", "beidou": "BeiDou (Trung Quốc)", "gb": "BeiDou (Trung Quốc)", "bd": "BeiDou (Trung Quốc)",
-                    "jp": "QZSS (Nhật Bản)", "qzss": "QZSS (Nhật Bản)", "gq": "QZSS (Nhật Bản)", "qz": "QZSS (Nhật Bản)",
-                    "un": "GNSS chưa phân loại", "gn": "GNSS chưa phân loại",
-                }
                 grouped: Dict[str, Set[str]] = {}
                 active_satellites = []
                 for index, sat in enumerate(satellites):
@@ -691,7 +692,7 @@ async def lifespan(app: FastAPI):
                     raw_system = str(
                         sat.get("system") or sat.get("navSystem") or sat.get("talker") or "un"
                     ).strip().lower()
-                    label = system_names.get(raw_system, raw_system.upper() or system_names["un"])
+                    label = GNSS_SYSTEM_NAMES.get(raw_system, raw_system.upper() or GNSS_SYSTEM_NAMES["un"])
                     sat_key = str(sat.get("id") or sat.get("prn") or index)
                     grouped.setdefault(label, set()).add(sat_key)
 
@@ -1017,9 +1018,11 @@ async def lifespan(app: FastAPI):
                                 telemetry = _zalo_live_telemetry(device.serial)
                                 nmea = telemetry.get("nmea_data") if isinstance(telemetry.get("nmea_data"), dict) else {}
                                 gga = nmea.get("gga") if isinstance(nmea.get("gga"), dict) else {}
-                                lat = (coords.get("lat") if "lat" in coords else coords.get("latitude")) if isinstance(coords, dict) else None
-                                lon = (coords.get("lon") if "lon" in coords else coords.get("longitude")) if isinstance(coords, dict) else None
-                                alt = (coords.get("alt") if "alt" in coords else coords.get("altitude")) if isinstance(coords, dict) else None
+                                lat = lon = alt = None
+                                if isinstance(coords, dict):
+                                    lat = coords.get("lat", coords.get("latitude"))
+                                    lon = coords.get("lon", coords.get("longitude"))
+                                    alt = coords.get("alt", coords.get("altitude"))
                                 lat = lat if lat is not None else gga.get("latitude")
                                 lon = lon if lon is not None else gga.get("longitude")
                                 alt = alt if alt is not None else gga.get("altitude")
@@ -1430,8 +1433,8 @@ async def lifespan(app: FastAPI):
             try:
                 from .zalo_bot_service import stop_zalo_bots
                 await stop_zalo_bots()
-            except Exception as e:
-                logger.error(f"Error stopping Zalo Bot: {e}")
+            except Exception:
+                logger.exception("Error stopping Zalo Bot")
 
         await redis_client.disconnect()
 
@@ -1440,8 +1443,8 @@ async def lifespan(app: FastAPI):
             mqtt_handler.stop_mqtt_loop()
             logger.info("âœ“ MQTT stopped")
             await asyncio.sleep(1.0)
-        except Exception as e:
-            logger.error(f"Error stopping MQTT: {e}")
+        except Exception:
+            logger.exception("Error stopping MQTT")
 
         # --- BƯỚC 2: HỦY CÁC BACKGROUND TASKS ---
         for task in tasks:
@@ -1467,8 +1470,8 @@ async def lifespan(app: FastAPI):
                 )
                 await db.commit()
             logger.info("âœ“ All devices marked as OFFLINE")
-        except Exception as e:
-            logger.error(f"Error setting devices offline: {e}")
+        except Exception:
+            logger.exception("Error setting devices offline")
 
         # 4. ĐÓNG KẾT NỐI DATABASE (Cuối cùng)
         try:
@@ -1476,8 +1479,8 @@ async def lifespan(app: FastAPI):
             await engine.dispose()
             await auth_engine.dispose()
             logger.info("âœ“ Database connections closed gracefully")
-        except Exception as e:
-            logger.error(f"Error closing databases: {e}")
+        except Exception:
+            logger.exception("Error closing databases")
 
         logger.info("âœ… Shutdown sequence complete")
 
