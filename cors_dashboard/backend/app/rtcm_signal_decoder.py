@@ -237,29 +237,29 @@ class RTCMSignalDecoder:
         M = eph['M0'] + (math.sqrt(MU / (A**3)) + eph['deln']) * tk
         E = M
         for _ in range(MAX_ITER_KEPLER):
-            Ek = E
-            E = M + eph['e'] * math.sin(Ek)
-            if abs(E - Ek) < RTOL_KEPLER:
+            ek = E
+            E = M + eph['e'] * math.sin(ek)
+            if abs(E - ek) < RTOL_KEPLER:
                 break
 
-        sinE = math.sin(E)
-        cosE = math.cos(E)
-        nu = math.atan2(math.sqrt(1.0 - eph['e']**2) * sinE, cosE - eph['e'])
+        sin_e = math.sin(E)
+        cos_e = math.cos(E)
+        nu = math.atan2(math.sqrt(1.0 - eph['e']**2) * sin_e, cos_e - eph['e'])
         phi = nu + eph['omg']
         sin2phi = math.sin(2.0 * phi)
         cos2phi = math.cos(2.0 * phi)
 
         u = phi + eph['cuc'] * cos2phi + eph['cus'] * sin2phi
-        r = A * (1.0 - eph['e'] * cosE) + eph['crc'] * cos2phi + eph['crs'] * sin2phi
+        r = A * (1.0 - eph['e'] * cos_e) + eph['crc'] * cos2phi + eph['crs'] * sin2phi
         i = eph['i0'] + eph['idot'] * tk + eph['cic'] * cos2phi + eph['cis'] * sin2phi
 
         x = r * math.cos(u)
         y = r * math.sin(u)
 
         if sys_name == 'BEIDOU' and eph.get('is_geo', False):
-            O_mg = eph['OMG0'] + eph['OMGd'] * tk - OMGE_SYS * eph['toe']
-            xg = x * math.cos(O_mg) - y * math.cos(i) * math.sin(O_mg)
-            yg = x * math.sin(O_mg) + y * math.cos(i) * math.cos(O_mg)
+            o_mg = eph['OMG0'] + eph['OMGd'] * tk - OMGE_SYS * eph['toe']
+            xg = x * math.cos(o_mg) - y * math.cos(i) * math.sin(o_mg)
+            yg = x * math.sin(o_mg) + y * math.cos(i) * math.cos(o_mg)
             zg = y * math.sin(i)
             sina = math.sin(-5.0 * math.pi / 180.0)
             cosa = math.cos(-5.0 * math.pi / 180.0)
@@ -267,13 +267,13 @@ class RTCMSignalDecoder:
             rs_y =  yg
             rs_z = -xg * sina + zg * cosa
         else:
-            O_mg = eph['OMG0'] + (eph['OMGd'] - OMGE_SYS) * tk - OMGE_SYS * eph['toe']
-            cosO = math.cos(O_mg)
-            sinO = math.sin(O_mg)
+            o_mg = eph['OMG0'] + (eph['OMGd'] - OMGE_SYS) * tk - OMGE_SYS * eph['toe']
+            cos_o = math.cos(o_mg)
+            sin_o = math.sin(o_mg)
             cosi = math.cos(i)
             sini = math.sin(i)
-            rs_x = x * cosO - y * cosi * sinO
-            rs_y = x * sinO + y * cosi * cosO
+            rs_x = x * cos_o - y * cosi * sin_o
+            rs_y = x * sin_o + y * cosi * cos_o
             rs_z = y * sini
 
         return (rs_x, rs_y, rs_z)
@@ -380,7 +380,7 @@ class RTCMSignalDecoder:
         i0 = reader.read_int(32) * (2**-31) * math.pi
         crc = reader.read_int(16) * (2**-5)
         omg = reader.read_int(32) * (2**-31) * math.pi
-        OMGd = reader.read_int(24) * (2**-43) * math.pi
+        omg_d = reader.read_int(24) * (2**-43) * math.pi
         if not 1 <= prn <= 32 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
         
@@ -388,7 +388,7 @@ class RTCMSignalDecoder:
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         self._ephemeris_data[serial][sat_id] = {
             'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
-            'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
+            'deln': deln, 'OMGd': omg_d, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2
         }
@@ -473,7 +473,7 @@ class RTCMSignalDecoder:
         i0 = reader.read_int(32) * (2**-31) * math.pi
         crc = reader.read_int(18) * (2**-6)
         omg = reader.read_int(32) * (2**-31) * math.pi
-        OMGd = reader.read_int(24) * (2**-43) * math.pi
+        omg_d = reader.read_int(24) * (2**-43) * math.pi
         if not 1 <= prn <= 63 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
         
@@ -482,7 +482,7 @@ class RTCMSignalDecoder:
         is_geo = (1 <= prn <= 5) or (59 <= prn <= 63)
         self._ephemeris_data[serial][sat_id] = {
             'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
-            'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
+            'deln': deln, 'OMGd': omg_d, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2, 'is_geo': is_geo
         }
@@ -511,7 +511,7 @@ class RTCMSignalDecoder:
         i0 = reader.read_int(32) * (2**-31) * math.pi
         crc = reader.read_int(16) * (2**-5)
         omg = reader.read_int(32) * (2**-31) * math.pi
-        OMGd = reader.read_int(24) * (2**-43) * math.pi
+        omg_d = reader.read_int(24) * (2**-43) * math.pi
         idot = reader.read_int(14) * (2**-43) * math.pi
         if not 193 <= prn <= 202 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
@@ -520,7 +520,7 @@ class RTCMSignalDecoder:
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         self._ephemeris_data[serial][sat_id] = {
             'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
-            'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
+            'deln': deln, 'OMGd': omg_d, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2
         }
@@ -549,7 +549,7 @@ class RTCMSignalDecoder:
         i0 = reader.read_int(32) * (2**-31) * math.pi
         crc = reader.read_int(16) * (2**-5)
         omg = reader.read_int(32) * (2**-31) * math.pi
-        OMGd = reader.read_int(24) * (2**-43) * math.pi
+        omg_d = reader.read_int(24) * (2**-43) * math.pi
         if not 1 <= prn <= 36 or not self._valid_kepler_ephemeris(semi_major_axis_sqrt, e, toes):
             return
         
@@ -557,7 +557,7 @@ class RTCMSignalDecoder:
         if serial not in self._ephemeris_data: self._ephemeris_data[serial] = {}
         self._ephemeris_data[serial][sat_id] = {
             'A': semi_major_axis_sqrt**2, 'e': e, 'i0': i0, 'OMG0': OMG0, 'omg': omg, 'M0': M0,
-            'deln': deln, 'OMGd': OMGd, 'idot': idot, 'crc': crc, 'crs': crs,
+            'deln': deln, 'OMGd': omg_d, 'idot': idot, 'crc': crc, 'crs': crs,
             'cuc': cuc, 'cus': cus, 'cic': cic, 'cis': cis, 'toe': toes, 'toc': toc,
             'f0': f0, 'f1': f1, 'f2': f2
         }
