@@ -605,7 +605,7 @@ class CommandsMixin:
             return
 
         try:
-            binding, user = await zalo_repository.consume_group_link_code(
+            binding, _ = await zalo_repository.consume_group_link_code(
                 token, chat_id, sender_id, self._get_display_name(update)
             )
         except ValueError as exc:

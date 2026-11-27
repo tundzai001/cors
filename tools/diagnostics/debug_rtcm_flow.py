@@ -347,7 +347,7 @@ async def print_statistics():
         m_rtcm = stats["mqtt"]["last_sec_rtcm"]
         m_total_raw = stats["mqtt"]["total_bytes"]
         m_total_rtcm = stats["mqtt"]["rtcm_bytes"]
-        m_idle = now - stats["mqtt"]["last_recv_time"] if stats["mqtt"]["last_recv_time"] > 0 else uptime
+        _ = now - stats["mqtt"]["last_recv_time"] if stats["mqtt"]["last_recv_time"] > 0 else uptime
         
         # NTRIP Stats
         n_status = "ONLINE" if stats["ntrip"]["connected"] else "OFFLINE"
@@ -355,8 +355,8 @@ async def print_statistics():
         n_rtcm = stats["ntrip"]["last_sec_rtcm"]
         n_total_raw = stats["ntrip"]["total_bytes"]
         n_total_rtcm = stats["ntrip"]["rtcm_bytes"]
-        n_reconnects = stats["ntrip"]["reconnect_count"]
-        n_idle = now - stats["ntrip"]["last_recv_time"] if stats["ntrip"]["last_recv_time"] > 0 else uptime
+        _ = stats["ntrip"]["reconnect_count"]
+        _ = now - stats["ntrip"]["last_recv_time"] if stats["ntrip"]["last_recv_time"] > 0 else uptime
 
         logging.info("------------------------------------------------------------------------------------------------")
         logging.info(

@@ -403,7 +403,7 @@ class RTCMSignalDecoder:
         tk_h = reader.read_uint(5)
         tk_m = reader.read_uint(6)
         tk_s = reader.read_uint(1) * 30.0
-        bn = reader.read_uint(1)
+        _ = reader.read_uint(1)
         reader.skip(1)
         tb = reader.read_uint(7)
         vel_x = reader.read_int(24) * (2**-20) * 1000.0
@@ -416,9 +416,9 @@ class RTCMSignalDecoder:
         pos_z = reader.read_int(27) * (2**-11) * 1000.0
         acc_z = reader.read_int(5) * (2**-30) * 1000.0
         reader.skip(1)
-        gamn = reader.read_int(11) * (2**-40)
+        _ = reader.read_int(11) * (2**-40)
         reader.skip(3)
-        taun = reader.read_int(22) * (2**-30)
+        _ = reader.read_int(22) * (2**-30)
         
         tb_time = tb * 900.0 - 10800.0
         if tb_time < 0: tb_time += 86400.0
@@ -496,7 +496,7 @@ class RTCMSignalDecoder:
         f2 = reader.read_int(8) * (2**-55)
         f1 = reader.read_int(16) * (2**-43)
         f0 = reader.read_int(22) * (2**-31)
-        iode = reader.read_uint(8)
+        _ = reader.read_uint(8)
         crs = reader.read_int(16) * (2**-5)
         deln = reader.read_int(16) * (2**-43) * math.pi
         M0 = reader.read_int(32) * (2**-31) * math.pi

@@ -122,7 +122,7 @@ def validate_caster_hosts(hosts: list[str] | tuple[str, ...]) -> list[str]:
 
 
 async def get_caster_client(db: AsyncSession) -> CasterClient:
-    hosts, env_cfg = _read_caster_config_from_env()
+    _, env_cfg = _read_caster_config_from_env()
     host = str(env_cfg["host"] or settings.CASTER_HOST or "").strip()
     port = int(env_cfg["port"] or settings.CASTER_PORT or 2101)
     user = str(env_cfg["user"] or "").strip()

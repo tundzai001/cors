@@ -334,7 +334,7 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
         method = request.method.upper()
         path = request.url.path.lower()
         client_ip = rate_limiter._get_client_ip(request)
-        now = time.time()
+        _ = time.time()
 
         # 1. Kiểm tra xem IP có đang bị BAN không (Via Redis)
         is_banned = await redis_client.is_ip_banned(client_ip)
@@ -1900,7 +1900,7 @@ async def get_caster_config(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES))
 ):
     """Return the list of configured caster hosts and system version."""
-    hosts, env_cfg = _read_caster_config_from_env()
+    hosts, _ = _read_caster_config_from_env()
     if not hosts:
         # Fallback to single host from settings
         hosts = [str(settings.CASTER_HOST or "localhost")]

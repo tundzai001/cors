@@ -502,7 +502,7 @@ async def block_caster_user(
         await auth_db.commit()
 
     # 3. Gọi các caster TCP để xóa user (kick ngay lập tức trên tất cả server)
-    hosts, env_cfg = _read_caster_config_from_env()
+    hosts, _ = _read_caster_config_from_env()
     target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
     port = int(settings.CASTER_PORT or 2101)
 
@@ -578,7 +578,7 @@ async def unblock_caster_user(
         pass
 
     result = await auth_db.execute(del_q)
-    deleted_count = result.rowcount
+    _ = result.rowcount
     await auth_db.commit()
 
     caster_recreated = False
@@ -589,7 +589,7 @@ async def unblock_caster_user(
         await auth_db.commit()
 
         # 3. Tạo lại user trên TẤT CẢ caster
-        hosts, env_cfg = _read_caster_config_from_env()
+        hosts, _ = _read_caster_config_from_env()
         target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
         port = int(settings.CASTER_PORT or 2101)
 

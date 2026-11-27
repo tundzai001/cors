@@ -1310,7 +1310,7 @@ def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: b
                 errors.append(f"[{current_path}] Type mismatch")
                 continue
             
-            is_match, sub_errors = _compare_configs(agent_val, db_val, current_path, is_relay=is_relay)
+            _, sub_errors = _compare_configs(agent_val, db_val, current_path, is_relay=is_relay)
             errors.extend(sub_errors)
             continue
 

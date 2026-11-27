@@ -392,8 +392,8 @@ async def sync_esp_base_rovers() -> None:
                               and (s.host.rstrip('.').casefold(), int(s.port)) in destinations
                               and _source_has_data(s, now)), None)
         source_active = active_source is not None
-        host = active_source.host if active_source else None
-        port = active_source.port if active_source else None
+        _ = active_source.host if active_source else None
+        _ = active_source.port if active_source else None
         if mp and not source_active:
             await notify_decoder_worker("stop", serial, mp, mp, DEFAULT_ROVER_PASSWORD)
 

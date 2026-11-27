@@ -513,7 +513,7 @@ async def delete_device_from_list(
         logging.warning(f"Không thể gửi lệnh xóa xuống Pi '{serial}' (có thể thiết bị đang tắt): {e}")
 
     # Xóa khỏi database
-    deleted_chip_type = str(device.detected_chip_type or "").upper()
+    _ = str(device.detected_chip_type or "").upper()
     # Serialize deletion with MQTT status writes. If a retained relay status
     # was already writing, it finishes first and this delete wins; if deletion
     # wins, the metadata tombstone is visible before later writes proceed.

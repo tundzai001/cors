@@ -2821,12 +2821,12 @@ class RTCMSignalDecoder:
         if len(payload) * 8 < 12 + 336: return
         reader = BitReader(payload, 12)
         prn = reader.read_uint(6)
-        freq = reader.read_uint(5) - 7
+        _ = reader.read_uint(5) - 7
         reader.skip(4)
-        tk_h = reader.read_uint(5)
-        tk_m = reader.read_uint(6)
-        tk_s = reader.read_uint(1) * 30.0
-        bn = reader.read_uint(1)
+        _ = reader.read_uint(5)
+        _ = reader.read_uint(6)
+        _ = reader.read_uint(1) * 30.0
+        _ = reader.read_uint(1)
         reader.skip(1)
         tb = reader.read_uint(7)
         vel_x = reader.read_int(24) * (2**-20) * 1000.0
@@ -2839,9 +2839,9 @@ class RTCMSignalDecoder:
         pos_z = reader.read_int(27) * (2**-11) * 1000.0
         acc_z = reader.read_int(5) * (2**-30) * 1000.0
         reader.skip(1)
-        gamn = reader.read_int(11) * (2**-40)
+        _ = reader.read_int(11) * (2**-40)
         reader.skip(3)
-        taun = reader.read_int(22) * (2**-30)
+        _ = reader.read_int(22) * (2**-30)
         
         tb_time = tb * 900.0 - 10800.0
         if tb_time < 0: tb_time += 86400.0
@@ -2903,7 +2903,7 @@ class RTCMSignalDecoder:
         f2 = reader.read_int(8) * (2**-55)
         f1 = reader.read_int(16) * (2**-43)
         f0 = reader.read_int(22) * (2**-31)
-        iode = reader.read_uint(8)
+        _ = reader.read_uint(8)
         crs = reader.read_int(16) * (2**-5)
         deln = reader.read_int(16) * (2**-43) * math.pi
         M0 = reader.read_int(32) * (2**-31) * math.pi
@@ -4552,7 +4552,7 @@ class GNSSReader(threading.Thread):
                                 # === LOG STATISTICS PERIODICALLY ===
                                 current_time = time.time()
                                 if current_time - last_stats_log > 30:  # Every 30 seconds
-                                    stats = self.get_statistics()
+                                    _ = self.get_statistics()
                                     #self.log("INFO", f"GNSS Stats: RTCM={stats['rtcm_packets']}, NMEA={stats['nmea_packets']}, Errors={stats['parse_errors']}, Overflows={stats['buffer_overflows']}")
                                     last_stats_log = current_time
                                 self._log_parser_debug_if_due(current_time, len(buffer))

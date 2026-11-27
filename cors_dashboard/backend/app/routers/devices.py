@@ -999,7 +999,7 @@ async def delete_rover(
         logger.warning(f"Failed to delete rover from Caster (might be already deleted): {e}")
 
     # 4. Xóa khỏi DB Local
-    success = await crud.delete_rover_account(db, rover_id=rover_id)
+    _ = await crud.delete_rover_account(db, rover_id=rover_id)
     
     return {"status": "deleted", "rover_id": rover_id}
 

@@ -777,12 +777,12 @@ class RTCMSignalDecoder:
         if len(payload) * 8 < 12 + 336: return
         reader = BitReader(payload, 12)
         prn = reader.read_uint(6)
-        freq = reader.read_uint(5) - 7
+        _ = reader.read_uint(5) - 7
         reader.skip(4)
-        tk_h = reader.read_uint(5)
-        tk_m = reader.read_uint(6)
-        tk_s = reader.read_uint(1) * 30.0
-        bn = reader.read_uint(1)
+        _ = reader.read_uint(5)
+        _ = reader.read_uint(6)
+        _ = reader.read_uint(1) * 30.0
+        _ = reader.read_uint(1)
         reader.skip(1)
         tb = reader.read_uint(7)
         vel_x = reader.read_int(24) * (2**-20) * 1000.0
@@ -795,9 +795,9 @@ class RTCMSignalDecoder:
         pos_z = reader.read_int(27) * (2**-11) * 1000.0
         acc_z = reader.read_int(5) * (2**-30) * 1000.0
         reader.skip(1)
-        gamn = reader.read_int(11) * (2**-40)
+        _ = reader.read_int(11) * (2**-40)
         reader.skip(3)
-        taun = reader.read_int(22) * (2**-30)
+        _ = reader.read_int(22) * (2**-30)
         
         tb_time = tb * 900.0 - 10800.0
         if tb_time < 0: tb_time += 86400.0
@@ -860,7 +860,7 @@ class RTCMSignalDecoder:
         f2 = reader.read_int(8) * (2**-55)
         f1 = reader.read_int(16) * (2**-43)
         f0 = reader.read_int(22) * (2**-31)
-        iode = reader.read_uint(8)
+        _ = reader.read_uint(8)
         crs = reader.read_int(16) * (2**-5)
         deln = reader.read_int(16) * (2**-43) * math.pi
         M0 = reader.read_int(32) * (2**-31) * math.pi
@@ -3240,11 +3240,11 @@ class MqttSourceWorker(threading.Thread):
         return
         self.log("INFO", "📡 Executing Geotek LTE specialized configuration...")
         
-        setup_method = self.cfg.get('setup_method', 'SURVEY_IN')
-        duration = self.cfg.get('duration', 60)
-        lat = self.cfg.get('lat', 0.0)
-        lon = self.cfg.get('lon', 0.0)
-        alt = self.cfg.get('alt', 0.0)
+        _ = self.cfg.get('setup_method', 'SURVEY_IN')
+        _ = self.cfg.get('duration', 60)
+        _ = self.cfg.get('lat', 0.0)
+        _ = self.cfg.get('lon', 0.0)
+        _ = self.cfg.get('alt', 0.0)
         
         cmds = []
         # Lệnh RESET vật lý chip đầu tiên
