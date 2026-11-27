@@ -668,7 +668,7 @@ async def create_rover_for_base(
 
     # Gộp thêm extra mountpoints của user (nếu có)
     if current_user.extra_mountpoints:
-        extra_list = [mp.strip() for mp in re.split(r'[;,\s\n]+', current_user.extra_mountpoints) if mp.strip()]
+        extra_list = [mp.strip() for mp in re.split(r'[;,\s]+', current_user.extra_mountpoints) if mp.strip()]
         valid_mps.extend(extra_list)
 
     if not valid_mps:

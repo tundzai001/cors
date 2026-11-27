@@ -351,11 +351,11 @@ async def create_multi_base_rover(
 
         # 2. MP bổ sung được gÃ¡n rÃªng
         if current_user.extra_mountpoints:
-            extras = [mp.strip() for mp in re.split(r'[;,\s\n]+', current_user.extra_mountpoints) if mp.strip()]
+            extras = [mp.strip() for mp in re.split(r'[;,\s]+', current_user.extra_mountpoints) if mp.strip()]
             valid_mps.update(extras)
 
         # 3. Kiểm tra Mountpoint yÃªu cầu
-        requested = [mp.strip() for mp in re.split(r'[;,\s\n]+', request.mountpoint_override) if mp.strip()]
+        requested = [mp.strip() for mp in re.split(r'[;,\s]+', request.mountpoint_override) if mp.strip()]
         if not requested:
              raise HTTPException(status_code=400, detail="Mountpoint không được để trống.")
 

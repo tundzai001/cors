@@ -48,7 +48,7 @@ async def get_heatmap_data(
 
 # === OPERATIONS CENTER / V1 ADDITIVE OPS APIS ===
 def _split_ops_tokens(value: str | None) -> list[str]:
-    return [token.strip() for token in re.split(r"[;,\s\n]+", str(value or "")) if token.strip()]
+    return [token.strip() for token in re.split(r"[;,\s]+", str(value or "")) if token.strip()]
 
 
 def _device_total_bps(device: models.Device) -> int:
