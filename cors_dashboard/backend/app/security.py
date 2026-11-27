@@ -663,7 +663,7 @@ class AdvancedRateLimiter:
             return result
 
         except Exception as e:
-            logger.error(f"Error in get_stats: {e}", exc_info=True)
+            logger.exception(f"Error in get_stats: {e}", exc_info=True)
             # Return minimal fallback data
             return {
                 "error": "Failed to generate stats",

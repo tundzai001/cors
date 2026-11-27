@@ -47,7 +47,7 @@ async def delete_caster_user_endpoint(
             await caster.delete_user(identifier='admin', username=username)
             results_log.append(host)
         except Exception as e:
-            logger.error("Failed to delete rover on caster (%s)", type(e).__name__)
+            logger.exception("Failed to delete rover on caster (%s)", type(e).__name__)
             errors.append(f"{host}: {str(e)}")
 
     if errors and not results_log:
@@ -267,7 +267,7 @@ async def sync_rover_by_username(
                     if not toggle_ok:
                         logger.warning("Sync-by-username could not confirm show_position toggle")
             except Exception as host_err:
-                logger.error("Failed to sync rover to caster (%s)", type(host_err).__name__)
+                logger.exception("Failed to sync rover to caster (%s)", type(host_err).__name__)
                 failed_hosts.append(host)
         if failed_hosts:
             raise HTTPException(status_code=502, detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Có thể thử lại.")
@@ -280,7 +280,7 @@ async def sync_rover_by_username(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Sync Caster Error (%s)", type(e).__name__)
+        logger.exception("Sync Caster Error (%s)", type(e).__name__)
         raise HTTPException(status_code=502, detail="Chưa thể đồng bộ Rover sang caster; hãy thử lại.") from None
 
     return rover
@@ -414,7 +414,7 @@ async def create_multi_base_rover(
                 )
                 results_log.append(host)
             except Exception as e:
-                logger.error(f"Failed to create user on caster {host}: {e}")
+                logger.exception(f"Failed to create user on caster {host}: {e}")
                 errors.append(f"{host}: {str(e)}")
 
         if errors and not results_log:
@@ -424,7 +424,7 @@ async def create_multi_base_rover(
         logger.info(f"✓ Created Multi-Rover '{request.username}' on: {', '.join(results_log)}")
 
     except Exception as e:
-        logger.error(f"Caster Multi-Create error: {e}")
+        logger.exception(f"Caster Multi-Create error: {e}")
         raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(e)}")
 
     # 5. LƯU VÀO DB (Ghi rõ mountpoint)

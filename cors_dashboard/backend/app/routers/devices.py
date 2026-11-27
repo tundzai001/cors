@@ -474,7 +474,7 @@ async def configure_chip_endpoint(
         })
     except Exception as e:
         await db.rollback()
-        logger.error("Failed to save chip config (%s)", type(e).__name__)
+        logger.exception("Failed to save chip config (%s)", type(e).__name__)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to save configuration to database: {str(e)}"
@@ -543,7 +543,7 @@ async def configure_chip_endpoint(
                 "original_config": config_request.payload,
             }
     except Exception as e:
-        logger.error("Failed to build chip config commands (%s)", type(e).__name__)
+        logger.exception("Failed to build chip config commands (%s)", type(e).__name__)
         raise HTTPException(
             status_code=400,
             detail=f"Failed to build configuration commands: {str(e)}"
@@ -575,7 +575,7 @@ async def configure_chip_endpoint(
             detail=f"Configuration saved to database successfully, but device is offline ({http_exc.detail}). Config will auto-sync when device comes back online."
         )
     except Exception as e:
-        logger.error("Unexpected error sending chip config command to %s: %s", serial, e, exc_info=True)
+        logger.exception("Unexpected error sending chip config command to %s: %s", serial, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error while sending command: {str(e)}")
 
 # --- CÁC ENDPOINT CHO QUẢN LÝ ROVER ---
@@ -718,7 +718,7 @@ async def create_rover_for_base(
             created_any = True
             logger.info("Created rover on caster")
         except Exception as host_err:
-            logger.error(f"Failed to create rover '{rover_data.username}' on Caster {host}: {host_err}")
+            logger.exception(f"Failed to create rover '{rover_data.username}' on Caster {host}: {host_err}")
 
     if not created_any:
         raise HTTPException(status_code=502, detail="Không thể tạo tài khoản trên bất kỳ NTRIP Caster Server nào.")
@@ -908,7 +908,7 @@ async def update_rover(
                     logger.warning(f"Caster {host} did not confirm show_position toggle for rover '{rover.username}'")
                 results_log.append(host)
             except Exception as e:
-                logger.error(f"Failed to update rover on caster {host}: {e}")
+                logger.exception(f"Failed to update rover on caster {host}: {e}")
                 failed_hosts.append(host)
         if failed_hosts:
             raise HTTPException(status_code=502, detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Cấu hình đã lưu được giữ nguyên; có thể thử lại.")
@@ -930,7 +930,7 @@ async def update_rover(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Caster Multi-Update Error: {e}")
+        logger.exception(f"Caster Multi-Update Error: {e}")
         raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(e)}")
 
     # 5. Cập nhật DB Local

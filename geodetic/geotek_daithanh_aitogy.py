@@ -67,7 +67,7 @@ class ConfigManager:
                     self.data = json.load(f)
                 logging.info(f"✓ Loaded config from {self.config_path}")
             except Exception as e:
-                logging.error(f"Error loading config: {e}")
+                logging.exception(f"Error loading config: {e}")
         else:
             logging.warning(f"Config file {self.config_path} not found. Using defaults.")
             self.data = {
@@ -96,7 +96,7 @@ class ConfigManager:
                 with open(self.config_path, 'w', encoding='utf-8') as f:
                     json.dump(self.data, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            logging.error(f"Error saving config: {e}")
+            logging.exception(f"Error saving config: {e}")
 
     def update_mqtt_source_config(self, serial, updates):
         serial = str(serial or "").strip()
@@ -3723,7 +3723,7 @@ def setup_mqtt(worker_map):
                             worker_map.pop(serial, None)
                             logging.info(f"✓ Stopped ESP Decoder Worker: serial={serial}, mp={mp}")
             except Exception as e:
-                logging.error(f"Error handling esp_base decoder control: {e}")
+                logging.exception(f"Error handling esp_base decoder control: {e}")
             return
 
         try:
@@ -3874,7 +3874,7 @@ def setup_mqtt(worker_map):
                         publish_unconfigured_device_status(c, serial, "License saved; waiting for geotek source config")
                     logging.info(f"[{serial}] Received and applied new license key at {license_path}; relay remains running")
                 except Exception as e:
-                    logging.error(f"[{serial}] Failed to save license key: {e}")
+                    logging.exception(f"[{serial}] Failed to save license key: {e}")
             return
 
         if command in {"REBOOT_DEVICE", "RESTART_DEVICE", "RESTART_MQTT"}:
@@ -3902,7 +3902,7 @@ def setup_mqtt(worker_map):
                             publish_unconfigured_device_status(c, new_serial, "Serial saved; waiting for geotek source config")
                         logging.info(f"[{serial}] Received CHANGE_SERIAL command. Applied new serial '{new_serial}' without exiting")
                 except Exception as e:
-                    logging.error(f"[{serial}] Failed to update serial: {e}")
+                    logging.exception(f"[{serial}] Failed to update serial: {e}")
             return
 
         if command == "SET_CONFIGURED_RELAY_ACTIVE":
@@ -3949,7 +3949,7 @@ def setup_mqtt(worker_map):
         client.loop_start()
         return client
     except Exception as e:
-        logging.error(f"MQTT error: {e}")
+        logging.exception(f"MQTT error: {e}")
         return None
 
 # ==============================================================================

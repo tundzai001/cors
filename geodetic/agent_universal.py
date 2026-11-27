@@ -1550,7 +1550,7 @@ def get_machine_serial():
             f.write(final_serial)
             logging.info(f"Saved new serial to {SERIAL_FILE_PATH}")
     except Exception as e:
-        logging.error(f"Cannot save device ID: {e}")
+        logging.exception(f"Cannot save device ID: {e}")
 
     return final_serial
 
@@ -1598,7 +1598,7 @@ def cleanup_lock_file():
         except: pass
         return True
     except Exception as e:
-        logging.error(f"Loi kiem tra lock file: {e}")
+        logging.exception(f"Loi kiem tra lock file: {e}")
         return False
 
 def create_lock_file():
@@ -1728,7 +1728,7 @@ def get_system_info() -> dict:
             "timestamp": int(time.time())
         }
     except Exception as e:
-        logging.error(f"Error collecting system info: {e}")
+        logging.exception(f"Error collecting system info: {e}")
         return {}
 
 
@@ -3385,7 +3385,7 @@ class NMEAPublisher(threading.Thread):
             except Empty:
                 continue
             except Exception as e:
-                logging.error(f"Error in NMEAPublisher: {e}", exc_info=True)
+                logging.exception(f"Error in NMEAPublisher: {e}", exc_info=True)
 
 
 class RTCMPublisherMQTT(threading.Thread):
@@ -3511,7 +3511,7 @@ class RTCMPublisherMQTT(threading.Thread):
                                             result = self.mqtt_client.publish(topic, payload, qos=0)
                                             mqtt_delivered = result.rc == mqtt.MQTT_ERR_SUCCESS
                                         except Exception as e:
-                                            logging.error(f"Failed to publish RTCM skyview: {e}")
+                                            logging.exception(f"Failed to publish RTCM skyview: {e}")
                                     if (
                                         not mqtt_delivered
                                         and active_websocket_connection
@@ -3536,7 +3536,7 @@ class RTCMPublisherMQTT(threading.Thread):
             except Empty:
                 pass
             except Exception as e:
-                logging.error(f"Error in RTCMPublisherMQTT: {e}", exc_info=True)
+                logging.exception(f"Error in RTCMPublisherMQTT: {e}", exc_info=True)
 
 class NTRIPServerWorker(threading.Thread):
     def __init__(self, server_id, config, log_callback, stats_dict, stats_lock, connection_status_dict):
@@ -5761,7 +5761,7 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
             status_payload['system_info'] = dict(system_info)
             logging.debug(f"System info collected: CPU={system_info.get('cpu', {}).get('usage_percent')}%, Temp={system_info.get('temperature', {}).get('celsius')} C")
     except Exception as e:
-        logging.error(f"Failed to collect system info: {e}")
+        logging.exception(f"Failed to collect system info: {e}")
 
     status_payload.setdefault("system_info", {}).update(receiver_base_system_info(agent))
     status_payload["system_info"]["device_lock"] = get_device_lock_status()
@@ -5791,7 +5791,7 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
             )
         except Exception as e:
             _set_transport_state("websocket", False)
-            logging.error(f"Failed to send status via WebSocket: {e}")
+            logging.exception(f"Failed to send status via WebSocket: {e}")
 
     # Gửi qua MQTT
     if mqtt_client and mqtt_client.is_connected():
@@ -6193,7 +6193,7 @@ async def _process_command(source: str, data: dict, agent: AgentManager, gnss_re
                         agent.restart_services()
                     
                 except Exception as e:
-                    logging.error(f"Raw command execution error: {e}")
+                    logging.exception(f"Raw command execution error: {e}")
                     raise
                 finally:
                     if gnss_reader:
@@ -6311,7 +6311,7 @@ async def _process_command(source: str, data: dict, agent: AgentManager, gnss_re
         _record_command_result(command, source, "success", "", command_id)
     except Exception as e:
         _record_command_result(command, source, "error", str(e), command_id)
-        logging.error(f"Command '{command}' failed: {e}", exc_info=True)
+        logging.exception(f"Command '{command}' failed: {e}", exc_info=True)
     finally:
         if current_state == "CONFIGURING":
             current_state = previous_state
@@ -6381,10 +6381,10 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
                 try: 
                     f.result()
                 except Exception as e:
-                    logging.error(f"Process command failed: {e}", exc_info=True)
+                    logging.exception(f"Process command failed: {e}", exc_info=True)
             future.add_done_callback(on_done)
         except Exception as e:
-            logging.error(f"Error processing MQTT message: {e}")
+            logging.exception(f"Error processing MQTT message: {e}")
     
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
@@ -6421,7 +6421,7 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
         try:
             auth_token = (await asyncio.to_thread(Path(LICENSE_PATH).read_text, encoding="utf-8")).strip()
         except Exception as e:
-            logging.error(f"Error reading license key: {e}")
+            logging.exception(f"Error reading license key: {e}")
             
     if BACKEND_WS_SCHEME not in {"ws", "wss"}:
         raise ValueError("BACKEND_WS_SCHEME must be ws or wss")
@@ -6502,7 +6502,7 @@ async def memory_guard_task():
                 logging.info(f"[MEM GUARD] Current RAM usage: {ram_mb:.2f} MB. GC collected {collected} objects.")
                 
         except Exception as e:
-            logging.error(f"[MEM GUARD] Error during cleanup: {e}")
+            logging.exception(f"[MEM GUARD] Error during cleanup: {e}")
             
         await asyncio.sleep(1800) # Every 30 minutes
 
@@ -7111,7 +7111,7 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
         await _apply_rover_mode_to_chip(chip_type, port, gnss_reader)
         logging.info(f"AutoBase: {chip_type} successfully configured to ROVER mode")
     except Exception as e:
-        logging.error(f"AutoBase: Failed to set ROVER mode: {e}")
+        logging.exception(f"AutoBase: Failed to set ROVER mode: {e}")
         raise
 
     # Wait up to 5 seconds for initial NMEA GGA from rover chip before connecting to NTRIP
@@ -7629,7 +7629,7 @@ async def main():
                 mqtt_client.publish(f"pi/devices/{MACHINE_SERIAL}/status", offline_msg, qos=1, retain=True)
                 await asyncio.sleep(0.5)  # Give MQTT time to send
             except Exception as e:
-                logging.error(f"Failed to send final offline status: {e}")
+                logging.exception(f"Failed to send final offline status: {e}")
 
             mqtt_client.loop_stop()
             mqtt_client.disconnect()

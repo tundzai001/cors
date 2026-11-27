@@ -340,7 +340,7 @@ async def check_device_heartbeats_with_retry():
                 break  # Success, thoát retry loop
 
             except Exception as e:
-                logger.error(f"Heartbeat check failed (attempt {attempt+1}/{max_retries}): {e}")
+                logger.exception(f"Heartbeat check failed (attempt {attempt+1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)  # Exponential backoff
                 else:
@@ -425,7 +425,7 @@ async def check_device_heartbeats():
                     })
 
         except Exception as e:
-            logging.error(f"Error in heartbeat check: {e}", exc_info=True)
+            logging.exception(f"Error in heartbeat check: {e}", exc_info=True)
 
 
 async def periodic_buffer_flush():
@@ -462,7 +462,7 @@ async def periodic_buffer_flush():
                     await flush_device_buffer(db)
                     last_flush = time.monotonic()
             except Exception as e:
-                logger.error(f"Flush task error: {e}")
+                logger.exception(f"Flush task error: {e}")
 
 
 async def memory_guard_task():
@@ -479,7 +479,7 @@ async def memory_guard_task():
             else:
                 logger.debug(f"[MEM GUARD] RAM: {ram_mb:.2f} MB")
         except Exception as e:
-            logger.error(f"[MEM GUARD] Error: {e}")
+            logger.exception(f"[MEM GUARD] Error: {e}")
         await asyncio.sleep(1800) # Mỗi 30 phút
 
 
@@ -657,7 +657,7 @@ async def flush_device_buffer(db: AsyncSession):
                     f"dedup_ratio={buffer_metrics['total_duplicates_deduped']/max(1, buffer_metrics['total_updates_flushed']):.2%}"
                 )
         except Exception as e:
-            logger.error(f"Error flushing DB: {e}")
+            logger.exception(f"Error flushing DB: {e}")
 
 
 pi_websocket_endpoint_router = APIRouter()

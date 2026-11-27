@@ -666,6 +666,6 @@ async def ntrip_auth_check(
             return PlainTextResponse("OK", status_code=200)
 
     except Exception as e:
-        logger.error("[NTRIP AUTH] Blocklist lookup failed (%s)", type(e).__name__)
+        logger.exception("[NTRIP AUTH] Blocklist lookup failed (%s)", type(e).__name__)
         return PlainTextResponse("UNAVAILABLE", status_code=503)
 

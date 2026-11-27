@@ -133,7 +133,7 @@ async def _notify_casters_on_status_change(serial: str, device: models.Device, s
                 schedule_background(_send_status_to_caster(target, payload, f"S{server_id}", serial))
 
     except Exception as e:
-        logger.error(f"[CASTER SYNC] Error notifying casters for '{serial}': {e}")
+        logger.exception(f"[CASTER SYNC] Error notifying casters for '{serial}': {e}")
 
 
 async def _send_status_to_caster(caster_host: str, status_payload: dict, server_label: str, serial: str) -> None:

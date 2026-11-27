@@ -117,5 +117,5 @@ async def nginx_security_loop():
             await sync_security_bans()
         except Exception as exc:
             nginx_security.status.update(state='error')
-            logger.error('Security ban synchronization failed: %s', exc)
+            logger.exception('Security ban synchronization failed: %s', exc)
         await asyncio.sleep(10)

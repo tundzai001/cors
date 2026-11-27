@@ -293,7 +293,7 @@ class CommandsMixin:
         try:
             result = await self._admin_action_cb(pending.action, payload)
         except Exception as exc:
-            logger.error("Zalo admin mutation failed action=%s: %s", pending.action, exc, exc_info=True)
+            logger.exception("Zalo admin mutation failed action=%s: %s", pending.action, exc, exc_info=True)
             await zalo_repository.finish_pending_action(pending.id, False)
             try:
                 if isinstance(exc, ValueError):
@@ -301,13 +301,13 @@ class CommandsMixin:
                 else:
                     await update.message.reply_text("❌ Hệ thống gặp sự cố khi xử lý yêu cầu. Vui lòng thử lại sau.")
             except Exception as send_exc:
-                logger.error("Could not deliver Zalo mutation failure: %s", send_exc)
+                logger.exception("Could not deliver Zalo mutation failure: %s", send_exc)
             return
         await zalo_repository.finish_pending_action(pending.id, True)
         try:
             await self._reply_text_chunks(update, str(result.get("message") or "✅ Hoàn tất."))
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Zalo mutation succeeded but result delivery failed action=%s: %s",
                 pending.action, exc, exc_info=True,
             )

@@ -101,7 +101,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
 
         return HTMLResponse(content=html_content)
     except Exception as e:
-        logging.error(f"❌ Professional SEO Injection Failed: {e}")
+        logging.exception(f"❌ Professional SEO Injection Failed: {e}")
         return FileResponse(index_path)
 
 @router.get("/sitemap.xml")

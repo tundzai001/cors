@@ -740,7 +740,7 @@ async def batch_sync_checker():
             logging.info(f"✓ Batch sync check completed: {checked_count}/{len(online_serials)} devices")
         
         except Exception as e:
-            logging.error(f"❌ Batch sync checker error: {e}", exc_info=True)
+            logging.exception(f"❌ Batch sync checker error: {e}", exc_info=True)
 
 # ==============================================================================
 # MAIN MESSAGE HANDLER (ĐàTỐI ƯU HÓA - KHÔNG MỞ DB MỖI MESSAGE)
@@ -863,10 +863,10 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                     data['rtk_fix_status'] = 'NO_FIX'
                     data['base_mode_active'] = False
         except json.JSONDecodeError as e:
-            logging.error(f"❌ JSON decode error on topic {topic}: {e}")
+            logging.exception(f"❌ JSON decode error on topic {topic}: {e}")
             return
         except UnicodeDecodeError as e:
-            logging.error(f"❌ Unicode decode error on topic {topic}: {e}")
+            logging.exception(f"❌ Unicode decode error on topic {topic}: {e}")
             return
 
         if message_type in ["status", "status_update"]:
@@ -1195,10 +1195,10 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
                             # Exponential backoff: 0.5s, 1s, 2s
                             await asyncio.sleep(0.5 * (2 ** attempt))
                         else:
-                            logging.error(f"❌ DB Write Failed for {serial}: {db_error}")
+                            logging.exception(f"❌ DB Write Failed for {serial}: {db_error}")
 
     except Exception as e:
-        logging.error(f"❌ Critical error in handle_message_async: {e}", exc_info=True)
+        logging.exception(f"❌ Critical error in handle_message_async: {e}", exc_info=True)
 
 # ==============================================================================
 # CONFIG COMPARISON (Giữ nguyên)
@@ -1347,7 +1347,7 @@ def start_mqtt_loop():
         
         logging.info("✓ MQTT Loop + Batch Sync Checker Started.")
     except Exception as e:
-        logging.error(f"MQTT Start Error: {e}")
+        logging.exception(f"MQTT Start Error: {e}")
 
 
 def stop_mqtt_loop():

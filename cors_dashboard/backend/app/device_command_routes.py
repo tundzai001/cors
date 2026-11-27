@@ -141,7 +141,7 @@ async def configure_chip_endpoint(
 
     except Exception as e:
         await db.rollback()
-        logging.error(f"❌ Failed to save config to DB for {serial}: {e}")
+        logging.exception(f"❌ Failed to save config to DB for {serial}: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to save configuration to database: {str(e)}"
@@ -206,7 +206,7 @@ async def configure_chip_endpoint(
             }
 
     except Exception as e:
-        logging.error(f"❌ Failed to build configuration commands for {serial}: {e}")
+        logging.exception(f"❌ Failed to build configuration commands for {serial}: {e}")
         raise HTTPException(
             status_code=400,
             detail=f"Failed to build configuration commands: {str(e)}"
@@ -241,7 +241,7 @@ async def configure_chip_endpoint(
             detail=f"Configuration saved to database successfully, but device is offline ({http_exc.detail}). Config will auto-sync when device comes back online."
         )
     except Exception as e:
-        logging.error(f"❌ Unexpected error sending command to {serial}: {e}", exc_info=True)
+        logging.exception(f"❌ Unexpected error sending command to {serial}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Internal error while sending command: {str(e)}"
@@ -410,7 +410,7 @@ async def reset_pi_device(
         await send_command_to_pi(serial, {"command": "REBOOT_DEVICE", "payload": {}})
     except Exception as e:
         # Log lỗi nhưng không chặn dòng chảy để cập nhật DB cho UI phản hồi
-        logging.error(f"Failed to send reboot command to {serial}: {e}")
+        logging.exception(f"Failed to send reboot command to {serial}: {e}")
 
     # 4. Cập nhật DB ngay lập tức
     device.status = "rebooting"
@@ -453,7 +453,7 @@ async def hard_reset_pi_device(
         await send_command_to_pi(serial, {"command": "DELETE_DEVICE", "payload": {}})
     except Exception as e:
         # Log lỗi nhưng không chặn dòng chảy để cập nhật DB cho UI phản hồi
-        logging.error(f"Failed to send hard-reset command to {serial}: {e}")
+        logging.exception(f"Failed to send hard-reset command to {serial}: {e}")
 
     # 4. Cập nhật DB ngay lập tức
     device.status = "rebooting_for_reset"

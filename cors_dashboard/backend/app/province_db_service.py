@@ -371,7 +371,7 @@ async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[
         }
     except Exception as exc:
         await db.rollback()
-        logger.error("Error seeding vietnam provinces into database: %s", exc)
+        logger.exception("Error seeding vietnam provinces into database: %s", exc)
         return {"error": str(exc)}
 
 

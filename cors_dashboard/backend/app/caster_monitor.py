@@ -69,7 +69,7 @@ async def caster_monitor_task():
                     await asyncio.gather(*tasks)
 
         except Exception as e:
-            logger.error(f"[CASTER MONITOR] Sync loop error: {e}")
+            logger.exception(f"[CASTER MONITOR] Sync loop error: {e}")
 
         # Nới lỏng thời gian quét tránh bão request tới Caster
         monitor_interval = float(os.getenv("CASTER_MONITOR_INTERVAL", "30"))

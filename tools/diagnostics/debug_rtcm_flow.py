@@ -311,7 +311,7 @@ async def start_ntrip_monitor():
                 handle_ntrip_data(data, time.time())
                 
         except Exception as e:
-            logging.error(f"[NTRIP] Lỗi đường truyền: {e}")
+            logging.exception(f"[NTRIP] Lỗi đường truyền: {e}")
         
         stats["ntrip"]["connected"] = False
         stats["ntrip"]["reconnect_count"] += 1

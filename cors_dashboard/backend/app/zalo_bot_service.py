@@ -396,7 +396,7 @@ class ZaloBotService(
             except Exception as exc:
                 outbound["status"] = "error"
                 outbound["error"] = f"{type(exc).__name__}: {exc}"
-                logger.error("[ZALO TRACE %s] outbound failed chat_id=%s: %s", trace_id or "background", chat_id, exc, exc_info=True)
+                logger.exception("[ZALO TRACE %s] outbound failed chat_id=%s: %s", trace_id or "background", chat_id, exc, exc_info=True)
                 raise
 
         try:
@@ -495,7 +495,7 @@ class ZaloBotService(
                 raise RuntimeError("Installed Zalo SDK does not expose an async webhook API")
             logger.info("Zalo webhook registered: %s", webhook_url)
         except Exception as e:
-            logger.error("Failed to register Zalo webhook: %s", e, exc_info=True)
+            logger.exception("Failed to register Zalo webhook: %s", e, exc_info=True)
 
     def _start_polling_task(self) -> None:
         logger.info("Starting Zalo polling loop...")
@@ -513,7 +513,7 @@ class ZaloBotService(
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error(f"Zalo Bot polling loop crashed: {e}. Restarting in 5s...", exc_info=True)
+                    logger.exception(f"Zalo Bot polling loop crashed: {e}. Restarting in 5s...", exc_info=True)
                     await asyncio.sleep(5)
 
         self._polling_task = asyncio.create_task(safe_polling_loop())
@@ -557,7 +557,7 @@ class ZaloBotService(
             logger.info("Zalo Bot Service started successfully.")
             return True
         except Exception as e:
-            logger.error(f"FATAL ZALO BOT ERROR: {e}", exc_info=True)
+            logger.exception(f"FATAL ZALO BOT ERROR: {e}", exc_info=True)
             await self.stop()
             if strict:
                 raise RuntimeError(f"Zalo Bot failed to start: {e}") from e
@@ -802,7 +802,7 @@ class ZaloBotService(
                 elif self._bot_mode() == "webhook" and getattr(self.app, "bot", None):
                     await self.app.bot.shutdown()
         except Exception as e:
-            logger.error(f"Error stopping Zalo Bot: {e}")
+            logger.exception(f"Error stopping Zalo Bot: {e}")
         finally:
             self._task = None
             self._polling_task = None

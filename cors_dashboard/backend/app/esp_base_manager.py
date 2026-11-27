@@ -274,7 +274,7 @@ async def auto_deprovision_esp_rover_account(device_serial: str, username: str) 
             await client.delete_user(identifier="system", username=username)
             logger.info(f"[ESP ROVER] Deleted user '{username}' from Caster {host}:{port}")
         except Exception as e:
-            logger.error(f"[ESP ROVER] Error deleting user '{username}' on Caster {host}:{port}: {e}")
+            logger.exception(f"[ESP ROVER] Error deleting user '{username}' on Caster {host}:{port}: {e}")
 
     # 2. Delete from Auth DB
     async with auth_session_scope() as auth_db:
@@ -352,7 +352,7 @@ async def notify_decoder_worker(
             log = logger.debug if is_4g_mountpoint(mountpoint) else logger.info
             log(f"[ESP DECODER MQTT] Sent {action} for serial={serial}, mp={mountpoint}")
     except Exception as e:
-        logger.error(f"[ESP DECODER MQTT] Failed to publish {action} to {MQTT_DECODER_TOPIC}: {e}")
+        logger.exception(f"[ESP DECODER MQTT] Failed to publish {action} to {MQTT_DECODER_TOPIC}: {e}")
 
 
 async def sync_esp_base_rovers() -> None:
@@ -548,5 +548,5 @@ async def esp_base_manager_task() -> None:
             await sync_esp_base_rovers()
             await sync_prefix7_bases()
         except Exception as e:
-            logger.error(f"[ESP BASE MANAGER] Error in sync loop: {e}", exc_info=True)
+            logger.exception(f"[ESP BASE MANAGER] Error in sync loop: {e}", exc_info=True)
         await asyncio.sleep(SYNC_INTERVAL_SECONDS)

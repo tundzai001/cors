@@ -137,10 +137,10 @@ async def zalo_webhook(request: Request, response: Response, bot_key: str = "tun
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        logger.error("Zalo webhook runtime error: %s", e)
+        logger.exception("Zalo webhook runtime error: %s", e)
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        logger.error("Unhandled Zalo webhook error: %s", e, exc_info=True)
+        logger.exception("Unhandled Zalo webhook error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Zalo webhook processing failed")
 
     return "ok"

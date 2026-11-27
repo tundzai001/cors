@@ -292,7 +292,7 @@ async def log_system_event(
             }
         })
     except Exception as e:
-        logger.error(f"Failed to write activity log: {e}")
+        logger.exception(f"Failed to write activity log: {e}")
 
 class IgnoreSocketErrorsFilter(logging.Filter):
     def filter(self, record):
@@ -359,7 +359,7 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
                         await rate_limiter.block_ip(auth_db, client_ip,
                             reason=f"Security Gate: {score} violations; last {method} {path[:160]}")
                 except Exception as exc:
-                    logger.error("Could not persist automatic IP ban: %s", exc)
+                    logger.exception("Could not persist automatic IP ban: %s", exc)
                 # Dọn dẹp score vì đã ban
                 security_rep_scores[client_ip] = 0
                 logger.critical(f"🚨 AUTOMATIC BAN: IP {client_ip} has been BANNED after {score} violations.")
@@ -1168,7 +1168,7 @@ async def get_security_stats(
         }
 
     except Exception as e:
-        logger.error(f"Error in get_security_stats: {e}", exc_info=True)
+        logger.exception(f"Error in get_security_stats: {e}", exc_info=True)
 
         # Return partial data instead of crashing
         return JSONResponse(
@@ -1597,7 +1597,7 @@ async def generate_pi_license(
         raise HTTPException(status_code=409, detail="Could not issue a unique device token") from None
     except Exception as e:
         await db.rollback()
-        logging.error(f"Failed to generate license for {serial}: {e}")
+        logging.exception(f"Failed to generate license for {serial}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate license key.")
 
 # === CASTER USER MANAGEMENT (For non-DB users) ===
@@ -1755,7 +1755,7 @@ async def detailed_health_check(
         }
 
     except Exception as e:
-        logger.error(f"Error in detailed health check: {e}", exc_info=True)
+        logger.exception(f"Error in detailed health check: {e}", exc_info=True)
 
         # Return partial data on error
         return JSONResponse(
@@ -1953,7 +1953,7 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
 
         except Exception as e:
             health_monitor.record_error('request_error', str(e))
-            logger.error(f"Request error: {e}", exc_info=True)
+            logger.exception(f"Request error: {e}", exc_info=True)
             raise
 
 # Global monitoring middleware

@@ -119,7 +119,7 @@ class CasterClient:
                                    self.host, self.port, type(e).__name__)
                     self._connection_errors[key] = now
             else:
-                logger.error("Lỗi gọi Caster (%s:%s): %s", self.host, self.port, type(e).__name__)
+                logger.exception("Lỗi gọi Caster (%s:%s): %s", self.host, self.port, type(e).__name__)
             if chunks and total_bytes <= MAX_RESPONSE_BYTES:
                 return b"".join(chunks).decode('utf-8', errors='ignore')
             return ""
@@ -413,7 +413,7 @@ class CasterClient:
                 real_identifier = target["identifier"]
                 logger.info(f"Dynamically detected real Caster identifier '{real_identifier}' for user '{username}'")
         except Exception as e:
-            logger.error(f"Error querying real identifier for '{username}' deletion: {e}")
+            logger.exception(f"Error querying real identifier for '{username}' deletion: {e}")
 
         cmd = f"GET /deluser HTTP/1.0/{real_identifier}/{username}\r\n\r\n"
         response = await self._send_command(cmd)
@@ -589,5 +589,5 @@ class CasterClient:
 
             return sources
         except Exception as e:
-            logger.error(f"Error fetching sources from {self.host}:{self.port}: {e}")
+            logger.exception(f"Error fetching sources from {self.host}:{self.port}: {e}")
             return None

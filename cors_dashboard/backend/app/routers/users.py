@@ -418,7 +418,7 @@ async def delete_user(
         logger.info(f"Unlinked {len(devices_to_unlink)} devices from deleted user {user_id}")
 
     except Exception as e:
-        logger.error(f"Error unlinking devices: {e}")
+        logger.exception(f"Error unlinking devices: {e}")
         # Không raise lỗi để tiếp tục xóa user
     # ===================================================================
 

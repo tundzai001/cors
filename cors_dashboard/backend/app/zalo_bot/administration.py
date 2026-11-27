@@ -66,7 +66,7 @@ class AdministrationMixin:
             await update.message.reply_text(f"❌ {exc}")
             return False
         except Exception as exc:
-            logger.error("Zalo admin read failed action=%s: %s", action, exc, exc_info=True)
+            logger.exception("Zalo admin read failed action=%s: %s", action, exc, exc_info=True)
             await update.message.reply_text(f"❌ Không thể đọc dữ liệu lúc này: {exc}")
             return False
         try:
@@ -111,7 +111,7 @@ class AdministrationMixin:
             await self._reply_text_chunks(update, msg)
             return True
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Zalo outbound delivery failed after data was prepared action=%s: %s",
                 action, exc, exc_info=True,
             )
@@ -261,7 +261,7 @@ class AdministrationMixin:
                         preview = f"Sửa cấu hình trạm {device_name} ({device_serial})\n" + "\n".join(change_lines)
 
                 except Exception as exc:
-                    logger.error("Error resolving device in _queue_admin_action: %s", exc, exc_info=True)
+                    logger.exception("Error resolving device in _queue_admin_action: %s", exc, exc_info=True)
 
         principal = operator[2]
         payload.update(self._principal_payload(principal))

@@ -143,18 +143,18 @@ class AlertsMixin:
                         try:
                             await self.app.bot.send_message(chat_id=chat_id, text=text)
                         except Exception as e:
-                            logger.error(f"Failed to send alert to {chat_id}: {e}")
+                            logger.exception(f"Failed to send alert to {chat_id}: {e}")
                             try:
                                 await zalo_repository.finish_delivery(target["delivery_id"], False, str(e))
                             except Exception as log_exc:
-                                logger.error("Failed to record Zalo delivery failure id=%s: %s", target["delivery_id"], log_exc)
+                                logger.exception("Failed to record Zalo delivery failure id=%s: %s", target["delivery_id"], log_exc)
                         else:
                             try:
                                 await zalo_repository.finish_delivery(target["delivery_id"], True)
                             except Exception as log_exc:
-                                logger.error("Zalo alert sent but delivery log update failed id=%s: %s", target["delivery_id"], log_exc)
+                                logger.exception("Zalo alert sent but delivery log update failed id=%s: %s", target["delivery_id"], log_exc)
 
             except Exception as e:
-                logger.error(f"Error in Zalo error_check_loop: {e}")
+                logger.exception(f"Error in Zalo error_check_loop: {e}")
 
             await asyncio.sleep(120)
