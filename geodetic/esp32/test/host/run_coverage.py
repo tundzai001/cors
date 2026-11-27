@@ -7,6 +7,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 root = Path(__file__).resolve().parents[2]
+project_root = Path(os.environ.get('SONAR_PROJECT_ROOT', root)).resolve()
 compiler = os.environ.get('CXX', 'clang++')
 profdata = os.environ.get('LLVM_PROFDATA', 'llvm-profdata')
 cov = os.environ.get('LLVM_COV', 'llvm-cov')
@@ -74,7 +75,8 @@ if not any(any(lines.values()) for lines in files.values()):
     raise SystemExit('No measured firmware lines in coverage report')
 coverage = ET.Element('coverage', version='1')
 for path, lines in sorted(files.items()):
-    file = ET.SubElement(coverage, 'file', path=path)
+    report_path = os.path.relpath(root / path, project_root)
+    file = ET.SubElement(coverage, 'file', path=report_path)
     for number, hit in sorted(lines.items()):
         ET.SubElement(file, 'lineToCover', lineNumber=str(number), covered=str(hit).lower())
     print(f'{path}: {sum(lines.values())}/{len(lines)} measured lines covered')

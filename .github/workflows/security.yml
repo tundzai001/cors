@@ -65,6 +65,23 @@ jobs:
             echo '::error::Add SONAR_TOKEN as a repository Actions secret, then rerun this job.'
             exit 1
           fi
+      - name: Install PlatformIO
+        run: |
+          python -m venv /tmp/platformio
+          /tmp/platformio/bin/pip install platformio==6.2.0
+      - name: Build firmware and compilation database
+        working-directory: geodetic/esp32
+        run: |
+          /tmp/platformio/bin/pio run -e tdm240x_dev_general
+          /tmp/platformio/bin/pio run -e tdm240x_dev_general -t compiledb
+      - name: Measure native firmware coverage
+        working-directory: geodetic/esp32
+        env:
+          CXX: clang++-18
+          LLVM_PROFDATA: llvm-profdata-18
+          LLVM_COV: llvm-cov-18
+          SONAR_PROJECT_ROOT: ${{ github.workspace }}
+        run: python3 -B test/host/run_coverage.py
       - name: Scan source and resolved dependencies
         uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8
         with:

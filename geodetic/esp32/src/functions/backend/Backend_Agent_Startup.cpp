@@ -98,7 +98,7 @@ bool BackendAgent::buildStartupCommands(JsonObjectConst base,
             error = "Saved Survey-In parameters are invalid";
             return false;
         }
-        surveyInTargetSeconds_ = duration;
+        surveyInTargetSeconds_ = static_cast<uint32_t>(duration);
         surveyInMonitoring_ = true;
         surveyInResultPending_ = true;
         commands = buildBaseSurveyInCommand(static_cast<uint32_t>(duration), accuracy, detected, options);
@@ -137,7 +137,7 @@ bool BackendAgent::buildStartupCommands(JsonObjectConst base,
 
 bool BackendAgent::verifyStartupReadback(GnssCmdBuilder::GnssSensorType detected,
                                          bool restoreFixed, const StartupPosition &expected,
-                                         String &error)
+                                         String &error) const
 {
     DynamicJsonDocument readback(2048);
     deserializeJson(readback, receiverBaseReadback_.c_str());
@@ -280,7 +280,7 @@ void BackendAgent::startBootAutoBaseWhenReady()
 {
     if (baseStartupState_ != "awaiting_auto_base" || stationLock_.all || !licenseValid_ || workflowActive())
         return;
-    if (isGsmConnection() ? !modem.isGprsConnected() : WiFi.status() != WL_CONNECTED)
+    if (isGsmConnection() ? !getModem().isGprsConnected() : WiFiClass::status() != WL_CONNECTED)
         return;
     DynamicJsonDocument request(CONFIG_DOCUMENT_SIZE);
     request["source_mode"] = "nearest";

@@ -6,8 +6,10 @@
 #include "Top_Lvl_Config.h"
 #include <Preferences.h>
 
-extern Preferences prefs;
-extern SemaphoreHandle_t gnssSerialMutex;
+Preferences &appPrefs();
+SemaphoreHandle_t &rtcmBufferMutex();
+SemaphoreHandle_t &tcpStreamMutex();
+SemaphoreHandle_t &gnssSerialMutex();
 
 // ================= CẤU HÌNH CHÂN CẮM VÀ TỐC ĐỘ SERIAL =================
 #if BOARD_2A53N
@@ -48,8 +50,7 @@ inline constexpr char GPRS_PASS[] = "";
 inline constexpr char AUTO_BASE_CASTER_HOST[] = "aitogy.click";
 inline constexpr uint16_t AUTO_BASE_CASTER_PORT = 2101;
 inline constexpr char AUTO_BASE_CASTER_USER[] = "aitogy";
-inline constexpr char AUTO_BASE_CASTER_AUTH[] = "aitogy";
-#define AUTO_BASE_CASTER_PASSWORD AUTO_BASE_CASTER_AUTH
+inline constexpr char AUTO_BASE_CASTER_PASSWORD[] = "aitogy";
 inline constexpr char AUTO_BASE_CASTER_MOUNTPOINT[] = "test";
 
 // ================= CẤU HÌNH NTRIP =================
