@@ -787,45 +787,57 @@ async def handle_ntrip_mqtt_command(topic: str, payload: bytes):
             logger.warning("[NTRIP MQTT] Missing 'mountpoint' for command")
             return
 
-        if mountpoint and _is_command_mountpoint(mountpoint):
+        if _is_command_mountpoint(mountpoint):
             logger.debug(f"[NTRIP MQTT] Bypassing command for command/test mountpoint '{mountpoint}'")
             return
 
         if topic.endswith("/start"):
-            # === CHECK BLOCKLIST TRƯỚC KHI MỞ LUỒNG ===
-            block_reason = await _check_rover_blocked(client_instance_id, mountpoint)
-            if block_reason:
-                logger.warning(
-                    f"[NTRIP MQTT] BLOCKED user='{client_instance_id}' "
-                    f"mountpoint='{mountpoint}' reason='{block_reason}'"
-                )
-                return
-
-            async with device_session_scope() as db:
-                resolved_serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
-            if resolved_serial is None:
-                return
-
-            ttl_seconds = int(data.get("ttl_seconds", 90))
-            await _ntrip_mqtt_start(
-                serial=resolved_serial,
-                mountpoint=mountpoint,
-                client_instance_id=client_instance_id,
-                ttl_seconds=ttl_seconds,
-            )
-            logger.info(f"[NTRIP MQTT] start accepted serial={resolved_serial} mountpoint={mountpoint} client={client_instance_id}")
-        elif topic.endswith("/stop"):
-            force = bool(data.get("force", False))
-            address = data.get("caster_address") or data.get("address") or data.get("host") or data.get("ip") or data.get("caster_host")
-            await _do_ntrip_stop(
-                mountpoint=mountpoint,
-                client_id=client_instance_id,
-                force=force,
-                requested_address=address
-            )
-            logger.info(f"[NTRIP MQTT] stop accepted mountpoint={mountpoint} client={client_instance_id} force={force} address={address}")
+            await _handle_ntrip_mqtt_start(data, mountpoint, client_instance_id)
+        else:
+            await _handle_ntrip_mqtt_stop(data, mountpoint, client_instance_id)
     except Exception as e:
         logger.warning(f"[NTRIP MQTT] Command failed mountpoint={mountpoint}: {e}")
+
+
+async def _handle_ntrip_mqtt_start(data: dict, mountpoint: str, client_instance_id: str) -> None:
+    block_reason = await _check_rover_blocked(client_instance_id, mountpoint)
+    if block_reason:
+        logger.warning(
+            f"[NTRIP MQTT] BLOCKED user='{client_instance_id}' "
+            f"mountpoint='{mountpoint}' reason='{block_reason}'"
+        )
+        return
+
+    async with device_session_scope() as db:
+        resolved_serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+    if resolved_serial is None:
+        return
+
+    await _ntrip_mqtt_start(
+        serial=resolved_serial,
+        mountpoint=mountpoint,
+        client_instance_id=client_instance_id,
+        ttl_seconds=int(data.get("ttl_seconds", 90)),
+    )
+    logger.info(
+        "[NTRIP MQTT] start accepted serial=%s mountpoint=%s client=%s",
+        resolved_serial, mountpoint, client_instance_id
+    )
+
+
+async def _handle_ntrip_mqtt_stop(data: dict, mountpoint: str, client_instance_id: str) -> None:
+    force = bool(data.get("force", False))
+    address = data.get("caster_address") or data.get("address") or data.get("host") or data.get("ip") or data.get("caster_host")
+    await _do_ntrip_stop(
+        mountpoint=mountpoint,
+        client_id=client_instance_id,
+        force=force,
+        requested_address=address
+    )
+    logger.info(
+        "[NTRIP MQTT] stop accepted mountpoint=%s client=%s force=%s address=%s",
+        mountpoint, client_instance_id, force, address
+    )
 
 
 def _fresh_rtcm_clienttable(cache: Optional[dict], now: int) -> bool:
