@@ -19,14 +19,14 @@ def _admin(user):
         raise HTTPException(403, "Chỉ quản trị viên được thay đổi kiểm tra CORS Cục")
 
 
-@router.get("/api/admin/reference-network-settings")
+@router.get("/api/admin/reference-network-settings", responses={403: {"description": "Forbidden"}})
 async def reference_network_settings(response: Response, user=Depends(auth.get_current_user)):
     _admin(user)
     response.headers["Cache-Control"] = "no-store"
     return get_check_settings()
 
 
-@router.put("/api/admin/reference-network-settings", responses={503: {"description": "Service Unavailable"}})
+@router.put("/api/admin/reference-network-settings", responses={403: {"description": "Forbidden"}, 503: {"description": "Service Unavailable"}})
 async def update_reference_network_settings(body: ReferenceNetworkSettingsUpdate, response: Response,
                                             user=Depends(auth.get_current_user)):
     _admin(user)

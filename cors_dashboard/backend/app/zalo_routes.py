@@ -110,15 +110,15 @@ def _get_zalo_system_state() -> dict[str, Any]:
     }
 
 
-@router.get("/api/zalo/webhook", response_class=PlainTextResponse)
-@router.get("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse)
+@router.get("/api/zalo/webhook", response_class=PlainTextResponse, responses={401: {"description": "Unauthorized"}, 404: {"description": "Not Found"}, 503: {"description": "Service Unavailable"}})
+@router.get("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse, responses={401: {"description": "Unauthorized"}, 404: {"description": "Not Found"}, 503: {"description": "Service Unavailable"}})
 async def zalo_webhook_verify(request: Request, bot_key: str = "tun"):
     _validate_zalo_webhook_secret(request, bot_key)
     return "ok"
 
 
-@router.post("/api/zalo/webhook", response_class=PlainTextResponse, responses={400: {"description": "Bad Request"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
-@router.post("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse, responses={400: {"description": "Bad Request"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
+@router.post("/api/zalo/webhook", response_class=PlainTextResponse, responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
+@router.post("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse, responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
 async def zalo_webhook(request: Request, response: Response, bot_key: str = "tun"):
     _validate_zalo_webhook_secret(request, bot_key)
 
@@ -146,7 +146,7 @@ async def zalo_webhook(request: Request, response: Response, bot_key: str = "tun
     return "ok"
 
 
-@router.get("/api/admin/zalo/diagnostics")
+@router.get("/api/admin/zalo/diagnostics", responses={404: {"description": "Not Found"}})
 async def get_zalo_diagnostics(
     limit: int = Query(default=20, ge=1, le=100),
     bot_key: str = Query(default="tun"),
@@ -156,7 +156,7 @@ async def get_zalo_diagnostics(
     return _get_bot_service(bot_key).get_debug_events(limit=limit)
 
 
-@router.delete("/api/admin/zalo/diagnostics")
+@router.delete("/api/admin/zalo/diagnostics", responses={404: {"description": "Not Found"}})
 async def clear_zalo_diagnostics(
     bot_key: str = Query(default="tun"),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),

@@ -573,7 +573,7 @@ async def delete_device_from_list(
     return {"status": "deleted", "serial": serial}
 
 
-@router.post("/api/devices/{serial}/lock", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 503: {"description": "Service Unavailable"}})
+@router.post("/api/devices/{serial}/lock", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
 async def lock_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
@@ -606,17 +606,18 @@ async def lock_device(
     config = dict(_device_service_config(device))
     delivered = True
     command = {"command": "LOCK_DEVICE", "payload": {"locked_servers": locked}} if scoped else {"command": "UNLOCK_DEVICE", "payload": {}}
-    try:
-        if locked and not scoped:
-            raise HTTPException(503, "Agent chưa hỗ trợ device_lock từng server")
-        await send_command_to_pi(serial, command)
-        device.is_locked = False
-        await db.commit()
-    except HTTPException as exc:
-        if exc.status_code != 503:
-            raise
+    if locked and not scoped:
         delivered = False
-        await db.commit()
+    else:
+        try:
+            await send_command_to_pi(serial, command)
+        except HTTPException as exc:
+            if exc.status_code != 503:
+                raise
+            delivered = False
+        else:
+            device.is_locked = False
+    await db.commit()
     await db.refresh(device)
     await ui_manager.broadcast({"type": "status_update", "data": schemas.Device.from_orm(device).model_dump()})
     await crud.log_system_event(db=db, type="warning", message=f"Admin {current_user.username} set device_lock for {serial}; locked servers: {locked}", user_id=current_user.id, serial=serial)

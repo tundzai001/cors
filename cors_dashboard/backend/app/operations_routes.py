@@ -495,7 +495,7 @@ async def _set_ops_alert_workflow_state(
     return {"status": "success", "alert": alert}
 
 
-@router.post("/api/ops/alerts/{alert_id}/ack")
+@router.post("/api/ops/alerts/{alert_id}/ack", responses={404: {"description": "Not Found"}})
 async def acknowledge_ops_alert(
     alert_id: str,
     payload: dict = Body(default={}),
@@ -506,7 +506,7 @@ async def acknowledge_ops_alert(
     return await _set_ops_alert_workflow_state(alert_id, "acknowledged", payload, auth_db, devices_db, current_user)
 
 
-@router.post("/api/ops/alerts/{alert_id}/resolve")
+@router.post("/api/ops/alerts/{alert_id}/resolve", responses={404: {"description": "Not Found"}})
 async def resolve_ops_alert(
     alert_id: str,
     payload: dict = Body(default={}),
