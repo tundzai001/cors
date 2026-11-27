@@ -1357,7 +1357,7 @@ def stop_mqtt_loop():
         mqtt_client.loop_stop()
         mqtt_client.disconnect()
         logging.info("MQTT Stopped.")
-    except:
+    except Exception:
         pass
 
 

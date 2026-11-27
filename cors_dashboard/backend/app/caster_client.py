@@ -127,7 +127,7 @@ class CasterClient:
             if writer:
                 writer.close()
                 try: await writer.wait_closed()
-                except: pass
+                except Exception: pass
 
     @staticmethod
     def _parse_bool_token(raw_value, default: bool = True) -> bool:
@@ -360,7 +360,7 @@ class CasterClient:
                     response = resp
                     if CLIENTTABLE_DEBUG: logger.info(f"-> THÀNH CÔNG VỚI LỆNH: {repr(cmd)}")
                     break
-            except: continue
+            except Exception: continue
 
         if not response: return None
 
@@ -399,7 +399,7 @@ class CasterClient:
                     "uptime": int(parts[8]) if len(parts) > 8 and parts[8].isdigit() else None,
                     "client_id": parts[9].strip() if len(parts) > 9 else "",
                 })
-            except: continue
+            except Exception: continue
         
         return clients
 

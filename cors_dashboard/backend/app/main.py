@@ -684,7 +684,7 @@ async def track_visitors_endpoint(websocket: WebSocket):
         while True:
             # Giữ kết nối sống, nhận ping pong
             await websocket.receive_text()
-    except:
+    except Exception:
         # Khi ngắt kết nối
         visitor_manager.disconnect(websocket, client_ip)
         # ðŸ“¢ Báo lại cho Admin khi có người thoát

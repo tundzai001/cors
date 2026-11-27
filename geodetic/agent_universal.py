@@ -1539,7 +1539,7 @@ def get_machine_serial():
                 for line in f:
                     if line.startswith('Serial'):
                         final_serial = line.strip().split(':')[-1].strip()
-        except: pass
+        except Exception: pass
         if not final_serial: final_serial = f"PI_{uuid.uuid4().hex[:12]}"
     
     else:
@@ -1595,7 +1595,7 @@ def cleanup_lock_file():
         return True
     except (ValueError, psutil.NoSuchProcess, FileNotFoundError):
         try: os.remove(LOCK_FILE_PATH)
-        except: pass
+        except Exception: pass
         return True
     except Exception as e:
         logging.exception(f"Loi kiem tra lock file: {e}")
@@ -1606,14 +1606,14 @@ def create_lock_file():
         with open(LOCK_FILE_PATH, 'w') as f:
             f.write(f"{os.getpid()}")
         return True
-    except:
+    except Exception:
         return False
 
 def remove_lock_file():
     if os.path.exists(LOCK_FILE_PATH):
         try:
             os.remove(LOCK_FILE_PATH)
-        except:
+        except Exception:
             pass
 
 def read_remote_lock():
@@ -1684,14 +1684,14 @@ def get_system_info() -> dict:
             try:
                 with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
                     temp = float(f.read().strip()) / 1000.0  # Celsius
-            except:
+            except Exception:
                 pass
             try:
                 import subprocess
                 out = subprocess.check_output(["vcgencmd", "measure_volts", "core"], text=True, timeout=1)
                 if "volt=" in out:
                     core_volts = float(out.strip().replace("volt=", "").replace("V", ""))
-            except:
+            except Exception:
                 pass
         
         # Memory
@@ -2361,7 +2361,7 @@ def dispatch_rtcm_data(data):
     if 'rtcm_mqtt_queue' in globals() and rtcm_mqtt_queue:
         try:
             rtcm_mqtt_queue.put_nowait(data)
-        except:
+        except Exception:
             pass
 
     # Check if RTCM streaming is active (can be disabled by SET_RTCM_STREAM_ACTIVE command)

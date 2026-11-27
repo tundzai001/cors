@@ -2078,7 +2078,7 @@ class RelayWorker(threading.Thread):
                             self.log("WARNING", f"Target connection failed: {e}")
                             if target_sock:
                                 try: target_sock.close()
-                                except: pass
+                                except Exception: pass
                                 target_sock = None
                                 with self.socket_lock:
                                     self._target_sock = None
@@ -2088,9 +2088,9 @@ class RelayWorker(threading.Thread):
                     if not self.desired_active and target_sock is not None and not self._keep_target_connected():
                         self.log("INFO", "Stream deactivated -> closing TARGET socket only.")
                         try: target_sock.shutdown(socket.SHUT_RDWR)
-                        except: pass
+                        except Exception: pass
                         try: target_sock.close()
-                        except: pass
+                        except Exception: pass
                         target_sock = None
                         with self.socket_lock:
                             self._target_sock = None
@@ -2164,7 +2164,7 @@ class RelayWorker(threading.Thread):
                             except Exception as e:
                                 self.log("WARNING", f"Error sending RTCM frame to target: {e}")
                                 try: target_sock.close()
-                                except: pass
+                                except Exception: pass
                                 target_sock = None
                                 with self.socket_lock:
                                     self._target_sock = None
@@ -2203,10 +2203,10 @@ class RelayWorker(threading.Thread):
                 self.current_source_bps = 0
                 if source_sock:
                     try: source_sock.close()
-                    except: pass
+                    except Exception: pass
                 if target_sock:
                     try: target_sock.close()
-                    except: pass
+                    except Exception: pass
                 with self.socket_lock:
                     self._source_sock = None
                     self._target_sock = None
@@ -2589,7 +2589,7 @@ class MonitorWorker(threading.Thread):
                 self.current_bps = 0
                 if sock:
                     try: sock.close()
-                    except: pass
+                    except Exception: pass
                 with self.socket_lock:
                     self._sock = None
                 self.publish_status()
@@ -2854,7 +2854,7 @@ class MqttSourceWorker(threading.Thread):
             if self.mqtt_status_client and self.mqtt_status_client.is_connected():
                 self.mqtt_status_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
             status_mgr.update_worker_status(self.serial, status)
-        except:
+        except Exception:
             pass
 
     def _connect_target(self, server_id=1):
@@ -3281,7 +3281,7 @@ class MqttSourceWorker(threading.Thread):
                 self.restart_connection_event.clear()
                 try:
                     self.mqtt_data_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-                except:
+                except Exception:
                     self.mqtt_data_client = mqtt.Client()
                 
                 if self.cfg.get('mqtt_user') and self.cfg.get('mqtt_pass'):
@@ -3486,11 +3486,11 @@ class MqttSourceWorker(threading.Thread):
                     try:
                         self.mqtt_data_client.loop_stop()
                         self.mqtt_data_client.disconnect()
-                    except: pass
+                    except Exception: pass
                 with self.socket_lock:
                     for sock in list(self._target_socks.values()):
                         try: sock.close()
-                        except: pass
+                        except Exception: pass
                     self._target_socks.clear()
                     self._target_sock = None
                 self.is_connected = False
@@ -3643,7 +3643,7 @@ def publish_unconfigured_device_status(client, serial, detail=""):
 def setup_mqtt(worker_map):
     try:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"relay-{int(time.time())}")
-    except:
+    except Exception:
         client = mqtt.Client(client_id=f"relay-{int(time.time())}")
     
     if MQTT_USER and MQTT_PASS:

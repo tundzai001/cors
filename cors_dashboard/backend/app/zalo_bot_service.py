@@ -110,7 +110,7 @@ class ZaloBotService(
             try:
                 with open(self.CHATS_FILE, 'r') as f:
                     self.chats = json.load(f)
-            except:
+            except Exception:
                 self.chats = {}
 
     def _save_chats(self):
