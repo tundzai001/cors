@@ -633,67 +633,62 @@ async def _resolve_station_serial_by_mountpoint(db: AsyncSession, mountpoint: st
         # Cache hết hạn hoặc không có -> Quét DB 1 lần duy nhất để rebuild toàn bộ cache
         if force_refresh or (now - mountpoint_cache_last_updated) >= 60:
             logger.info("[CACHE] Rebuilding Mountpoint-to-Serial cache & Command Mountpoints cache...")
-            new_cache = {}
-            owner_priority = {}
-            new_cmd_cache = set()
-            rs = await db.execute(select(models.Device.serial, models.Device.service_config, models.Device.system_info))
-            for row in sorted(rs.all(), key=lambda row: str(row[0])):
-                serial = str(row[0])
-
-                # 🔥 FIX: Xử lý an toàn service_config
-                raw_cfg = row[1]
-                if isinstance(raw_cfg, dict):
-                    cfg = raw_cfg
-                elif isinstance(raw_cfg, str):
-                    try:
-                        cfg = json.loads(raw_cfg)
-                    except json.JSONDecodeError:
-                        cfg = {}
-                else:
-                    cfg = {}
-
-                for sid in service_server_ids(cfg):
-                    mp = _normalize_mountpoint(cfg.get(f"mountpoint{sid}"))
-                    if mp:
-                        priority = 2 if cfg.get(f"server{sid}_enabled") else 1
-                        if priority > owner_priority.get(mp, 0):
-                            new_cache[mp] = serial
-                            owner_priority[mp] = priority
-
-                # A relay input is supplied by the Caster, not controlled by this relay.
-                # None marks a known passive input; actual output owners take precedence.
-                source = cfg.get('relay_source')
-                if serial.upper().startswith('RELAY_') and isinstance(source, dict):
-                    source_mp = _normalize_mountpoint(source.get('mountpoint'))
-                    if source_mp:
-                        new_cache.setdefault(source_mp, None)
-
-                # Quét system_info để lấy command_mp động
-                raw_sys = row[2]
-                if isinstance(raw_sys, dict):
-                    sys_info = raw_sys
-                elif isinstance(raw_sys, str):
-                    try:
-                        sys_info = json.loads(raw_sys)
-                    except json.JSONDecodeError:
-                        sys_info = {}
-                else:
-                    sys_info = {}
-
-                cmd_source = sys_info.get("command_source") or {}
-                if isinstance(cmd_source, dict):
-                    cmd_mp = _normalize_mountpoint(cmd_source.get("mountpoint") or cmd_source.get("command_mp"))
-                    if cmd_mp:
-                        new_cmd_cache.add(cmd_mp)
-
-            mountpoint_serial_cache = new_cache
-            command_mountpoints_cache = new_cmd_cache
+            mountpoint_serial_cache, command_mountpoints_cache = await _build_mountpoint_caches(db)
             mountpoint_cache_last_updated = now
 
         if requested in mountpoint_serial_cache:
             return mountpoint_serial_cache[requested]
 
     raise ValueError(f"No station found for mountpoint '{mountpoint}'")
+
+
+def _json_dict(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _cache_device_mountpoints(serial: str, config: dict, cache: dict, priorities: dict) -> None:
+    for server_id in service_server_ids(config):
+        mountpoint = _normalize_mountpoint(config.get(f"mountpoint{server_id}"))
+        if not mountpoint:
+            continue
+        priority = 2 if config.get(f"server{server_id}_enabled") else 1
+        if priority > priorities.get(mountpoint, 0):
+            cache[mountpoint] = serial
+            priorities[mountpoint] = priority
+
+    source = config.get("relay_source")
+    if serial.upper().startswith("RELAY_") and isinstance(source, dict):
+        source_mountpoint = _normalize_mountpoint(source.get("mountpoint"))
+        if source_mountpoint:
+            cache.setdefault(source_mountpoint, None)
+
+
+async def _build_mountpoint_caches(db: AsyncSession) -> tuple[dict, set]:
+    result = await db.execute(
+        select(models.Device.serial, models.Device.service_config, models.Device.system_info)
+    )
+    cache = {}
+    priorities = {}
+    command_mountpoints = set()
+    for row in sorted(result.all(), key=lambda item: str(item[0])):
+        serial = str(row[0])
+        _cache_device_mountpoints(serial, _json_dict(row[1]), cache, priorities)
+        command_source = _json_dict(row[2]).get("command_source") or {}
+        if isinstance(command_source, dict):
+            command_mountpoint = _normalize_mountpoint(
+                command_source.get("mountpoint") or command_source.get("command_mp")
+            )
+            if command_mountpoint:
+                command_mountpoints.add(command_mountpoint)
+    return cache, command_mountpoints
 
 
 async def _resolve_stop_serial(
