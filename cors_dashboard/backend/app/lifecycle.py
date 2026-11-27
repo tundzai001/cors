@@ -118,6 +118,40 @@ def _zalo_parse_scalar(value: Any) -> Any:
         return float(text_value)
     return text_value
 
+def _zalo_device_identifiers(device):
+    return {
+        str(device.name or "").strip().lower(),
+        str(device.serial or "").strip().lower(),
+    }
+
+
+def _zalo_device_contains(device, wanted):
+    return wanted in str(device.name or "").lower() or wanted in str(device.serial or "").lower()
+
+
+def _zalo_device_suggestions(wanted, devices):
+    labels = {
+        str(device.name or device.serial or "").strip().lower():
+        str(device.name or device.serial or "").strip()
+        for device in devices if device.name or device.serial
+    }
+    keys = difflib.get_close_matches(wanted, list(labels), n=5, cutoff=0.35)
+    return [labels[key] for key in keys]
+
+
+def _zalo_station_matches_rover_query(item, wanted):
+    return wanted in _zalo_device_identifiers(item) or _zalo_device_contains(item, wanted)
+
+
+def _zalo_rover_suggestions(wanted, rover_items):
+    usernames = {
+        str(item.username or "").strip().lower(): str(item.username or "").strip()
+        for item in rover_items if item.username
+    }
+    keys = difflib.get_close_matches(wanted, list(usernames), n=5, cutoff=0.35)
+    return [usernames[key] for key in keys]
+
+
 async def _zalo_find_device(
     devices_db: AsyncSession,
     identifier: str,
@@ -129,31 +163,12 @@ async def _zalo_find_device(
     if devices_list is None:
         result = await devices_db.execute(select(models.Device))
         devices_list = result.scalars().all()
-    exact = [
-        device for device in devices_list
-        if wanted in {
-            str(device.name or "").strip().lower(),
-            str(device.serial or "").strip().lower(),
-        }
-    ]
+    exact = [device for device in devices_list if wanted in _zalo_device_identifiers(device)]
     if len(exact) == 1:
         return exact[0]
-    partial = [
-        device for device in devices_list
-        if wanted in str(device.name or "").lower()
-        or wanted in str(device.serial or "").lower()
-    ]
+    partial = [device for device in devices_list if _zalo_device_contains(device, wanted)]
     if not partial:
-        label_lookup = {
-            str(device.name or device.serial or "").strip().lower():
-            str(device.name or device.serial or "").strip()
-            for device in devices_list
-            if device.name or device.serial
-        }
-        suggestion_keys = difflib.get_close_matches(
-            wanted, list(label_lookup), n=5, cutoff=0.35
-        )
-        suggestions = [label_lookup[key] for key in suggestion_keys]
+        suggestions = _zalo_device_suggestions(wanted, devices_list)
         if suggestions:
             raise ValueError(
                 f"Không tìm thấy trạm '{identifier}'. Có phải bạn muốn: "
@@ -199,13 +214,7 @@ async def _zalo_find_rover(
         device_rs = await devices_db.execute(select(models.Device))
         device_items = device_rs.scalars().all()
     matching_stations = [
-        item for item in device_items
-        if wanted in {
-            str(item.name or "").strip().lower(),
-            str(item.serial or "").strip().lower(),
-        }
-        or wanted in str(item.name or "").lower()
-        or wanted in str(item.serial or "").lower()
+        item for item in device_items if _zalo_station_matches_rover_query(item, wanted)
     ]
     if matching_stations:
         station = matching_stations[0]
@@ -215,12 +224,7 @@ async def _zalo_find_rover(
             f"Để xem trạm, dùng /station {station_name}"
         )
 
-    username_lookup = {
-        str(item.username or "").strip().lower(): str(item.username or "").strip()
-        for item in rover_items if item.username
-    }
-    suggestion_keys = difflib.get_close_matches(wanted, list(username_lookup), n=5, cutoff=0.35)
-    suggestions = [username_lookup[key] for key in suggestion_keys]
+    suggestions = _zalo_rover_suggestions(wanted, rover_items)
     if suggestions:
         raise ValueError(
             f"Không tìm thấy rover '{identifier}'. Có phải bạn muốn: "
@@ -300,12 +304,7 @@ def _zalo_traffic_lines(device: models.Device, snapshot: dict) -> List[str]:
         lines.append(f"• RTCM nhận vào: {_zalo_format_speed(traffic['rtcm_input'])}")
     return lines
 
-def _zalo_config_summary(device: models.Device, snapshot: dict) -> str:
-    base = device.base_config if isinstance(device.base_config, dict) else {}
-    service = device.service_config if isinstance(device.service_config, dict) else {}
-    coords = base.get("coords") if isinstance(base.get("coords"), dict) else {}
-    gnss = base.get("gnss_options") if isinstance(base.get("gnss_options"), dict) else {}
-    constellations = gnss.get("constellations") if isinstance(gnss.get("constellations"), dict) else {}
+def _zalo_base_config_lines(device, base, coords, gnss, constellations):
     constellation_labels = {
         "gps": "GPS", "glo": "GLONASS", "gal": "Galileo",
         "bds": "BeiDou", "qzss": "QZSS", "sbas": "SBAS",
@@ -321,8 +320,7 @@ def _zalo_config_summary(device: models.Device, snapshot: dict) -> str:
         "rtcm_only": "Chỉ xuất RTCM", "nmea_only": "Chỉ xuất NMEA",
         "rtcm_nmea": "RTCM và NMEA",
     }
-    traffic = _zalo_device_traffic(device, snapshot)
-    lines = [
+    return [
         f"⚙️ CẤU HÌNH TRẠM {device.name or device.serial}",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "",
@@ -339,32 +337,33 @@ def _zalo_config_summary(device: models.Device, snapshot: dict) -> str:
         f"• Hệ vệ tinh bật: {', '.join(enabled_constellations) or 'Chưa chọn'}",
     ]
 
-    for server_id in (1, 2):
-        enabled = bool(service.get(f"server{server_id}_enabled"))
-        host = service.get(f"serverhost{server_id}") or "Chưa cấu hình"
-        port = service.get(f"port{server_id}") or "--"
-        mountpoint = service.get(f"mountpoint{server_id}") or "Chưa cấu hình"
-        username = service.get(f"username{server_id}") or "Không dùng"
-        ntrip_version = service.get(f"ntrip_version{server_id}") or "--"
-        on_demand = service.get(
-            f"server{server_id}_stream_on_demand", service.get("stream_on_demand", False)
-        )
-        active = bool(service.get(f"server{server_id}_stream_active")) or traffic[f"server{server_id}"] > 0
-        lines.extend((
-            "",
-            f"🔗 SERVER {server_id}",
-            f"• Kích hoạt: {_zalo_yes_no(enabled, 'Đang bật', 'Đang tắt')}",
-            f"• Máy chủ: {host}:{port}",
-            f"• Mountpoint: {mountpoint}",
-            f"• Tài khoản: {username}",
-            f"• Mật khẩu: {'Đã thiết lập' if service.get(f'password{server_id}') else 'Chưa thiết lập'}",
-            f"• Phiên bản NTRIP: {ntrip_version}",
-            f"• Chế độ truyền: {_zalo_stream_mode(on_demand)}",
-            f"• Trạng thái dòng: {_zalo_yes_no(active, 'Đang truyền', 'Chưa truyền')}",
-            f"• Tốc độ hiện tại: {_zalo_format_speed(traffic[f'server{server_id}'])}",
-        ))
+def _zalo_server_config_lines(server_id, service, traffic):
+    enabled = bool(service.get(f"server{server_id}_enabled"))
+    host = service.get(f"serverhost{server_id}") or "Chưa cấu hình"
+    port = service.get(f"port{server_id}") or "--"
+    mountpoint = service.get(f"mountpoint{server_id}") or "Chưa cấu hình"
+    username = service.get(f"username{server_id}") or "Không dùng"
+    ntrip_version = service.get(f"ntrip_version{server_id}") or "--"
+    on_demand = service.get(
+        f"server{server_id}_stream_on_demand", service.get("stream_on_demand", False)
+    )
+    active = bool(service.get(f"server{server_id}_stream_active")) or traffic[f"server{server_id}"] > 0
+    return [
+        "",
+        f"🔗 SERVER {server_id}",
+        f"• Kích hoạt: {_zalo_yes_no(enabled, 'Đang bật', 'Đang tắt')}",
+        f"• Máy chủ: {host}:{port}",
+        f"• Mountpoint: {mountpoint}",
+        f"• Tài khoản: {username}",
+        f"• Mật khẩu: {'Đã thiết lập' if service.get(f'password{server_id}') else 'Chưa thiết lập'}",
+        f"• Phiên bản NTRIP: {ntrip_version}",
+        f"• Chế độ truyền: {_zalo_stream_mode(on_demand)}",
+        f"• Trạng thái dòng: {_zalo_yes_no(active, 'Đang truyền', 'Chưa truyền')}",
+        f"• Tốc độ hiện tại: {_zalo_format_speed(traffic[f'server{server_id}'])}",
+    ]
 
-    lines.extend((
+def _zalo_rtcm_config_lines(service, traffic):
+    return [
         "",
         "📥 NGUỒN RTCM ĐẦU VÀO",
         f"• Kích hoạt: {_zalo_yes_no(service.get('rtcm_enabled'), 'Đang bật', 'Đang tắt')}",
@@ -378,35 +377,52 @@ def _zalo_config_summary(device: models.Device, snapshot: dict) -> str:
         "🔄 KẾT NỐI",
         f"• Thử kết nối lại sau: {service.get('reconnectioninterval', 10)} giây",
         f"• Tổng dữ liệu gửi đi: {_zalo_format_speed(traffic['total'])}",
-    ))
+    ]
+
+
+def _zalo_config_summary(device: models.Device, snapshot: dict) -> str:
+    base = device.base_config if isinstance(device.base_config, dict) else {}
+    service = device.service_config if isinstance(device.service_config, dict) else {}
+    coords = base.get("coords") if isinstance(base.get("coords"), dict) else {}
+    gnss = base.get("gnss_options") if isinstance(base.get("gnss_options"), dict) else {}
+    constellations = gnss.get("constellations") if isinstance(gnss.get("constellations"), dict) else {}
+    traffic = _zalo_device_traffic(device, snapshot)
+    lines = _zalo_base_config_lines(device, base, coords, gnss, constellations)
+    for server_id in (1, 2):
+        lines.extend(_zalo_server_config_lines(server_id, service, traffic))
+    lines.extend(_zalo_rtcm_config_lines(service, traffic))
     return "\n".join(lines)
+
+def _zalo_cache_value(cache, serial_text):
+    direct = cache.get(serial_text)
+    if isinstance(direct, dict):
+        return direct
+    wanted = serial_text.casefold()
+    for key, value in cache.items():
+        if str(key).casefold() == wanted and isinstance(value, dict):
+            return value
+    return {}
+
+
+def _zalo_merge_live_source(snapshot, merged_nmea, source):
+    source_nmea = source.get("nmea_data")
+    if isinstance(source_nmea, dict):
+        for key, value in source_nmea.items():
+            if key == "satellites" and not value and merged_nmea.get("satellites"):
+                continue
+            merged_nmea[key] = value
+    snapshot.update({key: value for key, value in source.items() if key != "nmea_data"})
+
 
 def _zalo_live_telemetry(serial: str) -> dict:
     serial_text = str(serial)
-
-    def cache_value(cache: dict) -> dict:
-        direct = cache.get(serial_text)
-        if isinstance(direct, dict):
-            return direct
-        wanted = serial_text.casefold()
-        for key, value in cache.items():
-            if str(key).casefold() == wanted and isinstance(value, dict):
-                return value
-        return {}
-
     snapshot: dict = {}
     merged_nmea: dict = {}
     for source in (
-        cache_value(mqtt_handler.device_telemetry_cache),
-        cache_value(latest_device_telemetry_cache),
+        _zalo_cache_value(mqtt_handler.device_telemetry_cache, serial_text),
+        _zalo_cache_value(latest_device_telemetry_cache, serial_text),
     ):
-        source_nmea = source.get("nmea_data")
-        if isinstance(source_nmea, dict):
-            for key, value in source_nmea.items():
-                if key == "satellites" and not value and merged_nmea.get("satellites"):
-                    continue
-                merged_nmea[key] = value
-        snapshot.update({key: value for key, value in source.items() if key != "nmea_data"})
+        _zalo_merge_live_source(snapshot, merged_nmea, source)
     if merged_nmea:
         snapshot["nmea_data"] = merged_nmea
     return snapshot
@@ -1009,7 +1025,7 @@ async def _zalo_admin_station_delete(context, payload):
 
 
 
-async def _zalo_admin_rovers(context, payload):
+def _zalo_admin_rovers(context, payload):
     query = str(payload.get("query") or "").strip().lower()
     rover_items = list(context.visible_rovers)
     if query:

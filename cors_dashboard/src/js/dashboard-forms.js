@@ -19,7 +19,11 @@ const STATUS_TEXT_MAP = {
     'auto_setup_averaging': 'Bước 3/4: Thu thập mẫu RTK Fixed & Tính trung bình',
     'auto_setup_base': 'Bước 4/4: Hoàn thiện kết quả Auto Base'
 };
-const projectionLabel = report => Math.abs(Number(report?.k0) - 0.9999) <= 1e-9 ? 'múi 3°' : isSixDegreeReport(report) ? 'múi 6°' : 'phép chiếu tùy chọn';
+const projectionLabel = report => {
+    if (Math.abs(Number(report?.k0) - 0.9999) <= 1e-9) return 'múi 3°';
+    if (isSixDegreeReport(report)) return 'múi 6°';
+    return 'phép chiếu tùy chọn';
+};
 const isSixDegreeReport = report => Number.isFinite(Number(report?.k0)) && Math.abs(Number(report.k0) - 0.9996) <= 1e-9;
 // Show the nominal VN M6 zone constants when RTCM's quantized values decode a few nanodegrees off.
 const displayMeridian = (value, report) => {
@@ -32,8 +36,10 @@ const displayMeridian = (value, report) => {
     return String(value);
 };
 const displayProjectionScale = report => isSixDegreeReport(report) ? '0.9996' : report?.k0 ?? 'Chưa có dữ liệu';
-const formatReportCoordinate = (value, key) => value == null || !Number.isFinite(Number(value))
-    ? 'Chưa có dữ liệu' : Number(value).toFixed(key === 'alt' ? 4 : 10);
+const formatReportCoordinate = (value, key) => {
+    if (value == null || !Number.isFinite(Number(value))) return 'Chưa có dữ liệu';
+    return Number(value).toFixed(key === 'alt' ? 4 : 10);
+};
 const Vn2000Result = ({ report, onReviewChange }) => {
     const sourceKey = JSON.stringify([report?.projected_coord, report?.central_meridian_deg, report?.k0, report?.rtcm1025]);
     const [preview, setPreview] = useState(null);
@@ -57,6 +63,15 @@ const Vn2000Result = ({ report, onReviewChange }) => {
     const decoded = report.rtcm1025;
     const canRecalculate = !onReviewChange || (report.input_coord && report.parameters && report.parameter_source === 'rtcm1021');
     const hasDecoded = decoded && decoded.raw_k0 != null && decoded.raw_l0 != null;
+    const processorLabel = {
+        esp32: 'ESP32',
+        python_agent: 'Agent Python trên Pi',
+    }[report.processor] || 'Chưa ghi nhận';
+    let calculateButtonText = onReviewChange ? 'Tính lại NEh và LLH' : 'Đổi múi N/E';
+    if (calculating) calculateButtonText = 'Đang tính…';
+    let calculateHelpText = 'Đổi múi để xem N/E của tọa độ đã lưu.';
+    if (onReviewChange) calculateHelpText = 'Dùng lại mẫu RTK Fixed của phiên này. Kiểm tra LLH mới trước khi áp dụng vào Base.';
+    if (!canRecalculate) calculateHelpText = 'Phiên này thiếu tham số RTCM để tính lại.';
     const projectionSource = {rtcm1025:'CORS · RTCM 1025', manual:'Nhập L₀/k₀ thủ công', server_catalog:'Danh mục tỉnh trên máy chủ', not_used:'Không chuyển đổi'}[report.projection_source] || 'Báo cáo chưa lưu nguồn phép chiếu';
     async function reproject() {
         if (!canRecalculate || calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112) return;
@@ -124,14 +139,12 @@ const Vn2000Result = ({ report, onReviewChange }) => {
                 <button type="button" className="btn btn-outline-info" style={{minHeight:44}}
                     disabled={!canRecalculate || calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112} onClick={reproject}>
                     {calculating && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}
-                    {calculating ? 'Đang tính…' : onReviewChange ? 'Tính lại NEh và LLH' : 'Đổi múi N/E'}
+                    {calculateButtonText}
                 </button>
                 {(onReviewChange || preview?.sourceKey === sourceKey) && <button type="button" className="btn btn-outline-secondary" style={{minHeight:44}} disabled={calculating}
                     onClick={resetProjection}>Dùng kết quả gốc</button>}
             </div>
-            <p className="small text-muted mt-2 mb-0">{!canRecalculate ? 'Phiên này thiếu tham số RTCM để tính lại.' : onReviewChange
-                ? 'Dùng lại mẫu RTK Fixed của phiên này. Kiểm tra LLH mới trước khi áp dụng vào Base.'
-                : 'Đổi múi để xem N/E của tọa độ đã lưu.'}</p>
+            <p className="small text-muted mt-2 mb-0">{calculateHelpText}</p>
             {error && <p className="small text-danger mt-2 mb-0" role="alert">{error}</p>}
         </div>}
         <p className="small mt-2 mb-1">Nguồn phép chiếu gốc: <strong>{projectionSource}</strong>.</p>
@@ -139,7 +152,7 @@ const Vn2000Result = ({ report, onReviewChange }) => {
         {(hasDecoded || report.projection_source === 'rtcm1025') && <details className="small mt-2">
             <summary className="py-2" style={{minHeight:44}}>Đối chiếu giải mã RTCM 1025</summary>
             {hasDecoded ? <>
-                <p className="mb-2">Bộ giải mã: {report.processor === 'esp32' ? 'ESP32' : report.processor === 'python_agent' ? 'Agent Python trên Pi' : 'Chưa ghi nhận'} · {decoded.frame_bytes ?? '—'} byte.</p>
+                <p className="mb-2">Bộ giải mã: {processorLabel} · {decoded.frame_bytes ?? '—'} byte.</p>
                 <dl className="row g-2 mb-2">
                     {[
                         ['Giá trị LoNO thô', decoded.raw_l0], ['Giá trị SNO thô', decoded.raw_k0],
@@ -155,6 +168,61 @@ const Vn2000Result = ({ report, onReviewChange }) => {
         </details>}
     </section>;
 };
+const getLicenseStatusMessage = (authStatus, serverTokenPresent, agentTokenPresent, tokenSynced) => {
+    if (authStatus.token_deployment_pending === true) {
+        return 'Token đã tạo trên server; lệnh cấp token đã gửi. Đang chờ agent báo fingerprint khớp để xác nhận đồng bộ.';
+    }
+    if (serverTokenPresent === false) {
+        if (agentTokenPresent) {
+            return 'Agent đã báo có Access Token cục bộ, nhưng server chưa có token để đối chiếu. Bấm nút bên dưới để tạo token trên server và gửi lại xuống agent qua MQTT.';
+        }
+        return 'Thiết bị chưa có Access Token trên server. Bấm nút bên dưới để tạo token và gửi xuống agent qua MQTT.';
+    }
+    if (tokenSynced) return 'Access Token đã đồng bộ với agent. Bạn có thể gửi lại token nếu cần.';
+    if (agentTokenPresent) return 'Access Token trên agent không khớp với server. Bấm nút bên dưới để gửi lại token đúng.';
+    return 'Agent chưa có Access Token. Bấm nút bên dưới để gửi token xuống thiết bị qua MQTT.';
+};
+const getAutoBaseResultText = (autoFixedResult, progress) => {
+    if (autoFixedResult) {
+        if (progress.auto_applied === true) {
+            return `Đã tự áp dụng Fixed LLA sau ${progress.sample_count || 0} mẫu RTK Fixed.`;
+        }
+        return `Đã lấy ${progress.sample_count || 0} mẫu RTK Fixed. Xem tọa độ trước khi áp dụng Fixed LLA.`;
+    }
+    if (['completed', 'unverified'].includes(progress.phase)) {
+        return 'Kết quả cũ chưa được xác nhận RTK Fixed. Cần chạy lại Auto Base.';
+    }
+    if (progress.phase === 'failed') return `Auto Base thất bại: ${progress.reason || 'Không đủ dữ liệu RTK Fixed.'}`;
+    if (progress.phase === 'stopped') return 'Auto Base đã dừng.';
+    return '';
+};
+const getAutoBaseReviewText = progress => {
+    if (progress.auto_applied === true) return 'Fixed LLA đã được tự áp dụng sau khi receiver xác nhận tọa độ.';
+    if (progress.phase === 'ready_for_review') return 'Chưa áp dụng tọa độ này vào máy.';
+    return 'Kết quả đang chờ duyệt trên UI.';
+};
+const getAutoBaseIntroText = (sourceMode, autoFixedResult) => {
+    if (sourceMode === 'nearest') {
+        return 'ESP32 vào Rover, gửi vị trí lên backend, nhận cải chính từ trạm gần nhất, lấy mẫu RTK_FIXED rồi tự chuyển sang Fixed LLA.';
+    }
+    if (autoFixedResult) return 'Đã có kết quả. Kiểm tra tọa độ rồi xác nhận áp dụng Fixed LLA.';
+    return 'Lấy mẫu RTK Fixed từ Base bạn nhập. Sau khi có kết quả, bạn kiểm tra và xác nhận áp dụng Fixed LLA.';
+};
+const getBaseSubmitLabel = (method, isAutoSetupActive, sourceMode, autoFixedResult) => {
+    if (method !== 'AUTO_CORS') return 'Áp dụng cấu hình BASE';
+    if (isAutoSetupActive) return 'Đang lấy tọa độ…';
+    if (sourceMode === 'nearest') return 'Chuyển Rover & tìm trạm gần nhất';
+    if (autoFixedResult) return 'Lấy lại tọa độ Auto Base';
+    return 'Lấy tọa độ Auto Base';
+};
+const getCasterNoDataReason = (sleeping, startup, runningAutoBase, device) => {
+    if (sleeping) return 'Đang chờ yêu cầu phát từ rover.';
+    if (startup.state === 'error') return startup.error || 'Thiết lập Base thất bại; xem trạng thái GNSS.';
+    if (startup.state === 'awaiting_auto_base') return 'Đang chờ bắt đầu Auto Base.';
+    if (runningAutoBase) return `Đang chạy Auto Base (${device.auto_base_progress?.phase || 'đang xử lý'}); chưa phát RTCM Base.`;
+    if (device.ntrip_stats?.rtcm_input_bps === 0) return 'ESP không nhận được RTCM từ chip GNSS.';
+    return 'Chưa xác định được nguyên nhân từ trạng thái thiết bị hiện tại.';
+};
 const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {
     const [isDeploying, setIsDeploying] = useState(false);
     const [isUpdatingBypass, setIsUpdatingBypass] = useState(false);
@@ -166,17 +234,7 @@ const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDepl
         : authStatus.token_required;
     const agentTokenPresent = authStatus.agent_token_present === true;
     const tokenSynced = window.CorsDashboardShared?.isAccessTokenSynced?.(device) === true;
-    const authMessage = authStatus.token_deployment_pending === true
-        ? 'Token đã tạo trên server; lệnh cấp token đã gửi. Đang chờ agent báo fingerprint khớp để xác nhận đồng bộ.'
-        : serverTokenPresent === false
-        ? agentTokenPresent
-            ? 'Agent đã báo có Access Token cục bộ, nhưng server chưa có token để đối chiếu. Bấm nút bên dưới để tạo token trên server và gửi lại xuống agent qua MQTT.'
-            : 'Thiết bị chưa có Access Token trên server. Bấm nút bên dưới để tạo token và gửi xuống agent qua MQTT.'
-        : tokenSynced
-            ? 'Access Token đã đồng bộ với agent. Bạn có thể gửi lại token nếu cần.'
-            : agentTokenPresent
-                ? 'Access Token trên agent không khớp với server. Bấm nút bên dưới để gửi lại token đúng.'
-                : 'Agent chưa có Access Token. Bấm nút bên dưới để gửi token xuống thiết bị qua MQTT.';
+    const authMessage = getLicenseStatusMessage(authStatus, serverTokenPresent, agentTokenPresent, tokenSynced);
 
     const handleAutoDeploy = async (e) => {
         e.preventDefault();
@@ -409,7 +467,11 @@ const GnssReadbackDetails = ({ details }) => {
         && (!enabledOnly || observed?.values?.[index] !== 0 || (compare && details.expected?.[index] > 0)));
     const logs = details.logs || [];
     const expectedLogs = compare ? details.expected_logs || [] : [];
-    const rate = value => value === 0 ? 'Tắt' : value == null ? 'Chưa đọc được' : `Mỗi ${value} chu kỳ`;
+    const rate = value => {
+        if (value === 0) return 'Tắt';
+        if (value == null) return 'Chưa đọc được';
+        return `Mỗi ${value} chu kỳ`;
+    };
     const show = value => value == null ? 'Chưa đọc được' : String(value);
     const logNames = [...new Set([...logs.filter(log => log.port === selected).map(log => log.name), ...expectedLogs])].sort((a, b) => a.localeCompare(b))
         .filter(name => !enabledOnly || expectedLogs.includes(name) || logs.some(log => log.port === selected && log.name === name && log.period > 0));
@@ -439,10 +501,10 @@ const GnssReadbackDetails = ({ details }) => {
                         <th scope="row"><button type="button" className={`btn btn-sm ${selected === name ? 'btn-info' : 'btn-outline-info'}`}
                             style={{ minHeight: 44 }} aria-pressed={selected === name} onClick={() => setPortName(name)}>{name}</button></th>
                         {ublox ? <>
-                            <td>{!ready || port.enabled == null ? 'Chưa đọc được' : port.enabled === 1 ? 'Bật' : port.enabled === 0 ? 'Tắt' : String(port.enabled)}</td>
-                            <td>{name.startsWith('UART') ? port?.baud != null ? `${port.baud} bps` : 'Chưa đọc được' : '—'}</td>
+                            <td>{formatPortEnabledState(port.enabled, ready)}</td>
+                            <td>{formatPortBaud(name, port?.baud)}</td>
                             {[0, 1, 2].map(index => <td key={index} className={ready && port.values?.[index] === 1 ? 'text-success-emphasis' : 'text-body-secondary'}>
-                                {!ready ? 'Chưa đọc được' : port.values?.[index] === 1 ? 'Bật' : port.values?.[index] === 0 ? 'Tắt' : show(port.values?.[index])}
+                                {formatPortValue(port.values?.[index], ready, show)}
                             </td>)}
                         </> : <td>{ready ? logs.filter(log => log.port === name && log.period > 0).length : 'Chưa đọc được'}</td>}
                     </tr>;
@@ -483,8 +545,8 @@ const GnssReadbackDetails = ({ details }) => {
                     const expected = expectedLogs.includes(name);
                     if (enabledOnly && actual?.period == null && !expected) return null;
                     return <tr key={name}><th scope="row" className="fw-normal">{name}</th>
-                        <td className={compare && ((!expected && actual?.period > 0) || (expected && actual?.period !== 1)) ? 'text-danger-emphasis' : ''}>{!actual ? 'Không có trong danh sách' : actual.period == null ? 'Một lần' : `${actual.period} giây`}</td>
-                        <td>{expected ? '1 giây' : compare ? 'Không bật' : 'Không đối chiếu'}</td></tr>;
+                        <td className={compare && ((!expected && actual?.period > 0) || (expected && actual?.period !== 1)) ? 'text-danger-emphasis' : ''}>{formatLogPeriod(actual)}</td>
+                        <td>{formatExpectedLogPeriod(expected, compare)}</td></tr>;
                 })}</tbody>
             </table>
             {logNames.length === 0 && <div className="small text-muted p-2">Chip không liệt kê log trên cổng này.</div>}
@@ -492,6 +554,32 @@ const GnssReadbackDetails = ({ details }) => {
     </div>;
 };
 
+const formatPortEnabledState = (value, ready) => {
+    if (!ready || value == null) return 'Chưa đọc được';
+    if (value === 1) return 'Bật';
+    if (value === 0) return 'Tắt';
+    return String(value);
+};
+const formatPortValue = (value, ready, show) => {
+    if (!ready) return 'Chưa đọc được';
+    if (value === 1) return 'Bật';
+    if (value === 0) return 'Tắt';
+    return show(value);
+};
+const formatPortBaud = (name, baud) => {
+    if (!name.startsWith('UART')) return '—';
+    return baud == null ? 'Chưa đọc được' : `${baud} bps`;
+};
+const formatLogPeriod = actual => {
+    if (!actual) return 'Không có trong danh sách';
+    if (actual.period == null) return 'Một lần';
+    return `${actual.period} giây`;
+};
+const formatExpectedLogPeriod = (expected, compare) => {
+    if (expected) return '1 giây';
+    if (compare) return 'Không bật';
+    return 'Không đối chiếu';
+};
 const GnssConfigVerification = ({ device, disabled }) => {
     const [pending, setPending] = useState(null);
     const [result, setResult] = useState(null);
@@ -716,15 +804,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             : 'Chưa có kết quả tra tỉnh/thành');
     const supportsAutoBaseReview = device.system_info?.auto_base_review_supported === true;
     const supportsAutoBaseNearest = device.system_info?.auto_base_nearest_supported === true;
-    const autoResultText = autoFixedResult
-        ? autoProgress.auto_applied === true
-            ? `Đã tự áp dụng Fixed LLA sau ${autoProgress.sample_count || 0} mẫu RTK Fixed.`
-            : `Đã lấy ${autoProgress.sample_count || 0} mẫu RTK Fixed. Xem tọa độ trước khi áp dụng Fixed LLA.`
-        : ['completed', 'unverified'].includes(autoProgress.phase)
-        ? 'Kết quả cũ chưa được xác nhận RTK Fixed. Cần chạy lại Auto Base.'
-        : autoProgress.phase === 'failed'
-        ? `Auto Base thất bại: ${autoProgress.reason || 'Không đủ dữ liệu RTK Fixed.'}`
-        : autoProgress.phase === 'stopped' ? 'Auto Base đã dừng.' : '';
+    const autoResultText = getAutoBaseResultText(autoFixedResult, autoProgress);
 
     // Tọa độ Fixed
     const [latitude, setLatitude] = useState('');
@@ -1588,11 +1668,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                                 <div className="col-12" role="status" aria-live="polite">
                                     <div className="border rounded p-3">
                                         <h3 className="h6">Kết quả Auto Base</h3>
-                                        <p className="small mb-2">{autoProgress.auto_applied === true
-                                            ? 'Fixed LLA đã được tự áp dụng sau khi receiver xác nhận tọa độ.'
-                                            : autoProgress.phase === 'ready_for_review'
-                                                ? 'Chưa áp dụng tọa độ này vào máy.'
-                                                : 'Kết quả đang chờ duyệt trên UI.'}</p>
+                                        <p className="small mb-2">{getAutoBaseReviewText(autoProgress)}</p>
                                         <div className="small text-break mb-2">Base cấp cải chính: {conversionReport.source?.station_name || conversionReport.source?.host || 'Chưa có dữ liệu'}
                                             {conversionReport.source?.mountpoint ? ` / ${conversionReport.source.mountpoint}` : ''}</div>
                                         {conversionReport.source?.distance_m != null && <div className="small text-muted mb-2">Cách thiết bị khoảng {(Number(conversionReport.source.distance_m) / 1000).toFixed(1)} km.</div>}
@@ -1832,13 +1908,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         <div className="col-12">
                                 <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
                                 <i className="bi bi-robot me-2"></i>
-                                {corsSourceMode === 'nearest' ? (
-                                    <span>ESP32 vào Rover, gửi vị trí lên backend, nhận cải chính từ trạm gần nhất, lấy mẫu RTK_FIXED rồi tự chuyển sang Fixed LLA.</span>
-                                ) : autoFixedResult ? (
-                                    <span>Đã có kết quả. Kiểm tra tọa độ rồi xác nhận áp dụng Fixed LLA.</span>
-                                ) : (
-                                    <span>Lấy mẫu RTK Fixed từ Base bạn nhập. Sau khi có kết quả, bạn kiểm tra và xác nhận áp dụng Fixed LLA.</span>
-                                )}
+                                <span>{getAutoBaseIntroText(corsSourceMode, autoFixedResult)}</span>
                             </div>
                         </div>
 
@@ -2103,9 +2173,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                         ) : (
                             <>
                                 <i className="bi bi-lightning-charge-fill me-2"></i>
-                                {method === 'AUTO_CORS'
-                                    ? (isAutoSetupActive ? 'Đang lấy tọa độ…' : corsSourceMode === 'nearest' ? 'Chuyển Rover & tìm trạm gần nhất' : autoFixedResult ? 'Lấy lại tọa độ Auto Base' : 'Lấy tọa độ Auto Base')
-                                    : 'Áp dụng cấu hình BASE'}
+                                {getBaseSubmitLabel(method, isAutoSetupActive, corsSourceMode, autoFixedResult)}
                             </>
                         )}
                     </button>
@@ -2328,12 +2396,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         const startup = device.system_info?.base_startup || {};
         const workflow = device.auto_base_progress || {};
         const runningAutoBase = /^auto_setup/.test(device.status || '');
-        const noDataReason = sleeping ? 'Đang chờ yêu cầu phát từ rover.'
-            : startup.state === 'error' ? (startup.error || 'Thiết lập Base thất bại; xem trạng thái GNSS.')
-            : startup.state === 'awaiting_auto_base' ? 'Đang chờ bắt đầu Auto Base.'
-            : runningAutoBase ? `Đang chạy Auto Base (${workflow.phase || 'đang xử lý'}); chưa phát RTCM Base.`
-            : device.ntrip_stats?.rtcm_input_bps === 0 ? 'ESP không nhận được RTCM từ chip GNSS.'
-            : 'Chưa xác định được nguyên nhân từ trạng thái thiết bị hiện tại.';
+        const noDataReason = getCasterNoDataReason(sleeping, startup, runningAutoBase, device);
         return (
             <span className="d-inline-flex flex-wrap align-items-center gap-2 ms-2 small" role="status" aria-live="polite">
                 <span className={`badge text-bg-${enabled ? 'primary' : 'secondary'}`}>
