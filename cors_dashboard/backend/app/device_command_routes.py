@@ -45,6 +45,206 @@ COORDINATOR_DEVICE_ACCESS_DENIED = "Bạn không có quyền quản lý thiết 
 tools_router = APIRouter(dependencies=[Depends(require_editable_base)])
 
 
+async def _get_configure_chip_device(db, serial, current_user):
+    device = await crud.get_device_by_serial(db, serial)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found in database")
+    if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
+    return device
+
+
+async def _prepare_chip_setup(serial, device, config_request):
+    payload = config_request.payload
+    sensor_type = payload.get("sensor_type")
+    params = payload.get("params", {})
+    mode = payload.get("mode")
+    method = params.get("base_setup_method")
+    gnss_options = params.get("gnss_options") if isinstance(params, dict) else None
+    existing_base_config = device.base_config if isinstance(device.base_config, dict) else {}
+    if gnss_options is None:
+        gnss_options = existing_base_config.get("gnss_options")
+    if gnss_options and isinstance(params, dict) and "gnss_options" not in params:
+        params["gnss_options"] = gnss_options
+    if not sensor_type or not mode:
+        raise HTTPException(status_code=400, detail="Missing required fields: sensor_type or mode")
+
+    receiver_profile = None
+    if sensor_type == "Ublox" and mode == "BASE" and method in ("FIXED_LLA", "SURVEY_IN", "AUTO_CORS"):
+        live = mqtt_handler.device_telemetry_cache.get(serial) or {}
+        capabilities = live.get("system_info") or device.system_info or {}
+        try:
+            receiver_profile = await command_builder.wait_for_ublox_profile(
+                mqtt_handler.device_telemetry_cache, serial, capabilities
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    auto_cors_config = None
+    if mode == "BASE" and method == "AUTO_CORS":
+        if not (device.system_info or {}).get("auto_base_review_supported"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cập nhật agent để lấy và duyệt kết quả Auto Base trước khi áp dụng Fixed LLA.",
+            )
+        from .routers.devices import _normalize_auto_cors_config
+        try:
+            auto_cors_config = _normalize_auto_cors_config(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "sensor_type": sensor_type,
+        "params": params,
+        "mode": mode,
+        "method": method,
+        "gnss_options": gnss_options,
+        "existing_base_config": existing_base_config,
+        "receiver_profile": receiver_profile,
+        "auto_cors_config": auto_cors_config,
+    }
+
+
+def _merge_chip_base_config(device, params, gnss_options, existing_base_config):
+    normalized = crud.normalize_base_config(params)
+    if normalized:
+        if "gnss_options" not in normalized and "gnss_options" in existing_base_config:
+            normalized["gnss_options"] = existing_base_config["gnss_options"]
+        elif gnss_options and "gnss_options" not in normalized:
+            normalized["gnss_options"] = gnss_options
+        return normalized
+
+    current = device.base_config if isinstance(device.base_config, dict) else {}
+    merged = dict(current)
+    for key, value in params.items():
+        if key != "coords":
+            merged[key] = value
+    if "gnss_options" not in merged and "gnss_options" in existing_base_config:
+        merged["gnss_options"] = existing_base_config["gnss_options"]
+    elif gnss_options and "gnss_options" not in merged:
+        merged["gnss_options"] = gnss_options
+    return merged or None
+
+
+async def _save_chip_base_config(db, serial, device, setup):
+    sensor_type = setup["sensor_type"]
+    params = setup["params"]
+    method = setup["method"]
+    try:
+        if sensor_type:
+            device.detected_chip_type = sensor_type
+        if isinstance(params, dict) and params and method != "AUTO_CORS":
+            base_config = _merge_chip_base_config(
+                device, params, setup["gnss_options"], setup["existing_base_config"]
+            )
+            if base_config is not None:
+                device.base_config = base_config
+        device.is_synced = False
+        await db.commit()
+        await db.refresh(device)
+        mqtt_handler.invalidate_device_cache(serial)
+        logging.info(
+            "✓ Saved base config for %s to database: Chip=%s, Method=%s, Marked as UNSYNCED",
+            serial, sensor_type, method,
+        )
+        await ui_manager.broadcast({
+            "type": "status_update",
+            "data": schemas.Device.from_orm(device).model_dump(),
+        })
+    except Exception as exc:
+        await db.rollback()
+        logging.exception("❌ Failed to save config to DB for %s: %s", serial, exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save configuration to database: {str(exc)}",
+        )
+
+
+def _build_chip_command(serial, config_request, setup):
+    sensor_type = setup["sensor_type"]
+    params = setup["params"]
+    method = setup["method"]
+    receiver_profile = setup["receiver_profile"]
+    commands_to_send = []
+    if setup["mode"] != "BASE":
+        raise ValueError(f"Unsupported mode: {setup['mode']}")
+    if method == "AUTO_CORS":
+        pi_command = {
+            "command": "TRIGGER_AUTO_BASE",
+            "payload": {
+                "review_only": True,
+                **setup["auto_cors_config"],
+                "timeout": 3600,
+                "samples": 60,
+                "sensor_type": sensor_type,
+            },
+            "original_config": config_request.payload,
+        }
+        logging.info("Built Auto Base Setup trigger for %s", serial)
+        return pi_command, commands_to_send
+    if method == "SURVEY_IN":
+        survey_duration = params.get("survey_in_duration")
+        survey_accuracy = params.get("survey_in_accuracy")
+        if not survey_duration or not survey_accuracy:
+            raise ValueError("Missing survey_in parameters")
+        commands_to_send = command_builder.build_base_survey_in_command(
+            sensor_type, survey_duration, survey_accuracy, setup["gnss_options"],
+            receiver_profile=receiver_profile,
+        )
+        logging.info("Built Survey-In commands for %s: %ss, %sm", serial, survey_duration, survey_accuracy)
+    elif method == "FIXED_LLA":
+        coords = params.get("coords")
+        if not coords or not all(key in coords for key in ("lat", "lon", "alt")):
+            raise ValueError("Missing or incomplete coordinates")
+        accuracy = params.get("accuracy", 10.0)
+        commands_to_send = command_builder.build_base_fixed_lla_command(
+            sensor_type, coords["lat"], coords["lon"], coords["alt"], accuracy,
+            setup["gnss_options"], altitude_reference=params.get("altitude_reference"),
+            receiver_profile=receiver_profile,
+        )
+        logging.info("Built Fixed LLA commands for %s: lat/lon/alt, acc=%sm", serial, accuracy)
+    else:
+        raise ValueError(f"Unknown base setup method: {method}")
+
+    encoded_commands = [base64.b64encode(command).decode("ascii") for command in commands_to_send if command]
+    if not encoded_commands:
+        raise ValueError("No commands generated")
+    return {
+        "command": "EXECUTE_RAW_COMMANDS",
+        "payload": {"commands_b64": encoded_commands, "receiver_profile": receiver_profile},
+        "original_config": config_request.payload,
+    }, commands_to_send
+
+
+async def _send_chip_command(db, serial, device, current_user, pi_command, commands_to_send):
+    try:
+        response = await send_command_to_pi(serial, pi_command)
+        logging.info("✓ Sent configuration commands to %s", serial)
+        await crud.log_system_event(
+            db=db,
+            type="info",
+            message=f"GNSS config updated for '{device.name}' by {current_user.username}",
+            user_id=current_user.id,
+            serial=serial,
+        )
+        return {
+            "status": "command_sent_waiting_sync",
+            "channel": response["channel"],
+            "commands_sent": len(commands_to_send) if not pi_command else 1,
+            "message": "Configuration saved to database and sent to device. Waiting for device to apply and confirm sync status...",
+            "is_synced": False,
+        }
+    except HTTPException as exc:
+        logging.warning("⚠️ Failed to send command to %s: %s. Config auto-sync when online.", serial, exc.detail)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Configuration saved to database successfully, but device is offline ({exc.detail}). Config will auto-sync when device comes back online.",
+        )
+    except Exception as exc:
+        logging.exception("❌ Unexpected error sending command to %s: %s", serial, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error while sending command: {str(exc)}")
+
+
 @router.post("/api/devices/{serial}/configure-chip", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
 async def configure_chip_endpoint(
     serial: str,
@@ -52,203 +252,20 @@ async def configure_chip_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.EDIT_COORDINATES))
 ):
-    # ==================== BƯỚC 1: KIỂM TRA THIẾT BỊ ====================
-    device_in_db = await crud.get_device_by_serial(db, serial)
-    if not device_in_db:
-        raise HTTPException(
-            status_code=404,
-            detail="Device not found in database"
-        )
-    if current_user.role == auth.Role.COORDINATOR and device_in_db.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Trạm này chỉ được xem")
-
-    # ==================== BƯỚC 2: PARSE PAYLOAD ====================
-    payload = config_request.payload
-    sensor_type = payload.get("sensor_type")
-    params = payload.get("params", {})
-    mode = payload.get("mode")
-    method = params.get("base_setup_method")
-    gnss_options = params.get("gnss_options") if isinstance(params, dict) else None
-
-    # Mặc định kế thừa cấu hình RTCM/GNSS đã được admin thiết lập trên trạm nếu params không truyền
-    existing_base_config = device_in_db.base_config if isinstance(device_in_db.base_config, dict) else {}
-    if gnss_options is None and isinstance(existing_base_config, dict):
-        gnss_options = existing_base_config.get("gnss_options")
-    if gnss_options and isinstance(params, dict) and "gnss_options" not in params:
-        params["gnss_options"] = gnss_options
-
-    if not sensor_type or not mode:
+    device = await _get_configure_chip_device(db, serial, current_user)
+    setup = await _prepare_chip_setup(serial, device, config_request)
+    await _save_chip_base_config(db, serial, device, setup)
+    try:
+        pi_command, commands_to_send = _build_chip_command(serial, config_request, setup)
+    except Exception as exc:
+        logging.exception("❌ Failed to build configuration commands for %s: %s", serial, exc)
         raise HTTPException(
             status_code=400,
-            detail="Missing required fields: sensor_type or mode"
+            detail=f"Failed to build configuration commands: {str(exc)}",
         )
-
-    receiver_profile = None
-    if sensor_type == 'Ublox' and mode == 'BASE' and method in ('FIXED_LLA', 'SURVEY_IN', 'AUTO_CORS'):
-        live = mqtt_handler.device_telemetry_cache.get(serial) or {}
-        capabilities = live.get('system_info') or device_in_db.system_info or {}
-        try:
-            receiver_profile = await command_builder.wait_for_ublox_profile(mqtt_handler.device_telemetry_cache, serial, capabilities)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    auto_cors_config = None
-    if mode == 'BASE' and method == 'AUTO_CORS':
-        if not (device_in_db.system_info or {}).get('auto_base_review_supported'):
-            raise HTTPException(status_code=409, detail='Cập nhật agent để lấy và duyệt kết quả Auto Base trước khi áp dụng Fixed LLA.')
-        from .routers.devices import _normalize_auto_cors_config
-        try:
-            auto_cors_config = _normalize_auto_cors_config(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    # ==================== BƯỚC 3: LƯU CẤU HÌNH VÀO DATABASE ====================
-    try:
-        if sensor_type:
-            device_in_db.detected_chip_type = sensor_type
-        if isinstance(params, dict) and params and method != "AUTO_CORS":
-            normalized_params = crud.normalize_base_config(params)
-            if normalized_params:
-                if "gnss_options" not in normalized_params and "gnss_options" in existing_base_config:
-                    normalized_params["gnss_options"] = existing_base_config["gnss_options"]
-                elif gnss_options and "gnss_options" not in normalized_params:
-                    normalized_params["gnss_options"] = gnss_options
-                device_in_db.base_config = normalized_params
-            else:
-                current_base_config = device_in_db.base_config if isinstance(device_in_db.base_config, dict) else {}
-                merged_base_config = dict(current_base_config)
-                for key, value in params.items():
-                    if key != "coords":
-                        merged_base_config[key] = value
-                if "gnss_options" not in merged_base_config and "gnss_options" in existing_base_config:
-                    merged_base_config["gnss_options"] = existing_base_config["gnss_options"]
-                elif gnss_options and "gnss_options" not in merged_base_config:
-                    merged_base_config["gnss_options"] = gnss_options
-                if merged_base_config:
-                    device_in_db.base_config = merged_base_config
-        device_in_db.is_synced = False
-
-        await db.commit()
-        await db.refresh(device_in_db)
-
-        # 🔥 FIX: Invalidate sync cache để background task không check dữ liệu cũ
-        mqtt_handler.invalidate_device_cache(serial)
-
-        logging.info(f"✓ Saved base config for {serial} to database: Chip={sensor_type}, Method={method}, Marked as UNSYNCED")
-
-        await ui_manager.broadcast({
-            "type": "status_update",
-            "data": schemas.Device.from_orm(device_in_db).model_dump()
-        })
-
-    except Exception as e:
-        await db.rollback()
-        logging.exception(f"❌ Failed to save config to DB for {serial}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save configuration to database: {str(e)}"
-        )
-
-    # ==================== BƯỚC 4 & 5: BUILD VÀ GỬI LỆNH XUỐNG AGENT ====================
-    try:
-        commands_to_send = []
-        pi_command = None
-
-        if mode == "BASE":
-            if method == "AUTO_CORS":
-                import os
-                pi_command = {
-                    "command": "TRIGGER_AUTO_BASE",
-                    "payload": {
-                        "review_only": True,
-                        **auto_cors_config,
-                        "timeout": 3600,
-                        "samples": 60,
-                        "sensor_type": sensor_type
-                    },
-                    "original_config": config_request.payload
-                }
-                logging.info(f"Built Auto Base Setup trigger for {serial}")
-            elif method == "SURVEY_IN":
-                survey_duration = params.get('survey_in_duration')
-                survey_accuracy = params.get('survey_in_accuracy')
-
-                if not survey_duration or not survey_accuracy:
-                    raise ValueError("Missing survey_in parameters")
-
-                commands_to_send = command_builder.build_base_survey_in_command(
-                    sensor_type, survey_duration, survey_accuracy, gnss_options, receiver_profile=receiver_profile
-                )
-                logging.info(f"Built Survey-In commands for {serial}: {survey_duration}s, {survey_accuracy}m")
-            elif method == "FIXED_LLA":
-                coords = params.get('coords')
-                if not coords or not all(k in coords for k in ['lat', 'lon', 'alt']):
-                    raise ValueError("Missing or incomplete coordinates")
-
-                accuracy = params.get('accuracy', 10.0)
-                commands_to_send = command_builder.build_base_fixed_lla_command(
-                    sensor_type, coords['lat'], coords['lon'], coords['alt'], accuracy, gnss_options,
-                    altitude_reference=params.get('altitude_reference'), receiver_profile=receiver_profile
-                )
-                logging.info(f"Built Fixed LLA commands for {serial}: lat/lon/alt, acc={accuracy}m")
-            else:
-                raise ValueError(f"Unknown base setup method: {method}")
-        else:
-            raise ValueError(f"Unsupported mode: {mode}")
-
-        if not pi_command:
-            encoded_commands = [base64.b64encode(cmd).decode('ascii') for cmd in commands_to_send if cmd]
-            if not encoded_commands:
-                raise ValueError("No commands generated")
-
-            pi_command = {
-                "command": "EXECUTE_RAW_COMMANDS",
-                "payload": {"commands_b64": encoded_commands, "receiver_profile": receiver_profile},
-                "original_config": config_request.payload
-            }
-
-    except Exception as e:
-        logging.exception(f"❌ Failed to build configuration commands for {serial}: {e}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to build configuration commands: {str(e)}"
-        )
-
-    # ==================== BƯỚC 6: GỬI LỆNH ====================
-    try:
-        response = await send_command_to_pi(serial, pi_command)
-
-        logging.info(f"✓ Sent configuration commands to {serial}")
-
-        await crud.log_system_event(
-            db=db,
-            type="info",
-            message=f"GNSS config updated for '{device_in_db.name}' by {current_user.username}",
-            user_id=current_user.id,
-            serial=serial
-        )
-
-        return {
-            "status": "command_sent_waiting_sync",
-            "channel": response['channel'],
-            "commands_sent": len(commands_to_send) if not pi_command else 1,
-            "message": "Configuration saved to database and sent to device. Waiting for device to apply and confirm sync status...",
-            "is_synced": False
-        }
-
-    except HTTPException as http_exc:
-        logging.warning(f"⚠️ Failed to send command to {serial}: {http_exc.detail}. Config auto-sync when online.")
-        raise HTTPException(
-            status_code=503,
-            detail=f"Configuration saved to database successfully, but device is offline ({http_exc.detail}). Config will auto-sync when device comes back online."
-        )
-    except Exception as e:
-        logging.exception(f"❌ Unexpected error sending command to {serial}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal error while sending command: {str(e)}"
-        )
-
+    return await _send_chip_command(
+        db, serial, device, current_user, pi_command, commands_to_send
+    )
 
 @router.post("/api/devices/{serial}/configure-service", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
 async def configure_service_endpoint(
