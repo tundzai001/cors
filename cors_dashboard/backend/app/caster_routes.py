@@ -30,7 +30,7 @@ def _finite_coordinate(value):
     return coordinate if math.isfinite(coordinate) else None
 
 
-@router.get("/api/caster/clienttable")
+@router.get("/api/caster/clienttable", responses={403: {"description": "Forbidden"}})
 async def get_caster_clienttable(
     db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
@@ -234,7 +234,7 @@ async def get_caster_users(
     )
 
 
-@router.get("/api/admin/caster-sources")
+@router.get("/api/admin/caster-sources", responses={403: {"description": "Forbidden"}})
 async def get_admin_caster_sources(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
@@ -252,7 +252,7 @@ async def get_admin_caster_sources(
     return inventory_response(result.scalars().all(), hosts, observations)
 
 
-@router.post("/api/admin/caster-sources/sync")
+@router.post("/api/admin/caster-sources/sync", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def sync_admin_caster_sources(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_CASTER)),
 ):
@@ -265,7 +265,7 @@ async def sync_admin_caster_sources(
     return {'results': results, 'synced_hosts': sum(result['error'] is None for result in results)}
 
 
-@router.post("/api/admin/caster-sources/restore")
+@router.post("/api/admin/caster-sources/restore", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 502: {"description": "Bad Gateway"}})
 async def restore_admin_caster_source(
     req: schemas.CasterSourceRestoreRequest,
     db: AsyncSession = Depends(get_auth_db),
@@ -311,7 +311,7 @@ async def restore_admin_caster_source(
     return {"status": "restored", "host": host, "mountpoint": saved.mountpoint}
 
 
-@router.put("/api/admin/caster-sources")
+@router.put("/api/admin/caster-sources", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 502: {"description": "Bad Gateway"}})
 async def update_admin_caster_source(
     req: schemas.CasterSourceUpdateRequest,
     db: AsyncSession = Depends(get_auth_db),
@@ -359,7 +359,7 @@ async def update_admin_caster_source(
     return {'status': 'updated', 'host': host, 'mountpoint': saved.mountpoint}
 
 
-@router.post("/api/admin/caster-sources")
+@router.post("/api/admin/caster-sources", responses={403: {"description": "Forbidden"}, 500: {"description": "Internal Server Error"}, 502: {"description": "Bad Gateway"}})
 async def create_admin_caster_source(
     req: schemas.CasterSourceCreateRequest,
     db: AsyncSession = Depends(get_auth_db),
@@ -406,7 +406,7 @@ async def create_admin_caster_source(
     return {"status": "ok", "host": target_host, "mountpoint": req.mountpoint, "identifier": req.identifier}
 
 
-@router.delete("/api/admin/caster-sources")
+@router.delete("/api/admin/caster-sources", responses={403: {"description": "Forbidden"}, 500: {"description": "Internal Server Error"}, 502: {"description": "Bad Gateway"}})
 async def delete_admin_caster_source(
     req: schemas.CasterSourceDeleteRequest,
     db: AsyncSession = Depends(get_auth_db),
@@ -446,7 +446,7 @@ async def delete_admin_caster_source(
     return {"status": "ok", "host": target_host, "mountpoint": req.mountpoint, "identifier": req.identifier}
 
 
-@router.post("/api/caster/block-user")
+@router.post("/api/caster/block-user", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def block_caster_user(
     req: schemas.BlockRoverRequest,
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -541,7 +541,7 @@ async def get_caster_blocklist(
     return rs.scalars().all()
 
 
-@router.post("/api/caster/unblock-user")
+@router.post("/api/caster/unblock-user", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def unblock_caster_user(
     req: schemas.UnblockRoverRequest,
     auth_db: AsyncSession = Depends(get_auth_db),

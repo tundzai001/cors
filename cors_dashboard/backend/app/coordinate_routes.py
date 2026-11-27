@@ -95,7 +95,7 @@ def transformer(source, target, dimensions=2):
                                 area_of_interest=AreaOfInterest(102, 8, 110, 24))
 
 
-@router.post("/convert")
+@router.post("/convert", responses={422: {"description": "Unprocessable Entity"}})
 def convert(request: ConversionRequest):
     allowed = {s["id"] for s in catalog()["systems"]}
     if request.source not in allowed or request.target not in allowed:
@@ -207,7 +207,7 @@ def _coordinate_frame(lon, lat, height, x, y, z, rx, ry, rz, scale):
     return operation.transform(lon, lat, height, errcheck=True)
 
 
-@router.post('/recalculate-auto-base')
+@router.post('/recalculate-auto-base', responses={422: {"description": "Unprocessable Entity"}})
 def recalculate_auto_base(request: AutoBaseRecalculation):
     """ITRF2vn2000.txt: llh2NEH followed by vn20002llh using the selected projection."""
     point, datum, projection = request.input_coord, request.parameters, request.projection
@@ -236,7 +236,7 @@ def recalculate_auto_base(request: AutoBaseRecalculation):
                 'central_meridian_deg':projection.l0_deg, 'k0':projection.k0}
 
 
-@router.post('/reproject-display')
+@router.post('/reproject-display', responses={422: {"description": "Unprocessable Entity"}})
 def reproject_display(request: ReprojectionRequest):
     """Change only the map projection of an existing VN-2000 result; no datum or receiver writes."""
     target = request.source.model_copy(update={'l0_deg':request.target_l0_deg, 'k0':request.target_k0})

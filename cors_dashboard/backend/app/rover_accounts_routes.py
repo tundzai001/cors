@@ -17,7 +17,7 @@ logger = logging.getLogger("app.main")
 router = APIRouter()
 
 
-@router.delete("/api/caster/users/{username}")
+@router.delete("/api/caster/users/{username}", responses={403: {"description": "Forbidden"}, 500: {"description": "Internal Server Error"}, 502: {"description": "Bad Gateway"}})
 async def delete_caster_user_endpoint(
     username: str,
     db: AsyncSession = Depends(get_auth_db),
@@ -73,7 +73,7 @@ async def delete_caster_user_endpoint(
     }
 
 
-@router.get("/api/rovers/all", response_model=list[schemas.RoverAccountResponse])
+@router.get("/api/rovers/all", response_model=list[schemas.RoverAccountResponse], responses={403: {"description": "Forbidden"}})
 async def get_all_rovers_global(
     db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db),
@@ -118,7 +118,7 @@ async def get_all_rovers_global(
     return enriched_rovers
 
 
-@router.put("/api/rovers/sync/by-username/{username}", response_model=schemas.RoverAccountResponse)
+@router.put("/api/rovers/sync/by-username/{username}", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 502: {"description": "Bad Gateway"}})
 async def sync_rover_by_username(
     username: str,
     update_req: schemas.RoverUpdate,
@@ -286,7 +286,7 @@ async def sync_rover_by_username(
     return rover
 
 
-@router.post("/api/rovers/create-multi", response_model=schemas.RoverAccountResponse)
+@router.post("/api/rovers/create-multi", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 502: {"description": "Bad Gateway"}})
 async def create_multi_base_rover(
     request: schemas.RoverMultiCreate,
     db: AsyncSession = Depends(get_auth_db),

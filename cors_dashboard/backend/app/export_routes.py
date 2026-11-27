@@ -49,7 +49,7 @@ async def get_ops_export_options(
     }
 
 
-@router.post("/api/ops/export/xlsx")
+@router.post("/api/ops/export/xlsx", responses={400: {"description": "Bad Request"}, 404: {"description": "Not Found"}})
 async def export_ops_xlsx(
     request: dict = Body(...),
     auth_db: AsyncSession = Depends(get_auth_db),

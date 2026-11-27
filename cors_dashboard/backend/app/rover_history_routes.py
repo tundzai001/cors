@@ -50,7 +50,7 @@ async def _rover_history_user_scope(
     return {str(rover.username).strip().casefold() for rover in rovers if rover.username}
 
 
-@router.get("/api/rovers/activity/daily")
+@router.get("/api/rovers/activity/daily", responses={400: {"description": "Bad Request"}})
 async def get_rover_activity_daily(
     date_from: date = Query(...),
     date_to: date = Query(...),
@@ -194,7 +194,7 @@ async def get_rover_activity_day(
     return {"date": activity_date.isoformat(), "machine_count": len(machines), "machines": machines}
 
 
-@router.get("/api/rovers/activity/track")
+@router.get("/api/rovers/activity/track", responses={400: {"description": "Bad Request"}})
 async def get_rover_activity_track(
     activity_date: date = Query(..., alias="date"),
     receiver_id: str = Query(..., min_length=1, max_length=256),
@@ -277,7 +277,7 @@ async def get_rover_activity_track(
     return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "sessions": sessions, "points": points}
 
 
-@router.get("/api/rovers/{username}/history")
+@router.get("/api/rovers/{username}/history", responses={403: {"description": "Forbidden"}})
 async def get_rover_history(
     username: str,
     activity_date: date | None = Query(None, alias="date"),
@@ -411,7 +411,7 @@ async def get_rover_history(
     }
 
 
-@router.delete("/api/rovers/{username}/history/{session_id}")
+@router.delete("/api/rovers/{username}/history/{session_id}", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
 async def delete_rover_history_session(
     username: str,
     session_id: int,
@@ -437,7 +437,7 @@ async def delete_rover_history_session(
     return {"status": "deleted", "session_id": session_id}
 
 
-@router.delete("/api/rovers/{username}/history/{session_id}/points/{point_id}")
+@router.delete("/api/rovers/{username}/history/{session_id}/points/{point_id}", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def delete_rover_history_point(
     username: str,
     session_id: int,

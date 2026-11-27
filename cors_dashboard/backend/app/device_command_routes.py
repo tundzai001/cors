@@ -44,7 +44,7 @@ DEVICE_NOT_FOUND = "Thiết bị không tồn tại"
 tools_router = APIRouter(dependencies=[Depends(require_editable_base)])
 
 
-@router.post("/api/devices/{serial}/configure-chip")
+@router.post("/api/devices/{serial}/configure-chip", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
 async def configure_chip_endpoint(
     serial: str,
     config_request: schemas.Command,
@@ -249,7 +249,7 @@ async def configure_chip_endpoint(
         )
 
 
-@router.post("/api/devices/{serial}/configure-service")
+@router.post("/api/devices/{serial}/configure-service", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
 async def configure_service_endpoint(
     serial: str,
     payload: schemas.ServiceConfig,
@@ -336,7 +336,7 @@ async def configure_service_endpoint(
         raise HTTPException(status_code=503, detail=f"Config saved to DB, but failed to send command to Pi: {e.detail}")
 
 
-@router.post("/api/devices/{serial}/configured-relay-power")
+@router.post("/api/devices/{serial}/configured-relay-power", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 503: {"description": "Service Unavailable"}})
 async def set_configured_relay_power(
     serial: str,
     request: schemas.ConfiguredRelayPowerRequest,
@@ -388,7 +388,7 @@ async def set_configured_relay_power(
     return {"status": "command_sent", "active": request.active, "channel": response.get("channel", "unknown")}
 
 
-@router.post("/api/devices/{serial}/reset")
+@router.post("/api/devices/{serial}/reset", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def reset_pi_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
@@ -438,7 +438,7 @@ async def reset_pi_device(
     return {"status": "reboot_command_sent"}
 
 
-@router.post("/api/devices/{serial}/hard-reset")
+@router.post("/api/devices/{serial}/hard-reset", responses={404: {"description": "Not Found"}})
 async def hard_reset_pi_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
@@ -487,7 +487,7 @@ async def hard_reset_pi_device(
     return {"status": "hard_reset_command_sent"}
 
 
-@router.delete("/api/devices/{serial}")
+@router.delete("/api/devices/{serial}", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def delete_device_from_list(
     serial: str,
     db: AsyncSession = Depends(get_db),
@@ -573,7 +573,7 @@ async def delete_device_from_list(
     return {"status": "deleted", "serial": serial}
 
 
-@router.post("/api/devices/{serial}/lock")
+@router.post("/api/devices/{serial}/lock", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 503: {"description": "Service Unavailable"}})
 async def lock_device(
     serial: str,
     db: AsyncSession = Depends(get_db),
@@ -870,7 +870,7 @@ async def get_device_alerts(
     return {"timestamp": now_ts, "count": len(alerts), "items": alerts}
 
 
-@tools_router.get("/api/devices/{serial}/history")
+@tools_router.get("/api/devices/{serial}/history", responses={403: {"description": "Forbidden"}})
 async def get_device_history(
     serial: str,
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -891,7 +891,7 @@ async def get_device_history(
     }
 
 
-@tools_router.post("/api/devices/bulk-action")
+@tools_router.post("/api/devices/bulk-action", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def bulk_device_action(
     request: schemas.DeviceBulkActionRequest,
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -998,7 +998,7 @@ async def create_device_config_template(
     return template
 
 
-@tools_router.post("/api/devices/apply-template")
+@tools_router.post("/api/devices/apply-template", responses={404: {"description": "Not Found"}})
 async def apply_device_config_template(
     request: schemas.DeviceApplyTemplateRequest,
     auth_db: AsyncSession = Depends(get_auth_db),

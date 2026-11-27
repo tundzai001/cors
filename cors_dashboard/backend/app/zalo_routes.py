@@ -117,8 +117,8 @@ async def zalo_webhook_verify(request: Request, bot_key: str = "tun"):
     return "ok"
 
 
-@router.post("/api/zalo/webhook", response_class=PlainTextResponse)
-@router.post("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse)
+@router.post("/api/zalo/webhook", response_class=PlainTextResponse, responses={400: {"description": "Bad Request"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
+@router.post("/api/zalo/webhook/{bot_key}", response_class=PlainTextResponse, responses={400: {"description": "Bad Request"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
 async def zalo_webhook(request: Request, response: Response, bot_key: str = "tun"):
     _validate_zalo_webhook_secret(request, bot_key)
 
@@ -165,7 +165,7 @@ async def clear_zalo_diagnostics(
     return {"status": "cleared"}
 
 
-@router.get("/api/admin/zalo/system")
+@router.get("/api/admin/zalo/system", responses={403: {"description": "Forbidden"}})
 async def get_zalo_system_state(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
 ):
@@ -174,7 +174,7 @@ async def get_zalo_system_state(
     return _get_zalo_system_state()
 
 
-@router.patch("/api/admin/zalo/system")
+@router.patch("/api/admin/zalo/system", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 500: {"description": "Internal Server Error"}})
 async def update_zalo_system_state(
     payload: Dict[str, Any] = Body(...),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
@@ -243,7 +243,7 @@ async def create_my_zalo_link_code(
     return result
 
 
-@router.post("/api/admin/zalo-group-link-code")
+@router.post("/api/admin/zalo-group-link-code", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def create_zalo_group_link_code(
     body: schemas.ZaloGroupLinkCodeCreate,
     current_user: models.User = Depends(auth.get_current_user),
@@ -307,7 +307,7 @@ async def get_zalo_bindings(
     }
 
 
-@router.patch("/api/auth/zalo-bindings/{binding_id}")
+@router.patch("/api/auth/zalo-bindings/{binding_id}", responses={400: {"description": "Bad Request"}})
 async def update_zalo_binding(
     binding_id: int,
     body: schemas.ZaloBindingAdminUpdate,
@@ -332,7 +332,7 @@ async def update_zalo_binding(
     return {"status": "updated", "item": item}
 
 
-@router.delete("/api/auth/zalo-bindings/{binding_id}")
+@router.delete("/api/auth/zalo-bindings/{binding_id}", responses={404: {"description": "Not Found"}})
 async def revoke_zalo_binding(
     binding_id: int,
     current_user: models.User = Depends(auth.get_current_user),

@@ -461,15 +461,13 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
 
     elif sensor_type == 'Unicorecomm':
         # BƯỚC 1: Clear all logs (TẮT TẤT CẢ OUTPUT)
-        commands.append(UNICORE_UNLOG_ALL)
-        commands.append(b'$DELAY_1000$')
+        commands.extend((UNICORE_UNLOG_ALL, b'$DELAY_1000$'))
         
         # BƯỚC 2: Set base mode (Survey-In)
         commands.append(UNICORE_SET_UNDULATION)
         cmd_str = f'mode base time {duration} 0\r\n'
         logging.info(f"🔍 Survey-In command: {repr(cmd_str)}")
-        commands.append(cmd_str.encode('ascii'))
-        commands.append(b'$DELAY_2000$')
+        commands.extend((cmd_str.encode('ascii'), b'$DELAY_2000$'))
         
         logging.info("Configuring Unicore output messages on COM3")
         _append_unicore_output_commands(commands, "com3", gnss_options)

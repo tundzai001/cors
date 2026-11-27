@@ -55,7 +55,7 @@ def device_dimensions(ua, hint, touch=False):
     return device, os_name, browser
 
 
-@router.post('/api/public/analytics/page', status_code=204)
+@router.post('/api/public/analytics/page', status_code=204, responses={403: {"description": "Forbidden"}})
 async def record_page(signal: PageSignal, request: Request, db: AsyncSession = Depends(get_auth_db)):
     origin = request.headers.get('origin')
     if origin and urlsplit(origin).netloc != request.headers.get('host'):
@@ -79,7 +79,7 @@ async def record_page(signal: PageSignal, request: Request, db: AsyncSession = D
     return Response(status_code=204)
 
 
-@router.get('/api/admin/analytics')
+@router.get('/api/admin/analytics', responses={403: {"description": "Forbidden"}, 422: {"description": "Unprocessable Entity"}})
 async def analytics_report(response: Response, days: int = Query(28, ge=1, le=90),
                            db: AsyncSession = Depends(get_auth_db),
                            user: models.User = Depends(auth.get_current_user)):

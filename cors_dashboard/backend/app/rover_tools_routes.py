@@ -19,7 +19,7 @@ logger = logging.getLogger("app.main")
 router = APIRouter()
 
 
-@router.get("/api/rovers/validate")
+@router.get("/api/rovers/validate", responses={403: {"description": "Forbidden"}})
 async def validate_rover_username(
     username: str = Query(..., min_length=1),
     mountpoints: Optional[str] = Query(None),
@@ -56,7 +56,7 @@ async def validate_rover_username(
     }
 
 
-@router.post("/api/rovers/bulk-renew")
+@router.post("/api/rovers/bulk-renew", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def bulk_renew_rovers(
     request: schemas.RoverBulkRenewRequest,
     auth_db: AsyncSession = Depends(get_auth_db),

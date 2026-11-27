@@ -76,7 +76,7 @@ async def get_users(db: AsyncSession = Depends(get_auth_db),
         response_list.append(user_resp)
     return response_list
 
-@router.get("/api/users/{user_id}", response_model=schemas.UserResponse)
+@router.get("/api/users/{user_id}", response_model=schemas.UserResponse, responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def get_user_details(user_id: int, db: AsyncSession = Depends(get_auth_db),
                            current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
     user = await crud.get_user_by_id(db, user_id)
@@ -94,7 +94,7 @@ async def get_user_details(user_id: int, db: AsyncSession = Depends(get_auth_db)
     user_response.permissions = permissions
     return user_response
 
-@router.put("/api/devices/{serial}/name", dependencies=[Depends(require_editable_base)])
+@router.put("/api/devices/{serial}/name", dependencies=[Depends(require_editable_base)], responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def rename_device(
     serial: str,
     request: schemas.DeviceRename, 
@@ -144,7 +144,7 @@ async def rename_device(
     
     return {"status": "success", "name": device.name}
 
-@router.put("/api/devices/{serial}/serial", dependencies=[Depends(require_editable_base)])
+@router.put("/api/devices/{serial}/serial", dependencies=[Depends(require_editable_base)], responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}})
 async def rename_device_serial(
     serial: str,
     request: schemas.DeviceRenameSerial, 
@@ -192,7 +192,7 @@ async def rename_device_serial(
     
     return {"status": "success", "new_serial": request.new_serial}
 
-@router.post("/api/users", response_model=schemas.UserResponse)
+@router.post("/api/users", response_model=schemas.UserResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def create_user(
     user_data: schemas.UserCreate,
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -263,7 +263,7 @@ async def create_user(
     
     return user_response
 
-@router.put("/api/users/{user_id}", response_model=schemas.UserResponse)
+@router.put("/api/users/{user_id}", response_model=schemas.UserResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def update_user(
     user_id: int, 
     user_data: schemas.UserUpdate,
@@ -376,7 +376,7 @@ async def update_user(
     
     return user_response
 
-@router.delete("/api/users/{user_id}")
+@router.delete("/api/users/{user_id}", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def delete_user(
     user_id: int, 
     auth_db: AsyncSession = Depends(get_auth_db),

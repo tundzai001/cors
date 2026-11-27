@@ -22,7 +22,7 @@ JSONLD_TYPE_KEY = "@type"
 SCHEMA_ORG_URL = "https://schema.org"
 
 
-@router.get("/station/{serial}")
+@router.get("/station/{serial}", responses={404: {"description": "Not Found"}})
 async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
     """
     ENTERPRISE SEO ENGINE: Renders a high-performance, crawler-optimized page
@@ -140,7 +140,7 @@ async def get_dynamic_sitemap(request: Request, db: AsyncSession = Depends(get_d
 
     return Response(content=xml_content, media_type="application/xml")
 
-@router.get("/blog/{slug}")
+@router.get("/blog/{slug}", responses={404: {"description": "Not Found"}})
 async def get_blog_post_seo(slug: str):
     """
     Renders index.html with server-side SEO for individual blog posts.

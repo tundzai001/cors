@@ -739,7 +739,7 @@ async def get_integration_stations(
     return api_keys.project_station_items(items, key, configs)
 
 
-@app.post("/api/integrations/stations/{serial}/configure-service", dependencies=[Depends(require_editable_base)])
+@app.post("/api/integrations/stations/{serial}/configure-service", dependencies=[Depends(require_editable_base)], responses={404: {"description": "Not Found"}})
 async def configure_integration_station(
     serial: str,
     payload: schemas.ServiceConfig,
@@ -785,7 +785,7 @@ app.include_router(caster_router)
 
 from .station_scope import _rtcm_visible_serials
 
-@app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse)
+@app.post("/api/rtcm/stations/{serial}/activate", response_model=schemas.RTCMSessionResponse, responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 503: {"description": "Service Unavailable"}})
 async def activate_rtcm_station(
     serial: str,
     req: schemas.RTCMStationActivateRequest,
@@ -896,7 +896,7 @@ async def ntrip_start_forward(
     )
 
 
-@app.post("/api/rtcm/sessions/{session_id}/heartbeat", response_model=schemas.RTCMSessionResponse)
+@app.post("/api/rtcm/sessions/{session_id}/heartbeat", response_model=schemas.RTCMSessionResponse, responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def heartbeat_rtcm_session(
     session_id: str,
     req: schemas.RTCMSessionHeartbeatRequest,
@@ -948,7 +948,7 @@ async def heartbeat_rtcm_session(
     )
 
 
-@app.delete("/api/rtcm/sessions/{session_id}")
+@app.delete("/api/rtcm/sessions/{session_id}", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def release_rtcm_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
@@ -1110,7 +1110,7 @@ from .auth_routes import get_current_user_info_router
 app.include_router(get_current_user_info_router)
 
 #=== Admin endpoint ===
-@app.get("/api/admin/settings", response_model=dict)
+@app.get("/api/admin/settings", response_model=dict, responses={403: {"description": "Forbidden"}})
 async def get_system_settings(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
@@ -1122,7 +1122,7 @@ async def get_system_settings(
 
     return settings_data
 
-@app.post("/api/admin/settings")
+@app.post("/api/admin/settings", responses={403: {"description": "Forbidden"}})
 async def update_system_settings(
     settings_data: dict,
     db: AsyncSession = Depends(get_auth_db),
@@ -1136,7 +1136,7 @@ async def update_system_settings(
     logger.info(f"Admin '{current_user.username}' updated system settings: {settings_data}")
     return {"status": "ok", "updated_settings": settings_data}
 
-@app.get("/api/admin/security/stats")
+@app.get("/api/admin/security/stats", responses={403: {"description": "Forbidden"}})
 async def get_security_stats(
     db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))
@@ -1187,7 +1187,7 @@ async def get_security_stats(
             }
         )
 
-@app.post("/api/admin/security/unblock-ip")
+@app.post("/api/admin/security/unblock-ip", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def unblock_ip(
     request_data: dict,  # {"ip_address": "1.2.3.4"}
     db: AsyncSession = Depends(get_auth_db),
@@ -1214,7 +1214,7 @@ async def unblock_ip(
     else:
         return {"status": "not_found", "ip": ip}
 
-@app.post("/api/admin/security/block-ip")
+@app.post("/api/admin/security/block-ip", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def block_ip_manually(
     request_data: dict,  # {"ip_address": "1.2.3.4"}
     db: AsyncSession = Depends(get_auth_db),
@@ -1244,7 +1244,7 @@ async def block_ip_manually(
 # === SESSION & DEVICE ACCESS CONTROL (Quản lý phiên đăng nhập & Chặn máy)   ===
 # ==============================================================================
 
-@app.get("/api/admin/security/sessions")
+@app.get("/api/admin/security/sessions", responses={403: {"description": "Forbidden"}, 422: {"description": "Unprocessable Entity"}})
 async def get_admin_sessions(
     request: Request,
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -1355,7 +1355,7 @@ async def get_admin_sessions(
     }
 
 
-@app.post("/api/admin/security/sessions/revoke")
+@app.post("/api/admin/security/sessions/revoke", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def revoke_session(
     request_data: dict,  # {"session_id": "sess_..."}
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -1397,7 +1397,7 @@ async def revoke_session(
     return {"status": "ok", "message": f"Đã ngắt phiên đăng nhập của '{target_session.username}'", "session_id": session_id}
 
 
-@app.post("/api/admin/security/sessions/block-device")
+@app.post("/api/admin/security/sessions/block-device", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def block_device_endpoint(
     request_data: dict,  # {"device_id": "dev_...", "reason": "..."}
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -1480,7 +1480,7 @@ async def block_device_endpoint(
     }
 
 
-@app.post("/api/admin/security/sessions/unblock-device")
+@app.post("/api/admin/security/sessions/unblock-device", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
 async def unblock_device_endpoint(
     request_data: dict,  # {"device_id": "dev_..."}
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -1515,7 +1515,7 @@ async def unblock_device_endpoint(
     return {"status": "ok", "message": f"Đã bỏ chặn máy tính {device_id}", "device_id": device_id}
 
 
-@app.post("/api/admin/security/sessions/revoke-all-others")
+@app.post("/api/admin/security/sessions/revoke-all-others", responses={403: {"description": "Forbidden"}})
 async def revoke_all_other_sessions(
     request: Request,
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -1562,7 +1562,7 @@ async def revoke_all_other_sessions(
 
 
 # === LICENSE ===
-@app.post("/api/license/pi", response_model=schemas.LicenseResponse, dependencies=[Depends(require_editable_base)])
+@app.post("/api/license/pi", response_model=schemas.LicenseResponse, dependencies=[Depends(require_editable_base)], responses={400: {"description": "Bad Request"}, 409: {"description": "Conflict"}, 500: {"description": "Internal Server Error"}})
 async def generate_pi_license(
     request: schemas.LicenseRequest,
     db: AsyncSession = Depends(get_db),
@@ -1866,7 +1866,7 @@ async def simple_health_check():
     )
 
 # === ADMIN SERVER LOGS VIEWER ===
-@app.get("/api/admin/server-logs")
+@app.get("/api/admin/server-logs", responses={403: {"description": "Forbidden"}})
 async def get_server_logs(
     lines: int = Query(100, ge=1, le=1000),
     level: str = None,

@@ -26,7 +26,7 @@ async def reference_network_settings(response: Response, user=Depends(auth.get_c
     return get_check_settings()
 
 
-@router.put("/api/admin/reference-network-settings")
+@router.put("/api/admin/reference-network-settings", responses={503: {"description": "Service Unavailable"}})
 async def update_reference_network_settings(body: ReferenceNetworkSettingsUpdate, response: Response,
                                             user=Depends(auth.get_current_user)):
     _admin(user)

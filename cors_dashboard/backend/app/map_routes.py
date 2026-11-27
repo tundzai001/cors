@@ -532,7 +532,7 @@ async def seed_vietnam_units_endpoint(
 
 get_authenticated_map_stations_router = APIRouter()
 
-@get_authenticated_map_stations_router.get("/api/map/stations")
+@get_authenticated_map_stations_router.get("/api/map/stations", responses={403: {"description": "Forbidden"}})
 async def get_authenticated_map_stations(
     response: Response,
     db: AsyncSession = Depends(get_db),

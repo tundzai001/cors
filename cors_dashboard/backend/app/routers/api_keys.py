@@ -123,7 +123,7 @@ async def api_keys_page(user: models.User = Depends(auth.get_current_user)):
     )
 
 
-@router.get("/api/admin/api-keys")
+@router.get("/api/admin/api-keys", responses={403: {"description": "Forbidden"}})
 async def list_api_keys(
     db: AsyncSession = Depends(get_auth_db),
     user: models.User = Depends(auth.get_current_user),
@@ -134,7 +134,7 @@ async def list_api_keys(
     return [_key_metadata(key) for key in result.scalars().all()]
 
 
-@router.post("/api/admin/api-keys", status_code=201)
+@router.post("/api/admin/api-keys", status_code=201, responses={403: {"description": "Forbidden"}, 422: {"description": "Unprocessable Entity"}})
 async def create_api_key(
     body: ApiKeyPolicy,
     response: Response,
@@ -162,7 +162,7 @@ async def create_api_key(
     return _key_metadata(key)
 
 
-@router.post("/api/admin/api-keys/{key_id}/token")
+@router.post("/api/admin/api-keys/{key_id}/token", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 429: {"description": "Too Many Requests"}, 503: {"description": "Service Unavailable"}})
 async def reveal_api_key(
     key_id: int,
     body: RevealApiKey,
@@ -189,7 +189,7 @@ async def reveal_api_key(
     return {"token": token, "expires_in": 30}
 
 
-@router.put("/api/admin/api-keys/{key_id}/token")
+@router.put("/api/admin/api-keys/{key_id}/token", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 422: {"description": "Unprocessable Entity"}})
 async def save_existing_api_key(
     key_id: int,
     body: SavedApiKey,
@@ -210,7 +210,7 @@ async def save_existing_api_key(
     return _key_metadata(key)
 
 
-@router.put("/api/admin/api-keys/{key_id}")
+@router.put("/api/admin/api-keys/{key_id}", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 422: {"description": "Unprocessable Entity"}})
 async def update_api_key(
     key_id: int,
     body: ApiKeyPolicy,
@@ -232,7 +232,7 @@ async def update_api_key(
     return _key_metadata(key)
 
 
-@router.delete("/api/admin/api-keys/{key_id}", status_code=204)
+@router.delete("/api/admin/api-keys/{key_id}", status_code=204, responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def revoke_api_key(
     key_id: int,
     db: AsyncSession = Depends(get_auth_db),

@@ -112,7 +112,7 @@ def _rover_response_list(rovers: list[models.RoverAccount], current_user: models
 
 
 # === DEVICE ENDPOINTS ===
-@router.get("/api/devices", response_model=list[schemas.Device])
+@router.get("/api/devices", response_model=list[schemas.Device], responses={403: {"description": "Forbidden"}})
 async def get_initial_devices(
     user_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -168,7 +168,7 @@ async def get_initial_devices(
     logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → returning ALL devices")
     return _device_response_list(await crud.get_all_devices(db), current_user)
 
-@router.post("/api/devices/{serial}/command")
+@router.post("/api/devices/{serial}/command", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
 async def send_generic_command(
     serial: str, 
     command: schemas.Command, 
@@ -259,7 +259,7 @@ async def send_generic_command(
     return await send_command_to_pi(serial, command.model_dump())
 
 
-@router.post("/api/devices/{serial}/reference-check")
+@router.post("/api/devices/{serial}/reference-check", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def start_base_reference_check(
     serial: str,
     request: schemas.BaseReferenceCheckRequest,
@@ -298,7 +298,7 @@ async def start_base_reference_check(
     )
     return await send_command_to_pi(serial, command)
 
-@router.post("/api/devices/{serial}/cors-mountpoints")
+@router.post("/api/devices/{serial}/cors-mountpoints", responses={400: {"description": "Bad Request"}, 404: {"description": "Not Found"}, 502: {"description": "Bad Gateway"}})
 async def get_device_cors_mountpoints(
     serial: str,
     request: schemas.CasterMountpointLookupRequest,
@@ -351,7 +351,7 @@ async def get_device_cors_mountpoints(
     return {"host": host, "port": request.port, "sources": safe_sources}
 
 
-@router.post("/api/devices/{serial}/configure-chip")
+@router.post("/api/devices/{serial}/configure-chip", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 500: {"description": "Internal Server Error"}, 503: {"description": "Service Unavailable"}})
 async def configure_chip_endpoint(
     serial: str,
     config_request: schemas.Command,
@@ -581,7 +581,7 @@ async def configure_chip_endpoint(
         raise HTTPException(status_code=500, detail=f"Internal error while sending command: {str(e)}")
 
 # --- CÁC ENDPOINT CHO QUẢN LÝ ROVER ---
-@router.get("/api/bases/{serial}/rovers", response_model=list[schemas.RoverAccountResponse])
+@router.get("/api/bases/{serial}/rovers", response_model=list[schemas.RoverAccountResponse], responses={403: {"description": "Forbidden"}})
 async def get_rovers_for_base(
     serial: str,
     db: AsyncSession = Depends(get_auth_db),
@@ -617,7 +617,7 @@ async def get_rovers_for_base(
     # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
     raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm nÃ y.")
 
-@router.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse)
+@router.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 502: {"description": "Bad Gateway"}})
 async def create_rover_for_base(
     serial: str,
     rover_data: schemas.RoverAccountCreate,
@@ -743,7 +743,7 @@ async def create_rover_for_base(
     
     return new_rover
 
-@router.put("/api/rovers/{rover_id}", response_model=schemas.RoverAccountResponse)
+@router.put("/api/rovers/{rover_id}", response_model=schemas.RoverAccountResponse, responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 502: {"description": "Bad Gateway"}})
 async def update_rover(
     rover_id: int,
     update_req: schemas.RoverUpdate,
@@ -965,7 +965,7 @@ async def update_rover(
     
     return updated_rover
 
-@router.delete("/api/rovers/{rover_id}")
+@router.delete("/api/rovers/{rover_id}", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def delete_rover(
     rover_id: int,
     db: AsyncSession = Depends(get_auth_db),
@@ -1005,7 +1005,7 @@ async def delete_rover(
     
     return {"status": "deleted", "rover_id": rover_id}
 
-@router.post("/api/devices/{serial}/auto-deploy-token")
+@router.post("/api/devices/{serial}/auto-deploy-token", responses={400: {"description": "Bad Request"}})
 async def auto_deploy_device_token(
     serial: str,
     db: AsyncSession = Depends(get_db),
@@ -1104,7 +1104,7 @@ async def auto_deploy_device_token(
         })
         raise
 
-@router.post("/api/devices/{serial}/license-bypass")
+@router.post("/api/devices/{serial}/license-bypass", responses={404: {"description": "Not Found"}})
 async def set_device_license_bypass(
     serial: str,
     payload: dict | None = Body(default=None),
