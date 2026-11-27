@@ -1354,22 +1354,3 @@ async def _do_ntrip_stop(mountpoint: str, client_id: str, force: bool = False, r
         msg = f"ERROR: {e}"
         logger.error(f"[NTRIP Stop ERR] {msg}")
         return PlainTextResponse(f"STOP_STATUS: error\n{msg}", status_code=200)
-
-
-async def get_caster_client(db: AsyncSession) -> CasterClient:
-    """Helper để khởi tạo Caster Client an toàn từ .env hoặc settings"""
-    hosts, env_cfg = _read_caster_config_from_env()
-
-    # Ưu tiên .env -> settings -> default
-    host = str(env_cfg["host"] or settings.CASTER_HOST or '').strip()
-    port = int(env_cfg["port"] or settings.CASTER_PORT or 2101)
-    user = str(env_cfg["user"] or "").strip()
-    password = str(env_cfg["pass"] or "").strip()
-    if not host or not user or not password:
-        raise HTTPException(status_code=503, detail="Caster connection credentials are not configured")
-
-    if RTCM_KEEPALIVE_DEBUG:
-        logger.warning(f"[RTCM DEBUG] Using caster host={host} port={port} user={user}")
-
-    return CasterClient(host, port, admin_user=user, admin_password=password)
-
