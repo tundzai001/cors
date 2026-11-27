@@ -395,12 +395,12 @@ async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> in
                     logger.warning(f"⚠️ DB Deadlock (Attempt {attempt+1}). Retrying in {wait}s...")
                     await asyncio.sleep(wait)
                     continue
-            logger.error(f"❌ Batch update DB Error: {e}")
+            logger.exception("❌ Batch update DB Error")
             return 0
             
-        except Exception as e:
+        except Exception:
             await db.rollback()
-            logger.error(f"❌ Batch update Unexpected Error: {e}")
+            logger.exception("❌ Batch update Unexpected Error")
             return 0
             
     return 0
@@ -537,7 +537,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     new_status = device_data.get("status")
     new_is_synced = device_data.get("is_synced", True)
     
-    def build_ntrip_status(device_data: dict, service_config: dict) -> dict:
+    def build_ntrip_status(device_data: dict) -> dict:
         if not isinstance(device_data, dict):
             return {}
         normalized = normalize_ntrip_status_payload(device_data)
@@ -637,13 +637,10 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         old_config = _ensure_dict(existing_device.base_config)
         old_coords = _ensure_dict(old_config.get('coords'))
         new_coords = _ensure_dict(new_base_config.get('coords'))
-        old_method = old_config.get('base_setup_method')
         new_method = new_base_config.get('base_setup_method')
 
         # Nếu DB đã có tọa độ mà status mới không có (nhưng cùng method), giữ nguyên DB
-        if old_coords and not new_coords and new_method != "SURVEY_IN":
-            pass
-        else:
+        if not (old_coords and not new_coords and new_method != "SURVEY_IN"):
             if "gnss_options" not in new_base_config and old_config.get("gnss_options"):
                 new_base_config["gnss_options"] = old_config["gnss_options"]
             update_values["base_config"] = new_base_config
@@ -708,7 +705,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
 
     # NTRIP status
     current_service_config = new_service_config if new_service_config else _ensure_dict(existing_device.service_config)
-    new_ntrip_status = build_ntrip_status(device_data, current_service_config)
+    new_ntrip_status = build_ntrip_status(device_data)
     
     if new_ntrip_status:
         old_ntrip_status = _ensure_dict(existing_device.ntrip_status)
@@ -1104,7 +1101,7 @@ async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current
             
     if current_user.extra_mountpoints:
         import re
-        extras = [mp.strip().lower() for mp in re.split(r'[;,\s\n]+', current_user.extra_mountpoints) if mp.strip()]
+        extras = [mp.strip().lower() for mp in re.split(r'[;,\s]+', current_user.extra_mountpoints) if mp.strip()]
         managed_mps.update(extras)
         
     return managed_mps, managed_serials
@@ -1129,7 +1126,7 @@ async def _get_coordinator_manageable_mountpoints_and_serials(
     if current_user.extra_mountpoints:
         mountpoints.update(
             part.strip().lower()
-            for part in re.split(r"[;,\s\n]+", current_user.extra_mountpoints)
+            for part in re.split(r"[;,\s]+", current_user.extra_mountpoints)
             if part.strip()
         )
     return mountpoints, serials
@@ -1170,8 +1167,6 @@ async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSe
             
         if _rover_matches_station_scope(r, managed_serials, managed_mps):
             visible_rovers.append(r)
-            continue
-            
     return visible_rovers
 
 async def check_rover_management_permission(rover: models.RoverAccount, current_user: models.User, devices_db: AsyncSession, auth_db: AsyncSession) -> bool:
@@ -1310,6 +1305,7 @@ async def get_activity_heatmap(
         
         if 0 <= day_diff < 7:
             hour = int((ts + 7*3600) / 3600) % 24
+            grid[day_diff][hour] += 1
     return grid
 
 async def log_system_event(
@@ -1349,5 +1345,5 @@ async def log_system_event(
                 "icon": log_entry.icon
             }
         })
-    except Exception as e:
-        logger.error(f"Failed to write activity log: {e}")
+    except Exception:
+        logger.exception("Failed to write activity log")

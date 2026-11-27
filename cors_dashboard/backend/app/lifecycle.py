@@ -722,15 +722,18 @@ async def lifespan(app: FastAPI):
                     f"• Đang dùng để định vị: {int(used_count or 0)} vệ tinh",
                 ]
                 for label in (
-                    "GPS (Mỹ)", "GLONASS (Nga)", "Galileo (Châu Âu)",
-                    "BeiDou (Trung Quốc)", "QZSS (Nhật Bản)",
+                    GNSS_SYSTEM_LABELS["gps"], GNSS_SYSTEM_LABELS["glonass"],
+                    GNSS_SYSTEM_LABELS["galileo"], GNSS_SYSTEM_LABELS["beidou"],
+                    GNSS_SYSTEM_LABELS["qzss"],
                 ):
                     lines.append(f"• {label}: {len(grouped.get(label, set()))}")
-                if grouped.get("GNSS chưa phân loại"):
-                    lines.append(f"• GNSS chưa phân loại: {len(grouped['GNSS chưa phân loại'])}")
+                unknown_label = GNSS_SYSTEM_LABELS["unknown"]
+                if grouped.get(unknown_label):
+                    lines.append(f"• {unknown_label}: {len(grouped[unknown_label])}")
                 for label in sorted(set(grouped) - {
-                    "GPS (Mỹ)", "GLONASS (Nga)", "Galileo (Châu Âu)",
-                    "BeiDou (Trung Quốc)", "QZSS (Nhật Bản)", "GNSS chưa phân loại",
+                    GNSS_SYSTEM_LABELS["gps"], GNSS_SYSTEM_LABELS["glonass"],
+                    GNSS_SYSTEM_LABELS["galileo"], GNSS_SYSTEM_LABELS["beidou"],
+                    GNSS_SYSTEM_LABELS["qzss"], unknown_label,
                 }):
                     lines.append(f"• {label}: {len(grouped[label])}")
                 return lines
