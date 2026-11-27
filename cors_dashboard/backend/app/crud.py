@@ -16,7 +16,8 @@ import json
 import math
 
 logger = logging.getLogger(__name__)
- 
+MOUNTPOINT_SPLIT_PATTERN = r"[;,\s]+"
+
 def _ensure_dict(val) -> dict:
     """Đảm bảo trả về dict để tránh lỗi 'list' object has no attribute 'get'"""
     if isinstance(val, dict):
@@ -118,6 +119,29 @@ def _has_usable_value(value) -> bool:
     return str(value).strip() != ""
 
 
+def _normalize_survey_config(base_config: dict) -> dict:
+    if isinstance(base_config.get("survey_in_duration"), bool) or isinstance(base_config.get("survey_in_accuracy"), bool):
+        return {}
+    try:
+        duration = float(base_config.get("survey_in_duration"))
+        accuracy = float(base_config.get("survey_in_accuracy"))
+    except (TypeError, ValueError):
+        return {}
+    if (
+        not math.isfinite(duration)
+        or not duration.is_integer()
+        or not 1 <= duration <= 604800
+        or not math.isfinite(accuracy)
+        or not 0.001 <= accuracy <= 10000
+    ):
+        return {}
+    return {
+        key: value
+        for key, value in base_config.items()
+        if key not in {"coords", "lat", "lon", "alt", "accuracy", "altitude_reference"}
+    }
+
+
 def normalize_base_config(base_config: dict | None) -> dict:
     """Accept complete Survey-In settings or canonical fixed coordinates.
 
@@ -129,18 +153,7 @@ def normalize_base_config(base_config: dict | None) -> dict:
         return {}
 
     if base_config.get("base_setup_method") == "SURVEY_IN":
-        if isinstance(base_config.get("survey_in_duration"), bool) or isinstance(base_config.get("survey_in_accuracy"), bool):
-            return {}
-        try:
-            duration = float(base_config.get("survey_in_duration"))
-            accuracy = float(base_config.get("survey_in_accuracy"))
-        except (TypeError, ValueError):
-            return {}
-        if (not math.isfinite(duration) or not duration.is_integer() or not 1 <= duration <= 604800
-                or not math.isfinite(accuracy) or not 0.001 <= accuracy <= 10000):
-            return {}
-        return {key: value for key, value in base_config.items()
-                if key not in {"coords", "lat", "lon", "alt", "accuracy", "altitude_reference"}}
+        return _normalize_survey_config(base_config)
 
     coords = _ensure_dict(base_config.get("coords"))
     lat = coords.get("lat", base_config.get("lat"))
@@ -704,7 +717,6 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
         should_update = True
 
     # NTRIP status
-    current_service_config = new_service_config if new_service_config else _ensure_dict(existing_device.service_config)
     new_ntrip_status = build_ntrip_status(device_data)
     
     if new_ntrip_status:
@@ -1066,7 +1078,7 @@ def _rover_matches_station_scope(rover: models.RoverAccount, serials: set[str], 
 
 
 async def rover_mountpoints_within_scope(devices_db: AsyncSession, user: models.User, serials: list[str], mountpoints: str) -> bool:
-    requested = {part.strip().lower() for part in re.split(r"[;,\s]+", mountpoints or "") if part.strip()}
+    requested = {part.strip().lower() for part in re.split(MOUNTPOINT_SPLIT_PATTERN, mountpoints or "") if part.strip()}
     if not requested:
         return True
     selected = {str(serial).strip().upper() for serial in serials if str(serial).strip()}
@@ -1079,7 +1091,7 @@ async def rover_mountpoints_within_scope(devices_db: AsyncSession, user: models.
                 if config.get(f"server{index}_enabled") and config.get(f"mountpoint{index}"):
                     allowed.add(str(config[f"mountpoint{index}"]).strip().lower())
     if user.role == "coordinator" and user.extra_mountpoints:
-        allowed.update(part.strip().lower() for part in re.split(r"[;,\s]+", user.extra_mountpoints) if part.strip())
+        allowed.update(part.strip().lower() for part in re.split(MOUNTPOINT_SPLIT_PATTERN, user.extra_mountpoints) if part.strip())
     return requested.issubset(allowed)
 
 async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current_user: models.User) -> tuple[set[str], set[str]]:
@@ -1101,7 +1113,7 @@ async def _get_manager_mountpoints_and_serials(devices_db: AsyncSession, current
             
     if current_user.extra_mountpoints:
         import re
-        extras = [mp.strip().lower() for mp in re.split(r'[;,\s]+', current_user.extra_mountpoints) if mp.strip()]
+        extras = [mp.strip().lower() for mp in re.split(MOUNTPOINT_SPLIT_PATTERN, current_user.extra_mountpoints) if mp.strip()]
         managed_mps.update(extras)
         
     return managed_mps, managed_serials
@@ -1126,7 +1138,7 @@ async def _get_coordinator_manageable_mountpoints_and_serials(
     if current_user.extra_mountpoints:
         mountpoints.update(
             part.strip().lower()
-            for part in re.split(r"[;,\s]+", current_user.extra_mountpoints)
+            for part in re.split(MOUNTPOINT_SPLIT_PATTERN, current_user.extra_mountpoints)
             if part.strip()
         )
     return mountpoints, serials
