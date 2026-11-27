@@ -58,6 +58,106 @@ async def _authenticate_login_user(
         )
     return user
 
+
+def _login_device_details(login_data: schemas.LoginRequest) -> tuple[str, str | None, str | None]:
+    device_id = (getattr(login_data, "device_id", None) or "").strip()
+    return (
+        device_id or f"dev_{secrets.token_hex(8)}",
+        (getattr(login_data, "local_ip", None) or "").strip() or None,
+        (getattr(login_data, "device_name", None) or "").strip() or None,
+    )
+
+
+def _ensure_device_allowed(device_id: str, request: Request) -> None:
+    if not auth.is_device_blocked(device_id):
+        return
+    client_ip = request.client.host if request else "unknown"
+    logger.warning(f"❌ Login rejected: Blocked device '{device_id}' from {client_ip}")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Thiết bị (máy tính) này đã bị quản trị viên chặn truy cập."
+    )
+
+
+def _login_expires_delta(login_data: schemas.LoginRequest) -> timedelta:
+    minutes = (
+        auth.ACCESS_TOKEN_REMEMBER_ME_EXPIRE_MINUTES
+        if getattr(login_data, "remember_me", False)
+        else auth.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+    return timedelta(minutes=minutes)
+
+
+def _remote_ip(request: Request) -> str:
+    remote_ip = request.client.host if request and request.client else "127.0.0.1"
+    if not (hasattr(rate_limiter, "get_client_ip") and request):
+        return remote_ip
+    try:
+        return rate_limiter.get_client_ip(request)
+    except Exception:
+        return remote_ip
+
+
+async def _record_login_session(
+    auth_db: AsyncSession,
+    request: Request,
+    user: models.User,
+    session_id: str,
+    device_id: str,
+    local_ip: str | None,
+    device_name: str | None,
+    now_ts: int,
+    expires_at: int,
+) -> tuple[str, str]:
+    remote_ip = _remote_ip(request)
+    user_agent = request.headers.get("User-Agent", "") if request else ""
+    device_name = client_device_name(user_agent, device_name or "")
+    try:
+        new_session = models.UserSession(
+            session_id=session_id,
+            user_id=user.id,
+            username=user.username,
+            role=user.role,
+            ip_address=remote_ip,
+            local_ip=local_ip,
+            device_id=device_id,
+            device_name=device_name[:100] if device_name else None,
+            user_agent=user_agent[:500] if user_agent else None,
+            created_at=now_ts,
+            last_active_at=now_ts,
+            expires_at=expires_at,
+            is_revoked=False
+        )
+        auth_db.add(new_session)
+        await auth_db.commit()
+    except Exception as e:
+        logger.warning(f"Could not record user session: {e}")
+    return remote_ip, device_name
+
+
+def _login_event_description(
+    user: models.User,
+    remote_ip: str,
+    local_ip: str | None,
+    device_name: str,
+) -> str:
+    local_ip_label = f", IP máy: {local_ip}" if local_ip else ""
+    return f"User '{user.username}' logged in (IP mạng: {remote_ip}{local_ip_label}, Thiết bị: {device_name})"
+
+
+def _set_access_cookie(response: Response | None, token: str, expires_delta: timedelta) -> None:
+    if response is None:
+        return
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=auth.IS_PRODUCTION,
+        samesite="lax",
+        max_age=int(expires_delta.total_seconds()),
+        path="/",
+    )
+
 @login_router.post("/api/auth/login", response_model=schemas.Token)
 async def login(
     request: Request,
@@ -66,19 +166,8 @@ async def login(
     auth_db: AsyncSession = Depends(get_auth_db),
     devices_db: AsyncSession = Depends(get_db)
 ):
-    device_id = (getattr(login_data, "device_id", None) or "").strip()
-    if not device_id:
-        device_id = f"dev_{secrets.token_hex(8)}"
-    local_ip = (getattr(login_data, "local_ip", None) or "").strip() or None
-    device_name = (getattr(login_data, "device_name", None) or "").strip() or None
-
-    # Kiểm tra thiết bị có bị chặn không (chỉ chặn riêng máy này, không chặn cả mạng IP)
-    if auth.is_device_blocked(device_id):
-        logger.warning(f"❌ Login rejected: Blocked device '{device_id}' from {request.client.host if request else 'unknown'}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Thiết bị (máy tính) này đã bị quản trị viên chặn truy cập."
-        )
+    device_id, local_ip, device_name = _login_device_details(login_data)
+    _ensure_device_allowed(device_id, request)
 
     # Log login attempt
     logger.info(f"🔑 Login attempt for user: '{login_data.username}' from {request.client.host if request else 'unknown'} (device: {device_id})")
@@ -111,46 +200,15 @@ async def login(
     )
 
     # Mặc định 24h nếu không chọn remember_me, 1 năm nếu có chọn
-    if getattr(login_data, "remember_me", False):
-        expires_delta = timedelta(minutes=auth.ACCESS_TOKEN_REMEMBER_ME_EXPIRE_MINUTES)
-    else:
-        expires_delta = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expires_delta = _login_expires_delta(login_data)
 
     session_id = f"sess_{secrets.token_urlsafe(24)}"
     now_ts = int(time.time())
     expires_at = now_ts + int(expires_delta.total_seconds())
 
-    # Get remote IP respecting trusted proxies if configured
-    remote_ip = request.client.host if request and request.client else "127.0.0.1"
-    if hasattr(rate_limiter, "get_client_ip") and request:
-        try:
-            remote_ip = rate_limiter.get_client_ip(request)
-        except Exception:
-            pass
-
-    user_agent = request.headers.get("User-Agent", "") if request else ""
-    device_name = client_device_name(user_agent, device_name or "")
-
-    try:
-        new_session = models.UserSession(
-            session_id=session_id,
-            user_id=user.id,
-            username=user.username,
-            role=user.role,
-            ip_address=remote_ip,
-            local_ip=local_ip,
-            device_id=device_id,
-            device_name=device_name[:100] if device_name else None,
-            user_agent=user_agent[:500] if user_agent else None,
-            created_at=now_ts,
-            last_active_at=now_ts,
-            expires_at=expires_at,
-            is_revoked=False
-        )
-        auth_db.add(new_session)
-        await auth_db.commit()
-    except Exception as e:
-        logger.warning(f"Could not record user session: {e}")
+    remote_ip, device_name = await _record_login_session(
+        auth_db, request, user, session_id, device_id, local_ip, device_name, now_ts, expires_at
+    )
 
     access_token = auth.create_access_token(
         data={
@@ -162,29 +220,15 @@ async def login(
         expires_delta=expires_delta
     )
 
-    log_desc = f"User '{user.username}' logged in (IP mạng: {remote_ip}"
-    if local_ip:
-        log_desc += f", IP máy: {local_ip}"
-    log_desc += f", Thiết bị: {device_name})"
-
     await crud.log_system_event(
         db=devices_db,
         type="success",
-        message=log_desc,
+        message=_login_event_description(user, remote_ip, local_ip, device_name),
         user_id=user.id,
         ip=remote_ip
     )
 
-    if response is not None:
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=auth.IS_PRODUCTION,
-            samesite="lax",
-            max_age=int(expires_delta.total_seconds()),
-            path="/",
-        )
+    _set_access_cookie(response, access_token, expires_delta)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
