@@ -16,6 +16,10 @@ from .seo import BLOG_METADATA, page_metadata, station_slug
 
 logger = logging.getLogger("app.main")
 router = APIRouter()
+FRONTEND_INDEX_FILE = "index.html"
+JSONLD_CONTEXT_KEY = "@context"
+JSONLD_TYPE_KEY = "@type"
+SCHEMA_ORG_URL = "https://schema.org"
 
 
 @router.get("/station/{serial}")
@@ -42,7 +46,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
     if serial != (slug or device.serial):
         return RedirectResponse(canonical_path, status_code=308)
 
-    index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
+    index_path = Path(__file__).parent.parent.parent / "frontend" / FRONTEND_INDEX_FILE
 
     if not index_path.exists():
         return HTMLResponse(content="<h1>System Error: Frontend missing</h1>", status_code=500)
@@ -69,20 +73,20 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
 
             # 3. BUILD DEEP JSON-LD (Schema.org)
             json_ld = {
-                "@context": "https://schema.org",
-                "@type": "Place",
+                JSONLD_CONTEXT_KEY: SCHEMA_ORG_URL,
+                JSONLD_TYPE_KEY: "Place",
                 "name": f"GNSS Base Station {station_name}",
                 "description": desc,
                 "identifier": slug or device.serial,
                 "geo": {
-                    "@type": "GeoCoordinates",
+                    JSONLD_TYPE_KEY: "GeoCoordinates",
                     "latitude": lat,
                     "longitude": lon,
                     "elevation": alt
                 },
                 "additionalType": "https://en.wikipedia.org/wiki/GNSS_augmentation",
                 "provider": {
-                    "@type": "Organization",
+                    JSONLD_TYPE_KEY: "Organization",
                     "name": "AITOGY .,JSC",
                     "legalName": "Aitogy Infrastructure Technology Joint Stock Company",
                     "url": "https://base.aitogy.com"
@@ -142,7 +146,7 @@ async def get_blog_post_seo(slug: str):
     Renders index.html with server-side SEO for individual blog posts.
     Each technical article becomes a landing page for Google Search.
     """
-    index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
+    index_path = Path(__file__).parent.parent.parent / "frontend" / FRONTEND_INDEX_FILE
 
     published_slug = next((key for key in BLOG_METADATA if key == slug), None)
     if published_slug is None:
@@ -160,22 +164,22 @@ async def get_blog_post_seo(slug: str):
 
         # Article Schema
         article_schema = {
-            "@context": "https://schema.org",
-            "@type": "TechArticle",
+            JSONLD_CONTEXT_KEY: SCHEMA_ORG_URL,
+            JSONLD_TYPE_KEY: "TechArticle",
             "headline": meta["title"].split(" | ")[0],
             "inLanguage": "vi-VN",
             "isPartOf": {"@id": "https://base.aitogy.com/#website"},
             "description": meta['desc'],
-            "author": {"@type": "Organization", "name": "Aitogy"},
-            "publisher": {"@type": "Organization", "name": "Aitogy", "logo": "https://base.aitogy.com/assets/img/aitogy.png"},
-            "mainEntityOfPage": {"@type": "WebPage", "@id": page_url}
+            "author": {JSONLD_TYPE_KEY: "Organization", "name": "Aitogy"},
+            "publisher": {JSONLD_TYPE_KEY: "Organization", "name": "Aitogy", "logo": "https://base.aitogy.com/assets/img/aitogy.png"},
+            "mainEntityOfPage": {JSONLD_TYPE_KEY: "WebPage", "@id": page_url}
         }
         breadcrumb_schema = {
-            "@context": "https://schema.org",
-            "@type": "BreadcrumbList",
+            JSONLD_CONTEXT_KEY: SCHEMA_ORG_URL,
+            JSONLD_TYPE_KEY: "BreadcrumbList",
             "itemListElement": [
-                {"@type": "ListItem", "position": 1, "name": "Bài viết", "item": "https://base.aitogy.com/blog"},
-                {"@type": "ListItem", "position": 2, "name": article_schema["headline"],
+                {JSONLD_TYPE_KEY: "ListItem", "position": 1, "name": "Bài viết", "item": "https://base.aitogy.com/blog"},
+                {JSONLD_TYPE_KEY: "ListItem", "position": 2, "name": article_schema["headline"],
                  "item": article_schema["mainEntityOfPage"]["@id"]},
             ],
         }
@@ -192,7 +196,7 @@ async def get_blog_post_seo(slug: str):
 @router.get("/blog")
 async def get_public_pages(request: Request):
     """Keep homepage aliases canonical; give the knowledge index its own URL."""
-    index_path = Path(__file__).parent.parent.parent / "frontend" / "index.html"
+    index_path = Path(__file__).parent.parent.parent / "frontend" / FRONTEND_INDEX_FILE
     if request.url.path == "/blog":
         return HTMLResponse(page_metadata(
             await asyncio.to_thread(index_path.read_text, encoding="utf-8"),

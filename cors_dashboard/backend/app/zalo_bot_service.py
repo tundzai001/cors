@@ -32,6 +32,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 ZALO_TRACE_VERSION = "20261021-two-bots-v24"
+REDACTED_VALUE = "<redacted>"
 
 # Preserve existing imports of command constants and intent helpers.
 from .zalo_bot.common import (
@@ -173,11 +174,11 @@ class ZaloBotService(
 
     @staticmethod
     def _redact_command_secret(text: str) -> str:
-        text = re.sub(r"(?i)(/register)(\s+)\S+", r"\1\2<redacted>", text)
-        text = re.sub(r"(?i)(/link)(\s+)\S+", r"\1\2<redacted>", text)
+        text = re.sub(r"(?i)(/register)(\s+)\S+", rf"\1\2{REDACTED_VALUE}", text)
+        text = re.sub(r"(?i)(/link)(\s+)\S+", rf"\1\2{REDACTED_VALUE}", text)
         text = re.sub(
             r"(?i)(/rovercreate\s+\S+\s+\S+\s+)\S+",
-            r"\1<redacted>",
+            rf"\1{REDACTED_VALUE}",
             text,
         )
         value_pattern = re.compile(r"""(?:\s*=\s*|\s+)(?=\S)(?P<value>"[^"]*"|'[^']*'|\S+)""")
@@ -193,7 +194,7 @@ class ZaloBotService(
             value = value_pattern.match(text, key.end())
             if value:
                 segments.append(text[cursor:value.start("value")])
-                segments.append("<redacted>")
+                segments.append(REDACTED_VALUE)
                 cursor = value.end()
         segments.append(text[cursor:])
         return "".join(segments)
@@ -208,7 +209,7 @@ class ZaloBotService(
             for key, item in value.items():
                 key_text = str(key)
                 if any(part in key_text.lower() for part in ("token", "secret", "authorization", "password")):
-                    safe[key_text] = "<redacted>"
+                    safe[key_text] = REDACTED_VALUE
                 elif key_text.lower() in {"text", "content", "message_text"} and isinstance(item, str):
                     safe[key_text] = ZaloBotService._redact_command_secret(item)
                 else:
@@ -592,7 +593,7 @@ class ZaloBotService(
             logger.warning("[ZALO TRACE %s] workflow hydration failed; inbound text redacted: %s", trace_id, exc)
         debug_payload = self._safe_debug_value(payload)
         if sensitive_input:
-            summary["text"] = "<redacted>"
+            summary["text"] = REDACTED_VALUE
             debug_payload = self._redact_payload_message(debug_payload)
         event = {
             "trace_id": trace_id,
@@ -666,7 +667,7 @@ class ZaloBotService(
             if update is None:
                 raise ValueError("Zalo SDK could not parse webhook payload")
             event["parsed_update"] = (
-                "<redacted>" if sensitive_input else self._safe_debug_value(
+                REDACTED_VALUE if sensitive_input else self._safe_debug_value(
                     update.to_dict() if hasattr(update, "to_dict") else update
                 )
             )
@@ -678,7 +679,7 @@ class ZaloBotService(
                 return {"trace_id": trace_id, "status": "ignored_no_chat", "outbound_count": 0}
             parsed_text = getattr(getattr(update, "message", None), "text", None)
             safe_parsed_text = (
-                "<redacted>" if sensitive_input
+                REDACTED_VALUE if sensitive_input
                 else self._redact_command_secret(parsed_text) if isinstance(parsed_text, str)
                 else parsed_text
             )

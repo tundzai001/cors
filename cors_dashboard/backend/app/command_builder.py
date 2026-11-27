@@ -7,6 +7,9 @@ import time
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 UBLOX_SAVE_CONFIG = b'\xb5\x62\x06\x09\x0d\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x03\x1d\xab'
+UNICORE_UNLOG_ALL = b'unlogall\r\n'
+UNICORE_SET_UNDULATION = b'config undulation 0.0\r\n'
+UNICORE_SAVE_CONFIG = b'saveconfig\r\n'
 
 DEFAULT_GNSS_OPTIONS = {
     "constellations": {
@@ -458,11 +461,11 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
 
     elif sensor_type == 'Unicorecomm':
         # BƯỚC 1: Clear all logs (TẮT TẤT CẢ OUTPUT)
-        commands.append(b'unlogall\r\n')
+        commands.append(UNICORE_UNLOG_ALL)
         commands.append(b'$DELAY_1000$')
         
         # BƯỚC 2: Set base mode (Survey-In)
-        commands.append(b'config undulation 0.0\r\n')
+        commands.append(UNICORE_SET_UNDULATION)
         cmd_str = f'mode base time {duration} 0\r\n'
         logging.info(f"🔍 Survey-In command: {repr(cmd_str)}")
         commands.append(cmd_str.encode('ascii'))
@@ -472,7 +475,7 @@ def build_base_survey_in_command(sensor_type: str, duration: int, accuracy: floa
         _append_unicore_output_commands(commands, "com3", gnss_options)
         
         # BƯỚC 5: Save config
-        commands.append(b'saveconfig\r\n')
+        commands.append(UNICORE_SAVE_CONFIG)
         
     return commands
 
@@ -548,7 +551,7 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
 
     elif sensor_type == 'Unicorecomm':
         # BƯỚC 1: Clear all logs (TẮT TẤT CẢ OUTPUT)
-        commands.append(b'unlogall\r\n')
+        commands.append(UNICORE_UNLOG_ALL)
         commands.append(b'$DELAY_1000$')
         
         # Quantize only the receiver output, never datum calculations.
@@ -559,7 +562,7 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         # MODE BASE otherwise interprets altitude using the receiver's undulation.
         # Missing metadata preserves legacy configurations instead of reinterpreting them.
         if altitude_reference == 'ELLIPSOID':
-            commands.append(b'config undulation 0.0\r\n')
+            commands.append(UNICORE_SET_UNDULATION)
         
         cmd_str = f'mode base {lat_str} {lon_str} {alt_str}\r\n'
         logging.info(f"🔍 Fixed position command: {repr(cmd_str)}")
@@ -568,7 +571,7 @@ def build_base_fixed_lla_command(sensor_type: str, lat: float, lon: float, alt: 
         logging.info("Configuring Unicore output messages on COM3")
         _append_unicore_output_commands(commands, "com3", gnss_options)
         
-        commands.append(b'saveconfig\r\n')
+        commands.append(UNICORE_SAVE_CONFIG)
         
     return commands
 
@@ -586,16 +589,16 @@ def build_lte_unicore_config(setup_method: str, duration: int = 60, lat: float =
     
     # 1. Reset vật lý chip và xóa hết log cũ
     commands.append(b'FRESET\r\n')
-    commands.append(b'unlogall\r\n')
+    commands.append(UNICORE_UNLOG_ALL)
     
     # 2. Cấu hình chế độ Base (Survey-In hoặc Fixed)
     if setup_method.upper() == 'SURVEY_IN':
-        commands.append(b'config undulation 0.0\r\n')
+        commands.append(UNICORE_SET_UNDULATION)
         commands.append(f'mode base time {duration} 0\r\n'.encode('ascii'))
     else:
         # Giữ nguyên độ chính xác của tọa độ
         if altitude_reference == 'ELLIPSOID':
-            commands.append(b'config undulation 0.0\r\n')
+            commands.append(UNICORE_SET_UNDULATION)
         commands.append(f'mode base {lat} {lon} {alt}\r\n'.encode('ascii'))
     
     # Preserve the old profile when an installation has no saved options.
@@ -610,7 +613,7 @@ def build_lte_unicore_config(setup_method: str, duration: int = 60, lat: float =
     _append_unicore_output_commands(commands, port, options)
     
     # 5. Lưu cấu hình
-    commands.append(b'saveconfig\r\n')
+    commands.append(UNICORE_SAVE_CONFIG)
     
     return commands
 

@@ -24,6 +24,7 @@ def _get_env_preferring_dotenv(key: str, default: str) -> str:
 
 # Cấu hình Debug cho ClientTable
 CLIENTTABLE_DEBUG = False
+SOURCETABLE_OK_RESPONSE = "SOURCETABLE 200 OK"
 
 class CasterClient:
     _connection_errors = {}
@@ -495,16 +496,16 @@ class CasterClient:
         try:
             if prefer_standard_ntrip:
                 response = await self._send_command(cmd_standard)
-                if not response or "SOURCETABLE 200 OK" not in response:
+                if not response or SOURCETABLE_OK_RESPONSE not in response:
                     response = await self._send_command(cmd_custom)
             else:
                 response = await self._send_command(cmd_custom)
-                if not response or "SOURCETABLE 200 OK" not in response:
+                if not response or SOURCETABLE_OK_RESPONSE not in response:
                     response = await self._send_command(cmd_standard)
 
             if not response:
                 return None
-            if "SOURCETABLE 200 OK" not in response:
+            if SOURCETABLE_OK_RESPONSE not in response:
                 logger.warning(f"Invalid sourcetable response from {self.host}:{self.port}")
                 return None
 
