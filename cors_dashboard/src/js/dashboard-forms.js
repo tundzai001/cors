@@ -784,6 +784,201 @@ const GnssConfigVerification = ({ device, disabled }) => {
 
 // Keep per-station form drafts across navigation in this tab; credentials stay in memory.
 const autoBaseDrafts = new Map();
+
+function hasValidApprovedBaseCoordinates(coords) {
+    return ['lat', 'lon', 'alt'].every(key =>
+        coords[key] != null && String(coords[key]).trim() !== '' && Number.isFinite(Number(coords[key]))
+    );
+}
+
+function buildFixedBaseParams({
+    approvedCoords, latitude, longitude, altitude, finalChipType, altitudeReference,
+    autoProgress, autoFixedResult, reviewReport, conversionReport, fixedAccuracyM,
+}) {
+    const latStr = String(approvedCoords ? approvedCoords.lat : latitude).trim();
+    const lonStr = String(approvedCoords ? approvedCoords.lon : longitude).trim();
+    const latNum = Number.parseFloat(latStr);
+    const lonNum = Number.parseFloat(lonStr);
+    if (!latStr || !lonStr || Number.isNaN(latNum) || Number.isNaN(lonNum)) {
+        return { error: 'Vui lòng nhập vĩ độ và kinh độ hợp lệ.' };
+    }
+
+    const coords = {
+        lat: chipCoordinate(latStr, finalChipType === 'Ublox' ? 9 : 10),
+        lon: chipCoordinate(lonStr, finalChipType === 'Ublox' ? 9 : 10),
+        alt: approvedCoords ? formatApprovedAltitude(approvedCoords.alt, finalChipType)
+            : finalChipType === 'Ublox'
+                ? chipCoordinate(String(altitude).trim() || '0', 4)
+                : String(altitude).trim() || '0',
+    };
+    const params = {
+        coords,
+        altitude_reference: approvedCoords || finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference,
+        accuracy: String(fixedAccuracyM).trim().replace(',', '.') || '0.01',
+    };
+    const candidate = autoProgress.averaged_coord;
+    const isAutoBaseCoordinate = approvedCoords || (autoFixedResult && candidate && ['lat', 'lon', 'alt'].every(key =>
+        Math.abs(Number(coords[key]) - Number(candidate[key])) <= (key === 'alt' ? 0.00011 : 1.01e-9)
+    ));
+    if (isAutoBaseCoordinate) {
+        params.conversion_report = { ...(approvedCoords ? reviewReport : conversionReport), output_coord: { ...coords } };
+        params.coordinate_source = 'AUTO_CORS';
+    }
+    return { params };
+}
+
+function getAutoBaseSubmissionError({
+    corsSourceMode, supportsAutoBaseNearest, corsHost, corsPort, corsUsername, corsPassword,
+    selectedMountpoint, projectionMeridian, projectionScale,
+}) {
+    if (corsSourceMode === 'nearest' && !supportsAutoBaseNearest) {
+        return 'Cần cập nhật agent ESP32 để tự chọn CORS gần nhất.';
+    }
+    if (corsSourceMode !== 'nearest') {
+        const port = Number(corsPort);
+        if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
+            return 'Vui lòng nhập đủ thông tin kết nối Base.';
+        }
+        if (!selectedMountpoint) {
+            return 'Vui lòng bấm "Kết nối Base & lấy mountpoint" rồi chọn một mountpoint.';
+        }
+    }
+    if ((projectionMeridian.trim() && !projectionScale) || (!projectionMeridian.trim() && projectionScale)) {
+        return 'Nhập cả kinh tuyến trục và hệ số k₀, hoặc để trống cả hai.';
+    }
+    return '';
+}
+
+function buildGnssOptions({
+    isAdmin, existingGnss, activeChip, interferenceDetectionEnabled, jammingSensitivityHigh,
+    outputMode, msmLevel, constellations, isLteStation,
+}) {
+    if (!isAdmin && existingGnss) return { ...existingGnss };
+    const isDefaultOptions = !isAdmin;
+    return {
+        ...(activeChip === 'Ublox' ? {
+            interference_detection_enabled: isDefaultOptions ? true : interferenceDetectionEnabled,
+            jamming_sensitivity_high: jammingSensitivityHigh,
+        } : {}),
+        output_mode: isDefaultOptions ? outputMode || 'diagnostics_rtcm' : outputMode,
+        msm_level: msmLevel === 'both' ? 'both' : Number(isDefaultOptions ? msmLevel || 4 : msmLevel),
+        constellations: constellations || {
+            gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true,
+        },
+        ...(!isLteStation ? { ports: ['USB'] } : {}),
+    };
+}
+
+function buildAutoCorsPayload({
+    corsSourceMode, corsHost, corsPort, corsUsername, corsPassword, selectedMountpoint,
+    projectionMeridian, projectionScale,
+}) {
+    const autoCors = corsSourceMode === 'nearest' ? { source_mode: 'nearest' } : {
+        source_mode: 'manual',
+        ip: corsHost.trim(),
+        port: Number(corsPort),
+        user: corsUsername.trim(),
+        password: corsPassword,
+        mountpoint: selectedMountpoint,
+    };
+    if (projectionMeridian.trim() || projectionScale) {
+        const l0 = Number(projectionMeridian);
+        const k0 = Number(projectionScale);
+        if (!projectionMeridian.trim() || !projectionScale || !Number.isFinite(l0) || l0 < 100 || l0 > 112) {
+            return { error: 'Nhập đủ kinh tuyến trục và hệ số k₀ hợp lệ.' };
+        }
+        autoCors.l0_deg = l0;
+        autoCors.k0 = k0;
+    }
+    return { payload: autoCors };
+}
+
+function restoreBaseFormDraft({ device, isAutoSetupActive, draftOwnerRef, skipDraftSaveRef, corsRequestRef, setters }) {
+    const switched = draftOwnerRef.current.serial !== device.serial;
+    const savedMethod = device.base_config?.base_setup_method;
+    const methodChanged = draftOwnerRef.current.savedMethod !== savedMethod;
+    if (switched) {
+        skipDraftSaveRef.current = true;
+        ++corsRequestRef.current;
+        const draft = autoBaseDrafts.get(device.serial);
+        setters.setCorsHost(draft?.host || '');
+        setters.setCorsSourceMode(draft?.sourceMode || device.base_config?.auto_cors_source_mode || 'nearest');
+        setters.setCorsPort(draft?.port || '2101');
+        setters.setCorsUsername(draft?.username || '');
+        setters.setCorsPassword(draft?.password || '');
+        setters.setCorsSources(draft?.sources || []);
+        setters.setSelectedMountpoint(draft?.mountpoint || '');
+        setters.setProjectionMeridian(draft?.meridian || '');
+        setters.setProjectionScale(draft?.scale || '');
+        setters.setCorsLookupError('');
+        setters.setIsLoadingCorsSources(false);
+        setters.setMethod(isAutoSetupActive ? 'AUTO_CORS' : draft?.method || savedMethod || 'AUTO_CORS');
+    } else if (isAutoSetupActive) {
+        setters.setMethod('AUTO_CORS');
+    } else if (methodChanged && savedMethod) {
+        setters.setMethod(savedMethod);
+    }
+    draftOwnerRef.current = { serial: device.serial, savedMethod };
+}
+
+function resetBaseFormValues(setters, device, isLteStation) {
+    setters.setManualChip(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
+    setters.setLatitude('');
+    setters.setLongitude('');
+    setters.setAltitude('');
+    setters.setCoordinatePasteNotice(null);
+    setters.setAltitudeReference('ELLIPSOID');
+    setters.setFixedAccuracyM('0.01');
+    setters.setSvinDuration('300');
+    setters.setSvinAccuracyM('3.00');
+    setters.setInterferenceDetectionEnabled(true);
+    setters.setJammingSensitivityHigh(true);
+    setters.setOutputMode(isLteStation ? 'rtcm_only' : 'diagnostics_rtcm');
+    setters.setMsmLevel(isLteStation ? 'both' : '4');
+    setters.setConstellations({ gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true });
+}
+
+function restoreBaseCoordinates(config, activeChip, detectedChipType, setters) {
+    const coords = config.coords || ((config.lat !== undefined && config.lon !== undefined)
+        ? { lat: config.lat, lon: config.lon, alt: config.alt }
+        : null);
+    if (coords) {
+        const precision = activeChip === 'Ublox' ? 9 : 10;
+        setters.setLatitude(coords.lat != null ? chipCoordinate(coords.lat, precision) : coords.lat ?? '');
+        setters.setLongitude(coords.lon != null ? chipCoordinate(coords.lon, precision) : coords.lon ?? '');
+        setters.setAltitude(coords.alt ?? '');
+        setters.setAltitudeReference(config.altitude_reference === 'ELLIPSOID' || detectedChipType === 'Ublox'
+            ? 'ELLIPSOID' : 'LEGACY');
+    }
+    if (config.accuracy !== undefined) setters.setFixedAccuracyM(String(config.accuracy));
+}
+
+function restoreBaseGnssOptions(options, setters) {
+    if (!options || typeof options !== 'object') return;
+    setters.setInterferenceDetectionEnabled(options.interference_detection_enabled !== false);
+    setters.setJammingSensitivityHigh(options.jamming_sensitivity_high !== false);
+    if (options.output_mode) setters.setOutputMode(String(options.output_mode));
+    if ([4, 7].includes(Number(options.msm_level)) || options.msm_level === 'both') {
+        setters.setMsmLevel(String(options.msm_level));
+    }
+    if (options.constellations && typeof options.constellations === 'object') {
+        setters.setConstellations(previous => ({
+            ...previous,
+            ...Object.fromEntries(Object.entries(options.constellations)
+                .filter(([key]) => Object.prototype.hasOwnProperty.call(previous, key))
+                .map(([key, value]) => [key, !!value])),
+        }));
+    }
+}
+
+function restoreBaseConfig(config, activeChip, detectedChipType, setters) {
+    if (!config) return;
+    restoreBaseCoordinates(config, activeChip, detectedChipType, setters);
+    if (config.survey_in_duration !== undefined) setters.setSvinDuration(String(config.survey_in_duration));
+    if (config.survey_in_accuracy !== undefined) setters.setSvinAccuracyM(String(config.survey_in_accuracy));
+    restoreBaseGnssOptions(config.gnss_options, setters);
+}
+
 const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, onStopAutoBase, onReadBaseStatus, disabled }) {
     const knownChips = ['Ublox', 'Unicorecomm'];
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
@@ -1025,93 +1220,17 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
 
     useEffect(() => {
-        const switched = draftOwnerRef.current.serial !== device.serial;
-        const savedMethod = device.base_config?.base_setup_method;
-        const methodChanged = draftOwnerRef.current.savedMethod !== savedMethod;
-        if (switched) {
-            skipDraftSaveRef.current = true;
-            ++corsRequestRef.current;
-            const draft = autoBaseDrafts.get(device.serial);
-            setCorsHost(draft?.host || '');
-            setCorsSourceMode(draft?.sourceMode || device.base_config?.auto_cors_source_mode || 'nearest');
-            setCorsPort(draft?.port || '2101');
-            setCorsUsername(draft?.username || '');
-            setCorsPassword(draft?.password || '');
-            setCorsSources(draft?.sources || []);
-            setSelectedMountpoint(draft?.mountpoint || '');
-            setProjectionMeridian(draft?.meridian || '');
-            setProjectionScale(draft?.scale || '');
-            setCorsLookupError('');
-            setIsLoadingCorsSources(false);
-            setMethod(isAutoSetupActive ? 'AUTO_CORS' : draft?.method || savedMethod || 'AUTO_CORS');
-        } else if (isAutoSetupActive) setMethod('AUTO_CORS');
-        else if (methodChanged && savedMethod) setMethod(savedMethod);
-        draftOwnerRef.current = {serial:device.serial, savedMethod};
-        // Reload receiver configuration without clearing this station's CORS draft.
-
-        setManualChip(device.detected_chip_type === 'RTCM3_Source' ? 'Unicorecomm' : 'Ublox');
-        setLatitude('');
-        setLongitude('');
-        setAltitude('');
-        setCoordinatePasteNotice(null);
-        setAltitudeReference('ELLIPSOID');
-        setFixedAccuracyM('0.01');
-        setSvinDuration('300');
-        setSvinAccuracyM('3.00');
-        setInterferenceDetectionEnabled(true);
-        setJammingSensitivityHigh(true);
-        setOutputMode(isLteStation ? 'rtcm_only' : 'diagnostics_rtcm');
-        setMsmLevel(isLteStation ? 'both' : '4');
-        setConstellations({ gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true });
-
-        // 2. Load config từ DB (nếu có)
-        if (device.base_config) {
-            const config = device.base_config;
-
-            // Load Fixed Params
-            const coords = config.coords || (
-                (config.lat !== undefined && config.lon !== undefined)
-                    ? { lat: config.lat, lon: config.lon, alt: config.alt }
-                    : null
-            );
-            if (coords) {
-                setLatitude(coords.lat != null ? chipCoordinate(coords.lat, activeChip === 'Ublox' ? 9 : 10) : coords.lat ?? '');
-                setLongitude(coords.lon != null ? chipCoordinate(coords.lon, activeChip === 'Ublox' ? 9 : 10) : coords.lon ?? '');
-                setAltitude(coords.alt ?? '');
-                setAltitudeReference(config.altitude_reference === 'ELLIPSOID' || device.detected_chip_type === 'Ublox'
-                    ? 'ELLIPSOID' : 'LEGACY');
-            }
-            // Display stored meters directly without unit conversion or rounding.
-            if (config.accuracy !== undefined) {
-                setFixedAccuracyM(String(config.accuracy));
-            }
-
-            // Load Survey-In Params
-            if (config.survey_in_duration !== undefined) {
-                setSvinDuration(String(config.survey_in_duration));
-            }
-            // Load Accuracy cho Survey-In (Lưu trong DB là mét -> Giữ nguyên là mét)
-            if (config.survey_in_accuracy !== undefined) {
-                setSvinAccuracyM(String(config.survey_in_accuracy));
-            }
-            if (config.gnss_options && typeof config.gnss_options === 'object') {
-                const options = config.gnss_options;
-                setInterferenceDetectionEnabled(options.interference_detection_enabled !== false);
-                setJammingSensitivityHigh(options.jamming_sensitivity_high !== false);
-                if (options.output_mode) setOutputMode(String(options.output_mode));
-                if ([4, 7].includes(Number(options.msm_level)) || options.msm_level === 'both') setMsmLevel(String(options.msm_level));
-                if (options.constellations && typeof options.constellations === 'object') {
-                    setConstellations(prev => ({
-                        ...prev,
-                        ...Object.fromEntries(
-                            Object.entries(options.constellations)
-                                .filter(([key]) => Object.prototype.hasOwnProperty.call(prev, key))
-                                .map(([key, value]) => [key, !!value])
-                        )
-                    }));
-                }
-            }
-        }
+        const setters = {
+            setCorsHost, setCorsSourceMode, setCorsPort, setCorsUsername, setCorsPassword,
+            setCorsSources, setSelectedMountpoint, setProjectionMeridian, setProjectionScale,
+            setCorsLookupError, setIsLoadingCorsSources, setMethod, setManualChip, setLatitude,
+            setLongitude, setAltitude, setCoordinatePasteNotice, setAltitudeReference,
+            setFixedAccuracyM, setSvinDuration, setSvinAccuracyM, setInterferenceDetectionEnabled,
+            setJammingSensitivityHigh, setOutputMode, setMsmLevel, setConstellations,
+        };
+        restoreBaseFormDraft({ device, isAutoSetupActive, draftOwnerRef, skipDraftSaveRef, corsRequestRef, setters });
+        resetBaseFormValues(setters, device, isLteStation);
+        restoreBaseConfig(device.base_config, activeChip, device.detected_chip_type, setters);
     }, [device.serial, device.detected_chip_type, device.base_config?.base_setup_method, device.system_info?.base_startup?.state, isAutoSetupActive]);
 
     useEffect(() => {
@@ -1253,8 +1372,7 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     const handleSubmit = async (e, approvedCoords = null) => {
         e.preventDefault();
         if (disabled || (approvedCoords && (isAutoSetupActive || !autoFixedResult || currentReview?.pending))) return;
-        if (approvedCoords && !['lat', 'lon', 'alt'].every(key =>
-            approvedCoords[key] != null && String(approvedCoords[key]).trim() !== '' && Number.isFinite(Number(approvedCoords[key])))) {
+        if (approvedCoords && !hasValidApprovedBaseCoordinates(approvedCoords)) {
             window.showError('Kết quả Auto Base thiếu LLH hợp lệ. Cần lấy lại tọa độ.');
             return;
         }
@@ -1269,62 +1387,31 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             let params = { base_setup_method: submittedMethod };
 
             if (submittedMethod === 'FIXED_LLA') {
-                const latStr = String(approvedCoords ? approvedCoords.lat : latitude).trim();
-                const lonStr = String(approvedCoords ? approvedCoords.lon : longitude).trim();
-                const latNum = Number.parseFloat(latStr);
-                const lonNum = Number.parseFloat(lonStr);
-                if (!latStr || !lonStr || Number.isNaN(latNum) || Number.isNaN(lonNum)) {
-                    window.showError('Vui lòng nhập vĩ độ và kinh độ hợp lệ.');
-                    setIsSubmitting(false);
+                const fixedBase = buildFixedBaseParams({
+                    approvedCoords, latitude, longitude, altitude, finalChipType, altitudeReference,
+                    autoProgress, autoFixedResult, reviewReport, conversionReport, fixedAccuracyM,
+                });
+                if (fixedBase.error) {
+                    window.showError(fixedBase.error);
                     return;
                 }
-                params.coords = {
-                    lat: chipCoordinate(latStr, finalChipType === 'Ublox' ? 9 : 10),
-                    lon: chipCoordinate(lonStr, finalChipType === 'Ublox' ? 9 : 10),
-                    alt: approvedCoords ? formatApprovedAltitude(approvedCoords.alt, finalChipType)
-                        : finalChipType === 'Ublox' ? chipCoordinate(String(altitude).trim() || '0', 4) : String(altitude).trim() || '0'
-                };
+                params = { ...params, ...fixedBase.params };
                 if (finalChipType === 'Ublox') {
                     setLatitude(params.coords.lat);
                     setLongitude(params.coords.lon);
                     setAltitude(params.coords.alt);
                 }
-                params.altitude_reference = approvedCoords || finalChipType === 'Ublox' ? 'ELLIPSOID' : altitudeReference;
-                const candidate = autoProgress.averaged_coord;
-                if (approvedCoords || (autoFixedResult && candidate && ['lat', 'lon', 'alt'].every(key =>
-                    Math.abs(Number(params.coords[key]) - Number(candidate[key])) <= (key === 'alt' ? 0.00011 : 1.01e-9)))) {
-                    params.conversion_report = { ...(approvedCoords ? reviewReport : conversionReport), output_coord: { ...params.coords } };
-                    params.coordinate_source = 'AUTO_CORS';
-                }
-                // Preserve decimal meters through the API and UBX encoding.
-                params.accuracy = String(fixedAccuracyM).trim().replace(',', '.') || '0.01';
             } else if (submittedMethod === 'SURVEY_IN') {
                 params.survey_in_duration = Number.parseInt(svinDuration);
                 // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
                 params.survey_in_accuracy = Number.parseFloat(svinAccuracyM);
             } else if (submittedMethod === 'AUTO_CORS') {
-                if (corsSourceMode === 'nearest') {
-                    if (!supportsAutoBaseNearest) {
-                        window.showError('Cần cập nhật agent ESP32 để tự chọn CORS gần nhất.');
-                        setIsSubmitting(false);
-                        return;
-                    }
-                } else {
-                    const port = Number(corsPort);
-                    if (!corsHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !corsUsername.trim() || !corsPassword) {
-                        window.showError('Vui lòng nhập đủ thông tin kết nối Base.');
-                        setIsSubmitting(false);
-                        return;
-                    }
-                    if (!selectedMountpoint) {
-                        window.showError('Vui lòng bấm "Kết nối Base & lấy mountpoint" rồi chọn một mountpoint.');
-                        setIsSubmitting(false);
-                        return;
-                    }
-                }
-                if ((projectionMeridian.trim() && !projectionScale) || (!projectionMeridian.trim() && projectionScale)) {
-                    window.showError('Nhập cả kinh tuyến trục và hệ số k₀, hoặc để trống cả hai.');
-                    setIsSubmitting(false);
+                const validationError = getAutoBaseSubmissionError({
+                    corsSourceMode, supportsAutoBaseNearest, corsHost, corsPort, corsUsername, corsPassword,
+                    selectedMountpoint, projectionMeridian, projectionScale,
+                });
+                if (validationError) {
+                    window.showError(validationError);
                     return;
                 }
             }
@@ -1336,39 +1423,10 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 ? device.base_config.gnss_options
                 : null;
 
-            if (isAdmin) {
-                params.gnss_options = {
-                    ...(activeChip === 'Ublox' ? { interference_detection_enabled: interferenceDetectionEnabled, jamming_sensitivity_high: jammingSensitivityHigh } : {}),
-                    output_mode: outputMode,
-                    msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel),
-                    constellations: constellations || {
-                        gps: true,
-                        glo: true,
-                        gal: true,
-                        bds: true,
-                        qzss: true,
-                        sbas: true
-                    },
-                    ...(!isLteStation ? { ports: ['USB'] } : {})
-                };
-            } else if (existingGnss) {
-                params.gnss_options = { ...existingGnss };
-            } else {
-                params.gnss_options = {
-                    ...(activeChip === 'Ublox' ? { interference_detection_enabled: true, jamming_sensitivity_high: jammingSensitivityHigh } : {}),
-                    output_mode: outputMode || 'diagnostics_rtcm',
-                    msm_level: msmLevel === 'both' ? 'both' : Number(msmLevel || 4),
-                    constellations: constellations || {
-                        gps: true,
-                        glo: true,
-                        gal: true,
-                        bds: true,
-                        qzss: true,
-                        sbas: true
-                    },
-                    ...(!isLteStation ? { ports: ['USB'] } : {})
-                };
-            }
+            params.gnss_options = buildGnssOptions({
+                isAdmin, existingGnss, activeChip, interferenceDetectionEnabled, jammingSensitivityHigh,
+                outputMode, msmLevel, constellations, isLteStation,
+            });
 
             const payload = {
                 sensor_type: finalChipType,
@@ -1377,24 +1435,15 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
             };
 
             if (submittedMethod === 'AUTO_CORS') {
-                payload.auto_cors = corsSourceMode === 'nearest' ? { source_mode: 'nearest' } : {
-                    source_mode: 'manual',
-                    ip: corsHost.trim(),
-                    port: Number(corsPort),
-                    user: corsUsername.trim(),
-                    password: corsPassword,
-                    mountpoint: selectedMountpoint
-                };
-                if (projectionMeridian.trim() || projectionScale) {
-                    const l0 = Number(projectionMeridian);
-                    const k0 = Number(projectionScale);
-                    if (!projectionMeridian.trim() || !projectionScale || !Number.isFinite(l0) || l0 < 100 || l0 > 112) {
-                        window.showError('Nhập đủ kinh tuyến trục và hệ số k₀ hợp lệ.');
-                        return;
-                    }
-                    payload.auto_cors.l0_deg = l0;
-                    payload.auto_cors.k0 = k0;
+                const autoCors = buildAutoCorsPayload({
+                    corsSourceMode, corsHost, corsPort, corsUsername, corsPassword, selectedMountpoint,
+                    projectionMeridian, projectionScale,
+                });
+                if (autoCors.error) {
+                    window.showError(autoCors.error);
+                    return;
                 }
+                payload.auto_cors = autoCors.payload;
                 delete params.auto_cors;
             }
 
