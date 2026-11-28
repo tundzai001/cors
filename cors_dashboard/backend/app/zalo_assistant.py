@@ -896,6 +896,62 @@ class ZaloAssistantRepository:
                 "critical_override": pref.critical_override,
             }
 
+    @staticmethod
+    def _private_notification_scope(binding_id, pref, binding_scopes):
+        values = binding_scopes.get(int(binding_id), set())
+        preference_scope = pref.scopes if isinstance(pref.scopes, dict) else {}
+        preference_mode = str(preference_scope.get("mode") or "all")
+        if preference_mode == "none":
+            values = set()
+        elif preference_mode == "selected":
+            preferred = {
+                str(value).strip().casefold()
+                for value in (preference_scope.get("values") or []) if str(value).strip()
+            }
+            values = set(values).intersection(preferred)
+        return {"mode": "selected", "values": sorted(values)}
+
+    def _notification_scope_override(self, binding, pref, binding_scopes):
+        if binding.binding_type == "private" and binding_scopes is not None:
+            return self._private_notification_scope(binding.id, pref, binding_scopes)
+        if binding.chat_type == "group":
+            return {
+                "mode": str(binding.station_scope_mode or "all"),
+                "values": list(binding.allowed_bases or []),
+            }
+        return None
+
+    async def _reserve_notification_target(
+        self, db, binding, pref, event_key, severity, subjects, binding_scopes, bot_key, now
+    ):
+        if bot_key is not None and chat_bot_key(binding.chat_id) != bot_key:
+            return None
+        if self.delivery_mode(binding, pref) == "cors_only":
+            return None
+        override = self._notification_scope_override(binding, pref, binding_scopes)
+        if not self._notification_allowed(pref, severity, subjects, override):
+            return None
+        reserve = (
+            pg_insert(models.ZaloDeliveryLog)
+            .values(
+                binding_id=int(binding.id), event_key=str(event_key),
+                severity=str(severity), status="pending", attempts=0, created_at=now,
+            )
+            .on_conflict_do_nothing(index_elements=["binding_id", "event_key"])
+            .returning(models.ZaloDeliveryLog.id)
+        )
+        reserved = (await db.execute(reserve)).scalar_one_or_none()
+        if reserved is None:
+            return None
+        scope = override or pref.scopes or {}
+        return {
+            "binding_id": int(binding.id),
+            "chat_id": str(binding.chat_id),
+            "delivery_id": int(reserved),
+            "scope_mode": str(scope.get("mode") or "all"),
+            "scope_values": list(scope.get("values") or []),
+        }
+
     async def reserve_notification_targets(
         self,
         event_key: str,
@@ -920,49 +976,12 @@ class ZaloAssistantRepository:
                 .where(models.ZaloChatBinding.is_active.is_(True))
             )
             for binding, pref in rs.all():
-                if bot_key is not None and chat_bot_key(binding.chat_id) != bot_key:
-                    continue
-                if self.delivery_mode(binding, pref) == "cors_only":
-                    continue
-                override = None
-                if binding.binding_type == "private" and binding_scopes is not None:
-                    values = binding_scopes.get(int(binding.id), set())
-                    preference_scope = pref.scopes if isinstance(pref.scopes, dict) else {}
-                    preference_mode = str(preference_scope.get("mode") or "all")
-                    if preference_mode == "none":
-                        values = set()
-                    elif preference_mode == "selected":
-                        preferred = {
-                            str(value).strip().casefold()
-                            for value in (preference_scope.get("values") or []) if str(value).strip()
-                        }
-                        values = set(values).intersection(preferred)
-                    override = {"mode": "selected", "values": sorted(values)}
-                elif binding.chat_type == "group":
-                    override = {
-                        "mode": str(binding.station_scope_mode or "all"),
-                        "values": list(binding.allowed_bases or []),
-                    }
-                if not self._notification_allowed(pref, severity, normalized_subjects, override):
-                    continue
-                reserve = (
-                    pg_insert(models.ZaloDeliveryLog)
-                    .values(
-                        binding_id=int(binding.id), event_key=str(event_key),
-                        severity=str(severity), status="pending", attempts=0, created_at=now,
-                    )
-                    .on_conflict_do_nothing(index_elements=["binding_id", "event_key"])
-                    .returning(models.ZaloDeliveryLog.id)
+                target = await self._reserve_notification_target(
+                    db, binding, pref, event_key, severity, normalized_subjects,
+                    binding_scopes, bot_key, now,
                 )
-                reserved = (await db.execute(reserve)).scalar_one_or_none()
-                if reserved is not None:
-                    targets.append({
-                        "binding_id": int(binding.id),
-                        "chat_id": str(binding.chat_id),
-                        "delivery_id": int(reserved),
-                        "scope_mode": str((override or pref.scopes or {}).get("mode") or "all"),
-                        "scope_values": list((override or pref.scopes or {}).get("values") or []),
-                    })
+                if target is not None:
+                    targets.append(target)
             await db.commit()
         return targets
 

@@ -277,6 +277,113 @@ async def get_rover_activity_track(
     return {"date": activity_date.isoformat(), "username": username, "receiver_id": receiver_id, "sessions": sessions, "points": points}
 
 
+async def _rover_history_events(devices_db, auth_db, current_user, username, date_start, date_end):
+    is_admin = current_user.role == auth.Role.ADMIN
+    allowed_serials = None
+    if not is_admin:
+        visible_devices = await _ops_visible_devices(devices_db, auth_db, current_user)
+        allowed_serials = {
+            str(device.serial).strip().upper() for device in visible_devices if device.serial
+        }
+    return await _ops_events_query(
+        devices_db,
+        limit=100,
+        q=username,
+        timestamp_from=date_start,
+        timestamp_to=date_end,
+        allowed_serials=allowed_serials,
+        actor_user_id=None if is_admin else current_user.id,
+    )
+
+
+async def _rover_history_session_page(auth_db, username, date_start, date_end, page):
+    normalized_username = username.strip().lower()
+    session_query = select(models.RoverSessionHistory).where(
+        func.lower(models.RoverSessionHistory.username) == normalized_username
+    )
+    if date_start is not None and date_end is not None:
+        session_query = session_query.where(*_rover_history_overlap_filters(date_start, date_end))
+    total_result = await auth_db.execute(
+        select(func.count()).select_from(session_query.order_by(None).subquery())
+    )
+    total_sessions = int(total_result.scalar_one() or 0)
+    date_filters = _rover_history_overlap_filters(date_start, date_end) if date_start is not None else ()
+    receiver_count_result = await auth_db.execute(
+        select(func.count(func.distinct(func.lower(func.trim(models.RoverSessionHistory.receiver_id)))))
+        .where(
+            func.lower(models.RoverSessionHistory.username) == normalized_username,
+            models.RoverSessionHistory.receiver_id.is_not(None),
+            func.trim(models.RoverSessionHistory.receiver_id) != "",
+            *date_filters,
+        )
+    )
+    receiver_count = int(receiver_count_result.scalar_one() or 0)
+    total_pages = (total_sessions + ROVER_HISTORY_PAGE_SIZE - 1) // ROVER_HISTORY_PAGE_SIZE
+    page = min(page, max(total_pages, 1))
+    sessions_result = await auth_db.execute(
+        session_query.order_by(models.RoverSessionHistory.last_seen_at.desc())
+        .offset((page - 1) * ROVER_HISTORY_PAGE_SIZE)
+        .limit(ROVER_HISTORY_PAGE_SIZE)
+    )
+    return page, total_pages, total_sessions, receiver_count, sessions_result.scalars().all()
+
+
+async def _rover_history_points(auth_db, session_rows, date_start, date_end):
+    session_ids = [session.id for session in session_rows]
+    points_by_session: dict[int, list[dict]] = {session_id: [] for session_id in session_ids}
+    if not session_ids:
+        return points_by_session
+    point_query = select(models.RoverFixedPoint).where(
+        models.RoverFixedPoint.session_id.in_(session_ids)
+    )
+    if date_start is not None and date_end is not None:
+        point_query = point_query.where(
+            models.RoverFixedPoint.recorded_at >= date_start,
+            models.RoverFixedPoint.recorded_at < date_end,
+        )
+    point_result = await auth_db.execute(
+        point_query.order_by(models.RoverFixedPoint.recorded_at, models.RoverFixedPoint.id)
+    )
+    for point in point_result.scalars().all():
+        points_by_session[point.session_id].append({
+            "id": point.id, "label": point.label, "lat": point.latitude, "lon": point.longitude,
+            "fix_quality": point.fix_quality, "satellites": point.satellite_count,
+            "recorded_at": point.recorded_at, "saved_at": point.saved_at,
+            "created_by": point.created_by,
+        })
+    return points_by_session
+
+
+def _rover_history_session_payload(session, points, date_start, date_end):
+    has_position = (
+        session.latitude is not None
+        and session.longitude is not None
+        and (date_start is None or date_start <= int(session.position_updated_at or 0) < date_end)
+    )
+    return {
+        "id": session.id,
+        "server": session.server,
+        "mountpoint": session.mountpoint,
+        "base_name": session.base_name,
+        "client_id": session.client_id,
+        "receiver_id": session.receiver_id,
+        "started_at": session.started_at,
+        "last_seen_at": session.last_seen_at,
+        "ended_at": session.ended_at,
+        "uptime_seconds": session.uptime_seconds,
+        "current_fix_quality": session.latest_fix_quality,
+        "satellites": session.satellite_count,
+        "last_position": {
+            "lat": session.latitude,
+            "lon": session.longitude,
+            "recorded_at": session.position_updated_at,
+            "fix_quality": session.position_fix_quality if session.position_fix_quality is not None else 4,
+            "satellites": session.position_satellite_count,
+        } if has_position else None,
+        "points": points[session.id],
+    }
+
+
 @router.get("/api/rovers/{username}/history", responses={403: {"description": "Forbidden"}})
 async def get_rover_history(
     username: str,
@@ -288,110 +395,22 @@ async def get_rover_history(
 ):
     rover = await crud.get_rover_by_username(auth_db, username)
     scoped = await _ops_visible_rovers(auth_db, devices_db, current_user)
-    scoped_names = {str(r.username).strip().lower() for r in scoped}
+    scoped_names = {str(item.username).strip().lower() for item in scoped}
     if current_user.role != auth.Role.ADMIN and username.strip().lower() not in scoped_names:
         raise HTTPException(status_code=403, detail="Rover is outside your scope")
     date_start, date_end = _rover_history_day_bounds(activity_date) if activity_date else (None, None)
-    events = await _ops_events_query(
-        devices_db,
-        limit=100,
-        q=username,
-        timestamp_from=date_start,
-        timestamp_to=date_end,
-        allowed_serials=None if current_user.role == auth.Role.ADMIN else {
-            str(device.serial).strip().upper()
-            for device in await _ops_visible_devices(devices_db, auth_db, current_user)
-            if device.serial
-        },
-        actor_user_id=None if current_user.role == auth.Role.ADMIN else current_user.id,
+    events = await _rover_history_events(
+        devices_db, auth_db, current_user, username, date_start, date_end
     )
     statuses = await _ops_cached_rover_status({username.strip().lower()})
-    session_query = select(models.RoverSessionHistory).where(
-        func.lower(models.RoverSessionHistory.username) == username.strip().lower()
+    page, total_pages, total_sessions, receiver_count, session_rows = await _rover_history_session_page(
+        auth_db, username, date_start, date_end, page
     )
-    if date_start is not None and date_end is not None:
-        session_query = session_query.where(*_rover_history_overlap_filters(date_start, date_end))
-    total_sessions_result = await auth_db.execute(
-        select(func.count()).select_from(session_query.order_by(None).subquery())
-    )
-    total_sessions = int(total_sessions_result.scalar_one() or 0)
-    receiver_count_result = await auth_db.execute(
-        select(func.count(func.distinct(func.lower(func.trim(models.RoverSessionHistory.receiver_id)))))
-        .where(
-            func.lower(models.RoverSessionHistory.username) == username.strip().lower(),
-            models.RoverSessionHistory.receiver_id.is_not(None),
-            func.trim(models.RoverSessionHistory.receiver_id) != "",
-            *(_rover_history_overlap_filters(date_start, date_end) if date_start is not None else ()),
-        )
-    )
-    receiver_count = int(receiver_count_result.scalar_one() or 0)
-    total_pages = (total_sessions + ROVER_HISTORY_PAGE_SIZE - 1) // ROVER_HISTORY_PAGE_SIZE
-    page = min(page, max(total_pages, 1))
-    sessions_result = await auth_db.execute(
-        session_query.order_by(models.RoverSessionHistory.last_seen_at.desc())
-        .offset((page - 1) * ROVER_HISTORY_PAGE_SIZE)
-        .limit(ROVER_HISTORY_PAGE_SIZE)
-    )
-    session_rows = sessions_result.scalars().all()
-    session_ids = [session.id for session in session_rows]
-    points_by_session: dict[int, list[dict]] = {session_id: [] for session_id in session_ids}
-    if session_ids:
-        point_query = select(models.RoverFixedPoint).where(
-            models.RoverFixedPoint.session_id.in_(session_ids)
-        )
-        if date_start is not None and date_end is not None:
-            point_query = point_query.where(
-                models.RoverFixedPoint.recorded_at >= date_start,
-                models.RoverFixedPoint.recorded_at < date_end,
-            )
-        point_result = await auth_db.execute(
-            point_query.order_by(models.RoverFixedPoint.recorded_at, models.RoverFixedPoint.id)
-        )
-        for point in point_result.scalars().all():
-            points_by_session[point.session_id].append({
-                "id": point.id,
-                "label": point.label,
-                "lat": point.latitude,
-                "lon": point.longitude,
-                "fix_quality": point.fix_quality,
-                "satellites": point.satellite_count,
-                "recorded_at": point.recorded_at,
-                "saved_at": point.saved_at,
-                "created_by": point.created_by,
-            })
-
-    sessions = []
-    for session in session_rows:
-        has_complete_position = (
-            session.latitude is not None
-            and session.longitude is not None
-            and (
-                date_start is None
-                or date_start <= int(session.position_updated_at or 0) < date_end
-            )
-        )
-        sessions.append({
-            "id": session.id,
-            "server": session.server,
-            "mountpoint": session.mountpoint,
-            "base_name": session.base_name,
-            "client_id": session.client_id,
-            "receiver_id": session.receiver_id,
-            "started_at": session.started_at,
-            "last_seen_at": session.last_seen_at,
-            "ended_at": session.ended_at,
-            "uptime_seconds": session.uptime_seconds,
-            "current_fix_quality": session.latest_fix_quality,
-            "satellites": session.satellite_count,
-            "last_position": {
-                "lat": session.latitude,
-                "lon": session.longitude,
-                "recorded_at": session.position_updated_at,
-                "fix_quality": session.position_fix_quality if session.position_fix_quality is not None else 4,
-                "satellites": session.position_satellite_count,
-            } if has_complete_position else None,
-            "points": points_by_session[session.id],
-        })
+    points = await _rover_history_points(auth_db, session_rows, date_start, date_end)
+    sessions = [
+        _rover_history_session_payload(session, points, date_start, date_end)
+        for session in session_rows
+    ]
     return {
         "username": username,
         "in_db": bool(rover),

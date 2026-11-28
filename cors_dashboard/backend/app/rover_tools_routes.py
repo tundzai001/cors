@@ -132,6 +132,62 @@ async def export_rovers_csv(
     )
 
 
+def _safe_rover_csv_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, str) and re.match(r"^\s*[=+\-@]", value):
+        return "'" + value
+    return value
+
+
+def _rover_session_history_csv_row(session):
+    has_position = (
+        session.position_fix_quality == 4
+        and session.latitude is not None
+        and session.longitude is not None
+    )
+    maps_url = (
+        f"https://www.google.com/maps/search/?api=1&query={session.latitude},{session.longitude}"
+        if has_position else ""
+    )
+    return [
+        _safe_rover_csv_value(session.username), _safe_rover_csv_value(session.server),
+        _safe_rover_csv_value(session.mountpoint), _safe_rover_csv_value(session.receiver_id),
+        _safe_rover_csv_value(session.client_id), _safe_rover_csv_value(session.started_at),
+        _safe_rover_csv_value(session.last_seen_at), _safe_rover_csv_value(session.ended_at),
+        session.latitude if has_position else "", session.longitude if has_position else "",
+        _safe_rover_csv_value(session.position_updated_at) if has_position else "", maps_url,
+        session.position_fix_quality if has_position else "",
+    ]
+
+
+async def _rover_session_history_csv_stream(query):
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "username", "server", "mountpoint", "receiver_id", "client_id",
+        "started_at_unix", "last_seen_at_unix", "ended_at_unix",
+        "latitude", "longitude", "position_updated_at_unix", "google_maps_url",
+        "position_fix_quality",
+    ])
+    yield "\ufeff" + buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    async with auth_session_scope() as db:
+        result = await db.stream_scalars(query)
+        count = 0
+        async for session in result:
+            writer.writerow(_rover_session_history_csv_row(session))
+            count += 1
+            if count % 256 == 0:
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+        if buffer.tell():
+            yield buffer.getvalue()
+
+
 @router.get("/api/rovers/history/export/csv")
 async def export_rover_session_history_csv(
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -146,57 +202,8 @@ async def export_rover_session_history_csv(
         query = query.where(func.lower(models.RoverSessionHistory.username).in_(usernames))
     query = query.order_by(models.RoverSessionHistory.last_seen_at.desc())
 
-    def safe(value):
-        if value is None:
-            return ""
-        if isinstance(value, str) and re.match(r"^\s*[=+\-@]", value):
-            return "'" + value
-        return value
-
-    async def csv_stream():
-        buffer = io.StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow([
-            "username", "server", "mountpoint", "receiver_id", "client_id",
-            "started_at_unix", "last_seen_at_unix", "ended_at_unix",
-            "latitude", "longitude", "position_updated_at_unix", "google_maps_url",
-            "position_fix_quality",
-        ])
-        yield "\ufeff" + buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate(0)
-
-        async with auth_session_scope() as db:
-            result = await db.stream_scalars(query)
-            count = 0
-            async for session in result:
-                has_position = (
-                    session.position_fix_quality == 4
-                    and session.latitude is not None
-                    and session.longitude is not None
-                )
-                maps_url = (
-                    f"https://www.google.com/maps/search/?api=1&query={session.latitude},{session.longitude}"
-                    if has_position else ""
-                )
-                writer.writerow([
-                    safe(session.username), safe(session.server), safe(session.mountpoint),
-                    safe(session.receiver_id), safe(session.client_id),
-                    safe(session.started_at), safe(session.last_seen_at), safe(session.ended_at),
-                    session.latitude if has_position else "", session.longitude if has_position else "",
-                    safe(session.position_updated_at) if has_position else "", maps_url,
-                    session.position_fix_quality if has_position else "",
-                ])
-                count += 1
-                if count % 256 == 0:
-                    yield buffer.getvalue()
-                    buffer.seek(0)
-                    buffer.truncate(0)
-            if buffer.tell():
-                yield buffer.getvalue()
-
     return StreamingResponse(
-        csv_stream(),
+        _rover_session_history_csv_stream(query),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=rover-session-history.csv"},
     )

@@ -239,6 +239,43 @@ async def ui_broadcast_worker_task():
             ui_broadcast_queue.task_done()
 
 
+def _outbound_status_message(message, data, serial):
+    outbound = message
+    if "_drop_if_device_missing" in message:
+        outbound = dict(message)
+        outbound.pop("_drop_if_device_missing", None)
+    if serial.lower().startswith("esp_"):
+        from .esp_base_manager import get_esp_setup_status
+        outbound = {
+            **outbound,
+            "data": {
+                **data,
+                "esp_setup": get_esp_setup_status(serial, str(data.get("status_boot_id") or "")),
+            },
+        }
+    return outbound
+
+
+async def _broadcast_status_message(message):
+    data = message.get("data") or {}
+    serial = str(message.get("serial") or data.get("serial") or "").strip()
+    async with _get_ui_status_emit_lock(serial):
+        if mqtt_handler.device_was_deleted(serial):
+            return
+        if message.get("_drop_if_device_missing") and mqtt_handler.device_metadata_is_missing(serial):
+            return
+        # Đồng bộ caster tại điểm nhận chung của MQTT, WebSocket và thông báo hết hạn heartbeat.
+        # Dùng trạng thái trong bản tin mới vì dữ liệu DB có thể chưa ghi xong.
+        try:
+            async with device_session_scope() as db:
+                device = await crud.get_device_by_serial(db, serial)
+                if device:
+                    await _on_device_status_update(device, data)
+        except Exception as exc:
+            logger.warning("[CASTER SYNC] Status sync failed for %s: %s", serial, exc)
+        await ui_manager.broadcast(_outbound_status_message(message, data, serial))
+
+
 async def ui_status_broadcast_worker_task():
     """Coalesce bursts per station without dropping another station's update."""
     while True:
@@ -250,31 +287,7 @@ async def ui_status_broadcast_worker_task():
             pending_ui_status_event.clear()
         for message in batch:
             try:
-                data = message.get("data") or {}
-                serial = str(message.get("serial") or data.get("serial") or "").strip()
-                async with _get_ui_status_emit_lock(serial):
-                    if mqtt_handler.device_was_deleted(serial):
-                        continue
-                    if message.get("_drop_if_device_missing") and mqtt_handler.device_metadata_is_missing(serial):
-                        continue
-                    # Đồng bộ caster tại điểm nhận chung của MQTT, WebSocket và thông báo hết hạn heartbeat.
-                    # Dùng trạng thái trong bản tin mới vì dữ liệu DB có thể chưa ghi xong.
-                    try:
-                        async with device_session_scope() as db:
-                            device = await crud.get_device_by_serial(db, serial)
-                            if device:
-                                await _on_device_status_update(device, data)
-                    except Exception as exc:
-                        logger.warning("[CASTER SYNC] Status sync failed for %s: %s", serial, exc)
-                    outbound = message
-                    if "_drop_if_device_missing" in message:
-                        outbound = dict(message)
-                        outbound.pop("_drop_if_device_missing", None)
-                    if serial.lower().startswith("esp_"):
-                        from .esp_base_manager import get_esp_setup_status
-                        outbound = {**outbound, "data": {**data, "esp_setup": get_esp_setup_status(
-                            serial, str(data.get("status_boot_id") or ""))}}
-                    await ui_manager.broadcast(outbound)
+                await _broadcast_status_message(message)
             except Exception as exc:
                 logger.warning("UI status broadcast worker error: %s", exc)
 

@@ -1259,30 +1259,17 @@ async def block_ip_manually(
 # === SESSION & DEVICE ACCESS CONTROL (Quản lý phiên đăng nhập & Chặn máy)   ===
 # ==============================================================================
 
-@app.get("/api/admin/security/sessions", responses={403: {"description": "Forbidden"}, 422: {"description": "Unprocessable Entity"}})
-async def get_admin_sessions(
-    request: Request,
-    auth_db: AsyncSession = Depends(get_auth_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
-    history_page: int = 0,
-):
-    """Lấy danh sách các phiên đăng nhập đang hoạt động và các máy tính bị chặn."""
-    if current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Chỉ admin được xem danh sách phiên đăng nhập")
-    if history_page < 0:
-        raise HTTPException(status_code=422, detail="Trang lịch sử phải lớn hơn 0")
-
+def _admin_current_session_id(request: Request):
     auth_header = request.headers.get("Authorization", "")
-    current_sid = None
-    if auth_header.startswith("Bearer "):
-        try:
-            token_payload = auth.decode_token(auth_header.split(" ", 1)[1])
-            current_sid = token_payload.get("sid")
-        except Exception:
-            pass
+    if not auth_header.startswith("Bearer "):
+        return None
+    try:
+        return auth.decode_token(auth_header.split(" ", 1)[1]).get("sid")
+    except Exception:
+        return None
 
-    now = int(time.time())
-    # Online requires a recent authenticated signal, not merely a valid token.
+
+async def _admin_session_query(auth_db: AsyncSession, history_page: int, now: int):
     stmt = (
         select(models.UserSession)
         .filter(
@@ -1301,63 +1288,91 @@ async def get_admin_sessions(
             models.UserSession.created_at.desc(), models.UserSession.id.desc()
         ).offset((history_page - 1) * 20).limit(20)
         pagination = {"page": history_page, "pages": pages, "page_size": 20, "total": total}
+    return stmt, pagination, history_page
+
+
+async def _update_admin_session_local_ip(auth_db, sessions, request, current_sid):
+    req_local_ip = request.headers.get("x-local-ip")
+    if not req_local_ip or not current_sid:
+        return
+    for session in sessions:
+        if session.session_id == current_sid and not session.local_ip:
+            session.local_ip = req_local_ip
+            await auth_db.commit()
+            return
+
+
+async def _admin_session_full_names(auth_db: AsyncSession, sessions):
+    user_ids = {session.user_id for session in sessions}
+    if not user_ids:
+        return {}
+    users_result = await auth_db.execute(select(models.User).filter(models.User.id.in_(user_ids)))
+    return {user.id: user.full_name or user.username for user in users_result.scalars().all()}
+
+
+def _admin_session_payload(session, full_name_map, current_sid, current_user, now):
+    return {
+        "session_id": session.session_id,
+        "username": session.username,
+        "full_name": full_name_map.get(session.user_id, session.username),
+        "role": session.role,
+        "ip_address": session.ip_address,
+        "local_ip": session.local_ip,
+        "device_id": session.device_id,
+        "device_name": client_device_name(session.user_agent, session.device_name or ""),
+        "user_agent": session.user_agent,
+        "created_at": session.created_at,
+        "last_active_at": session.last_active_at,
+        "expires_at": session.expires_at,
+        "is_revoked": session.is_revoked,
+        "is_expired": session.expires_at <= now,
+        "is_online": not session.is_revoked and session.expires_at > now and session.last_active_at > now - auth.SESSION_ONLINE_WINDOW_SECONDS,
+        "is_current": (session.session_id == current_sid if current_sid else (session.user_id == current_user.id))
+    }
+
+
+def _admin_blocked_device_payload(device):
+    return {
+        "device_id": device.device_id,
+        "device_name": device.device_name or "Thiết bị",
+        "local_ip": device.local_ip,
+        "last_ip": device.last_ip,
+        "username": device.username,
+        "blocked_at": device.blocked_at,
+        "blocked_by": device.blocked_by,
+        "reason": device.reason or "Chặn bởi quản trị viên"
+    }
+
+
+@app.get("/api/admin/security/sessions", responses={403: {"description": "Forbidden"}, 422: {"description": "Unprocessable Entity"}})
+async def get_admin_sessions(
+    request: Request,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+    history_page: int = 0,
+):
+    """Lấy danh sách các phiên đăng nhập đang hoạt động và các máy tính bị chặn."""
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được xem danh sách phiên đăng nhập")
+    if history_page < 0:
+        raise HTTPException(status_code=422, detail="Trang lịch sử phải lớn hơn 0")
+
+    current_sid = _admin_current_session_id(request)
+    now = int(time.time())
+    # Online requires a recent authenticated signal, not merely a valid token.
+    stmt, pagination, history_page = await _admin_session_query(auth_db, history_page, now)
     result = await auth_db.execute(stmt)
     sessions = list(result.scalars().all())
-
-    req_local_ip = request.headers.get("x-local-ip")
-    if req_local_ip and current_sid:
-        for session in sessions:
-            if session.session_id == current_sid and not session.local_ip:
-                session.local_ip = req_local_ip
-                await auth_db.commit()
-                break
+    await _update_admin_session_local_ip(auth_db, sessions, request, current_sid)
 
     # Lấy danh sách máy tính bị chặn
     blocked_stmt = select(models.BlockedDevice).order_by(models.BlockedDevice.blocked_at.desc())
     blocked_result = await auth_db.execute(blocked_stmt)
     blocked_devices = blocked_result.scalars().all()
 
-    # Map tên đầy đủ của user
-    user_ids = {s.user_id for s in sessions}
-    full_name_map = {}
-    if user_ids:
-        users_result = await auth_db.execute(select(models.User).filter(models.User.id.in_(user_ids)))
-        for u in users_result.scalars().all():
-            full_name_map[u.id] = u.full_name or u.username
-
-    session_list = []
-    for s in sessions:
-        session_list.append({
-            "session_id": s.session_id,
-            "username": s.username,
-            "full_name": full_name_map.get(s.user_id, s.username),
-            "role": s.role,
-            "ip_address": s.ip_address,
-            "local_ip": s.local_ip,
-            "device_id": s.device_id,
-            "device_name": client_device_name(s.user_agent, s.device_name or ""),
-            "user_agent": s.user_agent,
-            "created_at": s.created_at,
-            "last_active_at": s.last_active_at,
-            "expires_at": s.expires_at,
-            "is_revoked": s.is_revoked,
-            "is_expired": s.expires_at <= now,
-            "is_online": not s.is_revoked and s.expires_at > now and s.last_active_at > now - auth.SESSION_ONLINE_WINDOW_SECONDS,
-            "is_current": (s.session_id == current_sid if current_sid else (s.user_id == current_user.id))
-        })
-
-    blocked_list = []
-    for b in blocked_devices:
-        blocked_list.append({
-            "device_id": b.device_id,
-            "device_name": b.device_name or "Thiết bị",
-            "local_ip": b.local_ip,
-            "last_ip": b.last_ip,
-            "username": b.username,
-            "blocked_at": b.blocked_at,
-            "blocked_by": b.blocked_by,
-            "reason": b.reason or "Chặn bởi quản trị viên"
-        })
+    full_name_map = await _admin_session_full_names(auth_db, sessions)
+    session_list = [_admin_session_payload(s, full_name_map, current_sid, current_user, now) for s in sessions]
+    blocked_list = [_admin_blocked_device_payload(device) for device in blocked_devices]
 
     return {
         "status": "ok",
