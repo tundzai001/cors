@@ -993,26 +993,40 @@ function getRoverServerBadges(infos, targetHosts) {
     </span>`).join('');
 }
 
-function getRoverRowIcons(rover, infos) {
-    const dbBadge = rover.type === 'db'
-        ? rover.is_active
+    function getRoverAccountBadge(rover) {
+        if (rover.type !== 'db') return '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
+        return rover.is_active
             ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>'
-            : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>'
-        : '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
+            : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>';
+    }
+
+    function getRoverPositionIcon(rover, infos) {
     const hasLiveShowPos = infos.some(info => typeof info?.show_position !== 'undefined');
     const actualShowPos = hasLiveShowPos ? infos.every(info => info?.show_position !== false) : rover.show_position;
-    const showPosIcon = actualShowPos
+        return actualShowPos
         ? '<i class="bi bi-eye-fill text-primary" title="Vị trí đang HIỆN (Live)"></i>'
         : '<i class="bi bi-eye-slash text-muted opacity-50" title="Vị trí đang ẨN (Live)"></i>';
-    const autoSaveFixedPointsEnabled = rover.type === 'db' && rover.auto_save_fixed_points === true;
-    const autoSaveSessionsEnabled = rover.type === 'db' && rover.auto_save_sessions !== false;
-    const autoSaveFixedPointsIcon = rover.type === 'db'
-        ? `<span role="img" aria-label="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'bật' : 'tắt'}" title="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi ${autoSaveFixedPointsEnabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'}" aria-hidden="true"></i></span>`
-        : '';
-    const autoSaveSessionsIcon = rover.type === 'db'
-        ? `<span role="img" aria-label="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'bật' : 'tắt'}" title="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi bi-clock-history ${autoSaveSessionsEnabled ? 'text-success' : 'text-muted opacity-50'}" aria-hidden="true"></i></span>`
-        : '';
-    return {dbBadge, showPosIcon, autoSaveFixedPointsIcon, autoSaveSessionsIcon};
+    }
+
+    function getAutoSaveIcon(rover, fixedPoints) {
+        if (rover.type !== 'db') return '';
+        const enabled = fixedPoints ? rover.auto_save_fixed_points === true : rover.auto_save_sessions !== false;
+        const label = fixedPoints ? 'điểm vị trí' : 'phiên Rover';
+        const stateLabel = enabled ? 'bật' : 'tắt';
+        const icon = fixedPoints
+            ? enabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'
+            : `bi-clock-history ${enabled ? 'text-success' : 'text-muted opacity-50'}`;
+        const titleState = enabled ? 'BẬT' : 'TẮT';
+        return `<span role="img" aria-label="Tự lưu ${label} đang ${stateLabel}" title="Tự lưu ${label} đang ${titleState}"><i class="bi ${icon}" aria-hidden="true"></i></span>`;
+    }
+
+    function getRoverRowIcons(rover, infos) {
+        return {
+            dbBadge: getRoverAccountBadge(rover),
+            showPosIcon: getRoverPositionIcon(rover, infos),
+            autoSaveFixedPointsIcon: getAutoSaveIcon(rover, true),
+            autoSaveSessionsIcon: getAutoSaveIcon(rover, false),
+        };
 }
 
 function getRoverConnectionLimit(r, infos) {

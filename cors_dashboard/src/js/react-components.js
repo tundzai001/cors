@@ -531,6 +531,145 @@ const getDistanceMeters = (lat1, lon1, lat2, lon2) => {
     return R * c;
 };
 
+function getRoverMarkerKey(rover) {
+    return `${rover.username || 'unknown'}_${rover.receiver_id || '0'}`;
+}
+
+function getRoverPopupContent(rover) {
+    const statusMeta = getRoverStatusMeta(rover.status);
+    return `<div style="color: #333; min-width: 180px;">
+        <strong>Rover: ${escapeHtmlReact(rover.username || 'N/A')}</strong><br>
+        <span class="badge text-bg-dark">RX: ${escapeHtmlReact(rover.receiver_id || 'N/A')}</span>
+        <span class="badge text-bg-primary ms-1">${escapeHtmlReact(rover.mountpoint || 'N/A')}</span><br>
+        Status: <b>${escapeHtmlReact(statusMeta.label)}</b> | nSV: <b>${escapeHtmlReact(rover.nsv ?? 'N/A')}</b>
+    </div>`;
+}
+
+function updateRoverMapMarker(rover, key, lat, lon, popupContent, context) {
+    const {roverMarkers, ensureMarkerVisible, minMoveMeters, maxSmoothMoveMeters} = context;
+    const statusMeta = getRoverStatusMeta(rover.status);
+    const marker = roverMarkers[key];
+    if (!marker) {
+        const created = createRoverMarker(lat, lon, statusMeta.color).bindPopup(popupContent);
+        created.__statusColor = statusMeta.color;
+        created.__popupHtml = popupContent;
+        roverMarkers[key] = created;
+        ensureMarkerVisible(created);
+        return;
+    }
+
+    const current = marker.getLatLng();
+    const distance = getDistanceMeters(current.lat, current.lng, lat, lon);
+    if (distance >= minMoveMeters) {
+        if (distance <= maxSmoothMoveMeters) animateMarkerLatLng(marker, lat, lon, 550);
+        else marker.setLatLng([lat, lon]);
+    }
+    if (marker.__statusColor !== statusMeta.color) {
+        marker.setIcon(createRoverIcon(statusMeta.color));
+        marker.__statusColor = statusMeta.color;
+    }
+    if (marker.__popupHtml !== popupContent) {
+        marker.setPopupContent(popupContent);
+        marker.__popupHtml = popupContent;
+    }
+    ensureMarkerVisible(marker);
+}
+
+function tuneRoverChunkSize(elapsedMs, chunkSizeRef, minChunk, maxChunk) {
+    if (elapsedMs > 14 && chunkSizeRef.current > minChunk) {
+        chunkSizeRef.current = Math.max(minChunk, chunkSizeRef.current - 4);
+    } else if (elapsedMs < 7 && chunkSizeRef.current < maxChunk) {
+        chunkSizeRef.current = Math.min(maxChunk, chunkSizeRef.current + 2);
+    }
+}
+
+function removeStaleRoverMarkers(roverMarkers, showRovers, validRoverKeys, ensureMarkerHidden) {
+    Object.keys(roverMarkers).forEach(key => {
+        if (showRovers && validRoverKeys.has(key)) return;
+        const marker = roverMarkers[key];
+        if (marker.__animFrame) {
+            cancelAnimationFrame(marker.__animFrame);
+            marker.__animFrame = null;
+        }
+        ensureMarkerHidden(marker);
+        delete roverMarkers[key];
+    });
+}
+
+function getBaseCoordinates(device) {
+    const config = device?.base_config;
+    if (!config) return null;
+    if (config.coords && config.coords.lat && config.coords.lon) return config.coords;
+    if (config.lat !== undefined && config.lon !== undefined) return {lat: config.lat, lon: config.lon, alt: config.alt};
+    return null;
+}
+
+function findNearestBase(devices, lat, lon) {
+    let best = null;
+    let bestDistance = Infinity;
+    devices.forEach(device => {
+        const coords = getBaseCoordinates(device);
+        const distance = (window.getDistanceMeters || getDistanceMeters)(
+            lat, lon, Number.parseFloat(coords.lat), Number.parseFloat(coords.lon));
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = device;
+        }
+    });
+    return best ? {device: best, dist: bestDistance} : null;
+}
+
+function drawNearestStationLine(leaflet, map, location, target, color, label) {
+    if (!target) return null;
+    const coords = getBaseCoordinates(target.device);
+    const tLat = Number.parseFloat(coords.lat);
+    const tLon = Number.parseFloat(coords.lon);
+    const distKm = (target.dist / 1000).toFixed(2);
+    const stationName = target.device.name || target.device.serial;
+    const line = leaflet.polyline([[location.lat, location.lon], [tLat, tLon]], {
+        color, weight: 5, opacity: 1.0, dashArray: '12, 12', lineCap: 'round', lineJoin: 'round',
+    }).addTo(map);
+    line.bindTooltip(
+        `<div style="font-size: 13px; font-weight: bold; color: ${color}; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; white-space: nowrap;">
+            ${label} ${escapeHtmlReact(stationName)}: ${distKm} km
+        </div>`,
+        {permanent: true, direction: 'center', className: 'bg-transparent border-0 shadow-none'}
+    ).openTooltip();
+    return {line};
+}
+
+function drawNearestStationConnections({
+    lat, lon, locationName, safeLocationName, nearestConnected, nearestOffline,
+    map, leaflet, userMarkerRef, polylinesRef,
+}) {
+    if (!leaflet || !map) return;
+    if (userMarkerRef.current) map.removeLayer(userMarkerRef.current);
+    polylinesRef.current.forEach(item => {
+        map.removeLayer(item.line);
+        if (item.tooltip) map.removeLayer(item.tooltip);
+    });
+    polylinesRef.current = [];
+
+    const color = locationName === 'Vị trí của bạn' ? '#007bff' : '#ffc107';
+    const iconHtml = `<div style="background-color: ${color}; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`;
+    const userIcon = leaflet.divIcon({className: 'custom-div-icon', html: iconHtml, iconSize: [16, 16], iconAnchor: [8, 8]});
+    userMarkerRef.current = leaflet.marker([lat, lon], {icon: userIcon}).addTo(map)
+        .bindPopup(`<b>${escapeHtmlReact(safeLocationName.split('(')[0])}</b>`).openPopup();
+
+    const connectedLine = drawNearestStationLine(leaflet, map, {lat, lon}, nearestConnected, '#00ff00', '🟢');
+    if (connectedLine) polylinesRef.current.push(connectedLine);
+    const offlineLine = drawNearestStationLine(leaflet, map, {lat, lon}, nearestOffline, '#ff3333', '🔴');
+    if (offlineLine) polylinesRef.current.push(offlineLine);
+
+    const allBounds = leaflet.latLngBounds([[lat, lon]]);
+    [nearestConnected, nearestOffline].forEach(target => {
+        if (!target) return;
+        const coords = getBaseCoordinates(target.device);
+        allBounds.extend([Number.parseFloat(coords.lat), Number.parseFloat(coords.lon)]);
+    });
+    map.flyToBounds(allBounds, {padding: [60, 60], maxZoom: 14, duration: 1.5});
+}
+
 const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
@@ -839,92 +978,35 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             : [];
 
         let cursor = 0;
+        const markerContext = {
+            roverMarkers, ensureMarkerVisible, minMoveMeters: MIN_MOVE_METERS,
+            maxSmoothMoveMeters: MAX_SMOOTH_MOVE_METERS,
+        };
         const processChunk = () => {
             const currentChunkSize = roverChunkSizeRef.current;
             const chunkStartTs = performance.now();
             const end = Math.min(cursor + currentChunkSize, visibleRovers.length);
-
             for (let i = cursor; i < end; i++) {
                 const rover = visibleRovers[i];
                 const lat = Number(rover.latitude);
                 const lon = Number(rover.longitude);
-                const key = `${rover.username || 'unknown'}_${rover.receiver_id || '0'}`;
+                const key = getRoverMarkerKey(rover);
                 validRoverKeys.add(key);
                 bounds.push([lat, lon]);
-
-                const statusMeta = getRoverStatusMeta(rover.status);
-                const popupContent = `
-                    <div style="color: #333; min-width: 180px;">
-                        <strong>Rover: ${escapeHtmlReact(rover.username || 'N/A')}</strong><br>
-                        <span class="badge text-bg-dark">RX: ${escapeHtmlReact(rover.receiver_id || 'N/A')}</span>
-                        <span class="badge text-bg-primary ms-1">${escapeHtmlReact(rover.mountpoint || 'N/A')}</span><br>
-                        Status: <b>${escapeHtmlReact(statusMeta.label)}</b> | nSV: <b>${escapeHtmlReact(rover.nsv ?? 'N/A')}</b>
-                    </div>
-                `;
-
-                if (roverMarkers[key]) {
-                    const marker = roverMarkers[key];
-                    const current = marker.getLatLng();
-                    const distance = getDistanceMeters(current.lat, current.lng, lat, lon);
-
-                    if (distance >= MIN_MOVE_METERS) {
-                        if (distance <= MAX_SMOOTH_MOVE_METERS) {
-                            animateMarkerLatLng(marker, lat, lon, 550);
-                        } else {
-                            marker.setLatLng([lat, lon]);
-                        }
-                    }
-
-                    if (marker.__statusColor !== statusMeta.color) {
-                        marker.setIcon(createRoverIcon(statusMeta.color));
-                        marker.__statusColor = statusMeta.color;
-                    }
-                    if (marker.__popupHtml !== popupContent) {
-                        marker.setPopupContent(popupContent);
-                        marker.__popupHtml = popupContent;
-                    }
-                    ensureMarkerVisible(marker);
-                } else {
-                    const marker = createRoverMarker(lat, lon, statusMeta.color).bindPopup(popupContent);
-                    marker.__statusColor = statusMeta.color;
-                    marker.__popupHtml = popupContent;
-                    roverMarkers[key] = marker;
-                    ensureMarkerVisible(marker);
-                }
+                updateRoverMapMarker(rover, key, lat, lon, getRoverPopupContent(rover), markerContext);
             }
 
             cursor = end;
-
-            // Adaptive FPS guard:
-            // - If a chunk takes too long, reduce work per frame.
-            // - If chunks are consistently fast, increase gradually.
-            const elapsed = performance.now() - chunkStartTs;
-            if (elapsed > 14 && roverChunkSizeRef.current > MIN_CHUNK) {
-                roverChunkSizeRef.current = Math.max(MIN_CHUNK, roverChunkSizeRef.current - 4);
-            } else if (elapsed < 7 && roverChunkSizeRef.current < MAX_CHUNK) {
-                roverChunkSizeRef.current = Math.min(MAX_CHUNK, roverChunkSizeRef.current + 2);
-            }
-
+            tuneRoverChunkSize(performance.now() - chunkStartTs, roverChunkSizeRef, MIN_CHUNK, MAX_CHUNK);
             if (cursor < visibleRovers.length) {
                 roverProcessFrameRef.current = requestAnimationFrame(processChunk);
                 return;
             }
 
             roverProcessFrameRef.current = null;
-
-            Object.keys(roverMarkers).forEach((key) => {
-                if (!showRovers || !validRoverKeys.has(key)) {
-                    if (roverMarkers[key].__animFrame) {
-                        cancelAnimationFrame(roverMarkers[key].__animFrame);
-                        roverMarkers[key].__animFrame = null;
-                    }
-                    ensureMarkerHidden(roverMarkers[key]);
-                    delete roverMarkers[key];
-                }
-            });
-
-            if (bounds.length > 0 && !map.fitted) {
-                map.fitBounds(bounds, { padding: [50, 50] });
+            removeStaleRoverMarkers(roverMarkers, showRovers, validRoverKeys, ensureMarkerHidden);
+            if (bounds.length && !map.fitted) {
+                map.fitBounds(bounds, {padding: [50, 50]});
                 map.fitted = true;
             }
         };
@@ -959,132 +1041,35 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
     };
 
     const findNearestFromCoords = (lat, lon, locationName = "Vị trí của bạn") => {
-        // Helper: extract coords from device consistently
-        const getDeviceCoords = (d) => {
-            const bc = d?.base_config;
-            if (!bc) return null;
-            if (bc.coords && bc.coords.lat && bc.coords.lon) return bc.coords;
-            if (bc.lat !== undefined && bc.lon !== undefined) return { lat: bc.lat, lon: bc.lon, alt: bc.alt };
-            return null;
-        };
-        // Lấy tất cả các trạm có tọa độ
-        const validDevices = devices.filter(d => getDeviceCoords(d) !== null);
-
-        if (validDevices.length === 0) {
+        const validDevices = devices.filter(device => getBaseCoordinates(device) !== null);
+        if (!validDevices.length) {
             if (window.showError) window.showError("Không có trạm Base nào có tọa độ hợp lệ trên hệ thống.");
             return;
         }
 
-        // Tách riêng trạm kết nối (online hoặc có BPS > 0) và offline
-        // BPS > 0 có nghĩa là trạm vẫn truyền dữ liệu (kể cả khi sleep)
-        const connectedDevices = validDevices.filter(d =>
-            d.status === 'online' || (d.bps && d.bps > 0)
-        );
-        const offlineDevices = validDevices.filter(d =>
-            d.status !== 'online' && (!d.bps || d.bps === 0)
-        );
-
-        // Hàm tính khoảng cách
-        const calcDist = (d) => {
-            const coords = getDeviceCoords(d);
-            return window.getDistanceMeters
-                ? window.getDistanceMeters(lat, lon, Number.parseFloat(coords.lat), Number.parseFloat(coords.lon))
-                : getDistanceMeters(lat, lon, Number.parseFloat(coords.lat), Number.parseFloat(coords.lon));
-        };
-
-        // Tìm trạm gần nhất trong 1 danh sách
-        const findNearest = (list) => {
-            let best = null, bestDist = Infinity;
-            list.forEach(d => {
-                const dist = calcDist(d);
-                if (dist < bestDist) { bestDist = dist; best = d; }
-            });
-            return best ? { device: best, dist: bestDist } : null;
-        };
-
-        const nearestConnected = findNearest(connectedDevices);
-        const nearestOffline = findNearest(offlineDevices);
-
+        const connectedDevices = validDevices.filter(device =>
+            device.status === 'online' || (device.bps && device.bps > 0));
+        const offlineDevices = validDevices.filter(device =>
+            device.status !== 'online' && (!device.bps || device.bps === 0));
+        const nearestConnected = findNearestBase(connectedDevices, lat, lon);
+        const nearestOffline = findNearestBase(offlineDevices, lat, lon);
         if (!nearestConnected && !nearestOffline) {
             if (window.showError) window.showError("Không tìm thấy trạm Base nào phù hợp.");
             return;
         }
 
-        // Thông báo kết quả
         const safeLocationName = String(locationName || 'Vị trí của bạn');
-        const textPrefix = safeLocationName === "Vị trí của bạn" ? "Trạm gần nhất" : `Gần ${safeLocationName.split(',')[0]} nhất`;
-        let msg = [];
-        if (nearestConnected) msg.push(`🟢 CONNECTED: ${nearestConnected.device.name || nearestConnected.device.serial} (${(nearestConnected.dist / 1000).toFixed(2)} km)`);
-        if (nearestOffline) msg.push(`🔴 OFFLINE: ${nearestOffline.device.name || nearestOffline.device.serial} (${(nearestOffline.dist / 1000).toFixed(2)} km)`);
-        if (window.showSuccess) window.showSuccess(`${textPrefix} — ${msg.join(' | ')}`);
+        const textPrefix = safeLocationName === "Vị trí của bạn"
+            ? "Trạm gần nhất" : `Gần ${safeLocationName.split(',')[0]} nhất`;
+        const messages = [];
+        if (nearestConnected) messages.push(`🟢 CONNECTED: ${nearestConnected.device.name || nearestConnected.device.serial} (${(nearestConnected.dist / 1000).toFixed(2)} km)`);
+        if (nearestOffline) messages.push(`🔴 OFFLINE: ${nearestOffline.device.name || nearestOffline.device.serial} (${(nearestOffline.dist / 1000).toFixed(2)} km)`);
+        if (window.showSuccess) window.showSuccess(`${textPrefix} — ${messages.join(' | ')}`);
 
-        const leaflet = getLeaflet();
-        const map = mapInstanceRef.current;
-        if (leaflet && map) {
-            // Xóa các đường cũ
-            if (userMarkerRef.current) map.removeLayer(userMarkerRef.current);
-            polylinesRef.current.forEach(item => {
-                map.removeLayer(item.line);
-                if (item.tooltip) map.removeLayer(item.tooltip);
-            });
-            polylinesRef.current = [];
-
-            // Marker vị trí người dùng
-            const iconHtml = locationName === "Vị trí của bạn"
-                ? `<div style="background-color: #007bff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`
-                : `<div style="background-color: #ffc107; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`;
-            const userIcon = leaflet.divIcon({ className: 'custom-div-icon', html: iconHtml, iconSize: [16, 16], iconAnchor: [8, 8] });
-            userMarkerRef.current = leaflet.marker([lat, lon], { icon: userIcon }).addTo(map)
-                .bindPopup(`<b>${escapeHtmlReact(safeLocationName.split('(')[0])}</b>`).openPopup();
-
-            // Hàm vẽ 1 đường nối
-            const drawLine = (target, color, label) => {
-                if (!target) return null;
-                const tCoords = getDeviceCoords(target.device);
-                const tLat = Number.parseFloat(tCoords.lat);
-                const tLon = Number.parseFloat(tCoords.lon);
-                const distKm = (target.dist / 1000).toFixed(2);
-                const stationName = target.device.name || target.device.serial;
-
-                const line = leaflet.polyline([[lat, lon], [tLat, tLon]], {
-                    color: color,
-                    weight: 5,
-                    opacity: 1.0,
-                    dashArray: '12, 12',
-                    lineCap: 'round',
-                    lineJoin: 'round'
-                }).addTo(map);
-
-                line.bindTooltip(
-                    `<div style="font-size: 13px; font-weight: bold; color: ${color}; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; white-space: nowrap;">
-                        ${label} ${escapeHtmlReact(stationName)}: ${distKm} km
-                    </div>`,
-                    { permanent: true, direction: 'center', className: 'bg-transparent border-0 shadow-none' }
-                ).openTooltip();
-
-                return { line };
-            };
-
-            // Vẽ đường xanh lá đến trạm kết nối gần nhất (online hoặc có BPS)
-            const connectedLine = drawLine(nearestConnected, '#00ff00', '🟢');
-            if (connectedLine) polylinesRef.current.push(connectedLine);
-
-            // Vẽ đường đỏ đến trạm offline gần nhất
-            const offlineLine = drawLine(nearestOffline, '#ff3333', '🔴');
-            if (offlineLine) polylinesRef.current.push(offlineLine);
-
-            // Zoom bao trọn tất cả đường nối
-            const allBounds = leaflet.latLngBounds([[lat, lon]]);
-            if (nearestConnected) {
-                const cCoords = getDeviceCoords(nearestConnected.device);
-                allBounds.extend([Number.parseFloat(cCoords.lat), Number.parseFloat(cCoords.lon)]);
-            }
-            if (nearestOffline) {
-                const oCoords = getDeviceCoords(nearestOffline.device);
-                allBounds.extend([Number.parseFloat(oCoords.lat), Number.parseFloat(oCoords.lon)]);
-            }
-            map.flyToBounds(allBounds, { padding: [60, 60], maxZoom: 14, duration: 1.5 });
-        }
+        drawNearestStationConnections({
+            lat, lon, locationName, safeLocationName, nearestConnected, nearestOffline,
+            map: mapInstanceRef.current, leaflet: getLeaflet(), userMarkerRef, polylinesRef,
+        });
     };
 
     const handleFindNearest = () => {

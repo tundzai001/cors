@@ -225,39 +225,36 @@ function queueMapRender() {
     });
 }
 
+function scheduleDashboardRender() {
+    const waitMs = Math.max(0, RENDER_INTERVAL - (Date.now() - lastRenderTime));
+    if (waitMs === 0) {
+        queueDashboardRender();
+        return;
+    }
+    if (dashboardTimerId) clearTimeout(dashboardTimerId);
+    dashboardTimerId = setTimeout(queueDashboardRender, waitMs);
+}
+
+function scheduleMapRender(priority) {
+    mapNeedsUpdate = true;
+    const baseWait = Math.max(0, MAP_RENDER_INTERVAL - (Date.now() - lastMapRenderTime));
+    const lowPriorityDelay = priority === 'low' ? 120 : 0;
+    const waitMs = baseWait + lowPriorityDelay;
+    if (waitMs === 0) {
+        queueMapRender();
+        return;
+    }
+    if (mapTimerId) clearTimeout(mapTimerId);
+    mapTimerId = setTimeout(queueMapRender, waitMs);
+}
+
 function scheduleRender(priority = 'high') {
     if (priority === 'high') {
         deviceListNeedsUpdate = true;
         detailsPanelNeedsUpdate = true;
-
-        if (globalState.currentView === 'dashboard') {
-            const now = Date.now();
-            const waitMs = Math.max(0, RENDER_INTERVAL - (now - lastRenderTime));
-            if (waitMs === 0) {
-                queueDashboardRender();
-            } else {
-                if (dashboardTimerId) clearTimeout(dashboardTimerId);
-                dashboardTimerId = setTimeout(queueDashboardRender, waitMs);
-            }
-        }
+        if (globalState.currentView === 'dashboard') scheduleDashboardRender();
     }
-
-    // Map render (chậm hơn)
-    if (globalState.currentView === 'map') {
-        mapNeedsUpdate = true;
-
-        const now = Date.now();
-        const baseWait = Math.max(0, MAP_RENDER_INTERVAL - (now - lastMapRenderTime));
-        const lowPriorityDelay = priority === 'low' ? 120 : 0;
-        const waitMs = baseWait + lowPriorityDelay;
-
-        if (waitMs === 0) {
-            queueMapRender();
-        } else {
-            if (mapTimerId) clearTimeout(mapTimerId);
-            mapTimerId = setTimeout(queueMapRender, waitMs);
-        }
-    }
+    if (globalState.currentView === 'map') scheduleMapRender(priority);
 }
 
 // === CACHED FILTERED DEVICES ===

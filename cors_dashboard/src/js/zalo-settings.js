@@ -106,20 +106,37 @@
         return 'Bot chưa sẵn sàng để bật.';
     }
 
-    function syncSystemControls() {
-        const section = document.getElementById('zalo-system-section');
-        if (!section) return;
-
-        const toggle = document.getElementById('zalo-system-toggle');
-        const badge = document.getElementById('zalo-system-badge');
+    function syncSystemLabels(section, enabled, available, sdkAvailable, tokenConfigured) {
         const label = section.querySelector('.zalo-system-switch .form-check-label');
-        const note = document.getElementById('zalo-system-note');
         const description = document.getElementById('zalo-system-description');
+        const note = document.getElementById('zalo-system-note');
+        if (label) label.textContent = enabled ? 'Hệ thống đang bật' : 'Hệ thống đang tắt';
+        if (description) description.textContent = getSystemDescription(available, sdkAvailable, tokenConfigured);
+        if (note) note.textContent = enabled
+            ? 'Khi tắt, webhook / polling và các lệnh bot sẽ dừng; khi bật, bot khởi động lại ngay nếu token hợp lệ.'
+            : 'Bot đang tắt. Các lệnh Zalo, OTP và webhook sẽ không hoạt động cho đến khi bật lại.';
+    }
+
+    function syncSystemActions(enabled, loading, isAdmin) {
         const refreshBtn = document.getElementById('zalo-system-refresh');
         const otpToggle = document.getElementById('otp-toggle-btn');
         const otpCopy = document.getElementById('copy-link-cmd');
         const groupGenerate = document.getElementById('generate-group-otp');
         const groupCopy = document.getElementById('copy-group-otp');
+        if (refreshBtn) refreshBtn.disabled = loading;
+        if (otpToggle) otpToggle.disabled = !enabled;
+        if (otpCopy) otpCopy.disabled = !enabled;
+        if (groupGenerate) groupGenerate.disabled = !enabled || !isAdmin;
+        if (groupCopy) groupCopy.disabled = !enabled;
+        const otpStatus = document.getElementById('otp-status-text');
+        if (otpStatus && !state.otpStreaming) otpStatus.textContent = enabled ? 'Sẵn sàng' : 'Hệ thống đã tắt';
+    }
+
+    function syncSystemControls() {
+        const section = document.getElementById('zalo-system-section');
+        if (!section) return;
+        const toggle = document.getElementById('zalo-system-toggle');
+        const badge = document.getElementById('zalo-system-badge');
 
         const enabled = Boolean(state.system.enabled);
         const running = Boolean(state.system.running);
@@ -132,20 +149,8 @@
             toggle.disabled = state.system.loading || (!available && !enabled);
         }
         syncSystemBadge(badge, enabled, running, available);
-        if (label) label.textContent = enabled ? 'Hệ thống đang bật' : 'Hệ thống đang tắt';
-        if (description) description.textContent = getSystemDescription(available, sdkAvailable, tokenConfigured);
-        if (note) note.textContent = enabled
-            ? 'Khi tắt, webhook / polling và các lệnh bot sẽ dừng; khi bật, bot khởi động lại ngay nếu token hợp lệ.'
-            : 'Bot đang tắt. Các lệnh Zalo, OTP và webhook sẽ không hoạt động cho đến khi bật lại.';
-
-        if (refreshBtn) refreshBtn.disabled = state.system.loading;
-        if (otpToggle) otpToggle.disabled = !enabled;
-        if (otpCopy) otpCopy.disabled = !enabled;
-        if (groupGenerate) groupGenerate.disabled = !enabled || !state.isAdmin;
-        if (groupCopy) groupCopy.disabled = !enabled;
-
-        const otpStatus = document.getElementById('otp-status-text');
-        if (otpStatus && !state.otpStreaming) otpStatus.textContent = enabled ? 'Sẵn sàng' : 'Hệ thống đã tắt';
+        syncSystemLabels(section, enabled, available, sdkAvailable, tokenConfigured);
+        syncSystemActions(enabled, state.system.loading, state.isAdmin);
     }
 
     function corsCheckBadgeText(control) {
