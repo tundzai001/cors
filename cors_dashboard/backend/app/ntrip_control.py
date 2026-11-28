@@ -1071,92 +1071,91 @@ async def rtcm_ntrip_clienttable_keepalive_task():
             logger.exception("[RTCM] Keepalive task error")
 
 
+async def _expired_session_pairs(db, now):
+    result = await db.execute(
+        select(models.RTCMStreamSession.serial, models.RTCMStreamSession.mountpoint)
+        .where(models.RTCMStreamSession.expires_at <= now)
+        .distinct()
+    )
+    return [
+        (str(row[0]), str(row[1]))
+        for row in result.all()
+        if row and row[0] and row[1]
+    ]
+
+
+async def _mark_expired_streams_for_reaping(db, expired_pairs, now, candidates):
+    for serial, expired_mountpoint in expired_pairs:
+        device = await crud.get_device_by_serial(db, serial)
+        expired_mp_norm = _normalize_mountpoint(expired_mountpoint)
+        for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
+            if mountpoint_norm != expired_mp_norm:
+                continue
+            active_count = await _count_active_mountpoint_sessions(db, serial, mountpoint_norm, now)
+            if active_count == 0:
+                candidates.add((serial, server_id, mountpoint_norm))
+
+
+async def _mark_orphaned_streams_for_reaping(db, now, candidates):
+    devices_rs = await db.execute(select(models.Device))
+    for device in devices_rs.scalars().all():
+        serial = str(device.serial)
+        for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
+            remaining = await _count_active_mountpoint_sessions(db, serial, mountpoint_norm, now)
+            if remaining == 0:
+                candidates.add((serial, server_id, mountpoint_norm))
+
+
+async def _collect_reaper_candidates(now):
+    candidates: Set[tuple[str, Optional[int], str]] = set()
+    async with rtcm_session_lock, device_session_scope() as db:
+        expired_pairs = await _expired_session_pairs(db, now)
+        if expired_pairs:
+            await db.execute(
+                delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
+            )
+            await db.commit()
+            await _mark_expired_streams_for_reaping(db, expired_pairs, now, candidates)
+        # Also clear active flags left behind by manual cleanup or stale state.
+        await _mark_orphaned_streams_for_reaping(db, now, candidates)
+    return candidates
+
+
+async def _deactivate_reaper_candidate(serial, server_id, mountpoint_norm):
+    # A wake may arrive between the initial scan and command send. Recheck under
+    # the session lock so a fresh rover is never put to sleep by a stale candidate.
+    async with rtcm_session_lock:
+        async with device_session_scope() as db:
+            device = await crud.get_device_by_serial(db, serial)
+            current_targets = set(_extract_reapable_server_streams(device))
+            if (server_id, mountpoint_norm) not in current_targets:
+                return
+            remaining = await _count_active_mountpoint_sessions(
+                db, serial, mountpoint_norm, int(time.time())
+            )
+            if remaining > 0:
+                return
+
+        server_label = f" S{server_id}" if server_id is not None else ""
+        device_label = f"{serial}@{mountpoint_norm}{server_label}"
+        logger.info(f"[RTCM REAPER] Sending deactivation command to station {device_label}")
+        await _set_station_stream(
+            serial,
+            active=False,
+            mountpoint=mountpoint_norm or None,
+            server_id=server_id,
+        )
+
+
 async def _rtcm_session_reaper_loop():
     while True:
         await asyncio.sleep(5)
-        now = int(time.time())
-        stations_to_deactivate: Set[tuple[str, Optional[int], str]] = set()
-
-        async with rtcm_session_lock, device_session_scope() as db:
-            expired_serials_rs = await db.execute(
-                select(models.RTCMStreamSession.serial, models.RTCMStreamSession.mountpoint)
-                .where(models.RTCMStreamSession.expires_at <= now)
-                .distinct()
-            )
-            expired_pairs = [
-                (str(r[0]), str(r[1]))
-                for r in expired_serials_rs.all()
-                if r and r[0] and r[1]
-            ]
-
-            if expired_pairs:
-                await db.execute(
-                    delete(models.RTCMStreamSession).where(models.RTCMStreamSession.expires_at <= now)
-                )
-                await db.commit()
-
-                for serial, expired_mountpoint in expired_pairs:
-                    device = await crud.get_device_by_serial(db, serial)
-                    expired_mp_norm = _normalize_mountpoint(expired_mountpoint)
-                    for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
-                        if mountpoint_norm != expired_mp_norm:
-                            continue
-                        active_count = await _count_active_mountpoint_sessions(
-                            db,
-                            serial,
-                            mountpoint_norm,
-                            now,
-                        )
-                        if active_count == 0:
-                            stations_to_deactivate.add((serial, server_id, mountpoint_norm))
-
-            # Safety sweep: if stream is marked active but there are no sessions for active mountpoint,
-            # force stream off. This covers manual DB cleanup and stale state scenarios.
-            devices_rs = await db.execute(select(models.Device))
-            for device in devices_rs.scalars().all():
-                for server_id, mountpoint_norm in _extract_reapable_server_streams(device):
-                    remaining_for_active_mp = await _count_active_mountpoint_sessions(
-                        db,
-                        str(device.serial),
-                        mountpoint_norm,
-                        now,
-                    )
-                    if remaining_for_active_mp == 0:
-                        stations_to_deactivate.add(
-                            (str(device.serial), server_id, mountpoint_norm)
-                        )
-
-        for serial, server_id, mountpoint_norm in stations_to_deactivate:
+        candidates = await _collect_reaper_candidates(int(time.time()))
+        for serial, server_id, mountpoint_norm in candidates:
             try:
-                # A wake may arrive between the initial scan and command send.
-                # Re-check under the session lock so a fresh rover is never put
-                # back to sleep by a stale reaper candidate.
-                async with rtcm_session_lock:
-                    async with device_session_scope() as db:
-                        device = await crud.get_device_by_serial(db, serial)
-                        current_targets = set(_extract_reapable_server_streams(device))
-                        if (server_id, mountpoint_norm) not in current_targets:
-                            continue
-                        remaining = await _count_active_mountpoint_sessions(
-                            db,
-                            serial,
-                            mountpoint_norm,
-                            int(time.time()),
-                        )
-                        if remaining > 0:
-                            continue
-
-                    server_label = f" S{server_id}" if server_id is not None else ""
-                    device_label = f"{serial}@{mountpoint_norm}{server_label}"
-                    logger.info(f"[RTCM REAPER] Sending deactivation command to station {device_label}")
-                    await _set_station_stream(
-                        serial,
-                        active=False,
-                        mountpoint=mountpoint_norm or None,
-                        server_id=server_id,
-                    )
-            except Exception as e:
-                logger.warning(f"[RTCM REAPER] Failed to auto-deactivate station '{serial}': {e}")
+                await _deactivate_reaper_candidate(serial, server_id, mountpoint_norm)
+            except Exception as exc:
+                logger.warning(f"[RTCM REAPER] Failed to auto-deactivate station '{serial}': {exc}")
 
 
 async def rtcm_session_reaper_task():

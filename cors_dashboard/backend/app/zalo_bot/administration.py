@@ -117,73 +117,78 @@ class AdministrationMixin:
             )
             return False
 
-    def _find_device_locally(self, identifier: str, devices_list: List[dict]) -> tuple[Optional[dict], Optional[str]]:
-        wanted = str(identifier or "").strip().lower()
-        if not wanted:
-            return None, "Bạn chưa nhập tên hoặc serial trạm."
+    @staticmethod
+    def _device_search_key(value):
+        normalized = unicodedata.normalize("NFD", str(value or "").lower())
+        ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+        return "".join(char for char in ascii_text if char.isalnum())
 
-        def get_search_key(val):
-            normalized = unicodedata.normalize("NFD", str(val or "").lower())
-            ascii_text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-            return "".join(ch for ch in ascii_text if ch.isalnum())
-
-        normalized_wanted = unicodedata.normalize("NFD", wanted)
-        ascii_text = "".join(ch for ch in normalized_wanted if not unicodedata.combining(ch))
+    def _device_search_needles(self, wanted):
+        normalized = unicodedata.normalize("NFD", wanted)
+        ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
         stop_words = {
             "xem", "tim", "kiem", "tra", "cuu", "giup", "toi", "cho", "minh",
             "thong", "tin", "chi", "tiet", "tram", "rover", "tai", "khoan",
         }
-        tokens = [
-            t for t in re.findall(r"[a-z0-9_.-]+", ascii_text)
-            if t not in stop_words
-        ]
-        needles = {get_search_key(wanted)}
-        needles.update(get_search_key(token) for token in tokens)
-        needles = {n for n in needles if len(n) >= 2}
+        tokens = [token for token in re.findall(r"[a-z0-9_.-]+", ascii_text) if token not in stop_words]
+        needles = {self._device_search_key(wanted)}
+        needles.update(self._device_search_key(token) for token in tokens)
+        return {needle for needle in needles if len(needle) >= 2}
 
+    def _score_local_device(self, device, needles):
+        name_key = self._device_search_key(device.get("name") or "")
+        serial_key = self._device_search_key(device.get("serial") or "")
+        score = 0
+        for needle in needles:
+            if needle == name_key:
+                score += 10
+            if needle == serial_key:
+                score += 10
+            if len(needle) >= 10 and needle.isdigit() and needle == serial_key:
+                score += 20
+            if len(needle) >= 3:
+                if needle != name_key and name_key and needle in name_key:
+                    score += 3
+                if needle != serial_key and serial_key and needle in serial_key:
+                    score += 3
+        return score
+
+    def _rank_local_devices(self, devices_list, needles):
         scored_devices = []
-        for dev in devices_list:
-            score = 0
-            name_key = get_search_key(dev.get("name") or "")
-            serial_key = get_search_key(dev.get("serial") or "")
-            for needle in needles:
-                if needle == name_key:
-                    score += 10
-                if needle == serial_key:
-                    score += 10
-                if len(needle) >= 10 and needle.isdigit() and needle == serial_key:
-                    score += 20
-                if len(needle) >= 3:
-                    if needle != name_key and name_key and needle in name_key:
-                        score += 3
-                    if needle != serial_key and serial_key and needle in serial_key:
-                        score += 3
+        for device in devices_list:
+            score = self._score_local_device(device, needles)
             if score > 0:
-                scored_devices.append((dev, score))
+                scored_devices.append((device, score))
+        return scored_devices
 
-        scored_devices.sort(key=lambda x: -x[1])
-        if not scored_devices:
-            label_lookup = {}
-            for dev in devices_list:
-                k = get_search_key(dev.get("name") or dev.get("serial") or "")
-                if k:
-                    label_lookup[k] = f"trạm {dev.get('name') or dev.get('serial')}"
-            suggestion_keys = difflib.get_close_matches(
-                get_search_key(wanted), list(label_lookup), n=5, cutoff=0.35
-            )
-            if suggestion_keys:
-                sugs = ", ".join(label_lookup[k] for k in suggestion_keys)
-                return None, f"Không tìm thấy trạm '{identifier}'. Có phải bạn muốn: {sugs}?"
+    def _suggest_local_device(self, identifier, wanted, devices_list):
+        label_lookup = {}
+        for device in devices_list:
+            key = self._device_search_key(device.get("name") or device.get("serial") or "")
+            if key:
+                label_lookup[key] = f"trạm {device.get('name') or device.get('serial')}"
+        suggestion_keys = difflib.get_close_matches(
+            self._device_search_key(wanted), list(label_lookup), n=5, cutoff=0.35
+        )
+        if not suggestion_keys:
             return None, f"Không tìm thấy trạm '{identifier}'."
+        suggestions = ", ".join(label_lookup[key] for key in suggestion_keys)
+        return None, f"Không tìm thấy trạm '{identifier}'. Có phải bạn muốn: {suggestions}?"
 
+    def _find_device_locally(self, identifier: str, devices_list: List[dict]) -> tuple[Optional[dict], Optional[str]]:
+        wanted = str(identifier or "").strip().lower()
+        if not wanted:
+            return None, "Bạn chưa nhập tên hoặc serial trạm."
+        scored_devices = self._rank_local_devices(devices_list, self._device_search_needles(wanted))
+        if not scored_devices:
+            return self._suggest_local_device(identifier, wanted, devices_list)
+        scored_devices.sort(key=lambda item: -item[1])
         top_dev, best_score = scored_devices[0]
         second_score = scored_devices[1][1] if len(scored_devices) > 1 else -1
-
         if best_score > second_score:
             return top_dev, None
-        else:
-            choices = ", ".join(f"trạm {d.get('name') or d.get('serial')}" for d, _ in scored_devices[:5])
-            return None, f"Có nhiều trạm khớp '{identifier}': {choices}."
+        choices = ", ".join(f"trạm {device.get('name') or device.get('serial')}" for device, _ in scored_devices[:5])
+        return None, f"Có nhiều trạm khớp '{identifier}': {choices}."
 
     async def _queue_admin_action(
         self,
