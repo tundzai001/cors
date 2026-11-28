@@ -5604,7 +5604,7 @@ class AgentManager:
         self.restart_services()
         return True
     
-    def get_full_status(self):
+    def _resolve_reported_status(self):
         base_status = "online" 
         if not self.config.get('is_provisioned', False):
             base_status = "unprovisioned"
@@ -5629,7 +5629,9 @@ class AgentManager:
             final_status = base_status
         if is_remote_locked():
             final_status = "locked"
+        return final_status
 
+    def _build_base_status_payload(self, final_status):
         status = {
             "serial": self.serial_number,
             "rtcm_stats": self.rtcm_mqtt_publisher.decoder.get_stats(self.serial_number) if (getattr(self, "rtcm_mqtt_publisher", None) and getattr(self.rtcm_mqtt_publisher, "decoder", None)) else {},
@@ -5653,8 +5655,9 @@ class AgentManager:
             "is_locked": is_remote_locked(),
             "is_synced": not self.config.get("gnss_config_pending", False)
         }
+        return status
 
-        # Antenna / RTCM health check logic
+    def _antenna_status(self, final_status):
         rtcm_input_bps_val = globals().get('rtcm_input_bps', 0)
         numsv_val = globals().get("LAST_UBX_NUMSV")
         numsv_ts_val = float(globals().get("LAST_UBX_NUMSV_TS") or 0.0)
@@ -5687,6 +5690,9 @@ class AgentManager:
             if now_ts - last_log > 300: # Every 5 minutes
                 self.log("ERROR", f"[Antenna Quality] {antenna_message}")
                 self._last_antenna_fault_log_ts = now_ts
+        return {"state": antenna_state, "message": antenna_message}
+
+    def _auto_base_datum_status(self):
         with DATUM_LOCK:
             datum_l0_deg = math.degrees(AUTO_BASE_DATUM.l0)
             datum_k0 = AUTO_BASE_DATUM.k0
@@ -5701,6 +5707,7 @@ class AgentManager:
             "k0": datum_k0
         }
 
+    def _add_receiver_status(self, status):
         base_cfg = status.get("base_config") or {}
         coords = base_cfg.get("coords")
         if not coords:
@@ -5723,7 +5730,9 @@ class AgentManager:
             status["satellite_count"] = int(numsv)
 
         status.update(receiver_quality_status(now))
+        return now
 
+    def _nmea_health_status(self, now):
         nmea_health = {
             "type_counts": dict(globals().get("LAST_NMEA_TYPE_COUNTS") or {}),
             "gsv_snr_samples": int(globals().get("LAST_GSV_SNR_SAMPLES") or 0),
@@ -5746,44 +5755,52 @@ class AgentManager:
         if gsv_avg_snr is not None and now - gsv_ts <= 15:
             nmea_health["avg_snr"] = round(float(gsv_avg_snr), 1)
             nmea_health["seconds_since_gsv"] = round(now - gsv_ts, 1)
-        status["nmea_health"] = nmea_health
+        return nmea_health
 
+    def _ntrip_server_state(self, cfg, server_id, selected_mountpoint, ingress_bps, ntrip_stats):
+        key = f"server{server_id}"
+        switch = _get_server_stream_switches(cfg, server_id, apply_fail_open=True)
+        if switch['locked']:
+            self.ntrip_connection_status[key] = False
+        connected = bool(self.ntrip_connection_status.get(key))
+        mountpoint = self._normalize_mountpoint(cfg.get(f'mountpoint{server_id}'))
+        can_forward = switch['can_push'] and (
+            not switch['on_demand'] or control_plane_fail_open_event.is_set()
+            or not selected_mountpoint or selected_mountpoint == mountpoint
+        )
+        fallback_bps = ingress_bps if connected and can_forward else 0
+        bps = int(ntrip_stats.get(f'{key}_bps', fallback_bps)) if connected and can_forward else 0
+        ntrip_stats[f'{key}_bps'] = bps
+        return key, {
+            **{name: bool(switch[name]) for name in ('enabled', 'on_demand', 'active', 'can_push', 'configured_can_push', 'fail_open_forced')},
+            'effective_can_push': bool(switch['can_push']),
+            'sleep': bool(switch['enabled'] and switch['on_demand'] and not switch['active']),
+            'connected': connected,
+            'bps': bps,
+            'mountpoint': cfg.get(f'mountpoint{server_id}'),
+        }
+
+    def _add_ntrip_status(self, status):
         with self.stats_lock:
             if self.service_stats:
-                status["ntrip_stats"] = self.service_stats.copy()
+                ntrip_stats = self.service_stats.copy()
             else:
-                status["ntrip_stats"] = {}
+                ntrip_stats = {}
 
             # Always expose internal RTCM input bitrate for UI, even when forwarding sockets are closed.
             with rtcm_input_stats_lock:
                 ingress_bps = rtcm_input_bps
-                status["ntrip_stats"]["rtcm_input_bps"] = ingress_bps
+                ntrip_stats["rtcm_input_bps"] = ingress_bps
 
             cfg = self.get_service_config() or {}
             selected_mountpoint = self._normalize_mountpoint(cfg.get('active_mountpoint'))
             stream_state = {"selected_mountpoint": cfg.get("active_mountpoint")}
             for sid in _get_ntrip_server_ids(cfg):
-                key = f"server{sid}"
-                switch = _get_server_stream_switches(cfg, sid, apply_fail_open=True)
-                if switch['locked']:
-                    self.ntrip_connection_status[key] = False
-                connected = bool(self.ntrip_connection_status.get(key))
-                mountpoint = self._normalize_mountpoint(cfg.get(f'mountpoint{sid}'))
-                can_forward = switch['can_push'] and (
-                    not switch['on_demand'] or control_plane_fail_open_event.is_set()
-                    or not selected_mountpoint or selected_mountpoint == mountpoint
+                key, server_state = self._ntrip_server_state(
+                    cfg, sid, selected_mountpoint, ingress_bps, ntrip_stats
                 )
-                fallback_bps = ingress_bps if connected and can_forward else 0
-                bps = int(status['ntrip_stats'].get(f'{key}_bps', fallback_bps)) if connected and can_forward else 0
-                status['ntrip_stats'][f'{key}_bps'] = bps
-                stream_state[key] = {
-                    **{name: bool(switch[name]) for name in ('enabled', 'on_demand', 'active', 'can_push', 'configured_can_push', 'fail_open_forced')},
-                    'effective_can_push': bool(switch['can_push']),
-                    'sleep': bool(switch['enabled'] and switch['on_demand'] and not switch['active']),
-                    'connected': connected,
-                    'bps': bps,
-                    'mountpoint': cfg.get(f'mountpoint{sid}'),
-                }
+                stream_state[key] = server_state
+            status['ntrip_stats'] = ntrip_stats
             status['ntrip_connected'] = any(self.ntrip_connection_status.get(f'server{sid}') for sid in _get_ntrip_server_ids(cfg))
             status['ntrip_status'] = self.ntrip_connection_status.copy()
             status['ntrip_stream_state'] = stream_state
@@ -5792,10 +5809,7 @@ class AgentManager:
                 if 'bps' in key and bps > 0 and bps < 100:
                     status["warning"] = f"Low data rate detected on {key}: {bps} bps"
 
-        telemetry = _snapshot_agent_telemetry()
-        status.update(telemetry)
-        status["control_plane_failover"] = self.control_plane_failover.snapshot()
-
+    def _serial_health_status(self):
         serial_health = {
             "port": self.detected_chip.get("port"),
             "baud": self.detected_chip.get("baud"),
@@ -5818,8 +5832,9 @@ class AgentManager:
                 serial_health["service_queue_depths"][worker.name] = worker.queue.qsize()
             except Exception:
                 pass
-        status["serial_health"] = serial_health
-        
+        return serial_health
+
+    def _update_savings_status(self):
         now_time = time.time()
         elapsed = now_time - getattr(self, 'last_savings_calc_time', now_time)
         self.last_savings_calc_time = now_time
@@ -5835,12 +5850,27 @@ class AgentManager:
             saved_mwh_per_sec = 0.7 / 3.6 
             self.cumulative_saved_mwh += saved_mwh_per_sec * elapsed
 
-        status["savings_stats"] = {
+        return {
             "total_data_saved_bytes": int(self.cumulative_saved_bytes),
             "total_saved_mwh": round(self.cumulative_saved_mwh, 3),
             "telemetry_bps": getattr(self, 'telemetry_bps', 0),
             "is_sleeping": is_sleeping
         }
+
+    def get_full_status(self):
+        final_status = self._resolve_reported_status()
+        status = self._build_base_status_payload(final_status)
+        status["antenna_status"] = self._antenna_status(final_status)
+        status["auto_base_datum"] = self._auto_base_datum_status()
+
+        now = self._add_receiver_status(status)
+        status["nmea_health"] = self._nmea_health_status(now)
+        self._add_ntrip_status(status)
+
+        status.update(_snapshot_agent_telemetry())
+        status["control_plane_failover"] = self.control_plane_failover.snapshot()
+        status["serial_health"] = self._serial_health_status()
+        status["savings_stats"] = self._update_savings_status()
         
         return status
     
