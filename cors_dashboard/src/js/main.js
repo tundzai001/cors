@@ -459,172 +459,107 @@ const handleSearchChange = (newTerm) => {
     }, 200);
 };
 
-window.switchView = function (viewName) {
-    const previousView = globalState.currentView;
-    globalState.currentView = viewName;
+function updateViewLayout(viewName, previousView) {
     if (viewName !== 'dashboard' || previousView !== 'dashboard') {
         document.body.classList.remove('mobile-detail-open');
     }
     document.body.classList.toggle('landing-view-active', viewName === 'homepage');
+    document.body.classList.toggle('dashboard-fixed-layout', ['dashboard', 'map'].includes(viewName));
 
-    // 1. Dynamic class toggling on body to control page-level scrolling
-    if (viewName === 'dashboard' || viewName === 'map') {
-        document.body.classList.add('dashboard-fixed-layout');
-    } else {
-        document.body.classList.remove('dashboard-fixed-layout');
-    }
+    document.getElementById('nav-dashboard')?.classList.toggle('active', viewName === 'dashboard');
+    document.getElementById('nav-map')?.classList.toggle('active', viewName === 'map');
 
-    const navDashboard = document.getElementById('nav-dashboard');
-    const navMap = document.getElementById('nav-map');
-    const dashboardDiv = document.getElementById('view-dashboard');
-    const mapDiv = document.getElementById('view-map');
-    const stationDetailDiv = document.getElementById('view-station-detail');
+    const viewIds = {
+        dashboard: 'view-dashboard',
+        map: 'view-map',
+        'station-detail': 'view-station-detail',
+        homepage: 'view-homepage',
+        blog: 'view-blog',
+        'api-docs': 'view-api-docs',
+    };
+    const activeViewId = viewIds[viewName];
+    if (!activeViewId) return;
 
-    if (navDashboard) {
-        navDashboard.classList.toggle('active', viewName === 'dashboard');
-    }
+    Object.values(viewIds).forEach(id => {
+        document.getElementById(id)?.classList.toggle('d-none', id !== activeViewId);
+    });
+    document.querySelector('.navbar')?.classList.toggle('d-none', viewName === 'homepage');
+}
 
-    if (navMap) {
-        navMap.classList.toggle('active', viewName === 'map');
-    }
-
-    const homepageDiv = document.getElementById('view-homepage');
-    const blogDiv = document.getElementById('view-blog');
-    const apiDocsDiv = document.getElementById('view-api-docs');
-
-    const navbar = document.querySelector('.navbar');
-
+function refreshViewContent(viewName) {
     if (viewName === 'dashboard') {
-        if (dashboardDiv) dashboardDiv.classList.remove('d-none');
-        if (mapDiv) mapDiv.classList.add('d-none');
-        if (stationDetailDiv) stationDetailDiv.classList.add('d-none');
-        if (homepageDiv) homepageDiv.classList.add('d-none');
-        if (blogDiv) blogDiv.classList.add('d-none');
-        if (apiDocsDiv) apiDocsDiv.classList.add('d-none');
-        if (navbar) navbar.classList.remove('d-none');
-
         deviceListNeedsUpdate = true;
         detailsPanelNeedsUpdate = true;
         renderDashboard();
-    } else if (viewName === 'map') {
-        if (dashboardDiv) dashboardDiv.classList.add('d-none');
-        if (mapDiv) mapDiv.classList.remove('d-none');
-        if (stationDetailDiv) stationDetailDiv.classList.add('d-none');
-        if (homepageDiv) homepageDiv.classList.add('d-none');
-        if (blogDiv) blogDiv.classList.add('d-none');
-        if (apiDocsDiv) apiDocsDiv.classList.add('d-none');
-        if (navbar) navbar.classList.remove('d-none');
-
-        mapNeedsUpdate = true;
-        queueMapRender();
-        setTimeout(() => {
-            if (window.mapInstance) window.mapInstance.invalidateSize();
-        }, 100);
-    } else if (viewName === 'station-detail') {
-        if (dashboardDiv) dashboardDiv.classList.add('d-none');
-        if (mapDiv) mapDiv.classList.add('d-none');
-        if (stationDetailDiv) stationDetailDiv.classList.remove('d-none');
-        if (homepageDiv) homepageDiv.classList.add('d-none');
-        if (blogDiv) blogDiv.classList.add('d-none');
-        if (apiDocsDiv) apiDocsDiv.classList.add('d-none');
-        if (navbar) navbar.classList.remove('d-none');
-    } else if (viewName === 'homepage') {
-        if (dashboardDiv) dashboardDiv.classList.add('d-none');
-        if (mapDiv) mapDiv.classList.add('d-none');
-        if (stationDetailDiv) stationDetailDiv.classList.add('d-none');
-        if (homepageDiv) homepageDiv.classList.remove('d-none');
-        if (blogDiv) blogDiv.classList.add('d-none');
-        if (apiDocsDiv) apiDocsDiv.classList.add('d-none');
-        if (navbar) navbar.classList.add('d-none'); 
-    } else if (viewName === 'blog') {
-        if (dashboardDiv) dashboardDiv.classList.add('d-none');
-        if (mapDiv) mapDiv.classList.add('d-none');
-        if (stationDetailDiv) stationDetailDiv.classList.add('d-none');
-        if (homepageDiv) homepageDiv.classList.add('d-none');
-        if (blogDiv) blogDiv.classList.remove('d-none');
-        if (apiDocsDiv) apiDocsDiv.classList.add('d-none');
-        if (navbar) navbar.classList.remove('d-none');
-    } else if (viewName === 'api-docs') {
-        if (dashboardDiv) dashboardDiv.classList.add('d-none');
-        if (mapDiv) mapDiv.classList.add('d-none');
-        if (stationDetailDiv) stationDetailDiv.classList.add('d-none');
-        if (homepageDiv) homepageDiv.classList.add('d-none');
-        if (blogDiv) blogDiv.classList.add('d-none');
-        if (apiDocsDiv) apiDocsDiv.classList.remove('d-none');
-        if (navbar) navbar.classList.remove('d-none');
+        return;
     }
+    if (viewName !== 'map') return;
+    mapNeedsUpdate = true;
+    queueMapRender();
+    setTimeout(() => {
+        if (window.mapInstance) window.mapInstance.invalidateSize();
+    }, 100);
+}
 
-    // 2. Dynamic Mounting and Unmounting logic for public page roots
-    
-    // --- Homepage ---
-    if (window.homepageRoot) {
-        if (viewName === 'homepage') {
-            waitForGlobalComponent('HomePageEnterprise', 15000).then((homeComp) => {
-                if (homeComp && window.homepageRoot && globalState.currentView === 'homepage') {
-                    renderReactComponent(window.homepageRoot, homeComp, { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary }, 'Homepage component is not loaded');
-                }
-            }).catch(error => console.error('Could not render the public page:', error));
-        } else {
-            window.homepageRoot.render(null);
+function mountPublicPageRoot(route, props) {
+    waitForGlobalComponent(route.component, 15000).then(component => {
+        const root = window[route.rootName];
+        if (!component || !root || globalState.currentView !== route.view) return;
+        renderReactComponent(root, component, props, route.errorMessage);
+    }).catch(error => console.error('Could not render the public page:', error));
+}
+
+function syncPublicPageRoots(viewName) {
+    const currentPath = window.location.pathname;
+    const blogPath = currentPath.startsWith('/blog') ? currentPath.split('/').pop() : 'blog';
+    const stationDevice = globalState.devices.find(device => device.serial === globalState.selectedDeviceSerial)
+        || globalState.devices[0];
+    const routes = [
+        {
+            view: 'homepage', rootName: 'homepageRoot', component: 'HomePageEnterprise',
+            props: { devices: globalState.devices, networkSummary: globalState.publicNetworkSummary },
+            errorMessage: 'Homepage component is not loaded',
+        },
+        {
+            view: 'blog', rootName: 'blogRoot', component: 'BlogSystem',
+            props: { slug: currentPath.startsWith('/blog') && blogPath !== 'blog' ? blogPath : null },
+            errorMessage: 'Blog component is not loaded',
+        },
+        {
+            view: 'station-detail', rootName: 'enterpriseDetailRoot', component: 'EnterpriseStationDetail',
+            props: stationDevice ? { device: stationDevice } : null,
+            errorMessage: 'Station detail component is not loaded',
+        },
+        {
+            view: 'api-docs', rootName: 'apiDocsRoot', component: 'ApiDocs',
+            props: {}, errorMessage: 'API docs component is not loaded',
+        },
+    ];
+
+    routes.forEach(route => {
+        const root = window[route.rootName];
+        if (!root) return;
+        if (route.view !== viewName) {
+            root.render(null);
+            return;
         }
-    }
+        if (route.props) mountPublicPageRoot(route, route.props);
+    });
 
-    // --- Blog ---
-    if (window.blogRoot) {
-        if (viewName === 'blog') {
-            const currentPath = window.location.pathname;
-            const slug = currentPath.startsWith('/blog') && currentPath.split('/').pop() !== 'blog' ? currentPath.split('/').pop() : null;
-            waitForGlobalComponent('BlogSystem', 15000).then((blogComp) => {
-                if (blogComp && window.blogRoot && globalState.currentView === 'blog') {
-                    renderReactComponent(window.blogRoot, blogComp, { slug }, 'Blog component is not loaded');
-                }
-            }).catch(error => console.error('Could not render the public page:', error));
-        } else {
-            window.blogRoot.render(null);
-        }
-    }
-
-    // --- Station Detail ---
-    if (window.enterpriseDetailRoot) {
-        if (viewName === 'station-detail') {
-            const device = globalState.devices.find(d => d.serial === globalState.selectedDeviceSerial) || globalState.devices[0];
-            if (device) {
-                waitForGlobalComponent('EnterpriseStationDetail', 15000).then((stationComp) => {
-                    if (stationComp && window.enterpriseDetailRoot && globalState.currentView === 'station-detail') {
-                        renderReactComponent(window.enterpriseDetailRoot, stationComp, { device }, 'Station detail component is not loaded');
-                    }
-                }).catch(error => console.error('Could not render the public page:', error));
-            }
-        } else {
-            window.enterpriseDetailRoot.render(null);
-        }
-    }
-
-    // --- API Docs ---
-    if (window.apiDocsRoot) {
-        if (viewName === 'api-docs') {
-            waitForGlobalComponent('ApiDocs', 15000).then((apiDocsComp) => {
-                if (apiDocsComp && window.apiDocsRoot && globalState.currentView === 'api-docs') {
-                    renderReactComponent(window.apiDocsRoot, apiDocsComp, {}, 'API docs component is not loaded');
-                }
-            }).catch(error => console.error('Could not render the public page:', error));
-        } else {
-            window.apiDocsRoot.render(null);
-        }
-    }
-
-    // --- Dashboard & Map Roots (to optimize resource usage when inactive) ---
     if (viewName !== 'dashboard') {
         if (typeof deviceListRoot !== 'undefined' && deviceListRoot) deviceListRoot.render(null);
         if (typeof detailsPanelRoot !== 'undefined' && detailsPanelRoot) detailsPanelRoot.render(null);
     }
-    if (viewName !== 'map') {
-        if (typeof mapRoot !== 'undefined' && mapRoot) mapRoot.render(null);
-    }
+    if (viewName !== 'map' && typeof mapRoot !== 'undefined' && mapRoot) mapRoot.render(null);
+}
 
-    setTimeout(() => {
-        window.dispatchEvent(new Event('resize'));
-    }, 100);
+window.switchView = function (viewName) {
+    const previousView = globalState.currentView;
+    globalState.currentView = viewName;
+    updateViewLayout(viewName, previousView);
+    refreshViewContent(viewName);
+    syncPublicPageRoots(viewName);
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
 };
 
 // Toggle auth-related buttons (login / logout / back) based on token and current view
