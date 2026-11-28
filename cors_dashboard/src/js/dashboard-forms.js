@@ -40,6 +40,27 @@ const formatReportCoordinate = (value, key) => {
     if (value == null || !Number.isFinite(Number(value))) return 'Chưa có dữ liệu';
     return Number(value).toFixed(key === 'alt' ? 4 : 10);
 };
+const buildProjectionRequest = (report, decoded, meridian, scale, onReviewChange) => {
+    const offsets = {
+        false_easting: Number(decoded?.false_easting ?? 500000),
+        false_northing: Number(decoded?.false_northing ?? 0),
+    };
+    const payload = onReviewChange ? {
+        input_coord: report.input_coord,
+        parameters: report.parameters,
+        apply_residual: report.residual_source === 'rtcm1023',
+        projection: { l0_deg: Number(meridian), k0: Number(scale), ...offsets },
+    } : {
+        ...report.projected_coord,
+        source: { l0_deg: Number(report.central_meridian_deg), k0: Number(report.k0), ...offsets },
+        target_l0_deg: Number(meridian),
+        target_k0: Number(scale),
+    };
+    return {
+        path: onReviewChange ? '/api/coordinates/recalculate-auto-base' : '/api/coordinates/reproject-display',
+        body: JSON.stringify(payload),
+    };
+};
 const Vn2000Result = ({ report, onReviewChange }) => {
     const sourceKey = JSON.stringify([report?.projected_coord, report?.central_meridian_deg, report?.k0, report?.rtcm1025]);
     const [preview, setPreview] = useState(null);
@@ -78,20 +99,9 @@ const Vn2000Result = ({ report, onReviewChange }) => {
         const request = ++requestRef.current;
         setCalculating(true); setError('');
         onReviewChange?.({ pending: true });
-        const offsets = { false_easting: Number(decoded?.false_easting ?? 500000),
-            false_northing: Number(decoded?.false_northing ?? 0) };
         try {
-            const response = await window.apiFetch(onReviewChange ? '/api/coordinates/recalculate-auto-base' : '/api/coordinates/reproject-display', {
-                method: 'POST', body: JSON.stringify(onReviewChange ? {
-                    input_coord: report.input_coord, parameters: report.parameters,
-                    apply_residual: report.residual_source === 'rtcm1023',
-                    projection: { l0_deg: Number(meridian), k0: Number(scale), ...offsets }
-                } : {
-                    ...report.projected_coord,
-                    source: { l0_deg: Number(report.central_meridian_deg), k0: Number(report.k0), ...offsets },
-                    target_l0_deg: Number(meridian), target_k0: Number(scale)
-                })
-            });
+            const requestOptions = buildProjectionRequest(report, decoded, meridian, scale, onReviewChange);
+            const response = await window.apiFetch(requestOptions.path, { method: 'POST', body: requestOptions.body });
             const data = await response.json();
             if (request !== requestRef.current) return;
             if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Không tính được múi hiển thị. Kiểm tra L₀ và dữ liệu gốc.');
