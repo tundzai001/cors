@@ -908,6 +908,127 @@ async def _deactivate_idle_rtcm_mountpoint(serial: str, mountpoint: str):
             logger.info(f"[RTCM] Deactivated station {serial} S{server_id} (mp={mp}, no remaining sessions)")
 
 
+async def _fetch_active_rtcm_sessions(now: int):
+    async with rtcm_session_lock, device_session_scope() as db:
+        result = await db.execute(
+            select(
+                models.RTCMStreamSession.session_id,
+                models.RTCMStreamSession.client_id,
+                models.RTCMStreamSession.serial,
+                models.RTCMStreamSession.mountpoint,
+                models.RTCMStreamSession.caster_host,
+                models.RTCMStreamSession.expires_at,
+                models.RTCMStreamSession.created_at
+            ).where(models.RTCMStreamSession.expires_at > now)
+        )
+        return [
+            (str(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4] or ""), int(row[5] or 0), int(row[6] or 0))
+            for row in result.all() if row and row[0]
+        ]
+
+
+def _cache_has_keepalive_client(clients, mountpoint, client_id):
+    for item in clients:
+        if _normalize_mountpoint(item.get("mountpoint")) != mountpoint:
+            continue
+        row_ids = {
+            _normalize_keepalive_client_id(item.get("client_id")),
+            _normalize_keepalive_client_id(item.get("receiver_id")),
+            _normalize_keepalive_client_id(item.get("username")),
+        } - {""}
+        if client_id in row_ids:
+            return True
+    return False
+
+
+async def _find_keepalive_client_host(target_host: str, client_id: str, mountpoint: str, now: int):
+    port = int(settings.CASTER_PORT or 2101)
+    primary_cache = await _get_caster_cache(f"{target_host}:{port}")
+    hosts = [target_host]
+    hosts.extend(
+        host.strip() for host in settings.CASTER_HOST.split(",")
+        if host.strip() and host.strip() != target_host
+    )
+    normalized_mountpoint = _normalize_mountpoint(mountpoint)
+    normalized_client_id = _normalize_keepalive_client_id(client_id)
+
+    for host in hosts:
+        host_port = int(settings.CASTER_PORT or 2101)
+        cache = await _get_caster_cache(f"{host}:{host_port}")
+        if not _fresh_rtcm_clienttable(cache, now):
+            continue
+        if _cache_has_keepalive_client(cache.get("clients", []), normalized_mountpoint, normalized_client_id):
+            return host, primary_cache
+    return None, primary_cache
+
+
+async def _update_keepalive_session_host(session_id: str, client_id: str, previous_host: str, host: str):
+    logger.info(
+        f"[RTCM KEEPALIVE] User '{client_id}' switched from {previous_host} to {host}. Updating session."
+    )
+    async with rtcm_session_lock, device_session_scope() as db:
+        await db.execute(
+            update(models.RTCMStreamSession)
+            .where(models.RTCMStreamSession.session_id == session_id)
+            .values(caster_host=host)
+        )
+        await db.commit()
+
+
+async def _keepalive_session_outcome(row, now: int):
+    session_id, client_id, serial, mountpoint, host, _, created_at = row
+    target_host = host or next(
+        (item.strip() for item in settings.CASTER_HOST.split(",") if item.strip()),
+        "localhost",
+    )
+    found_host, primary_cache = await _find_keepalive_client_host(
+        target_host, client_id, mountpoint, now
+    )
+    if found_host:
+        rtcm_keepalive_miss_counts.pop(session_id, None)
+        if found_host != target_host:
+            await _update_keepalive_session_host(session_id, client_id, target_host, found_host)
+        return True, False, None
+
+    miss_count = _record_rtcm_keepalive_miss(session_id, primary_cache, now, created_at)
+    normalized_mountpoint = _normalize_mountpoint(mountpoint)
+    if miss_count >= RTCM_KEEPALIVE_MISS_THRESHOLD:
+        logger.warning(
+            f"[RTCM] User '{client_id}' (@{mountpoint}) on station {serial} expired after {miss_count} misses."
+        )
+        return False, True, (serial, normalized_mountpoint)
+    if RTCM_KEEPALIVE_DEBUG:
+        logger.info(
+            f"[RTCM DEBUG] User '{client_id}' miss {miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD} on {target_host}"
+        )
+    return True, False, None
+
+
+async def _persist_rtcm_keepalive_results(updated_ids, expired_ids, keepalive_to: int, now: int):
+    if not (updated_ids or expired_ids):
+        return
+    async with rtcm_session_lock, device_session_scope() as db:
+        if updated_ids:
+            await db.execute(
+                update(models.RTCMStreamSession)
+                .where(models.RTCMStreamSession.session_id.in_(updated_ids))
+                .values(expires_at=keepalive_to, last_heartbeat_at=now)
+            )
+        if expired_ids:
+            await db.execute(
+                update(models.RTCMStreamSession)
+                .where(models.RTCMStreamSession.session_id.in_(expired_ids))
+                .values(expires_at=now - 1)
+            )
+        await db.commit()
+
+
+async def _deactivate_empty_rtcm_mountpoints(candidates):
+    for serial, mountpoint in candidates:
+        if mountpoint:
+            await _deactivate_idle_rtcm_mountpoint(serial, mountpoint)
+
+
 async def rtcm_ntrip_clienttable_keepalive_task():
     global rtcm_keepalive_miss_counts
 
@@ -918,23 +1039,7 @@ async def rtcm_ntrip_clienttable_keepalive_task():
         now = int(time.time())
 
         try:
-            # 1. Fetch active sessions from DB
-            async with rtcm_session_lock, device_session_scope() as db:
-                rs = await db.execute(
-                    select(
-                        models.RTCMStreamSession.session_id,
-                        models.RTCMStreamSession.client_id,
-                        models.RTCMStreamSession.serial,
-                        models.RTCMStreamSession.mountpoint,
-                        models.RTCMStreamSession.caster_host,
-                        models.RTCMStreamSession.expires_at,
-                        models.RTCMStreamSession.created_at
-                    ).where(models.RTCMStreamSession.expires_at > now)
-                )
-                active_rows = [
-                    (str(r[0]), str(r[1]), str(r[2]), str(r[3]), str(r[4] or ""), int(r[5] or 0), int(r[6] or 0))
-                    for r in rs.all() if r and r[0]
-                ]
+            active_rows = await _fetch_active_rtcm_sessions(now)
 
             active_ids = {row[0] for row in active_rows}
             for session_id in rtcm_keepalive_miss_counts.copy():
@@ -949,95 +1054,18 @@ async def rtcm_ntrip_clienttable_keepalive_task():
             expired_ids = []
             candidates_for_deactivation = set()
 
-            # Group sessions by host for easier lookup
-            for sid, client_id, serial, mountpoint, host, expires_at, created_at in active_rows:
-                # Resolve host to find cache entry
-                target_host = host or next((h.strip() for h in settings.CASTER_HOST.split(",") if h.strip()), "localhost")
-                port = int(settings.CASTER_PORT or 2101)
+            for row in active_rows:
+                updated, expired, candidate = await _keepalive_session_outcome(row, now)
+                session_id = row[0]
+                if updated:
+                    updated_ids.append(session_id)
+                if expired:
+                    expired_ids.append(session_id)
+                if candidate:
+                    candidates_for_deactivation.add(candidate)
 
-                hosts_to_check = [target_host]
-                other_hosts = [h.strip() for h in settings.CASTER_HOST.split(",") if h.strip() and h.strip() != target_host]
-                hosts_to_check.extend(other_hosts)
-
-                found_on_host = None
-                primary_cache = await _get_caster_cache(f"{target_host}:{port}")
-                for h in hosts_to_check:
-                    h_port = int(settings.CASTER_PORT or 2101)
-                    h_key = f"{h}:{h_port}"
-                    h_cache = await _get_caster_cache(h_key)
-                    if not _fresh_rtcm_clienttable(h_cache, now): continue
-
-                    clients = h_cache.get("clients", [])
-                    session_mp_norm = _normalize_mountpoint(mountpoint)
-                    session_client_norm = _normalize_keepalive_client_id(client_id)
-
-                    found_in_h = False
-                    for item in clients:
-                        mp = _normalize_mountpoint(item.get("mountpoint"))
-                        if mp != session_mp_norm: continue
-
-                        row_ids = {
-                            _normalize_keepalive_client_id(item.get("client_id")),
-                            _normalize_keepalive_client_id(item.get("receiver_id")),
-                            _normalize_keepalive_client_id(item.get("username")),
-                        } - {""}
-
-                        if session_client_norm in row_ids:
-                            found_in_h = True
-                            break
-                    if found_in_h:
-                        found_on_host = h
-                        break
-
-                if found_on_host:
-                    rtcm_keepalive_miss_counts.pop(sid, None)
-                    updated_ids.append(sid)
-                    if found_on_host != target_host:
-                        logger.info(f"[RTCM KEEPALIVE] User '{client_id}' switched from {target_host} to {found_on_host}. Updating session.")
-                        async with rtcm_session_lock, device_session_scope() as db:
-                            await db.execute(
-                                update(models.RTCMStreamSession)
-                                .where(models.RTCMStreamSession.session_id == sid)
-                                .values(caster_host=found_on_host)
-                            )
-                            await db.commit()
-                else:
-                    miss_count = _record_rtcm_keepalive_miss(sid, primary_cache, now, created_at)
-
-                    if miss_count >= RTCM_KEEPALIVE_MISS_THRESHOLD:
-                        expired_ids.append(sid)
-                        candidates_for_deactivation.add((serial, _normalize_mountpoint(mountpoint)))
-                        logger.warning(f"[RTCM] User '{client_id}' (@{mountpoint}) on station {serial} expired after {miss_count} misses.")
-                    else:
-                        # Keep the lease alive until enough independent, successful
-                        # scans confirm absence, including during cache outages.
-                        updated_ids.append(sid)
-                        if RTCM_KEEPALIVE_DEBUG:
-                            logger.info(f"[RTCM DEBUG] User '{client_id}' miss {miss_count}/{RTCM_KEEPALIVE_MISS_THRESHOLD} on {target_host}")
-
-            # 3. Update DB
-            if updated_ids or expired_ids:
-                async with rtcm_session_lock, device_session_scope() as db:
-                    if updated_ids:
-                        # Batch update heartbeats
-                        await db.execute(
-                            update(models.RTCMStreamSession)
-                            .where(models.RTCMStreamSession.session_id.in_(updated_ids))
-                            .values(expires_at=keepalive_to, last_heartbeat_at=now)
-                        )
-                    if expired_ids:
-                        # Batch expire sessions
-                        await db.execute(
-                            update(models.RTCMStreamSession)
-                            .where(models.RTCMStreamSession.session_id.in_(expired_ids))
-                            .values(expires_at=now - 1)
-                        )
-                    await db.commit()
-
-            # 4. Station Deactivation (On-Demand only)
-            for serial, mp_norm in candidates_for_deactivation:
-                if mp_norm:
-                    await _deactivate_idle_rtcm_mountpoint(serial, mp_norm)
+            await _persist_rtcm_keepalive_results(updated_ids, expired_ids, keepalive_to, now)
+            await _deactivate_empty_rtcm_mountpoints(candidates_for_deactivation)
 
         except Exception:
             logger.exception("[RTCM] Keepalive task error")
