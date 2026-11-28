@@ -577,35 +577,35 @@ flags.un.src = '/assets/img/flags/un.jpg';
 
 const colors = { us: '#00d47e', ru: '#ff5c5c', eu: '#5c9cff', cn: '#ffb95c', jp: '#ff77a9', un: '#aaaaaa' };
 const constellationNames = { us: "GPS (USA)", ru: "GLONASS (Russia)", eu: "Galileo (EU)", cn: "BeiDou (China)", jp: "QZSS (Japan)", sb: "SBAS", im: "IMES", in: "NavIC", un: "Unknown" };
+const satelliteSystems = new Set(['us', 'ru', 'eu', 'cn', 'jp', 'sb', 'im', 'in']);
+const satelliteSystemAliases = {
+    g: 'us', gps: 'us',
+    r: 'ru', glonass: 'ru',
+    e: 'eu', galileo: 'eu',
+    c: 'cn', beidou: 'cn', compass: 'cn',
+    j: 'jp', qzss: 'jp'
+};
 
-function getSatelliteSystem(sat) {
-    if (!sat) return 'un';
-    const sys = String(sat.system || '').toLowerCase();
-    if (['us', 'ru', 'eu', 'cn', 'jp', 'sb', 'im', 'in'].includes(sys)) return sys;
-    
-    const mapping = {
-        g: 'us', gps: 'us',
-        r: 'ru', glonass: 'ru',
-        e: 'eu', galileo: 'eu',
-        c: 'cn', beidou: 'cn', compass: 'cn',
-        j: 'jp', qzss: 'jp'
-    };
-    if (mapping[sys]) return mapping[sys];
-
-    // Fallback: try extracting system from string PRN (e.g. "G01", "R07")
-    const prnStr = String(sat.prn || '');
-    if (prnStr.length >= 2) {
-        const firstChar = prnStr[0].toLowerCase();
-        if (mapping[firstChar]) return mapping[firstChar];
-    }
-
-    const prn = Number(sat.prn);
+function getSatelliteSystemFromPrn(prn) {
     if (prn >= 1 && prn <= 32) return 'us';
     if (prn >= 65 && prn <= 96) return 'ru';
     if (prn >= 301 && prn <= 336) return 'eu';
     if (prn >= 193 && prn <= 202) return 'jp';
     if ((prn >= 33 && prn <= 64) || (prn >= 401 && prn <= 463)) return 'cn';
-    return 'un';
+    return null;
+}
+
+function getSatelliteSystem(sat) {
+    if (!sat) return 'un';
+    const sys = String(sat.system || '').toLowerCase();
+    if (satelliteSystems.has(sys)) return sys;
+    if (satelliteSystemAliases[sys]) return satelliteSystemAliases[sys];
+    const prnStr = String(sat.prn || '');
+    if (prnStr.length >= 2) {
+        const prefixSystem = satelliteSystemAliases[prnStr[0].toLowerCase()];
+        if (prefixSystem) return prefixSystem;
+    }
+    return getSatelliteSystemFromPrn(Number(sat.prn)) || 'un';
 }
 
 // Chuẩn hóa PRN về dải RTCM (1-based) để NMEA và RTCM cùng vệ tinh dùng chung key.
