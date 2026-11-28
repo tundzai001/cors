@@ -3839,155 +3839,186 @@ class NTRIPClientWorker(threading.Thread):
         self.daemon = True; self._stop_event = threading.Event()
         self.name = "NTRIPClientWorker"
     def stop(self): self._stop_event.set()
-    def run(self):
-        host, p_str = self.config.get('rtcmserver1'), self.config.get('rtcmport1')
-        mp, user, pw = self.config.get('rtcmmountpoint1'), self.config.get('rtcmusername1'), self.config.get('rtcmpassword1')
-        if not all([host, p_str, mp, user]): return
-        try: port = int(p_str)
-        except (ValueError, TypeError): return
-        
+    def _client_connection_settings(self):
+        host = self.config.get('rtcmserver1')
+        port_value = self.config.get('rtcmport1')
+        mountpoint = self.config.get('rtcmmountpoint1')
+        username = self.config.get('rtcmusername1')
+        password = self.config.get('rtcmpassword1')
+        if not all([host, port_value, mountpoint, username]):
+            return None
+        try:
+            port = int(port_value)
+        except (ValueError, TypeError):
+            return None
         reconnect_interval = int(self.config.get('reconnectioninterval', 15))
-        while not self._stop_event.is_set():
-            if is_remote_locked(): time.sleep(2); continue
-            client_socket = None
-            rtcm_stream_buffer = bytearray()
-            try:
-                self.log("INFO", f"[RTCM Client] Connecting to ntrip://{host}:{port}/{mp}...")
-                client_socket = socket.create_connection((host, port), timeout=10)
-                
-                auth_str = f"{user}:{pw or ''}"
-                auth_b64 = base64.b64encode(auth_str.encode('ascii')).decode('ascii').strip()
-                headers = (
-                    f"GET /{mp} HTTP/1.0\r\n"
-                    f"User-Agent: NTRIP AitogyNTRIPClient/20131124\r\n"
-                    f"Authorization: Basic {auth_b64}\r\n"
-                    f"Accept: */*\r\n"
-                    f"Connection: close\r\n\r\n"
-                )
-                
-                client_socket.sendall(headers.encode('ascii'))
-                
-                response_header = bytearray()
-                header_deadline = time.monotonic() + 15.0
-                while b"\r\n\r\n" not in response_header:
-                    if len(response_header) >= 16 * 1024:
-                        raise ConnectionError("Caster response headers exceed the 16 KiB limit")
-                    remaining = header_deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("Caster response headers timed out")
-                    client_socket.settimeout(min(remaining, 2.0))
-                    byte = client_socket.recv(1)
-                    if not byte:
-                        raise ConnectionError("Caster closed connection before response headers completed")
-                    response_header.extend(byte)
-                    if response_header == b"ICY 200 OK\r\n":
-                        break  # NTRIP v1 may start RTCM immediately after this line.
-                
-                if not bytes(response_header).startswith((b"ICY 200 OK\r\n", b"HTTP/1.1 200 ", b"HTTP/1.0 200 ")):
-                    status_line = bytes(response_header).split(b"\r\n", 1)[0].decode(errors="ignore")[:200]
-                    raise ConnectionError(f"Caster rejected request: {status_line}")
+        return host, port, mountpoint, username, password, reconnect_interval
 
-                self.log("INFO", "[RTCM Client] Authenticated. Receiving correction data.")
-                
+    def _read_client_response_header(self, client_socket):
+        response_header = bytearray()
+        header_deadline = time.monotonic() + 15.0
+        while b"\r\n\r\n" not in response_header:
+            if len(response_header) >= 16 * 1024:
+                raise ConnectionError("Caster response headers exceed the 16 KiB limit")
+            remaining = header_deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Caster response headers timed out")
+            client_socket.settimeout(min(remaining, 2.0))
+            byte = client_socket.recv(1)
+            if not byte:
+                raise ConnectionError("Caster closed connection before response headers completed")
+            response_header.extend(byte)
+            if response_header == b"ICY 200 OK\r\n":
+                break
+        return bytes(response_header)
+
+    def _authenticate_client_socket(self, client_socket, mountpoint, username, password):
+        auth_str = f"{username}:{password or ''}"
+        auth_b64 = base64.b64encode(auth_str.encode('ascii')).decode('ascii').strip()
+        headers = (
+            f"GET /{mountpoint} HTTP/1.0\r\n"
+            f"User-Agent: NTRIP AitogyNTRIPClient/20131124\r\n"
+            f"Authorization: Basic {auth_b64}\r\n"
+            f"Accept: */*\r\n"
+            f"Connection: close\r\n\r\n"
+        )
+        client_socket.sendall(headers.encode('ascii'))
+        response_header = self._read_client_response_header(client_socket)
+        if not response_header.startswith((b"ICY 200 OK\r\n", b"HTTP/1.1 200 ", b"HTTP/1.0 200 ")):
+            status_line = response_header.split(b"\r\n", 1)[0].decode(errors="ignore")[:200]
+            raise ConnectionError(f"Caster rejected request: {status_line}")
+        self.log("INFO", "[RTCM Client] Authenticated. Receiving correction data.")
+
+    def _send_initial_client_gga(self, client_socket):
+        self.last_sent_gga = None
+        self.last_sent_gga_time = 0.0
+        self.total_rtcm_bytes = 0
+        self.total_rtcm_pkts = 0
+        out_gga = _get_fresh_outbound_gga(10.0)
+        if out_gga:
+            try:
+                gga_bytes = (out_gga + '\r\n').encode('ascii')
+                client_socket.sendall(gga_bytes)
+                self.last_sent_gga = out_gga
+                self.last_sent_gga_time = time.time()
+                self.log("INFO", f"[RTCM Client] >>> SENT INITIAL GGA: {out_gga}")
+            except Exception as error:
+                self.log("WARNING", f"[RTCM Client] Failed to send initial GGA: {error}")
+            return
+        raw_gga = globals().get('LAST_RAW_GGA')
+        if raw_gga:
+            age = time.time() - float(globals().get('LAST_RAW_GGA_TS') or 0.0)
+            self.log("WARNING", f"[RTCM Client] Last GGA is {age:.1f}s old: {raw_gga}")
+        else:
+            self.log("WARNING", "[RTCM Client] Waiting for rover chip to output first GGA sentence...")
+
+    def _send_periodic_client_gga(self, client_socket, now, last_send_time):
+        if now - last_send_time < 5:
+            return last_send_time, True
+        out_gga = _get_fresh_outbound_gga(10.0)
+        if out_gga:
+            try:
+                gga_bytes = (out_gga + '\r\n').encode('ascii')
+                client_socket.sendall(gga_bytes)
+                self.last_sent_gga = out_gga
+                self.last_sent_gga_time = now
+                self.log("INFO", f"[RTCM Client] >>> GGA sent: {out_gga}")
+            except Exception as error:
+                self.log("WARNING", f"[RTCM Client] Failed to send GGA: {error}")
+                return last_send_time, False
+        else:
+            raw_gga = globals().get('LAST_RAW_GGA')
+            if raw_gga:
+                age = now - float(globals().get('LAST_RAW_GGA_TS') or 0.0)
+                self.log("WARNING", f"[RTCM Client] GGA is stale ({age:.1f}s old): {raw_gga}")
+            else:
+                self.log("WARNING", "[RTCM Client] No GGA received from rover chip yet")
+        return now, True
+
+    def _receive_client_rtcm(self, client_socket):
+        try:
+            return client_socket.recv(4096)
+        except socket.timeout:
+            self.log(
+                "INFO",
+                f"[RTCM Client] recv timeout (5s), total RTCM: {self.total_rtcm_bytes}B / "
+                f"{self.total_rtcm_pkts} pkts | Last GGA: {getattr(self, 'last_sent_gga', 'None')}",
+            )
+            return None
+
+    def _process_client_rtcm_chunk(self, data, rtcm_stream_buffer, total_rtcm_bytes, total_rtcm_pkts):
+        total_rtcm_bytes += len(data)
+        rtcm_stream_buffer.extend(data)
+        if len(rtcm_stream_buffer) > 16384:
+            self.log("WARNING", "[RTCM Client] Stream buffer overflow; dropping buffered data")
+            rtcm_stream_buffer.clear()
+            return total_rtcm_bytes, total_rtcm_pkts
+        packets = extract_valid_rtcm3_packets(rtcm_stream_buffer)
+        for packet in packets:
+            self.correction_sink(packet)
+            total_rtcm_pkts += 1
+        self.total_rtcm_bytes = total_rtcm_bytes
+        self.total_rtcm_pkts = total_rtcm_pkts
+        if packets:
+            now_log = time.time()
+            if not hasattr(self, '_last_rtcm_log_time'):
+                self._last_rtcm_log_time = 0
+            if now_log - self._last_rtcm_log_time >= 30.0 or total_rtcm_pkts <= 5:
+                self.log("INFO", f"[RTCM Client] Total received so far: {total_rtcm_bytes}B / {total_rtcm_pkts} pkts")
+                self._last_rtcm_log_time = now_log
+        return total_rtcm_bytes, total_rtcm_pkts
+
+    def _read_client_rtcm_stream(self, client_socket):
+        total_rtcm_bytes = 0
+        total_rtcm_pkts = 0
+        last_gga_send_time = time.time()
+        rtcm_stream_buffer = bytearray()
+        client_socket.settimeout(5.0)
+        while not self._stop_event.is_set() and not is_remote_locked():
+            now = time.time()
+            last_gga_send_time, keep_reading = self._send_periodic_client_gga(
+                client_socket, now, last_gga_send_time
+            )
+            if not keep_reading:
+                break
+            rtcm_data = self._receive_client_rtcm(client_socket)
+            if rtcm_data is None:
+                continue
+            if not rtcm_data:
+                self.log("WARNING", f"[RTCM Client] Server closed connection (recv returned empty). Total received: {total_rtcm_bytes}B")
+                break
+            if self._stop_event.is_set():
+                break
+            total_rtcm_bytes, total_rtcm_pkts = self._process_client_rtcm_chunk(
+                rtcm_data, rtcm_stream_buffer, total_rtcm_bytes, total_rtcm_pkts
+            )
+
+    def run(self):
+        connection_settings = self._client_connection_settings()
+        if connection_settings is None:
+            return
+        host, port, mountpoint, username, password, reconnect_interval = connection_settings
+        while not self._stop_event.is_set():
+            if is_remote_locked():
+                time.sleep(2)
+                continue
+            client_socket = None
+            try:
+                self.log("INFO", f"[RTCM Client] Connecting to ntrip://{host}:{port}/{mountpoint}...")
+                client_socket = socket.create_connection((host, port), timeout=10)
+                self._authenticate_client_socket(
+                    client_socket, mountpoint, username, password
+                )
                 if self._stop_event.is_set():
                     break
-
-                # Send GGA immediately after auth for VRS
-                self.last_sent_gga = None
-                self.last_sent_gga_time = 0.0
-                self.total_rtcm_bytes = 0
-                self.total_rtcm_pkts = 0
-                total_rtcm_bytes = 0
-                total_rtcm_pkts = 0
-
-                out_gga = _get_fresh_outbound_gga(10.0)
-                if out_gga:
-                    try:
-                        gga_bytes = (out_gga + '\r\n').encode('ascii')
-                        client_socket.sendall(gga_bytes)
-                        self.last_sent_gga = out_gga
-                        self.last_sent_gga_time = time.time()
-                        self.log("INFO", f"[RTCM Client] >>> SENT INITIAL GGA: {out_gga}")
-                    except Exception as e:
-                        self.log("WARNING", f"[RTCM Client] Failed to send initial GGA: {e}")
-                else:
-                    raw_gga = globals().get('LAST_RAW_GGA')
-                    if raw_gga:
-                        age = time.time() - float(globals().get('LAST_RAW_GGA_TS') or 0.0)
-                        self.log("WARNING", f"[RTCM Client] Last GGA is {age:.1f}s old: {raw_gga}")
-                    else:
-                        self.log("WARNING", "[RTCM Client] Waiting for rover chip to output first GGA sentence...")
-                
-                last_gga_send_time = time.time()
-                gga_send_interval = 5  # Send GGA every 5 seconds for VRS
-                client_socket.settimeout(5.0)
-                
-                while not self._stop_event.is_set() and not is_remote_locked():
-                    # Send GGA to caster periodically (required for VRS)
-                    now = time.time()
-                    if now - last_gga_send_time >= gga_send_interval:
-                        out_gga = _get_fresh_outbound_gga(10.0)
-                        if out_gga:
-                            try:
-                                gga_bytes = (out_gga + '\r\n').encode('ascii')
-                                client_socket.sendall(gga_bytes)
-                                self.last_sent_gga = out_gga
-                                self.last_sent_gga_time = now
-                                self.log("INFO", f"[RTCM Client] >>> GGA sent: {out_gga}")
-                            except Exception as e:
-                                self.log("WARNING", f"[RTCM Client] Failed to send GGA: {e}")
-                                break
-                        else:
-                            raw_gga = globals().get('LAST_RAW_GGA')
-                            if raw_gga:
-                                age = now - float(globals().get('LAST_RAW_GGA_TS') or 0.0)
-                                self.log("WARNING", f"[RTCM Client] GGA is stale ({age:.1f}s old): {raw_gga}")
-                            else:
-                                self.log("WARNING", "[RTCM Client] No GGA received from rover chip yet")
-                        last_gga_send_time = now
-                    
-                    try:
-                        rtcm_data = client_socket.recv(4096)
-                    except socket.timeout:
-                        self.log("INFO", f"[RTCM Client] recv timeout (5s), total RTCM: {total_rtcm_bytes}B / {total_rtcm_pkts} pkts | Last GGA: {getattr(self, 'last_sent_gga', 'None')}")
-                        continue  # No data yet, loop back to check GGA send
-                    
-                    if not rtcm_data:
-                        self.log("WARNING", f"[RTCM Client] Server closed connection (recv returned empty). Total received: {total_rtcm_bytes}B")
-                        break
-                    
-                    if self._stop_event.is_set():
-                        break
-                    total_rtcm_bytes += len(rtcm_data)
-                    rtcm_stream_buffer.extend(rtcm_data)
-
-                    # Safety cap for malformed stream bursts.
-                    if len(rtcm_stream_buffer) > 16384:
-                        self.log("WARNING", "[RTCM Client] Stream buffer overflow; dropping buffered data")
-                        rtcm_stream_buffer.clear()
-                        continue
-
-                    pkts = extract_valid_rtcm3_packets(rtcm_stream_buffer)
-                    for pkt in pkts:
-                        self.correction_sink(pkt)
-                        total_rtcm_pkts += 1
-                    
-                    self.total_rtcm_bytes = total_rtcm_bytes
-                    self.total_rtcm_pkts = total_rtcm_pkts
-                    if pkts:
-                        # Log summary every 30s instead of every packet
-                        now_log = time.time()
-                        if not hasattr(self, '_last_rtcm_log_time'):
-                            self._last_rtcm_log_time = 0
-                        if now_log - self._last_rtcm_log_time >= 30.0 or total_rtcm_pkts <= 5:
-                            self.log("INFO", f"[RTCM Client] Total received so far: {total_rtcm_bytes}B / {total_rtcm_pkts} pkts")
-                            self._last_rtcm_log_time = now_log
-
-            except Exception as e:
+                self._send_initial_client_gga(client_socket)
+                self._read_client_rtcm_stream(client_socket)
+            except Exception as error:
                 _telemetry_inc("reconnect", "ntrip_client")
-                self.log("WARNING", f"[RTCM Client] Connection error: {e}.")
+                self.log("WARNING", f"[RTCM Client] Connection error: {error}.")
             finally:
-                if client_socket: client_socket.close()
+                if client_socket:
+                    client_socket.close()
             self._stop_event.wait(reconnect_interval)
 
 class GNSSReader(threading.Thread):
