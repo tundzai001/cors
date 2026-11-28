@@ -115,131 +115,114 @@ class NMEAParser:
         except (ValueError, IndexError):
             return None
 
+    @staticmethod
+    def _normalize_gsv_prn(talker_id: str, system: str, prn: int) -> tuple[str, int, bool]:
+        if talker_id == 'GP':
+            if 65 <= prn <= 96:
+                return 'ru', prn - 64, True
+            if 193 <= prn <= 202:
+                return 'jp', prn - 192, True
+            if prn > 100:
+                return system, prn, False
+        elif talker_id == 'GL' and prn > 64:
+            prn -= 64
+        return system, prn, True
+
+    def _parse_gsv_satellite(self, talker_id: str, system: str, fields: list[str]):
+        if len(fields) < 4 or not fields[0]:
+            return system, None
+        try:
+            prn = int(fields[0])
+            if prn < 1 or prn > 999:
+                return system, None
+            system, prn, accepted = self._normalize_gsv_prn(talker_id, system, prn)
+            if not accepted or prn < 1 or prn > 200:
+                return system, None
+            elevation = int(fields[1]) if fields[1] else 0
+            azimuth = int(fields[2]) if fields[2] else 0
+            snr = int(fields[3].split('*')[0]) if fields[3] else 0
+            if not 0 <= elevation <= 90 or not 0 <= azimuth <= 359 or not 0 <= snr <= 99:
+                return system, None
+        except (ValueError, IndexError):
+            return system, None
+        return system, {
+            "id": f"{talker_id}:{prn}",
+            "prn": prn,
+            "talker": talker_id,
+            "system": system,
+            "elevation": elevation,
+            "azimuth": azimuth,
+            "snr": snr,
+            "isTracking": False,
+        }
+
+    def _buffer_gsv_satellites(self, talker_id: str, system: str, sats_raw: list[str]) -> None:
+        for offset in range(0, len(sats_raw), 4):
+            system, satellite = self._parse_gsv_satellite(
+                talker_id, system, sats_raw[offset:offset + 4]
+            )
+            if satellite and talker_id in self.gsv_buffer:
+                self.gsv_buffer[talker_id].append(satellite)
+
+    def _complete_gsv_buffer(self, talker_id: str) -> dict:
+        all_sats = []
+        for constellation_sats in self.gsv_buffer.values():
+            all_sats.extend(constellation_sats)
+        for sat in all_sats:
+            self.satellites[sat.get('id') or sat['prn']] = sat
+        if len(self.satellites) > 64:
+            self.satellites = dict(list(self.satellites.items())[-64:])
+            if self.last_gsa:
+                sat['isTracking'] = sat['prn'] in self.last_gsa['active_sats']
+        self.gsv_buffer.clear()
+        self.gsv_expected_messages.clear()
+        return {
+            "type": "GSV",
+            "talker": talker_id,
+            "satellites": list(self.satellites.values())
+        }
+
+    def _flush_stale_gsv_buffer(self):
+        if time.time() - self.gsv_last_update <= self.gsv_timeout or not self.gsv_buffer:
+            return None
+        all_sats = []
+        for constellation_sats in self.gsv_buffer.values():
+            all_sats.extend(constellation_sats)
+        if not all_sats:
+            return None
+        for sat in all_sats:
+            self.satellites[sat.get('id') or sat['prn']] = sat
+        if len(self.satellites) > 64:
+            self.satellites = dict(list(self.satellites.items())[-64:])
+        self.gsv_buffer.clear()
+        return {
+            "type": "GSV",
+            "satellites": list(self.satellites.values())
+        }
+
     def _parse_gsv(self, parts: list) -> dict | None:
         if len(parts) < 4:
             return None
         try:
-            talker_id = parts[0][1:3]  
-            
-            # Map Talker ID sang mã hệ thống
-            system_map = {
-                'GP': 'us', # GPS (USA)
-                'GL': 'ru', # GLONASS (Russia)
-                'GA': 'eu', # Galileo (Europe) 
-                'GB': 'cn', # BeiDou (China)
-                'BD': 'cn', # BeiDou (Newer)
-                'GQ': 'jp', # QZSS (Japan) 
-                'QZ': 'jp', # QZSS (Alternative)
-                'GN': 'un'  # GNSS (Mixed)
-            }
-            system = system_map.get(talker_id, 'un')
-
+            talker_id = parts[0][1:3]
+            system = {
+                'GP': 'us', 'GL': 'ru', 'GA': 'eu', 'GB': 'cn',
+                'BD': 'cn', 'GQ': 'jp', 'QZ': 'jp', 'GN': 'un',
+            }.get(talker_id, 'un')
             num_messages = int(parts[1])
             msg_num = int(parts[2])
             if num_messages < 1 or num_messages > 9 or msg_num < 1 or msg_num > num_messages:
                 return None
-            
-            # Khởi tạo buffer cho constellation này
             if msg_num == 1:
                 self.gsv_buffer[talker_id] = []
                 self.gsv_expected_messages[talker_id] = num_messages
-            
-            # Parse 4 satellites trong message này
-            sats_raw = parts[4:]
-            for i in range(0, len(sats_raw), 4):
-                if len(sats_raw[i:i+4]) < 4 or not sats_raw[i]:
-                    continue
-                
-                try:
-                    prn = int(sats_raw[i])
-                    if prn < 1 or prn > 999:
-                        continue
-                    
-                    # FILTER: Unicore receivers offset PRNs for different constellations in GPGSV
-                    if talker_id == 'GP':
-                        if prn >= 65 and prn <= 96:
-                            system = 'ru'
-                            prn -= 64
-                        elif prn >= 193 and prn <= 202:
-                            system = 'jp'
-                            prn -= 192
-                        elif prn > 100:
-                            continue # Completely ignore PRNs like 1212, 254
-                    elif talker_id == 'GL' and prn > 64:
-                        prn -= 64
-                    
-                    if prn < 1 or prn > 200:
-                        continue
-                        
-                    elevation = int(sats_raw[i+1]) if sats_raw[i+1] else 0
-                    azimuth = int(sats_raw[i+2]) if sats_raw[i+2] else 0
-                    snr = int(sats_raw[i+3].split('*')[0]) if sats_raw[i+3] else 0
-                    if not 0 <= elevation <= 90 or not 0 <= azimuth <= 359 or not 0 <= snr <= 99:
-                        continue
-                    
-                    # Lưu vào buffer kèm theo SYSTEM
-                    if talker_id in self.gsv_buffer:
-                        self.gsv_buffer[talker_id].append({
-                            "id": f"{talker_id}:{prn}",
-                            "prn": prn,
-                            "talker": talker_id,
-                            "system": system, 
-                            "elevation": elevation,
-                            "azimuth": azimuth,
-                            "snr": snr,
-                            "isTracking": False
-                        })
-                
-                except (ValueError, IndexError):
-                    continue
-            
+            self._buffer_gsv_satellites(talker_id, system, parts[4:])
             self.gsv_last_update = time.time()
-            
-            if msg_num == int(parts[1]): 
-                if msg_num == num_messages:
-                    all_sats = []
-                    for constellation_sats in self.gsv_buffer.values():
-                        all_sats.extend(constellation_sats)
-                    
-                    for sat in all_sats:
-                        self.satellites[sat.get('id') or sat['prn']] = sat
-                    if len(self.satellites) > 64:
-                        self.satellites = dict(list(self.satellites.items())[-64:])
-                        
-                        if self.last_gsa:
-                            sat['isTracking'] = sat['prn'] in self.last_gsa['active_sats']
-                    
-                    self.gsv_buffer.clear()
-                    self.gsv_expected_messages.clear()
-                    
-                    return {
-                        "type": "GSV",
-                        "talker": talker_id,
-                        "satellites": list(self.satellites.values())
-                    }
-        
+            if msg_num == int(parts[1]) and msg_num == num_messages:
+                return self._complete_gsv_buffer(talker_id)
         except (ValueError, IndexError):
             pass
-        
-        if time.time() - self.gsv_last_update > self.gsv_timeout and self.gsv_buffer:
-            all_sats = []
-            for constellation_sats in self.gsv_buffer.values():
-                all_sats.extend(constellation_sats)
-            
-            if all_sats:
-                for sat in all_sats:
-                    self.satellites[sat.get('id') or sat['prn']] = sat
-                if len(self.satellites) > 64:
-                    self.satellites = dict(list(self.satellites.items())[-64:])
-                
-                self.gsv_buffer.clear()
-                
-                return {
-                    "type": "GSV",
-                    "satellites": list(self.satellites.values())
-                }
-        
-        return None
+        return self._flush_stale_gsv_buffer()
 
     def _parse_gst(self, parts: list) -> dict | None:
         """Parse GST - GNSS pseudorange error statistics."""
