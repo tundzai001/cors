@@ -12,9 +12,12 @@ export function getBaseChipSelection(device, manualChip) {
 export function getAutoBaseProgressSummary(device, autoProgress) {
     const autoSamplesCollected = Number(autoProgress.samples_collected || 0);
     const autoSamplesTarget = Number(autoProgress.samples_target || 0);
-    const ggaAge = autoProgress.gga_age_seconds !== undefined && autoProgress.gga_age_seconds !== null
-        ? autoProgress.gga_age_seconds
-        : (device?.last_raw_gga_age !== undefined ? device.last_raw_gga_age : null);
+    let ggaAge = null;
+    if (autoProgress.gga_age_seconds !== undefined && autoProgress.gga_age_seconds !== null) {
+        ggaAge = autoProgress.gga_age_seconds;
+    } else if (device?.last_raw_gga_age !== undefined) {
+        ggaAge = device.last_raw_gga_age;
+    }
     return {
         autoSamplesCollected,
         autoSamplesTarget,
@@ -134,9 +137,9 @@ export function getBaseReceiverInfo(device, currentUser, isReadingReceiver) {
         })
         : '';
     const savedMethod = String(device.base_config?.base_setup_method || '').toUpperCase();
-    const expectedReceiverMode = savedMethod === 'SURVEY_IN'
-        ? 'survey_in'
-        : ['FIXED_LLA', 'AUTO_CORS'].includes(savedMethod) ? 'base' : '';
+    let expectedReceiverMode = '';
+    if (savedMethod === 'SURVEY_IN') expectedReceiverMode = 'survey_in';
+    else if (['FIXED_LLA', 'AUTO_CORS'].includes(savedMethod)) expectedReceiverMode = 'base';
     const receiverReadbackIsFresh = receiverReadback.state === 'ok'
         && Number(receiverReadback.age_seconds) <= 60
         && !receiverOffline;

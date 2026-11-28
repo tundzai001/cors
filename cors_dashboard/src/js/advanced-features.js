@@ -104,7 +104,7 @@ window.ActivityFeed = React.memo(function ActivityFeed({ maxItems = 10 }) {
                 overflowY: 'auto', 
                 padding: '8px' 
             }}>
-                {isLoading ? (
+                {isLoading && (
                     <div style={{ 
                         textAlign: 'center', 
                         padding: '40px 20px', 
@@ -115,7 +115,8 @@ window.ActivityFeed = React.memo(function ActivityFeed({ maxItems = 10 }) {
                         </div>
                         <p className="mt-2 small">Loading history...</p>
                     </div>
-                ) : activities.length === 0 ? (
+                )}
+                {!isLoading && activities.length === 0 && (
                     <div style={{ 
                         textAlign: 'center', 
                         padding: '40px 20px', 
@@ -130,7 +131,8 @@ window.ActivityFeed = React.memo(function ActivityFeed({ maxItems = 10 }) {
                         }}></i>
                         No recent activity
                     </div>
-                ) : (
+                )}
+                {!isLoading && activities.length > 0 && (
                     activities.map(activity => (
                         <div 
                             key={activity.id} 

@@ -19,7 +19,9 @@ function AutoBaseMonitorHeader({
     stopAutoBase, ggaFix, ggaAge, autoProgressPercent,
 }) {
     const statusText = STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & Base';
-    const ggaAgeClass = ggaAge < 3 ? 'bg-success' : ggaAge < 10 ? 'bg-warning text-dark' : 'bg-danger';
+    let ggaAgeClass = 'bg-danger';
+    if (ggaAge < 10) ggaAgeClass = 'bg-warning text-dark';
+    if (ggaAge < 3) ggaAgeClass = 'bg-success';
     return <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
         <div className="d-flex align-items-center gap-2">
             {isAutoSetupStatus && <span className="spinner-grow spinner-grow-sm text-info" role="status"></span>}

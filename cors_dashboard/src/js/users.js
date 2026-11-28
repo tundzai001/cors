@@ -239,7 +239,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const serial = String(device.serial);
             const label = `<span><strong>${escapeHtml(device.name || serial)}</strong><span class="text-muted ms-2">${escapeHtml(serial)}</span></span>`;
             if (roleSelect.value === 'coordinator') {
-                const access = editable.has(serial) ? 'edit' : viewable.has(serial) ? 'view' : 'none';
+                let access = 'none';
+                if (editable.has(serial)) access = 'edit';
+                else if (viewable.has(serial)) access = 'view';
                 return `<label class="d-flex align-items-center justify-content-between gap-2 mb-2">${label}
                     <select class="form-select form-select-sm device-access-select w-auto" data-serial="${escapeHtml(serial)}" aria-label="Quyền trạm ${escapeHtml(serial)}" ${currentUser.role !== 'admin' ? 'disabled' : ''}>
                         <option value="none" ${access === 'none' ? 'selected' : ''}>Không cấp</option>

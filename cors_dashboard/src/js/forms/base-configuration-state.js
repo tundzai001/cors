@@ -54,13 +54,18 @@ function buildFixedBaseParams({
         return { error: 'Vui lòng nhập vĩ độ và kinh độ hợp lệ.' };
     }
 
+    let alt;
+    if (approvedCoords) {
+        alt = formatApprovedAltitude(approvedCoords.alt, finalChipType);
+    } else if (finalChipType === 'Ublox') {
+        alt = chipCoordinate(String(altitude).trim() || '0', 4);
+    } else {
+        alt = String(altitude).trim() || '0';
+    }
     const coords = {
         lat: chipCoordinate(latStr, finalChipType === 'Ublox' ? 9 : 10),
         lon: chipCoordinate(lonStr, finalChipType === 'Ublox' ? 9 : 10),
-        alt: approvedCoords ? formatApprovedAltitude(approvedCoords.alt, finalChipType)
-            : finalChipType === 'Ublox'
-                ? chipCoordinate(String(altitude).trim() || '0', 4)
-                : String(altitude).trim() || '0',
+        alt,
     };
     const params = {
         coords,
@@ -106,13 +111,20 @@ function buildGnssOptions({
 }) {
     if (!isAdmin && existingGnss) return { ...existingGnss };
     const isDefaultOptions = !isAdmin;
+    let outputMsmLevel;
+    if (msmLevel === 'both') {
+        outputMsmLevel = 'both';
+    } else {
+        const level = isDefaultOptions ? msmLevel || 4 : msmLevel;
+        outputMsmLevel = Number(level);
+    }
     return {
         ...(activeChip === 'Ublox' ? {
             interference_detection_enabled: isDefaultOptions ? true : interferenceDetectionEnabled,
             jamming_sensitivity_high: jammingSensitivityHigh,
         } : {}),
         output_mode: isDefaultOptions ? outputMode || 'diagnostics_rtcm' : outputMode,
-        msm_level: msmLevel === 'both' ? 'both' : Number(isDefaultOptions ? msmLevel || 4 : msmLevel),
+        msm_level: outputMsmLevel,
         constellations: constellations || {
             gps: true, glo: true, gal: true, bds: true, qzss: true, sbas: true,
         },

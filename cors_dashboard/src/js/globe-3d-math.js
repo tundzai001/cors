@@ -46,7 +46,9 @@
         };
         for (const feature of features) {
             const geometry = feature.geometry;
-            const polygons = geometry?.type === 'Polygon' ? [geometry.coordinates] : geometry?.type === 'MultiPolygon' ? geometry.coordinates : [];
+            let polygons = [];
+            if (geometry?.type === 'Polygon') polygons = [geometry.coordinates];
+            else if (geometry?.type === 'MultiPolygon') polygons = geometry.coordinates;
             if (polygons.some(rings => rings[0] && inRing(rings[0]) && !rings.slice(1).some(inRing))) {
                 const properties = feature.properties || {};
                 return properties.name_vi || properties.ADMIN || properties.name || properties.NAME || 'Đất liền';

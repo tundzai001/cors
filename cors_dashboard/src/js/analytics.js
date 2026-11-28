@@ -44,7 +44,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const label = `${date(row.date)}: ${number(row[series])} ${labelName}`;
             if (row[series] != null) svg += `<circle tabindex="0" role="img" aria-label="${label}" cx="${x(i)}" cy="${y(row[series])}" r="3"><title>${label}</title></circle>`;
             if (i===0 || i===rows.length-1 || i===Math.floor(rows.length/2)) {
-                svg += `<text x="${x(i)}" y="${height-4}" text-anchor="${i===0?'start':i===rows.length-1?'end':'middle'}">${date(row.date)}</text>`;
+                let anchor = 'middle';
+                if (i === 0) anchor = 'start';
+                else if (i === rows.length - 1) anchor = 'end';
+                svg += `<text x="${x(i)}" y="${height-4}" text-anchor="${anchor}">${date(row.date)}</text>`;
             }
         });
         document.getElementById('analytics-trend').innerHTML = svg + '</svg>';

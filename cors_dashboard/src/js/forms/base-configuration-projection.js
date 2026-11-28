@@ -158,11 +158,13 @@ function Vn2000DecodeDetails({ report, decoded, hasDecoded, processorLabel }) {
 }
 
 function getVn2000ActionLabels(onReviewChange, canRecalculate, calculating) {
+    let button = onReviewChange ? 'Tính lại NEh và LLH' : 'Đổi múi N/E';
+    if (calculating) button = 'Đang tính…';
+    let help = onReviewChange ? 'Dùng lại mẫu RTK Fixed của phiên này. Kiểm tra LLH mới trước khi áp dụng vào Base.' : 'Đổi múi để xem N/E của tọa độ đã lưu.';
+    if (!canRecalculate) help = 'Phiên này thiếu tham số RTCM để tính lại.';
     return {
-        button: calculating ? 'Đang tính…' : onReviewChange ? 'Tính lại NEh và LLH' : 'Đổi múi N/E',
-        help: !canRecalculate ? 'Phiên này thiếu tham số RTCM để tính lại.'
-            : onReviewChange ? 'Dùng lại mẫu RTK Fixed của phiên này. Kiểm tra LLH mới trước khi áp dụng vào Base.'
-            : 'Đổi múi để xem N/E của tọa độ đã lưu.',
+        button,
+        help,
     };
 }
 

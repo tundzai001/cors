@@ -78,7 +78,8 @@ const GnssReadbackDetails = ({ details }) => {
                 <input className="form-check-input m-0" type="checkbox" checked={enabledOnly} onChange={event => setEnabledOnly(event.target.checked)} />Chỉ bản tin đang bật
             </label>
         </div>
-        {ublox ? observed?.state !== 'ok' ? <div className="small text-warning">Chưa đọc được danh sách bản tin trên {selected}.</div> : <>
+        {ublox && observed?.state !== 'ok' && <div className="small text-warning">Chưa đọc được danh sách bản tin trên {selected}.</div>}
+        {ublox && observed?.state === 'ok' && <>
             <div className="table-responsive border rounded">
                 <table className="table table-sm align-middle mb-0 small">
                     <caption className="visually-hidden">Tốc độ bản tin đọc từ chip trên {selected}</caption>
@@ -97,7 +98,9 @@ const GnssReadbackDetails = ({ details }) => {
                 </table>
             </div>
             <p className="small text-muted mt-2 mb-0">Tốc độ tính theo chu kỳ đo của chip. Bảng liệt kê các bản tin trong bộ cấu hình Base. Cổng và giao thức tương ứng phải bật để xuất bản tin.</p>
-        </> : details.logs_state !== 'ok' ? <div className="small text-warning">Chưa đọc được danh sách log từ UM.</div> : <div className="table-responsive border rounded">
+        </>}
+        {!ublox && details.logs_state !== 'ok' && <div className="small text-warning">Chưa đọc được danh sách log từ UM.</div>}
+        {!ublox && details.logs_state === 'ok' && <div className="table-responsive border rounded">
             <table className="table table-sm align-middle mb-0 small">
                 <caption className="visually-hidden">Danh sách log UM trên {selected}</caption>
                 <thead><tr><th scope="col">Bản tin</th><th scope="col">Chip trả về</th><th scope="col">Yêu cầu</th></tr></thead>
@@ -167,9 +170,18 @@ const verificationGroups = chipType => {
 const verificationGroupStatus = group => {
     const unread = !group || Number(group.unread) > 0 || !(Number(group.checked) > 0);
     const mismatch = Number(group?.mismatched) > 0;
+    let className = 'text-success-emphasis';
+    let label = 'Khớp';
+    if (unread) {
+        className = 'text-warning';
+        label = 'Chưa đọc được';
+    } else if (mismatch) {
+        className = 'text-danger-emphasis';
+        label = `Sai (${group.mismatched}/${group.checked})`;
+    }
     return {
-        className: unread ? 'text-warning' : mismatch ? 'text-danger-emphasis' : 'text-success-emphasis',
-        label: unread ? 'Chưa đọc được' : mismatch ? `Sai (${group.mismatched}/${group.checked})` : 'Khớp',
+        className,
+        label,
     };
 };
 export const GnssConfigVerification = ({ device, disabled }) => {
@@ -351,9 +363,9 @@ function GnssRtcmMessages({ activeChip, isLteStation, msmLevel, constellations }
         return <span><strong>1006</strong> (Tọa độ Base), <strong>1033</strong> (antenna/receiver). {selectedMessages}</span>;
     }
     if (activeChip === 'Unicorecomm') {
-        const messages = msmLevel === 'both'
-            ? '1074/1084/1094/1124 + 1077/1087/1097/1127'
-            : msmLevel === '7' ? '1077/1087/1097/1127' : '1074/1084/1094/1124';
+        let messages = '1074/1084/1094/1124';
+        if (msmLevel === 'both') messages = '1074/1084/1094/1124 + 1077/1087/1097/1127';
+        else if (msmLevel === '7') messages = '1077/1087/1097/1127';
         return <span>
             <strong>1006</strong> (Tọa độ Base), <strong>1033</strong> (mô tả antenna/receiver), <strong>{messages}</strong> ({msmLevel === 'both' ? 'MSM4 + MSM7' : `MSM${msmLevel}`}), <strong>1019/1020/1042/1045</strong> (Lịch vệ tinh GPS/GLO/BDS/GAL).
         </span>;

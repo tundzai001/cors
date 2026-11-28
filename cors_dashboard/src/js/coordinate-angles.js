@@ -70,7 +70,12 @@
         const degrees = Math.floor(total / 3600e6);
         const minutes = Math.floor(total % 3600e6 / 60e6);
         const seconds = String(Number((total % 60e6 / 1e6).toFixed(6)));
-        if (mode === 'dms') return `${degrees}°${String(minutes).padStart(2, '0')}′${seconds}″${axis === 'lat' ? number < 0 ? 'S' : 'N' : number < 0 ? 'W' : 'E'}`;
+        if (mode === 'dms') {
+            let direction;
+            if (axis === 'lat') direction = number < 0 ? 'S' : 'N';
+            else direction = number < 0 ? 'W' : 'E';
+            return `${degrees}°${String(minutes).padStart(2, '0')}′${seconds}″${direction}`;
+        }
         if (mode !== 'packed_dms') throw new Error('Định dạng góc không hợp lệ.');
         const [whole, fraction] = seconds.split('.');
         return `${number < 0 ? '-' : ''}${String(degrees).padStart(axis === 'lat' ? 2 : 3, '0')}${String(minutes).padStart(2, '0')}${whole.padStart(2, '0')}${fraction ? '.' + fraction : ''}`;

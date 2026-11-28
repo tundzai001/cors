@@ -127,22 +127,18 @@ const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDepl
                     disabled={isUpdatingBypass}
                     onClick={handleToggleBypass}
                 >
-                    {isUpdatingBypass ? (
-                        <>
-                            <span className="spinner-border spinner-border-sm me-2"></span>
-                            Đang cập nhật bypass...
-                        </>
-                    ) : licenseBypass ? (
-                        <>
-                            <i className="bi bi-shield-check me-2"></i>
-                            Tắt bypass license
-                        </>
-                    ) : (
-                        <>
-                            <i className="bi bi-shield-exclamation me-2"></i>
-                            Bỏ qua license cho trạm này
-                        </>
-                    )}
+                    {isUpdatingBypass && <>
+                        <span className="spinner-border spinner-border-sm me-2"></span>
+                        Đang cập nhật bypass...
+                    </>}
+                    {!isUpdatingBypass && licenseBypass && <>
+                        <i className="bi bi-shield-check me-2"></i>
+                        Tắt bypass license
+                    </>}
+                    {!isUpdatingBypass && !licenseBypass && <>
+                        <i className="bi bi-shield-exclamation me-2"></i>
+                        Bỏ qua license cho trạm này
+                    </>}
                 </button>
             )}
         </form>

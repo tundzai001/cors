@@ -103,7 +103,8 @@
             const metersPerPixel = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, options.zoom || 6);
             const altitudeKm = metersPerPixel * this.container.clientHeight / 2000 / Math.tan(this.camera.fov * Math.PI / 360);
             const distance = Math.max(5.08, Math.min(90, 5 + altitudeKm / 6371 * 5));
-            this.focusVietnam(false, options.autoZoom ? distance : reducedMotion ? 90 : distance, center);
+            const initialDistance = options.autoZoom || !reducedMotion ? distance : 90;
+            this.focusVietnam(false, initialDistance, center);
             if (!options.autoZoom && !reducedMotion) {
                 this.focusVietnam(true, 90, center);
             }

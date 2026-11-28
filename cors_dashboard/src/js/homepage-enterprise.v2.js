@@ -372,7 +372,9 @@ const ParticleField = () => {
             lastFrameAt = now;
             ctx.clearRect(0, 0, width, height);
             const activeParticleCount = Math.max(8, Math.min(particles.length, Number(performanceSettings.particleCount || 18)));
-            const maxDistance = performanceSettings.tier === 'high' ? 140 : performanceSettings.tier === 'balanced' ? 115 : 88;
+            let maxDistance = 88;
+            if (performanceSettings.tier === 'balanced') maxDistance = 115;
+            else if (performanceSettings.tier === 'high') maxDistance = 140;
             for (let index = 0; index < activeParticleCount; index++) updateParticle(particles[index]);
             updateSpatialGrid(activeParticleCount, maxDistance);
             lineBuckets.forEach(bucket => { bucket.length = 0; });
@@ -878,7 +880,9 @@ const HeroThreeScene = () => {
             lastFrameAt = now;
 
             const elapsed = clock.getElapsedTime();
-            const visibleParticleCount = qualitySettings.tier === 'high' ? 180 : qualitySettings.tier === 'balanced' ? 72 : 28;
+            let visibleParticleCount = 28;
+            if (qualitySettings.tier === 'balanced') visibleParticleCount = 72;
+            else if (qualitySettings.tier === 'high') visibleParticleCount = 180;
             particleGeometry.setDrawRange(0, visibleParticleCount);
             if (!prefersReducedMotion) {
                 group.rotation.y = 0;
@@ -1837,9 +1841,12 @@ function setupCinematicWhyChoose() {
             y: 50, opacity: 0, duration: 0.8, delay: 0.1, ease: 'power3.out'
         });
         whyCards.forEach((card, i) => {
+            let rotateY = -12;
+            if (i === 0) rotateY = 12;
+            else if (i === 1) rotateY = 0;
             gsap.from(card, {
                 scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
-                y: 80, opacity: 0, scale: 0.88, rotateY: i === 1 ? 0 : (i === 0 ? 12 : -12),
+                y: 80, opacity: 0, scale: 0.88, rotateY,
                 duration: 1, delay: i * 0.15, ease: 'power3.out'
             });
         });

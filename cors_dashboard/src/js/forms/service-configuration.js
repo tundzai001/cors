@@ -30,6 +30,11 @@ const getCasterActivityPresentation = (sleeping, bps) => {
     if (bps > 0) return { label: `Đang gửi RTCM · ${bps} B/s`, tone: 'success' };
     return { label: 'Chưa gửi RTCM', tone: 'secondary' };
 };
+const getServerLockStatusText = (blocked, lockApplied) => {
+    if (!blocked) return 'Được phép gửi · người dùng không được tắt';
+    if (lockApplied) return 'Đã khoá · không gửi dữ liệu';
+    return 'Khoá · chờ trạm xác nhận';
+};
 function applyGlobalOnDemandChange(next, name, checked, serverIds) {
     if (name !== 'stream_on_demand') return;
     next.server1_stream_on_demand = !!checked;
@@ -296,7 +301,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
             </div>
             {hostsLocked && isAdmin && <div className="alert alert-warning small" role="status">
                 <i className="bi bi-shield-lock me-2" aria-hidden="true"></i>Admin quản lý khoá server.
-                {[1, 2].map(sid => <span key={sid} className="d-block mt-1">Server {sid}: {blockedServer(sid) ? (lockApplied ? 'Đã khoá · không gửi dữ liệu' : 'Khoá · chờ trạm xác nhận') : 'Được phép gửi · người dùng không được tắt'}</span>)}
+                {[1, 2].map(sid => <span key={sid} className="d-block mt-1">Server {sid}: {getServerLockStatusText(blockedServer(sid), lockApplied)}</span>)}
             </div>}
             {isLteStation && (
                 <div className="alert alert-primary small">

@@ -238,9 +238,15 @@
         const expires = Number.isFinite(health?.valid_until) ? health.valid_until : (health?.checked_at || 0) + 75;
         const fresh = health?.checked_at && now >= health.checked_at - 5 && now < expires;
         const status = fresh ? health.status : 'unknown';
-        return status === 'online' ? {label: 'Online', color: '#22c55e'}
-            : status === 'offline' ? {label: 'Đang báo lỗi', color: '#ef4444'}
-            : {label: 'Chưa xác định', color: '#94a3b8'};
+        if (status === 'online') return {label: 'Online', color: '#22c55e'};
+        if (status === 'offline') return {label: 'Đang báo lỗi', color: '#ef4444'};
+        return {label: 'Chưa xác định', color: '#94a3b8'};
+    }
+
+    function rtcmCheckStatusText(saving, enabled) {
+        if (saving) return 'Đang lưu…';
+        if (enabled) return 'Đang bật · có dữ liệu mới báo hoạt động.';
+        return 'Đang tắt · kiểm tra form đăng nhập như cũ.';
     }
 
     function referenceCheckLabel(health) {
@@ -440,7 +446,7 @@
                     <label className="form-check-label" htmlFor="cors-cuc-rtcm-check">Kiểm tra dữ liệu RTCM Cục</label>
                 </div>
                 <div className="form-text" id="cors-cuc-rtcm-help" role="status" aria-live="polite">
-                    {rtcmSaving ? 'Đang lưu…' : vngeonetHealth?.rtcm_check_enabled ? 'Đang bật · có dữ liệu mới báo hoạt động.' : 'Đang tắt · kiểm tra form đăng nhập như cũ.'}
+                    {rtcmCheckStatusText(rtcmSaving, vngeonetHealth?.rtcm_check_enabled)}
                 </div>
                 {rtcmSaveError && <div className="small text-danger mt-1" role="alert">{rtcmSaveError}</div>}
             </div>}

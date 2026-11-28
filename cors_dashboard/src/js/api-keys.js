@@ -176,7 +176,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
 
-    const keyState = key => key.revoked_at ? 'revoked' : key.expires_at !== 0 && key.expires_at <= Date.now() / 1000 ? 'expired' : 'active';
+    const keyState = key => {
+        if (key.revoked_at) return 'revoked';
+        if (key.expires_at !== 0 && key.expires_at <= Date.now() / 1000) return 'expired';
+        return 'active';
+    };
     function createTokenReveal(key, identity) {
         const reveal = document.createElement('details'); reveal.className = 'ak-row-token';
         const toggle = document.createElement('summary'); toggle.textContent = 'Hiển thị key';

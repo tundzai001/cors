@@ -1188,8 +1188,9 @@ function DetailsPanelName({device, role, canEdit, isEditingName, setIsEditingNam
 
 function DetailsPanelStatusBadges({device, isReadonly4g, canEdit, displayStatusKey, staleOffline, lifecycleStatus, isDeviceLocked, lockedServers, lockApplied}) {
     const syncErrorText = device.sync_errors ? device.sync_errors.join('\n') : 'Đang chờ dữ liệu...';
+    const lockAppliedSuffix = lockApplied ? '' : ' · Chờ áp dụng';
     const lockedServerLabel = lockedServers.length
-        ? `Khoá ${lockedServers.map(serverId => `S${serverId}`).join(', ')}${lockApplied ? '' : ' · Chờ áp dụng'}`
+        ? `Khoá ${lockedServers.map(serverId => `S${serverId}`).join(', ')}${lockAppliedSuffix}`
         : 'Khoá toàn trạm';
     return <div className="d-flex align-items-center">
         {(isReadonly4g || device.is_lte) && <span className="badge bg-primary me-2" title="Trạm kết nối qua 4G/LTE">
