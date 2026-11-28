@@ -161,6 +161,25 @@
         }
     }
 
+    function corsCheckBadgeText(control) {
+        if (control.loading) return 'Đang lưu / tải…';
+        if (!control.loaded) return 'Chưa tải được';
+        return control.rtcm_check_enabled ? 'Đang bật' : 'Đã tắt';
+    }
+
+    function corsCheckNoteText(control) {
+        if (control.loading) return 'Đang cập nhật cài đặt…';
+        if (!control.loaded) return 'Chưa tải được cài đặt. Nhấn Làm mới để thử lại.';
+        if (control.rtcm_check_enabled) {
+            return 'Đang bật: có RTCM hợp lệ mới báo hoạt động. Nhận dữ liệu là đóng kết nối ngay.';
+        }
+        return 'Đang tắt: chỉ kiểm tra form đăng nhập như cũ, không kết nối NTRIP tự động.';
+    }
+
+    function formatCheckInterval(seconds) {
+        return seconds % 60 === 0 ? `${seconds / 60} phút` : `${seconds} giây`;
+    }
+
     function syncCorsCheckControls() {
         const control = state.corsCheck;
         const toggle = document.getElementById('cors-check-toggle');
@@ -169,15 +188,11 @@
         document.getElementById('cors-check-refresh').disabled = control.loading;
         document.getElementById('cors-check-label').textContent = control.rtcm_check_enabled ? 'RTCM đang bật' : 'RTCM đang tắt';
         const badge = document.getElementById('cors-check-badge');
-        badge.textContent = control.loading ? 'Đang lưu / tải…' : !control.loaded ? 'Chưa tải được' : control.rtcm_check_enabled ? 'Đang bật' : 'Đã tắt';
+        badge.textContent = corsCheckBadgeText(control);
         badge.className = `badge ${control.loaded && control.rtcm_check_enabled ? 'bg-success' : 'bg-secondary'}`;
-        document.getElementById('cors-check-note').textContent = control.loading ? 'Đang cập nhật cài đặt…'
-            : !control.loaded ? 'Chưa tải được cài đặt. Nhấn Làm mới để thử lại.'
-            : control.rtcm_check_enabled ? 'Đang bật: có RTCM hợp lệ mới báo hoạt động. Nhận dữ liệu là đóng kết nối ngay.'
-            : 'Đang tắt: chỉ kiểm tra form đăng nhập như cũ, không kết nối NTRIP tự động.';
+        document.getElementById('cors-check-note').textContent = corsCheckNoteText(control);
         if (control.loaded) {
-            const interval = seconds => seconds % 60 === 0 ? `${seconds / 60} phút` : `${seconds} giây`;
-            document.getElementById('cors-check-interval').textContent = `Web: ${interval(control.web_check_interval_seconds)} · RTCM: ${interval(control.rtcm_check_interval_seconds)}`;
+            document.getElementById('cors-check-interval').textContent = `Web: ${formatCheckInterval(control.web_check_interval_seconds)} · RTCM: ${formatCheckInterval(control.rtcm_check_interval_seconds)}`;
         }
         const error = document.getElementById('cors-check-error');
         error.textContent = control.error;
@@ -269,39 +284,85 @@
             </label>`).join('') : '<div class="text-muted">Chưa có trạm trong hệ thống.</div>';
     }
 
+    function matchesBindingFilters(item, query) {
+        if (state.botFilter && (item.bot_key || 'tun') !== state.botFilter) return false;
+        if (!query) return true;
+        return [item.display_name, item.chat_id, item.dashboard_username, item.binding_type, botLabel(item), item.bot_owner]
+            .some(value => String(value || '').toLocaleLowerCase('vi').includes(query));
+    }
+
+    function bindingAccountDetails(item, isPublic, isGroup) {
+        if (isPublic) {
+            return {
+                primary: 'Chỉ CORS Cục',
+                secondary: item.binding_type === 'cors_public'
+                    ? 'Không cần /sign hoặc OTP'
+                    : 'Quyền gốc được giữ, không dùng để gửi tin',
+            };
+        }
+        if (isGroup) {
+            return {
+                primary: bindingLabel(item),
+                secondary: item.binding_type === 'group_admin'
+                    ? 'Mọi thành viên có quyền quản trị'
+                    : 'Mọi thành viên chỉ được tra cứu',
+            };
+        }
+        return {
+            primary: item.dashboard_username || 'Tài khoản không khả dụng',
+            secondary: item.dashboard_role || 'Không xác định',
+        };
+    }
+
+    function bindingActions(item, isPublic) {
+        const adminActions = state.isAdmin
+            ? `${!isPublic ? `<button class="btn btn-sm btn-outline-primary me-1" data-cors-only="${item.id}">Chỉ Cục</button>` : ''}<button class="btn btn-sm ${item.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${item.is_active ? 'Dừng gửi' : 'Cho gửi'}</button>`
+            : '';
+        return `${adminActions}<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình" aria-label="Cấu hình chat"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết" aria-label="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
+    }
+
+    function bindingNotification(item, isPublic) {
+        const notification = item.notifications || {};
+        if (isPublic) {
+            return `<span class="text-info">${notification.cors_notify_changes ? 'Cục đổi trạng thái' : 'Chỉ khi gọi /cors'}</span>`;
+        }
+        if (notification.enabled) {
+            return `<span class="text-success"><i class="bi bi-bell-fill me-1"></i>${escapeHtml(notification.min_severity || 'critical')}</span>`;
+        }
+        return '<span class="text-muted"><i class="bi bi-bell-slash me-1"></i>Tắt</span>';
+    }
+
+    function renderBindingRow(item) {
+        const isGroup = item.chat_type === 'group';
+        const isPublic = item.delivery_mode === 'cors_only' || item.binding_type === 'cors_public';
+        const fallbackName = isGroup ? `Nhóm Zalo …${String(item.chat_id || '').slice(-6)}` : 'Chat cá nhân';
+        const account = bindingAccountDetails(item, isPublic, isGroup);
+        const typeClass = isGroup ? 'bg-warning text-dark' : 'bg-info text-dark';
+        const typeLabel = isGroup ? 'Nhóm' : 'Cá nhân';
+        const statusClass = item.is_active ? 'bg-success' : 'bg-secondary';
+        const statusLabel = item.is_active ? 'Đang hoạt động' : 'Đã tắt';
+        return `<tr>
+            <td data-label="Bot"><div><strong>${escapeHtml(botLabel(item))}</strong><div class="small text-muted">${escapeHtml(item.bot_owner || (item.bot_key === 'tb' ? 'Trường' : 'Tun'))}</div></div></td>
+            <td data-label="Loại"><span class="badge ${typeClass}">${typeLabel}</span></td>
+            <td data-label="Chat"><strong>${escapeHtml(item.display_name || fallbackName)}</strong><div class="small text-muted font-monospace">${escapeHtml(item.chat_id)}</div></td>
+            <td data-label="Tài khoản"><div>${escapeHtml(account.primary)}</div><div class="small text-muted">${escapeHtml(account.secondary)}</div></td>
+            <td data-label="Phạm vi"><span class="badge ${scopeBadgeClass(item)}">${escapeHtml(scopeLabel(item))}</span></td>
+            <td data-label="Cảnh báo">${bindingNotification(item, isPublic)}</td>
+            <td data-label="Lần cuối">${fmtTime(item.last_seen_at)}</td>
+            <td data-label="Trạng thái"><span class="badge ${statusClass}">${statusLabel}</span></td>
+            <td data-label="Thao tác" class="zalo-binding-actions text-end text-nowrap">${bindingActions(item, isPublic)}</td>
+        </tr>`;
+    }
+
     function renderBindings() {
         const body = document.getElementById('binding-list');
         const query = state.query.trim().toLocaleLowerCase('vi');
-        const items = state.items.filter(item => (!state.botFilter || (item.bot_key || 'tun') === state.botFilter) && (!query || [
-            item.display_name, item.chat_id, item.dashboard_username, item.binding_type, botLabel(item), item.bot_owner
-        ].some(value => String(value || '').toLocaleLowerCase('vi').includes(query))));
+        const items = state.items.filter(item => matchesBindingFilters(item, query));
         if (!items.length) {
             body.innerHTML = '<tr><td colspan="9"><div class="ops-empty-state"><i class="bi bi-chat"></i><span>Không có liên kết phù hợp</span></div></td></tr>';
             return;
         }
-        body.innerHTML = items.map(item => {
-            const isGroup = item.chat_type === 'group';
-            const fallbackName = isGroup ? `Nhóm Zalo …${String(item.chat_id || '').slice(-6)}` : 'Chat cá nhân';
-            const notification = item.notifications || {};
-            const isPublic = item.delivery_mode === 'cors_only' || item.binding_type === 'cors_public';
-            const accountPrimary = isPublic ? 'Chỉ CORS Cục' : isGroup ? bindingLabel(item) : (item.dashboard_username || 'Tài khoản không khả dụng');
-            const accountSecondary = isPublic ? (item.binding_type === 'cors_public' ? 'Không cần /sign hoặc OTP' : 'Quyền gốc được giữ, không dùng để gửi tin') : isGroup
-                ? (item.binding_type === 'group_admin' ? 'Mọi thành viên có quyền quản trị' : 'Mọi thành viên chỉ được tra cứu')
-                : (item.dashboard_role || 'Không xác định');
-            const badgeClass = scopeBadgeClass(item);
-            const actions = (state.isAdmin ? `${!isPublic ? `<button class="btn btn-sm btn-outline-primary me-1" data-cors-only="${item.id}">Chỉ Cục</button>` : ''}<button class="btn btn-sm ${item.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${item.is_active ? 'Dừng gửi' : 'Cho gửi'}</button>` : '') + `<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình" aria-label="Cấu hình chat"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết" aria-label="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
-            return `<tr>
-                <td data-label="Bot"><div><strong>${escapeHtml(botLabel(item))}</strong><div class="small text-muted">${escapeHtml(item.bot_owner || (item.bot_key === 'tb' ? 'Trường' : 'Tun'))}</div></div></td>
-                <td data-label="Loại"><span class="badge ${isGroup ? 'bg-warning text-dark' : 'bg-info text-dark'}">${isGroup ? 'Nhóm' : 'Cá nhân'}</span></td>
-                <td data-label="Chat"><strong>${escapeHtml(item.display_name || fallbackName)}</strong><div class="small text-muted font-monospace">${escapeHtml(item.chat_id)}</div></td>
-                <td data-label="Tài khoản"><div>${escapeHtml(accountPrimary)}</div><div class="small text-muted">${escapeHtml(accountSecondary)}</div></td>
-                <td data-label="Phạm vi"><span class="badge ${badgeClass}">${escapeHtml(scopeLabel(item))}</span></td>
-                <td data-label="Cảnh báo">${isPublic ? `<span class="text-info">${notification.cors_notify_changes ? 'Cục đổi trạng thái' : 'Chỉ khi gọi /cors'}</span>` : notification.enabled ? `<span class="text-success"><i class="bi bi-bell-fill me-1"></i>${escapeHtml(notification.min_severity || 'critical')}</span>` : '<span class="text-muted"><i class="bi bi-bell-slash me-1"></i>Tắt</span>'}</td>
-                <td data-label="Lần cuối">${fmtTime(item.last_seen_at)}</td>
-                <td data-label="Trạng thái"><span class="badge ${item.is_active ? 'bg-success' : 'bg-secondary'}">${item.is_active ? 'Đang hoạt động' : 'Đã tắt'}</span></td>
-                <td data-label="Thao tác" class="zalo-binding-actions text-end text-nowrap">${actions}</td>
-            </tr>`;
-        }).join('');
+        body.innerHTML = items.map(renderBindingRow).join('');
     }
 
     async function loadBindings({ silent = false } = {}) {
