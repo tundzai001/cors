@@ -305,116 +305,110 @@ async def sync_rover_by_username(
     return await _sync_rover_casters(username, update_req, rover, current_user, target_hosts, config, db)
 
 
-@router.post("/api/rovers/create-multi", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 502: {"description": "Bad Gateway"}})
-async def create_multi_base_rover(
-    request: schemas.RoverMultiCreate,
-    db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # Add devices_db here
-    current_user: models.User = Depends(auth.get_current_user)
+async def _get_coordinator_visible_serials(request, devices_db, current_user):
+    visible_serials = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
+    for serial in request.selected_serials:
+        if str(serial).strip().upper() not in visible_serials:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Bạn không có quyền quản lý trạm '{serial}'."
+            )
+    return visible_serials
+
+
+async def _validate_viewer_multi_rover_scope(
+    devices_db, db, current_user, selected_serials, target_mountpoints,
 ):
-    # 1. Kiểm tra quyền (như cũ)
-    is_admin = current_user.role == auth.Role.ADMIN
-    if not auth.can_edit_rovers(current_user):
-        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tài khoản Rover.")
+    manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
+    selected_serials_upper = {
+        str(serial).strip().upper() for serial in selected_serials if str(serial).strip()
+    }
+    if not selected_serials_upper.issubset(manageable_serials):
+        raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi Rover Access của bạn.")
+    if not await crud.rover_mountpoints_within_scope(
+        devices_db, current_user, selected_serials, target_mountpoints
+    ):
+        raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
 
-    # 2. Kiểm tra trùng (như cũ)
-    existing = await crud.get_rover_by_username(db, request.username)
-    if existing:
-        raise HTTPException(status_code=400, detail="Username đã tồn tại.")
 
-    # 2.1 Coordinator may create Rover for editable or view-only stations.
-    if current_user.role == auth.Role.COORDINATOR:
-        coord_visible_serials = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
-
-        # Every requested station must be in the coordinator's visible scope.
+async def _collect_coordinator_mountpoints(request, devices_db, current_user, visible_serials):
+    valid_mountpoints = set()
+    if request.selected_serials:
         for serial in request.selected_serials:
-            if str(serial).strip().upper() not in coord_visible_serials:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Bạn không có quyền quản lý trạm '{serial}'."
-                )
+            device = await crud.get_device_by_serial(devices_db, serial)
+            if device and str(device.serial).strip().upper() in visible_serials:
+                config = _device_service_config(device)
+                if config.get('server1_enabled') and config.get('mountpoint1'):
+                    valid_mountpoints.add(config.get('mountpoint1'))
+                if config.get('server2_enabled') and config.get('mountpoint2'):
+                    valid_mountpoints.add(config.get('mountpoint2'))
+
+    if current_user.extra_mountpoints:
+        extras = [
+            mountpoint.strip()
+            for mountpoint in re.split(r'[;,\s]+', current_user.extra_mountpoints)
+            if mountpoint.strip()
+        ]
+        valid_mountpoints.update(extras)
+    return valid_mountpoints
 
 
-    # 3. Chuẩn bị dữ liệu
-    duration_seconds = request.expiry_days * 86400
-    target_mountpoints = request.mountpoint_override.strip()
+async def _validate_coordinator_mountpoint_scope(request, devices_db, current_user, visible_serials):
+    valid_mountpoints = await _collect_coordinator_mountpoints(
+        request, devices_db, current_user, visible_serials
+    )
+    requested = [
+        mountpoint.strip()
+        for mountpoint in re.split(r'[;,\s]+', request.mountpoint_override)
+        if mountpoint.strip()
+    ]
+    if not requested:
+        raise HTTPException(status_code=400, detail="Mountpoint không được để trống.")
+    for mountpoint in requested:
+        if mountpoint not in valid_mountpoints:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Mountpoint '{mountpoint}' không thuộc quyền quản lý của bạn."
+            )
 
-    selected_serials = list(request.selected_serials or [])
 
-    if current_user.role == auth.Role.VIEWER:
-        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
-        selected_serials_upper = {
-            str(serial).strip().upper()
-            for serial in selected_serials
-            if str(serial).strip()
-        }
-        if not selected_serials_upper.issubset(manageable_serials):
-            raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi Rover Access của bạn.")
-        if not await crud.rover_mountpoints_within_scope(devices_db, current_user, selected_serials, target_mountpoints):
-            raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
-
-    # 3. Xác định danh sách Mountpoint hợp lệ (Đặc biệt cho Coordinator)
+async def _validate_multi_rover_scope(
+    request, db, devices_db, current_user, is_admin, selected_serials, target_mountpoints,
+):
     if current_user.role == auth.Role.COORDINATOR:
-        valid_mps = set()
-
-        # 1. MP từ các trạm vật lý được chọn
-        if request.selected_serials:
-            for serial in request.selected_serials:
-                dev = await crud.get_device_by_serial(devices_db, serial)
-                if dev and str(dev.serial).strip().upper() in coord_visible_serials:
-                    sc = _device_service_config(dev)
-                    if sc.get('server1_enabled') and sc.get('mountpoint1'):
-                        valid_mps.add(sc.get('mountpoint1'))
-                    if sc.get('server2_enabled') and sc.get('mountpoint2'):
-                        valid_mps.add(sc.get('mountpoint2'))
-
-        # 2. MP bổ sung được gán riêng
-        if current_user.extra_mountpoints:
-            extras = [mp.strip() for mp in re.split(r'[;,\s]+', current_user.extra_mountpoints) if mp.strip()]
-            valid_mps.update(extras)
-
-        # 3. Kiểm tra Mountpoint yêu cầu
-        requested = [mp.strip() for mp in re.split(r'[;,\s]+', request.mountpoint_override) if mp.strip()]
-        if not requested:
-             raise HTTPException(status_code=400, detail="Mountpoint không được để trống.")
-
-        for mp in requested:
-            if mp not in valid_mps:
-                raise HTTPException(status_code=403, detail=f"Mountpoint '{mp}' không thuộc quyền quản lý của bạn.")
-
-    # 4. Nới lỏng yêu cầu chọn trạm:
-    # Nếu là Coordinator và đã có mountpoint_override (hợp lệ) thì không bắt buộc chọn trạm vật lý.
+        visible_serials = await _get_coordinator_visible_serials(request, devices_db, current_user)
+        await _validate_coordinator_mountpoint_scope(
+            request, devices_db, current_user, visible_serials
+        )
+    if current_user.role == auth.Role.VIEWER:
+        await _validate_viewer_multi_rover_scope(
+            devices_db, db, current_user, selected_serials, target_mountpoints
+        )
     if not selected_serials and not is_admin:
         if current_user.role != auth.Role.COORDINATOR or not target_mountpoints:
             raise HTTPException(status_code=400, detail="Phải chọn ít nhất 1 trạm hoặc Mountpoint bổ sung.")
+    return ",".join(selected_serials) if selected_serials else ""
 
-    combined_serials = ",".join(selected_serials) if selected_serials else ""
 
-    # 4. GỌI CASTER (Tạo user thật)
+async def _create_multi_rover_on_casters(request, current_user, duration_seconds, target_mountpoints):
     try:
         creator_identifier = current_user.username
-
-        # Determine which casters to send to
         target_hosts = request.target_casters or []
         if not target_hosts:
-            # Fallback to all configured hosts to ensure complete sync
-            env_hosts, env_cfg = _read_caster_config_from_env()
+            env_hosts, env_config = _read_caster_config_from_env()
             if env_hosts:
-                target_hosts = [str(h).strip() for h in env_hosts if h.strip()]
+                target_hosts = [str(host).strip() for host in env_hosts if host.strip()]
             else:
-                default_host = str(env_cfg.get("host") or settings.CASTER_HOST or "")
+                default_host = str(env_config.get("host") or settings.CASTER_HOST or "")
                 if default_host:
                     target_hosts = [default_host]
 
         if not target_hosts:
             raise ValueError("No target caster configured.")
         target_hosts = validate_caster_hosts(target_hosts)
-
-        # Create user on each target caster
         results_log = []
         errors = []
         port = int(settings.CASTER_PORT or 2101)
-
         for host in target_hosts:
             try:
                 from app.caster_client import CasterClient
@@ -432,31 +426,54 @@ async def create_multi_base_rover(
                     rtcm_disconnect_duration_seconds=int(getattr(request, "rtcm_disconnect_duration_seconds", 10) or 10),
                 )
                 results_log.append(host)
-            except Exception as e:
-                logger.exception(f"Failed to create user on caster {host}: {e}")
-                errors.append(f"{host}: {str(e)}")
+            except Exception as error:
+                logger.exception(f"Failed to create user on caster {host}: {error}")
+                errors.append(f"{host}: {str(error)}")
 
         if errors and not results_log:
-            # Failed on all targets
             raise Exception("; ".join(errors))
-
         logger.info(f"✓ Created Multi-Rover '{request.username}' on: {', '.join(results_log)}")
+        return results_log
+    except Exception as error:
+        logger.exception(f"Caster Multi-Create error: {error}")
+        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(error)}")
 
-    except Exception as e:
-        logger.exception(f"Caster Multi-Create error: {e}")
-        raise HTTPException(status_code=502, detail=f"Lỗi Caster: {str(e)}")
 
-    # 5. LƯU VÀO DB (Ghi rõ mountpoint)
+@router.post("/api/rovers/create-multi", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 502: {"description": "Bad Gateway"}})
+async def create_multi_base_rover(
+    request: schemas.RoverMultiCreate,
+    db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db), # Add devices_db here
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    is_admin = current_user.role == auth.Role.ADMIN
+    if not auth.can_edit_rovers(current_user):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tài khoản Rover.")
+
+    existing = await crud.get_rover_by_username(db, request.username)
+    if existing:
+        raise HTTPException(status_code=400, detail="Username đã tồn tại.")
+
+    duration_seconds = request.expiry_days * 86400
+    target_mountpoints = request.mountpoint_override.strip()
+    selected_serials = list(request.selected_serials or [])
+    combined_serials = await _validate_multi_rover_scope(
+        request, db, devices_db, current_user, is_admin, selected_serials, target_mountpoints
+    )
+    results_log = await _create_multi_rover_on_casters(
+        request, current_user, duration_seconds, target_mountpoints
+    )
+
     new_rover = await crud.create_rover_account(
         db,
         username=request.username,
         password=request.password,
-        base_serial=combined_serials,   # Lưu: "SN1,SN2"
-        mountpoints=target_mountpoints, # Lưu: "MP1;MP2" (Cột mới)
+        base_serial=combined_serials,
+        mountpoints=target_mountpoints,
         creator_id=current_user.id,
         max_connections=request.max_connections,
         show_position=request.show_position,
-        target_casters=";".join(results_log), # Lưu chính xác những server đã tạo thành công
+        target_casters=";".join(results_log),
         rtcm_cycle_enabled=getattr(request, 'rtcm_cycle_enabled', False),
         rtcm_disconnect_interval_seconds=getattr(request, 'rtcm_disconnect_interval_seconds', 300),
         rtcm_disconnect_duration_seconds=getattr(request, 'rtcm_disconnect_duration_seconds', 10),
@@ -465,6 +482,5 @@ async def create_multi_base_rover(
         auto_save_sessions=getattr(request, 'auto_save_sessions', True) if is_admin else True,
         auto_save_fixed_points=getattr(request, 'auto_save_fixed_points', False) if is_admin else False
     )
-
     return new_rover
 
