@@ -54,32 +54,37 @@ def catalog(dataset):
     filename = 'vietnam_units_legacy.json' if dataset == 'legacy' else 'vietnam_units.json'
     provinces = json.loads((DATA / filename).read_text(encoding='utf-8'))
     rows = []
-
-    def add(unit, kind, province=None, district=None):
-        parents = [parent.get('FullName') or parent['Name'] for parent in (district, province) if parent]
-        rows.append({
-            'type':kind, 'code':unit['Code'], 'name':unit['Name'],
-            'full_name':unit.get('FullName') or unit['Name'],
-            'province_code':province['Code'] if province else unit['Code'],
-            'province_name':(province or unit).get('FullName'),
-            'district_code':district['Code'] if district else None,
-            'district_name':district.get('FullName') if district else None,
-            'display_name':', '.join([unit.get('FullName') or unit['Name'], *parents]),
-            'dataset':dataset, 'dataset_version':VERSIONS[dataset],
-            'lat':None, 'lon':None, 'coordinate_source':None,
-            'source':'Cơ sở dữ liệu hành chính Việt Nam',
-            'storage':'bundled_catalogue',
-        })
-
-    for province in provinces:
-        add(province, 'province')
-        for ward in province.get('Wards') or province.get('Ward') or []:
-            add(ward, 'ward', province)
-        for district in province.get('District') or []:
-            add(district, 'district', province)
-            for ward in district.get('Ward') or []:
-                add(ward, 'ward', province, district)
+    for unit, kind, province, district in _catalog_units(provinces):
+        rows.append(_catalog_entry(unit, kind, dataset, province, district))
     return rows
+
+
+def _catalog_units(provinces):
+    for province in provinces:
+        yield province, 'province', None, None
+        for ward in province.get('Wards') or province.get('Ward') or []:
+            yield ward, 'ward', province, None
+        for district in province.get('District') or []:
+            yield district, 'district', province, None
+            for ward in district.get('Ward') or []:
+                yield ward, 'ward', province, district
+
+
+def _catalog_entry(unit, kind, dataset, province=None, district=None):
+    parents = [parent.get('FullName') or parent['Name'] for parent in (district, province) if parent]
+    return {
+        'type':kind, 'code':unit['Code'], 'name':unit['Name'],
+        'full_name':unit.get('FullName') or unit['Name'],
+        'province_code':province['Code'] if province else unit['Code'],
+        'province_name':(province or unit).get('FullName'),
+        'district_code':district['Code'] if district else None,
+        'district_name':district.get('FullName') if district else None,
+        'display_name':', '.join([unit.get('FullName') or unit['Name'], *parents]),
+        'dataset':dataset, 'dataset_version':VERSIONS[dataset],
+        'lat':None, 'lon':None, 'coordinate_source':None,
+        'source':'Cơ sở dữ liệu hành chính Việt Nam',
+        'storage':'bundled_catalogue',
+    }
 
 
 def search_catalog(query, limit=15, dataset='all'):

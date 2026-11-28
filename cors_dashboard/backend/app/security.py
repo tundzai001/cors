@@ -306,72 +306,66 @@ class AdvancedRateLimiter:
         5. Behavioral Anomalies
         """
         score = 0
-        
-        # === 1. 🆕 VPN ROTATION DETECTION (CRITICAL) ===
         if settings.get('vpn_detection_enabled', True):
-            # Track fingerprint → IPs mapping
-            self.fingerprint_to_ips[fingerprint].add(ip)
-            unique_ips_for_fingerprint = len(self.fingerprint_to_ips[fingerprint])
-            
-            # CRITICAL: Cùng fingerprint từ nhiều IPs khác nhau = VPN rotation
-            if unique_ips_for_fingerprint > self.MAX_IPS_PER_FINGERPRINT:
-                score += 50  # Very high score
-                logger.critical(
-                    f"🚨 VPN ROTATION DETECTED! Fingerprint {fingerprint[:8]} "
-                    f"seen from {unique_ips_for_fingerprint} different IPs"
-                )
-            
-            # Track IP → fingerprints (multiple browsers/devices)
-            self.ip_fingerprints[ip].add(fingerprint)
-            if len(self.ip_fingerprints[ip]) > self.MAX_FINGERPRINTS_PER_IP:
-                score += 25
-                logger.warning(f"⚠️ IP {ip} using {len(self.ip_fingerprints[ip])} fingerprints")
-        
+            score += self._score_fingerprint_rotation(ip, fingerprint)
         if settings.get('pattern_analysis_enabled', True):
-            # === 2. 🆕 BOT USER-AGENT DETECTION ===
-            ua = request.headers.get("User-Agent", "").lower()
-            bot_keywords = ['bot', 'crawler', 'spider', 'curl', 'wget', 'python', 'java']
-            if any(keyword in ua for keyword in bot_keywords):
-                score += 20
-                logger.warning(f"⚠️ Bot User-Agent detected from {ip}: {ua[:50]}")
-            
-            # === 3. REQUEST TIMING ANALYSIS ===
-            intervals = self.request_intervals[ip]
-            if len(intervals) > 0:
-                interval = now - intervals[-1]
-                if interval < self.MIN_REQUEST_INTERVAL:
-                    score += 20
-                    logger.warning(f"⚠️ IP {ip} too fast: {interval:.3f}s")
-            intervals.append(now)
-            
-            # === 4. BURST DETECTION ===
-            recent = [t for t in intervals if now - t < 5]
-            if len(recent) > 10:
-                score += 25
-                logger.warning(f"⚠️ IP {ip} burst: {len(recent)} req/5s")
-            
-            # === 5. PERSISTENT SUSPICIOUS BEHAVIOR ===
-            score += min(self.suspicious_patterns[ip], 25)
-        
+            score += self._score_request_pattern(ip, request, now)
         self.suspicious_patterns[ip] = score
-        # Cập nhật metadata cho VPN detection
         self.fingerprint_history[fingerprint]["ips"].add(ip)
-        
-        # 🆕 Cập nhật Traffic History (cho biểu đồ)
+        self._record_traffic_tick(now)
+        return score
+
+    def _score_fingerprint_rotation(self, ip: str, fingerprint: str) -> int:
+        score = 0
+        self.fingerprint_to_ips[fingerprint].add(ip)
+        unique_ip_count = len(self.fingerprint_to_ips[fingerprint])
+        if unique_ip_count > self.MAX_IPS_PER_FINGERPRINT:
+            score += 50
+            logger.critical(
+                f"🚨 VPN ROTATION DETECTED! Fingerprint {fingerprint[:8]} "
+                f"seen from {unique_ip_count} different IPs"
+            )
+
+        self.ip_fingerprints[ip].add(fingerprint)
+        fingerprint_count = len(self.ip_fingerprints[ip])
+        if fingerprint_count > self.MAX_FINGERPRINTS_PER_IP:
+            score += 25
+            logger.warning(f"⚠️ IP {ip} using {fingerprint_count} fingerprints")
+        return score
+
+    def _score_request_pattern(self, ip: str, request: Request, now: float) -> int:
+        score = 0
+        user_agent = request.headers.get("User-Agent", "").lower()
+        bot_keywords = ['bot', 'crawler', 'spider', 'curl', 'wget', 'python', 'java']
+        if any(keyword in user_agent for keyword in bot_keywords):
+            score += 20
+            logger.warning(f"⚠️ Bot User-Agent detected from {ip}: {user_agent[:50]}")
+
+        intervals = self.request_intervals[ip]
+        if intervals:
+            interval = now - intervals[-1]
+            if interval < self.MIN_REQUEST_INTERVAL:
+                score += 20
+                logger.warning(f"⚠️ IP {ip} too fast: {interval:.3f}s")
+        intervals.append(now)
+
+        recent_count = sum(1 for timestamp in intervals if now - timestamp < 5)
+        if recent_count > 10:
+            score += 25
+            logger.warning(f"⚠️ IP {ip} burst: {recent_count} req/5s")
+        return score + min(self.suspicious_patterns[ip], 25)
+
+    def _record_traffic_tick(self, now: float) -> None:
         current_tick = int(now)
         if current_tick > self.last_tick:
-            # Điền số 0 cho các giây không có request (nếu server idle)
             for _ in range(current_tick - self.last_tick - 1):
                 self.traffic_history.append(0)
             self.traffic_history.append(1)
             self.last_tick = current_tick
+        elif not self.traffic_history:
+            self.traffic_history.append(1)
         else:
-            if not self.traffic_history:
-                self.traffic_history.append(1)
-            else:
-                self.traffic_history[-1] += 1
-                
-        return score # Trả về score như cũ
+            self.traffic_history[-1] += 1
 
     # ==========================================================================
     # === FINGERPRINTING                                                     ===

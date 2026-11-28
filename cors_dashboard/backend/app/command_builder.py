@@ -183,14 +183,7 @@ def _ubx_cfg_msg(msg_class: int, msg_id: int, ports: list[str], rate: int = 1) -
     return _ubx_packet(0x06, 0x01, bytes(payload))
 
 
-def normalize_gnss_options(options: dict | None) -> dict:
-    raw = options if isinstance(options, dict) else {}
-    interference_enabled = raw.get("interference_detection_enabled", True)
-    if not isinstance(interference_enabled, bool):
-        raise ValueError("Phát hiện nhiễu GNSS phải là bật hoặc tắt.")
-    sensitivity_high = raw.get("jamming_sensitivity_high", True)
-    if not isinstance(sensitivity_high, bool):
-        raise ValueError("Độ nhạy phát hiện nhiễu phải là cao hoặc thường.")
+def _normalize_constellations(raw: dict) -> dict:
     constellations = dict(DEFAULT_GNSS_OPTIONS["constellations"])
     for key, value in (raw.get("constellations") or {}).items():
         normalized_key = str(key).strip().lower()
@@ -198,11 +191,17 @@ def normalize_gnss_options(options: dict | None) -> dict:
             constellations[normalized_key] = bool(value)
     if not any(constellations.values()):
         constellations["gps"] = True
+    return constellations
 
+
+def _normalize_output_mode(raw: dict) -> str:
     output_mode = str(raw.get("output_mode") or DEFAULT_GNSS_OPTIONS["output_mode"]).strip().lower()
     if output_mode not in {"diagnostics_rtcm", "rtcm_only"}:
         output_mode = DEFAULT_GNSS_OPTIONS["output_mode"]
+    return output_mode
 
+
+def _normalize_msm_level(raw: dict):
     try:
         raw_msm_level = raw.get("msm_level") or DEFAULT_GNSS_OPTIONS["msm_level"]
         msm_level = "both" if str(raw_msm_level).strip().lower() == "both" else int(raw_msm_level)
@@ -210,6 +209,10 @@ def normalize_gnss_options(options: dict | None) -> dict:
         msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
     if msm_level not in {4, 7, "both"}:
         msm_level = DEFAULT_GNSS_OPTIONS["msm_level"]
+    return msm_level
+
+
+def _normalize_ports(raw: dict) -> list[str]:
     raw_ports = raw.get("ports") or DEFAULT_GNSS_OPTIONS["ports"]
     if isinstance(raw_ports, str):
         raw_ports = [raw_ports]
@@ -220,12 +223,23 @@ def normalize_gnss_options(options: dict | None) -> dict:
             ports.append(normalized_port)
     if not ports:
         ports = list(DEFAULT_GNSS_OPTIONS["ports"])
+    return ports
+
+
+def normalize_gnss_options(options: dict | None) -> dict:
+    raw = options if isinstance(options, dict) else {}
+    interference_enabled = raw.get("interference_detection_enabled", True)
+    if not isinstance(interference_enabled, bool):
+        raise ValueError("Phát hiện nhiễu GNSS phải là bật hoặc tắt.")
+    sensitivity_high = raw.get("jamming_sensitivity_high", True)
+    if not isinstance(sensitivity_high, bool):
+        raise ValueError("Độ nhạy phát hiện nhiễu phải là cao hoặc thường.")
 
     return {
-        "constellations": constellations,
-        "output_mode": output_mode,
-        "msm_level": msm_level,
-        "ports": ports,
+        "constellations": _normalize_constellations(raw),
+        "output_mode": _normalize_output_mode(raw),
+        "msm_level": _normalize_msm_level(raw),
+        "ports": _normalize_ports(raw),
         "interference_detection_enabled": interference_enabled,
         "jamming_sensitivity_high": sensitivity_high,
     }

@@ -29,34 +29,17 @@ DEVICE_NOT_FOUND = "Device not found"
 VIEW_ONLY_STATION = "Trạm này chỉ được xem"
 
 
-def _normalize_auto_cors_config(payload: dict) -> dict:
-    raw_config = payload.get("auto_cors") if isinstance(payload, dict) else None
-    if not isinstance(raw_config, dict):
-        raise ValueError("AUTO_CORS requires the Base connection fields")
-
-    host = str(raw_config.get("ip") or "").strip()
-    user = str(raw_config.get("user") or "").strip()
-    password = str(raw_config.get("password") or "")
-    mountpoint = str(raw_config.get("mountpoint") or "").strip()
-    if not host or not user or not password or not mountpoint:
-        raise ValueError("Base IP, port, username, password, and mountpoint are required")
-    if any(char in "\r\n" for char in f"{host}{user}{password}{mountpoint}"):
-        raise ValueError("Base connection fields contain invalid line breaks")
-
+def _auto_cors_port(raw_config: dict) -> int:
     try:
         port = int(raw_config.get("port"))
     except (TypeError, ValueError):
         raise ValueError("Base port must be a valid number") from None
     if not 1 <= port <= 65535:
         raise ValueError("Base port must be between 1 and 65535")
+    return port
 
-    result = {
-        "ip": host,
-        "port": port,
-        "user": user,
-        "password": password,
-        "mountpoint": mountpoint,
-    }
+
+def _add_auto_cors_projection(raw_config: dict, result: dict) -> None:
     enabled = raw_config.get('enable_itrf_vn2000_transform', True)
     if not isinstance(enabled, bool):
         raise ValueError('enable_itrf_vn2000_transform must be a boolean')
@@ -74,6 +57,30 @@ def _normalize_auto_cors_config(payload: dict) -> dict:
         if isinstance(raw_config[key], bool) or not math.isfinite(value) or not low <= value <= high:
             raise ValueError(f'Invalid {key}')
         result[key] = value
+
+
+def _normalize_auto_cors_config(payload: dict) -> dict:
+    raw_config = payload.get("auto_cors") if isinstance(payload, dict) else None
+    if not isinstance(raw_config, dict):
+        raise ValueError("AUTO_CORS requires the Base connection fields")
+
+    host = str(raw_config.get("ip") or "").strip()
+    user = str(raw_config.get("user") or "").strip()
+    password = str(raw_config.get("password") or "")
+    mountpoint = str(raw_config.get("mountpoint") or "").strip()
+    if not host or not user or not password or not mountpoint:
+        raise ValueError("Base IP, port, username, password, and mountpoint are required")
+    if any(char in "\r\n" for char in f"{host}{user}{password}{mountpoint}"):
+        raise ValueError("Base connection fields contain invalid line breaks")
+
+    result = {
+        "ip": host,
+        "port": _auto_cors_port(raw_config),
+        "user": user,
+        "password": password,
+        "mountpoint": mountpoint,
+    }
+    _add_auto_cors_projection(raw_config, result)
     return result
 
 

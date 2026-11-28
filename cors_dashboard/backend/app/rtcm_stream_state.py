@@ -140,50 +140,40 @@ def _iter_reapable_server_streams(config, legacy_active_mountpoint):
     yield resolved_server_id, active_mountpoint
 
 
-def apply_stream_control_state(
-    config: Mapping[str, Any] | None,
-    active: bool,
-    mountpoint: Any = None,
-    server_id: Any = None,
-) -> Dict[str, Any]:
-    """Apply one stream command to config and recompute aggregate flags."""
-
-    cfg: Dict[str, Any] = dict(config) if isinstance(config, Mapping) else {}
-    mountpoint_norm = normalize_mountpoint(mountpoint)
-
+def _target_stream_server_ids(cfg: Dict[str, Any], active: bool, mountpoint_norm: str, server_id: Any):
+    configured_ids = service_server_ids(cfg)
     try:
         parsed_server_id = int(server_id) if server_id is not None else None
     except (TypeError, ValueError):
         parsed_server_id = None
-    if parsed_server_id not in service_server_ids(cfg):
+    if parsed_server_id not in configured_ids:
         parsed_server_id = None
-
     if parsed_server_id is not None:
-        target_server_ids = (parsed_server_id,)
-    elif mountpoint_norm:
-        target_server_ids = tuple(
+        return (parsed_server_id,)
+    if mountpoint_norm:
+        return tuple(
             sid
-            for sid in service_server_ids(cfg)
+            for sid in configured_ids
             if normalize_mountpoint(cfg.get(f"mountpoint{sid}")) == mountpoint_norm
         )
-    elif not bool(active):
-        target_server_ids = service_server_ids(cfg)
-    else:
-        target_server_ids = ()
+    return configured_ids if not bool(active) else ()
 
-    for sid in target_server_ids:
-        state = get_server_stream_state(cfg, sid)
-        on_demand_key = f"server{sid}_stream_on_demand"
-        active_key = f"server{sid}_stream_active"
-        if bool(active):
-            # A wake must not silently convert an explicit Always-On server to
-            # On-Demand. Preserve its mode and only align the active flag.
-            cfg[on_demand_key] = state.on_demand
-            cfg[active_key] = True
-        elif state.on_demand:
-            cfg[on_demand_key] = True
-            cfg[active_key] = False
 
+def _set_stream_server_state(cfg: Dict[str, Any], sid: int, active: bool) -> None:
+    state = get_server_stream_state(cfg, sid)
+    on_demand_key = f"server{sid}_stream_on_demand"
+    active_key = f"server{sid}_stream_active"
+    if bool(active):
+        # A wake must not silently convert an explicit Always-On server to
+        # On-Demand. Preserve its mode and only align the active flag.
+        cfg[on_demand_key] = state.on_demand
+        cfg[active_key] = True
+    elif state.on_demand:
+        cfg[on_demand_key] = True
+        cfg[active_key] = False
+
+
+def _update_stream_aggregate_state(cfg: Dict[str, Any], active: bool, mountpoint: Any, mountpoint_norm: str):
     if bool(active) and mountpoint_norm:
         cfg["active_mountpoint"] = str(mountpoint).strip()
 
@@ -199,6 +189,22 @@ def apply_stream_control_state(
                 cfg.pop("active_mountpoint", None)
 
     return cfg
+
+
+def apply_stream_control_state(
+    config: Mapping[str, Any] | None,
+    active: bool,
+    mountpoint: Any = None,
+    server_id: Any = None,
+) -> Dict[str, Any]:
+    """Apply one stream command to config and recompute aggregate flags."""
+
+    cfg: Dict[str, Any] = dict(config) if isinstance(config, Mapping) else {}
+    mountpoint_norm = normalize_mountpoint(mountpoint)
+    target_server_ids = _target_stream_server_ids(cfg, active, mountpoint_norm, server_id)
+    for sid in target_server_ids:
+        _set_stream_server_state(cfg, sid, active)
+    return _update_stream_aggregate_state(cfg, active, mountpoint, mountpoint_norm)
 
 
 def build_stream_control_payload(

@@ -64,45 +64,50 @@ def normalize_service_config(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _has_ntrip_server_telemetry(stats: dict, raw_status: dict, server_keys: tuple[str, ...]) -> bool:
+    return any(
+        f"{key}_bps" in stats
+        or f"{key}_bps" in raw_status
+        or key in raw_status
+        for key in server_keys
+    )
+
+
+def _normalize_ntrip_server_status(key: str, stats: dict, raw_status: dict, stream_state: dict) -> dict:
+    raw_server = raw_status.get(key)
+    server_status = raw_server if isinstance(raw_server, dict) else {}
+    raw_bps = stats.get(f"{key}_bps")
+    if raw_bps is None:
+        raw_bps = server_status.get("bps", raw_status.get(f"{key}_bps", 0))
+    try:
+        bps = max(0, int(float(raw_bps or 0)))
+    except (TypeError, ValueError, OverflowError):
+        bps = 0
+
+    connected = server_status.get("connected")
+    if isinstance(raw_server, bool):
+        connected = raw_server
+    normalized = {**server_status, "connected": connected is True or bps > 0, "bps": bps}
+    stream_server = _ensure_dict(stream_state.get(key))
+    for state_key in ("enabled", "on_demand", "active", "can_push", "sleep", "mountpoint"):
+        if state_key in stream_server:
+            normalized[state_key] = stream_server[state_key]
+    return normalized
+
+
 def normalize_ntrip_status_payload(device_data: dict) -> dict:
     """Normalize agent NTRIP telemetry into per-server bps and connection fields."""
     stats = _ensure_dict(device_data.get("ntrip_stats"))
     raw_status = _ensure_dict(device_data.get("ntrip_status"))
     stream_state = _ensure_dict(device_data.get("ntrip_stream_state"))
     server_keys = ("server1", "server2")
-    has_server_telemetry = any(
-        f"{key}_bps" in stats
-        or f"{key}_bps" in raw_status
-        or key in raw_status
-        for key in server_keys
-    )
-    if not has_server_telemetry:
+    if not _has_ntrip_server_telemetry(stats, raw_status, server_keys):
         return raw_status
 
-    normalized = {}
-    for key in server_keys:
-        raw_server = raw_status.get(key)
-        server_status = raw_server if isinstance(raw_server, dict) else {}
-        raw_bps = stats.get(f"{key}_bps")
-        if raw_bps is None:
-            raw_bps = server_status.get("bps", raw_status.get(f"{key}_bps", 0))
-        try:
-            bps = max(0, int(float(raw_bps or 0)))
-        except (TypeError, ValueError, OverflowError):
-            bps = 0
-
-        connected = server_status.get("connected")
-        if isinstance(raw_server, bool):
-            connected = raw_server
-        connected = (connected is True) or bps > 0
-        normalized_server = {**server_status, "connected": connected, "bps": bps}
-        stream_server = _ensure_dict(stream_state.get(key))
-        for state_key in (
-            "enabled", "on_demand", "active", "can_push", "sleep", "mountpoint"
-        ):
-            if state_key in stream_server:
-                normalized_server[state_key] = stream_server[state_key]
-        normalized[key] = normalized_server
+    normalized = {
+        key: _normalize_ntrip_server_status(key, stats, raw_status, stream_state)
+        for key in server_keys
+    }
 
     for key in ("rtcm_input_bps", "rtcm_in_bps", "antenna_status"):
         if key in stats:
