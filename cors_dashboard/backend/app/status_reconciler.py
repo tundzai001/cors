@@ -87,18 +87,15 @@ class StatusReconciler:
         self._rejected_counts[reason] = self._rejected_counts.get(reason, 0) + 1
         return StatusDecision(False, None, reason, revision)
 
-    async def accept(
-        self,
-        payload: dict,
-        *,
-        source: str,
-        retained: bool = False,
-        received_at: Optional[float] = None,
-    ) -> StatusDecision:
+    def _normalize_status_input(self, payload, source, retained, received_at):
         if not isinstance(payload, dict):
             return self._reject("invalid_payload")
         serial = str(payload.get("serial") or "").strip()
-        if not serial or len(serial) > 128 or any(ord(char) < 33 or ord(char) > 126 for char in serial):
+        invalid_serial = (
+            not serial or len(serial) > 128
+            or any(ord(char) < 33 or ord(char) > 126 for char in serial)
+        )
+        if invalid_serial:
             return self._reject("missing_serial")
 
         now = float(received_at if received_at is not None else time.time())
@@ -119,88 +116,159 @@ class StatusReconciler:
             return self._reject("missing_status")
         if agent_timestamp is not None and agent_timestamp > now + 120:
             return self._reject("future_agent_timestamp")
+        return {
+            "payload": payload,
+            "serial": serial,
+            "now": now,
+            "source_name": source_name,
+            "priority": priority,
+            "boot_id": boot_id,
+            "sequence": sequence,
+            "agent_timestamp": agent_timestamp,
+            "status": status,
+            "event": event,
+            "retained": retained,
+        }
 
-        async with self._lock:
-            previous = self._states.get(serial)
+    def _reject_boot_order(self, serial, previous, boot_id, agent_timestamp, retained, status, now):
+        retired = self._retired_boot_ids.get(serial, set())
+        if boot_id and boot_id in retired:
+            return self._reject("retired_boot", previous.revision)
+        older_boot = (
+            boot_id and previous.boot_id and boot_id != previous.boot_id
+            and agent_timestamp and previous.agent_timestamp
+            and agent_timestamp < previous.agent_timestamp - 2.0
+        )
+        if older_boot:
+            return self._reject("older_boot_timestamp", previous.revision)
+        previous_is_fresh = now - previous.received_at <= self.retained_online_max_age
+        if retained and previous_is_fresh and (boot_id != previous.boot_id or status != previous.status):
+            return self._reject("retained_over_fresh_state", previous.revision)
+        return None
 
-            if retained and status not in {"offline", "locked"}:
-                if not agent_timestamp or now - agent_timestamp > self.retained_online_max_age:
-                    return self._reject("stale_retained_online", previous.revision if previous else 0)
+    def _reject_same_boot_sequence(self, previous, boot_id, sequence, priority, event, status):
+        same_boot = bool(boot_id and previous.boot_id and boot_id == previous.boot_id)
+        explicit_lwt = event in {"lwt", "cleanup"} and status == "offline"
+        has_sequences = sequence is not None and previous.sequence is not None
+        if not (same_boot and has_sequences and not explicit_lwt):
+            return None
+        if sequence < previous.sequence:
+            return self._reject("out_of_order_sequence", previous.revision)
+        if sequence == previous.sequence and priority <= previous.source_priority:
+            return self._reject("duplicate_sequence", previous.revision)
+        return None
 
-            if previous:
-                previous_is_fresh = now - previous.received_at <= self.retained_online_max_age
-                same_boot = bool(boot_id and previous.boot_id and boot_id == previous.boot_id)
-                explicit_lwt = event in {"lwt", "cleanup"} and status == "offline"
+    def _reject_timestamp_order(self, previous, boot_id, agent_timestamp, status, priority):
+        if boot_id and previous.boot_id:
+            return None
+        if not (agent_timestamp and previous.agent_timestamp):
+            return None
+        if agent_timestamp < previous.agent_timestamp - 0.5:
+            return self._reject("out_of_order_timestamp", previous.revision)
+        is_duplicate = (
+            abs(agent_timestamp - previous.agent_timestamp) <= 0.001
+            and status == previous.status
+            and priority <= previous.source_priority
+        )
+        if is_duplicate:
+            return self._reject("duplicate_timestamp", previous.revision)
+        return None
 
-                if boot_id and boot_id in self._retired_boot_ids.get(serial, set()):
-                    return self._reject("retired_boot", previous.revision)
+    def _record_retired_boot(self, serial, previous, boot_id):
+        if not (boot_id and previous.boot_id and boot_id != previous.boot_id):
+            return
+        retired = self._retired_boot_ids.setdefault(serial, set())
+        retired.add(previous.boot_id)
+        if len(retired) > 8:
+            retired.pop()
 
-                if (
-                    boot_id
-                    and previous.boot_id
-                    and boot_id != previous.boot_id
-                    and agent_timestamp
-                    and previous.agent_timestamp
-                    and agent_timestamp < previous.agent_timestamp - 2.0
-                ):
-                    return self._reject("older_boot_timestamp", previous.revision)
+    def _prior_status_rejection(self, serial, previous, fields):
+        if previous is None:
+            return None
+        reason = self._reject_boot_order(
+            serial, previous, fields["boot_id"], fields["agent_timestamp"],
+            fields["retained"], fields["status"], fields["now"],
+        )
+        if reason:
+            return reason
+        reason = self._reject_same_boot_sequence(
+            previous, fields["boot_id"], fields["sequence"], fields["priority"],
+            fields["event"], fields["status"],
+        )
+        if reason:
+            return reason
+        reason = self._reject_timestamp_order(
+            previous, fields["boot_id"], fields["agent_timestamp"],
+            fields["status"], fields["priority"],
+        )
+        if reason:
+            return reason
+        self._record_retired_boot(serial, previous, fields["boot_id"])
+        return None
 
-                if retained and previous_is_fresh and (boot_id != previous.boot_id or status != previous.status):
-                    return self._reject("retained_over_fresh_state", previous.revision)
-
-                if same_boot and sequence is not None and previous.sequence is not None and not explicit_lwt:
-                    if sequence < previous.sequence:
-                        return self._reject("out_of_order_sequence", previous.revision)
-                    if sequence == previous.sequence and priority <= previous.source_priority:
-                        return self._reject("duplicate_sequence", previous.revision)
-                elif not boot_id or not previous.boot_id:
-                    if agent_timestamp and previous.agent_timestamp:
-                        if agent_timestamp < previous.agent_timestamp - 0.5:
-                            return self._reject("out_of_order_timestamp", previous.revision)
-                        if (
-                            abs(agent_timestamp - previous.agent_timestamp) <= 0.001
-                            and status == previous.status
-                            and priority <= previous.source_priority
-                        ):
-                            return self._reject("duplicate_timestamp", previous.revision)
-
-                if boot_id and previous.boot_id and boot_id != previous.boot_id:
-                    retired = self._retired_boot_ids.setdefault(serial, set())
-                    retired.add(previous.boot_id)
-                    if len(retired) > 8:
-                        retired.pop()
-
-            revision = (previous.revision + 1) if previous else 1
-            normalized = dict(payload)
-            normalized["serial"] = serial
-            normalized["timestamp"] = int(now)
-            normalized["server_received_at"] = now
-            normalized["status_revision"] = revision
-            normalized["status_source"] = source_name
-            normalized["agent_timestamp"] = agent_timestamp
-
-            stored_sequence = sequence
-            if previous and boot_id == previous.boot_id and event in {"lwt", "cleanup"}:
-                stored_sequence = previous.sequence
-            if previous and source_name in {"heartbeat", "disconnect"}:
-                stored_sequence = previous.sequence
-
-            self._states[serial] = StatusState(
-                boot_id=boot_id or (previous.boot_id if previous else None),
-                sequence=stored_sequence,
-                agent_timestamp=agent_timestamp or (previous.agent_timestamp if previous else None),
-                received_at=now,
-                source=source_name,
-                source_priority=priority,
-                status=status,
-                revision=revision,
+    def _accept_status_locked(self, fields):
+        serial = fields["serial"]
+        previous = self._states.get(serial)
+        retained_online = fields["retained"] and fields["status"] not in {"offline", "locked"}
+        stale_retained = (
+            retained_online
+            and (
+                not fields["agent_timestamp"]
+                or fields["now"] - fields["agent_timestamp"] > self.retained_online_max_age
             )
-            self._states.move_to_end(serial)
-            while len(self._states) > self.max_states:
-                evicted_serial, _ = self._states.popitem(last=False)
-                self._retired_boot_ids.pop(evicted_serial, None)
-            self._accepted_count += 1
-            return StatusDecision(True, normalized, "accepted", revision)
+        )
+        if stale_retained:
+            return self._reject("stale_retained_online", previous.revision if previous else 0)
+        rejection = self._prior_status_rejection(serial, previous, fields)
+        if rejection:
+            return rejection
+
+        revision = previous.revision + 1 if previous else 1
+        normalized = dict(fields["payload"])
+        normalized.update(
+            serial=serial,
+            timestamp=int(fields["now"]),
+            server_received_at=fields["now"],
+            status_revision=revision,
+            status_source=fields["source_name"],
+            agent_timestamp=fields["agent_timestamp"],
+        )
+        stored_sequence = fields["sequence"]
+        if previous and fields["boot_id"] == previous.boot_id and fields["event"] in {"lwt", "cleanup"}:
+            stored_sequence = previous.sequence
+        if previous and fields["source_name"] in {"heartbeat", "disconnect"}:
+            stored_sequence = previous.sequence
+
+        self._states[serial] = StatusState(
+            boot_id=fields["boot_id"] or (previous.boot_id if previous else None),
+            sequence=stored_sequence,
+            agent_timestamp=fields["agent_timestamp"] or (previous.agent_timestamp if previous else None),
+            received_at=fields["now"],
+            source=fields["source_name"],
+            source_priority=fields["priority"],
+            status=fields["status"],
+            revision=revision,
+        )
+        self._states.move_to_end(serial)
+        while len(self._states) > self.max_states:
+            evicted_serial, _ = self._states.popitem(last=False)
+            self._retired_boot_ids.pop(evicted_serial, None)
+        self._accepted_count += 1
+        return StatusDecision(True, normalized, "accepted", revision)
+
+    async def accept(
+        self,
+        payload: dict,
+        *,
+        source: str,
+        retained: bool = False,
+        received_at: Optional[float] = None,
+    ) -> StatusDecision:
+        fields = self._normalize_status_input(payload, source, retained, received_at)
+        if isinstance(fields, StatusDecision):
+            return fields
+        async with self._lock:
+            return self._accept_status_locked(fields)
 
     async def has_update_after(self, serial: str, observed_at: float) -> bool:
         async with self._lock:
