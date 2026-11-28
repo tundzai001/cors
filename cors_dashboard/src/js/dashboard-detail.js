@@ -997,35 +997,49 @@ function getEspNearestStep(context, offline, waiting, ready, retrying) {
     return makeEspSetupStep('AutoNearest', status, detail);
 }
 
-function getEspBaseStep(context, offline, waiting, ready) {
-    const {progress, startup, survey, phase, useSurvey, actualSource} = context;
-    let status = waiting;
-    let detail = '';
-    if (phase === 'failed' || startup.state === 'error') {
-        status = 'Thất bại';
-        detail = progress.reason || startup.error || 'Chưa thiết lập được Base.';
-    } else if (phase === 'stopped') {
-        status = 'Đã dừng';
-    } else if (useSurvey) {
-        status = survey.state === 'base_ready' ? ready : 'Đang Survey-In';
-        const seconds = survey.elapsed_seconds ?? survey.elapsed_since_ack_seconds;
-        detail = [
-            progress.reason === 'no_fixed_station_within_20_km' && 'Ngoài vùng trạm cố định 20 km.',
-            seconds != null && survey.target_seconds ? seconds + '/' + survey.target_seconds + ' giây' : '',
-        ].filter(Boolean).join(' ');
-    } else {
-        status = ({
-            set_rover: 'Đang vào Rover', wait_gga: 'Đang chờ GGA', connect_caster: 'Đang kết nối caster',
-            wait_fix: 'Đang chờ RTK FIX', averaging: 'Đang lấy mẫu', resolving_location: 'Đang xử lý tọa độ',
-            ready_for_review: 'Chờ duyệt tọa độ', completed: 'Đã áp dụng Fixed LLA',
-        })[phase] || (startup.state === 'fixed_restored' ? 'Đã khôi phục Fixed LLA' : waiting);
-        detail = [
-            actualSource && ('Nguồn RTCM ' + actualSource),
-            phase === 'averaging' && progress.samples_target ? (progress.samples_collected ?? 0) + '/' + progress.samples_target + ' mẫu' : '',
-        ].filter(Boolean).join(' · ');
+function getEspBaseSurveyState(context, ready) {
+    const {progress, survey} = context;
+    const status = survey.state === 'base_ready' ? ready : 'Đang Survey-In';
+    const seconds = survey.elapsed_seconds ?? survey.elapsed_since_ack_seconds;
+    const details = [];
+    if (progress.reason === 'no_fixed_station_within_20_km') details.push('Ngoài vùng trạm cố định 20 km.');
+    if (seconds != null && survey.target_seconds) details.push(seconds + '/' + survey.target_seconds + ' giây');
+    return {status, detail: details.join(' ')};
+}
+
+function getEspBaseFixedState(context, waiting) {
+    const {progress, startup, phase, actualSource} = context;
+    const phaseStatuses = {
+        set_rover: 'Đang vào Rover', wait_gga: 'Đang chờ GGA', connect_caster: 'Đang kết nối caster',
+        wait_fix: 'Đang chờ RTK FIX', averaging: 'Đang lấy mẫu', resolving_location: 'Đang xử lý tọa độ',
+        ready_for_review: 'Chờ duyệt tọa độ', completed: 'Đã áp dụng Fixed LLA',
+    };
+    const status = phaseStatuses[phase] || (startup.state === 'fixed_restored' ? 'Đã khôi phục Fixed LLA' : waiting);
+    const details = [];
+    if (actualSource) details.push('Nguồn RTCM ' + actualSource);
+    if (phase === 'averaging' && progress.samples_target) {
+        details.push((progress.samples_collected ?? 0) + '/' + progress.samples_target + ' mẫu');
     }
-    const terminalStatuses = new Set(['Thất bại', 'Đã dừng', ready, 'Chờ duyệt tọa độ', 'Đã áp dụng Fixed LLA', 'Đã khôi phục Fixed LLA']);
-    if (offline && !terminalStatuses.has(status)) {
+    return {status, detail: details.join(' · ')};
+}
+
+function getEspBaseState(context, waiting, ready) {
+    const {progress, startup, phase, useSurvey} = context;
+    if (phase === 'failed' || startup.state === 'error') {
+        return {status: 'Thất bại', detail: progress.reason || startup.error || 'Chưa thiết lập được Base.'};
+    }
+    if (phase === 'stopped') return {status: 'Đã dừng', detail: ''};
+    if (useSurvey) return getEspBaseSurveyState(context, ready);
+    return getEspBaseFixedState(context, waiting);
+}
+
+function isTerminalEspBaseStatus(status, ready) {
+    return ['Thất bại', 'Đã dừng', ready, 'Chờ duyệt tọa độ', 'Đã áp dụng Fixed LLA', 'Đã khôi phục Fixed LLA'].includes(status);
+}
+
+function getEspBaseStep(context, offline, waiting, ready) {
+    let {status, detail} = getEspBaseState(context, waiting, ready);
+    if (offline && !isTerminalEspBaseStatus(status, ready)) {
         if (status !== waiting) detail = [status, detail].filter(Boolean).join(' · ');
         status = 'Ngoại tuyến';
     }
