@@ -1130,6 +1130,235 @@ function DetailsPanelTabContent({device, currentUser, activeTab, isReadonly4g, c
     }
 }
 
+function DetailsPanelName({device, role, canEdit, isEditingName, setIsEditingName, tempName, setTempName, nameInputRef, onSave}) {
+    if (isEditingName) return (
+        <div className="input-group input-group-sm me-3" style={{maxWidth: 'min(300px, 100%)'}}>
+            <input type="text" className="form-control" value={tempName}
+                onChange={event => setTempName(event.target.value)}
+                onKeyDown={event => {
+                    if (event.key === 'Enter') onSave();
+                    if (event.key === 'Escape') setIsEditingName(false);
+                }}
+                ref={nameInputRef} aria-label="Tên trạm" />
+            <button className="btn btn-success" onClick={onSave} title="Lưu tên mới"><i className="bi bi-check"></i></button>
+            <button className="btn btn-secondary" onClick={() => { setTempName(device.name); setIsEditingName(false); }} title="Hủy">
+                <i className="bi bi-x"></i>
+            </button>
+        </div>
+    );
+    return (
+        <div className="d-flex align-items-center me-3">
+            <h4 className="mb-0 me-2 text-truncate" style={{maxWidth: 'min(350px, calc(100vw - 120px))'}} title={device.name}>{device.name}</h4>
+            {role === 'coordinator' && !canEdit && <span className="badge bg-secondary">Chỉ xem</span>}
+            {canEdit && <button className="btn btn-link text-muted p-0 ms-1"
+                onClick={() => { setTempName(device.name); setIsEditingName(true); }}
+                title="Đổi tên trạm" style={{fontSize: '1.1rem'}}>
+                <i className="bi bi-pencil-square"></i>
+            </button>}
+        </div>
+    );
+}
+
+function DetailsPanelStatusBadges({device, isReadonly4g, canEdit, displayStatusKey, staleOffline, lifecycleStatus, isDeviceLocked, lockedServers, lockApplied}) {
+    const syncErrorText = device.sync_errors ? device.sync_errors.join('\n') : 'Đang chờ dữ liệu...';
+    return <div className="d-flex align-items-center">
+        {(isReadonly4g || device.is_lte) && <span className="badge bg-primary me-2" title="Trạm kết nối qua 4G/LTE">
+            <i className="bi bi-reception-4 me-1"></i>{isReadonly4g ? 'Base 4G · Chỉ xem' : 'LTE'}
+        </span>}
+        {!device.is_synced && canEdit && <div className="me-2 position-relative group-hover-target">
+            <button className="btn btn-warning btn-sm text-dark fw-bold"
+                onClick={() => window.CorsUI.showToast('warning', syncErrorText)}
+                title={device.sync_errors ? device.sync_errors.join('\n') : 'Click để xem chi tiết'}>
+                <i className="bi bi-exclamation-triangle-fill me-1"></i>Không đồng bộ (Click xem)
+            </button>
+        </div>}
+        <div className="d-flex align-items-center gap-1">
+            <span className={`badge ${STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary'}`}>
+                {STATUS_TEXT_MAP[displayStatusKey] || displayStatusKey}
+            </span>
+            {staleOffline && lifecycleStatus !== 'offline' && <span className="badge bg-secondary" title="Trạng thái cuối cùng của agent; dữ liệu GNSS hiện không còn trực tiếp.">
+                Last: {STATUS_TEXT_MAP[lifecycleStatus] || lifecycleStatus.toUpperCase()}
+            </span>}
+            {device.is_synced
+                ? <i className="bi bi-check-circle-fill text-success" title="Đã đồng bộ" style={{fontSize: '1rem'}}></i>
+                : <i className="bi bi-exclamation-triangle-fill text-warning"
+                    title={device.sync_errors && device.sync_errors.length > 0 ? device.sync_errors.join('\n') : 'Không đồng bộ'}
+                    style={{fontSize: '1rem'}}></i>}
+        </div>
+        {isDeviceLocked && <span className="badge bg-danger ms-2">
+            <i className="bi bi-lock-fill me-1"></i>{lockedServers.length
+                ? `Khoá ${lockedServers.map(serverId => `S${serverId}`).join(', ')}${lockApplied ? '' : ' · Chờ áp dụng'}`
+                : 'Khoá toàn trạm'}
+        </span>}
+    </div>;
+}
+
+async function rebootStation(device, onReset) {
+    const confirmed = await window.CorsUI.confirmAction({
+        title: 'Khởi động lại trạm',
+        message: `Bạn có chắc muốn khởi động lại nguồn trạm ${device.name || device.serial}?`,
+        confirmText: 'Khởi động lại',
+        tone: 'danger'
+    });
+    if (confirmed) onReset(device.serial);
+}
+
+async function factoryResetStation(device) {
+    const confirmed = await window.CorsUI.confirmAction({
+        title: 'Khôi phục cài đặt gốc',
+        message: `Bạn có chắc muốn khôi phục cài đặt gốc và xóa mọi cấu hình của trạm ${device.name || device.serial} không?`,
+        confirmText: 'Khôi phục',
+        tone: 'danger'
+    });
+    if (!confirmed) return;
+    try {
+        await window.CorsDeviceAPI.hardReset(device.serial);
+        window.showSuccess('Đã gửi lệnh khôi phục cài đặt gốc đến thiết bị.');
+    } catch (error) {
+        window.showError(`Không thể gửi lệnh khôi phục: ${error.message}`);
+    }
+}
+
+function DetailsPanelActions({device, canEdit, isAdmin, isEditingName, onReset}) {
+    return <>
+        {canEdit && !isEditingName && <button className="btn btn-sm btn-outline-danger ms-2"
+            title="Khởi động lại nguồn trạm" onClick={() => rebootStation(device, onReset)}>
+            <i className="bi bi-power"></i> Khởi động lại
+        </button>}
+        {isAdmin && !isEditingName && <button className="btn btn-sm btn-outline-danger ms-2"
+            title="Khôi phục cài đặt gốc" onClick={() => factoryResetStation(device)}>
+            <i className="bi bi-eraser-fill"></i> Reset Mới Cứng
+        </button>}
+    </>;
+}
+
+function DetailsPanelHeader(props) {
+    const {device, currentUser, isAdmin, isReadonly4g, role, canEdit, isEditingName, setIsEditingName,
+        tempName, setTempName, nameInputRef, onSaveName,
+        displayStatusKey, staleOffline, lifecycleStatus, isDeviceLocked, lockedServers, lockApplied, onReset} = props;
+    return <div className="card-header dashboard-detail-header d-flex justify-content-between align-items-center bg-dark flex-shrink-0">
+        <div className="d-flex align-items-center flex-grow-1">
+            <DetailsPanelName device={device} role={role} canEdit={canEdit} isEditingName={isEditingName}
+                setIsEditingName={setIsEditingName} tempName={tempName} setTempName={setTempName}
+                nameInputRef={nameInputRef} onSave={onSaveName} />
+            <DetailsPanelStatusBadges device={device} isReadonly4g={isReadonly4g} canEdit={canEdit}
+                displayStatusKey={displayStatusKey} staleOffline={staleOffline} lifecycleStatus={lifecycleStatus}
+                isDeviceLocked={isDeviceLocked} lockedServers={lockedServers} lockApplied={lockApplied} />
+        </div>
+        {!isReadonly4g && <ConfiguredRelayPowerControl device={device} currentUser={currentUser} />}
+        <DetailsPanelActions device={device} canEdit={canEdit} isAdmin={isAdmin} isEditingName={isEditingName} onReset={onReset} />
+    </div>;
+}
+
+function DetailsPanelNotices({device, staleOffline, tokenConfirmed, rawStatusKey, activeTab, isReadonly4g}) {
+    const configStatus = device.system_info?.config_status;
+    return <>
+        {/^esp_/i.test(String(device.serial || '').trim()) && <EspSetupProgress device={device} offline={staleOffline} tokenConfirmed={tokenConfirmed} />}
+        {configStatus && !['done', 'success', 'idle'].includes(configStatus.state) && (
+            <div className={'alert ' + (configStatus.state === 'error' ? 'alert-danger' : 'alert-info') + ' mb-3'}>
+                <div className="d-flex align-items-center">
+                    {configStatus.state === 'executing'
+                        ? <div className="spinner-border spinner-border-sm me-2" role="status"></div>
+                        : configStatus.state === 'error'
+                            ? <i className="bi bi-x-circle-fill me-2 fs-5"></i>
+                            : <i className="bi bi-info-circle-fill me-2 fs-5"></i>}
+                    <div>
+                        <strong>Trạng thái cấu hình thiết bị:</strong> {configStatus.progress}
+                        {configStatus.error && <div className="small mt-1 text-danger">Lỗi: {configStatus.error}</div>}
+                    </div>
+                </div>
+            </div>
+        )}
+        {rawStatusKey === 'offline' && !(activeTab === 'dashboard' && staleOffline) && (
+            <div className="alert alert-warning py-2 px-3 small mb-3" role="status">
+                <i className="bi bi-broadcast-pin me-2"></i>
+                GNSS/RTCM hiện không có dữ liệu trực tiếp. Độ chính xác chỉ được xác nhận lại khi trạm kết nối trở lại.
+            </div>
+        )}
+        {isReadonly4g && device.system_info?.decoder_status === 'missing_rover_credentials' && (
+            <div className="alert alert-warning small" role="status">
+                Chưa có tài khoản Rover hợp lệ trùng mountpoint. Kiểm tra tài khoản trong trang Rover.
+            </div>
+        )}
+    </>;
+}
+
+function requestStationSerialRename(device) {
+    const newSerial = prompt('Nhập Serial mới cho trạm LTE này:', device.serial);
+    if (newSerial && newSerial.trim() && newSerial.trim() !== device.serial) {
+        void window.handleRenameSerial(device.serial, newSerial.trim());
+    }
+}
+
+function DetailsPanelMetadata({device, isAdmin}) {
+    const supportsSerialRename = device.serial.includes('_LTE_') || device.serial.includes('LTE_') || device.serial.startsWith('MQTT_');
+    return <div className="dashboard-detail-meta d-flex justify-content-between align-items-center mb-3">
+        {isAdmin ? <p className="text-white-50 small mb-0 d-flex align-items-center">
+            Serial: {device.serial}
+            {supportsSerialRename && <button className="btn btn-link text-warning p-0 ms-2" title="Chỉnh sửa Serial" onClick={() => requestStationSerialRename(device)}>
+                <i className="bi bi-pencil-square"></i>
+            </button>}
+        </p> : <div></div>}
+        <div className="d-flex flex-wrap align-items-center gap-2">
+            <span className="badge bg-dark-subtle text-light border border-secondary text-nowrap">
+                {/^esp_/i.test(device.serial) ? 'Firmware' : 'Agent'}: {device.version || 'Chưa rõ phiên bản'}
+            </span>
+            <span className="badge bg-dark-subtle text-light border border-secondary">
+                {device.detected_chip_type || 'UNKNOWN'}
+            </span>
+        </div>
+    </div>;
+}
+
+function DetailsPanelTabs(props) {
+    const {device, currentUser, activeTab, isReadonly4g, canEdit, canEditService, canManageRovers,
+        isAdmin, staleOffline, offlineInfo, nmeaData, showLicenseTab, showConfigTabs,
+        showServiceAndDashboardTabs, showStationOperationsTab, showOverviewTab, onTabClick, handlers} = props;
+    const tab = (name, icon, label) => <li className="nav-item">
+        <button className={'nav-link ' + (activeTab === name ? 'active' : '')} onClick={() => onTabClick(name)}>
+            <i className={'bi ' + icon + ' me-1'}></i>{label}
+        </button>
+    </li>;
+    return <>
+        <ul className="nav nav-tabs dashboard-tabs mb-3" role="tablist">
+            {showLicenseTab && tab('license', 'bi-key-fill', 'License')}
+            {showConfigTabs && tab('chip', 'bi-cpu-fill', 'Kích hoạt & GNSS')}
+            {showServiceAndDashboardTabs && tab('service', 'bi-hdd-network-fill', 'Dịch vụ')}
+            {showServiceAndDashboardTabs && canManageRovers && tab('rovers', 'bi-person-circle', 'Quản lý Rover')}
+            {showStationOperationsTab && tab('operations', 'bi-activity', 'Operations')}
+            {showOverviewTab && tab('dashboard', 'bi-speedometer2', 'Overview')}
+        </ul>
+        <div className="tab-content dashboard-tab-content pt-3">
+            <DetailsPanelTabContent device={device} currentUser={currentUser} activeTab={activeTab}
+                isReadonly4g={isReadonly4g} canEdit={canEdit} canEditService={canEditService}
+                canManageRovers={canManageRovers} isAdmin={isAdmin} staleOffline={staleOffline}
+                offlineInfo={offlineInfo} nmeaData={nmeaData} handlers={handlers} />
+        </div>
+    </>;
+}
+
+function DetailsPanelFooter({device, canEdit, isAdmin, isDeviceLocked, onLock}) {
+    if (!canEdit) return null;
+    return <div className="card-footer dashboard-detail-footer bg-dark border-top border-secondary p-3 mt-auto">
+        {isAdmin ? <div id="admin-actions-section">
+            <div className="d-flex align-items-center justify-content-between">
+                <span className="text-muted small">
+                    <i className="bi bi-shield-lock-fill me-2 text-danger"></i>
+                    Admin Control (Chỉ Admin)
+                </span>
+                <div style={{width: '60%'}}>
+                    <button onClick={() => onLock(device.serial)} className="btn btn-warning w-100 text-dark fw-bold">
+                        <i className="bi bi-shield-lock me-2"></i>{isDeviceLocked ? 'Sửa khoá host / server' : 'Khoá host / server'}
+                    </button>
+                </div>
+            </div>
+        </div> : <div className="text-center text-muted small">
+            <i className="bi bi-info-circle me-1"></i>
+            Bạn có quyền quản lý trạm này.
+        </div>}
+    </div>;
+}
+
 const DetailsPanel = memo(function DetailsPanel({
     device,
     currentUser,
@@ -1334,323 +1563,54 @@ const DetailsPanel = memo(function DetailsPanel({
                 </button>
             )}
             {/* CARD-HEADER */}
-            <div className="card-header dashboard-detail-header d-flex justify-content-between align-items-center bg-dark flex-shrink-0">
-                <div className="d-flex align-items-center flex-grow-1">
-                    {/* 🔥 THAY THẾ PHẦN HIỂN THỊ TÊN */}
-                    {isEditingName ? (
-                        <div className="input-group input-group-sm me-3" style={{ maxWidth: 'min(300px, 100%)' }}>
-                            <input
-                                type="text"
-                                className="form-control"
-                                value={tempName}
-                                onChange={(e) => setTempName(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSaveName();
-                                    if (e.key === 'Escape') setIsEditingName(false);
-                                }}
-                                ref={nameInputRef}
-                                aria-label="Tên trạm"
-                            />
-                            <button
-                                className="btn btn-success"
-                                onClick={handleSaveName}
-                                title="Lưu tên mới"
-                            >
-                                <i className="bi bi-check"></i>
-                            </button>
-                            <button
-                                className="btn btn-secondary"
-                                onClick={() => {
-                                    setTempName(device.name);
-                                    setIsEditingName(false);
-                                }}
-                                title="Hủy"
-                            >
-                                <i className="bi bi-x"></i>
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="d-flex align-items-center me-3">
-                            <h4 className="mb-0 me-2 text-truncate" style={{ maxWidth: 'min(350px, calc(100vw - 120px))' }} title={device.name}>
-                                {device.name}
-                            </h4>
-                            {role === 'coordinator' && !canEdit && <span className="badge bg-secondary">Chỉ xem</span>}
-                            {canEdit && (
-                                <button
-                                    className="btn btn-link text-muted p-0 ms-1"
-                                    onClick={() => {
-                                        setTempName(device.name);
-                                        setIsEditingName(true);
-                                    }}
-                                    title="Đổi tên trạm"
-                                    style={{ fontSize: '1.1rem' }}
-                                >
-                                    <i className="bi bi-pencil-square"></i>
-                                </button>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Các Badge trạng thái */}
-                    <div className="d-flex align-items-center">
-                        {(isReadonly4g || device.is_lte) && (
-                            <span className="badge bg-primary me-2" title="Trạm kết nối qua 4G/LTE">
-                                <i className="bi bi-reception-4 me-1"></i>{isReadonly4g ? 'Base 4G · Chỉ xem' : 'LTE'}
-                            </span>
-                        )}
-                        {!device.is_synced && canEdit && (
-                            <div className="me-2 position-relative group-hover-target">
-                                <button
-                                    className="btn btn-warning btn-sm text-dark fw-bold"
-                                    onClick={() => {
-                                        // Cho phép click để xem alert chi tiết nếu cần
-                                        const errText = device.sync_errors ? device.sync_errors.join('\n') : "Đang chờ dữ liệu...";
-                                        window.CorsUI.showToast('warning', errText);
-                                    }}
-                                    title={device.sync_errors ? device.sync_errors.join('\n') : "Click để xem chi tiết"}
-                                >
-                                    <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                                    Không đồng bộ (Click xem)
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Badge trạng thái (luôn hiển thị) */}
-                        <div className="d-flex align-items-center gap-1">
-                            <span className={`badge ${STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary'}`}>
-                                {STATUS_TEXT_MAP[displayStatusKey] || displayStatusKey}
-                            </span>
-                            {staleOffline && lifecycleStatus !== 'offline' && (
-                                <span
-                                    className="badge bg-secondary"
-                                    title="Trạng thái cuối cùng của agent; dữ liệu GNSS hiện không còn trực tiếp."
-                                >
-                                    Last: {STATUS_TEXT_MAP[lifecycleStatus] || lifecycleStatus.toUpperCase()}
-                                </span>
-                            )}
-                            {device.is_synced ? (
-                                <i className="bi bi-check-circle-fill text-success" title={`Đã đồng bộ`} style={{ fontSize: '1rem' }}></i>
-                            ) : (
-                                <i className="bi bi-exclamation-triangle-fill text-warning" title={device.sync_errors && device.sync_errors.length > 0 ? device.sync_errors.join('\n') : "Không đồng bộ"} style={{ fontSize: '1rem' }}></i>
-                            )}
-                        </div>
-
-
-                        {/* Badge LOCKED (luôn hiển thị nếu bị khóa) */}
-                        {isDeviceLocked && (
-                            <span className="badge bg-danger ms-2">
-                                <i className="bi bi-lock-fill me-1"></i>{lockedServers.length ? `Khoá ${lockedServers.map(sid => `S${sid}`).join(", ")}${lockApplied ? "" : " · Chờ áp dụng"}` : "Khoá toàn trạm"}
-                            </span>
-                        )}
-                    </div>
-                </div>
-
-                {!isReadonly4g && <ConfiguredRelayPowerControl device={device} currentUser={currentUser} />}
-
-                {/* Nút Reset */}
-                {canEdit && !isEditingName && (
-                    <button
-                        className="btn btn-sm btn-outline-danger ms-2"
-                        title="Khởi động lại nguồn trạm"
-                        onClick={async () => {
-                            const ok = await window.CorsUI.confirmAction({
-                                title: 'Khởi động lại trạm',
-                                message: `Bạn có chắc muốn khởi động lại nguồn trạm ${device.name || device.serial}?`,
-                                confirmText: 'Khởi động lại',
-                                tone: 'danger'
-                            });
-                            if (ok) onReset(device.serial);
-                        }}
-                    >
-                        <i className="bi bi-power"></i> Khởi động lại
-                    </button>
-                )}
-
-                {/* Nút Hard Reset (Chỉ Admin) */}
-                {isAdmin && !isEditingName && (
-                    <button
-                        className="btn btn-sm btn-outline-danger ms-2"
-                        title="Khôi phục cài đặt gốc"
-                        onClick={async () => {
-                            const ok = await window.CorsUI.confirmAction({
-                                title: 'Khôi phục cài đặt gốc',
-                                message: `Bạn có chắc muốn khôi phục cài đặt gốc và xóa mọi cấu hình của trạm ${device.name || device.serial} không?`,
-                                confirmText: 'Khôi phục',
-                                tone: 'danger'
-                            });
-                            if (ok) {
-                                try {
-                                    await window.CorsDeviceAPI.hardReset(device.serial);
-                                    window.showSuccess(`Đã gửi lệnh khôi phục cài đặt gốc đến thiết bị.`);
-                                } catch (error) {
-                                    window.showError(`Không thể gửi lệnh khôi phục: ${error.message}`);
-                                }
-                            }
-                        }}
-                    >
-                        <i className="bi bi-eraser-fill"></i> Reset Mới Cứng
-                    </button>
-                )}
-            </div>
+            <DetailsPanelHeader
+                device={device}
+                currentUser={currentUser}
+                isAdmin={isAdmin}
+                isReadonly4g={isReadonly4g}
+                role={role}
+                canEdit={canEdit}
+                isEditingName={isEditingName}
+                setIsEditingName={setIsEditingName}
+                tempName={tempName}
+                setTempName={setTempName}
+                nameInputRef={nameInputRef}
+                onSaveName={handleSaveName}
+                displayStatusKey={displayStatusKey}
+                staleOffline={staleOffline}
+                lifecycleStatus={lifecycleStatus}
+                isDeviceLocked={isDeviceLocked}
+                lockedServers={lockedServers}
+                lockApplied={lockApplied}
+                onReset={onReset}
+            />
             <div className="details-panel-scroll dashboard-detail-body card-body overflow-auto flex-grow-1 p-3">
-                {/^esp_/i.test(String(device.serial || '').trim()) && (
-                    <EspSetupProgress device={device} offline={staleOffline} tokenConfirmed={tokenConfirmed} />
-                )}
-                {/* HIỂN THỊ TIẾN ĐỘ CẤU HÌNH (CONFIG STATUS) */}
-                {device?.system_info?.config_status && !['done', 'success', 'idle'].includes(device.system_info.config_status.state) && (
-                    <div className={`alert ${device.system_info.config_status.state === 'error' ? 'alert-danger' : 'alert-info'} mb-3`}>
-                        <div className="d-flex align-items-center">
-                            {device.system_info.config_status.state === 'executing' ? (
-                                <div className="spinner-border spinner-border-sm me-2" role="status"></div>
-                            ) : device.system_info.config_status.state === 'error' ? (
-                                <i className="bi bi-x-circle-fill me-2 fs-5"></i>
-                            ) : (
-                                <i className="bi bi-info-circle-fill me-2 fs-5"></i>
-                            )}
-                            <div>
-                                <strong>Trạng thái cấu hình thiết bị:</strong> {device.system_info.config_status.progress}
-                                {device.system_info.config_status.error && (
-                                    <div className="small mt-1 text-danger">Lỗi: {device.system_info.config_status.error}</div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
-                <div className="dashboard-detail-meta d-flex justify-content-between align-items-center mb-3">
-                    {isAdmin ? (
-                        <p className="text-white-50 small mb-0 d-flex align-items-center">
-                            Serial: {device.serial}
-                            {(device.serial.includes('_LTE_') || device.serial.includes('LTE_') || device.serial.startsWith('MQTT_')) && (
-                                <button className="btn btn-link text-warning p-0 ms-2" title="Chỉnh sửa Serial" onClick={() => {
-                                    const newSerial = prompt('Nhập Serial mới cho trạm LTE này:', device.serial);
-                                    if (newSerial && newSerial.trim() && newSerial.trim() !== device.serial) {
-                                        void window.handleRenameSerial(device.serial, newSerial.trim());
-                                    }
-                                }}>
-                                    <i className="bi bi-pencil-square"></i>
-                                </button>
-                            )}
-                        </p>
-                    ) : (
-                        <div></div>
-                    )}
-                    <div className="d-flex flex-wrap align-items-center gap-2">
-                        <span className="badge bg-dark-subtle text-light border border-secondary text-nowrap">
-                            {/^esp_/i.test(device.serial) ? 'Firmware' : 'Agent'}: {device.version || 'Chưa rõ phiên bản'}
-                        </span>
-                        <span className="badge bg-dark-subtle text-light border border-secondary">
-                            {device.detected_chip_type || 'UNKNOWN'}
-                        </span>
-                    </div>
-                </div>
-
-                {rawStatusKey === 'offline' && !(activeTab === 'dashboard' && staleOffline) && (
-                    <div className="alert alert-warning py-2 px-3 small mb-3" role="status">
-                        <i className="bi bi-broadcast-pin me-2"></i>
-                        GNSS/RTCM hiện không có dữ liệu trực tiếp. Độ chính xác chỉ được xác nhận lại khi trạm kết nối trở lại.
-                    </div>
-                )}
-
-                {isReadonly4g && device.system_info?.decoder_status === 'missing_rover_credentials' && (
-                    <div className="alert alert-warning small" role="status">
-                        Chưa có tài khoản Rover hợp lệ trùng mountpoint. Kiểm tra tài khoản trong trang Rover.
-                    </div>
-                )}
-                <ul className="nav nav-tabs dashboard-tabs mb-3" role="tablist">
-                    {showLicenseTab && (
-                        <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'license' ? 'active' : ''}`} onClick={() => handleTabClick('license')}>
-                                <i className="bi bi-key-fill me-1"></i>License
-                            </button>
-                        </li>
-                    )}
-
-                    {showConfigTabs && (
-                        <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'chip' ? 'active' : ''}`} onClick={() => handleTabClick('chip')}>
-                                <i className="bi bi-cpu-fill me-1"></i>Kích hoạt & GNSS
-                            </button>
-                        </li>
-                    )}
-
-                    {showServiceAndDashboardTabs && (
-                        <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'service' ? 'active' : ''}`} onClick={() => handleTabClick('service')}>
-                                <i className="bi bi-hdd-network-fill me-1"></i>Dịch vụ
-                            </button>
-                        </li>
-                    )}
-
-                    {showServiceAndDashboardTabs && canManageRovers && (
-                        <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'rovers' ? 'active' : ''}`} onClick={() => handleTabClick('rovers')}>
-                                <i className="bi bi-person-circle me-1"></i>Quản lý Rover
-                            </button>
-                        </li>
-                    )}
-
-                    {showStationOperationsTab && (
-                        <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'operations' ? 'active' : ''}`} onClick={() => handleTabClick('operations')}>
-                                <i className="bi bi-activity me-1"></i>Operations
-                            </button>
-                        </li>
-                    )}
-
-                    {showOverviewTab ? (
-                        <li className="nav-item">
-                            <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => handleTabClick('dashboard')}>
-                                <i className="bi bi-speedometer2 me-1"></i>Overview
-                            </button>
-                        </li>
-                    ) : null}
-                </ul>
-
-                <div className="tab-content dashboard-tab-content pt-3">
-                    <DetailsPanelTabContent
-                        device={device}
-                        currentUser={currentUser}
-                        activeTab={activeTab}
-                        isReadonly4g={isReadonly4g}
-                        canEdit={canEdit}
-                        canEditService={canEditService}
-                        canManageRovers={canManageRovers}
-                        isAdmin={isAdmin}
-                        staleOffline={staleOffline}
-                        offlineInfo={offlineInfo}
-                        nmeaData={nmeaData}
-                        handlers={{onDeployLicense,onProvision,onConfigureChip,onStopAutoBase,onReadBaseStatus,onConfigureService,onLock,onUnlock,onReset}}
-                    />
-                </div>
+                <DetailsPanelNotices device={device} staleOffline={staleOffline} tokenConfirmed={tokenConfirmed}
+                    rawStatusKey={rawStatusKey} activeTab={activeTab} isReadonly4g={isReadonly4g} />
+                <DetailsPanelMetadata device={device} isAdmin={isAdmin} />
+                <DetailsPanelTabs
+                    device={device}
+                    currentUser={currentUser}
+                    activeTab={activeTab}
+                    isReadonly4g={isReadonly4g}
+                    canEdit={canEdit}
+                    canEditService={canEditService}
+                    canManageRovers={canManageRovers}
+                    isAdmin={isAdmin}
+                    staleOffline={staleOffline}
+                    offlineInfo={offlineInfo}
+                    nmeaData={nmeaData}
+                    showLicenseTab={showLicenseTab}
+                    showConfigTabs={showConfigTabs}
+                    showServiceAndDashboardTabs={showServiceAndDashboardTabs}
+                    showStationOperationsTab={showStationOperationsTab}
+                    showOverviewTab={showOverviewTab}
+                    onTabClick={handleTabClick}
+                    handlers={{onDeployLicense,onProvision,onConfigureChip,onStopAutoBase,onReadBaseStatus,onConfigureService,onLock,onUnlock,onReset}}
+                />
             </div>
-            {canEdit && (
-                <div className="card-footer dashboard-detail-footer bg-dark border-top border-secondary p-3 mt-auto">
-                    {/* CHỈ HIỂN THỊ NÚT KHÓA NẾU LÀ ADMIN */}
-                    {isAdmin && (
-                        <div id="admin-actions-section">
-                            <div className="d-flex align-items-center justify-content-between">
-                                <span className="text-muted small">
-                                    <i className="bi bi-shield-lock-fill me-2 text-danger"></i>
-                                    Admin Control (Chỉ Admin)
-                                </span>
-                                <div style={{ width: '60%' }}>
-                                    <button onClick={() => onLock(device.serial)} className="btn btn-warning w-100 text-dark fw-bold">
-                                        <i className="bi bi-shield-lock me-2"></i>{isDeviceLocked ? 'Sửa khoá host / server' : 'Khoá host / server'}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Nếu là Coordinator thì không hiện gì hoặc hiện thông báo khác tùy bạn */}
-                    {!isAdmin && (
-                        <div className="text-center text-muted small">
-                            <i className="bi bi-info-circle me-1"></i>
-                            Bạn có quyền quản lý trạm này.
-                        </div>
-                    )}
-                </div>
-            )}
+            <DetailsPanelFooter device={device} canEdit={canEdit} isAdmin={isAdmin}
+                isDeviceLocked={isDeviceLocked} onLock={onLock} />
             {isAdmin && device && (
                 <SystemInfoPanel
                     device={device}

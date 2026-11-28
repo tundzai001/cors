@@ -576,264 +576,270 @@
         </div>;
     }
 
+    function getUnmatchedRtcmLabel(stats) {
+        if (!(stats.unmatchedRtcmCount > 0)) return '';
+        const codes = (stats.unmatchedRtcmCodes || []).join(', ');
+        return ` · ${stats.unmatchedRtcmCount} chưa ghép quỹ đạo (${codes}${stats.unmatchedRtcmCount > 8 ? ', …' : ''})`;
+    }
+
+    function SatelliteStationBanner({station, stats}) {
+        if (!station) return <div className="small text-muted mb-2 fst-italic">
+            <i className="bi bi-cursor me-1"></i>Vị trí vệ tinh theo quỹ đạo TLE; chỉ vệ tinh khớp RTCM mới được tô sáng.
+        </div>;
+        const offline = station.status === 'offline' || station.status === 'lost';
+        return <div className={`sat-hud-station-banner${offline ? ' border border-danger' : ''}`}>
+            <div className="d-flex justify-content-between align-items-center mb-1">
+                <span>Trạm: <b>{station.name || station.serial}</b></span>
+                <button type="button" className="btn btn-sm btn-outline-light sat-hud-stop-tracking"
+                    aria-label="Hủy theo dõi trạm" onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}>
+                    Hủy theo dõi
+                </button>
+            </div>
+            {offline
+                ? <div className="text-danger small fw-semibold">
+                    <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                    Trạm ngoại tuyến — Ngưng phát tia & IPP
+                </div>
+                : <div className="text-info small">
+                    <i className="bi bi-eye me-1"></i>
+                    <b>{stats.visible}</b> vệ tinh khớp quỹ đạo
+                    {stats.hasLiveRtcm ? ` · ${stats.liveRtcmCount} PRN RTCM` : ' · đang chờ RTCM'}
+                    {getUnmatchedRtcmLabel(stats)}
+                </div>}
+        </div>;
+    }
+
+    function SatelliteConstellationToggles({satelliteStats, satelliteFilters, selectedSatStation}) {
+        const systems = [
+            {key: 'gps', label: 'GPS', shortLabel: 'GPS', color: '#22c55e'},
+            {key: 'galileo', label: 'Galileo', shortLabel: 'GAL', color: '#3b82f6'},
+            {key: 'beidou', label: 'BeiDou', shortLabel: 'BDS', color: '#f97316'},
+            {key: 'glonass', label: 'GLONASS', shortLabel: 'GLO', color: '#ef4444'},
+            {key: 'qzss', label: 'QZSS', shortLabel: 'QZSS', color: '#a855f7'},
+        ];
+        return <div className="sat-hud-toggles">{systems.map(system => (
+            <button type="button" key={system.key}
+                className={`sat-hud-pill ${satelliteFilters[system.key] ? 'active' : ''}`}
+                aria-pressed={satelliteFilters[system.key]}
+                onClick={() => window.GnssSatelliteOverlay?.setFilter(system.key, !satelliteFilters[system.key])}>
+                <span style={{color: system.color}}>● <span className="sat-label-full">{system.label}</span><span className="sat-label-short d-none">{system.shortLabel}</span></span>
+                {selectedSatStation && <span className="badge bg-dark ms-1" style={{fontSize: '0.62rem'}}>
+                    {satelliteStats.byConstellation?.[system.key] ?? 0}
+                </span>}
+            </button>
+        ))}</div>;
+    }
+
+    function SatelliteRtcmStatus({stats}) {
+        if (!stats.hasLiveRtcm) return <div className="text-muted" style={{fontSize: '0.7rem'}}>
+            Đang chờ RTCM • tia và IPP chỉ hiện với PRN khớp
+        </div>;
+        return <div style={{color: '#86efac', fontSize: '0.7rem'}}>
+            ● RTCM: <b>{stats.liveRtcmCount} PRN</b> • khớp quỹ đạo: <b>{stats.visible}</b>
+            {stats.unmatchedRtcmCount > 0 && ` • chưa ghép quỹ đạo: ${stats.unmatchedRtcmCount} (${(stats.unmatchedRtcmCodes || []).join(', ')}${stats.unmatchedRtcmCount > 8 ? ', …' : ''})`}
+        </div>;
+    }
+
     function StationMapSatelliteHud({visible, selectedSatStation, satelliteStats, satelliteFilters, setShowSatellites}) {
-        return (
-            <>
-                {visible && (
-                    <div className="station-map-satellite-hud">
-                        <div className="sat-hud-header">
-                            <div className="d-flex align-items-center gap-1">
-                                <i className="bi bi-radar" style={{ color: '#38bdf8' }}></i>
-                                <span className="sat-hud-title">Vị trí vệ tinh GNSS</span>
-                            </div>
-                            <button
-                                type="button"
-                                className="iono-hud-close"
-                                onClick={() => setShowSatellites(false)}
-                                aria-label="Đóng lớp vệ tinh"
-                            >
-                                <i className="bi bi-x"></i>
-                            </button>
-                        </div>
+        if (!visible) return null;
+        return <div className="station-map-satellite-hud">
+            <div className="sat-hud-header">
+                <div className="d-flex align-items-center gap-1">
+                    <i className="bi bi-radar" style={{color: '#38bdf8'}}></i>
+                    <span className="sat-hud-title">Vị trí vệ tinh GNSS</span>
+                </div>
+                <button type="button" className="iono-hud-close" onClick={() => setShowSatellites(false)} aria-label="Đóng lớp vệ tinh">
+                    <i className="bi bi-x"></i>
+                </button>
+            </div>
+            <SatelliteStationBanner station={selectedSatStation} stats={satelliteStats} />
+            <SatelliteConstellationToggles satelliteStats={satelliteStats} satelliteFilters={satelliteFilters} selectedSatStation={selectedSatStation} />
+            <div className="form-check form-switch mb-1 small">
+                <input className="form-check-input" type="checkbox" id="sat-show-ipp"
+                    checked={satelliteFilters.showIpp !== false}
+                    onChange={event => window.GnssSatelliteOverlay?.setFilter('showIpp', event.target.checked)} />
+                <label className="form-check-label" htmlFor="sat-show-ipp" style={{fontSize: '0.72rem'}}>
+                    Hiện tia RTCM và điểm IPP (350 km)
+                </label>
+            </div>
+            <div className="sat-hud-source-credit">
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                    <span>🛰️ Nguồn quỹ đạo:</span>
+                    <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" className="text-info text-decoration-none">
+                        CelesTrak (NORAD GP) <i className="bi bi-box-arrow-up-right" style={{fontSize: '0.62rem'}}></i>
+                    </a>
+                </div>
+                <div className="d-flex justify-content-between align-items-center mb-1 text-muted" style={{fontSize: '0.68rem'}}>
+                    <span>Định danh PRN:</span>
+                    <a href="https://qzss.go.jp/en/technical/satellites/index.html" target="_blank" rel="noopener noreferrer" className="text-info text-decoration-none">
+                        Cabinet Office (QZSS) / IGS <i className="bi bi-box-arrow-up-right" style={{fontSize: '0.6rem'}}></i>
+                    </a>
+                </div>
+                <SatelliteRtcmStatus stats={satelliteStats} />
+            </div>
+        </div>;
+    }
 
-                        {selectedSatStation ? (
-                            (selectedSatStation.status === 'offline' || selectedSatStation.status === 'lost') ? (
-                                <div className="sat-hud-station-banner border border-danger">
-                                    <div className="d-flex justify-content-between align-items-center mb-1">
-                                        <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
-                                        <button
-                                            type="button"
-                                            className="btn btn-sm btn-outline-light sat-hud-stop-tracking"
-                                            aria-label="Hủy theo dõi trạm"
-                                            onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
-                                        >
-                                            Hủy theo dõi
-                                        </button>
-                                    </div>
-                                    <div className="text-danger small fw-semibold">
-                                        <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                                        Trạm ngoại tuyến — Ngưng phát tia & IPP
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="sat-hud-station-banner">
-                                    <div className="d-flex justify-content-between align-items-center mb-1">
-                                        <span>Trạm: <b>{selectedSatStation.name || selectedSatStation.serial}</b></span>
-                                        <button
-                                            type="button"
-                                            className="btn btn-sm btn-outline-light sat-hud-stop-tracking"
-                                            aria-label="Hủy theo dõi trạm"
-                                            onClick={() => window.GnssSatelliteOverlay?.clearSelectedStation()}
-                                        >
-                                            Hủy theo dõi
-                                        </button>
-                                    </div>
-                                    <div className="text-info small">
-                                        <i className="bi bi-eye me-1"></i>
-                                        <b>{satelliteStats.visible}</b> vệ tinh khớp quỹ đạo
-                                        {satelliteStats.hasLiveRtcm ? ` · ${satelliteStats.liveRtcmCount} PRN RTCM` : ' · đang chờ RTCM'}
-                                        {satelliteStats.unmatchedRtcmCount > 0 ? ` · ${satelliteStats.unmatchedRtcmCount} chưa ghép quỹ đạo (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
-                                    </div>
-                                </div>
-                            )
-                        ) : (
-                            <div className="small text-muted mb-2 fst-italic">
-                                <i className="bi bi-cursor me-1"></i>Vị trí vệ tinh theo quỹ đạo TLE; chỉ vệ tinh khớp RTCM mới được tô sáng.
-                            </div>
-                        )}
+    function toggleGlobeOrbitView({useOrbitView, setUseOrbitView, mapEngine, setShowSatellites}) {
+        const next = !useOrbitView;
+        setUseOrbitView(next);
+        if (mapEngine !== 'mapbox') return;
+        if (next) {
+            setShowSatellites(true);
+            window.MapboxGlobeView?.focusVietnam?.(true, 90);
+        } else {
+            window.MapboxGlobeView?.focusVietnam?.(false);
+        }
+    }
 
-                        <div className="sat-hud-toggles">
-                            {[
-                                { key: 'gps', label: 'GPS', shortLabel: 'GPS', color: '#22c55e', count: satelliteStats.byConstellation?.gps ?? 0 },
-                                { key: 'galileo', label: 'Galileo', shortLabel: 'GAL', color: '#3b82f6', count: satelliteStats.byConstellation?.galileo ?? 0 },
-                                { key: 'beidou', label: 'BeiDou', shortLabel: 'BDS', color: '#f97316', count: satelliteStats.byConstellation?.beidou ?? 0 },
-                                { key: 'glonass', label: 'GLONASS', shortLabel: 'GLO', color: '#ef4444', count: satelliteStats.byConstellation?.glonass ?? 0 },
-                                { key: 'qzss', label: 'QZSS', shortLabel: 'QZSS', color: '#a855f7', count: satelliteStats.byConstellation?.qzss ?? 0 },
-                            ].map(item => (
-                                <button
-                                    type="button"
-                                    key={item.key}
-                                    className={`sat-hud-pill ${satelliteFilters[item.key] ? 'active' : ''}`}
-                                    aria-pressed={satelliteFilters[item.key]}
-                                    onClick={() => {
-                                        const next = !satelliteFilters[item.key];
-                                        window.GnssSatelliteOverlay?.setFilter(item.key, next);
-                                    }}
-                                >
-                                    <span style={{ color: item.color }}>● <span className="sat-label-full">{item.label}</span><span className="sat-label-short d-none">{item.shortLabel}</span></span>
-                                    {selectedSatStation ? (
-                                        <span className="badge bg-dark ms-1" style={{ fontSize: '0.62rem' }}>
-                                            {item.count}
-                                        </span>
-                                    ) : null}
-                                </button>
-                            ))}
-                        </div>
+    function focusGlobeInVietnam(mapEngine, useOrbitView) {
+        const renderer = mapEngine !== 'mapbox' && useOrbitView ? window.Globe3DView : window.MapboxGlobeView;
+        renderer?.focusVietnam?.(true);
+    }
 
-                        <div className="form-check form-switch mb-1 small">
-                            <input
-                                className="form-check-input"
-                                type="checkbox"
-                                id="sat-show-ipp"
-                                checked={satelliteFilters.showIpp !== false}
-                                onChange={(e) => {
-                                    window.GnssSatelliteOverlay?.setFilter('showIpp', e.target.checked);
-                                }}
-                            />
-                            <label className="form-check-label" htmlFor="sat-show-ipp" style={{ fontSize: '0.72rem' }}>
-                                Hiện tia RTCM và điểm IPP (350 km)
-                            </label>
-                        </div>
+    function getNextGlobeTexture(texture) {
+        return ({'blue-marble': 'night', night: 'dark', dark: 'blue-marble'})[texture] || 'blue-marble';
+    }
 
-                        <div className="sat-hud-source-credit">
-                            <div className="d-flex justify-content-between align-items-center mb-1">
-                                <span>🛰️ Nguồn quỹ đạo:</span>
-                                <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" className="text-info text-decoration-none">
-                                    CelesTrak (NORAD GP) <i className="bi bi-box-arrow-up-right" style={{ fontSize: '0.62rem' }}></i>
-                                </a>
-                            </div>
-                            <div className="d-flex justify-content-between align-items-center mb-1 text-muted" style={{ fontSize: '0.68rem' }}>
-                                <span>Định danh PRN:</span>
-                                <a href="https://qzss.go.jp/en/technical/satellites/index.html" target="_blank" rel="noopener noreferrer" className="text-info text-decoration-none">
-                                    Cabinet Office (QZSS) / IGS <i className="bi bi-box-arrow-up-right" style={{ fontSize: '0.6rem' }}></i>
-                                </a>
-                            </div>
-                            {satelliteStats.hasLiveRtcm ? (
-                                <div style={{ color: '#86efac', fontSize: '0.7rem' }}>
-                                    ● RTCM: <b>{satelliteStats.liveRtcmCount} PRN</b> • khớp quỹ đạo: <b>{satelliteStats.visible}</b>
-                                    {satelliteStats.unmatchedRtcmCount > 0 ? ` • chưa ghép quỹ đạo: ${satelliteStats.unmatchedRtcmCount} (${(satelliteStats.unmatchedRtcmCodes || []).join(', ')}${satelliteStats.unmatchedRtcmCount > 8 ? ', …' : ''})` : ''}
-                                </div>
-                            ) : (
-                                <div className="text-muted" style={{ fontSize: '0.7rem' }}>Đang chờ RTCM • tia và IPP chỉ hiện với PRN khớp</div>
-                            )}
-                        </div>
-                    </div>
-                )}
-            </>
-        );
+    function toggleGlobeAppearance({mapEngine, tileMode, setTileMode, globeTexture, setGlobeTexture}) {
+        if (mapEngine === 'mapbox') {
+            setTileMode(tileMode === 'satellite' ? 'streets' : 'satellite');
+            return;
+        }
+        const next = getNextGlobeTexture(globeTexture);
+        setGlobeTexture(next);
+        window.Globe3DView?.setEarthTexture(next);
+    }
+
+    function globeAppearanceLabel({mapEngine, tileMode, globeTexture}) {
+        if (mapEngine === 'mapbox') return tileMode === 'satellite' ? 'Vệ tinh Mapbox' : 'Đường phố Mapbox';
+        if (globeTexture === 'blue-marble') return 'NASA Blue Marble';
+        if (globeTexture === 'night') return 'City Lights';
+        return 'Cyber Dark';
+    }
+
+    function GlobeSatelliteFilters({satelliteFilters, setSatelliteFilters}) {
+        const systems = [
+            {key: 'gps', label: 'GPS', color: '#22c55e'},
+            {key: 'galileo', label: 'GAL', color: '#38bdf8'},
+            {key: 'beidou', label: 'BDS', color: '#f59e0b'},
+            {key: 'glonass', label: 'GLO', color: '#ef4444'},
+            {key: 'qzss', label: 'QZSS', color: '#a855f7'},
+        ];
+        return systems.map(system => (
+            <button key={system.key} type="button"
+                className={'globe-dock-btn ' + (satelliteFilters[system.key] ? 'active' : '')}
+                onClick={() => {
+                    const next = !satelliteFilters[system.key];
+                    setSatelliteFilters(previous => ({...previous, [system.key]: next}));
+                    window.Globe3DView?.setFilter(system.key, next);
+                    window.GnssSatelliteOverlay?.setFilter(system.key, next);
+                }}>
+                <span style={{color: system.color}}>●</span>
+                <span className="text-uppercase">{system.label}</span>
+            </button>
+        ));
     }
 
     function StationMapGlobeDock(props) {
         const {visible, mapEngine, useOrbitView, enterGlobeMode, isGlobeMode, mapboxSpinning,
             setUseOrbitView, setShowSatellites, tileMode, setTileMode, satelliteFilters,
             setSatelliteFilters, globeTexture, setGlobeTexture} = props;
-        return (
-            <>
-                {visible && (
-                    <div className="station-map-globe-dock">
-                        <button
-                            type="button"
-                            className="globe-dock-btn"
-                            onClick={() => {
-                                const next = !useOrbitView;
-                                setUseOrbitView(next);
-                                if (mapEngine === 'mapbox') {
-                                    if (next) {
-                                        setShowSatellites(true);
-                                        window.MapboxGlobeView?.focusVietnam?.(true, 90);
-                                    } else {
-                                        window.MapboxGlobeView?.focusVietnam?.(false);
-                                    }
-                                }
-                            }}
-                            title={useOrbitView ? 'Trở về địa cầu Mapbox' : 'Xem quỹ đạo vệ tinh GNSS'}
-                        >
-                            <i className={`bi ${useOrbitView ? 'bi-globe' : 'bi-radar'}`} aria-hidden="true"></i>{' '}
-                            <span className="dock-btn-text-full">{useOrbitView ? 'Địa cầu' : 'Quỹ đạo GNSS'}</span>
-                            <span className="dock-btn-text-short d-none">{useOrbitView ? 'Địa cầu' : 'Quỹ đạo'}</span>
-                        </button>
-                        {!useOrbitView && <button type="button" className="globe-dock-btn" onClick={() => { enterGlobeMode(); window.MapboxGlobeView?.focusVietnam?.(true, 90); }}><i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu</button>}
-                        <button
-                            type="button"
-                            className="globe-dock-btn"
-                            onClick={() => (mapEngine !== 'mapbox' && useOrbitView ? window.Globe3DView : window.MapboxGlobeView)?.focusVietnam?.(true)}
-                            title="Tập trung cận cảnh vào Việt Nam"
-                        >
-                            <i className="bi bi-crosshair2 text-info"></i> Tâm VN
-                        </button>
-                        {isGlobeMode && (
-                            <button type="button" className={`globe-dock-btn ${mapboxSpinning ? 'active' : ''}`} aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning?.(!mapboxSpinning)}>
-                                <i className="bi bi-arrow-repeat" aria-hidden="true"></i>{' '}
-                                <span className="dock-btn-text-full">{mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</span>
-                                <span className="dock-btn-text-short d-none">{mapboxSpinning ? 'Dừng xoay' : 'Tự xoay'}</span>
-                            </button>
-                        )}
-                        {useOrbitView && <React.Fragment>
-                        <div className="globe-dock-separator"></div>
-                        {['gps', 'galileo', 'beidou', 'glonass', 'qzss'].map(k => (
-                            <button
-                                key={k}
-                                type="button"
-                                className={`globe-dock-btn ${satelliteFilters[k] ? 'active' : ''}`}
-                                onClick={() => {
-                                    const next = !satelliteFilters[k];
-                                    setSatelliteFilters(prev => ({ ...prev, [k]: next }));
-                                    window.Globe3DView?.setFilter(k, next);
-                                    window.GnssSatelliteOverlay?.setFilter(k, next);
-                                }}
-                            >
-                                <span style={{ color: k === 'gps' ? '#22c55e' : k === 'galileo' ? '#38bdf8' : k === 'beidou' ? '#f59e0b' : k === 'glonass' ? '#ef4444' : '#a855f7' }}>●</span>
-                                <span className="text-uppercase">{k === 'galileo' ? 'GAL' : k === 'beidou' ? 'BDS' : k === 'glonass' ? 'GLO' : k === 'qzss' ? 'QZSS' : 'GPS'}</span>
-                            </button>
-                        ))}
-                        <div className="globe-dock-separator"></div>
-                        <button
-                            type="button"
-                            className="globe-dock-btn"
-                            onClick={() => {
-                                if (mapEngine === 'mapbox') {
-                                    setTileMode(tileMode === 'satellite' ? 'streets' : 'satellite');
-                                } else {
-                                    const next = globeTexture === 'blue-marble' ? 'night' : globeTexture === 'night' ? 'dark' : 'blue-marble';
-                                    setGlobeTexture(next);
-                                    window.Globe3DView?.setEarthTexture(next);
-                                }
-                            }}
-                            title="Đổi giao diện địa cầu (Blue Marble / City Lights / Cyber Dark)"
-                        >
-                            <i className="bi bi-palette"></i> {mapEngine === 'mapbox' ? (tileMode === 'satellite' ? 'Vệ tinh Mapbox' : 'Đường phố Mapbox') : (globeTexture === 'blue-marble' ? 'NASA Blue Marble' : globeTexture === 'night' ? 'City Lights' : 'Cyber Dark')}
-                        </button>
-                        </React.Fragment>}
-                    </div>
-                )}
-            </>
-        );
+        if (!visible) return null;
+        return <div className="station-map-globe-dock">
+            <button type="button" className="globe-dock-btn"
+                onClick={() => toggleGlobeOrbitView({useOrbitView, setUseOrbitView, mapEngine, setShowSatellites})}
+                title={useOrbitView ? 'Trở về địa cầu Mapbox' : 'Xem quỹ đạo vệ tinh GNSS'}>
+                <i className={'bi ' + (useOrbitView ? 'bi-globe' : 'bi-radar')} aria-hidden="true"></i>{' '}
+                <span className="dock-btn-text-full">{useOrbitView ? 'Địa cầu' : 'Quỹ đạo GNSS'}</span>
+                <span className="dock-btn-text-short d-none">{useOrbitView ? 'Địa cầu' : 'Quỹ đạo'}</span>
+            </button>
+            {!useOrbitView && <button type="button" className="globe-dock-btn"
+                onClick={() => { enterGlobeMode(); window.MapboxGlobeView?.focusVietnam?.(true, 90); }}>
+                <i className="bi bi-globe" aria-hidden="true"></i> Toàn cầu
+            </button>}
+            <button type="button" className="globe-dock-btn" onClick={() => focusGlobeInVietnam(mapEngine, useOrbitView)}
+                title="Tập trung cận cảnh vào Việt Nam">
+                <i className="bi bi-crosshair2 text-info"></i> Tâm VN
+            </button>
+            {isGlobeMode && <button type="button" className={'globe-dock-btn ' + (mapboxSpinning ? 'active' : '')}
+                aria-pressed={mapboxSpinning} onClick={() => window.MapboxGlobeView?.setSpinning?.(!mapboxSpinning)}>
+                <i className="bi bi-arrow-repeat" aria-hidden="true"></i>{' '}
+                <span className="dock-btn-text-full">{mapboxSpinning ? 'Tắt tự xoay' : 'Bật tự xoay'}</span>
+                <span className="dock-btn-text-short d-none">{mapboxSpinning ? 'Dừng xoay' : 'Tự xoay'}</span>
+            </button>}
+            {useOrbitView && <>
+                <div className="globe-dock-separator"></div>
+                <GlobeSatelliteFilters satelliteFilters={satelliteFilters} setSatelliteFilters={setSatelliteFilters} />
+                <div className="globe-dock-separator"></div>
+                <button type="button" className="globe-dock-btn"
+                    onClick={() => toggleGlobeAppearance({mapEngine, tileMode, setTileMode, globeTexture, setGlobeTexture})}
+                    title="Đổi giao diện địa cầu (Blue Marble / City Lights / Cyber Dark)">
+                    <i className="bi bi-palette"></i> {globeAppearanceLabel({mapEngine, tileMode, globeTexture})}
+                </button>
+            </>}
+        </div>;
     }
 
-    function StationMapToolbar({ showSurfaceMap, enterGlobeMode, mapEngine, mapReady, isGlobeMode, useOrbitView,
-            setFilterOpen, filterOpen, locate, findingNearest, findNearestFromBrowser,
-            setSearchOpen, searchOpen, setTileMode, tileMode, showSatellites, setShowSatellites,
-            measureOn, setMeasureOn }) {
-        return (
-                <div className="station-map-toolbar">
-                    <div className="station-map-toolgroup">
-                        <button
-                            className={`station-map-action ${isGlobeMode ? 'active text-info' : ''}`}
-                            type="button"
-                            title={useOrbitView ? "Trở về bản đồ" : mapEngine === 'leaflet' ? "Đang dùng bản đồ Google dự phòng" : isGlobeMode ? "Trở về bản đồ 2D" : "Mở địa cầu 3D"}
-                            aria-label={useOrbitView ? "Trở về bản đồ" : isGlobeMode ? "Bản đồ 2D" : "Địa cầu 3D"}
-                            data-action="toggle-globe"
-                            disabled={(mapEngine === 'leaflet' || !mapReady) && !useOrbitView}
-                            onClick={() => useOrbitView || isGlobeMode ? showSurfaceMap() : enterGlobeMode()}
-                        >
-                            <i className={`bi ${isGlobeMode || useOrbitView ? 'bi-map' : 'bi-globe-asia-australia'}`}></i>
-                        </button>
-                        {!useOrbitView && (
-                            <React.Fragment>
-                                <button className={`station-map-action ${filterOpen ? 'active' : ''}`} type="button" title="Bộ lọc bản đồ" aria-label="Bộ lọc bản đồ" aria-expanded={filterOpen} aria-controls="station-map-filters" onClick={() => { setFilterOpen(!filterOpen); setSearchOpen(false); }}><i className="bi bi-funnel" aria-hidden="true"></i></button>
-                                <button className="station-map-action" type="button" title="Vị trí của tôi" aria-label="Vị trí của tôi" onClick={locate}><i className="bi bi-geo-alt-fill" aria-hidden="true"></i></button>
-                                <button className="station-map-action" type="button" title="Tìm trạm gần nhất" aria-label={findingNearest ? 'Đang tìm trạm gần nhất' : 'Tìm trạm gần nhất'} aria-busy={findingNearest} onClick={findNearestFromBrowser} disabled={findingNearest}>
-                                    {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
-                                </button>
-                                <button className={`station-map-action ${searchOpen ? 'active' : ''}`} type="button" title="Tìm kiếm" aria-label="Tìm kiếm" aria-expanded={searchOpen} aria-controls="station-map-search" onClick={() => { setSearchOpen(!searchOpen); setFilterOpen(false); }}><i className="bi bi-search" aria-hidden="true"></i></button>
-                                <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ" onClick={() => setTileMode(tileMode === 'hybrid' ? 'satellite' : tileMode === 'satellite' ? 'streets' : 'hybrid')}><i className="bi bi-layers"></i></button>
-                                <button className={`station-map-action ${showSatellites ? 'active' : ''}`} type="button" title="Vệ tinh GNSS" aria-label="Vệ tinh GNSS" aria-pressed={showSatellites} onClick={() => { setShowSatellites(!showSatellites); setFilterOpen(false); setSearchOpen(false); }}><i className="bi bi-radar" aria-hidden="true"></i></button>
-                                <button className={`station-map-action ${measureOn ? 'active' : ''}`} type="button" title="Đo khoảng cách" aria-label="Đo khoảng cách" aria-pressed={measureOn} onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers" aria-hidden="true"></i></button>
-                            </React.Fragment>
-                        )}
-                    </div>
-                </div>
-        );
+    function getStationMapToggleTitle({useOrbitView, mapEngine, isGlobeMode}) {
+        if (useOrbitView) return 'Trở về bản đồ';
+        if (mapEngine === 'leaflet') return 'Đang dùng bản đồ Google dự phòng';
+        return isGlobeMode ? 'Trở về bản đồ 2D' : 'Mở địa cầu 3D';
+    }
+
+    function getStationMapToggleLabel({useOrbitView, isGlobeMode}) {
+        if (useOrbitView) return 'Trở về bản đồ';
+        return isGlobeMode ? 'Bản đồ 2D' : 'Địa cầu 3D';
+    }
+
+    function getNextMapTileMode(current) {
+        const modes = ['hybrid', 'satellite', 'streets'];
+        return modes[(modes.indexOf(current) + 1) % modes.length];
+    }
+
+    function StationMapSecondaryTools(props) {
+        const {useOrbitView, filterOpen, setFilterOpen, setSearchOpen, locate, findingNearest,
+            findNearestFromBrowser, searchOpen, tileMode, setTileMode, showSatellites,
+            setShowSatellites, measureOn, setMeasureOn} = props;
+        if (useOrbitView) return null;
+        return <>
+            <button className={'station-map-action ' + (filterOpen ? 'active' : '')} type="button" title="Bộ lọc bản đồ"
+                aria-label="Bộ lọc bản đồ" aria-expanded={filterOpen} aria-controls="station-map-filters"
+                onClick={() => { setFilterOpen(!filterOpen); setSearchOpen(false); }}><i className="bi bi-funnel" aria-hidden="true"></i></button>
+            <button className="station-map-action" type="button" title="Vị trí của tôi" aria-label="Vị trí của tôi" onClick={locate}>
+                <i className="bi bi-geo-alt-fill" aria-hidden="true"></i>
+            </button>
+            <button className="station-map-action" type="button" title="Tìm trạm gần nhất"
+                aria-label={findingNearest ? 'Đang tìm trạm gần nhất' : 'Tìm trạm gần nhất'} aria-busy={findingNearest}
+                onClick={findNearestFromBrowser} disabled={findingNearest}>
+                {findingNearest ? <span className="spinner-border spinner-border-sm"></span> : <i className="bi bi-crosshair"></i>}
+            </button>
+            <button className={'station-map-action ' + (searchOpen ? 'active' : '')} type="button" title="Tìm kiếm"
+                aria-label="Tìm kiếm" aria-expanded={searchOpen} aria-controls="station-map-search"
+                onClick={() => { setSearchOpen(!searchOpen); setFilterOpen(false); }}><i className="bi bi-search" aria-hidden="true"></i></button>
+            <button className="station-map-action" type="button" title="Đổi lớp bản đồ" aria-label="Đổi lớp bản đồ"
+                onClick={() => setTileMode(getNextMapTileMode(tileMode))}><i className="bi bi-layers"></i></button>
+            <button className={'station-map-action ' + (showSatellites ? 'active' : '')} type="button" title="Vệ tinh GNSS"
+                aria-label="Vệ tinh GNSS" aria-pressed={showSatellites}
+                onClick={() => { setShowSatellites(!showSatellites); setFilterOpen(false); setSearchOpen(false); }}><i className="bi bi-radar" aria-hidden="true"></i></button>
+            <button className={'station-map-action ' + (measureOn ? 'active' : '')} type="button" title="Đo khoảng cách"
+                aria-label="Đo khoảng cách" aria-pressed={measureOn} onClick={() => setMeasureOn(!measureOn)}><i className="bi bi-rulers" aria-hidden="true"></i></button>
+        </>;
+    }
+
+    function StationMapToolbar(props) {
+        const {showSurfaceMap, enterGlobeMode, mapEngine, mapReady, isGlobeMode, useOrbitView} = props;
+        return <div className="station-map-toolbar">
+            <div className="station-map-toolgroup">
+                <button className={'station-map-action ' + (isGlobeMode ? 'active text-info' : '')}
+                    type="button" title={getStationMapToggleTitle(props)} aria-label={getStationMapToggleLabel(props)}
+                    data-action="toggle-globe" disabled={(mapEngine === 'leaflet' || !mapReady) && !useOrbitView}
+                    onClick={() => useOrbitView || isGlobeMode ? showSurfaceMap() : enterGlobeMode()}>
+                    <i className={'bi ' + (isGlobeMode || useOrbitView ? 'bi-map' : 'bi-globe-asia-australia')}></i>
+                </button>
+                <StationMapSecondaryTools {...props} />
+            </div>
+        </div>;
     }
 
     function StationMapSearchPanel({ visible, search, setSearch, locationSearch, setLocationSearch, searchLocation,
@@ -880,7 +886,7 @@
                             </div>
                         )}
                         <button className="btn btn-sm btn-outline-info w-100 mt-1" onClick={openLocationInGoogleMaps} disabled={!locationSearch.trim()}>
-                            Mo tren Google Maps
+                            Mở trên Google Maps
                         </button>
                         <button className="btn btn-sm btn-outline-primary w-100 mt-2" onClick={findNearestFromBrowser} disabled={findingNearest}>
                             {findingNearest ? 'Đang tìm...' : 'Tìm trạm gần nhất từ vị trí của tôi'}
