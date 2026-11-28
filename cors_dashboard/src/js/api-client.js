@@ -214,30 +214,34 @@
         finally { browserDetectionComplete = true; }
     })();
 
+    function getOperatingSystemName(uaLower) {
+        if (uaLower.includes('iphone')) return 'iPhone · iOS';
+        if (uaLower.includes('ipad')) return 'iPad · iPadOS';
+        if (uaLower.includes('ipod')) return 'iPod · iOS';
+        if (uaLower.includes('android')) return 'Android';
+        if (uaLower.includes('windows nt 10.0') || uaLower.includes('windows nt 11.0')) return 'Windows 10/11';
+        if (uaLower.includes('windows')) return 'Windows';
+        if (uaLower.includes('macintosh') && navigator.maxTouchPoints > 1) return 'iPad · iPadOS';
+        if (uaLower.includes('macintosh') || uaLower.includes('mac os x')) return 'macOS';
+        if (uaLower.includes('linux')) return 'Linux';
+        return 'Máy tính';
+    }
+
+    function getBrowserName(ua) {
+        const uaLower = ua.toLowerCase();
+        if (isBrave || /brave\//i.test(ua)) return 'Brave';
+        if (/edg\/|edgios\/|edga\//i.test(ua)) return 'Edge';
+        if (/opr\/|opera\/|opios\//i.test(ua)) return 'Opera';
+        if (/chrome\/|crios\//i.test(ua)) return 'Chrome';
+        if (/firefox\/|fxios\//i.test(ua)) return 'Firefox';
+        if (uaLower.includes('safari/')) return 'Safari';
+        return 'Trình duyệt';
+    }
+
     function getDeviceName() {
         try {
             const ua = navigator.userAgent || '';
-            const uaLower = ua.toLowerCase();
-            let os = 'Máy tính';
-            if (uaLower.includes('iphone')) os = 'iPhone · iOS';
-            else if (uaLower.includes('ipad')) os = 'iPad · iPadOS';
-            else if (uaLower.includes('ipod')) os = 'iPod · iOS';
-            else if (uaLower.includes('android')) os = 'Android';
-            else if (uaLower.includes('windows nt 10.0') || uaLower.includes('windows nt 11.0')) os = 'Windows 10/11';
-            else if (uaLower.includes('windows')) os = 'Windows';
-            else if (uaLower.includes('macintosh') && navigator.maxTouchPoints > 1) os = 'iPad · iPadOS';
-            else if (uaLower.includes('macintosh') || uaLower.includes('mac os x')) os = 'macOS';
-            else if (uaLower.includes('linux')) os = 'Linux';
-
-            let browser = 'Trình duyệt';
-            if (isBrave || /brave\//i.test(ua)) browser = 'Brave';
-            else if (/edg\/|edgios\/|edga\//i.test(ua)) browser = 'Edge';
-            else if (/opr\/|opera\/|opios\//i.test(ua)) browser = 'Opera';
-            else if (/chrome\/|crios\//i.test(ua)) browser = 'Chrome';
-            else if (/firefox\/|fxios\//i.test(ua)) browser = 'Firefox';
-            else if (uaLower.includes('safari/')) browser = 'Safari';
-
-            return `${os} · ${browser}`;
+            return `${getOperatingSystemName(ua.toLowerCase())} · ${getBrowserName(ua)}`;
         } catch (_) {
             return 'Thiết bị Web';
         }
