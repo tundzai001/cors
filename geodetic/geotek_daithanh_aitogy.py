@@ -1405,58 +1405,59 @@ def parse_nmea_gsa(payload):
         }
     return None
 
+def _gsv_satellite(chunk, talker_id, system):
+    prn = int(chunk[0])
+    if talker_id == 'GP':
+        if 65 <= prn <= 96:
+            system, prn = 'ru', prn - 64
+        elif 193 <= prn <= 202:
+            system, prn = 'jp', prn - 192
+        elif prn > 100:
+            return None
+    elif talker_id == 'GL' and prn > 64:
+        prn -= 64
+    if prn > 200:
+        return None
+    return {
+        "prn": prn,
+        "system": system,
+        "elevation": int(chunk[1]) if chunk[1] else 0,
+        "azimuth": int(chunk[2]) if chunk[2] else 0,
+        "snr": int(chunk[3]) if chunk[3] else 0,
+        "isTracking": False,
+        "source": "NMEA_GSV",
+        "last_seen": time.time(),
+    }
+
+
+def _gsv_sentence_satellites(line, system_map):
+    parts = line.split("*", 1)[0].split(",")
+    if len(parts) < 4 or not parts[0].endswith("GSV"):
+        return []
+    talker_id = parts[0][1:3]
+    system = system_map.get(talker_id, "un")
+    satellites = []
+    for index in range(0, len(parts[4:]), 4):
+        chunk = [value.strip() for value in parts[4 + index:8 + index]]
+        if len(chunk) < 4 or not chunk[0]:
+            continue
+        try:
+            satellite = _gsv_satellite(chunk, talker_id, system)
+            if satellite is not None:
+                satellites.append(satellite)
+        except Exception:
+            continue
+    return satellites
+
+
 def parse_nmea_gsv(payload):
     system_map = {
-        "GP": "us",
-        "GL": "ru",
-        "GA": "eu",
-        "GB": "cn",
-        "BD": "cn",
-        "GQ": "jp",
-        "QZ": "jp",
-        "GN": "un",
+        "GP": "us", "GL": "ru", "GA": "eu", "GB": "cn",
+        "BD": "cn", "GQ": "jp", "QZ": "jp", "GN": "un",
     }
     satellites = []
     for line in iter_nmea_sentences(payload):
-        sentence = line.split("*", 1)[0]
-        parts = sentence.split(",")
-        if len(parts) < 4 or not parts[0].endswith("GSV"):
-            continue
-        talker_id = parts[0][1:3]
-        system = system_map.get(talker_id, "un")
-        fields = parts[4:]
-        for index in range(0, len(fields), 4):
-            chunk = [c.strip() for c in fields[index:index + 4]]
-            if len(chunk) < 4 or not chunk[0]:
-                continue
-            try:
-                prn = int(chunk[0])
-                if talker_id == 'GP':
-                    if prn >= 65 and prn <= 96:
-                        system = 'ru'
-                        prn -= 64
-                    elif prn >= 193 and prn <= 202:
-                        system = 'jp'
-                        prn -= 192
-                    elif prn > 100:
-                        continue # Completely ignore PRNs like 1212, 254
-                elif talker_id == 'GL' and prn > 64:
-                    prn -= 64
-                if prn > 200:
-                    continue
-                    
-                satellites.append({
-                    "prn": prn,
-                    "system": system,
-                    "elevation": int(chunk[1]) if chunk[1] else 0,
-                    "azimuth": int(chunk[2]) if chunk[2] else 0,
-                    "snr": int(chunk[3]) if chunk[3] else 0,
-                    "isTracking": False,
-                    "source": "NMEA_GSV",
-                    "last_seen": time.time()
-                })
-            except Exception:
-                continue
+        satellites.extend(_gsv_sentence_satellites(line, system_map))
     return satellites
 
 NMEA_COMMAND_NAMES = {
@@ -1858,20 +1859,49 @@ class RelayWorker(threading.Thread):
         self.wakeup_event.set()
         self.publish_status()
 
+    def _apply_target_remote_aliases(self, service_config, updates):
+        aliases_by_key = {
+            "target_host": ("target_host", "serverhost1", "host", "caster_host"),
+            "target_port": ("target_port", "serverport1", "port1", "port", "caster_port"),
+            "target_pass": ("target_pass", "password1", "password", "pass", "caster_password"),
+            "target_mp": ("target_mp", "mountpoint", "mountpoint1", "active_mountpoint"),
+        }
+        for target_key, aliases in aliases_by_key.items():
+            for alias in aliases:
+                value = service_config.get(alias)
+                if value not in (None, ""):
+                    updates[target_key] = value
+                    break
+
+    def _apply_source_remote_aliases(self, source_config, updates):
+        if not isinstance(source_config, dict):
+            return
+        aliases_by_key = {
+            "source_host": ("host", "source_host"),
+            "source_port": ("port", "source_port"),
+            "source_user": ("username", "user", "source_user"),
+            "source_pass": ("password", "pass", "source_pass"),
+            "source_mp": ("mountpoint", "source_mp"),
+        }
+        for target_key, aliases in aliases_by_key.items():
+            for alias in aliases:
+                if alias not in source_config or source_config[alias] is None:
+                    continue
+                if target_key == "source_pass" and source_config[alias] == "":
+                    continue
+                updates[target_key] = source_config[alias]
+                break
+
     def _persist_remote_config(self, original_config):
         if not isinstance(original_config, dict):
             return
-
         payload = original_config.get("payload", original_config)
         service_config = payload.get("service_config", {}) if isinstance(payload.get("service_config"), dict) else {}
         if not service_config:
             service_config = payload
-
         before_target = (
-            self.cfg.get("target_host"),
-            str(self.cfg.get("target_port") or ""),
-            self.cfg.get("target_pass"),
-            self.cfg.get("target_mp"),
+            self.cfg.get("target_host"), str(self.cfg.get("target_port") or ""),
+            self.cfg.get("target_pass"), self.cfg.get("target_mp"),
         )
         before_source = (
             self._source_host(), self._source_port(), self._source_user(),
@@ -1879,65 +1909,28 @@ class RelayWorker(threading.Thread):
         )
 
         updates = {}
-        
-        # Parse stream_active
         stream_active = service_config.get("server1_stream_active")
         if stream_active is None:
             stream_active = service_config.get("stream_active")
         if stream_active is not None:
             updates["stream_active"] = bool(stream_active)
             self.desired_active = bool(stream_active)
-
-        target_aliases = {
-            "target_host": ("target_host", "serverhost1", "host", "caster_host"),
-            "target_port": ("target_port", "serverport1", "port1", "port", "caster_port"),
-            "target_pass": ("target_pass", "password1", "password", "pass", "caster_password"),
-            "target_mp": ("target_mp", "mountpoint", "mountpoint1", "active_mountpoint"),
-        }
-        for target_key, aliases in target_aliases.items():
-            for alias in aliases:
-                val = service_config.get(alias)
-                if val not in (None, ""):
-                    updates[target_key] = val
-                    break
-
-        source_config = service_config.get("relay_source")
-        if isinstance(source_config, dict):
-            source_aliases = {
-                "source_host": ("host", "source_host"),
-                "source_port": ("port", "source_port"),
-                "source_user": ("username", "user", "source_user"),
-                "source_pass": ("password", "pass", "source_pass"),
-                "source_mp": ("mountpoint", "source_mp"),
-            }
-            for target_key, aliases in source_aliases.items():
-                for alias in aliases:
-                    if alias in source_config and source_config[alias] is not None:
-                        if target_key == "source_pass" and source_config[alias] == "":
-                            continue
-                        updates[target_key] = source_config[alias]
-                        break
+        self._apply_target_remote_aliases(service_config, updates)
+        self._apply_source_remote_aliases(service_config.get("relay_source"), updates)
 
         if updates:
             self.cfg.update(updates)
             config_mgr.update_relay_config(self.serial, updates)
-            safe_updates = {
-                key: "***" if "pass" in key.lower() else value
-                for key, value in updates.items()
-            }
+            safe_updates = {key: "***" if "pass" in key.lower() else value for key, value in updates.items()}
             self.log("INFO", f"Saved remote config into geotek_config.json: {safe_updates}")
 
         after_target = (
-            self.cfg.get("target_host"),
-            str(self.cfg.get("target_port") or ""),
-            self.cfg.get("target_pass"),
-            self.cfg.get("target_mp"),
+            self.cfg.get("target_host"), str(self.cfg.get("target_port") or ""),
+            self.cfg.get("target_pass"), self.cfg.get("target_mp"),
         )
-
         if after_target != before_target:
             self.log("INFO", "Runtime target changed; reconnecting TARGET socket")
             self._close_target_socket()
-
         after_source = (
             self._source_host(), self._source_port(), self._source_user(),
             self._source_pass(), self.cfg.get("source_mp"),
@@ -1945,7 +1938,6 @@ class RelayWorker(threading.Thread):
         if after_source != before_source:
             self.log("INFO", "Runtime source changed; reconnecting SOURCE socket")
             self._close_source_socket()
-
         self.wakeup_event.set()
 
     def _close_source_socket(self):

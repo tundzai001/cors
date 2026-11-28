@@ -5362,6 +5362,30 @@ def _receiver_verification_status(agent, system):
             agent.gnss_verification = None
 
 
+def _survey_readback_fields(result, position, ready, fresh):
+    if fresh and position.get('state') == 'ok':
+        state = 'base_ready' if ready else 'waiting_base'
+    else:
+        state = 'awaiting_readback'
+    return {
+        'state': state,
+        'source': 'NAV-SVIN' if result['chip'] == 'Ublox' else 'BESTNAV',
+        'target_seconds': result.get('target_seconds', 0),
+        'readback_age_seconds': result['age_seconds'],
+        'fix_status': 'FIXEDPOS' if ready and fresh else 'UNVERIFIED',
+        'elapsed_since_ack_seconds': None,
+    }
+
+
+def _add_survey_progress(agent, survey, result):
+    started = getattr(agent, 'survey_in_started_at', None)
+    if started is not None:
+        survey['elapsed_since_ack_seconds'] = int(max(0, time.monotonic() - started))
+    for key in ('elapsed_seconds', 'observations', 'mean_accuracy_m', 'active'):
+        if key in result:
+            survey[key] = result[key]
+
+
 def _receiver_survey_status(agent, result, age):
     monitoring = result.get('mode_kind') == 'survey_in'
     position = result.get('bestpos', {})
@@ -5369,18 +5393,8 @@ def _receiver_survey_status(agent, result, age):
     fresh = age is not None and age <= 45 and result.get('state') == 'ok'
     survey = {'state':'not_monitoring'}
     if monitoring:
-        survey.update(state=('base_ready' if ready else 'waiting_base')
-                      if fresh and position.get('state') == 'ok' else 'awaiting_readback',
-                      source='NAV-SVIN' if result['chip'] == 'Ublox' else 'BESTNAV',
-                      target_seconds=result.get('target_seconds', 0),
-                      readback_age_seconds=result['age_seconds'], fix_status='FIXEDPOS' if ready and fresh else 'UNVERIFIED',
-                      elapsed_since_ack_seconds=None)
-        started = getattr(agent, 'survey_in_started_at', None)
-        if started is not None:
-            survey['elapsed_since_ack_seconds'] = int(max(0, time.monotonic() - started))
-        for key in ('elapsed_seconds', 'observations', 'mean_accuracy_m', 'active'):
-            if key in result:
-                survey[key] = result[key]
+        survey.update(_survey_readback_fields(result, position, ready, fresh))
+        _add_survey_progress(agent, survey, result)
     elif agent.get_base_config().get('base_setup_method') == 'SURVEY_IN' and (not result or result.get('error')):
         survey['state'] = 'awaiting_readback'
     return survey
