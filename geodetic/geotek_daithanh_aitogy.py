@@ -1977,6 +1977,274 @@ class RelayWorker(threading.Thread):
             self._source_sock = None
             self._target_sock = None
     
+    def _connection_settings(self):
+        return {
+            "source_host": self._source_host(),
+            "source_port": self._source_port(),
+            "source_user": self._source_user(),
+            "source_pass": self._source_pass(),
+            "target_host": self._target_host(),
+            "target_port": self._target_port(),
+            "target_pass": self._target_pass(),
+        }
+
+    def _open_source_socket(self, settings):
+        self.log("INFO", f"Connecting SOURCE: {settings['source_host']}:{settings['source_port']}/{self.cfg['source_mp']}")
+        with SOURCE_CONNECT_LIMIT:
+            if self.stop_event.is_set() or not self.station_enabled:
+                return None
+            source_sock = socket.create_connection(
+                (settings['source_host'], settings['source_port']), timeout=10
+            )
+        with self.socket_lock:
+            self._source_sock = source_sock
+        enable_tcp_keepalive(source_sock)
+        return source_sock if self.station_enabled else None
+
+    def _authenticate_source(self, source_sock, settings):
+        auth = base64.b64encode(
+            f"{settings['source_user']}:{settings['source_pass']}".encode()
+        ).decode()
+        request = (
+            f"GET /{self.cfg['source_mp']} HTTP/1.1\r\n"
+            f"Host: {settings['source_host']}\r\n"
+            f"Authorization: Basic {auth}\r\n"
+            f"User-Agent: NTRIP Relay/1.0\r\n"
+            f"Connection: keep-alive\r\n\r\n"
+        )
+        source_sock.sendall(request.encode())
+        header, leftover = read_http_header(source_sock)
+        if NTRIP_HTTP_SUCCESS not in header and NTRIP_ICY_SUCCESS not in header:
+            raise Exception("Source rejected")
+        self.source_connected = True
+        gga = generate_gga(self.cfg['lat'], self.cfg['lon'], self.cfg['alt'])
+        send_gga = self._source_send_gga()
+        if send_gga:
+            source_sock.sendall(gga.encode())
+        self.log("SUCCESS", "✓ Source connected")
+        self.is_connected = False
+        self.publish_status()
+        return leftover, gga, send_gga
+
+    def _connect_target(self, target_sock, source_has_rtcm, settings):
+        should_connect = (
+            self.station_enabled
+            and source_has_rtcm
+            and target_sock is None
+            and (self.desired_active or self._keep_target_connected())
+        )
+        if not should_connect:
+            return target_sock
+        self.log(
+            "INFO",
+            f"Connecting TARGET: {settings['target_host']}:{settings['target_port']}/{self.cfg['target_mp']} (v1.0)",
+        )
+        try:
+            target_sock = socket.create_connection(
+                (settings['target_host'], settings['target_port']), timeout=10
+            )
+            enable_tcp_keepalive(target_sock)
+            with self.socket_lock:
+                self._target_sock = target_sock
+            if not self.station_enabled:
+                return target_sock
+            request = (
+                f"SOURCE {settings['target_pass']} /{self.cfg['target_mp']}\r\n"
+                "Source-Agent: NTRIP NtripSource/1.0\r\n\r\n"
+            )
+            target_sock.sendall(request.encode())
+            response, _ = read_http_header(target_sock, timeout=10)
+            if not (NTRIP_ICY_SUCCESS in response or NTRIP_HTTP_SUCCESS in response):
+                raise Exception(f"Target rejected: {response.decode(errors='ignore')[:100]}")
+            target_sock.settimeout(None)
+            self.is_connected = True
+            mode = "ACTIVE" if self.desired_active else "SLEEP-STANDBY"
+            self.log("SUCCESS", f"RELAY {mode}: {self.cfg['source_mp']} -> {self.cfg['target_mp']}")
+        except Exception as error:
+            self.log("WARNING", f"Target connection failed: {error}")
+            if target_sock:
+                try:
+                    target_sock.close()
+                except Exception:
+                    pass
+            target_sock = None
+            with self.socket_lock:
+                self._target_sock = None
+            self.is_connected = False
+        return target_sock
+
+    def _disconnect_inactive_target(self, target_sock):
+        should_disconnect = (
+            not self.desired_active and target_sock is not None and not self._keep_target_connected()
+        )
+        if not should_disconnect:
+            return target_sock
+        self.log("INFO", "Stream deactivated -> closing TARGET socket only.")
+        try:
+            target_sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            target_sock.close()
+        except Exception:
+            pass
+        with self.socket_lock:
+            self._target_sock = None
+        self.is_connected = False
+        return None
+
+    def _send_source_gga_if_due(self, source_sock, gga, send_gga, last_gga):
+        if not send_gga or time.time() - last_gga <= 10:
+            return True, last_gga
+        try:
+            source_sock.sendall(gga.encode())
+            return True, time.time()
+        except Exception as error:
+            self._last_disconnect_reason = "source_gga_send_failed"
+            self.log("INFO", f"Source GGA send failed; reconnecting source socket: {error}")
+            return False, last_gga
+
+    def _read_source_data(self, source_sock):
+        try:
+            return source_sock.recv(4096)
+        except socket.timeout:
+            return None
+        except OSError as error:
+            remote_close = getattr(error, "winerror", None) in (10053, 10054) or getattr(error, "errno", None) in (10053, 10054)
+            if remote_close:
+                self._last_disconnect_reason = "source_remote_close"
+                self.log("INFO", f"Source remote closed socket; reconnecting source socket: {error}")
+            else:
+                self._last_disconnect_reason = "source_socket_error"
+                self.log("WARNING", f"Source socket error: {error}")
+            return b""
+        except Exception as error:
+            self._last_disconnect_reason = "source_data_error"
+            self.log("WARNING", f"Data error: {error}")
+            return b""
+
+    def _decode_source_frames(self, rtcm_buffer, data):
+        rtcm_buffer.extend(data)
+        frames = extract_rtcm3_frames(rtcm_buffer)
+        if frames:
+            self._source_failure_count = 0
+        for frame in frames:
+            decoded = rtcm_signal_decoder.decode_sync(self.serial, frame)
+            satellites = decoded.get("satellites", []) if decoded else []
+            for satellite in satellites:
+                key = f"{satellite.get('system', 'un')}:{satellite.get('prn')}"
+                existing = self.satellites.get(key, {})
+                existing.update({name: value for name, value in satellite.items() if value or name not in existing})
+                existing["last_seen"] = time.time()
+                self.satellites[key] = existing
+        return frames
+
+    def _forward_rtcm_frames(self, target_sock, frames):
+        if not (self.station_enabled and self.desired_active and target_sock is not None and frames):
+            return target_sock
+        for frame in frames:
+            try:
+                target_sock.sendall(frame)
+                self.bytes_sent += len(frame)
+            except Exception as error:
+                self.log("WARNING", f"Error sending RTCM frame to target: {error}")
+                try:
+                    target_sock.close()
+                except Exception:
+                    pass
+                target_sock = None
+                with self.socket_lock:
+                    self._target_sock = None
+                self.is_connected = False
+                break
+        return target_sock
+
+    def _publish_transfer_rates(self, now):
+        elapsed = now - self.last_stat_update
+        if elapsed < 1.0:
+            return
+        self.current_bps = int(self.bytes_sent / elapsed)
+        self.current_source_bps = int(self.bytes_received / elapsed)
+        self.bytes_sent = 0
+        self.bytes_received = 0
+        self.last_stat_update = now
+        self.publish_status()
+
+    def _stream_source(self, source_sock, settings, leftover, gga, send_gga):
+        last_gga = time.time()
+        self.bytes_sent = 0
+        self.bytes_received = 0
+        self.last_stat_update = time.time()
+        rtcm_buffer = bytearray(leftover or b"")
+        source_has_rtcm = False
+        source_sock.settimeout(5.0)
+        while not self.stop_event.is_set():
+            if not self.station_enabled:
+                break
+            target_sock = self._connect_target(self._target_sock, source_has_rtcm, settings)
+            if not self.station_enabled:
+                break
+            target_sock = self._disconnect_inactive_target(target_sock)
+            should_continue, last_gga = self._send_source_gga_if_due(
+                source_sock, gga, send_gga, last_gga
+            )
+            if not should_continue:
+                break
+            data = self._read_source_data(source_sock)
+            if data is None:
+                continue
+            if not data:
+                self._last_disconnect_reason = "source_eof"
+                self.log("INFO", "Source EOF; reconnecting source socket.")
+                break
+            self.bytes_received += len(data)
+            frames = self._decode_source_frames(rtcm_buffer, data)
+            if frames:
+                source_has_rtcm = True
+            target_sock = self._forward_rtcm_frames(target_sock, frames)
+            self._publish_transfer_rates(time.time())
+
+    def _wait_for_source_retry(self):
+        if self._last_disconnect_reason.startswith("source_"):
+            wait_seconds = self._source_retry_delay()
+        else:
+            wait_seconds = RECONNECT_INTERVAL
+        self.log("INFO", f"Source loop ended, reconnecting in {wait_seconds}s...")
+        self.wakeup_event.wait(wait_seconds)
+        self.wakeup_event.clear()
+
+    def _run_source_session(self):
+        settings = self._connection_settings()
+        source_sock = self._open_source_socket(settings)
+        if source_sock is None:
+            return
+        leftover, gga, send_gga = self._authenticate_source(source_sock, settings)
+        self._stream_source(source_sock, settings, leftover, gga, send_gga)
+        self._wait_for_source_retry()
+
+    def _handle_connection_error(self, error):
+        self.log("WARNING", f"Connection error: {error}")
+        wait_seconds = self._source_retry_delay()
+        self.log("INFO", f"Source connection retry scheduled in {wait_seconds}s")
+        self.wakeup_event.wait(wait_seconds)
+        self.wakeup_event.clear()
+
+    def _cleanup_source_session(self):
+        self.is_connected = False
+        self.source_connected = False
+        self.current_bps = 0
+        self.current_source_bps = 0
+        for sock in (self._source_sock, self._target_sock):
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        with self.socket_lock:
+            self._source_sock = None
+            self._target_sock = None
+        self.publish_status()
+
     def run(self):
         while not self.stop_event.is_set():
             if not self.station_enabled:
@@ -1988,236 +2256,13 @@ class RelayWorker(threading.Thread):
                 if self.wakeup_event.wait(30):
                     self.wakeup_event.clear()
                 continue
-
-            source_sock = None
-            target_sock = None
             try:
-                # Kết nối SOURCE khi trạm bật, kể cả khi stream output đang ở chế độ ngủ.
-                source_host = self._source_host()
-                source_port = self._source_port()
-                source_user = self._source_user()
-                source_pass = self._source_pass()
-                target_host = self._target_host()
-                target_port = self._target_port()
-                target_pass = self._target_pass()
-                # Kết nối SOURCE để lấy dữ liệu khi bật nguồn trạm.
-                self.log("INFO", f"Connecting SOURCE: {source_host}:{source_port}/{self.cfg['source_mp']}")
-                with SOURCE_CONNECT_LIMIT:
-                    if self.stop_event.is_set() or not self.station_enabled:
-                        continue
-                    source_sock = socket.create_connection((source_host, source_port), timeout=10)
-                enable_tcp_keepalive(source_sock)
-                with self.socket_lock:
-                    self._source_sock = source_sock
-                if not self.station_enabled:
-                    continue
-                
-                auth = base64.b64encode(f"{source_user}:{source_pass}".encode()).decode()
-                source_request = (
-                    f"GET /{self.cfg['source_mp']} HTTP/1.1\r\n"
-                    f"Host: {source_host}\r\n"
-                    f"Authorization: Basic {auth}\r\n"
-                    f"User-Agent: NTRIP Relay/1.0\r\n"
-                    f"Connection: keep-alive\r\n\r\n"
-                )
-                source_sock.sendall(source_request.encode())
-                
-                src_header, leftover = read_http_header(source_sock)
-                if NTRIP_HTTP_SUCCESS not in src_header and NTRIP_ICY_SUCCESS not in src_header:
-                    raise Exception("Source rejected")
-                self.source_connected = True
-                
-                gga = generate_gga(self.cfg['lat'], self.cfg['lon'], self.cfg['alt'])
-                source_send_gga = self._source_send_gga()
-                if source_send_gga:
-                    source_sock.sendall(gga.encode())
-                
-                self.log("SUCCESS", "✓ Source connected")
-                
-                # A 200/ICY response only authenticates the source. Do not mark
-                # the relay output online or open TARGET until real RTCM arrives.
-                self.is_connected = False
-                self.publish_status()
-                
-                last_gga = time.time()
-                self.bytes_sent = 0
-                self.bytes_received = 0
-                self.last_stat_update = time.time()
-                rtcm_buffer = bytearray()
-                source_has_rtcm = False
-                if leftover:
-                    rtcm_buffer.extend(leftover)
-                    leftover = None
-                
-                source_sock.settimeout(5.0)
-                
-                while not self.stop_event.is_set():
-                    if not self.station_enabled:
-                        break
-                    # 1. Kết nối TARGET khi stream đang bật hoặc cấu hình giữ kết nối standby.
-                    if self.station_enabled and source_has_rtcm and target_sock is None and (self.desired_active or self._keep_target_connected()):
-                        self.log("INFO", f"Connecting TARGET: {target_host}:{target_port}/{self.cfg['target_mp']} (v1.0)")
-                        try:
-                            target_sock = socket.create_connection((target_host, target_port), timeout=10)
-                            enable_tcp_keepalive(target_sock)
-                            with self.socket_lock:
-                                self._target_sock = target_sock
-                            if not self.station_enabled:
-                                break
-                            
-                            target_request = (
-                                f"SOURCE {target_pass} /{self.cfg['target_mp']}\r\n"
-                                f"Source-Agent: NTRIP NtripSource/1.0\r\n\r\n"
-                            )
-                            target_sock.sendall(target_request.encode())
-                            response, _ = read_http_header(target_sock, timeout=10)
-                            if not (NTRIP_ICY_SUCCESS in response or NTRIP_HTTP_SUCCESS in response):
-                                raise Exception(f"Target rejected: {response.decode(errors='ignore')[:100]}")
-                            target_sock.settimeout(None)
-                            self.is_connected = True
-                            
-                            target_mode = "ACTIVE" if self.desired_active else "SLEEP-STANDBY"
-                            self.log("SUCCESS", f"RELAY {target_mode}: {self.cfg['source_mp']} -> {self.cfg['target_mp']}")
-                        except Exception as e:
-                            self.log("WARNING", f"Target connection failed: {e}")
-                            if target_sock:
-                                try: target_sock.close()
-                                except Exception: pass
-                                target_sock = None
-                                with self.socket_lock:
-                                    self._target_sock = None
-                            self.is_connected = False
-                    
-                    # 2. NGẮT TARGET NẾU TRẠM TẮT (desired_active = False)
-                    if not self.desired_active and target_sock is not None and not self._keep_target_connected():
-                        self.log("INFO", "Stream deactivated -> closing TARGET socket only.")
-                        try: target_sock.shutdown(socket.SHUT_RDWR)
-                        except Exception: pass
-                        try: target_sock.close()
-                        except Exception: pass
-                        target_sock = None
-                        with self.socket_lock:
-                            self._target_sock = None
-                        self.is_connected = False
-                        
-                    if source_send_gga and time.time() - last_gga > 10:
-                        try:
-                            source_sock.sendall(gga.encode())
-                            last_gga = time.time()
-                        except Exception as e:
-                            self._last_disconnect_reason = "source_gga_send_failed"
-                            self.log("INFO", f"Source GGA send failed; reconnecting source socket: {e}")
-                            break
-                    
-                    # 3. LUÔN ĐỌC RAW DATA TỪ SOURCE
-                    try:
-                        data = source_sock.recv(4096)
-                    except socket.timeout:
-                        continue
-                    except OSError as e:
-                        if getattr(e, "winerror", None) in (10053, 10054) or getattr(e, "errno", None) in (10053, 10054):
-                            self._last_disconnect_reason = "source_remote_close"
-                            self.log("INFO", f"Source remote closed socket; reconnecting source socket: {e}")
-                        else:
-                            self._last_disconnect_reason = "source_socket_error"
-                            self.log("WARNING", f"Source socket error: {e}")
-                        break
-                    except Exception as e:
-                        self._last_disconnect_reason = "source_data_error"
-                        self.log("WARNING", f"Data error: {e}")
-                        break
-
-                    if not data:
-                        self._last_disconnect_reason = "source_eof"
-                        self.log("INFO", "Source EOF; reconnecting source socket.")
-                        break
-
-                    self.bytes_received += len(data)
-                    
-                    # if self.mqtt_client and self.mqtt_client.is_connected():
-                    #     self.raw_publish_buffer.extend(data)
-                    #     if time.time() - self.last_raw_publish >= 1.0:
-                    #         try:
-                    #             self.mqtt_client.publish(f"pi/devices/{self.serial}/raw_data", bytes(self.raw_publish_buffer), qos=0)
-                    #         except Exception as e:
-                    #             self.log("WARNING", f"Failed to publish raw_data: {e}")
-                    #         self.raw_publish_buffer.clear()
-                    #         self.last_raw_publish = time.time()
-
-                    rtcm_buffer.extend(data)
-                    frames = extract_rtcm3_frames(rtcm_buffer)
-                    if frames:
-                        source_has_rtcm = True
-                        self._source_failure_count = 0
-                    for frame in frames:
-                        decoded = rtcm_signal_decoder.decode_sync(self.serial, frame)
-                        sats = decoded.get("satellites", []) if decoded else []
-                        for sat in sats:
-                            sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
-                            existing = self.satellites.get(sat_key, {})
-                            existing.update({k: v for k, v in sat.items() if v or k not in existing})
-                            existing["last_seen"] = time.time()
-                            self.satellites[sat_key] = existing
-
-                    # 4. CHỈ GỬI ĐI NẾU ĐANG BẬT TARGET
-                    if self.station_enabled and self.desired_active and target_sock is not None and frames:
-                        for frame in frames:
-                            try:
-                                target_sock.sendall(frame)
-                                self.bytes_sent += len(frame)
-                            except Exception as e:
-                                self.log("WARNING", f"Error sending RTCM frame to target: {e}")
-                                try: target_sock.close()
-                                except Exception: pass
-                                target_sock = None
-                                with self.socket_lock:
-                                    self._target_sock = None
-                                self.is_connected = False
-                                break
-
-                    # Tính BPS thật sự
-                    now = time.time()
-                    if now - self.last_stat_update >= 1.0:
-                        self.current_bps = int(self.bytes_sent / (now - self.last_stat_update))
-                        self.current_source_bps = int(self.bytes_received / (now - self.last_stat_update))
-                        self.bytes_sent = 0
-                        self.bytes_received = 0
-                        self.last_stat_update = now
-                        self.publish_status()
-                
-                if self._last_disconnect_reason.startswith("source_"):
-                    reconnect_wait = self._source_retry_delay()
-                else:
-                    reconnect_wait = RECONNECT_INTERVAL
-                self.log("INFO", f"Source loop ended, reconnecting in {reconnect_wait}s...")
-                self.wakeup_event.wait(reconnect_wait)
-                self.wakeup_event.clear()
-                
-            except Exception as e:
-                self.log("WARNING", f"Connection error: {e}")
-                reconnect_wait = self._source_retry_delay()
-                self.log("INFO", f"Source connection retry scheduled in {reconnect_wait}s")
-                self.wakeup_event.wait(reconnect_wait)
-                self.wakeup_event.clear()
-                
+                self._run_source_session()
+            except Exception as error:
+                self._handle_connection_error(error)
             finally:
-                self.is_connected = False
-                self.source_connected = False
-                self.current_bps = 0
-                self.current_source_bps = 0
-                if source_sock:
-                    try: source_sock.close()
-                    except Exception: pass
-                if target_sock:
-                    try: target_sock.close()
-                    except Exception: pass
-                with self.socket_lock:
-                    self._source_sock = None
-                    self._target_sock = None
-                
-                self.publish_status()
+                self._cleanup_source_session()
 
-# ==============================================================================
 # === MONITOR WORKER (Dành cho trạm đã có sẵn trên server) ===
 # ==============================================================================
 class MonitorWorker(threading.Thread):
