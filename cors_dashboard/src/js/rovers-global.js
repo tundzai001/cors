@@ -1936,6 +1936,131 @@ document.addEventListener('DOMContentLoaded', async () => {
         </nav>`;
     }
 
+    function renderRoverHistoryPositionHtml(position) {
+        const hasPosition = position
+            && position.lat !== null && position.lat !== ''
+            && position.lon !== null && position.lon !== ''
+            && Number.isFinite(Number(position.lat))
+            && Number.isFinite(Number(position.lon))
+            && !(Number(position.lat) === 0 && Number(position.lon) === 0);
+        if (!hasPosition) {
+            return '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận tọa độ hợp lệ cho phiên này.</span></div>';
+        }
+        const latitude = String(position.lat);
+        const longitude = String(position.lon);
+        const positionFixLabel = roverFixQualityLabel(position.fix_quality);
+        const satellitesLabel = position.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(position.satellites)} vệ tinh`;
+        return `<div class="rover-history-position">
+                <div class="rover-history-position-heading">
+                    <span><i class="bi bi-crosshair2" aria-hidden="true"></i> Vị trí hợp lệ gần nhất · ${escapeHtml(positionFixLabel)}</span>
+                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${latitude}%2C${longitude}" target="_blank" rel="noopener noreferrer" aria-label="Mở vị trí ${latitude}, ${longitude} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Google Maps</span></a>
+                </div>
+                <div class="rover-history-coordinate-grid">
+                    <div class="rover-history-coordinate">
+                        <div class="rover-history-coordinate-heading"><span>Vĩ độ</span><button class="rover-history-copy" type="button" data-copy-value="${latitude}" aria-label="Sao chép vĩ độ" title="Sao chép vĩ độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div>
+                        <strong>${latitude}</strong>
+                    </div>
+                    <div class="rover-history-coordinate">
+                        <div class="rover-history-coordinate-heading"><span>Kinh độ</span><button class="rover-history-copy" type="button" data-copy-value="${longitude}" aria-label="Sao chép kinh độ" title="Sao chép kinh độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div>
+                        <strong>${longitude}</strong>
+                    </div>
+                </div>
+                <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)} · ${satellitesLabel}</div>
+            </div>`;
+    }
+
+    function renderRoverHistoryPointHtml(point, {isAdmin, selectedDate, currentPage, sessionId}) {
+        const pointLatitude = String(point.lat);
+        const pointLongitude = String(point.lon);
+        const pointMapQuery = encodeURIComponent(`${pointLatitude},${pointLongitude}`);
+        const deletePointButton = isAdmin
+            ? `<button class="rover-history-action-button rover-history-delete-point" type="button" data-point-id="${escapeHtml(point.id)}" data-session-id="${sessionId}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}" aria-label="Xóa điểm ${escapeHtml(point.label || 'vị trí')}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa điểm</span></button>`
+            : '';
+        return `<article class="rover-history-point">
+            <div class="rover-history-point-heading">
+                <div><strong>${escapeHtml(point.label || 'Điểm đo')}</strong><span class="rover-history-point-fix">${escapeHtml(roverFixQualityLabel(point.fix_quality))}</span></div>
+                <div class="rover-history-point-actions">
+                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'vị trí')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
+                    ${deletePointButton}
+                </div>
+            </div>
+            <div class="rover-history-coordinate-grid">
+                <div class="rover-history-coordinate"><div class="rover-history-coordinate-heading"><span>Vĩ độ</span><button class="rover-history-copy" type="button" data-copy-value="${pointLatitude}" aria-label="Sao chép vĩ độ điểm đo" title="Sao chép vĩ độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div><strong>${pointLatitude}</strong></div>
+                <div class="rover-history-coordinate"><div class="rover-history-coordinate-heading"><span>Kinh độ</span><button class="rover-history-copy" type="button" data-copy-value="${pointLongitude}" aria-label="Sao chép kinh độ điểm đo" title="Sao chép kinh độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div><strong>${pointLongitude}</strong></div>
+            </div>
+            <div class="rover-history-point-meta"><span><i class="bi bi-clock" aria-hidden="true"></i> Đo lúc ${formatDateTime(point.recorded_at)}</span><span><i class="bi bi-broadcast" aria-hidden="true"></i> ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span><span><i class="bi bi-save" aria-hidden="true"></i> Lưu lúc ${formatDateTime(point.saved_at)}</span><span><i class="bi bi-person" aria-hidden="true"></i> Lưu bởi ${escapeHtml(point.created_by || 'admin')}</span></div>
+        </article>`;
+    }
+
+    function renderRoverHistoryPointsHtml(points, options) {
+        if (!points.length) {
+            return '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
+        }
+        return `<div class="rover-history-point-list">${points.map(point => renderRoverHistoryPointHtml(point, options)).join('')}</div>`;
+    }
+
+    function renderRoverHistorySessionMapHtml(session, points, routeHtml) {
+        if (!points.length) return '';
+        return `<div class="rover-history-session-map" hidden>
+                <div class="rover-history-session-map-canvas" role="region" aria-label="Bản đồ nối toàn bộ điểm vị trí trong phiên ${escapeHtml(session.id)}"></div>
+                <div class="rover-history-session-map-directions"><span>Đường xanh nối các điểm vị trí theo thứ tự đo. Điểm gần nhau có thể chồng; bấm + để phóng to.</span></div>
+                ${routeHtml ? `<div class="rover-history-session-map-directions"><span>Chỉ đường Google Maps:</span>${routeHtml}</div>` : ''}
+            </div>`;
+    }
+
+    function renderRoverHistorySessionDeleteHtml(session, ended, isAdmin, selectedDate, currentPage) {
+        if (!isAdmin) return '';
+        if (!ended) return '<span class="rover-history-delete-note">Phiên đang chạy chỉ xóa được sau khi kết thúc.</span>';
+        return `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`;
+    }
+
+    function renderRoverHistorySessionHtml(session, options) {
+        const {isAdmin, selectedDate, currentPage, autoSaveFixedPointsEnabled, autoPointIntervalLabel} = options;
+        const ended = Boolean(session.ended_at);
+        const points = Array.isArray(session.points) ? session.points : [];
+        const currentFixQuality = session.current_fix_quality == null ? Number.NaN : Number(session.current_fix_quality);
+        const currentFixLabel = Number.isFinite(currentFixQuality) ? roverFixQualityLabel(currentFixQuality) : 'Chưa có dữ liệu';
+        const positionHtml = renderRoverHistoryPositionHtml(session.last_position);
+        const pointsHtml = renderRoverHistoryPointsHtml(points, {...options, sessionId: session.id});
+        const routeHtml = roverHistoryGoogleMapsRoutes(points);
+        const showSessionMapHtml = points.length
+            ? `<button class="rover-history-action-button rover-history-show-route" type="button" data-session-id="${escapeHtml(session.id)}" aria-expanded="false"><i class="bi bi-map" aria-hidden="true"></i><span>Xem toàn bộ trên bản đồ</span></button>`
+            : '';
+        const sessionMapHtml = renderRoverHistorySessionMapHtml(session, points, routeHtml);
+        const deleteSessionHtml = renderRoverHistorySessionDeleteHtml(session, ended, isAdmin, selectedDate, currentPage);
+        const satellitesLabel = session.satellites == null ? 'Không rõ' : escapeHtml(session.satellites);
+        const uptimeLabel = session.uptime_seconds == null ? 'Không rõ' : escapeHtml(formatDuration(session.uptime_seconds));
+        const updatedLabel = formatDateTime(ended ? session.ended_at : session.last_seen_at);
+        return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
+            <div class="rover-history-session-heading">
+                <div class="min-w-0">
+                    <span class="rover-history-label">Trạm Base</span>
+                    <h6>${escapeHtml(session.base_name || 'Không rõ')}</h6>
+                    <div class="small text-muted mt-1">Mountpoint · ${escapeHtml(session.mountpoint || 'Không rõ')}</div>
+                </div>
+                <span class="rover-history-status ${ended ? 'is-ended' : 'is-active'}"><i aria-hidden="true"></i>${ended ? 'Đã kết thúc' : 'Đang hoạt động'}</span>
+            </div>
+            <div class="rover-history-meta">
+                <div><span>Máy chủ</span><strong>${escapeHtml(session.server || 'Caster')}</strong></div>
+                <div><span>Receiver</span><strong>${escapeHtml(session.receiver_id || 'Không rõ')}</strong></div>
+                <div><span>Client</span><strong>${escapeHtml(session.client_id || 'Không rõ')}</strong></div>
+                <div><span>Bắt đầu</span><strong>${formatDateTime(session.started_at)}</strong></div>
+                <div><span>Fix gần nhất</span><strong>${escapeHtml(currentFixLabel)}</strong></div>
+                <div><span>Vệ tinh gần nhất</span><strong>${satellitesLabel}</strong></div>
+                <div><span>Uptime</span><strong>${uptimeLabel}</strong></div>
+                <div><span>${ended ? 'Kết thúc' : 'Cập nhật cuối'}</span><strong>${updatedLabel}</strong></div>
+            </div>
+            ${positionHtml}
+            <section class="rover-history-points" aria-label="Các điểm vị trí trong phiên ${session.id}">
+                <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><div class="rover-history-route-tools"><span>${points.length} điểm</span>${showSessionMapHtml}</div></div>
+                ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu điểm vị trí đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu điểm vị trí đang tắt cho tài khoản này.'}</p>`}
+                ${sessionMapHtml}
+                ${pointsHtml}
+            </section>
+            ${deleteSessionHtml ? `<div class="rover-history-session-actions">${deleteSessionHtml}</div>` : ''}
+        </article>`;
+    }
+
     async function handleRoverHistory(e) {
         const username = e.currentTarget.dataset.username;
         if (!username) return;
@@ -1978,109 +2103,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const currentPage = Number(data.page) || 1;
                 const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
                 const accountName = escapeHtml(data.account?.username || data.username || username);
-                const sessionHistoryHtml = sessions.length ? sessions.map(session => {
-                    const position = session.last_position;
-                    const hasPosition = position
-                        && position.lat !== null && position.lat !== ''
-                        && position.lon !== null && position.lon !== ''
-                        && Number.isFinite(Number(position.lat))
-                        && Number.isFinite(Number(position.lon))
-                        && !(Number(position.lat) === 0 && Number(position.lon) === 0);
-                    const latitude = hasPosition ? String(position.lat) : '';
-                    const longitude = hasPosition ? String(position.lon) : '';
-                    const ended = Boolean(session.ended_at);
-                    const points = Array.isArray(session.points) ? session.points : [];
-                    const currentFixQuality = session.current_fix_quality == null ? Number.NaN : Number(session.current_fix_quality);
-                    const currentFixLabel = Number.isFinite(currentFixQuality)
-                        ? roverFixQualityLabel(currentFixQuality)
-                        : 'Chưa có dữ liệu';
-                    const positionFixLabel = hasPosition ? roverFixQualityLabel(position.fix_quality) : '';
-                    const positionHtml = hasPosition
-                        ? `<div class="rover-history-position">
-                                <div class="rover-history-position-heading">
-                                    <span><i class="bi bi-crosshair2" aria-hidden="true"></i> Vị trí hợp lệ gần nhất · ${escapeHtml(positionFixLabel)}</span>
-                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${latitude}%2C${longitude}" target="_blank" rel="noopener noreferrer" aria-label="Mở vị trí ${latitude}, ${longitude} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Google Maps</span></a>
-                                </div>
-                                <div class="rover-history-coordinate-grid">
-                                    <div class="rover-history-coordinate">
-                                        <div class="rover-history-coordinate-heading"><span>Vĩ độ</span><button class="rover-history-copy" type="button" data-copy-value="${latitude}" aria-label="Sao chép vĩ độ" title="Sao chép vĩ độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div>
-                                        <strong>${latitude}</strong>
-                                    </div>
-                                    <div class="rover-history-coordinate">
-                                        <div class="rover-history-coordinate-heading"><span>Kinh độ</span><button class="rover-history-copy" type="button" data-copy-value="${longitude}" aria-label="Sao chép kinh độ" title="Sao chép kinh độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div>
-                                        <strong>${longitude}</strong>
-                                    </div>
-                                </div>
-                                <div class="rover-history-recorded"><i class="bi bi-clock" aria-hidden="true"></i> Ghi nhận lúc ${formatDateTime(position.recorded_at)} · ${position.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(position.satellites)} vệ tinh`}</div>
-                            </div>`
-                        : '<div class="rover-history-no-position"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa ghi nhận tọa độ hợp lệ cho phiên này.</span></div>';
-                    const pointsHtml = points.length ? `<div class="rover-history-point-list">${points.map(point => {
-                        const pointLatitude = String(point.lat);
-                        const pointLongitude = String(point.lon);
-                        const pointMapQuery = encodeURIComponent(`${pointLatitude},${pointLongitude}`);
-                        const deletePointButton = isAdmin
-                            ? `<button class="rover-history-action-button rover-history-delete-point" type="button" data-point-id="${escapeHtml(point.id)}" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}" aria-label="Xóa điểm ${escapeHtml(point.label || 'vị trí')}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa điểm</span></button>`
-                            : '';
-                        return `<article class="rover-history-point">
-                            <div class="rover-history-point-heading">
-                                <div><strong>${escapeHtml(point.label || 'Điểm đo')}</strong><span class="rover-history-point-fix">${escapeHtml(roverFixQualityLabel(point.fix_quality))}</span></div>
-                                <div class="rover-history-point-actions">
-                                    <a class="rover-history-map-link" href="https://www.google.com/maps/search/?api=1&amp;query=${pointMapQuery}" target="_blank" rel="noopener noreferrer" aria-label="Mở điểm ${escapeHtml(point.label || 'vị trí')} trên Google Maps"><i class="bi bi-map" aria-hidden="true"></i><span>Bản đồ</span></a>
-                                    ${deletePointButton}
-                                </div>
-                            </div>
-                            <div class="rover-history-coordinate-grid">
-                                <div class="rover-history-coordinate"><div class="rover-history-coordinate-heading"><span>Vĩ độ</span><button class="rover-history-copy" type="button" data-copy-value="${pointLatitude}" aria-label="Sao chép vĩ độ điểm đo" title="Sao chép vĩ độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div><strong>${pointLatitude}</strong></div>
-                                <div class="rover-history-coordinate"><div class="rover-history-coordinate-heading"><span>Kinh độ</span><button class="rover-history-copy" type="button" data-copy-value="${pointLongitude}" aria-label="Sao chép kinh độ điểm đo" title="Sao chép kinh độ"><i class="bi bi-copy" aria-hidden="true"></i></button></div><strong>${pointLongitude}</strong></div>
-                            </div>
-                            <div class="rover-history-point-meta"><span><i class="bi bi-clock" aria-hidden="true"></i> Đo lúc ${formatDateTime(point.recorded_at)}</span><span><i class="bi bi-broadcast" aria-hidden="true"></i> ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span><span><i class="bi bi-save" aria-hidden="true"></i> Lưu lúc ${formatDateTime(point.saved_at)}</span><span><i class="bi bi-person" aria-hidden="true"></i> Lưu bởi ${escapeHtml(point.created_by || 'admin')}</span></div>
-                        </article>`;
-                    }).join('')}</div>` : '<div class="rover-history-empty rover-history-no-points"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa lưu điểm đo nào trong phiên này.</span></div>';
-                    const googleMapsRoutesHtml = roverHistoryGoogleMapsRoutes(points);
-                    const showSessionMapHtml = points.length
-                        ? `<button class="rover-history-action-button rover-history-show-route" type="button" data-session-id="${escapeHtml(session.id)}" aria-expanded="false"><i class="bi bi-map" aria-hidden="true"></i><span>Xem toàn bộ trên bản đồ</span></button>`
-                        : '';
-                    const sessionMapHtml = points.length
-                        ? `<div class="rover-history-session-map" hidden>
-                                <div class="rover-history-session-map-canvas" role="region" aria-label="Bản đồ nối toàn bộ điểm vị trí trong phiên ${escapeHtml(session.id)}"></div>
-                                <div class="rover-history-session-map-directions"><span>Đường xanh nối các điểm vị trí theo thứ tự đo. Điểm gần nhau có thể chồng; bấm + để phóng to.</span></div>
-                                ${googleMapsRoutesHtml ? `<div class="rover-history-session-map-directions"><span>Chỉ đường Google Maps:</span>${googleMapsRoutesHtml}</div>` : ''}
-                            </div>`
-                        : '';
-                    const deleteSessionHtml = isAdmin
-                        ? ended
-                            ? `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`
-                            : '<span class="rover-history-delete-note">Phiên đang chạy chỉ xóa được sau khi kết thúc.</span>'
-                        : '';
-                    return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
-                        <div class="rover-history-session-heading">
-                            <div class="min-w-0">
-                                <span class="rover-history-label">Trạm Base</span>
-                                <h6>${escapeHtml(session.base_name || 'Không rõ')}</h6>
-                                <div class="small text-muted mt-1">Mountpoint · ${escapeHtml(session.mountpoint || 'Không rõ')}</div>
-                            </div>
-                            <span class="rover-history-status ${ended ? 'is-ended' : 'is-active'}"><i aria-hidden="true"></i>${ended ? 'Đã kết thúc' : 'Đang hoạt động'}</span>
-                        </div>
-                        <div class="rover-history-meta">
-                            <div><span>Máy chủ</span><strong>${escapeHtml(session.server || 'Caster')}</strong></div>
-                            <div><span>Receiver</span><strong>${escapeHtml(session.receiver_id || 'Không rõ')}</strong></div>
-                            <div><span>Client</span><strong>${escapeHtml(session.client_id || 'Không rõ')}</strong></div>
-                            <div><span>Bắt đầu</span><strong>${formatDateTime(session.started_at)}</strong></div>
-                            <div><span>Fix gần nhất</span><strong>${escapeHtml(currentFixLabel)}</strong></div>
-                            <div><span>Vệ tinh gần nhất</span><strong>${session.satellites == null ? 'Không rõ' : escapeHtml(session.satellites)}</strong></div>
-                            <div><span>Uptime</span><strong>${session.uptime_seconds == null ? 'Không rõ' : escapeHtml(formatDuration(session.uptime_seconds))}</strong></div>
-                            <div><span>${ended ? 'Kết thúc' : 'Cập nhật cuối'}</span><strong>${formatDateTime(ended ? session.ended_at : session.last_seen_at)}</strong></div>
-                        </div>
-                        ${positionHtml}
-                        <section class="rover-history-points" aria-label="Các điểm vị trí trong phiên ${session.id}">
-                            <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><div class="rover-history-route-tools"><span>${points.length} điểm</span>${showSessionMapHtml}</div></div>
-                            ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu điểm vị trí đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu điểm vị trí đang tắt cho tài khoản này.'}</p>`}
-                            ${sessionMapHtml}
-                            ${pointsHtml}
-                        </section>
-                        ${deleteSessionHtml ? `<div class="rover-history-session-actions">${deleteSessionHtml}</div>` : ''}
-                    </article>`;
-                }).join('') : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
+                const sessionHistoryHtml = sessions.length
+                    ? sessions.map(session => renderRoverHistorySessionHtml(session, {
+                        isAdmin,
+                        selectedDate,
+                        currentPage,
+                        autoSaveFixedPointsEnabled,
+                        autoPointIntervalLabel,
+                    })).join('')
+                    : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
                 const eventHistoryHtml = events.length ? events.map(item => {
                     const level = String(item.severity || item.type || '').toLowerCase();
                     const tone = ['critical', 'error', 'danger'].includes(level) ? 'danger'
