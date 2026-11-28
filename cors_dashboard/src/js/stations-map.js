@@ -305,6 +305,63 @@
         `;
     }
 
+    function addStationMeasurementPoint(state, event, map, leaflet) {
+        if (!state.enabled) return false;
+        const marker = leaflet.circleMarker(event.latlng, {
+            radius: 5, color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 1
+        }).addTo(map);
+        state.points.push(event.latlng);
+        state.layers.push(marker);
+        if (state.points.length === 2) {
+            const [start, end] = state.points;
+            const line = leaflet.polyline([start, end], { color: '#0ea5e9', weight: 3, dashArray: '6 6' }).addTo(map);
+            const distance = map.distance(start, end);
+            const label = leaflet.marker(end, {
+                icon: leaflet.divIcon({
+                    className: 'station-map-measure-label',
+                    html: window.CorsUI.formatDistance(distance),
+                    iconSize: [92, 30],
+                    iconAnchor: [46, 34]
+                })
+            }).addTo(map);
+            state.layers.push(line, label);
+            state.points = [];
+        }
+        return true;
+    }
+
+    function ionosphereProbePopupHtml(probe) {
+        const statusBadge = probe.is_stale
+            ? '<span class="badge bg-warning text-dark">STALE</span>'
+            : '<span class="badge bg-success">REALTIME</span>';
+        const anomalyColor = probe.anomaly >= 0 ? '#f87171' : '#60a5fa';
+        const sign = probe.anomaly >= 0 ? '+' : '';
+        return `
+            <div class="station-map-popup ionosphere-probe-popup">
+                <div class="d-flex justify-content-between align-items-center mb-1 gap-2">
+                    <div class="fw-bold" style="color:#38bdf8;font-size:0.85rem;">
+                        <i class="bi bi-broadcast-pin me-1"></i>Tầng điện ly GloTEC
+                    </div>
+                    ${statusBadge}
+                </div>
+                <div class="text-center my-1">
+                    <span style="font-size:1.6rem;font-weight:900;color:#f8fafc;letter-spacing:-0.02em;">${probe.tec.toFixed(1)}</span>
+                    <span class="ms-1 small" style="color:#94a3b8;font-weight:700;">TECU</span>
+                </div>
+                <div class="station-map-popup-grid" style="font-size:0.75rem;">
+                    <span class="station-map-popup-label">Tọa độ</span>
+                    <span class="station-map-popup-value">${probe.lat.toFixed(2)}°, ${probe.lon.toFixed(2)}°</span>
+                    <span class="station-map-popup-label">Dị thường</span>
+                    <span class="station-map-popup-value" style="color:${anomalyColor};font-weight:700;">${sign}${probe.anomaly.toFixed(2)} TECU</span>
+                    <span class="station-map-popup-label">Thời gian</span>
+                    <span class="station-map-popup-value">${probe.observation_time_vn || '--'}</span>
+                    <span class="station-map-popup-label">Nguồn</span>
+                    <span class="station-map-popup-value"><a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a></span>
+                </div>
+            </div>
+        `;
+    }
+
     function AllStationsMap({ devices = [], currentUser = null }) {
         const mapEl = useRef(null);
         const mapRef = useRef(null);
@@ -600,67 +657,15 @@
             });
 
             map.on('click', (event) => {
-                const state = measureRef.current;
-                if (state.enabled) {
-                    const marker = L.circleMarker(event.latlng, { radius: 5, color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 1 }).addTo(map);
-                    state.points.push(event.latlng);
-                    state.layers.push(marker);
-                    if (state.points.length === 2) {
-                        const [a, b] = state.points;
-                        const line = L.polyline([a, b], { color: '#0ea5e9', weight: 3, dashArray: '6 6' }).addTo(map);
-                        const dist = map.distance(a, b);
-                        const label = L.marker(b, {
-                            icon: L.divIcon({
-                                className: 'station-map-measure-label',
-                                html: window.CorsUI.formatDistance(dist),
-                                iconSize: [92, 30],
-                                iconAnchor: [46, 34]
-                            })
-                        }).addTo(map);
-                        state.layers.push(line, label);
-                        state.points = [];
-                    }
-                    return;
-                }
-
-                if (showIonosphereRef.current && window.IonosphereOverlay?.sample) {
-                    const probe = window.IonosphereOverlay.sample(event.latlng.lat, event.latlng.lng);
-                    if (probe && probe.tec !== undefined) {
-                        const statusBadge = probe.is_stale
-                            ? '<span class="badge bg-warning text-dark">STALE</span>'
-                            : '<span class="badge bg-success">REALTIME</span>';
-                        const anomalyColor = probe.anomaly >= 0 ? '#f87171' : '#60a5fa';
-                        const sign = probe.anomaly >= 0 ? '+' : '';
-                        const content = `
-                            <div class="station-map-popup ionosphere-probe-popup">
-                                <div class="d-flex justify-content-between align-items-center mb-1 gap-2">
-                                    <div class="fw-bold" style="color:#38bdf8;font-size:0.85rem;">
-                                        <i class="bi bi-broadcast-pin me-1"></i>Tầng điện ly GloTEC
-                                    </div>
-                                    ${statusBadge}
-                                </div>
-                                <div class="text-center my-1">
-                                    <span style="font-size:1.6rem;font-weight:900;color:#f8fafc;letter-spacing:-0.02em;">${probe.tec.toFixed(1)}</span>
-                                    <span class="ms-1 small" style="color:#94a3b8;font-weight:700;">TECU</span>
-                                </div>
-                                <div class="station-map-popup-grid" style="font-size:0.75rem;">
-                                    <span class="station-map-popup-label">Tọa độ</span>
-                                    <span class="station-map-popup-value">${probe.lat.toFixed(2)}°, ${probe.lon.toFixed(2)}°</span>
-                                    <span class="station-map-popup-label">Dị thường</span>
-                                    <span class="station-map-popup-value" style="color:${anomalyColor};font-weight:700;">${sign}${probe.anomaly.toFixed(2)} TECU</span>
-                                    <span class="station-map-popup-label">Thời gian</span>
-                                    <span class="station-map-popup-value">${probe.observation_time_vn || '--'}</span>
-                                    <span class="station-map-popup-label">Nguồn</span>
-                                    <span class="station-map-popup-value"><a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a></span>
-                                </div>
-                            </div>
-                        `;
-                        L.popup({ maxWidth: 280, className: 'ionosphere-leaflet-popup' })
-                            .setLatLng(event.latlng)
-                            .setContent(content)
-                            .openOn(map);
-                    }
-                }
+                if (addStationMeasurementPoint(measureRef.current, event, map, L)) return;
+                const overlay = window.IonosphereOverlay;
+                if (!showIonosphereRef.current || !overlay?.sample) return;
+                const probe = overlay.sample(event.latlng.lat, event.latlng.lng);
+                if (!probe || probe.tec === undefined) return;
+                L.popup({ maxWidth: 280, className: 'ionosphere-leaflet-popup' })
+                    .setLatLng(event.latlng)
+                    .setContent(ionosphereProbePopupHtml(probe))
+                    .openOn(map);
             });
 
             setTimeout(() => map.invalidateSize(), 80);
