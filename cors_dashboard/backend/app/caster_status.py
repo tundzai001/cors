@@ -25,6 +25,43 @@ device_status_cache_lock = asyncio.Lock()
 _status_last_notify: Dict[str, float] = {}
 STATUS_REFRESH_SECONDS = 30.0
 
+
+def _stream_info_state(info: dict, switch) -> str:
+    enabled = _as_bool(info.get("enabled"), switch.enabled)
+    active = _as_bool(info.get("active"), switch.active)
+    on_demand = _as_bool(info.get("on_demand"), switch.on_demand)
+    connected = _as_bool(info.get("connected"))
+    can_push = _as_bool(info.get("effective_can_push", info.get("can_push")), active or not on_demand)
+    if enabled and connected and can_push:
+        return "streaming"
+    if enabled and on_demand:
+        return "starting" if active else "sleep"
+    return "offline"
+
+
+def _legacy_stream_state(server, payload, device, switch) -> str:
+    if isinstance(server, dict):
+        connected = _as_bool(server.get("connected"))
+    elif server is not None:
+        connected = _as_bool(server)
+    else:
+        connected = _as_bool(payload.get("ntrip_connected"), device.ntrip_connected)
+    if switch.can_push and connected:
+        return "streaming"
+    if switch.on_demand:
+        return "starting" if switch.active else "sleep"
+    return "offline"
+
+
+def _server_stream_state(device_status, switch, info, ntrip, payload, device) -> str:
+    unavailable = {"offline", "locked", "unprovisioned", "awaiting_license"}
+    if not switch.enabled or device_status in unavailable:
+        return "offline"
+    if isinstance(info, dict):
+        return _stream_info_state(info, switch)
+    return _legacy_stream_state(ntrip.get(f"server{switch.server_id}"), payload, device, switch)
+
+
 def _extract_per_server_status(device: models.Device, payload: dict | None = None) -> dict:
     """
     Trích xuất per-server NTRIP status từ device và payload.
@@ -54,26 +91,7 @@ def _extract_per_server_status(device: models.Device, payload: dict | None = Non
         key = f"server{sid}"
         switch = get_server_stream_state(cfg, sid)
         info = stream_state.get(key)
-        state = "offline"
-        if switch.enabled and device_status not in {"offline", "locked", "unprovisioned", "awaiting_license"}:
-            if isinstance(info, dict):
-                enabled = _as_bool(info.get("enabled"), switch.enabled)
-                active = _as_bool(info.get("active"), switch.active)
-                on_demand = _as_bool(info.get("on_demand"), switch.on_demand)
-                connected = _as_bool(info.get("connected"))
-                can_push = _as_bool(info.get("effective_can_push", info.get("can_push")), active or not on_demand)
-                if enabled and connected and can_push:
-                    state = "streaming"
-                elif enabled and on_demand:
-                    state = "starting" if active else "sleep"
-            else:
-                server = ntrip.get(key)
-                connected = _as_bool(server.get("connected")) if isinstance(server, dict) else (
-                    _as_bool(server) if server is not None else _as_bool(payload.get("ntrip_connected"), device.ntrip_connected))
-                if switch.can_push and connected:
-                    state = "streaming"
-                elif switch.on_demand:
-                    state = "starting" if switch.active else "sleep"
+        state = _server_stream_state(device_status, switch, info, ntrip, payload, device)
         result[key] = {"enabled": switch.enabled, "state": state,
                        "mountpoint": cfg.get(f"mountpoint{sid}") or ""}
     return result
@@ -103,34 +121,41 @@ def _status_changed(old_status: dict, new_status: dict) -> dict:
     return result
 
 
+def _status_service_config(device):
+    raw_config = getattr(device, "service_config", None)
+    if isinstance(raw_config, str):
+        import json
+        try:
+            raw_config = json.loads(raw_config)
+        except ValueError:
+            raw_config = None
+    return raw_config if isinstance(raw_config, dict) else {}
+
+
+def _schedule_caster_status(serial, config, status_change, server_id):
+    change = status_change[f"server{server_id}"]
+    if not change["changed"]:
+        return
+    current = change["new"]
+    host = str(config.get(f"serverhost{server_id}") or "").strip()
+    port = config.get(f"port{server_id}")
+    target = f"{host}:{port}" if host and port and ":" not in host else host
+    mountpoint = str(config.get(f"mountpoint{server_id}") or "").strip()
+    if target and mountpoint:
+        payload = {
+            "mountpoint": mountpoint,
+            "state": current.get("state", "offline"),
+            "enabled": current.get("enabled", False),
+        }
+        schedule_background(_send_status_to_caster(target, payload, f"S{server_id}", serial))
+
+
 async def _notify_casters_on_status_change(serial: str, device: models.Device, status_change: dict) -> None:
     """Send a separate snapshot to each affected caster."""
     try:
-        raw_cfg = getattr(device, "service_config", None)
-        if isinstance(raw_cfg, str):
-            import json
-            try:
-                raw_cfg = json.loads(raw_cfg)
-            except ValueError:
-                raw_cfg = None
-        cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
-
+        config = _status_service_config(device)
         for server_id in (1, 2):
-            change = status_change[f"server{server_id}"]
-            if not change["changed"]:
-                continue
-            current = change["new"]
-            host = str(cfg.get(f"serverhost{server_id}") or "").strip()
-            port = cfg.get(f"port{server_id}")
-            target = f"{host}:{port}" if host and port and ":" not in host else host
-            mountpoint = str(cfg.get(f"mountpoint{server_id}") or "").strip()
-            if target and mountpoint:
-                payload = {
-                    "mountpoint": mountpoint,
-                    "state": current.get("state", "offline"),
-                    "enabled": current.get("enabled", False),
-                }
-                schedule_background(_send_status_to_caster(target, payload, f"S{server_id}", serial))
+            _schedule_caster_status(serial, config, status_change, server_id)
 
     except Exception as e:
         logger.exception(f"[CASTER SYNC] Error notifying casters for '{serial}': {e}")

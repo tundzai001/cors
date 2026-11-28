@@ -83,6 +83,127 @@ async def get_caster_clienttable(
     }
 
 
+async def _collect_caster_users():
+    users = []
+    async with global_caster_cache_lock:
+        for cache_data in (await _get_all_caster_cache()).values():
+            host = cache_data.get("host", "unknown")
+            for user in cache_data.get("users", []):
+                item = dict(user)
+                item["server"] = host
+                item["last_update"] = int(
+                    cache_data.get("users_last_update") or cache_data.get("last_update") or 0
+                )
+                users.append(item)
+    return users
+
+
+async def _visible_caster_users(users, auth_db, devices_db, current_user):
+    if current_user.role == auth.Role.ADMIN:
+        return users
+    rovers = await crud.get_visible_rovers_for_user(auth_db, devices_db, current_user)
+    allowed = {str(rover.username).strip().lower() for rover in rovers if rover.username}
+    return [
+        user for user in users
+        if str(user.get("username", "")).strip().lower() in allowed
+    ]
+
+
+async def _caster_user_lookup_maps(auth_db):
+    rover_result = await auth_db.execute(select(models.RoverAccount))
+    rover_map = {
+        str(rover.username).strip().lower(): rover
+        for rover in rover_result.scalars().all()
+    }
+    block_result = await auth_db.execute(select(models.RoverBlocklist))
+    block_map: Dict[str, List[models.RoverBlocklist]] = {}
+    for block in block_result.scalars().all():
+        block_map.setdefault(str(block.username).lower(), []).append(block)
+    return rover_map, block_map
+
+
+async def _active_caster_sessions():
+    sessions = {}
+    async with global_caster_cache_lock:
+        for cache_data in (await _get_all_caster_cache()).values():
+            host = cache_data.get("host", "unknown")
+            last_update = int(cache_data.get("last_update") or time.time())
+            for client in cache_data.get("clients", []):
+                key = (host, str(client.get("username", "")).strip().lower())
+                sessions.setdefault(key, []).append({
+                    "mountpoint": client.get("mountpoint"),
+                    "requested_mountpoint": client.get("requested_mountpoint"),
+                    "selected_mountpoint": client.get("selected_mountpoint"),
+                    "uptime": int(client.get("uptime", 0) or 0),
+                    "client_id": str(client.get("client_id", "") or "").strip(),
+                    "receiver_id": str(client.get("receiver_id", "") or "").strip(),
+                    "last_update": last_update,
+                })
+    return sessions
+
+
+def _caster_user_block_status(username_lower, user, blocklist_map):
+    for entry in blocklist_map.get(username_lower, []):
+        if entry.mountpoint is None:
+            return True, entry.reason, entry.blocked_at
+        user_mountpoints = [mp.lower().strip() for mp in user.get("mountpoints", [])]
+        if entry.mountpoint.lower().strip() in user_mountpoints:
+            return True, entry.reason, entry.blocked_at
+    return False, None, None
+
+
+def _active_connection_items(raw_connections):
+    items = []
+    for connection in raw_connections:
+        uptime = int(connection.get("uptime", 0) or 0)
+        last_update = int(connection.get("last_update") or time.time())
+        items.append({
+            "mountpoint": connection.get("mountpoint"),
+            "requested_mountpoint": connection.get("requested_mountpoint"),
+            "selected_mountpoint": connection.get("selected_mountpoint"),
+            "uptime": uptime,
+            "duration_seconds": uptime,
+            "client_id": connection.get("client_id", ""),
+            "receiver_id": connection.get("receiver_id", ""),
+            "started_at": last_update - uptime if uptime > 0 else None,
+            "last_seen_at": last_update,
+        })
+    return items
+
+
+def _build_caster_rover_item(user, rover_map, blocklist_map, version_map, sessions):
+    username = str(user.get("username", "")).strip()
+    username_lower = username.lower()
+    server_host = user.get("server")
+    rover = rover_map.get(username_lower)
+    in_db = rover is not None
+    is_blocked, blocked_reason, blocked_at = _caster_user_block_status(
+        username_lower, user, blocklist_map
+    )
+    active_connections = _active_connection_items(sessions.get((server_host, username_lower), []))
+    serial = str(rover.base_serial or "").strip().upper() if rover else ""
+    item = schemas.CasterRoverItem(
+        username=username,
+        password=str(user.get("password", "")),
+        mountpoints=user.get("mountpoints", []),
+        datacount=user.get("datacount", 0),
+        status=user.get("status", 0),
+        last_update=user.get("last_update", 0),
+        identifier=str(user.get("identifier", "")),
+        nclient=user.get("nclient", 0),
+        maxclient=user.get("maxclient", 0),
+        in_db=in_db,
+        is_blocked=is_blocked,
+        blocked_reason=blocked_reason,
+        blocked_at=blocked_at,
+        server=server_host,
+        version=version_map.get(serial) if serial else None,
+        active_connections=active_connections,
+        show_position=user.get("show_position", True),
+    )
+    return item, in_db, is_blocked
+
+
 @router.get("/api/caster/users", response_model=schemas.CasterUsersResponse)
 async def get_caster_users(
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -90,147 +211,31 @@ async def get_caster_users(
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_ROVERS)),
 ):
     """Aggregate total users from all scanned casters with enrichment."""
-    all_caster_users = []
-
-    async with global_caster_cache_lock:
-        for cache_data in (await _get_all_caster_cache()).values():
-            host = cache_data.get("host", "unknown")
-            users = cache_data.get("users", [])
-            for u in users:
-                u_copy = dict(u)
-                u_copy["server"] = host # Tag with server
-                u_copy["last_update"] = int(cache_data.get("users_last_update") or cache_data.get("last_update") or 0)
-                all_caster_users.append(u_copy)
-
-    # --- PHÂN QUYỀN HIỂN THỊ (ĐỒNG BỘ VỚI MAP) ---
-    if current_user.role != auth.Role.ADMIN:
-        # Use the same resolved rover scope as the DB list and map endpoint.
-        my_rovers = await crud.get_visible_rovers_for_user(auth_db, devices_db, current_user)
-        allowed_usernames = {
-            str(r.username).strip().lower() for r in my_rovers if r.username
-        }
-        all_caster_users = [u for u in all_caster_users if str(u.get("username", "")).strip().lower() in allowed_usernames]
-
-
-    # Local DB Lookups
-    db_rovers_rs = await auth_db.execute(select(models.RoverAccount))
-    db_rovers_map = {str(r.username).strip().lower(): r for r in db_rovers_rs.scalars().all()}
-
-    blocklist_rs = await auth_db.execute(select(models.RoverBlocklist))
-    blocklist_items = blocklist_rs.scalars().all()
-    blocklist_map: Dict[str, List[models.RoverBlocklist]] = {}
-    for bl in blocklist_items:
-        key = str(bl.username).lower()
-        if key not in blocklist_map:
-            blocklist_map[key] = []
-        blocklist_map[key].append(bl)
-
-    # Device lookup for version matching
+    users = await _collect_caster_users()
+    users = await _visible_caster_users(users, auth_db, devices_db, current_user)
+    rover_map, blocklist_map = await _caster_user_lookup_maps(auth_db)
     async with device_session_scope() as db:
-        res_devices = await db.execute(select(models.Device.serial, models.Device.version))
-        device_versions = {str(d.serial).upper(): d.version for d in res_devices.all()}
+        result = await db.execute(select(models.Device.serial, models.Device.version))
+        version_map = {str(device.serial).upper(): device.version for device in result.all()}
+    sessions = await _active_caster_sessions()
 
-    # 1. Active Sessions Lookup Map (from Caster Cache)
-    active_sessions_map = {}  # (server, username) -> [ {mp, uptime} ]
-
-    async with global_caster_cache_lock:
-        for cache_data in (await _get_all_caster_cache()).values():
-            host = cache_data.get("host", "unknown")
-            last_update = int(cache_data.get("last_update") or time.time())
-            clients = cache_data.get("clients", [])
-            for c in clients:
-                user_key = (host, str(c.get("username", "")).strip().lower())
-                if user_key not in active_sessions_map:
-                    active_sessions_map[user_key] = []
-                active_sessions_map[user_key].append({
-                    "mountpoint": c.get("mountpoint"),
-                    "requested_mountpoint": c.get("requested_mountpoint"),
-                    "selected_mountpoint": c.get("selected_mountpoint"),
-                    "uptime": int(c.get("uptime", 0) or 0),
-                    "client_id": str(c.get("client_id", "") or "").strip(),
-                    "receiver_id": str(c.get("receiver_id", "") or "").strip(),
-                    "last_update": last_update,
-                })
-
-    enriched_items = []
+    items = []
     in_db_count = 0
     blocked_count = 0
-
-    for cu in all_caster_users:
-        username = str(cu.get("username", "")).strip()
-        username_lower = username.lower()
-        server_host = cu.get("server")
-
-        in_db = username_lower in db_rovers_map
-        is_blocked = False
-        blocked_reason = None
-        blocked_at = None
-
-        if username_lower in blocklist_map:
-            for bl_entry in blocklist_map[username_lower]:
-                if bl_entry.mountpoint is None:
-                    is_blocked = True
-                    blocked_reason = bl_entry.reason
-                    blocked_at = bl_entry.blocked_at
-                    break
-                else:
-                    user_mps = [mp.lower().strip() for mp in cu.get("mountpoints", [])]
-                    if bl_entry.mountpoint.lower().strip() in user_mps:
-                        is_blocked = True
-                        blocked_reason = bl_entry.reason
-                        blocked_at = bl_entry.blocked_at
-                        break
-
-        if in_db: in_db_count += 1
-        if is_blocked: blocked_count += 1
-
-        # Match active connections
-        active_key = (server_host, username_lower)
-        active_conns_raw = active_sessions_map.get(active_key, [])
-        active_conns = []
-        for ac in active_conns_raw:
-            uptime = int(ac.get("uptime", 0) or 0)
-            last_update = int(ac.get("last_update") or time.time())
-            started_at = last_update - uptime if uptime > 0 else None
-            active_conns.append({
-                "mountpoint": ac.get("mountpoint"),
-                "requested_mountpoint": ac.get("requested_mountpoint"),
-                "selected_mountpoint": ac.get("selected_mountpoint"),
-                "uptime": uptime,
-                "duration_seconds": uptime,
-                "client_id": ac.get("client_id", ""),
-                "receiver_id": ac.get("receiver_id", ""),
-                "started_at": started_at,
-                "last_seen_at": last_update,
-            })
-
-        enriched_items.append(schemas.CasterRoverItem(
-            username=username,
-            password=str(cu.get("password", "")),
-            mountpoints=cu.get("mountpoints", []),
-            datacount=cu.get("datacount", 0),
-            status=cu.get("status", 0),
-            last_update=cu.get("last_update", 0),
-            identifier=str(cu.get("identifier", "")),
-            nclient=cu.get("nclient", 0),
-            maxclient=cu.get("maxclient", 0),
-            in_db=in_db,
-            is_blocked=is_blocked,
-            blocked_reason=blocked_reason,
-            blocked_at=blocked_at,
-            server=server_host,
-            version=device_versions.get(str(db_rovers_map[username_lower].base_serial or "").strip().upper()) if in_db and db_rovers_map[username_lower].base_serial else None,
-            active_connections=active_conns,
-            show_position=cu.get("show_position", True)
-        ))
-
+    for user in users:
+        item, in_db, is_blocked = _build_caster_rover_item(
+            user, rover_map, blocklist_map, version_map, sessions
+        )
+        items.append(item)
+        in_db_count += in_db
+        blocked_count += is_blocked
     return schemas.CasterUsersResponse(
         server_time=int(time.time()),
-        total=len(enriched_items),
+        total=len(items),
         in_db_count=in_db_count,
-        unknown_count=len(enriched_items) - in_db_count,
+        unknown_count=len(items) - in_db_count,
         blocked_count=blocked_count,
-        items=enriched_items,
+        items=items,
     )
 
 
