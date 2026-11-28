@@ -177,6 +177,144 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const keyState = key => key.revoked_at ? 'revoked' : key.expires_at !== 0 && key.expires_at <= Date.now() / 1000 ? 'expired' : 'active';
+    function createTokenReveal(key, identity) {
+        const reveal = document.createElement('details'); reveal.className = 'ak-row-token';
+        const toggle = document.createElement('summary'); toggle.textContent = 'Hiển thị key';
+        const group = document.createElement('div'); group.className = 'input-group';
+        const input = document.createElement('input'); input.className = 'form-control font-monospace'; input.setAttribute('aria-label', `API key ${key.name}`); input.setAttribute('data-no-translate', ''); input.autocomplete = 'off'; input.spellcheck = false;
+        const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn btn-outline-secondary'; copy.textContent = 'Sao chép'; copy.disabled = true;
+        const save = document.createElement('button'); save.type = 'button'; save.className = 'btn btn-outline-secondary'; save.textContent = 'Lưu key';
+        const note = document.createElement('small'); note.className = 'ak-subtext';
+        const saved = key.has_saved_token;
+        let deadline = 0, timer, countdown;
+
+        const lock = () => {
+            clearTimeout(timer); clearInterval(countdown); revealedLocks.delete(lock);
+            deadline = 0; input.value = ''; copy.disabled = true;
+            note.textContent = 'Nhập lại mật khẩu admin để xem key trong 30 giây.';
+            reveal.open = false;
+        };
+        const displayToken = token => {
+            lockRevealedKeys();
+            input.value = token; input.type = 'text'; input.readOnly = true;
+            copy.disabled = false; save.hidden = true;
+            deadline = Date.now() + 30000;
+            revealedLocks.add(lock);
+            const updateCountdown = () => {
+                const seconds = Math.ceil((deadline - Date.now()) / 1000);
+                if (seconds <= 0) lock();
+                else note.textContent = `Key tự ẩn sau ${seconds} giây.`;
+            };
+            updateCountdown();
+            timer = setTimeout(lock, 30000);
+            countdown = setInterval(updateCountdown, 1000);
+        };
+        const confirmReveal = () => {
+            if (!reveal.open) { if (deadline) lock(); return; }
+            if (!saved || deadline) return;
+            pendingReveal = {key, reveal, displayToken};
+            revealPassword.value = ''; revealPassword.type = 'password';
+            passwordToggle.textContent = 'Hiện mật khẩu'; passwordToggle.setAttribute('aria-pressed', 'false');
+            revealError.textContent = '';
+            document.getElementById('reveal-key-name').textContent = key.name;
+            revealDialog.showModal(); revealPassword.focus();
+        };
+        const saveExistingToken = async () => {
+            const token = input.value.trim();
+            if (!token) { input.focus(); showStatus('Dán key đã lưu của tích hợp này.', 'warning'); return; }
+            save.disabled = true; input.readOnly = true; save.textContent = 'Đang lưu…';
+            try {
+                const metadata = await request(`/api/admin/api-keys/${key.id}/token`, { method: 'PUT', body: JSON.stringify({token}) });
+                keys = keys.map(item => item.id === key.id ? metadata : item); input.value = ''; renderKeys();
+                showStatus('Đã lưu key để xem lại. Key đang dùng giữ nguyên.', 'success');
+            } catch (error) { input.readOnly = false; showStatus(error.message, 'danger'); }
+            finally { save.disabled = false; save.textContent = 'Lưu key'; }
+        };
+        const copyToken = async () => {
+            if (!deadline || Date.now() >= deadline || sessionClosed) { lock(); return; }
+            try { await navigator.clipboard.writeText(input.value); showStatus('Đã sao chép key.', 'success'); }
+            catch { input.select(); showStatus('Hãy sao chép key đang được chọn.', 'warning'); }
+        };
+
+        input.readOnly = saved; input.type = saved ? 'text' : 'password'; save.hidden = saved;
+        input.placeholder = saved ? 'Nhập mật khẩu admin để xem key' : 'Dán key đã lưu';
+        note.textContent = saved ? 'Key chỉ hiển thị trong 30 giây sau khi xác nhận mật khẩu.' : 'Key cũ chỉ còn mã băm. Dán key đã lưu để bật xem lại; key đang dùng giữ nguyên.';
+        reveal.addEventListener('toggle', confirmReveal);
+        save.addEventListener('click', saveExistingToken);
+        copy.addEventListener('click', copyToken);
+        group.append(input, copy, save); reveal.append(toggle, group, note); identity.append(reveal);
+    }
+
+    function renderKeyIdentity(key, row) {
+        const name = document.createElement('span'); name.className = 'ak-key-name'; name.setAttribute('data-no-translate', ''); name.textContent = key.name;
+        const subtitle = document.createElement('span'); subtitle.className = 'ak-subtext'; subtitle.textContent = key.edit_config ? 'Đọc dữ liệu & sửa cấu hình' : 'Chỉ đọc dữ liệu';
+        const identity = row.insertCell(); identity.append(name, subtitle);
+        if (!key.revoked_at) createTokenReveal(key, identity);
+    }
+
+    function renderKeyExpiry(key, row) {
+        const date = row.insertCell();
+        date.textContent = key.expires_at === 0 ? 'Vĩnh viễn' : new Date(key.expires_at * 1000).toLocaleDateString('vi-VN');
+        if (key.expires_at === 0) return;
+        const time = document.createElement('span'); time.className = 'ak-subtext';
+        time.textContent = new Date(key.expires_at * 1000).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'});
+        date.append(time);
+    }
+
+    function renderKeyScope(key, row) {
+        const scope = row.insertCell(); scope.textContent = key.all_stations ? 'Tất cả trạm' : `${key.station_serials.length} trạm`;
+        const count = document.createElement('span'); count.className = 'ak-subtext'; count.textContent = `${key.data_fields.length} trường dữ liệu`; scope.append(count);
+    }
+
+    function renderKeyState(key, row) {
+        const state = keyState(key);
+        const iconNames = {active: 'check-circle', expired: 'clock', revoked: 'slash-circle'};
+        const labels = {active: 'Đang hoạt động', expired: 'Hết hạn', revoked: 'Đã thu hồi'};
+        const badge = document.createElement('span'); badge.className = `ak-state ${state}`;
+        const icon = document.createElement('i'); icon.className = `bi bi-${iconNames[state]}`; icon.setAttribute('aria-hidden', 'true');
+        badge.append(icon, document.createTextNode(labels[state]));
+        row.insertCell().append(badge);
+    }
+
+    function renderKeyActions(key, row) {
+        const actions = document.createElement('div'); actions.className = 'ak-actions'; row.insertCell().append(actions);
+        if (!key.revoked_at) {
+            const edit = document.createElement('button'); edit.className = 'btn btn-outline-secondary'; edit.textContent = 'Sửa quyền'; edit.setAttribute('aria-label', `Sửa quyền ${key.name}`); edit.addEventListener('click', () => editKey(key));
+            const revoke = document.createElement('button'); revoke.className = 'btn btn-outline-danger'; revoke.textContent = 'Thu hồi'; revoke.setAttribute('aria-label', `Thu hồi ${key.name}`); revoke.addEventListener('click', () => revokeKey(key));
+            actions.append(edit, revoke);
+        }
+    }
+
+    function renderKeyGuide(key, row) {
+        const guide = document.createElement('button'); guide.className = 'btn btn-outline-secondary ak-guide-button'; guide.textContent = 'Hướng dẫn';
+        guide.setAttribute('aria-label', `Hướng dẫn sử dụng ${key.name}`); guide.addEventListener('click', () => showGuide(key));
+        row.insertCell().append(guide);
+    }
+
+    function renderKeyRow(key) {
+        const row = tbody.insertRow();
+        renderKeyIdentity(key, row);
+        renderKeyExpiry(key, row);
+        renderKeyScope(key, row);
+        renderKeyState(key, row);
+        renderKeyActions(key, row);
+        renderKeyGuide(key, row);
+        [...row.cells].forEach((cell, index) => {
+            cell.dataset.label = ['Tích hợp', 'Thời hạn', 'Phạm vi', 'Trạng thái', 'Thao tác', 'Hướng dẫn'][index];
+        });
+    }
+
+    function renderEmptyKeys(visibleCount) {
+        if (visibleCount) return false;
+        const cell = tbody.insertRow().insertCell();
+        cell.colSpan = 6;
+        cell.className = 'ak-empty';
+        cell.innerHTML = keys.length
+            ? '<i class="bi bi-search" aria-hidden="true"></i><strong>Không tìm thấy key</strong><p>Thử tên khác hoặc đổi bộ lọc trạng thái.</p>'
+            : '<i class="bi bi-key" aria-hidden="true"></i><strong>Kết nối đầu tiên bắt đầu từ đây</strong><p>Tạo API key để cấp dữ liệu trạm cho ứng dụng của bạn.</p>';
+        return true;
+    }
+
     function renderKeys() {
         lockRevealedKeys();
         cancelReveal();
@@ -187,102 +325,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('count-inactive').textContent = keys.length - active;
         const query = document.getElementById('key-search').value.trim().toLocaleLowerCase('vi');
         const filter = document.getElementById('key-filter').value;
-        const visible = keys.filter(key => key.name.toLocaleLowerCase('vi').includes(query) && (filter === 'all' || keyState(key) === filter));
-        if (!visible.length) {
-            const cell = tbody.insertRow().insertCell();
-            cell.colSpan = 6;
-            cell.className = 'ak-empty';
-            cell.innerHTML = keys.length ? '<i class="bi bi-search" aria-hidden="true"></i><strong>Không tìm thấy key</strong><p>Thử tên khác hoặc đổi bộ lọc trạng thái.</p>' : '<i class="bi bi-key" aria-hidden="true"></i><strong>Kết nối đầu tiên bắt đầu từ đây</strong><p>Tạo API key để cấp dữ liệu trạm cho ứng dụng của bạn.</p>';
-            return;
-        }
-        for (const key of visible) {
-            const row = tbody.insertRow();
-            const name = document.createElement('span'); name.className = 'ak-key-name'; name.setAttribute('data-no-translate', ''); name.textContent = key.name;
-            const subtitle = document.createElement('span'); subtitle.className = 'ak-subtext'; subtitle.textContent = key.edit_config ? 'Đọc dữ liệu & sửa cấu hình' : 'Chỉ đọc dữ liệu';
-            const identity = row.insertCell(); identity.append(name, subtitle);
-            if (!key.revoked_at) {
-                const reveal = document.createElement('details'); reveal.className = 'ak-row-token';
-                const toggle = document.createElement('summary'); toggle.textContent = 'Hiển thị key';
-                const group = document.createElement('div'); group.className = 'input-group';
-                const input = document.createElement('input'); input.className = 'form-control font-monospace'; input.setAttribute('aria-label', `API key ${key.name}`); input.setAttribute('data-no-translate', ''); input.autocomplete = 'off'; input.spellcheck = false;
-                const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn btn-outline-secondary'; copy.textContent = 'Sao chép'; copy.disabled = true;
-                const save = document.createElement('button'); save.type = 'button'; save.className = 'btn btn-outline-secondary'; save.textContent = 'Lưu key';
-                const note = document.createElement('small'); note.className = 'ak-subtext';
-                let saved = key.has_saved_token;
-                let deadline = 0, timer, countdown;
-                const lock = () => {
-                    clearTimeout(timer); clearInterval(countdown); revealedLocks.delete(lock);
-                    deadline = 0; input.value = ''; copy.disabled = true;
-                    note.textContent = 'Nhập lại mật khẩu admin để xem key trong 30 giây.';
-                    reveal.open = false;
-                };
-                const displayToken = token => {
-                    lockRevealedKeys();
-                    input.value = token; input.type = 'text'; input.readOnly = true;
-                    copy.disabled = false; save.hidden = true;
-                    deadline = Date.now() + 30000;
-                    revealedLocks.add(lock);
-                    const updateCountdown = () => {
-                        const seconds = Math.ceil((deadline - Date.now()) / 1000);
-                        if (seconds <= 0) lock();
-                        else note.textContent = `Key tự ẩn sau ${seconds} giây.`;
-                    };
-                    updateCountdown();
-                    timer = setTimeout(lock, 30000);
-                    countdown = setInterval(updateCountdown, 1000);
-                };
-                input.readOnly = saved; input.type = saved ? 'text' : 'password'; save.hidden = saved;
-                input.placeholder = saved ? 'Nhập mật khẩu admin để xem key' : 'Dán key đã lưu';
-                note.textContent = saved ? 'Key chỉ hiển thị trong 30 giây sau khi xác nhận mật khẩu.' : 'Key cũ chỉ còn mã băm. Dán key đã lưu để bật xem lại; key đang dùng giữ nguyên.';
-                reveal.addEventListener('toggle', () => {
-                    if (!reveal.open) { if (deadline) lock(); return; }
-                    if (!saved || deadline) return;
-                    pendingReveal = {key, reveal, displayToken};
-                    revealPassword.value = ''; revealPassword.type = 'password';
-                    passwordToggle.textContent = 'Hiện mật khẩu'; passwordToggle.setAttribute('aria-pressed', 'false');
-                    revealError.textContent = '';
-                    document.getElementById('reveal-key-name').textContent = key.name;
-                    revealDialog.showModal(); revealPassword.focus();
-                });
-                save.addEventListener('click', async () => {
-                    const token = input.value.trim();
-                    if (!token) { input.focus(); showStatus('Dán key đã lưu của tích hợp này.', 'warning'); return; }
-                    save.disabled = true; input.readOnly = true; save.textContent = 'Đang lưu…';
-                    try {
-                        const metadata = await request(`/api/admin/api-keys/${key.id}/token`, { method: 'PUT', body: JSON.stringify({token}) });
-                        keys = keys.map(item => item.id === key.id ? metadata : item); input.value = ''; renderKeys();
-                        showStatus('Đã lưu key để xem lại. Key đang dùng giữ nguyên.', 'success');
-                    } catch (error) { input.readOnly = false; showStatus(error.message, 'danger'); }
-                    finally { save.disabled = false; save.textContent = 'Lưu key'; }
-                });
-                copy.addEventListener('click', async () => {
-                    if (!deadline || Date.now() >= deadline || sessionClosed) { lock(); return; }
-                    try { await navigator.clipboard.writeText(input.value); showStatus('Đã sao chép key.', 'success'); }
-                    catch { input.select(); showStatus('Hãy sao chép key đang được chọn.', 'warning'); }
-                });
-                group.append(input, copy, save); reveal.append(toggle, group, note); identity.append(reveal);
-            }
-            const date = row.insertCell();
-            date.textContent = key.expires_at === 0 ? 'Vĩnh viễn' : new Date(key.expires_at * 1000).toLocaleDateString('vi-VN');
-            if (key.expires_at !== 0) {
-                const time = document.createElement('span'); time.className = 'ak-subtext'; time.textContent = new Date(key.expires_at * 1000).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}); date.append(time);
-            }
-            const scope = row.insertCell(); scope.textContent = key.all_stations ? 'Tất cả trạm' : `${key.station_serials.length} trạm`;
-            const count = document.createElement('span'); count.className = 'ak-subtext'; count.textContent = `${key.data_fields.length} trường dữ liệu`; scope.append(count);
-            const state = keyState(key);
-            const badge = document.createElement('span'); badge.className = `ak-state ${state}`;
-            const icon = document.createElement('i'); icon.className = `bi bi-${state === 'active' ? 'check-circle' : state === 'expired' ? 'clock' : 'slash-circle'}`; icon.setAttribute('aria-hidden', 'true');
-            badge.append(icon, document.createTextNode(state === 'active' ? 'Đang hoạt động' : state === 'expired' ? 'Hết hạn' : 'Đã thu hồi'));
-            row.insertCell().append(badge);
-            const actions = document.createElement('div'); actions.className = 'ak-actions'; row.insertCell().append(actions);
-            if (!key.revoked_at) {
-                const edit = document.createElement('button'); edit.className = 'btn btn-outline-secondary'; edit.textContent = 'Sửa quyền'; edit.setAttribute('aria-label', `Sửa quyền ${key.name}`); edit.addEventListener('click', () => editKey(key));
-                const revoke = document.createElement('button'); revoke.className = 'btn btn-outline-danger'; revoke.textContent = 'Thu hồi'; revoke.setAttribute('aria-label', `Thu hồi ${key.name}`); revoke.addEventListener('click', () => revokeKey(key));
-                actions.append(edit, revoke);
-            }
-            const guide = document.createElement('button'); guide.className = 'btn btn-outline-secondary ak-guide-button'; guide.textContent = 'Hướng dẫn'; guide.setAttribute('aria-label', `Hướng dẫn sử dụng ${key.name}`); guide.addEventListener('click', () => showGuide(key)); row.insertCell().append(guide);
-            [...row.cells].forEach((cell, index) => { cell.dataset.label = ['Tích hợp', 'Thời hạn', 'Phạm vi', 'Trạng thái', 'Thao tác', 'Hướng dẫn'][index]; });
-        }
+        const visible = keys.filter(key => key.name.toLocaleLowerCase('vi').includes(query)
+            && (filter === 'all' || keyState(key) === filter));
+        if (renderEmptyKeys(visible.length)) return;
+        for (const key of visible) renderKeyRow(key);
     }
 
     function updateSummary() {

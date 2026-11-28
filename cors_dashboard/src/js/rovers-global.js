@@ -975,255 +975,201 @@ document.addEventListener('DOMContentLoaded', async () => {
         return remainingDays >= 0 && remainingDays <= 14;
     }
 
-    function createRoverRowElement(r) {
-        const tr = document.createElement('tr');
-        const escapedUsername = escapeHtml(r.username);
-        const escapedUsernameKey = escapeHtml(normalizeUsername(r.username));
-        tr.dataset.usernameKey = normalizeUsername(r.username);
-        if (r.type === 'unknown') tr.style.backgroundColor = 'rgba(239, 68, 68, 0.03)';
-
-        const infos = r.caster_infos || [r.caster_info].filter(i => i);
-        const isBlocked = infos.some(i => i.is_blocked);
-
-        let dbBadge = '';
-        if (r.type === 'db') {
-            dbBadge = r.is_active ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>' : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>';
-        } else {
-            dbBadge = '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
-        }
-
-        const targetHosts = parseCasterHosts(r.target_casters);
-        let serverBadges = '';
-        if (targetHosts.length > 0) {
-            serverBadges = targetHosts.map(h => {
-                const isPresent = infos.some(i => i.server === h);
-                const color = isPresent ? 'text-success' : 'text-danger fw-bold';
-                const icon = isPresent ? 'bi-server' : 'bi-exclamation-triangle';
-                return `<span class="rover-server-chip" title="${escapeHtml(h)}">
-                            <i class="bi ${icon} ${color}" aria-hidden="true"></i>
-                            <span class="rover-server-name">${escapeHtml(h)}</span>
-                        </span>`;
-            }).join('');
-        } else if (infos.length > 0) {
-            serverBadges = infos.map(i => {
-                return `<span class="rover-server-chip" title="${escapeHtml(i.server)}">
-                            <i class="bi bi-server text-warning" aria-hidden="true"></i>
-                            <span class="rover-server-name">${escapeHtml(i.server)}</span>
-                        </span>`;
-            }).join('');
-        }
-
-        const hasLiveShowPos = infos.some(i => typeof i?.show_position !== 'undefined');
-        const actualShowPos = hasLiveShowPos
-            ? infos.every(i => i?.show_position !== false)
-            : r.show_position;
-        const showPosIcon = actualShowPos
-            ? '<i class="bi bi-eye-fill text-primary" title="Vị trí đang HIỆN (Live)"></i>'
-            : '<i class="bi bi-eye-slash text-muted opacity-50" title="Vị trí đang ẨN (Live)"></i>';
-        const autoSaveFixedPointsEnabled = r.type === 'db' && r.auto_save_fixed_points === true;
-        const autoSaveFixedPointsIcon = r.type === 'db'
-            ? `<span role="img" aria-label="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'bật' : 'tắt'}" title="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi ${autoSaveFixedPointsEnabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'}" aria-hidden="true"></i></span>`
-            : '';
-        const autoSaveSessionsEnabled = r.type === 'db' && r.auto_save_sessions !== false;
-        const autoSaveSessionsIcon = r.type === 'db'
-            ? `<span role="img" aria-label="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'bật' : 'tắt'}" title="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi bi-clock-history ${autoSaveSessionsEnabled ? 'text-success' : 'text-muted opacity-50'}" aria-hidden="true"></i></span>`
-            : '';
-
-        const mps = normalizeMountpointList(r.mountpoints);
-        const mpsDisplay = mps.length > 0
-            ? mps.map(m => `<code class="rover-mount-chip">${escapeHtml(m)}</code>`).join('')
-            : '<span class="text-muted small">Chưa cấp MP</span>';
-        const mpsTitle = escapeHtml(mps.join(', '));
-
-        // Connection Limit computation & UI representation.
-        // Prefer live caster data when available because caster uses 0 as "unlimited".
-        const liveMaxClients = infos
-            .map(i => Number(i?.maxclient))
-            .filter(v => Number.isFinite(v) && v >= 0);
-        const dbMaxConnections = Number(r.max_connections);
-        const maxConn = liveMaxClients.length > 0
-            ? liveMaxClients[0]
-            : (Number.isFinite(dbMaxConnections) && dbMaxConnections >= 0 ? dbMaxConnections : 1);
-
-        let limitHtml = '';
-        if (maxConn === 0) {
-            limitHtml = `<div class="text-muted mt-1" style="font-size:0.7rem" title="Không giới hạn số lượng kết nối đồng thời"><i class="bi bi-infinity me-1 text-info"></i>Không giới hạn</div>`;
-        } else {
-            limitHtml = `<div class="text-muted mt-1" style="font-size:0.7rem" title="Số lượng kết nối đồng thời tối đa"><i class="bi bi-people me-1"></i>Tối đa: ${maxConn}</div>`;
-        }
-
-        let activeConnsHtml = '<span class="text-muted small">---</span>';
-        const allActiveConns = [];
-        infos.forEach(i => {
-            if (i.active_connections) {
-                i.active_connections.forEach(conn => {
-                    allActiveConns.push({ ...conn, server: i.server });
-                });
-            }
-        });
-
-        const getConnectionClockKey = (conn) => {
-            const server = String(conn?.server || '').trim().toLowerCase();
-            const username = String(r.username || '').trim().toLowerCase();
-            const mountpoint = String(conn?.mountpoint || '').trim().toLowerCase();
-            const clientId = String(conn?.client_id || '').trim().toLowerCase();
-            return [server, username, mountpoint, clientId].join('|');
-        };
-
-        const getStableStartedAt = (conn) => {
-            const key = getConnectionClockKey(conn);
-            const snapshotStartedAt = Number(conn?.started_at || 0);
-            const cached = connectionClockCache.get(key);
-
-            if (cached && Number.isFinite(cached.startedAt) && cached.startedAt > 0) {
-                cached.lastSeenAt = Date.now();
-                return cached.startedAt;
-            }
-
-            connectionClockCache.set(key, {
-                startedAt: snapshotStartedAt > 0 ? snapshotStartedAt : null,
-                lastSeenAt: Date.now(),
-            });
-
-            return snapshotStartedAt > 0 ? snapshotStartedAt : 0;
-        };
-
-        if (allActiveConns.length > 0) {
-            const fetchTime = Date.now();
-            activeConnsHtml = allActiveConns.map(conn => {
-                const stableStartedAt = getStableStartedAt(conn);
-                const durSeconds = Number(conn.duration_seconds ?? conn.uptime ?? 0);
-                const durText = formatDuration(durSeconds);
-                const startedAtText = formatDateTime(conn.started_at);
-                const clientIdText = conn.client_id ? String(conn.client_id) : 'N/A';
-                const serverLabel = allActiveConns.length > 1 ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${escapeHtml(String(conn.server || '').split('.')[0])}]</span>` : '';
-                const requestedMp = String(conn.requested_mountpoint || conn.mountpoint || '');
-                const selectedMp = String(conn.selected_mountpoint || '');
-                const routed = selectedMp && selectedMp.toLowerCase() !== requestedMp.toLowerCase();
-                const receiverId = String(conn.receiver_id || '');
-                const deviceLabel = /^esp_/i.test(receiverId)
-                    ? `<span class="text-muted small">${escapeHtml(receiverId)} · </span>` : '';
-                const sourceLabel = routed
-                    ? `<span class="text-info small"> · RTCM từ ${escapeHtml(selectedMp)}</span>` : '';
-                currentRenderedConnectionKeys.add(getConnectionClockKey(conn));
-                return `<div class="rover-connection-row">
-                            <span class="rover-connection-mp">${deviceLabel}${escapeHtml(requestedMp)}${sourceLabel}</span>
-                            ${serverLabel}
-                            <span class="rover-connection-time">
-                                <i class="bi bi-clock me-1"></i>
-                                <span class="live-clock" data-started-at="${Number.isFinite(stableStartedAt) ? stableStartedAt : 0}" title="Bắt đầu: ${escapeHtml(startedAtText)} | Client: ${escapeHtml(clientIdText)}">${escapeHtml(durText)}</span>
-                                <span class="rover-connection-start">(${escapeHtml(startedAtText)})</span>
-                            </span>
-                        </div>`;
-            }).join('');
-        }
-
-        let actionHtml = '';
-        if (currentUser.permissions?.includes('manage:caster')) {
-            if (isBlocked) {
-                actionHtml += `
-                    <button class="rover-action-btn caster-unblock-btn" 
-                        data-username="${escapedUsername}" title="Mở khóa">
-                        <i class="bi bi-unlock-fill"></i>
-                    </button>`;
-            } else {
-                actionHtml += `
-                    <button class="rover-action-btn danger caster-block-btn" 
-                        data-username="${escapedUsername}"
-                        data-mountpoints="${escapeHtml(mps.join(','))}"
-                        title="Chặn truy cập">
-                        <i class="bi bi-shield-lock-fill"></i>
-                    </button>`;
-            }
-        }
-
-        if (hasRoverEditAccess() || currentUser.role !== 'viewer') {
-            if (r.type === 'db') {
-                if (hasRoverEditAccess()) actionHtml += `
-                    <button class="rover-action-btn edit-btn" 
-                        data-id="${Number(r.id) || 0}" data-username="${escapedUsername}" title="Sửa">
-                        <i class="bi bi-pencil-square"></i>
-                    </button>
-                `;
-                if (currentUser.role !== 'viewer') actionHtml += `
-                    <button class="rover-action-btn danger delete-btn" 
-                        data-id="${Number(r.id) || 0}" data-user="${escapedUsername}" title="Xóa">
-                        <i class="bi bi-trash3-fill"></i>
-                    </button>
-                `;
-            } else if (r.type === 'unknown') {
-                if (hasRoverEditAccess()) actionHtml += `
-                    <button class="rover-action-btn edit-btn" 
-                        data-id="0" data-username="${escapedUsername}" title="Chỉnh sửa và Đồng bộ về Web">
-                        <i class="bi bi-pencil-square"></i>
-                    </button>
-                `;
-                if (currentUser.role !== 'viewer') actionHtml += `
-                    <button class="rover-action-btn danger caster-delete-btn" 
-                        data-username="${escapedUsername}" title="Xóa tài khoản khỏi Caster">
-                        <i class="bi bi-trash3"></i>
-                    </button>
-                `;
-            }
-        }
-
-        const roverKey = getRoverKey(r);
-        const checkedAttr = selectedRoverKeys.has(roverKey) ? 'checked' : '';
-        const expiresHtml = formatExpiryCell(r, infos);
-        const syncHtml = infos.length
-            ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Synced</span>'
-            : '<span class="badge bg-secondary bg-opacity-25 text-secondary border border-secondary border-opacity-25">No caster</span>';
-        const sessionHtml = allActiveConns.length
-            ? `<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">${allActiveConns.length}</span>`
-            : '<span class="text-muted small">0</span>';
-        const blockedHtml = isBlocked
-            ? '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Blocked</span>'
-            : '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">OK</span>';
-        actionHtml = `
-            <button class="rover-action-btn rover-history-btn"
-                data-username="${escapedUsername}" title="Rover history">
-                <i class="bi bi-clock-history"></i>
-            </button>
-            ${actionHtml}
-        `;
-
-        tr.innerHTML = `
-            <td class="text-center">
-                <input type="checkbox" class="form-check-input rover-row-check" data-username-key="${escapedUsernameKey}" aria-label="Chọn rover ${escapedUsername}" ${checkedAttr}>
-            </td>
-            <td>
-                <div class="rover-user-cell">
-                    <div class="rover-user-avatar ${r.type === 'db' ? '' : 'is-unknown'}">
-                        <i class="bi bi-person-fill"></i>
-                    </div>
-                    <div class="rover-user-copy">
-                        <div class="rover-user-heading">
-                            <span class="rover-user-name">${escapeHtml(r.username)}</span>
-                        </div>
-                        <div class="rover-user-indicators">${dbBadge}${showPosIcon}${autoSaveFixedPointsIcon}${autoSaveSessionsIcon}${r.type === 'db' ? '' : '<span class="rover-user-meta">Caster only</span>'}</div>
-                    </div>
-                </div>
-            </td>
-            <td data-label="Password"><code class="rover-password-chip">${escapeHtml(r.password || '---')}</code></td>
-            <td data-label="Mountpoints">
-                <div class="rover-mount-cell">
-                    <div class="rover-mountpoint-list" title="${mpsTitle}" aria-label="Mountpoints được cấp">${mpsDisplay}</div>
-                </div>
-            </td>
-            <td data-label="Connection">
-                <div>${activeConnsHtml}</div>
-                ${limitHtml}
-            </td>
-            <td class="text-center" data-label="Caster sync">${syncHtml}</td>
-            <td class="text-center" data-label="Sessions">${sessionHtml}</td>
-            <td class="text-center" data-label="Blocked">${blockedHtml}</td>
-            <td class="text-center" data-label="Expired">${expiresHtml}</td>
-            <td class="text-center" data-label="Server"><div class="rover-server-list">${serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>'}</div></td>
-            <td class="rover-actions-cell" data-label="Actions"><div class="rover-row-actions">${actionHtml}</div></td>
-        `;
-
-        return tr;
+function getRoverServerBadges(infos, targetHosts) {
+    if (targetHosts.length) {
+        return targetHosts.map(host => {
+            const isPresent = infos.some(info => info.server === host);
+            const color = isPresent ? 'text-success' : 'text-danger fw-bold';
+            const icon = isPresent ? 'bi-server' : 'bi-exclamation-triangle';
+            return `<span class="rover-server-chip" title="${escapeHtml(host)}">
+                        <i class="bi ${icon} ${color}" aria-hidden="true"></i>
+                        <span class="rover-server-name">${escapeHtml(host)}</span>
+                    </span>`;
+        }).join('');
     }
+    return infos.map(info => `<span class="rover-server-chip" title="${escapeHtml(info.server)}">
+        <i class="bi bi-server text-warning" aria-hidden="true"></i>
+        <span class="rover-server-name">${escapeHtml(info.server)}</span>
+    </span>`).join('');
+}
+
+function getRoverRowIcons(rover, infos) {
+    const dbBadge = rover.type === 'db'
+        ? rover.is_active
+            ? '<i class="bi bi-check-circle-fill text-success ms-1" title="Account Active"></i>'
+            : '<i class="bi bi-exclamation-circle-fill text-danger ms-1" title="Account Expired"></i>'
+        : '<i class="bi bi-question-diamond-fill text-warning ms-1" title="Unknown User (Not in DB)"></i>';
+    const hasLiveShowPos = infos.some(info => typeof info?.show_position !== 'undefined');
+    const actualShowPos = hasLiveShowPos ? infos.every(info => info?.show_position !== false) : rover.show_position;
+    const showPosIcon = actualShowPos
+        ? '<i class="bi bi-eye-fill text-primary" title="Vị trí đang HIỆN (Live)"></i>'
+        : '<i class="bi bi-eye-slash text-muted opacity-50" title="Vị trí đang ẨN (Live)"></i>';
+    const autoSaveFixedPointsEnabled = rover.type === 'db' && rover.auto_save_fixed_points === true;
+    const autoSaveSessionsEnabled = rover.type === 'db' && rover.auto_save_sessions !== false;
+    const autoSaveFixedPointsIcon = rover.type === 'db'
+        ? `<span role="img" aria-label="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'bật' : 'tắt'}" title="Tự lưu điểm vị trí đang ${autoSaveFixedPointsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi ${autoSaveFixedPointsEnabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'}" aria-hidden="true"></i></span>`
+        : '';
+    const autoSaveSessionsIcon = rover.type === 'db'
+        ? `<span role="img" aria-label="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'bật' : 'tắt'}" title="Tự lưu phiên Rover đang ${autoSaveSessionsEnabled ? 'BẬT' : 'TẮT'}"><i class="bi bi-clock-history ${autoSaveSessionsEnabled ? 'text-success' : 'text-muted opacity-50'}" aria-hidden="true"></i></span>`
+        : '';
+    return {dbBadge, showPosIcon, autoSaveFixedPointsIcon, autoSaveSessionsIcon};
+}
+
+function getRoverConnectionLimit(r, infos) {
+    const liveMaxClients = infos.map(info => Number(info?.maxclient)).filter(value => Number.isFinite(value) && value >= 0);
+    const dbMaxConnections = Number(r.max_connections);
+    const maxConn = liveMaxClients.length
+        ? liveMaxClients[0]
+        : Number.isFinite(dbMaxConnections) && dbMaxConnections >= 0 ? dbMaxConnections : 1;
+    return maxConn === 0
+        ? '<div class="text-muted mt-1" style="font-size:0.7rem" title="Không giới hạn số lượng kết nối đồng thời"><i class="bi bi-infinity me-1 text-info"></i>Không giới hạn</div>'
+        : `<div class="text-muted mt-1" style="font-size:0.7rem" title="Số lượng kết nối đồng thời tối đa"><i class="bi bi-people me-1"></i>Tối đa: ${maxConn}</div>`;
+}
+
+function getRoverConnectionInfo(r, infos) {
+    const allActiveConns = [];
+    infos.forEach(info => {
+        if (info.active_connections) {
+            info.active_connections.forEach(conn => allActiveConns.push({...conn, server: info.server}));
+        }
+    });
+    if (!allActiveConns.length) return {activeConnsHtml: '<span class="text-muted small">---</span>', allActiveConns};
+
+    const getConnectionClockKey = conn => [
+        String(conn?.server || '').trim().toLowerCase(),
+        String(r.username || '').trim().toLowerCase(),
+        String(conn?.mountpoint || '').trim().toLowerCase(),
+        String(conn?.client_id || '').trim().toLowerCase(),
+    ].join('|');
+    const getStableStartedAt = conn => {
+        const key = getConnectionClockKey(conn);
+        const snapshotStartedAt = Number(conn?.started_at || 0);
+        const cached = connectionClockCache.get(key);
+        if (cached && Number.isFinite(cached.startedAt) && cached.startedAt > 0) {
+            cached.lastSeenAt = Date.now();
+            return cached.startedAt;
+        }
+        connectionClockCache.set(key, {
+            startedAt: snapshotStartedAt > 0 ? snapshotStartedAt : null,
+            lastSeenAt: Date.now(),
+        });
+        return snapshotStartedAt > 0 ? snapshotStartedAt : 0;
+    };
+    const activeConnsHtml = allActiveConns.map(conn => {
+        const stableStartedAt = getStableStartedAt(conn);
+        const durText = formatDuration(Number(conn.duration_seconds ?? conn.uptime ?? 0));
+        const startedAtText = formatDateTime(conn.started_at);
+        const clientIdText = conn.client_id ? String(conn.client_id) : 'N/A';
+        const serverLabel = allActiveConns.length > 1
+            ? `<span class="text-muted mx-1" style="font-size:0.6rem">[${escapeHtml(String(conn.server || '').split('.')[0])}]</span>` : '';
+        const requestedMp = String(conn.requested_mountpoint || conn.mountpoint || '');
+        const selectedMp = String(conn.selected_mountpoint || '');
+        const sourceLabel = selectedMp && selectedMp.toLowerCase() !== requestedMp.toLowerCase()
+            ? `<span class="text-info small"> · RTCM từ ${escapeHtml(selectedMp)}</span>` : '';
+        const receiverId = String(conn.receiver_id || '');
+        const deviceLabel = /^esp_/i.test(receiverId)
+            ? `<span class="text-muted small">${escapeHtml(receiverId)} · </span>` : '';
+        currentRenderedConnectionKeys.add(getConnectionClockKey(conn));
+        return `<div class="rover-connection-row">
+                    <span class="rover-connection-mp">${deviceLabel}${escapeHtml(requestedMp)}${sourceLabel}</span>
+                    ${serverLabel}
+                    <span class="rover-connection-time">
+                        <i class="bi bi-clock me-1"></i>
+                        <span class="live-clock" data-started-at="${Number.isFinite(stableStartedAt) ? stableStartedAt : 0}" title="Bắt đầu: ${escapeHtml(startedAtText)} | Client: ${escapeHtml(clientIdText)}">${escapeHtml(durText)}</span>
+                        <span class="rover-connection-start">(${escapeHtml(startedAtText)})</span>
+                    </span>
+                </div>`;
+    }).join('');
+    return {activeConnsHtml, allActiveConns};
+}
+
+function getCasterActions(r, isBlocked, mountpoints, escapedUsername) {
+    if (!currentUser.permissions?.includes('manage:caster')) return '';
+    if (isBlocked) return `<button class="rover-action-btn caster-unblock-btn" data-username="${escapedUsername}" title="Mở khóa"><i class="bi bi-unlock-fill"></i></button>`;
+    return `<button class="rover-action-btn danger caster-block-btn" data-username="${escapedUsername}" data-mountpoints="${escapeHtml(mountpoints.join(','))}" title="Chặn truy cập"><i class="bi bi-shield-lock-fill"></i></button>`;
+}
+
+function getDatabaseRoverActions(r, escapedUsername) {
+    const id = Number(r.id) || 0;
+    const edit = hasRoverEditAccess()
+        ? `<button class="rover-action-btn edit-btn" data-id="${id}" data-username="${escapedUsername}" title="Sửa"><i class="bi bi-pencil-square"></i></button>` : '';
+    const remove = currentUser.role !== 'viewer'
+        ? `<button class="rover-action-btn danger delete-btn" data-id="${id}" data-user="${escapedUsername}" title="Xóa"><i class="bi bi-trash3-fill"></i></button>` : '';
+    return edit + remove;
+}
+
+function getUnknownRoverActions(escapedUsername) {
+    const edit = hasRoverEditAccess()
+        ? `<button class="rover-action-btn edit-btn" data-id="0" data-username="${escapedUsername}" title="Chỉnh sửa và Đồng bộ về Web"><i class="bi bi-pencil-square"></i></button>` : '';
+    const remove = currentUser.role !== 'viewer'
+        ? `<button class="rover-action-btn danger caster-delete-btn" data-username="${escapedUsername}" title="Xóa tài khoản khỏi Caster"><i class="bi bi-trash3"></i></button>` : '';
+    return edit + remove;
+}
+
+function getRoverActionHtml(r, isBlocked, mountpoints, escapedUsername) {
+    let actions = getCasterActions(r, isBlocked, mountpoints, escapedUsername);
+    if (hasRoverEditAccess() || currentUser.role !== 'viewer') {
+        if (r.type === 'db') actions += getDatabaseRoverActions(r, escapedUsername);
+        else if (r.type === 'unknown') actions += getUnknownRoverActions(escapedUsername);
+    }
+    return `<button class="rover-action-btn rover-history-btn" data-username="${escapedUsername}" title="Rover history"><i class="bi bi-clock-history"></i></button>${actions}`;
+}
+
+    function getRoverRowStatus(r, infos, isBlocked, activeConnectionCount) {
+    const expiresHtml = formatExpiryCell(r, infos);
+    const syncHtml = infos.length
+        ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Synced</span>'
+        : '<span class="badge bg-secondary bg-opacity-25 text-secondary border border-secondary border-opacity-25">No caster</span>';
+        const sessionBadge = activeConnectionCount
+            ? `<span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">${activeConnectionCount}</span>`
+        : '<span class="text-muted small">0</span>';
+    const blockedHtml = isBlocked
+        ? '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Blocked</span>'
+        : '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">OK</span>';
+        return {expiresHtml, syncHtml, sessionHtml: sessionBadge, blockedHtml};
+}
+
+function createRoverRowElement(r) {
+    const tr = document.createElement('tr');
+    const escapedUsername = escapeHtml(r.username);
+    const escapedUsernameKey = escapeHtml(normalizeUsername(r.username));
+    tr.dataset.usernameKey = normalizeUsername(r.username);
+    if (r.type === 'unknown') tr.style.backgroundColor = 'rgba(239, 68, 68, 0.03)';
+
+    const infos = r.caster_infos || [r.caster_info].filter(Boolean);
+    const isBlocked = infos.some(info => info.is_blocked);
+    const icons = getRoverRowIcons(r, infos);
+    const targetHosts = parseCasterHosts(r.target_casters);
+    const serverBadges = getRoverServerBadges(infos, targetHosts);
+    const mountpoints = normalizeMountpointList(r.mountpoints);
+    const mountpointDisplay = mountpoints.length
+        ? mountpoints.map(value => `<code class="rover-mount-chip">${escapeHtml(value)}</code>`).join('')
+        : '<span class="text-muted small">Chưa cấp MP</span>';
+    const connection = getRoverConnectionInfo(r, infos);
+        const {expiresHtml, syncHtml, sessionHtml, blockedHtml} =
+            getRoverRowStatus(r, infos, isBlocked, connection.allActiveConns.length);
+    const actionHtml = getRoverActionHtml(r, isBlocked, mountpoints, escapedUsername);
+    const connectionLimit = getRoverConnectionLimit(r, infos);
+    const checkedAttr = selectedRoverKeys.has(getRoverKey(r)) ? 'checked' : '';
+    const mountpointsTitle = escapeHtml(mountpoints.join(', '));
+    const mountpointHelp = serverBadges || '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size:0.6rem">Cần gán Server</span>';
+
+    tr.innerHTML = `
+        <td class="text-center"><input type="checkbox" class="form-check-input rover-row-check" data-username-key="${escapedUsernameKey}" aria-label="Chọn rover ${escapedUsername}" ${checkedAttr}></td>
+        <td><div class="rover-user-cell"><div class="rover-user-avatar ${r.type === 'db' ? '' : 'is-unknown'}"><i class="bi bi-person-fill"></i></div>
+            <div class="rover-user-copy"><div class="rover-user-heading"><span class="rover-user-name">${escapeHtml(r.username)}</span></div>
+            <div class="rover-user-indicators">${icons.dbBadge}${icons.showPosIcon}${icons.autoSaveFixedPointsIcon}${icons.autoSaveSessionsIcon}${r.type === 'db' ? '' : '<span class="rover-user-meta">Caster only</span>'}</div></div></div></td>
+        <td data-label="Password"><code class="rover-password-chip">${escapeHtml(r.password || '---')}</code></td>
+        <td data-label="Mountpoints"><div class="rover-mount-cell"><div class="rover-mountpoint-list" title="${mountpointsTitle}" aria-label="Mountpoints được cấp">${mountpointDisplay}</div></div></td>
+        <td data-label="Connection"><div>${connection.activeConnsHtml}</div>${connectionLimit}</td>
+        <td class="text-center" data-label="Caster sync">${syncHtml}</td>
+        <td class="text-center" data-label="Sessions">${sessionHtml}</td>
+        <td class="text-center" data-label="Blocked">${blockedHtml}</td>
+        <td class="text-center" data-label="Expired">${expiresHtml}</td>
+        <td class="text-center" data-label="Server"><div class="rover-server-list">${mountpointHelp}</div></td>
+        <td class="rover-actions-cell" data-label="Actions"><div class="rover-row-actions">${actionHtml}</div></td>`;
+    return tr;
+}
 
     function patchEditedRoverRow(updatedRover) {
         if (!updatedRover || !updatedRover.username) return;
