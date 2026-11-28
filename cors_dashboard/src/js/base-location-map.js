@@ -64,7 +64,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         );
     }
 
-    if (!getLeaflet || !getLeaflet()) {
+    if (!getLeaflet?.()) {
         return (
             <div className="alert alert-danger" style={{ height: '250px' }}>
                 <h5>Lỗi: Leaflet chưa được tải</h5>

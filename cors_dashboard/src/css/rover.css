@@ -87,7 +87,7 @@ body.cors-manager-page .dashboard-bg {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s;
 }
 
 .notification-btn:hover {
@@ -107,7 +107,7 @@ body.cors-manager-page .dashboard-bg {
     align-items: center;
     justify-content: center;
     text-decoration: none;
-    transition: all 0.2s;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, transform 0.2s;
 }
 
 .back-link:hover {
@@ -208,7 +208,7 @@ body.cors-manager-page .dashboard-bg {
     padding: 8px 20px;
     font-size: 14px;
     font-weight: 600;
-    transition: all 0.2s;
+    transition: background-color 0.2s, box-shadow 0.2s, color 0.2s;
     border: none;
     background: transparent;
 }
@@ -288,7 +288,7 @@ body.cors-manager-page .dashboard-bg {
     align-items: center;
     gap: 8px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background-color 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
 .btn-premium-primary:hover {
@@ -446,7 +446,7 @@ body.cors-manager-page .dashboard-bg {
     padding: 2px 8px;
     background: rgba(59, 130, 246, 0.1);
     border-radius: 4px;
-    transition: all 0.2s;
+    transition: background-color 0.2s, color 0.2s;
 }
 
 .mount-link:hover {
@@ -479,7 +479,7 @@ body.cors-manager-page .dashboard-bg {
     justify-content: center;
     cursor: pointer;
     color: var(--text-secondary);
-    transition: all 0.2s;
+    transition: background-color 0.2s, color 0.2s;
     border: none;
     background: transparent;
 }
@@ -575,5 +575,13 @@ body.cors-manager-page .dashboard-bg {
     .filter-row {
         flex-direction: column;
         align-items: stretch;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html:root *, html:root *::before, html:root *::after {
+        animation: none !important;
+        scroll-behavior: auto !important;
+        transition: none !important;
     }
 }

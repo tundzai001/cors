@@ -230,7 +230,7 @@
     background: transparent; border: 1px solid rgba(0, 242, 255, 0.4);
     color: var(--primary-cyan); padding: 8px 24px; border-radius: 50px;
     font-weight: 600; font-size: 0.85rem; cursor: pointer;
-    transition: all 0.3s; letter-spacing: 0.5px;
+    transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s, transform 0.3s; letter-spacing: 0.5px;
 }
 .btn-login-nav:hover {
     background: rgba(0, 242, 255, 0.1);
@@ -295,7 +295,7 @@
     background: linear-gradient(135deg, #00f2ff 0%, #0088ff 100%);
     color: #0a192f; font-weight: 700; padding: 14px 36px;
     border-radius: 50px; border: none; cursor: pointer;
-    transition: all 0.3s; text-transform: uppercase;
+    transition: box-shadow 0.3s, transform 0.3s; text-transform: uppercase;
     letter-spacing: 1px; font-size: 0.9rem;
     box-shadow: 0 4px 20px rgba(0, 242, 255, 0.3);
 }
@@ -306,7 +306,7 @@
 .btn-outline-cyan {
     background: transparent; border: 1px solid rgba(0, 242, 255, 0.4);
     color: var(--primary-cyan); padding: 14px 36px; border-radius: 50px;
-    font-weight: 600; cursor: pointer; transition: all 0.3s;
+    font-weight: 600; cursor: pointer; transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
     font-size: 0.9rem;
 }
 .btn-outline-cyan:hover {
@@ -324,7 +324,7 @@
     backdrop-filter: blur(16px);
     border: 1px solid rgba(0, 242, 255, 0.12);
     border-radius: 20px; padding: 28px 24px;
-    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    transition: border-color 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     position: relative; overflow: hidden;
 }
 .landing-stat-card::before {
@@ -378,7 +378,7 @@
     backdrop-filter: blur(12px);
     border: 1px solid rgba(0, 242, 255, 0.08);
     border-radius: 20px; padding: 32px 28px;
-    transition: all 0.4s; height: 100%;
+    transition: background-color 0.4s, border-color 0.4s, box-shadow 0.4s, transform 0.4s; height: 100%;
 }
 .landing-feature-card-OLD:hover {
     border-color: rgba(0, 242, 255, 0.3);
@@ -395,7 +395,7 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 1.6rem; margin-bottom: 20px;
     border: 1px solid rgba(0, 242, 255, 0.15);
-    transition: all 0.4s;
+    transition: box-shadow 0.4s, transform 0.4s;
 }
 .feature-icon-blue { background: #0c2a40; color: #4facfe; }
 .feature-icon-green { background: #064e3b; color: #51cf66; }
@@ -432,7 +432,7 @@
     background: rgba(0, 0, 0, 0.7);
     backdrop-filter: blur(8px);
     z-index: 9998; opacity: 0; visibility: hidden;
-    transition: all 0.4s ease;
+    transition: opacity 0.4s ease, visibility 0.4s ease;
 }
 .login-overlay.active { opacity: 1; visibility: visible; }
 .login-panel {
@@ -460,7 +460,7 @@
     position: absolute; top: 20px; right: 20px;
     background: #1e293b; border: 1px solid rgba(255,255,255,0.2);
     color: #e2e8f0; width: 36px; height: 36px; border-radius: 50%;
-    font-size: 1.2rem; cursor: pointer; transition: all 0.3s;
+    font-size: 1.2rem; cursor: pointer; transition: background-color 0.3s, color 0.3s;
     display: flex; align-items: center; justify-content: center;
 }
 .login-panel-close:hover { background: #334155; color: #fff; }
@@ -469,7 +469,7 @@
 .login-input-icon {
     position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
     color: rgba(0, 242, 255, 0.5); font-size: 1.1rem; z-index: 2;
-    transition: all 0.3s;
+    transition: color 0.3s;
 }
 .login-input-group:focus-within .login-input-icon {
     color: var(--primary-cyan);
@@ -478,7 +478,7 @@
     width: 100%; background: #0b1220;
     border: 1px solid rgba(0, 242, 255, 0.3); border-radius: 14px;
     color: #fff; padding: 14px 16px 14px 48px; font-size: 0.95rem;
-    transition: all 0.3s; position: relative; z-index: 1;
+    transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s; position: relative; z-index: 1;
 }
 .login-input:focus {
     outline: none; border-color: var(--primary-cyan);
@@ -490,7 +490,7 @@
     width: 100%; padding: 14px; border: none; border-radius: 14px;
     background: linear-gradient(135deg, #00f2ff, #0088ff);
     color: #0a192f; font-weight: 700; font-size: 0.95rem;
-    cursor: pointer; transition: all 0.3s; position: relative;
+    cursor: pointer; transition: box-shadow 0.3s, transform 0.3s; position: relative;
     overflow: hidden; text-transform: uppercase; letter-spacing: 1px;
 }
 .login-submit-btn:hover:not(:disabled) {
@@ -517,7 +517,7 @@
     border: 1px solid rgba(0, 242, 255, 0.1);
     border-radius: 12px; padding: 12px 14px; margin-bottom: 16px;
     display: flex; align-items: center; gap: 12px;
-    text-decoration: none; transition: all 0.3s;
+    text-decoration: none; transition: background-color 0.3s, border-color 0.3s;
 }
 .login-promo:hover {
     background: rgba(0, 242, 255, 0.08);
@@ -548,7 +548,7 @@
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 20px; padding: 2rem;
-    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    transition: background-color 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 .status-card:hover {
     background: rgba(0, 242, 255, 0.03);
@@ -570,7 +570,7 @@
 .landing-nav-link {
     color: #8892b0; text-decoration: none; font-size: 0.85rem;
     font-weight: 500; padding: 6px 14px; border-radius: 8px;
-    transition: all 0.3s;
+    transition: background-color 0.3s, color 0.3s;
 }
 .landing-nav-link:hover {
     color: var(--primary-cyan);
@@ -583,7 +583,7 @@
     padding: 10px 14px; border-radius: 12px;
     background: rgba(10, 25, 47, 0.5);
     border: 1px solid rgba(0, 242, 255, 0.06);
-    text-decoration: none; transition: all 0.3s;
+    text-decoration: none; transition: background-color 0.3s, border-color 0.3s, color 0.3s, transform 0.3s;
     color: #b0c4de; font-size: 0.82rem;
 }
 .station-dir-item:hover {
@@ -956,7 +956,7 @@ html.lenis, html.lenis body {
     width: 45%; padding: 32px;
     background: rgba(10, 25, 47, 0.6); backdrop-filter: blur(12px);
     border: 1px solid rgba(0, 242, 255, 0.1); border-radius: 20px;
-    transition: all 0.4s;
+    transition: border-color 0.4s, box-shadow 0.4s, transform 0.4s;
 }
 .hiw-step-content:hover {
     border-color: rgba(0, 242, 255, 0.4);
@@ -1014,7 +1014,7 @@ html.lenis, html.lenis body {
     background: rgba(10, 25, 47, 0.6); backdrop-filter: blur(12px);
     border: 1px solid rgba(0, 242, 255, 0.1); border-radius: 20px;
     padding: 40px 32px; text-align: center;
-    transition: all 0.4s;
+    transition: border-color 0.4s, box-shadow 0.4s;
 }
 .livedata-card:hover {
     border-color: rgba(0, 242, 255, 0.3);
@@ -1057,7 +1057,7 @@ html.lenis, html.lenis body {
     background: linear-gradient(145deg, rgba(10, 25, 47, 0.68), rgba(8, 20, 39, 0.62));
     border: 1px solid rgba(0, 242, 255, 0.14);
     white-space: nowrap; font-size: 0.9rem; font-weight: 600;
-    color: #b0c4de; transition: all 0.3s;
+    color: #b0c4de; transition: border-color 0.3s, box-shadow 0.3s, color 0.3s, transform 0.3s;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 .tech-marquee-item:hover {
@@ -1195,7 +1195,7 @@ html.lenis, html.lenis body {
     display: flex; align-items: center; justify-content: center;
     font-size: 1.8rem; margin-bottom: 24px;
     border: 1px solid rgba(0, 242, 255, 0.2);
-    transition: all 0.4s;
+    transition: box-shadow 0.4s, transform 0.4s;
     flex-shrink: 0;
 }
 .feature-icon-blue { background: #0c2a40 !important; color: #4facfe !important; }
@@ -1528,6 +1528,14 @@ html.lenis, html.lenis body {
 
     .footer-surface {
         padding: 22px 18px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html:root *, html:root *::before, html:root *::after {
+        animation: none !important;
+        scroll-behavior: auto !important;
+        transition: none !important;
     }
 }
 

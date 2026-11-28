@@ -115,7 +115,7 @@ async function fetchHealthData() {
 }
 
 function updateUI(data) {
-    if (!data || !data.system) return;
+    if (!data?.system) return;
 
     // Update Text Elements
     const setText = (id, val) => {

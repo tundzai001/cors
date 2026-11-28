@@ -786,7 +786,7 @@
     padding: 5px 12px;
     cursor: pointer;
     white-space: nowrap;
-    transition: all 180ms ease;
+    transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
     user-select: none;
 }
 
@@ -982,7 +982,7 @@
     justify-content: center;
     gap: 5px;
     cursor: pointer;
-    transition: all 180ms ease;
+    transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
 }
 
 .globe-detail-card .card-action-btn:hover {
@@ -1077,7 +1077,7 @@
     background: rgba(15, 23, 42, 0.85);
     border: 1px solid rgba(148, 163, 184, 0.2);
     cursor: pointer;
-    transition: all 140ms ease;
+    transition: box-shadow 140ms ease, transform 140ms ease;
     display: inline-flex;
     align-items: center;
     gap: 3px;
@@ -1237,5 +1237,13 @@
     color: #94a3b8;
     margin-top: 2px;
     font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html:root *, html:root *::before, html:root *::after {
+        animation: none !important;
+        scroll-behavior: auto !important;
+        transition: none !important;
+    }
 }
 

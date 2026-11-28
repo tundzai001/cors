@@ -234,6 +234,13 @@
             0% { transform: translateX(-110%); }
             100% { transform: translateX(250%); }
         }
+
+        @media (prefers-reduced-motion: reduce) {
+            #app-preloader *, #app-preloader *::before, #app-preloader *::after {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
     </style>
 </head>
 
