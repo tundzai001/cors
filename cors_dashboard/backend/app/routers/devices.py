@@ -360,6 +360,23 @@ async def _get_chip_config_device(db, serial, current_user):
     return device
 
 
+def _normalize_ublox_gnss_options(sensor_type, mode, params, gnss_options):
+    if mode != "BASE" or sensor_type != "Ublox":
+        return gnss_options
+    try:
+        normalized_options = command_builder.normalize_gnss_options(gnss_options)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    gnss_options = {
+        **(gnss_options if isinstance(gnss_options, dict) else {}),
+        "interference_detection_enabled": normalized_options["interference_detection_enabled"],
+        "jamming_sensitivity_high": normalized_options["jamming_sensitivity_high"],
+    }
+    if isinstance(params, dict):
+        params["gnss_options"] = gnss_options
+    return gnss_options
+
+
 def _normalize_chip_request(payload, device):
     sensor_type = payload.get("sensor_type")
     params = payload.get("params", {})
@@ -373,18 +390,7 @@ def _normalize_chip_request(payload, device):
         params["gnss_options"] = gnss_options
     if not sensor_type or not mode:
         raise HTTPException(status_code=400, detail="Missing required fields: sensor_type or mode")
-    if mode == "BASE" and sensor_type == "Ublox":
-        try:
-            normalized_options = command_builder.normalize_gnss_options(gnss_options)
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        gnss_options = {
-            **(gnss_options if isinstance(gnss_options, dict) else {}),
-            "interference_detection_enabled": normalized_options["interference_detection_enabled"],
-            "jamming_sensitivity_high": normalized_options["jamming_sensitivity_high"],
-        }
-        if isinstance(params, dict):
-            params["gnss_options"] = gnss_options
+    gnss_options = _normalize_ublox_gnss_options(sensor_type, mode, params, gnss_options)
     return {
         "sensor_type": sensor_type, "params": params, "mode": mode, "method": method,
         "gnss_options": gnss_options, "existing_base_config": existing_base_config,

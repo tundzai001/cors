@@ -61,6 +61,40 @@ def _export_ntrip_version(device, index):
     return f"v{value}" if "." in value else f"v{value}.0"
 
 
+async def _visible_export_devices(devices_db, auth_db, current_user, device_serial):
+    devices = await _ops_visible_devices(devices_db, auth_db, current_user)
+    if device_serial:
+        devices = [device for device in devices if str(device.serial).casefold() == device_serial.casefold()]
+        if not devices:
+            raise HTTPException(status_code=404, detail="Không tìm thấy trạm trong phạm vi được phép")
+    return devices
+
+
+async def _export_device_coordinators(auth_db, devices):
+    coordinator_ids = {device.user_id for device in devices if device.user_id}
+    if not coordinator_ids:
+        return {}
+    result = await auth_db.execute(
+        select(models.User.id, models.User.username).where(models.User.id.in_(coordinator_ids))
+    )
+    return dict(result.all())
+
+
+def _selected_device_export_fields(request, station_fields):
+    selected = request.get("device_fields")
+    if selected is None:
+        selected = ["serial", "name", "status", "updated_at", "coordinator", "synced"]
+    invalid = (
+        not isinstance(selected, list)
+        or not selected
+        or len(selected) > len(station_fields)
+        or any(not isinstance(key, str) or key not in station_fields for key in selected)
+    )
+    if invalid:
+        raise HTTPException(status_code=400, detail="Thông số trạm không hợp lệ")
+    return list(dict.fromkeys(selected))
+
+
 async def _export_devices_report(context):
     subtitle = context["subtitle"]
     request = context['request']
@@ -70,16 +104,8 @@ async def _export_devices_report(context):
     device_serial = context['device_serial']
     when = context['when']
     rows = context['rows']
-    devices = await _ops_visible_devices(devices_db, auth_db, current_user)
-    if device_serial:
-        devices = [d for d in devices if str(d.serial).casefold() == device_serial.casefold()]
-        if not devices:
-            raise HTTPException(status_code=404, detail="Không tìm thấy trạm trong phạm vi được phép")
-    coordinator_ids = {d.user_id for d in devices if d.user_id}
-    coordinators = {}
-    if coordinator_ids:
-        result = await auth_db.execute(select(models.User.id, models.User.username).where(models.User.id.in_(coordinator_ids)))
-        coordinators = dict(result.all())
+    devices = await _visible_export_devices(devices_db, auth_db, current_user, device_serial)
+    coordinators = await _export_device_coordinators(auth_db, devices)
 
     station_fields = {
         "serial": ("Số sê-ri", lambda d: d.serial),
@@ -120,12 +146,7 @@ async def _export_devices_report(context):
         "rtcm_mountpoint": ("RTCM mountpoint", lambda d: _export_config_value(d, "service_config", "rtcmmountpoint1")),
         "rtcm_username": ("RTCM tài khoản", lambda d: _export_config_value(d, "service_config", "rtcmusername1")),
     }
-    selected = request.get("device_fields")
-    if selected is None:
-        selected = ["serial", "name", "status", "updated_at", "coordinator", "synced"]
-    if not isinstance(selected, list) or not selected or len(selected) > len(station_fields) or any(not isinstance(key, str) or key not in station_fields for key in selected):
-        raise HTTPException(status_code=400, detail="Thông số trạm không hợp lệ")
-    selected = list(dict.fromkeys(selected))
+    selected = _selected_device_export_fields(request, station_fields)
     headers = [station_fields[key][0] for key in selected]
     rows = [[station_fields[key][1](device) for key in selected] for device in devices]
     title = "BÁO CÁO TRẠM BASE"
@@ -136,40 +157,57 @@ async def _export_devices_report(context):
     context["title"] = title
 
 
-async def _export_rover_report(context):
-    subtitle = context["subtitle"]
+async def _visible_export_rovers(context):
     auth_db = context['auth_db']
     devices_db = context['devices_db']
     current_user = context['current_user']
-    kind = context['kind']
     rover_name = context['rover_name']
-    when = context['when']
-    words = context['words']
-    rows = context['rows']
     rovers = await _ops_visible_rovers(auth_db, devices_db, current_user)
     allowed_names = {str(rover.username).casefold() for rover in rovers}
     if rover_name and current_user.role != auth.Role.ADMIN and rover_name.casefold() not in allowed_names:
         raise HTTPException(status_code=404, detail="Không tìm thấy Rover trong phạm vi được phép")
-    if kind == "rovers":
-        selected_rovers = [r for r in rovers if not rover_name or str(r.username).casefold() == rover_name.casefold()]
-        if rover_name and not selected_rovers:
-            raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover")
-        headers = [ACCOUNT_HEADER, "Số sê-ri Base", "Mountpoint", "Caster", "Hoạt động", "Kết nối tối đa", "Hết hạn", CREATED_AT_HEADER]
-        rows = [[r.username, r.base_serial, words(r.mountpoints), words(r.target_casters), r.is_active, r.max_connections, when(r.expires_at), when(r.created_at)] for r in selected_rovers]
-        title = "DANH SÁCH ROVER"
-    else:
-        query = select(models.RoverSessionHistory)
-        if rover_name:
-            query = query.where(func.lower(models.RoverSessionHistory.username) == rover_name.lower())
-        elif current_user.role != auth.Role.ADMIN:
-            query = query.where(func.lower(models.RoverSessionHistory.username).in_(allowed_names))
-        result = await auth_db.execute(query.order_by(models.RoverSessionHistory.last_seen_at.desc()))
-        sessions = result.scalars().all()
-        if rover_name and not sessions:
-            raise HTTPException(status_code=404, detail="Rover này chưa có phiên được lưu")
-        headers = [ACCOUNT_HEADER, "Caster", "Mountpoint", "Receiver", "Bắt đầu", "Cập nhật cuối", "Kết thúc", "Vĩ độ cuối", "Kinh độ cuối", "Ghi nhận vị trí", "Google Maps"]
-        rows = [[s.username, s.server, s.mountpoint, s.receiver_id, when(s.started_at), when(s.last_seen_at), when(s.ended_at), s.latitude if s.position_fix_quality == 4 else None, s.longitude if s.position_fix_quality == 4 else None, when(s.position_updated_at) if s.position_fix_quality == 4 else None, f"https://www.google.com/maps/search/?api=1&query={s.latitude},{s.longitude}" if s.position_fix_quality == 4 and s.latitude is not None and s.longitude is not None else ""] for s in sessions]
-        title = "LỊCH SỬ PHIÊN ROVER"
+    return rovers, allowed_names
+
+
+async def _export_rover_list_report(context):
+    subtitle = context["subtitle"]
+    rover_name = context['rover_name']
+    when = context['when']
+    words = context['words']
+    rows = context['rows']
+    rovers, _ = await _visible_export_rovers(context)
+    selected_rovers = [rover for rover in rovers if not rover_name or str(rover.username).casefold() == rover_name.casefold()]
+    if rover_name and not selected_rovers:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover")
+    headers = [ACCOUNT_HEADER, "Số sê-ri Base", "Mountpoint", "Caster", "Hoạt động", "Kết nối tối đa", "Hết hạn", CREATED_AT_HEADER]
+    rows = [[rover.username, rover.base_serial, words(rover.mountpoints), words(rover.target_casters), rover.is_active, rover.max_connections, when(rover.expires_at), when(rover.created_at)] for rover in selected_rovers]
+    title = "DANH SÁCH ROVER"
+    subtitle += f" · {len(rows)} dòng" + (f" · Rover {rover_name}" if rover_name else "")
+    context["rows"] = rows
+    context["subtitle"] = subtitle
+    context["headers"] = headers
+    context["title"] = title
+
+
+async def _export_rover_history_report(context):
+    subtitle = context["subtitle"]
+    auth_db = context['auth_db']
+    current_user = context['current_user']
+    rover_name = context['rover_name']
+    when = context['when']
+    _, allowed_names = await _visible_export_rovers(context)
+    query = select(models.RoverSessionHistory)
+    if rover_name:
+        query = query.where(func.lower(models.RoverSessionHistory.username) == rover_name.lower())
+    elif current_user.role != auth.Role.ADMIN:
+        query = query.where(func.lower(models.RoverSessionHistory.username).in_(allowed_names))
+    result = await auth_db.execute(query.order_by(models.RoverSessionHistory.last_seen_at.desc()))
+    sessions = result.scalars().all()
+    if rover_name and not sessions:
+        raise HTTPException(status_code=404, detail="Rover này chưa có phiên được lưu")
+    headers = [ACCOUNT_HEADER, "Caster", "Mountpoint", "Receiver", "Bắt đầu", "Cập nhật cuối", "Kết thúc", "Vĩ độ cuối", "Kinh độ cuối", "Ghi nhận vị trí", "Google Maps"]
+    rows = [[session.username, session.server, session.mountpoint, session.receiver_id, when(session.started_at), when(session.last_seen_at), when(session.ended_at), session.latitude if session.position_fix_quality == 4 else None, session.longitude if session.position_fix_quality == 4 else None, when(session.position_updated_at) if session.position_fix_quality == 4 else None, f"https://www.google.com/maps/search/?api=1&query={session.latitude},{session.longitude}" if session.position_fix_quality == 4 and session.latitude is not None and session.longitude is not None else ""] for session in sessions]
+    title = "LỊCH SỬ PHIÊN ROVER"
     subtitle += f" · {len(rows)} dòng" + (f" · Rover {rover_name}" if rover_name else "")
     context["rows"] = rows
     context["subtitle"] = subtitle
@@ -326,8 +364,8 @@ async def _export_templates_report(context):
 
 _EXPORT_REPORT_HANDLERS = {
     'devices': _export_devices_report,
-    'rovers': _export_rover_report,
-    'rover-history': _export_rover_report,
+    'rovers': _export_rover_list_report,
+    'rover-history': _export_rover_history_report,
     'caster-users': _export_caster_users_report,
     'blocklist': _export_blocklist_report,
     'alerts': _export_alerts_report,

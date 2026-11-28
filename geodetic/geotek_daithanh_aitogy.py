@@ -3687,6 +3687,58 @@ def publish_unconfigured_device_status(client, serial, detail=""):
         client.publish(f"pi/devices/{serial}/status", json.dumps(status), qos=0, retain=True)
 
 
+def _decoder_config_matches(existing, config, connection_keys):
+    return existing and existing.is_alive() and all(
+        getattr(existing, 'cfg', {}).get(key) == config[key] for key in connection_keys
+    )
+
+
+def _start_decoder_worker(client, serial, mountpoint, payload, worker_map):
+    is_prefix7 = mountpoint.startswith('7')
+    if is_prefix7 and (not payload.get('rover_pass') or payload.get('rover_user') != mountpoint):
+        logging.warning('Rejected Base 4G decoder start without Rover credentials')
+        return
+    config = {
+        "serial": serial, "mountpoint": mountpoint,
+        "rover_user": payload.get("rover_user") or mountpoint,
+        "rover_pass": payload.get("rover_pass") or "12345",
+        "host": str(payload.get("host") or TARGET_HOST).strip().lower(),
+        "port": int(payload.get("port") or TARGET_PORT),
+        "lat": payload.get("lat", 0.0), "lon": payload.get("lon", 0.0),
+        "alt": payload.get("alt", 0.0),
+    }
+    connection_keys = ('mountpoint', 'rover_user', 'rover_pass', 'host', 'port')
+    existing = worker_map.get(serial)
+    if _decoder_config_matches(existing, config, connection_keys):
+        return
+    if existing:
+        changed = [key for key in connection_keys if existing.cfg.get(key) != config[key]]
+        logging.info('Decoder configuration changed for %s: %s', serial, ', '.join(changed) or 'worker stopped')
+        existing.stop()
+        existing.join(timeout=12)
+        if existing.is_alive():
+            logging.warning('Previous decoder still stopping; deferring replacement')
+            return
+    worker = MonitorWorker(config, client)
+    worker_map[serial] = worker
+    worker.start()
+    logging.info(f"✓ Dynamically started ESP Decoder Worker: serial={serial}, mp={mountpoint}")
+
+
+def _stop_decoder_worker(serial, mountpoint, worker_map):
+    existing = worker_map.get(serial)
+    if not existing:
+        return
+    if hasattr(existing, "stop"):
+        existing.stop()
+    try:
+        existing.join(timeout=2)
+    except Exception:
+        pass
+    worker_map.pop(serial, None)
+    logging.info(f"✓ Stopped ESP Decoder Worker: serial={serial}, mp={mountpoint}")
+
+
 def _handle_decoder_control(c, msg, worker_map):
     if bool(getattr(msg, "retain", False)):
         return
@@ -3694,53 +3746,14 @@ def _handle_decoder_control(c, msg, worker_map):
         payload = json.loads((msg.payload or b"{}").decode("utf-8"))
         action = payload.get("action")
         serial = str(payload.get("serial") or '').strip()
-        mp = str(payload.get("mountpoint") or '').strip().lstrip('/')
-        if not serial or not mp:
+        mountpoint = str(payload.get("mountpoint") or '').strip().lstrip('/')
+        if not serial or not mountpoint:
             return
         with WORKER_MAP_LOCK:
             if action == "start":
-                prefix7 = mp.startswith('7')
-                if prefix7 and (not payload.get('rover_pass') or payload.get('rover_user') != mp):
-                    logging.warning('Rejected Base 4G decoder start without Rover credentials')
-                    return
-                cfg = {
-                    "serial": serial, "mountpoint": mp,
-                    "rover_user": payload.get("rover_user") or mp,
-                    "rover_pass": payload.get("rover_pass") or "12345",
-                    "host": str(payload.get("host") or TARGET_HOST).strip().lower(),
-                    "port": int(payload.get("port") or TARGET_PORT),
-                    "lat": payload.get("lat", 0.0), "lon": payload.get("lon", 0.0),
-                    "alt": payload.get("alt", 0.0),
-                }
-                existing = worker_map.get(serial)
-                connection_keys = ('mountpoint', 'rover_user', 'rover_pass', 'host', 'port')
-                if existing and existing.is_alive() and all(
-                    getattr(existing, 'cfg', {}).get(key) == cfg[key] for key in connection_keys
-                ):
-                    return
-                if existing:
-                    changed = [key for key in connection_keys if existing.cfg.get(key) != cfg[key]]
-                    logging.info('Decoder configuration changed for %s: %s', serial, ', '.join(changed) or 'worker stopped')
-                    existing.stop()
-                    existing.join(timeout=12)
-                    if existing.is_alive():
-                        logging.warning('Previous decoder still stopping; deferring replacement')
-                        return
-                worker = MonitorWorker(cfg, c)
-                worker_map[serial] = worker
-                worker.start()
-                logging.info(f"✓ Dynamically started ESP Decoder Worker: serial={serial}, mp={mp}")
+                _start_decoder_worker(c, serial, mountpoint, payload, worker_map)
             elif action == "stop":
-                existing = worker_map.get(serial)
-                if existing:
-                    if hasattr(existing, "stop"):
-                        existing.stop()
-                    try:
-                        existing.join(timeout=2)
-                    except Exception:
-                        pass
-                    worker_map.pop(serial, None)
-                    logging.info(f"✓ Stopped ESP Decoder Worker: serial={serial}, mp={mp}")
+                _stop_decoder_worker(serial, mountpoint, worker_map)
     except Exception as e:
         logging.exception(f"Error handling esp_base decoder control: {e}")
     return

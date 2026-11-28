@@ -642,27 +642,35 @@ def _update_device_service_config(device, previous, new_service_config, is_out_o
     return True
 
 
-def _update_device_status(device, new_status, current_ts, device_data, updates):
-    normalized_new = str(new_status or "").strip().lower()
-    normalized_current = str(device.status or "").strip().lower()
-    if normalized_new and normalized_new != normalized_current:
-        updates["status"] = new_status
-        updates["timestamp"] = current_ts
-        if normalized_new == "offline":
-            last_seen = int(device.timestamp or 0)
-            updates["offline_since"] = (
-                min(current_ts, last_seen + 180)
-                if last_seen > 0 and current_ts - last_seen > 180
-                else current_ts
-            )
-        else:
-            updates["offline_since"] = None
-        return True
+def _set_changed_device_status(device, new_status, normalized_new, current_ts, updates):
+    updates["status"] = new_status
+    updates["timestamp"] = current_ts
+    if normalized_new != "offline":
+        updates["offline_since"] = None
+        return
+    last_seen = int(device.timestamp or 0)
+    updates["offline_since"] = (
+        min(current_ts, last_seen + 180)
+        if last_seen > 0 and current_ts - last_seen > 180
+        else current_ts
+    )
+
+
+def _refresh_device_offline_since(device, normalized_new, current_ts, device_data, updates):
     updates["timestamp"] = current_ts
     if normalized_new == "offline" and device.offline_since is None and device_data.get("offline_since"):
         updates["offline_since"] = int(device_data["offline_since"])
     elif normalized_new and normalized_new != "offline" and device.offline_since is not None:
         updates["offline_since"] = None
+
+
+def _update_device_status(device, new_status, current_ts, device_data, updates):
+    normalized_new = str(new_status or "").strip().lower()
+    normalized_current = str(device.status or "").strip().lower()
+    if normalized_new and normalized_new != normalized_current:
+        _set_changed_device_status(device, new_status, normalized_new, current_ts, updates)
+    else:
+        _refresh_device_offline_since(device, normalized_new, current_ts, device_data, updates)
     return True
 
 
