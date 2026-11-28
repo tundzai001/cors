@@ -132,6 +132,58 @@ async def get_rover_activity_daily(
 
 
 @router.get("/api/rovers/activity/day")
+def _group_rover_history_sessions(rows):
+    items: dict[tuple[str, str], dict] = {}
+    machine_by_session: dict[int, tuple[str, str]] = {}
+    for session_id, username, mountpoint, receiver_id in rows:
+        username_value = str(username or "").strip()
+        username_key = username_value.casefold()
+        receiver_key = str(receiver_id or "").strip().casefold()
+        if not username_key or not receiver_key:
+            continue
+        machine_key = (username_key, receiver_key)
+        item = items.setdefault(machine_key, {
+            "machine_key": json.dumps(machine_key, ensure_ascii=False, separators=(",", ":")),
+            "username": username_value,
+            "receiver_id": str(receiver_id).strip(),
+            "usernames": set(),
+            "session_count": 0,
+            "point_count": 0,
+        })
+        item["usernames"].add(username_value)
+        item["session_count"] += 1
+        machine_by_session[session_id] = machine_key
+    return items, machine_by_session
+
+
+async def _add_rover_history_point_counts(auth_db, machine_by_session, start_at, end_at, items):
+    if not machine_by_session:
+        return
+    point_stmt = select(
+        models.RoverFixedPoint.session_id,
+        func.count(models.RoverFixedPoint.id),
+    ).where(
+        models.RoverFixedPoint.session_id.in_(list(machine_by_session)),
+        models.RoverFixedPoint.recorded_at >= start_at,
+        models.RoverFixedPoint.recorded_at < end_at,
+    ).group_by(models.RoverFixedPoint.session_id)
+    point_result = await auth_db.execute(point_stmt)
+    for session_id, point_count in point_result.all():
+        item = items.get(machine_by_session.get(session_id, ("", "")))
+        if item is not None:
+            item["point_count"] += int(point_count or 0)
+
+
+def _rover_activity_machines(items):
+    return [
+        {
+            **item,
+            "usernames": sorted(item["usernames"], key=str.casefold),
+        }
+        for item in sorted(items.values(), key=lambda value: (value["receiver_id"].casefold(), value["username"].casefold()))
+    ]
+
+
 async def get_rover_activity_day(
     activity_date: date = Query(..., alias="date"),
     auth_db: AsyncSession = Depends(get_auth_db),
@@ -140,7 +192,6 @@ async def get_rover_activity_day(
 ):
     visible_usernames = await _rover_history_user_scope(auth_db, devices_db, current_user)
     start_at, end_at = _rover_history_day_bounds(activity_date)
-    items: dict[tuple[str, str], dict] = {}
     if visible_usernames is not None and not visible_usernames:
         return {"date": activity_date.isoformat(), "machine_count": 0, "machines": []}
 
@@ -158,49 +209,9 @@ async def get_rover_activity_day(
     if visible_usernames is not None:
         stmt = stmt.where(func.lower(func.trim(session.username)).in_(visible_usernames))
     result = await auth_db.execute(stmt)
-    machine_by_session: dict[int, tuple[str, str]] = {}
-    for session_id, username, mountpoint, receiver_id in result.all():
-        username_value = str(username or "").strip()
-        username_key = username_value.casefold()
-        receiver_key = str(receiver_id or "").strip().casefold()
-        if not username_key or not receiver_key:
-            continue
-        machine_key = (username_key, receiver_key)
-        item = items.setdefault(machine_key, {
-            "machine_key": json.dumps(machine_key, ensure_ascii=False, separators=(",", ":")),
-            "username": username_value,
-            "receiver_id": str(receiver_id).strip(),
-            "usernames": set(),
-            "session_count": 0,
-            "point_count": 0,
-        })
-        if username_value:
-            item["usernames"].add(username_value)
-        item["session_count"] += 1
-        machine_by_session[session_id] = machine_key
-
-    if machine_by_session:
-        point_stmt = select(
-            models.RoverFixedPoint.session_id,
-            func.count(models.RoverFixedPoint.id),
-        ).where(
-            models.RoverFixedPoint.session_id.in_(list(machine_by_session)),
-            models.RoverFixedPoint.recorded_at >= start_at,
-            models.RoverFixedPoint.recorded_at < end_at,
-        ).group_by(models.RoverFixedPoint.session_id)
-        point_result = await auth_db.execute(point_stmt)
-        for session_id, point_count in point_result.all():
-            item = items.get(machine_by_session.get(session_id, ("", "")))
-            if item is not None:
-                item["point_count"] += int(point_count or 0)
-
-    machines = [
-        {
-            **item,
-            "usernames": sorted(item["usernames"], key=str.casefold),
-        }
-        for item in sorted(items.values(), key=lambda value: (value["receiver_id"].casefold(), value["username"].casefold()))
-    ]
+    items, machine_by_session = _group_rover_history_sessions(result.all())
+    await _add_rover_history_point_counts(auth_db, machine_by_session, start_at, end_at, items)
+    machines = _rover_activity_machines(items)
     return {"date": activity_date.isoformat(), "machine_count": len(machines), "machines": machines}
 
 

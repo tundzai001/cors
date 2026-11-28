@@ -25,23 +25,30 @@ def is_readonly_base(device) -> bool:
         'mountpoint1', 'active_mountpoint', 'mountpoint', 'source_mountpoint', 'mountpoint2'))
 
 
-async def require_editable_base(request: Request, db: AsyncSession = Depends(get_db)):
-    """Reject station mutations before handlers persist configuration or licenses."""
-    if request.method in ('GET', 'HEAD', 'OPTIONS'):
-        return
+async def _editable_base_request_serials(request):
     serials = [request.path_params['serial']] if request.path_params.get('serial') else []
     if request.url.path in ('/api/license/pi', '/api/devices/bulk-action', '/api/devices/apply-template'):
         try:
             payload = await request.json()
         except ValueError:
-            return  # Leave malformed bodies to the endpoint's schema validation.
+            return None  # Leave malformed bodies to the endpoint's schema validation.
         if not isinstance(payload, dict):
-            return
+            return None
         if request.url.path == '/api/license/pi':
             if isinstance(payload.get('serial'), str):
                 serials.append(payload['serial'])
         elif isinstance(payload.get('serials'), list):
             serials.extend(s for s in payload['serials'] if isinstance(s, str))
+    return serials
+
+
+async def require_editable_base(request: Request, db: AsyncSession = Depends(get_db)):
+    """Reject station mutations before handlers persist configuration or licenses."""
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return
+    serials = await _editable_base_request_serials(request)
+    if serials is None:
+        return
     from . import crud
     for serial in serials:
         device = await crud.get_device_by_serial(db, serial)

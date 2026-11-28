@@ -897,27 +897,35 @@ async def _live_rover_hosts(username):
     return live_hosts
 
 
+def _requested_rover_hosts(old_hosts, update_req, live_hosts):
+    if update_req.target_casters is not None:
+        requested = [str(host).strip() for host in update_req.target_casters if str(host).strip()]
+        return requested if requested else list(old_hosts or live_hosts)
+    return list(old_hosts or live_hosts)
+
+
+def _default_rover_hosts():
+    env_hosts, env_config = _read_caster_config_from_env()
+    if env_hosts:
+        return [str(host).strip() for host in env_hosts if host.strip()]
+    default_host = str(env_config.get("host") or settings.CASTER_HOST or "").strip()
+    return [default_host] if default_host else []
+
+
+def _unique_rover_hosts(hosts):
+    seen = set()
+    return [host for host in hosts if host and not (host in seen or seen.add(host))]
+
+
 def _validated_rover_hosts(rover, update_req, live_hosts):
     old_hosts = {
         host.strip() for host in (rover.target_casters if rover.target_casters else "").split(";")
         if host.strip()
     }
-    if update_req.target_casters is not None:
-        requested = [str(host).strip() for host in update_req.target_casters if str(host).strip()]
-        updated = requested if requested else list(old_hosts or live_hosts)
-    else:
-        updated = list(old_hosts or live_hosts)
+    updated = _requested_rover_hosts(old_hosts, update_req, live_hosts)
     if not updated:
-        env_hosts, env_config = _read_caster_config_from_env()
-        if env_hosts:
-            updated = [str(host).strip() for host in env_hosts if host.strip()]
-        else:
-            default_host = str(env_config.get("host") or settings.CASTER_HOST or "").strip()
-            if default_host:
-                updated = [default_host]
-
-    seen = set()
-    updated = [host for host in updated if host and not (host in seen or seen.add(host))]
+        updated = _default_rover_hosts()
+    updated = _unique_rover_hosts(updated)
     try:
         updated = validate_caster_hosts(updated)
     except ValueError as error:
