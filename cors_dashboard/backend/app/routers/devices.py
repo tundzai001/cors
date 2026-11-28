@@ -168,27 +168,21 @@ async def get_initial_devices(
     logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → returning ALL devices")
     return _device_response_list(await crud.get_all_devices(db), current_user)
 
-@router.post("/api/devices/{serial}/command", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
-async def send_generic_command(
-    serial: str, 
-    command: schemas.Command, 
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user)):
+async def _load_generic_command_device(serial, command, db, current_user):
     if current_user.role == auth.Role.COORDINATOR:
         raise HTTPException(status_code=403, detail="Coordinators can only send specific commands.")
     if not auth.has_permission(current_user, auth.Permission.EDIT_CHIP_CONFIG):
-         raise HTTPException(status_code=403, detail="Permission denied.")
-
+        raise HTTPException(status_code=403, detail="Permission denied.")
+    name = None
     if command.command == "PROVISION_DEVICE":
         name = command.payload.get("name")
         if not isinstance(name, str) or not name.strip():
             raise HTTPException(status_code=400, detail="Tên không được để trống")
-    
-    # 1. Lấy thiết bị
+
     device = await crud.get_device_by_serial(db, serial)
-    if not device and command.command == "PROVISION_DEVICE" and serial in mqtt_handler.device_telemetry_cache:
-        # Discovery does not create DB rows. Explicit admin provisioning must
-        # register and deploy a server credential before configuring the agent.
+    discovered = not device and command.command == "PROVISION_DEVICE"
+    discovered = discovered and serial in mqtt_handler.device_telemetry_cache
+    if discovered:
         if not auth.has_permission(current_user, auth.Permission.MANAGE_LICENSE):
             raise HTTPException(status_code=403, detail="Bạn không có quyền đăng ký và cấp token cho trạm mới.")
         await auto_deploy_device_token(serial, db, current_user)
@@ -197,64 +191,97 @@ async def send_generic_command(
         raise HTTPException(status_code=404, detail=DEVICE_NOT_FOUND)
     if current_user.role == auth.Role.COORDINATOR and device.user_id != current_user.id:
         raise HTTPException(status_code=403, detail=VIEW_ONLY_STATION)
+    return device, name
+
+
+async def _send_gnss_verification(serial, command, db, device, current_user):
+    live_info = (mqtt_handler.device_telemetry_cache.get(serial) or {}).get("system_info")
+    capabilities = live_info if isinstance(live_info, dict) else device.system_info or {}
+    supported_chip = device.detected_chip_type in ("Ublox", "Unicorecomm")
+    if not supported_chip or capabilities.get("gnss_verification_supported") is not True:
+        raise HTTPException(status_code=409, detail="Cập nhật agent để xác minh cấu hình GNSS.")
+    try:
+        embedded = capabilities.get("gnss_verification_uart1") is True
+        if device.detected_chip_type == "Ublox":
+            telemetry = mqtt_handler.device_telemetry_cache.get(serial) or {}
+            profile = command_builder.select_ublox_profile(telemetry, capabilities)
+            expected = command_builder.build_ublox_verification_payload(
+                device.base_config or {}, route_to_uart1=embedded, receiver_profile=profile
+            )
+        else:
+            expected = command_builder.build_unicore_verification_payload(
+                device.base_config or {}, current_port=embedded
+            )
+            selected_port = command.payload.get("port")
+            if selected_port is not None:
+                allowed_port = embedded and selected_port in ("COM1", "COM2", "COM3")
+                if not allowed_port:
+                    raise ValueError("Cổng đối chiếu phải là COM1, COM2 hoặc COM3 trên ESP32.")
+                expected["port"] = selected_port
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    command_id = secrets.token_urlsafe(18)
+    result = await send_command_to_pi(
+        serial, {"command": command.command, "payload": expected, "command_id": command_id}
+    )
+    await crud.log_system_event(
+        db=db, type="info", user_id=current_user.id, serial=serial,
+        message=f"GNSS configuration verification by {current_user.username}",
+    )
+    return {**result, "command_id": command_id}
+
+
+async def _send_storage_command(serial, command, db, device, current_user):
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ quản trị viên được quản lý bộ nhớ thiết bị.")
+    storage = (device.system_info or {}).get("nvs", {})
+    if not isinstance(storage, dict) or storage.get("cleanup_supported") is not True:
+        raise HTTPException(status_code=409, detail="Firmware chưa hỗ trợ quản lý bộ nhớ. Hãy cập nhật ESP32.")
+    if command.command == "CHECK_STORAGE_STATUS" and command.payload.get("inspect"):
+        if storage.get("inventory_supported") is not True:
+            raise HTTPException(status_code=409, detail="Cập nhật firmware để xem bảng dữ liệu NVS.")
+        offset = command.payload.get("offset", 0)
+        if type(offset) is not int or not 0 <= offset <= 8192:
+            raise HTTPException(status_code=400, detail="Vị trí trang NVS không hợp lệ.")
+        command.payload = {"inspect": True, "offset": offset}
+    if command.command == "CLEAR_NVS_DATA":
+        group = command.payload.get("group")
+        if group not in ("unused_wifi", "auto_base_history") or command.payload.get("confirm") != group:
+            raise HTTPException(status_code=400, detail="Chọn và xác nhận đúng nhóm dữ liệu cần xóa.")
+    command_id = secrets.token_urlsafe(18)
+    result = await send_command_to_pi(serial, {**command.model_dump(), "command_id": command_id})
+    await crud.log_system_event(
+        db=db, type="info", user_id=current_user.id, serial=serial,
+        message=f"Storage command {command.command} ({command.payload.get('group', 'status')}) by {current_user.username}",
+    )
+    return {**result, "command_id": command_id}
+
+
+async def _send_provision_device_command(serial, name, db, current_user):
+    from .users import rename_device
+    return await rename_device(serial, schemas.DeviceRename(name=name.strip()), db, current_user)
+
+
+@router.post("/api/devices/{serial}/command", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
+async def send_generic_command(
+    serial: str,
+    command: schemas.Command,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    device, name = await _load_generic_command_device(serial, command, db, current_user)
     if command.command == "VERIFY_GNSS_CONFIG":
-        live_info = (mqtt_handler.device_telemetry_cache.get(serial) or {}).get("system_info")
-        capabilities = live_info if isinstance(live_info, dict) else device.system_info or {}
-        if device.detected_chip_type not in ("Ublox", "Unicorecomm") or capabilities.get("gnss_verification_supported") is not True:
-            raise HTTPException(status_code=409, detail="Cập nhật agent để xác minh cấu hình GNSS.")
-        try:
-            # Compare against the saved desired configuration, never client input.
-            embedded = capabilities.get("gnss_verification_uart1") is True
-            if device.detected_chip_type == "Ublox":
-                profile = command_builder.select_ublox_profile(mqtt_handler.device_telemetry_cache.get(serial) or {}, capabilities)
-                expected = command_builder.build_ublox_verification_payload(device.base_config or {}, route_to_uart1=embedded, receiver_profile=profile)
-            else:
-                expected = command_builder.build_unicore_verification_payload(device.base_config or {}, current_port=embedded)
-                selected_port = command.payload.get("port")
-                if selected_port is not None:
-                    if not embedded or selected_port not in ("COM1", "COM2", "COM3"):
-                        raise ValueError("Cổng đối chiếu phải là COM1, COM2 hoặc COM3 trên ESP32.")
-                    expected["port"] = selected_port
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        command_id = secrets.token_urlsafe(18)
-        result = await send_command_to_pi(serial, {"command": command.command, "payload": expected, "command_id": command_id})
-        await crud.log_system_event(db=db, type="info", user_id=current_user.id, serial=serial,
-                                   message=f"GNSS configuration verification by {current_user.username}")
-        return {**result, "command_id": command_id}
+        return await _send_gnss_verification(serial, command, db, device, current_user)
     if command.command in ("CHECK_STORAGE_STATUS", "CLEAR_NVS_DATA"):
-        if current_user.role != auth.Role.ADMIN:
-            raise HTTPException(status_code=403, detail="Chỉ quản trị viên được quản lý bộ nhớ thiết bị.")
-        storage = (device.system_info or {}).get("nvs", {})
-        if not isinstance(storage, dict) or storage.get("cleanup_supported") is not True:
-            raise HTTPException(status_code=409, detail="Firmware chưa hỗ trợ quản lý bộ nhớ. Hãy cập nhật ESP32.")
-        if command.command == "CHECK_STORAGE_STATUS" and command.payload.get("inspect"):
-            if storage.get("inventory_supported") is not True:
-                raise HTTPException(status_code=409, detail="Cập nhật firmware để xem bảng dữ liệu NVS.")
-            offset = command.payload.get("offset", 0)
-            if type(offset) is not int or not 0 <= offset <= 8192:
-                raise HTTPException(status_code=400, detail="Vị trí trang NVS không hợp lệ.")
-            command.payload = {"inspect": True, "offset": offset}
-        if command.command == "CLEAR_NVS_DATA":
-            group = command.payload.get("group")
-            if group not in ("unused_wifi", "auto_base_history") or command.payload.get("confirm") != group:
-                raise HTTPException(status_code=400, detail="Chọn và xác nhận đúng nhóm dữ liệu cần xóa.")
-        command_id = secrets.token_urlsafe(18)
-        result = await send_command_to_pi(serial, {**command.model_dump(), "command_id": command_id})
-        await crud.log_system_event(db=db, type="info", user_id=current_user.id, serial=serial,
-                                   message=f"Storage command {command.command} ({command.payload.get('group', 'status')}) by {current_user.username}")
-        return {**result, "command_id": command_id}
+        return await _send_storage_command(serial, command, db, device, current_user)
     if command.command == "PROVISION_DEVICE":
-        # Provisioning must persist the chosen name before sending it to Pi.
-        # Reuse rename so offline broadcasts and explicit renames agree.
-        from .users import rename_device
-        return await rename_device(serial, schemas.DeviceRename(name=name.strip()), db, current_user)
+        return await _send_provision_device_command(serial, name, db, current_user)
     await crud.log_system_event(
         db=db,
         type="info",
         message=f"Command '{command.command}' sent to '{device.name}' by {current_user.username}",
         user_id=current_user.id,
-        serial=serial
+        serial=serial,
     )
     return await send_command_to_pi(serial, command.model_dump())
 
