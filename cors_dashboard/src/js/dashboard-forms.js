@@ -61,6 +61,30 @@ const buildProjectionRequest = (report, decoded, meridian, scale, onReviewChange
         body: JSON.stringify(payload),
     };
 };
+async function recalculateVn2000Projection({
+    canRecalculate, calculating, meridian, requestRef, setCalculating, setError,
+    onReviewChange, report, decoded, scale, setPreview, sourceKey,
+}) {
+    if (!canRecalculate || calculating || !meridian.trim() || !Number.isFinite(Number(meridian))
+        || Number(meridian) < 100 || Number(meridian) > 112) return;
+    const request = ++requestRef.current;
+    setCalculating(true);
+    setError('');
+    onReviewChange?.({ pending: true });
+    try {
+        const requestOptions = buildProjectionRequest(report, decoded, meridian, scale, onReviewChange);
+        const response = await window.apiFetch(requestOptions.path, { method: 'POST', body: requestOptions.body });
+        const data = await response.json();
+        if (request !== requestRef.current) return;
+        if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Không tính được múi hiển thị. Kiểm tra L₀ và dữ liệu gốc.');
+        setPreview({ ...data, sourceKey });
+        onReviewChange?.({ result: data });
+    } catch (error) {
+        if (request === requestRef.current) setError(error.message);
+    } finally {
+        if (request === requestRef.current) setCalculating(false);
+    }
+}
 const Vn2000Result = ({ report, onReviewChange }) => {
     const sourceKey = JSON.stringify([report?.projected_coord, report?.central_meridian_deg, report?.k0, report?.rtcm1025]);
     const [preview, setPreview] = useState(null);
@@ -94,25 +118,10 @@ const Vn2000Result = ({ report, onReviewChange }) => {
     if (onReviewChange) calculateHelpText = 'Dùng lại mẫu RTK Fixed của phiên này. Kiểm tra LLH mới trước khi áp dụng vào Base.';
     if (!canRecalculate) calculateHelpText = 'Phiên này thiếu tham số RTCM để tính lại.';
     const projectionSource = {rtcm1025:'CORS · RTCM 1025', manual:'Nhập L₀/k₀ thủ công', server_catalog:'Danh mục tỉnh trên máy chủ', not_used:'Không chuyển đổi'}[report.projection_source] || 'Báo cáo chưa lưu nguồn phép chiếu';
-    async function reproject() {
-        if (!canRecalculate || calculating || !meridian.trim() || !Number.isFinite(Number(meridian)) || Number(meridian) < 100 || Number(meridian) > 112) return;
-        const request = ++requestRef.current;
-        setCalculating(true); setError('');
-        onReviewChange?.({ pending: true });
-        try {
-            const requestOptions = buildProjectionRequest(report, decoded, meridian, scale, onReviewChange);
-            const response = await window.apiFetch(requestOptions.path, { method: 'POST', body: requestOptions.body });
-            const data = await response.json();
-            if (request !== requestRef.current) return;
-            if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Không tính được múi hiển thị. Kiểm tra L₀ và dữ liệu gốc.');
-            setPreview({ ...data, sourceKey });
-            onReviewChange?.({ result: data });
-        } catch (error) {
-            if (request === requestRef.current) setError(error.message);
-        } finally {
-            if (request === requestRef.current) setCalculating(false);
-        }
-    }
+    const reproject = () => recalculateVn2000Projection({
+        canRecalculate, calculating, meridian, requestRef, setCalculating, setError,
+        onReviewChange, report, decoded, scale, setPreview, sourceKey,
+    });
     function changeProjection(setter, value) {
         setter(value);
         if (onReviewChange) setPreview(null);
