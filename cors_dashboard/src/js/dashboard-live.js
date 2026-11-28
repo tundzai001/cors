@@ -612,6 +612,74 @@ function getSatelliteSystem(sat) {
     return getSatelliteSystemFromPrn(Number(sat.prn)) || 'un';
 }
 
+function satelliteSignalColor(snr) {
+    if (snr >= 40) return '#00ff88';
+    if (snr >= 20) return '#ffc107';
+    return '#ff5252';
+}
+
+function createSatelliteBar(sat, system) {
+    const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+    const barColor = satelliteSignalColor(sat.snr);
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'sat-bar-item';
+    itemDiv.id = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    itemDiv.innerHTML = `
+        <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
+        <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
+        <div class="sat-bar-prn">${getNormalizedPrn(sat)}</div>
+    `;
+    return itemDiv;
+}
+
+function createSatelliteConstellationGroup(system, satellites) {
+    // Keep the column order stable when signal strength changes.
+    const sortedSatellites = satellites.sort((a, b) => Number.parseFloat(a.prn) - Number.parseFloat(b.prn));
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'constellation-group';
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'constellation-header';
+    headerDiv.innerHTML = `<img src="${(flags[system] || flags.un).src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${sortedSatellites.length}</span>)`;
+    const barsWrapper = document.createElement('div');
+    barsWrapper.className = 'bars-wrapper';
+    sortedSatellites.forEach(sat => barsWrapper.appendChild(createSatelliteBar(sat, system)));
+    groupDiv.appendChild(headerDiv);
+    groupDiv.appendChild(barsWrapper);
+    return groupDiv;
+}
+
+function createSatelliteBars(groupedSatellites) {
+    const fragment = document.createDocumentFragment();
+    Object.keys(constellationNames).forEach(system => {
+        if (groupedSatellites[system]) {
+            fragment.appendChild(createSatelliteConstellationGroup(system, groupedSatellites[system]));
+        }
+    });
+    return fragment;
+}
+
+function updateSatelliteBar(sat) {
+    const domId = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    const itemDiv = document.getElementById(domId);
+    if (!itemDiv) return;
+    const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+    const barColor = satelliteSignalColor(sat.snr);
+    const snrText = itemDiv.querySelector('.sat-bar-snr');
+    const fillDiv = itemDiv.querySelector('.sat-bar-fill');
+    if (snrText) {
+        snrText.textContent = sat.snr;
+        snrText.style.color = barColor;
+    }
+    if (fillDiv) {
+        fillDiv.style.height = `${barFillHeight}%`;
+        fillDiv.style.background = barColor;
+    }
+}
+
+function updateSatelliteBars(satellites) {
+    satellites.forEach(updateSatelliteBar);
+}
+
 // Chuẩn hóa PRN về dải RTCM (1-based) để NMEA và RTCM cùng vệ tinh dùng chung key.
 // GLONASS: NMEA dùng 65-96 → chuẩn hóa về 1-32 (RTCM)
 // Galileo: NMEA dùng 301-336 → chuẩn hóa về 1-36 (RTCM)
@@ -1412,77 +1480,12 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             // 1. Nếu CẤU TRÚC bị đổi (thêm/bớt vệ tinh) -> Xóa toàn bộ và vẽ lại DOM
             if (lastSatelliteDataRef.current !== structureHash) {
                 lastSatelliteDataRef.current = structureHash;
-
-                const fragment = document.createDocumentFragment();
-
-                Object.keys(constellationNames).forEach(system => {
-                    if (groupedSats[system]) {
-                        // Bắt chước phần mềm u-center: Phải sắp xếp cố định theo số PRN thay vì SNR để cột không bị đảo lộn vị trí!
-                        const sats = groupedSats[system].sort((a, b) => Number.parseFloat(a.prn) - Number.parseFloat(b.prn));
-                        const groupDiv = document.createElement('div');
-                        groupDiv.className = 'constellation-group';
-
-                        const headerDiv = document.createElement('div');
-                        headerDiv.className = 'constellation-header';
-                        headerDiv.innerHTML = `<img src="${(flags[system] || flags.un).src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${sats.length}</span>)`;
-
-                        const barsWrapper = document.createElement('div');
-                        barsWrapper.className = 'bars-wrapper';
-
-                        sats.forEach(sat => {
-                            const barFillHeight = Math.min(100, sat.snr / 55 * 100);
-                            let barColor = colors[system];
-                            if (sat.snr >= 40) barColor = '#00ff88';
-                            else if (sat.snr >= 20) barColor = '#ffc107';
-                            else barColor = '#ff5252';
-
-                            const itemDiv = document.createElement('div');
-                            itemDiv.className = 'sat-bar-item';
-                            // Gắn id bằng PRN để sau này chọc thẳng vào DOM update
-                            itemDiv.id = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-                            itemDiv.innerHTML = `
-                                <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${sat.snr}</div>
-                                <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
-                                <div class="sat-bar-prn">${getNormalizedPrn(sat)}</div>
-                            `;
-                            barsWrapper.appendChild(itemDiv);
-                        });
-
-                        groupDiv.appendChild(headerDiv);
-                        groupDiv.appendChild(barsWrapper);
-                        fragment.appendChild(groupDiv);
-                    }
-                });
-
                 container.innerHTML = '';
-                container.appendChild(fragment);
+                container.appendChild(createSatelliteBars(groupedSats));
             }
             // 2. Chế độ NGẦM: Chỉ cập nhật trị SNR + Color (Không tái tạo DOM, giúp thanh Transition mượt mà và hết giật nền)
             else {
-                activeSatellites.forEach(sat => {
-                    const domId = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-                    const itemDiv = document.getElementById(domId);
-                    if (itemDiv) {
-                        const barFillHeight = Math.min(100, sat.snr / 55 * 100);
-                        const system = getSatelliteSystem(sat);
-                        let barColor = colors[system];
-                        if (sat.snr >= 40) barColor = '#00ff88';
-                        else if (sat.snr >= 20) barColor = '#ffc107';
-                        else barColor = '#ff5252';
-
-                        const snrText = itemDiv.querySelector('.sat-bar-snr');
-                        const fillDiv = itemDiv.querySelector('.sat-bar-fill');
-
-                        if (snrText) {
-                            snrText.textContent = sat.snr;
-                            snrText.style.color = barColor;
-                        }
-                        if (fillDiv) {
-                            fillDiv.style.height = `${barFillHeight}%`;
-                            fillDiv.style.background = barColor;
-                        }
-                    }
-                });
+                updateSatelliteBars(activeSatellites);
             }
         };
 
