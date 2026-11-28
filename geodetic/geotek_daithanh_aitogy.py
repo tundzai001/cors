@@ -1744,6 +1744,16 @@ class RelayWorker(threading.Thread):
     def log(self, level, msg):
         logging.log(getattr(logging, level.upper(), logging.INFO), f"[{self.cfg['target_mp']}] {msg}")
     
+    @staticmethod
+    def _relay_status_value(source_has_data, desired_active, output_connected, output_bps):
+        if not source_has_data:
+            return "offline"
+        if not desired_active:
+            return "sleep"
+        if output_connected and output_bps > 0:
+            return "online"
+        return "offline"
+
     def publish_status(self):
         if not self.mqtt_client or not self.mqtt_client.is_connected():
             pass # Vẫn cập nhật DB cục bộ dù mất MQTT
@@ -1751,14 +1761,9 @@ class RelayWorker(threading.Thread):
         source_has_data = bool(self.station_enabled and self.source_connected and self.current_source_bps > 0)
         output_connected = bool(self.station_enabled and self.is_connected)
         output_bps = self.current_bps if self.station_enabled and self.desired_active else 0
-        if not source_has_data:
-            status_value = "offline"
-        elif not self.desired_active:
-            status_value = "sleep"
-        elif output_connected and output_bps > 0:
-            status_value = "online"
-        else:
-            status_value = "offline"
+        status_value = self._relay_status_value(
+            source_has_data, self.desired_active, output_connected, output_bps
+        )
         now = time.time()
         satellites = {
             key: sat for key, sat in self.satellites.items()
@@ -2618,29 +2623,33 @@ class MonitorWorker(threading.Thread):
         self.publish_status()
         return True
 
+    def _read_monitor_iteration(self, sock, pending_data, rtcm_buffer, rtcm_confirmed):
+        try:
+            data = pending_data or sock.recv(4096)
+            if not data:
+                self.log("WARNING", "Caster closed the authenticated stream (EOF)")
+                return rtcm_confirmed, False
+            rtcm_confirmed, keep_stream = self._process_monitor_data(
+                sock, data, rtcm_buffer, rtcm_confirmed, time.time()
+            )
+            return rtcm_confirmed, keep_stream
+        except socket.timeout:
+            return rtcm_confirmed, self._handle_monitor_timeout(sock, time.time())
+        except Exception as error:
+            if not self.stop_event.is_set():
+                self.log("WARNING", f"Data error: {error}")
+            return rtcm_confirmed, False
+
     def _read_monitor_stream(self, sock, pending_data):
         sock.settimeout(2.0)
         rtcm_buffer = bytearray()
         rtcm_confirmed = False
         while not self.stop_event.is_set():
-            try:
-                data = pending_data or sock.recv(4096)
-                pending_data = b''
-                if not data:
-                    self.log("WARNING", "Caster closed the authenticated stream (EOF)")
-                    break
-                now = time.time()
-                rtcm_confirmed, keep_stream = self._process_monitor_data(
-                    sock, data, rtcm_buffer, rtcm_confirmed, now
-                )
-                if not keep_stream:
-                    break
-            except socket.timeout:
-                if not self._handle_monitor_timeout(sock, time.time()):
-                    break
-            except Exception as error:
-                if not self.stop_event.is_set():
-                    self.log("WARNING", f"Data error: {error}")
+            rtcm_confirmed, keep_stream = self._read_monitor_iteration(
+                sock, pending_data, rtcm_buffer, rtcm_confirmed
+            )
+            pending_data = b''
+            if not keep_stream:
                 break
 
     def _wait_monitor_retry(self, level, message):
@@ -3347,14 +3356,38 @@ class MqttSourceWorker(threading.Thread):
         self._reconnect_if_target_changed(before_target)
         self.log("INFO", "Saved remote config into geotek_db.json")
 
+    def _execute_command_batch(self, command_sock, decoded_commands):
+        total = len(decoded_commands)
+        for index, cmd_bytes in enumerate(decoded_commands):
+            self.config_status = {"state": "executing", "progress": f"Executing {index + 1}/{total}", "error": None}
+            self.publish_status()
+            delay = command_delay_seconds(cmd_bytes)
+            if cmd_bytes.startswith(COMMAND_DELAY_PREFIX):
+                time.sleep(delay)
+                continue
+            if not self._send_command_with_ack(command_sock, cmd_bytes):
+                raise TimeoutError(f"No response for: {cmd_bytes.decode(errors='ignore').strip()}")
+            time.sleep(delay)
+
+    def _close_command_source(self, command_sock):
+        if not command_sock:
+            return
+        try:
+            command_sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            command_sock.close()
+        except Exception:
+            pass
+        self.log("INFO", "COMMAND SOURCE closed after command batch")
+
     def execute_commands(self, commands_b64, original_config=None):
         """Inject Geotek LTE chip config commands through the active SOURCE socket."""
         try:
             self.config_status = {"state": "started", "progress": "Initializing...", "error": None}
             self.publish_status()
-            
             self._persist_remote_config(original_config)
-
             decoded_commands = build_lte_unicore_commands(original_config, self.cfg)
             self.log(
                 "INFO",
@@ -3362,7 +3395,6 @@ class MqttSourceWorker(threading.Thread):
                 f"(port={self.cfg.get('rtcm_port') or self.cfg.get('sensor_port') or 'com2'}; "
                 f"profile={self.cfg.get('gnss_options') or 'legacy RTCM-only MSM4+MSM7'})"
             )
-
             if not decoded_commands:
                 self.log("WARNING", "No commands to inject")
                 self.config_status = {"state": "done", "progress": "No commands needed", "error": None}
@@ -3382,36 +3414,18 @@ class MqttSourceWorker(threading.Thread):
                 command_sock = self._connect_command_source()
                 self._clear_command_responses()
                 self.command_batch_active = True
-                
-                total = len(decoded_commands)
-                for i, cmd_bytes in enumerate(decoded_commands):
-                    self.config_status = {"state": "executing", "progress": f"Executing {i+1}/{total}", "error": None}
-                    self.publish_status()
-                    
-                    delay = command_delay_seconds(cmd_bytes)
-                    if cmd_bytes.startswith(COMMAND_DELAY_PREFIX):
-                        time.sleep(delay)
-                        continue
-                    if not self._send_command_with_ack(command_sock, cmd_bytes):
-                        raise TimeoutError(f"No response for: {cmd_bytes.decode(errors='ignore').strip()}")
-                    time.sleep(delay)
-                
+                self._execute_command_batch(command_sock, decoded_commands)
                 self.config_status = {"state": "success", "progress": "Configuration applied successfully", "error": None}
                 self.log("SUCCESS", "Commands sent through command SOURCE successfully")
             finally:
-                if command_sock:
-                    try: command_sock.shutdown(socket.SHUT_RDWR)
-                    except Exception: pass
-                    try: command_sock.close()
-                    except Exception: pass
-                    self.log("INFO", "COMMAND SOURCE closed after command batch")
+                self._close_command_source(command_sock)
                 self.command_batch_active = False
                 self._clear_command_responses()
                 self.publish_status()
-        except Exception as e:
-            self.config_status = {"state": "error", "progress": "Failed", "error": str(e)}
+        except Exception as error:
+            self.config_status = {"state": "error", "progress": "Failed", "error": str(error)}
             self.publish_status()
-            self.log("ERROR", f"Failed to execute Geotek LTE commands: {e}")
+            self.log("ERROR", f"Failed to execute Geotek LTE commands: {error}")
 
     def _send_config_commands(self, sock):
         self.log("WARNING", "Direct local config path is disabled; MQTT EXECUTE_RAW_COMMANDS triggers the Geotek LTE builder.")

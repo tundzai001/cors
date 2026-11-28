@@ -76,6 +76,34 @@ def _psql_runner(command, env):
     return run
 
 
+def _ensure_legacy_schema(run, snapshot, apply):
+    exists = run(f"SELECT to_regclass('{SCHEMA}.vn_provinces_metadata') IS NOT NULL;") == 't'
+    if exists:
+        if run(f"SELECT dataset_version FROM {SCHEMA}.vn_provinces_metadata;") != 'v2.4.1':
+            raise RuntimeError('Existing legacy schema has a different owner/version')
+    elif apply:
+        run(import_sql(snapshot), write=True)
+        exists = True
+    return exists
+
+
+def _legacy_table_counts(run, exists):
+    legacy = {table: int(run(f'SELECT count(*) FROM {SCHEMA}.{table};'))
+              for table in ('provinces', 'districts', 'wards')} if exists else None
+    if exists and list(legacy.values()) != [63, 696, 10035]:
+        raise RuntimeError('Existing legacy schema is incomplete; no automatic overwrite')
+    return legacy
+
+
+def _verify_current_snapshot(run, snapshot):
+    for table, digest in snapshot.items():
+        current_digest = run(
+            f"SELECT md5(coalesce(string_agg(row_to_json(t)::text, '' ORDER BY code), '')) FROM public.{table} t;"
+        )
+        if current_digest != digest:
+            raise RuntimeError('Current dataset changed during verification')
+
+
 def main(apply=False):
     values = dotenv_values(ROOT / '.env')
     url = urlsplit(os.getenv('DATABASE_URL') or values['DATABASE_URL'])
@@ -91,20 +119,9 @@ def main(apply=False):
     snapshot = {table: run(f"SELECT md5(coalesce(string_agg(row_to_json(t)::text, '' ORDER BY code), '')) FROM public.{table} t;")
                 for table in ('provinces', 'wards')}
     current = {table: int(run(f'SELECT count(*) FROM public.{table};')) for table in snapshot}
-    exists = run(f"SELECT to_regclass('{SCHEMA}.vn_provinces_metadata') IS NOT NULL;") == 't'
-    if exists:
-        if run(f"SELECT dataset_version FROM {SCHEMA}.vn_provinces_metadata;") != 'v2.4.1':
-            raise RuntimeError('Existing legacy schema has a different owner/version')
-    elif apply:
-        run(import_sql(snapshot), write=True)
-        exists = True
-    legacy = {table: int(run(f'SELECT count(*) FROM {SCHEMA}.{table};'))
-              for table in ('provinces', 'districts', 'wards')} if exists else None
-    if exists and list(legacy.values()) != [63, 696, 10035]:
-        raise RuntimeError('Existing legacy schema is incomplete; no automatic overwrite')
-    for table, digest in snapshot.items():
-        if run(f"SELECT md5(coalesce(string_agg(row_to_json(t)::text, '' ORDER BY code), '')) FROM public.{table} t;") != digest:
-            raise RuntimeError('Current dataset changed during verification')
+    exists = _ensure_legacy_schema(run, snapshot, apply)
+    legacy = _legacy_table_counts(run, exists)
+    _verify_current_snapshot(run, snapshot)
     print(json.dumps({'current': current, 'legacy': legacy, 'current_checksums_unchanged': True,
                       'schema': SCHEMA, 'applied': apply}, ensure_ascii=False))
 

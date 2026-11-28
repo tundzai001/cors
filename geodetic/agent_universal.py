@@ -804,15 +804,15 @@ class GnssRfMonitor:
             'matched_satellites': last['matched'],
         }
 
-    def observe(self, payload, now):
-        while self.samples and now - self.samples[0]['at'] > 600:
-            self.samples.popleft()
+    def _rf_observation_source(self, payload):
         raw = payload.get('gnss_rf')
         modern = (payload.get('gnss_receiver') or {}).get('itfm_supported') is False
         if modern or payload.get('gnss_security'):
             raw = payload.get('gnss_security') or {'source': 'ubx_sec_sig'}
         source = raw.get('source') if isinstance(raw, dict) else None
-        age, severity, blocks, jam_warning, spoof_warning = self._decode_rf_sample(payload, raw, source)
+        return raw, source
+
+    def _reset_rf_source_if_changed(self, source, severity):
         if source != self.source and severity is not None:
             self.samples.clear()
             self.previous_cno = {}
@@ -820,11 +820,18 @@ class GnssRfMonitor:
             self.source = source
             self.started_at = None
             self.previous_epoch = None
+
+    def _should_append_rf_sample(self, sample_at, severity):
+        return severity is not None and (not self.samples or sample_at - self.samples[-1]['at'] >= 5)
+
+    def observe(self, payload, now):
+        while self.samples and now - self.samples[0]['at'] > 600:
+            self.samples.popleft()
+        raw, source = self._rf_observation_source(payload)
+        age, severity, blocks, jam_warning, spoof_warning = self._decode_rf_sample(payload, raw, source)
+        self._reset_rf_source_if_changed(source, severity)
         sample_at = now - age if age is not None else None
-        should_append = severity is not None and (
-            not self.samples or sample_at - self.samples[-1]['at'] >= 5
-        )
-        if should_append:
+        if self._should_append_rf_sample(sample_at, severity):
             self._append_rf_sample(sample_at, severity, age, jam_warning, spoof_warning, blocks, payload, now)
         elif self.history_path:
             self._archive(None, now)

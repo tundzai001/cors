@@ -1123,78 +1123,79 @@ async def _get_coordinator_manageable_mountpoints_and_serials(
         )
     return mountpoints, serials
 
+async def _visible_rovers_for_viewer(all_rovers, auth_db, devices_db, current_user):
+    allowed = get_allowed_rover_usernames(current_user)
+    if current_user.parent_id:
+        serials, mountpoints = await _viewer_rover_scope(auth_db, devices_db, current_user)
+        if not serials:
+            return []
+        all_rovers = [rover for rover in all_rovers if _rover_matches_station_scope(rover, serials, mountpoints)]
+    return [
+        rover for rover in all_rovers
+        if rover.created_by_user_id == current_user.id
+        or str(rover.username or "").strip().lower() in allowed
+    ]
+
+
 async def get_visible_rovers_for_user(auth_db: AsyncSession, devices_db: AsyncSession, current_user: models.User) -> list[models.RoverAccount]:
     all_rovers_res = await auth_db.execute(
         select(models.RoverAccount).order_by(models.RoverAccount.created_at.desc())
     )
     all_rovers = all_rovers_res.scalars().all()
-    
     if current_user.role == "admin":
         return all_rovers
-        
     if current_user.role == "viewer":
-        allowed = get_allowed_rover_usernames(current_user)
-        if current_user.parent_id:
-            serials, mountpoints = await _viewer_rover_scope(auth_db, devices_db, current_user)
-            if not serials:
-                return []
-            all_rovers = [r for r in all_rovers if _rover_matches_station_scope(r, serials, mountpoints)]
-        return [
-            r for r in all_rovers
-            if r.created_by_user_id == current_user.id
-            or str(r.username or "").strip().lower() in allowed
-        ]
-        
-        
+        return await _visible_rovers_for_viewer(all_rovers, auth_db, devices_db, current_user)
+
     managed_mps, managed_serials = await _get_manager_mountpoints_and_serials(devices_db, current_user)
-    
     visible_rovers = []
-    for r in all_rovers:
-        if r.created_by_user_id == current_user.id:
-            visible_rovers.append(r)
+    for rover in all_rovers:
+        if rover.created_by_user_id == current_user.id:
+            visible_rovers.append(rover)
             continue
-            
-        if not r.is_shared_with_managers:
+        if not rover.is_shared_with_managers:
             continue
-            
-        if _rover_matches_station_scope(r, managed_serials, managed_mps):
-            visible_rovers.append(r)
+        if _rover_matches_station_scope(rover, managed_serials, managed_mps):
+            visible_rovers.append(rover)
     return visible_rovers
+
+async def _viewer_can_manage_rover(rover, current_user, devices_db, auth_db):
+    if not getattr(current_user, "can_view_rovers", False) or not getattr(current_user, "can_create_rovers", False):
+        return False
+    if current_user.parent_id:
+        serials, mountpoints = await _viewer_rover_scope(auth_db, devices_db, current_user)
+        if not _rover_matches_station_scope(rover, serials, mountpoints):
+            return False
+    return (
+        rover.created_by_user_id == current_user.id
+        or str(rover.username or "").strip().lower() in get_allowed_rover_usernames(current_user)
+    )
+
+
+async def _coordinator_can_manage_rover(rover, current_user, devices_db):
+    if rover.created_by_user_id == current_user.id:
+        return True
+    if not rover.is_shared_with_managers:
+        return False
+    managed_mps, managed_serials = await _get_coordinator_manageable_mountpoints_and_serials(
+        devices_db, current_user
+    )
+    return _rover_matches_station_scope(rover, managed_serials, managed_mps)
+
 
 async def check_rover_management_permission(rover: models.RoverAccount, current_user: models.User, devices_db: AsyncSession, auth_db: AsyncSession) -> bool:
     role = str(getattr(current_user, "role", "") or "").strip().lower()
     if role == "admin":
         return True
-
     if role == "viewer":
-        if not getattr(current_user, "can_view_rovers", False) or not getattr(current_user, "can_create_rovers", False):
-            return False
-        if current_user.parent_id:
-            serials, mountpoints = await _viewer_rover_scope(auth_db, devices_db, current_user)
-            if not _rover_matches_station_scope(rover, serials, mountpoints):
-                return False
-        return (
-            rover.created_by_user_id == current_user.id
-            or str(rover.username or "").strip().lower() in get_allowed_rover_usernames(current_user)
-        )
-
+        return await _viewer_can_manage_rover(rover, current_user, devices_db, auth_db)
     if (
         role != "coordinator"
         or not getattr(current_user, "can_view_rovers", False)
         or not getattr(current_user, "can_create_rovers", False)
     ):
         return False
-        
-    if rover.created_by_user_id == current_user.id:
-        return True
-        
-    if not rover.is_shared_with_managers:
-        return False
-        
-    managed_mps, managed_serials = await _get_coordinator_manageable_mountpoints_and_serials(
-        devices_db, current_user
-    )
-    return _rover_matches_station_scope(rover, managed_serials, managed_mps)
+    return await _coordinator_can_manage_rover(rover, current_user, devices_db)
 
 # ==============================================================================
 # CLEANUP GHOST DEVICES: Xóa các device không hợp lệ (optional)

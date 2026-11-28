@@ -128,39 +128,46 @@ def is_region_only(question):
                                    scorer=fuzz.ratio, score_cutoff=90))
 
 
+def _valid_ionosphere_cells(data):
+    candidates = []
+    for feature in data.get('features', []):
+        lon, lat = feature['geometry']['coordinates'][:2]
+        props = feature['properties']
+        tec, anomaly = float(props['tec']), float(props['anomaly'])
+        if all(math.isfinite(value) for value in (lon, lat, tec, anomaly)) and 0 <= tec <= 300:
+            candidates.append((lon, lat, tec, anomaly))
+    return candidates
+
+
+def _regional_ionosphere_cells(candidates, name, bounds):
+    west, south, east, north = bounds
+    cells = [point for point in candidates if west <= point[0] <= east and south <= point[1] <= north]
+    if cells or not candidates or name == VIETNAM_REGION_NAME:
+        return cells
+    lon, lat = (west + east) / 2, (south + north) / 2
+    nearest = min(candidates, key=lambda point: (point[0] - lon) ** 2 + (point[1] - lat) ** 2)
+    return [nearest] if abs(nearest[0] - lon) <= 5 and abs(nearest[1] - lat) <= 2.5 else []
+
+
 def ionosphere_observation(data, question, now=None):
     name, bounds = region_for_question(question)
-    unavailable = None
     try:
         observed = datetime.fromisoformat(data['metadata']['time_tag'].replace('Z', '+00:00'))
         age = ((now or datetime.now(timezone.utc)) - observed).total_seconds()
         if not -300 <= age <= 5400:
-            return unavailable
-        candidates = []
-        west, south, east, north = bounds
-        for feature in data.get('features', []):
-            lon, lat = feature['geometry']['coordinates'][:2]
-            props = feature['properties']
-            tec, anomaly = float(props['tec']), float(props['anomaly'])
-            if all(math.isfinite(v) for v in (lon, lat, tec, anomaly)) and 0 <= tec <= 300:
-                candidates.append((lon, lat, tec, anomaly))
-        cells = [p for p in candidates if west <= p[0] <= east and south <= p[1] <= north]
-        if not cells and candidates and name != VIETNAM_REGION_NAME:
-            lon, lat = (west + east) / 2, (south + north) / 2
-            nearest = min(candidates, key=lambda p: (p[0]-lon)**2 + (p[1]-lat)**2)
-            if abs(nearest[0]-lon) <= 5 and abs(nearest[1]-lat) <= 2.5:
-                cells = [nearest]
+            return None
+        cells = _regional_ionosphere_cells(_valid_ionosphere_cells(data), name, bounds)
         if not cells:
-            return unavailable
-        low, high = min(p[2] for p in cells), max(p[2] for p in cells)
+            return None
+        low, high = min(point[2] for point in cells), max(point[2] for point in cells)
         tec_text = f'{low:.1f}' if low == high else f'{low:.1f}–{high:.1f}'
         stamp = observed.astimezone(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%H:%M %d/%m')
         return {'name': name, 'tec': tec_text, 'stamp': stamp,
-                'anomaly_low': min(p[3] for p in cells), 'anomaly_high': max(p[3] for p in cells),
+                'anomaly_low': min(point[3] for point in cells), 'anomaly_high': max(point[3] for point in cells),
                 'age_minutes': max(0, int(age // 60)),
                 'delayed': age > 1800 or data['metadata'].get('is_stale', False)}
     except (KeyError, ValueError, TypeError, IndexError, OverflowError):
-        return unavailable
+        return None
 
 
 def ionosphere_text(data, question, now=None):
