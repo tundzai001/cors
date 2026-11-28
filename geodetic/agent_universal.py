@@ -6919,7 +6919,7 @@ def _mqtt_message_callback(loop, command_topics, control_ack_topic):
     return on_message
 
 
-def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss_reader: GNSSReader):
+def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss_reader: GNSSReader | None):
     mqtt_cfg = _get_mqtt_runtime_config(agent)
     if hasattr(mqtt, 'CallbackAPIVersion'):
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"agent-{MACHINE_SERIAL}-{os.getpid()}")
@@ -7031,7 +7031,7 @@ async def _reset_websocket_connection():
         raise
 
 
-async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
+async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader | None, mqtt_client: mqtt.Client):
     auth_token = await _websocket_auth_token()
     safe_uri, ws_uri = _websocket_urls(auth_token)
     while True:

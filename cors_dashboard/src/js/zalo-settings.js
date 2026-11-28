@@ -373,7 +373,7 @@
         // Pulse effect
         const section = document.getElementById('otp-section');
         section.classList.remove('pulse');
-        void section.offsetWidth; // reflow
+        section.offsetWidth; // reflow
         section.classList.add('pulse');
     }
 

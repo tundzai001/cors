@@ -794,7 +794,7 @@ const StationOperationsPanel = memo(function StationOperationsPanel({ device, ca
             body: JSON.stringify({ template_id: templateId, serials: [device.serial] })
         });
         window.showSuccess?.('Template applied');
-        await void loadOps();
+        await loadOps();
     };
 
     const locked = window.CorsDashboardShared.getLockedServers(device).length > 0 || device?.is_locked || device?.status === 'locked';

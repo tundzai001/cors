@@ -480,7 +480,7 @@ def _bounded_finite_number(value, name: str, minimum: float, maximum: float) -> 
     return number
 
 
-def _coordinate_decimal(value, name: str, minimum: int, maximum: int) -> Decimal:
+def _coordinate_decimal(value, name: str, minimum: Decimal | int, maximum: Decimal | int) -> Decimal:
     try:
         number = Decimal(str(value).strip().replace(',', '.'))
     except (InvalidOperation, ValueError):

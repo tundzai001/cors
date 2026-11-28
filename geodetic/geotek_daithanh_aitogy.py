@@ -3429,42 +3429,6 @@ class MqttSourceWorker(threading.Thread):
 
     def _send_config_commands(self, sock):
         self.log("WARNING", "Direct local config path is disabled; MQTT EXECUTE_RAW_COMMANDS triggers the Geotek LTE builder.")
-        return
-        self.log("INFO", "📡 Executing Geotek LTE specialized configuration...")
-        
-        _ = self.cfg.get('setup_method', 'SURVEY_IN')
-        _ = self.cfg.get('duration', 60)
-        _ = self.cfg.get('lat', 0.0)
-        _ = self.cfg.get('lon', 0.0)
-        _ = self.cfg.get('alt', 0.0)
-        
-        cmds = []
-        # Lệnh RESET vật lý chip đầu tiên
-        cmds.append(b"FRESET\r\n")
-        
-        if False:
-            # Gọi hàm chuyên biệt dành riêng cho Geotek
-            pass
-        else:
-            self.log("ERROR", "❌ Specialized command builder function not found!")
-            return
-
-        for cmd in cmds:
-            try:
-                cmd_bytes = cmd if isinstance(cmd, bytes) else cmd.encode('ascii')
-                
-                if COMMAND_DELAY_PREFIX in cmd_bytes:
-                    ms = int(cmd_bytes.decode().split('_')[1].replace('$', ''))
-                    time.sleep(ms / 1000.0)
-                    continue
-                    
-                sock.sendall(cmd_bytes)
-                if b"FRESET" in cmd_bytes: time.sleep(3.0)
-                else: time.sleep(0.05) # Delay cực nhỏ giữa các lệnh
-            except Exception as e:
-                self.log("WARNING", f"Failed to send Geotek command: {e}")
-                break
-        self.log("SUCCESS", "✅ Geotek LTE configuration finished.")
 
     def _mark_source_data_online(self, now):
         if self.was_offline:

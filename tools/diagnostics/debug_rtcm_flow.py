@@ -74,13 +74,8 @@ def _next_rtcm3_frame(buffer):
 
     payload_len = ((buffer[1] & 0x03) << 8) | buffer[2]
     total_len = 3 + payload_len + 3
-    if payload_len > 1023:
-        del buffer[0]
-        return None, False
     if len(buffer) < total_len:
-        # Keep enough bytes to complete this frame, while bounding malformed input.
-        if len(buffer) > 8192:
-            del buffer[:-total_len]
+        # The header bounds the frame to 1029 bytes; wait for the remaining bytes.
         return None, True
 
     frame = bytes(buffer[:total_len])

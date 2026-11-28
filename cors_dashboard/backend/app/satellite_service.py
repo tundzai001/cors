@@ -121,7 +121,6 @@ class SatelliteService:
         self._assign_tle_codes(rows, owners)
         self._apply_status_snapshot(rows, owners)
         return payload
-        return payload
 
     def _merge_supplemental_constellations(self, payload, constellations):
         for key, sup_tle in SUPPLEMENTAL_TLE.items():
