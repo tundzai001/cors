@@ -893,6 +893,26 @@ function buildAutoCorsPayload({
     return { payload: autoCors };
 }
 
+function buildBaseMethodParams(options) {
+    const { submittedMethod } = options;
+    const params = { base_setup_method: submittedMethod };
+    if (submittedMethod === 'FIXED_LLA') {
+        const fixedBase = buildFixedBaseParams(options);
+        if (fixedBase.error) return { error: fixedBase.error };
+        return { params: { ...params, ...fixedBase.params }, coordinates: fixedBase.params.coords };
+    }
+    if (submittedMethod === 'SURVEY_IN') {
+        params.survey_in_duration = Number.parseInt(options.svinDuration);
+        // Độ chính xác Survey-In nhập theo mét; backend tự đổi đơn vị cho Ublox khi cần.
+        params.survey_in_accuracy = Number.parseFloat(options.svinAccuracyM);
+    }
+    if (submittedMethod === 'AUTO_CORS') {
+        const error = getAutoBaseSubmissionError(options);
+        if (error) return { error };
+    }
+    return { params };
+}
+
 function restoreBaseFormDraft({ device, isAutoSetupActive, draftOwnerRef, skipDraftSaveRef, corsRequestRef, setters }) {
     const switched = draftOwnerRef.current.serial !== device.serial;
     const savedMethod = device.base_config?.base_setup_method;
@@ -1539,36 +1559,21 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 ? manualChip
                 : device.detected_chip_type;
 
-            let params = { base_setup_method: submittedMethod };
-
-            if (submittedMethod === 'FIXED_LLA') {
-                const fixedBase = buildFixedBaseParams({
-                    approvedCoords, latitude, longitude, altitude, finalChipType, altitudeReference,
-                    autoProgress, autoFixedResult, reviewReport, conversionReport, fixedAccuracyM,
-                });
-                if (fixedBase.error) {
-                    window.showError(fixedBase.error);
-                    return;
-                }
-                params = { ...params, ...fixedBase.params };
-                if (finalChipType === 'Ublox') {
-                    setLatitude(params.coords.lat);
-                    setLongitude(params.coords.lon);
-                    setAltitude(params.coords.alt);
-                }
-            } else if (submittedMethod === 'SURVEY_IN') {
-                params.survey_in_duration = Number.parseInt(svinDuration);
-                // Survey-In: Input là m -> Gửi trực tiếp m cho backend (Backend sẽ tự xử lý x10000 nếu cần cho Ublox)
-                params.survey_in_accuracy = Number.parseFloat(svinAccuracyM);
-            } else if (submittedMethod === 'AUTO_CORS') {
-                const validationError = getAutoBaseSubmissionError({
-                    corsSourceMode, supportsAutoBaseNearest, corsHost, corsPort, corsUsername, corsPassword,
-                    selectedMountpoint, projectionMeridian, projectionScale,
-                });
-                if (validationError) {
-                    window.showError(validationError);
-                    return;
-                }
+            const methodParams = buildBaseMethodParams({
+                submittedMethod, approvedCoords, latitude, longitude, altitude, finalChipType, altitudeReference,
+                autoProgress, autoFixedResult, reviewReport, conversionReport, fixedAccuracyM, svinDuration,
+                svinAccuracyM, corsSourceMode, supportsAutoBaseNearest, corsHost, corsPort, corsUsername,
+                corsPassword, selectedMountpoint, projectionMeridian, projectionScale,
+            });
+            if (methodParams.error) {
+                window.showError(methodParams.error);
+                return;
+            }
+            const params = methodParams.params;
+            if (methodParams.coordinates && finalChipType === 'Ublox') {
+                setLatitude(params.coords.lat);
+                setLongitude(params.coords.lon);
+                setAltitude(params.coords.alt);
             }
             if (isLteStation && !['gps', 'glo', 'gal', 'bds', 'qzss'].some(key => constellations[key])) {
                 window.showError('Chọn ít nhất một hệ vệ tinh đầu ra.');
@@ -2362,6 +2367,101 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
     );
 });
 
+function applyGlobalOnDemandChange(next, name, checked, serverIds) {
+    if (name !== 'stream_on_demand') return;
+    next.server1_stream_on_demand = !!checked;
+    next.server2_stream_on_demand = !!checked;
+    next.stream_active = !checked;
+    next.server1_stream_active = !checked;
+    next.server2_stream_active = !checked;
+    for (const sid of serverIds) {
+        next[`server${sid}_stream_on_demand`] = !!checked;
+        next[`server${sid}_stream_active`] = !checked;
+    }
+}
+
+function applyServerOnDemandChange(next, name, checked) {
+    const streamMatch = name.match(/^server(\d+)_stream_on_demand$/);
+    if (streamMatch) next[`server${streamMatch[1]}_stream_active`] = !checked;
+    if (name === 'server1_stream_on_demand') next.server1_stream_active = !checked;
+    if (name === 'server2_stream_on_demand') next.server2_stream_active = !checked;
+}
+
+function buildServiceFormState(previous, name, inputValue, checked, serverIds) {
+    const next = { ...previous, [name]: inputValue };
+    applyGlobalOnDemandChange(next, name, checked, serverIds);
+    applyServerOnDemandChange(next, name, checked);
+    return next;
+}
+
+function buildServiceSubmissionPayload(formState, serverIds, toBool) {
+    const derivedGlobalOnDemand = serverIds.some(sid => toBool(formState[`server${sid}_enabled`]) && toBool(formState[`server${sid}_stream_on_demand`]));
+    const derivedGlobalActive = serverIds.some(sid => toBool(formState[`server${sid}_enabled`])
+        && (!toBool(formState[`server${sid}_stream_on_demand`]) || toBool(formState[`server${sid}_stream_active`])));
+    const payload = {
+        ...formState,
+        stream_on_demand: derivedGlobalOnDemand,
+        stream_active: derivedGlobalActive,
+        ntrip_version1: Number.parseInt(formState.ntrip_version1, 10),
+        ntrip_version2: Number.parseInt(formState.ntrip_version2, 10),
+        port1: formState.port1 ? Number.parseInt(formState.port1, 10) : null,
+        port2: formState.port2 ? Number.parseInt(formState.port2, 10) : null,
+        command_port: formState.command_port ? Number.parseInt(formState.command_port, 10) : null,
+        rtcmntripversion1: Number.parseInt(formState.rtcmntripversion1, 10) === 2 ? 2 : 1,
+        rtcmport1: formState.rtcmport1 ? Number.parseInt(formState.rtcmport1, 10) : null,
+        reconnectioninterval: Number.parseInt(formState.reconnectioninterval, 10),
+    };
+    for (const sid of serverIds) {
+        payload[`ntrip_version${sid}`] = Number.parseInt(formState[`ntrip_version${sid}`] || 1, 10);
+        payload[`port${sid}`] = formState[`port${sid}`] ? Number.parseInt(formState[`port${sid}`], 10) : null;
+    }
+    return payload;
+}
+
+function removeLteUnsupportedServiceFields(payload, isLteStation) {
+    if (!isLteStation) return;
+    delete payload.command_host;
+    delete payload.command_port;
+    delete payload.command_pass;
+    delete payload.command_mp;
+    Object.assign(payload, {
+        rtcm_enabled: false,
+        rtcmserver1: null,
+        rtcmport1: null,
+        rtcmmountpoint1: null,
+        rtcmusername1: null,
+        rtcmpassword1: null,
+    });
+}
+
+function removeLockedServiceFields(payload, { hostsLocked, isAdmin, hostPolicy, serverIds, blockedServer }) {
+    if (!hostsLocked || isAdmin) return;
+    for (const key of Object.keys(hostPolicy)) delete payload[key];
+    for (const sid of serverIds) {
+        delete payload[`server${sid}_stream_on_demand`];
+        delete payload[`server${sid}_stream_active`];
+        if (blockedServer(sid)) {
+            for (const prefix of ['ntrip_version', 'username', 'mountpoint', 'password']) delete payload[`${prefix}${sid}`];
+        }
+    }
+    delete payload.stream_on_demand;
+    delete payload.stream_active;
+}
+
+function removeUnchangedServiceFields(payload, formState, hydratedConfig, serverIds) {
+    const streamSettingsChanged = serverIds.some(sid => ['enabled', 'stream_on_demand', 'stream_active'].some(suffix => {
+        const key = `server${sid}_${suffix}`;
+        return String(formState[key] ?? '') !== String(hydratedConfig[key] ?? '');
+    }));
+    if (!streamSettingsChanged) {
+        delete payload.stream_on_demand;
+        delete payload.stream_active;
+    }
+    for (const key of Object.keys(payload)) {
+        if (String(payload[key] ?? '') === String(hydratedConfig[key] ?? '')) delete payload[key];
+    }
+}
+
 const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser = {}, onConfigureService, disabled }) {
     const [formState, setFormState] = useState({
         ncomport: '',
@@ -2621,39 +2721,7 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         if (lockedInput(name)) return;
         const inputValue = type === 'checkbox' ? checked : value;
         setIsFormDirty(true);
-
-        setFormState(prev => {
-            const next = {
-                ...prev,
-                [name]: inputValue
-            };
-
-            if (name === 'stream_on_demand') {
-                next.server1_stream_on_demand = !!checked;
-                next.server2_stream_on_demand = !!checked;
-                next.stream_active = !checked;
-                next.server1_stream_active = !checked;
-                next.server2_stream_active = !checked;
-            }
-
-            const streamMatch = name.match(/^server(\d+)_stream_on_demand$/);
-            if (streamMatch) next[`server${streamMatch[1]}_stream_active`] = !checked;
-            if (name === 'stream_on_demand') {
-                for (const sid of serverIds) {
-                    next[`server${sid}_stream_on_demand`] = !!checked;
-                    next[`server${sid}_stream_active`] = !checked;
-                }
-            }
-
-            if (name === 'server1_stream_on_demand') {
-                next.server1_stream_active = !checked;
-            }
-            if (name === 'server2_stream_on_demand') {
-                next.server2_stream_active = !checked;
-            }
-
-            return next;
-        });
+        setFormState(previous => buildServiceFormState(previous, name, inputValue, checked, serverIds));
     };
 
     const handleSubmit = async (e) => {
@@ -2662,73 +2730,16 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         setIsSubmitting(true);
 
         try {
-            const derivedGlobalOnDemand = serverIds.some(sid => toBool(formState[`server${sid}_enabled`]) && toBool(formState[`server${sid}_stream_on_demand`]));
-            const derivedGlobalActive = serverIds.some(sid => toBool(formState[`server${sid}_enabled`]) &&
-                (!toBool(formState[`server${sid}_stream_on_demand`]) || toBool(formState[`server${sid}_stream_active`])));
-
-            const payload = {
-                ...formState,
-                stream_on_demand: derivedGlobalOnDemand,
-                stream_active: derivedGlobalActive,
-                ntrip_version1: Number.parseInt(formState.ntrip_version1, 10),
-                ntrip_version2: Number.parseInt(formState.ntrip_version2, 10),
-                port1: formState.port1 ? Number.parseInt(formState.port1, 10) : null,
-                port2: formState.port2 ? Number.parseInt(formState.port2, 10) : null,
-                command_port: formState.command_port ? Number.parseInt(formState.command_port, 10) : null,
-                rtcmntripversion1: Number.parseInt(formState.rtcmntripversion1, 10) === 2 ? 2 : 1,
-                rtcmport1: formState.rtcmport1 ? Number.parseInt(formState.rtcmport1, 10) : null,
-                reconnectioninterval: Number.parseInt(formState.reconnectioninterval, 10)
-            };
-            for (const sid of serverIds) {
-                payload[`ntrip_version${sid}`] = Number.parseInt(formState[`ntrip_version${sid}`] || 1, 10);
-                payload[`port${sid}`] = formState[`port${sid}`] ? Number.parseInt(formState[`port${sid}`], 10) : null;
-            }
-            if (isLteStation) {
-                delete payload.command_host;
-                delete payload.command_port;
-                delete payload.command_pass;
-                delete payload.command_mp;
-                Object.assign(payload, {
-                    rtcm_enabled: false,
-                    rtcmserver1: null,
-                    rtcmport1: null,
-                    rtcmmountpoint1: null,
-                    rtcmusername1: null,
-                    rtcmpassword1: null
-                });
-            }
+            const payload = buildServiceSubmissionPayload(formState, serverIds, toBool);
+            removeLteUnsupportedServiceFields(payload, isLteStation);
 
             for (const key of [...serverIds.map(sid => `password${sid}`), 'rtcmpassword1', 'command_pass']) {
                 if (!payload[key]) delete payload[key];
             }
-
-            if (hostsLocked && !isAdmin) {
-                for (const key of Object.keys(hostPolicy)) delete payload[key];
-                for (const sid of serverIds) {
-                    delete payload[`server${sid}_stream_on_demand`];
-                    delete payload[`server${sid}_stream_active`];
-                    if (blockedServer(sid)) {
-                        for (const prefix of ['ntrip_version', 'username', 'mountpoint', 'password']) delete payload[`${prefix}${sid}`];
-                    }
-                }
-                delete payload.stream_on_demand; delete payload.stream_active;
-            }
-
-            const streamSettingsChanged = serverIds.some(sid => ['enabled', 'stream_on_demand', 'stream_active'].some(suffix => {
-                const key = `server${sid}_${suffix}`;
-                return String(formState[key] ?? '') !== String(hydratedConfigRef.current[key] ?? '');
-            }));
-            if (!streamSettingsChanged) {
-                delete payload.stream_on_demand;
-                delete payload.stream_active;
-            }
+            removeLockedServiceFields(payload, { hostsLocked, isAdmin, hostPolicy, serverIds, blockedServer });
 
             // Send only edited values; telemetry/password placeholders are not changes.
-            for (const key of Object.keys(payload)) {
-                if (String(payload[key] ?? '') === String(hydratedConfigRef.current[key] ?? '')) {
-                    delete payload[key];
-                }
-            }
+            removeUnchangedServiceFields(payload, formState, hydratedConfigRef.current, serverIds);
             if (removedServers.length) payload.removed_servers = removedServers;
             const result = await onConfigureService(device.serial, payload);
             hydratedConfigRef.current = window.CorsDashboardShared.removeServiceServers(

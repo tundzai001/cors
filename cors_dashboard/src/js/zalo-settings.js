@@ -651,6 +651,29 @@
         state.modal.show();
     }
 
+    function applyAdminBindingSettings(payload, item) {
+        if (!state.isAdmin) return;
+        const mode = document.querySelector('input[name="delivery-mode"]:checked').value;
+        const defaultMode = item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard');
+        payload.delivery_mode = mode === 'paused' ? defaultMode : mode;
+        payload.cors_notify_changes = document.getElementById('edit-cors-notify').checked;
+        payload.binding_type = document.getElementById('edit-binding-type').value;
+        payload.is_active = mode !== 'paused';
+    }
+
+    function applyGroupStationScope(payload, item, selectedStations) {
+        if (item.chat_type !== 'group' || payload.delivery_mode !== 'standard') return true;
+        const bindingType = payload.binding_type;
+        const scopeMode = bindingType === 'cors_public' ? 'none'
+            : bindingType === 'group_admin' ? 'all'
+            : document.getElementById('edit-scope-mode').value;
+        payload.station_scope_mode = scopeMode;
+        payload.allowed_bases = scopeMode === 'selected' ? selectedStations : [];
+        if (scopeMode !== 'selected' || payload.allowed_bases.length) return true;
+        window.CorsUI?.showToast?.('warning', 'Hãy chọn ít nhất một trạm hoặc đổi phạm vi.');
+        return false;
+    }
+
     function buildBindingPayload(item, selectedStations) {
         const payload = {
             display_name: document.getElementById('edit-display-name').value.trim(),
@@ -660,28 +683,8 @@
             quiet_end: document.getElementById('edit-quiet-end').value || null,
             critical_override: document.getElementById('edit-critical-override').checked
         };
-        if (state.isAdmin) {
-            const mode = document.querySelector('input[name="delivery-mode"]:checked').value;
-            if (mode === 'paused') {
-                payload.delivery_mode = item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard');
-            } else {
-                payload.delivery_mode = mode;
-            }
-            payload.cors_notify_changes = document.getElementById('edit-cors-notify').checked;
-            payload.binding_type = document.getElementById('edit-binding-type').value;
-            payload.is_active = mode !== 'paused';
-        }
-        if (item.chat_type === 'group' && payload.delivery_mode === 'standard') {
-            if (payload.binding_type === 'cors_public') payload.station_scope_mode = 'none';
-            else if (payload.binding_type === 'group_admin') payload.station_scope_mode = 'all';
-            else payload.station_scope_mode = document.getElementById('edit-scope-mode').value;
-            payload.allowed_bases = payload.station_scope_mode === 'selected' ? selectedStations : [];
-            if (payload.station_scope_mode === 'selected' && !payload.allowed_bases.length) {
-                window.CorsUI?.showToast?.('warning', 'Hãy chọn ít nhất một trạm hoặc đổi phạm vi.');
-                return null;
-            }
-        }
-        return payload;
+        applyAdminBindingSettings(payload, item);
+        return applyGroupStationScope(payload, item, selectedStations) ? payload : null;
     }
 
     async function saveBinding() {
