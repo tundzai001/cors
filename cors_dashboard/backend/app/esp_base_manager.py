@@ -124,6 +124,52 @@ async def _device_casters(device, mountpoint):
             for host, port in _device_source_destinations(device, mountpoint) if host in allowed]
 
 
+async def _ensure_esp_source_registered(slot, config, configured, username, identifier, latitude, longitude):
+    host_key = str(config.get(f"serverhost{slot}") or "").strip().rstrip(".").casefold()
+    destination = configured.get(host_key)
+    if not destination:
+        raise ValueError(f"Caster {host_key} chưa được cấu hình để đồng bộ mountpoint.")
+    host, default_port, admin, admin_password = destination
+    port = int(config.get(f"port{slot}") or default_port)
+    source_password = str(config.get(f"password{slot}") or "")
+    if not source_password:
+        raise ValueError(f"Chưa có mật khẩu SOURCE cho cổng phát S{slot}.")
+    caster = CasterClient(host, port, admin_user=admin, admin_password=admin_password)
+    sources = await caster.get_sources()
+    if sources is None:
+        raise ValueError(f"Không đọc được danh sách mountpoint trên {host}:{port}.")
+    existing = next((source for source in sources
+                     if str(source.get("mountpoint") or "").casefold() == username.casefold()), None)
+    if existing:
+        matches_device = existing.get("identifier") == identifier
+        matches_password = existing.get("password") == source_password
+        if not (matches_device and matches_password):
+            raise ValueError(f"Mountpoint {username} đã tồn tại trên {host}:{port}.")
+        return
+    created = await caster.create_source(
+        identifier, username, source_password, latitude=latitude, longitude=longitude
+    )
+    if not created:
+        raise ValueError(f"Caster {host}:{port} chưa xác nhận tạo mountpoint {username}.")
+
+
+async def _save_esp_mountpoint_patch(device, config, changed_slots, username):
+    patch = {f"mountpoint{slot}": username for slot in changed_slots}
+    payload = schemas.service_config_deployment_payload(device.version, {**config, **patch}, patch)
+    await send_command_to_pi(device.serial, {"command": "DEPLOY_SERVICE_CONFIG", "payload": payload})
+    # Keep desired DB config aligned with the command until the next health report.
+    async with mqtt_handler.mqtt_db_write_lock:
+        async with device_session_scope() as db:
+            current = await crud.get_device_for_update(db, device.serial)
+            if current is None:
+                return False
+            current.service_config = {**crud.normalize_service_config(current.service_config), **patch}
+            current.is_synced = False
+            await db.commit()
+            await mqtt_handler.cache_device_metadata(current)
+    return True
+
+
 async def sync_esp_mountpoint(device, username):
     """Sync the default S1 identity; additional destinations remain user-configured."""
     config = crud.normalize_service_config(device.service_config)
@@ -131,54 +177,67 @@ async def sync_esp_mountpoint(device, username):
              and str(config.get(f"server{slot}_enabled", True)).lower() in {"true", "1", "yes", "on"}]
     changed = [slot for slot in slots if config.get(f"mountpoint{slot}") != username]
     if not changed:
-        _set_esp_setup_status(device.serial, "source", "ready" if slots else "waiting_config",
-                              mountpoint=username)
+        state = "ready" if slots else "waiting_config"
+        _set_esp_setup_status(device.serial, "source", state, mountpoint=username)
         return False
     _set_esp_setup_status(device.serial, "source", "registering", mountpoint=username)
-
-    configured = {host.rstrip(".").casefold(): (host, port, user, password)
-                  for host, port, user, password in await _get_configured_casters()}
-    lat, lon, _ = _extract_device_coords(device)
+    configured = {
+        host.rstrip(".").casefold(): (host, port, user, password)
+        for host, port, user, password in await _get_configured_casters()
+    }
+    latitude, longitude, _ = _extract_device_coords(device)
     identifier = f"ESP32_{device.serial}"
     for slot in changed:
-        host_key = str(config.get(f"serverhost{slot}") or "").strip().rstrip(".").casefold()
-        destination = configured.get(host_key)
-        if not destination:
-            raise ValueError(f"Caster {host_key} chưa được cấu hình để đồng bộ mountpoint.")
-        host, default_port, admin, admin_password = destination
-        port = int(config.get(f"port{slot}") or default_port)
-        source_password = str(config.get(f"password{slot}") or "")
-        if not source_password:
-            raise ValueError(f"Chưa có mật khẩu SOURCE cho cổng phát S{slot}.")
-        caster = CasterClient(host, port, admin_user=admin, admin_password=admin_password)
-        sources = await caster.get_sources()
-        if sources is None:
-            raise ValueError(f"Không đọc được danh sách mountpoint trên {host}:{port}.")
-        existing = next((source for source in sources
-                         if str(source.get("mountpoint") or "").casefold() == username.casefold()), None)
-        if existing:
-            if existing.get("identifier") != identifier or existing.get("password") != source_password:
-                raise ValueError(f"Mountpoint {username} đã tồn tại trên {host}:{port}.")
-        elif not await caster.create_source(identifier, username, source_password, latitude=lat, longitude=lon):
-            raise ValueError(f"Caster {host}:{port} chưa xác nhận tạo mountpoint {username}.")
-
-    patch = {f"mountpoint{slot}": username for slot in changed}
-    payload = schemas.service_config_deployment_payload(device.version, {**config, **patch}, patch)
-    await send_command_to_pi(device.serial, {"command": "DEPLOY_SERVICE_CONFIG", "payload": payload})
-    # Keep the desired DB config aligned with the command. Otherwise the next
-    # health report is marked unsynced and cannot replace the old mountpoint.
-    async with mqtt_handler.mqtt_db_write_lock:
-        async with device_session_scope() as db:
-            current = await crud.get_device_for_update(db, device.serial)
-            if current is None:
-                return True
-            current.service_config = {**crud.normalize_service_config(current.service_config), **patch}
-            current.is_synced = False
-            await db.commit()
-            await mqtt_handler.cache_device_metadata(current)
+        await _ensure_esp_source_registered(
+            slot, config, configured, username, identifier, latitude, longitude
+        )
+    if not await _save_esp_mountpoint_patch(device, config, changed, username):
+        return True
     _set_esp_setup_status(device.serial, "source", "waiting_health", mountpoint=username)
-    # Health tiếp theo xác nhận cấu hình trước khi đồng bộ tài khoản theo nguồn mới.
     return True
+
+
+async def _sync_esp_rover_caster(
+    device, mountpoint, current, previous, password, saved_mounts, saved_hosts, now, caster_config
+):
+    host, port, admin, secret = caster_config
+    sync_key = (device.serial, mountpoint, host, port)
+    already_saved = current and mountpoint in saved_mounts and host in saved_hosts
+    if already_saved and _synced_esp_rover_passwords.get(sync_key) == password:
+        return True
+    caster = CasterClient(host, port, admin_user=admin, admin_password=secret)
+    remote = await caster_esp_rover(caster, mountpoint, current)
+    remote_mounts = remote["mountpoints"] if remote else []
+    expiry = (
+        int(previous.expires_at) - now
+        if previous and previous.expires_at is not None
+        else 31536000
+    )
+    already_synced = remote and remote["password"] == password and mountpoint in remote_mounts
+    created = already_synced or await caster.create_user(
+        "system", mountpoint, password, ";".join(dict.fromkeys([mountpoint, *remote_mounts])),
+        expiry_seconds=expiry,
+        max_users=previous.max_connections if previous else 0,
+        show_position=previous.show_position if previous else False,
+        rtcm_cycle_enabled=bool(previous and previous.rtcm_cycle_enabled),
+        rtcm_disconnect_interval_seconds=previous.rtcm_disconnect_interval_seconds if previous else 300,
+        rtcm_disconnect_duration_seconds=previous.rtcm_disconnect_duration_seconds if previous else 10,
+    )
+    if not created:
+        return False
+    _synced_esp_rover_passwords[sync_key] = password
+    return True
+
+
+def _new_esp_rover_account(device, mountpoint, password, previous, now):
+    return models.RoverAccount(
+        username=mountpoint, password=password, base_serial=device.serial,
+        created_by_user_id=None, created_at=now,
+        max_connections=previous.max_connections if previous else 0,
+        show_position=previous.show_position if previous else False,
+        expires_at=previous.expires_at if previous else None, is_active=True,
+        auto_save_sessions=False, auto_save_fixed_points=False,
+    )
 
 
 async def auto_provision_esp_rover_account(device: models.Device, mountpoint: str) -> bool:
@@ -189,58 +248,45 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
     async with auth_session_scope() as auth_db:
         current, previous = await existing_esp_rover(auth_db, device, mountpoint)
         now = int(time.time())
-        if previous and (not previous.is_active or (previous.expires_at is not None and previous.expires_at <= now)):
+        expired_or_inactive = previous and (
+            not previous.is_active
+            or (previous.expires_at is not None and previous.expires_at <= now)
+        )
+        if expired_or_inactive:
             return False
         password = previous.password if previous and previous.password else DEFAULT_ROVER_PASSWORD
         saved_hosts = [host for host in (current.target_casters or "").split(";") if host] if current else []
         saved_mounts = [mp for mp in (current.mountpoints or "").split(";") if mp] if current else []
         merged = list(dict.fromkeys([mountpoint, *saved_mounts]))
         successful_hosts = []
-        for host, port, admin, secret in casters:
-            sync_key = (device.serial, mountpoint, host, port)
-            if current and mountpoint in saved_mounts and host in saved_hosts \
-                    and _synced_esp_rover_passwords.get(sync_key) == password:
-                successful_hosts.append(host)
-                continue
-            caster = CasterClient(host, port, admin_user=admin, admin_password=secret)
-            remote = await caster_esp_rover(caster, mountpoint, current)
-            remote_mounts = remote["mountpoints"] if remote else []
-            expiry = int(previous.expires_at) - now if previous and previous.expires_at is not None else 31536000
-            already_synced = remote and remote["password"] == password and mountpoint in remote_mounts
-            if already_synced or await caster.create_user(
-                "system", mountpoint, password, ";".join(dict.fromkeys([mountpoint, *remote_mounts])),
-                expiry_seconds=expiry,
-                max_users=previous.max_connections if previous else 0,
-                show_position=previous.show_position if previous else False,
-                rtcm_cycle_enabled=bool(previous and previous.rtcm_cycle_enabled),
-                rtcm_disconnect_interval_seconds=previous.rtcm_disconnect_interval_seconds if previous else 300,
-                rtcm_disconnect_duration_seconds=previous.rtcm_disconnect_duration_seconds if previous else 10,
-            ):
-                _synced_esp_rover_passwords[sync_key] = password
+        for caster_config in casters:
+            host, _, _, _ = caster_config
+            synced = await _sync_esp_rover_caster(
+                device, mountpoint, current, previous, password,
+                saved_mounts, saved_hosts, now, caster_config,
+            )
+            if synced:
                 successful_hosts.append(host)
         if not successful_hosts:
             return False
         if current is None:
-            current = models.RoverAccount(
-                username=mountpoint, password=password, base_serial=device.serial,
-                created_by_user_id=None, created_at=now,
-                max_connections=previous.max_connections if previous else 0,
-                show_position=previous.show_position if previous else False,
-                expires_at=previous.expires_at if previous else None, is_active=True,
-                auto_save_sessions=False, auto_save_fixed_points=False,
-            )
+            current = _new_esp_rover_account(device, mountpoint, password, previous, now)
             auth_db.add(current)
         current.mountpoints = ";".join(merged)
         current.target_casters = ";".join(dict.fromkeys([*saved_hosts, *successful_hosts]))
         await auth_db.commit()
 
-    _set_esp_setup_status(device.serial, "rover", "ready" if len(successful_hosts) == len(casters) else "partial",
+    complete = len(successful_hosts) == len(casters)
+    _set_esp_setup_status(device.serial, "rover", "ready" if complete else "partial",
                           username=mountpoint)
     lat, lon, alt = _extract_device_coords(device)
-    await notify_decoder_worker("start", device.serial, mountpoint, mountpoint, password,
-                                lat=lat, lon=lon, alt=alt, host=successful_hosts[0],
-                                port=next(port for host, port, *_ in casters if host == successful_hosts[0]))
-    return len(successful_hosts) == len(casters)
+    first_host = successful_hosts[0]
+    first_port = next(port for host, port, *_ in casters if host == first_host)
+    await notify_decoder_worker(
+        "start", device.serial, mountpoint, mountpoint, password,
+        lat=lat, lon=lon, alt=alt, host=first_host, port=first_port,
+    )
+    return complete
 
 
 async def auto_deprovision_esp_rover_account(device_serial: str, username: str) -> bool:
@@ -355,6 +401,68 @@ async def notify_decoder_worker(
         logger.exception(f"[ESP DECODER MQTT] Failed to publish {action} to {MQTT_DECODER_TOPIC}: {e}")
 
 
+def _find_active_esp_source(device, mountpoint, sources, now):
+    destinations = _device_source_destinations(device, mountpoint)
+    return next((source for source in sources if source.mountpoint == mountpoint
+                 and (source.host.rstrip('.').casefold(), int(source.port)) in destinations
+                 and _source_has_data(source, now)), None)
+
+
+def _should_provision_esp_rover(device):
+    if str(device.status or "").lower() not in {"online", "streaming"}:
+        return False
+    if device.is_locked or not device.is_provisioned:
+        return False
+    system = device.system_info if isinstance(device.system_info, dict) else {}
+    startup = system.get("base_startup") or {}
+    return not (isinstance(startup, dict) and startup.get("state") == "auto_base_running")
+
+
+async def _sync_esp_rover_identity(device, existing_rovers, rover_map, source_active, mountpoint):
+    serial = device.serial
+    try:
+        username = esp_rover_name(device)
+        collision = rover_map.get(username.casefold())
+        if collision and (collision.base_serial != serial or collision.created_by_user_id is not None):
+            raise ValueError(f"Tài khoản {username} đang thuộc trạm khác hoặc được quản lý thủ công.")
+        if await sync_esp_mountpoint(device, username):
+            return
+        if not source_active or mountpoint != username:
+            return
+        if not await auto_provision_esp_rover_account(device, mountpoint):
+            rover_state = _esp_setup_status.get(serial, {}).get("rover", {}).get("state")
+            if rover_state != "partial":
+                _set_esp_setup_status(serial, "rover", "retrying", username=username)
+            return
+        for old in existing_rovers:
+            should_remove = (
+                old.base_serial == serial
+                and old.created_by_user_id is None
+                and old.username.casefold() != username.casefold()
+            )
+            if should_remove:
+                await auto_deprovision_esp_rover_account(serial, old.username)
+    except Exception as exc:
+        source_state = _esp_setup_status.get(serial, {}).get("source", {}).get("state")
+        failed_stage = "rover" if source_state == "ready" else "source"
+        detail = str(exc) if isinstance(exc, ValueError) else "Chưa đồng bộ được với caster."
+        _set_esp_setup_status(serial, failed_stage, "retrying", detail=detail)
+        logger.warning("[ESP ROVER] Không đồng bộ được định danh %s: %s", serial, exc)
+
+
+async def _sync_esp_device(device, sources, existing_rovers, rover_map, now):
+    serial = device.serial
+    mountpoint = _extract_esp_mountpoint(device)
+    active_source = _find_active_esp_source(device, mountpoint, sources, now)
+    source_active = active_source is not None
+    if mountpoint and not source_active:
+        await notify_decoder_worker("stop", serial, mountpoint, mountpoint, DEFAULT_ROVER_PASSWORD)
+    if _should_provision_esp_rover(device):
+        await _sync_esp_rover_identity(
+            device, existing_rovers, rover_map, source_active, mountpoint
+        )
+
+
 async def sync_esp_base_rovers() -> None:
     """Main synchronization check:
     - ESP32 sources with fresh Caster data -> ensure RoverAccount and decoder.
@@ -362,69 +470,23 @@ async def sync_esp_base_rovers() -> None:
     - Offline ESP32 bases -> stop decoder and retain the RoverAccount.
     """
     now = int(time.time())
-
     async with device_session_scope() as dev_db:
         result = await dev_db.execute(select(models.Device))
         all_devices = result.scalars().all()
-
         esp_devices = [
-            d for d in all_devices
-            if not is_readonly_base(d) and crud.is_mobile_base(d.serial)
+            device for device in all_devices
+            if not is_readonly_base(device) and crud.is_mobile_base(device.serial)
         ]
-
     if not esp_devices:
         return
 
     async with auth_session_scope() as auth_db:
-        rs = await auth_db.execute(select(models.RoverAccount))
-        existing_rovers = rs.scalars().all()
+        result = await auth_db.execute(select(models.RoverAccount))
+        existing_rovers = result.scalars().all()
         sources = (await auth_db.execute(select(models.CasterSource))).scalars().all()
-        # Map: username -> RoverAccount
-        rover_map = {r.username.lower(): r for r in existing_rovers}
-
-    for dev in esp_devices:
-        serial = dev.serial
-        status = str(dev.status or "").lower()
-        mp = _extract_esp_mountpoint(dev)
-
-        destinations = _device_source_destinations(dev, mp)
-        active_source = next((s for s in sources if s.mountpoint == mp
-                              and (s.host.rstrip('.').casefold(), int(s.port)) in destinations
-                              and _source_has_data(s, now)), None)
-        source_active = active_source is not None
-        _ = active_source.host if active_source else None
-        _ = active_source.port if active_source else None
-        if mp and not source_active:
-            await notify_decoder_worker("stop", serial, mp, mp, DEFAULT_ROVER_PASSWORD)
-
-        if status not in {"online", "streaming"} or dev.is_locked or not dev.is_provisioned:
-            continue
-        system = dev.system_info if isinstance(dev.system_info, dict) else {}
-        startup = system.get("base_startup") or {}
-        if isinstance(startup, dict) and startup.get("state") == "auto_base_running":
-            continue
-        try:
-            username = esp_rover_name(dev)
-            collision = rover_map.get(username.casefold())
-            if collision and (collision.base_serial != serial or collision.created_by_user_id is not None):
-                raise ValueError(f"Tài khoản {username} đang thuộc trạm khác hoặc được quản lý thủ công.")
-            if await sync_esp_mountpoint(dev, username):
-                continue
-            if not source_active or mp != username:
-                continue
-            if not await auto_provision_esp_rover_account(dev, mp):
-                if not _esp_setup_status.get(serial, {}).get("rover", {}).get("state") == "partial":
-                    _set_esp_setup_status(serial, "rover", "retrying", username=username)
-                continue
-            for old in existing_rovers:
-                if old.base_serial == serial and old.created_by_user_id is None and old.username.casefold() != username.casefold():
-                    await auto_deprovision_esp_rover_account(serial, old.username)
-        except Exception as exc:
-            source = _esp_setup_status.get(serial, {}).get("source", {})
-            failed_stage = "rover" if source.get("state") == "ready" else "source"
-            _set_esp_setup_status(serial, failed_stage, "retrying",
-                                  detail=str(exc) if isinstance(exc, ValueError) else "Chưa đồng bộ được với caster.")
-            logger.warning("[ESP ROVER] Không đồng bộ được định danh %s: %s", serial, exc)
+        rover_map = {rover.username.lower(): rover for rover in existing_rovers}
+    for device in esp_devices:
+        await _sync_esp_device(device, sources, existing_rovers, rover_map, now)
 
 
 def _source_has_data(source, now: int) -> bool:
@@ -439,98 +501,171 @@ def _source_has_data(source, now: int) -> bool:
     return count > 0 and observed_at > 0 and 0 <= now - observed_at <= max_age
 
 
-async def sync_prefix7_bases() -> None:
-    """Reuse Caster inventory and Rover credentials; never create/delete Rover users."""
-    from .mqtt import cache_device_metadata
-    now = int(time.time())
+async def _load_prefix7_sources(now):
     casters = {(host, port) for host, port, *_ in await _get_configured_casters()}
     async with auth_session_scope() as auth_db:
         sources = (await auth_db.execute(select(models.CasterSource))).scalars().all()
         rovers = (await auth_db.execute(select(models.RoverAccount))).scalars().all()
-        rover_map = {r.username: r for r in rovers}
-    sources = sorted((s for s in sources if is_4g_mountpoint(s.mountpoint)
-                      and (s.host, s.port) in casters),
-                     key=lambda s: (not _source_has_data(s, now), s.host, s.port, s.mountpoint))
+    rover_map = {rover.username: rover for rover in rovers}
+    sources = [
+        source for source in sources
+        if is_4g_mountpoint(source.mountpoint) and (source.host, source.port) in casters
+    ]
+    sources.sort(
+        key=lambda source: (
+            not _source_has_data(source, now), source.host, source.port, source.mountpoint
+        )
+    )
+    return sources, rover_map
+
+
+def _index_prefix7_devices(devices):
+    managed_mountpoints = set()
+    managed_identifiers = set()
+    by_mountpoint = {}
+    for device in devices:
+        mountpoint = _extract_esp_mountpoint(device)
+        if mountpoint:
+            by_mountpoint.setdefault(mountpoint, device)
+        if not str(device.serial or "").strip().lower().startswith("esp_"):
+            continue
+        managed_identifiers.add(f"ESP32_{device.serial}".casefold())
+        config = crud.normalize_service_config(device.service_config)
+        managed_mountpoints.update(
+            str(config.get(f"mountpoint{slot}") or "").strip().lstrip("/").casefold()
+            for slot in (1, 2)
+        )
+    return managed_mountpoints, managed_identifiers, by_mountpoint
+
+
+def _prefix7_source_rover(source, rover_map, managed, managed_identifiers, seen):
+    mountpoint = source.mountpoint
+    metadata = source.source_data if isinstance(source.source_data, dict) else {}
+    source_identifier = str(metadata.get("identifier") or "").casefold()
+    if mountpoint.casefold() in managed or source_identifier in managed_identifiers:
+        return False, None
+    if mountpoint in seen or any(character in mountpoint for character in '/+#\r\n'):
+        return False, None
+    rover = rover_map.get(mountpoint)
+    allowed_hosts = {host.strip() for host in (rover.target_casters or '').split(';')} if rover else set()
+    if rover and rover.target_casters and source.host not in allowed_hosts:
+        return False, None
+    seen.add(mountpoint)
+    return True, rover
+
+
+def _get_or_create_prefix7_device(db, mountpoint, devices, by_mountpoint):
+    device = by_mountpoint.get(mountpoint)
+    if device:
+        return device
+    serial = f'MONITOR_{mountpoint}'
+    device = next((item for item in devices if item.serial == serial), None)
+    if not device:
+        device = models.Device(
+            serial=serial, name=mountpoint, status='offline', timestamp=0,
+            service_config={}, base_config={}, bps=0,
+        )
+        db.add(device)
+        devices.append(device)
+    by_mountpoint[mountpoint] = device
+    return device
+
+
+def _prefix7_rover_is_valid(rover, mountpoint, now):
+    allowed_mountpoints = set(re.split(r'[;,\s]+', rover.mountpoints or '')) if rover else set()
+    return bool(
+        rover and rover.is_active and rover.password
+        and (not rover.mountpoints or '*' in allowed_mountpoints or mountpoint in allowed_mountpoints)
+        and (not rover.expires_at or rover.expires_at > now)
+    )
+
+
+def _update_prefix7_device(device, source, rover, mountpoint, now):
+    config = crud.normalize_service_config(device.service_config)
+    device.service_config = {
+        **config,
+        'mountpoint1': mountpoint,
+        'serverhost1': source.host,
+        'port1': source.port,
+        'server1_enabled': True,
+        'stream_on_demand': False,
+        'server1_stream_on_demand': False,
+    }
+    source_active = _source_has_data(source, now)
+    valid_rover = _prefix7_rover_is_valid(rover, mountpoint, now)
+    can_start = valid_rover and source_active
+    device.system_info = {
+        **(device.system_info or {}),
+        'auth_license_bypass': True,
+        'base_type': '4g',
+        'read_only': True,
+        'decoder_status': (
+            ('ready' if source_active else 'source_offline')
+            if valid_rover
+            else 'missing_rover_credentials'
+        ),
+    }
+    if not can_start or device.status in ('awaiting_license', 'unprovisioned', 'locked', 'sleep'):
+        device.status = 'offline'
+        device.bps = 0
+        device.ntrip_connected = False
+        device.offline_since = device.offline_since or now
+    device.is_provisioned = True
+    device.device_token = None
+    device.is_locked = False
+    device.server_config_lock = None
+    return rover if can_start else None
+
+
+def _sync_prefix7_source(db, source, rover_map, devices, by_mountpoint, managed, managed_ids, seen, now):
+    eligible, rover = _prefix7_source_rover(source, rover_map, managed, managed_ids, seen)
+    if not eligible:
+        return None
+    mountpoint = source.mountpoint
+    device = _get_or_create_prefix7_device(db, mountpoint, devices, by_mountpoint)
+    active_rover = _update_prefix7_device(device, source, rover, mountpoint, now)
+    return device, mountpoint, source, active_rover
+
+
+def _prefix7_stop_notifications(devices, seen):
+    return [
+        (device, _extract_esp_mountpoint(device) or '', None, None)
+        for device in devices
+        if is_readonly_base(device) and _extract_esp_mountpoint(device) not in seen
+    ]
+
+
+async def sync_prefix7_bases() -> None:
+    """Reuse Caster inventory and Rover credentials; never create/delete Rover users."""
+    from .mqtt import cache_device_metadata
+    now = int(time.time())
+    sources, rover_map = await _load_prefix7_sources(now)
     notifications = []
     async with device_session_scope() as db:
         # Multiple backend processes share one inventory and one device identity.
         await db.execute(select(func.pg_advisory_xact_lock(713204701)))
         devices = (await db.execute(select(models.Device))).scalars().all()
-        # Không tạo bản ghi giám sát từ nguồn mà ESP32 quản lý đang cấu hình/phát.
-        managed = set()
-        managed_identifiers = set()
-        for device in devices:
-            if not str(device.serial or "").strip().lower().startswith("esp_"):
-                continue
-            managed_identifiers.add(f"ESP32_{device.serial}".casefold())
-            config = crud.normalize_service_config(device.service_config)
-            managed.update(str(config.get(f"mountpoint{slot}") or "").strip().lstrip("/").casefold()
-                           for slot in (1, 2))
-        by_mp = {}
-        for device in devices:
-            mp = _extract_esp_mountpoint(device)
-            if mp:
-                by_mp.setdefault(mp, device)
+        managed, managed_ids, by_mountpoint = _index_prefix7_devices(devices)
         seen = set()
         for source in sources:
-            mp = source.mountpoint
-            metadata = source.source_data if isinstance(source.source_data, dict) else {}
-            if mp.casefold() in managed or str(metadata.get("identifier") or "").casefold() in managed_identifiers:
-                continue
-            if mp in seen or any(c in mp for c in '/+#\r\n'):
-                continue
-            rover = rover_map.get(mp)
-            allowed_hosts = {h.strip() for h in (rover.target_casters or '').split(';')} if rover else set()
-            if rover and rover.target_casters and source.host not in allowed_hosts:
-                continue
-            seen.add(mp)
-            device = by_mp.get(mp)
-            if not device:
-                serial = f'MONITOR_{mp}'
-                device = next((d for d in devices if d.serial == serial), None)
-                if not device:
-                    device = models.Device(serial=serial, name=mp, status='offline', timestamp=0,
-                                           service_config={}, base_config={}, bps=0)
-                    db.add(device)
-                    devices.append(device)
-                by_mp[mp] = device
-            device.service_config = {**crud.normalize_service_config(device.service_config), 'mountpoint1': mp,
-                                     'serverhost1': source.host, 'port1': source.port,
-                                     'server1_enabled': True, 'stream_on_demand': False,
-                                     'server1_stream_on_demand': False}
-            allowed_mps = set(re.split(r'[;,\s]+', rover.mountpoints or '')) if rover else set()
-            valid = bool(rover and rover.is_active and rover.password
-                         and (not rover.mountpoints or '*' in allowed_mps or mp in allowed_mps)
-                         and (not rover.expires_at or rover.expires_at > now))
-            source_active = _source_has_data(source, now)
-            can_start = valid and source_active
-            device.system_info = {**(device.system_info or {}), 'auth_license_bypass': True,
-                                  'base_type': '4g', 'read_only': True,
-                                  'decoder_status': ('ready' if source_active else 'source_offline') if valid else 'missing_rover_credentials'}
-            if not can_start or device.status in ('awaiting_license', 'unprovisioned', 'locked', 'sleep'):
-                device.status = 'offline'
-                device.bps = 0
-                device.ntrip_connected = False
-                device.offline_since = device.offline_since or now
-            device.is_provisioned = True
-            device.device_token = None
-            device.is_locked = False
-            device.server_config_lock = None
-            # No token/license is generated; bypass is owned by the backend.
-            notifications.append((device, mp, source, rover if can_start else None))
-        # Accounts disabled/deleted and removed inventory must stop existing decoders.
-        for device in devices:
-            if is_readonly_base(device) and _extract_esp_mountpoint(device) not in seen:
-                notifications.append((device, _extract_esp_mountpoint(device) or '', None, None))
+            notification = _sync_prefix7_source(
+                db, source, rover_map, devices, by_mountpoint,
+                managed, managed_ids, seen, now,
+            )
+            if notification:
+                notifications.append(notification)
+        notifications.extend(_prefix7_stop_notifications(devices, seen))
         await db.commit()
         for device, *_ in notifications:
             await cache_device_metadata(device)
-    for device, mp, source, rover in notifications:
+    for device, mountpoint, source, rover in notifications:
         lat, lon, alt = _extract_device_coords(device)
-        await notify_decoder_worker('start' if rover else 'stop', device.serial, mp,
-                                    mp, rover.password if rover else '', lat=lat, lon=lon, alt=alt,
-                                    host=source.host if source else None,
-                                    port=source.port if source else None)
+        await notify_decoder_worker(
+            'start' if rover else 'stop', device.serial, mountpoint,
+            mountpoint, rover.password if rover else '', lat=lat, lon=lon, alt=alt,
+            host=source.host if source else None,
+            port=source.port if source else None,
+        )
 
 
 async def resync_decoder_workers() -> None:
