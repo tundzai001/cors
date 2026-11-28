@@ -29,6 +29,91 @@ PUBLIC_MAP_CACHE_TTL_SECONDS = max(
 public_map_cache: Optional[list] = None
 public_map_cache_updated_monotonic = 0.0
 
+
+def _map_config(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _public_map_coords(dev: models.Device) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
+    sources = []
+    base_config = _map_config(getattr(dev, "base_config", None))
+    if base_config:
+        sources.append(base_config)
+    base_coords = getattr(dev, "base_coords", None)
+    if isinstance(base_coords, dict):
+        sources.append(base_coords)
+
+    for source in sources:
+        coords = _map_config(source.get("coords"))
+        lat = coords.get("lat") if coords.get("lat") is not None else source.get("lat")
+        lon = coords.get("lon") if coords.get("lon") is not None else source.get("lon")
+        alt = coords.get("alt") if coords.get("alt") is not None else source.get("alt")
+        if lat is None or lon is None:
+            continue
+        try:
+            alt = float(alt) if alt is not None else 0.0
+        except (TypeError, ValueError):
+            alt = 0.0
+        return lat, lon, alt
+    return None, None, None
+
+
+def _public_map_mountpoint(dev: models.Device) -> Optional[str]:
+    config = _map_config(getattr(dev, "service_config", None))
+    for key in ("active_mountpoint", "mountpoint1", "mountpoint2"):
+        value = str(config.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _public_map_streams(dev: models.Device) -> list:
+    config = _map_config(getattr(dev, "service_config", None))
+    streams = []
+    for index, stream_id in ((1, "s1"), (2, "s2")):
+        mountpoint = str(config.get(f"mountpoint{index}") or "").strip()
+        if not mountpoint:
+            continue
+        streams.append({
+            "stream_id": stream_id,
+            "host": config.get(f"serverhost{index}", config.get(f"host{index}", "")),
+            "port": config.get(f"port{index}", config.get(f"serverport{index}", "")),
+            "mountpoint": mountpoint,
+            "enabled": bool(config.get(f"server{index}_enabled")),
+        })
+    if streams:
+        return streams
+    mountpoint = str(config.get("active_mountpoint") or "").strip()
+    if not mountpoint:
+        return streams
+    return [{
+        "stream_id": "active", "host": "", "port": "",
+        "mountpoint": mountpoint, "enabled": True,
+    }]
+
+
+def _public_map_item(dev: models.Device) -> Optional[dict]:
+    lat, lon, alt = _public_map_coords(dev)
+    if lat is None or lon is None:
+        return None
+    return {
+        "serial": dev.serial,
+        "name": dev.name,
+        "status": dev.status,
+        "timestamp": dev.timestamp,
+        "offline_since": dev.offline_since,
+        "lat": float(lat),
+        "lon": float(lon),
+        "alt": float(alt) if alt is not None else 0.0,
+        "mountpoint": _public_map_mountpoint(dev),
+        "streams": _public_map_streams(dev),
+        "ntrip_status": schemas.redact_config_secrets(dev.ntrip_status),
+        "is_provisioned": dev.is_provisioned,
+        "ntrip_connected": getattr(dev, "ntrip_connected", False),
+        "bps": _device_total_bps(dev),
+    }
+
+
 async def _get_map_station_items(
     response: Response,
     db: AsyncSession = Depends(get_db),
@@ -55,114 +140,20 @@ async def _get_map_station_items(
         # Lấy tất cả thiết bị
         result = await db.execute(select(models.Device))
         devices = [d for d in result.scalars().all() if not crud.is_blocked_device_serial(d.serial)]
-
-        def _dict_or_empty(value: Any) -> dict:
-            return value if isinstance(value, dict) else {}
-
-        def _extract_public_map_coords(dev: models.Device) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
-            candidate_sources = []
-
-            base_config = _dict_or_empty(getattr(dev, "base_config", None))
-            if base_config:
-                candidate_sources.append(base_config)
-
-            base_coords = getattr(dev, "base_coords", None)
-            if isinstance(base_coords, dict):
-                candidate_sources.append(base_coords)
-
-            for source in candidate_sources:
-                coords = _dict_or_empty(source.get("coords"))
-                lat = coords.get("lat") if coords.get("lat") is not None else source.get("lat")
-                lon = coords.get("lon") if coords.get("lon") is not None else source.get("lon")
-                alt = coords.get("alt") if coords.get("alt") is not None else source.get("alt")
-
-                if lat is not None and lon is not None:
-                    try:
-                        alt_val = float(alt) if alt is not None else 0.0
-                    except (TypeError, ValueError):
-                        alt_val = 0.0
-                    return lat, lon, alt_val
-
-            return None, None, None
-
-        def _extract_public_mountpoint(dev: models.Device) -> Optional[str]:
-            service_config = _dict_or_empty(getattr(dev, "service_config", None))
-            for key in ("active_mountpoint", "mountpoint1", "mountpoint2"):
-                value = str(service_config.get(key) or "").strip()
-                if value:
-                    return value
-            return None
-
-        def _extract_public_streams(dev: models.Device) -> list:
-            service_config = _dict_or_empty(getattr(dev, "service_config", None))
-            streams = []
-
-            # Check S1
-            mp1 = str(service_config.get("mountpoint1") or "").strip()
-            if mp1:
-                streams.append({
-                    "stream_id": "s1",
-                    "host": service_config.get("serverhost1", service_config.get("host1", "")),
-                    "port": service_config.get("port1", service_config.get("serverport1", "")),
-                    "mountpoint": mp1,
-                    "enabled": bool(service_config.get("server1_enabled"))
-                })
-
-            # Check S2
-            mp2 = str(service_config.get("mountpoint2") or "").strip()
-            if mp2:
-                streams.append({
-                    "stream_id": "s2",
-                    "host": service_config.get("serverhost2", service_config.get("host2", "")),
-                    "port": service_config.get("port2", service_config.get("serverport2", "")),
-                    "mountpoint": mp2,
-                    "enabled": bool(service_config.get("server2_enabled"))
-                })
-
-            # Fallback
-            if not streams:
-                amp = str(service_config.get("active_mountpoint") or "").strip()
-                if amp:
-                    streams.append({
-                        "stream_id": "active",
-                        "host": "",
-                        "port": "",
-                        "mountpoint": amp,
-                        "enabled": True
-                    })
-
-            return streams
-
         public_data = []
         skipped_devices = 0
 
         for dev in devices:
-            lat, lon, alt = _extract_public_map_coords(dev)
-
-            if lat is not None and lon is not None:
-                try:
-                    public_data.append({
-                        "serial": dev.serial,
-                        "name": dev.name,
-                        "status": dev.status,
-                        "timestamp": dev.timestamp,
-                        "offline_since": dev.offline_since,
-                        "lat": float(lat),
-                        "lon": float(lon),
-                        "alt": float(alt) if alt is not None else 0.0,
-                        "mountpoint": _extract_public_mountpoint(dev),
-                        "streams": _extract_public_streams(dev),
-                        "ntrip_status": schemas.redact_config_secrets(dev.ntrip_status),
-                        "is_provisioned": dev.is_provisioned,
-                        "ntrip_connected": getattr(dev, "ntrip_connected", False),
-                        "bps": _device_total_bps(dev)
-                    })
-                except (ValueError, TypeError) as e:
-                    logging.warning(f"⚠️ Invalid coordinates for {dev.name}: {e}")
-                    skipped_devices += 1
-                    continue
-            else:
+            try:
+                item = _public_map_item(dev)
+            except (ValueError, TypeError) as e:
+                logging.warning(f"⚠️ Invalid coordinates for {dev.name}: {e}")
                 skipped_devices += 1
+                continue
+            if item is None:
+                skipped_devices += 1
+                continue
+            public_data.append(item)
 
         public_map_cache = public_data
         public_map_cache_updated_monotonic = time.monotonic()

@@ -104,6 +104,16 @@ class SatelliteService:
     def _normalize_codes(self, payload: dict[str, Any]) -> dict[str, Any]:
         # Merge supplemental operational satellites when constellation data is present.
         constellations = payload.get("constellations", {})
+        self._merge_supplemental_constellations(payload, constellations)
+
+        # Keep operational PRNs distinct from historical TLE names in every cache path.
+        rows = [(constellation, sat) for constellation, satellites in constellations.items() for sat in satellites]
+        owners = self._current_assignment_owners()
+        self._assign_tle_codes(rows, owners)
+        self._apply_status_snapshot(rows, owners)
+        return payload
+
+    def _merge_supplemental_constellations(self, payload, constellations):
         for key, sup_tle in SUPPLEMENTAL_TLE.items():
             constellation_sats = constellations.get(key)
             if isinstance(constellation_sats, list) and constellation_sats:
@@ -118,8 +128,7 @@ class SatelliteService:
                 if "total_satellites" in payload:
                     payload["total_satellites"] = sum(len(v) for v in constellations.values() if isinstance(v, list))
 
-        # Keep operational PRNs distinct from historical TLE names in every cache path.
-        rows = [(constellation, sat) for constellation, satellites in constellations.items() for sat in satellites]
+    def _current_assignment_owners(self):
         owners = {}
         now = datetime.now(timezone.utc)
         epoch = now.strftime(TLE_EPOCH_FORMAT) + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
@@ -128,10 +137,16 @@ class SatelliteService:
                 if start <= epoch and (end == "0000:000:00000" or epoch < end):
                     canonical = f"J{int(code[1:]) + 192:03d}" if code.startswith("J") and int(code[1:]) < 100 else code
                     owners.setdefault(canonical, set()).add(norad)
+
+        return owners
+
+    def _assign_tle_codes(self, rows, owners):
         for constellation, sat in rows:
             sat["code"] = self._extract_satellite_code(constellation, sat["name"], sat["line1"])
             if "?" not in sat["code"]:
                 owners.setdefault(sat["code"], set()).add(str(sat.get("norad_id", sat["line1"][2:7].strip())))
+
+    def _apply_status_snapshot(self, rows, owners):
         for constellation, sat in rows:
             norad = str(sat.get("norad_id", sat["line1"][2:7].strip())).lstrip("0")
             for field in ("status_source", "status_as_of_utc", "operational_status"):
