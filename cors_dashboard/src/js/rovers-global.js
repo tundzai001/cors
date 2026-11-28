@@ -1358,6 +1358,43 @@ function createRoverRowElement(r) {
         }
     }
 
+    function setRoverActivityDayLoading(dateValue, machinesContainer, subtitle, countEl) {
+        if (subtitle) subtitle.textContent = `Ngày ${dateValue} · đang tải danh sách máy…`;
+        if (countEl) countEl.textContent = '… máy';
+        if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải máy đo…</span></div>';
+    }
+
+    function showRoverActivityDayEmpty(dateValue, machinesContainer) {
+        roverActivitySelectedMachineKey = '';
+        const title = document.getElementById('rover-activity-track-title');
+        const meta = document.getElementById('rover-activity-track-meta');
+        if (title) title.textContent = 'Không có máy trong ngày này';
+        if (meta) meta.textContent = 'Không ghi nhận phiên nào trong ngày được chọn.';
+        if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-router" aria-hidden="true"></i><span>Không có máy đo trong ngày này.</span></div>';
+        setRoverActivityStatus(`Ngày ${dateValue}: không có máy hoạt động.`);
+    }
+
+    async function renderRoverActivityDay(data, dateValue, machinesContainer, subtitle, countEl) {
+        roverActivityMachines = data.machines || [];
+        const count = Number(data.machine_count) || 0;
+        if (countEl) countEl.textContent = `${count} máy`;
+        if (subtitle) subtitle.textContent = `Ngày ${dateValue} · ${count} máy (tài khoản + receiver)`;
+        renderRoverActivityMachines();
+        const selected = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey)
+            || roverActivityMachines[0];
+        if (!selected) {
+            showRoverActivityDayEmpty(dateValue, machinesContainer);
+            return;
+        }
+        await selectRoverActivityMachine(roverActivityMachineKey(selected));
+    }
+
+    function showRoverActivityDayError(error, machinesContainer, subtitle) {
+        if (subtitle) subtitle.textContent = 'Không tải được danh sách máy.';
+        if (machinesContainer) machinesContainer.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được dữ liệu.')}</span></div>`;
+        setRoverActivityStatus(error.message || 'Không tải được danh sách máy.', true);
+    }
+
     async function openRoverActivityDay(dateValue, options = {}) {
         if (!dateValue) return;
         roverActivitySelectedDate = dateValue;
@@ -1366,9 +1403,7 @@ function createRoverRowElement(r) {
         const machinesContainer = document.getElementById('rover-activity-machines');
         const subtitle = document.getElementById('rover-activity-detail-subtitle');
         const countEl = document.getElementById('rover-activity-machine-count');
-        if (subtitle) subtitle.textContent = `Ngày ${dateValue} · đang tải danh sách máy…`;
-        if (countEl) countEl.textContent = '… máy';
-        if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang tải máy đo…</span></div>';
+        setRoverActivityDayLoading(dateValue, machinesContainer, subtitle, countEl);
         clearRoverActivityTrack();
         try {
             const query = new URLSearchParams({ date: dateValue });
@@ -1376,29 +1411,10 @@ function createRoverRowElement(r) {
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail || `Không tải được danh sách máy (${response.status}).`);
             if (requestId !== roverActivityDayRequest) return;
-            roverActivityMachines = data.machines || [];
-            const count = Number(data.machine_count) || 0;
-            const countEl = document.getElementById('rover-activity-machine-count');
-            if (countEl) countEl.textContent = `${count} máy`;
-            if (subtitle) subtitle.textContent = `Ngày ${dateValue} · ${count} máy (tài khoản + receiver)`;
-            renderRoverActivityMachines();
-            const selected = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
-            if (selected) await selectRoverActivityMachine(roverActivityMachineKey(selected));
-            else if (roverActivityMachines.length) await selectRoverActivityMachine(roverActivityMachineKey(roverActivityMachines[0]));
-            else {
-                roverActivitySelectedMachineKey = '';
-                const title = document.getElementById('rover-activity-track-title');
-                const meta = document.getElementById('rover-activity-track-meta');
-                if (title) title.textContent = 'Không có máy trong ngày này';
-                if (meta) meta.textContent = 'Không ghi nhận phiên nào trong ngày được chọn.';
-                if (machinesContainer) machinesContainer.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-router" aria-hidden="true"></i><span>Không có máy đo trong ngày này.</span></div>';
-                setRoverActivityStatus(`Ngày ${dateValue}: không có máy hoạt động.`);
-            }
+            await renderRoverActivityDay(data, dateValue, machinesContainer, subtitle, countEl);
         } catch (error) {
             if (requestId !== roverActivityDayRequest) return;
-            if (subtitle) subtitle.textContent = 'Không tải được danh sách máy.';
-            if (machinesContainer) machinesContainer.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được dữ liệu.')}</span></div>`;
-            setRoverActivityStatus(error.message || 'Không tải được danh sách máy.', true);
+            showRoverActivityDayError(error, machinesContainer, subtitle);
         }
     }
 
@@ -1543,6 +1559,21 @@ function createRoverRowElement(r) {
         }
     }
 
+    function renderRoverActivityTrackEmpty(pointList) {
+        clearRoverActivityTrack();
+        const title = document.getElementById('rover-activity-track-title');
+        const meta = document.getElementById('rover-activity-track-meta');
+        const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
+        if (title) title.textContent = roverActivityMachineLabel(selectedMachine);
+        if (meta) meta.textContent = 'Máy có phiên hoạt động nhưng chưa lưu tọa độ hợp lệ trong ngày.';
+        if (pointList) pointList.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa có điểm vị trí trong ngày.</span></div>';
+    }
+
+    function showRoverActivityTrackError(error, pointList) {
+        if (pointList) pointList.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được điểm vị trí.')}</span></div>`;
+        setRoverActivityStatus(error.message || 'Không tải được tuyến vị trí.', true);
+    }
+
     async function loadRoverActivityTrack(receiverId, username) {
         const requestId = ++roverActivityTrackRequest;
         const map = document.getElementById('rover-activity-map');
@@ -1560,22 +1591,129 @@ function createRoverRowElement(r) {
             if (requestId !== roverActivityTrackRequest) return;
             const points = data.points || [];
             const sessions = data.sessions || [];
-            if (!points.length && !sessions.length) {
-                clearRoverActivityTrack();
-                const title = document.getElementById('rover-activity-track-title');
-                const meta = document.getElementById('rover-activity-track-meta');
-                const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
-                if (title) title.textContent = roverActivityMachineLabel(selectedMachine);
-                if (meta) meta.textContent = 'Máy có phiên hoạt động nhưng chưa lưu tọa độ hợp lệ trong ngày.';
-                if (pointList) pointList.innerHTML = '<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>Chưa có điểm vị trí trong ngày.</span></div>';
-                return;
-            }
+            if (!points.length && !sessions.length) return renderRoverActivityTrackEmpty(pointList);
             renderRoverActivityTrack(points, sessions);
         } catch (error) {
             if (requestId !== roverActivityTrackRequest) return;
-            if (pointList) pointList.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span>${escapeHtml(error.message || 'Không tải được điểm vị trí.')}</span></div>`;
-            setRoverActivityStatus(error.message || 'Không tải được tuyến vị trí.', true);
+            showRoverActivityTrackError(error, pointList);
         }
+    }
+
+    function updateRoverActivitySessionSummary(session, points, sessionIndex, sessions, validPoints, title, meta) {
+        const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
+        if (title) title.textContent = `${roverActivityMachineLabel(selectedMachine)}${session ? ` · Phiên ${sessionIndex}` : ''}`;
+        if (!meta) return;
+        if (session) {
+            meta.textContent = points.length
+                ? `${points.length} điểm vị trí · ${formatDateTime(points[0].recorded_at)} – ${formatDateTime(points[points.length - 1].recorded_at)} · nối từ đầu xanh đến cuối đỏ`
+                : `Phiên ${sessionIndex} chưa có điểm vị trí được lưu.`;
+            return;
+        }
+        meta.textContent = `${validPoints.length} điểm vị trí · ${sessions.length} phiên · mỗi phiên một màu`;
+    }
+
+    function renderRoverActivitySessionLinks(routeSessions, sessionColor, googleLinks) {
+        if (!googleLinks) return;
+        googleLinks.innerHTML = routeSessions.map(({ session, index }) => {
+            const routes = roverHistoryGoogleMapsRoutes(session.points);
+            return routes
+                ? `<div class="rover-activity-route-group" style="--rover-activity-route-color:${sessionColor(index)}"><strong>Phiên ${index + 1}</strong>${routes}</div>`
+                : '';
+        }).join('');
+        googleLinks.hidden = !googleLinks.childElementCount;
+    }
+
+    function renderRoverActivitySessionPoints(points, pointList, session, sessionIndex) {
+        const googlePointUrl = point => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${point.lat},${point.lon}`)}`;
+        pointList.innerHTML = points.map((point, index) => `<div class="rover-activity-point-row">
+            <div class="rover-activity-point-details">
+                <span><strong>${index + 1}.</strong> ${formatDateTime(point.recorded_at)} · ${escapeHtml(point.username || '')}${point.mountpoint ? ` · ${escapeHtml(point.mountpoint)}` : ''}</span>
+                <span class="rover-activity-point-coordinates">Tọa độ (vĩ độ, kinh độ): ${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}</span>
+                <span>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span>
+            </div>
+            <a href="${googlePointUrl(point)}" target="_blank" rel="noopener noreferrer" aria-label="Mở tọa độ điểm ${index + 1}${session ? ` phiên ${sessionIndex}` : ''} trên Google Maps">Bản đồ</a>
+        </div>`).join('');
+    }
+
+    function setRoverActivityMapEmpty(mapElement, message) {
+        mapElement.classList.add('is-empty');
+        mapElement.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>${message}</span></div>`;
+    }
+
+    function addRoverActivityMapPoint(leaflet, coordinate, point, index, route, selectedSession, mapCoordinates) {
+        const isStart = index === 0;
+        const isEnd = index === route.pointCount - 1;
+        mapCoordinates.push(coordinate);
+        const color = isStart ? '#34d399' : isEnd ? '#fb7185' : route.color;
+        leaflet.circleMarker(coordinate, {
+            radius: isStart || isEnd ? 6 : 3,
+            color,
+            fillColor: color,
+            fillOpacity: 0.95,
+            weight: 1
+        }).addTo(roverActivityMap).bindPopup(`<strong>${selectedSession ? `Điểm ${index + 1}` : `Phiên ${route.index + 1} · điểm ${index + 1}`}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}<br>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}`);
+    }
+
+    function drawRoverActivitySessionRoute(leaflet, session, index, selectedSession, mapCoordinates, sessionColor) {
+        const coordinates = session.points.map(point => [Number(point.lat), Number(point.lon)]);
+        const route = { index, color: sessionColor(index), pointCount: coordinates.length };
+        if (coordinates.length > 1) leaflet.polyline(coordinates, { color: route.color, weight: 4, opacity: 0.9 }).addTo(roverActivityMap);
+        coordinates.forEach((coordinate, pointIndex) => {
+            addRoverActivityMapPoint(leaflet, coordinate, session.points[pointIndex], pointIndex, route, selectedSession, mapCoordinates);
+        });
+    }
+
+    function renderRoverActivitySessionMap(mapElement, visibleSessions, sessions, selectedSession, sessionColor) {
+        const leaflet = window.L;
+        if (!leaflet || typeof leaflet.map !== 'function') {
+            mapElement.classList.add('is-empty');
+            mapElement.innerHTML = '<div class="rover-activity-empty">Bản đồ chưa tải được. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
+            return;
+        }
+        try {
+            roverActivityMap = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
+            addMapTiles(leaflet, roverActivityMap);
+            const mapCoordinates = [];
+            visibleSessions.forEach(session => {
+                drawRoverActivitySessionRoute(leaflet, session, sessions.indexOf(session), selectedSession, mapCoordinates, sessionColor);
+            });
+            if (mapCoordinates.length > 1) roverActivityMap.fitBounds(leaflet.latLngBounds(mapCoordinates), { padding: [22, 22], maxZoom: 19 });
+            else roverActivityMap.setView(mapCoordinates[0], 17);
+            requestAnimationFrame(() => roverActivityMap?.invalidateSize());
+        } catch (error) {
+            mapElement.classList.add('is-empty');
+            mapElement.innerHTML = '<div class="rover-activity-empty">Không thể dựng bản đồ. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
+            console.warn('Could not render Rover activity map', error);
+        }
+    }
+
+    function selectRoverActivitySession(sessionKey, context) {
+        const { sessions, validPoints, sessionPicker, pointList, mapElement, googleLinks, title, meta, sessionColor } = context;
+        const selectedSession = sessions.find(session => session.id === sessionKey);
+        const selectedPoints = selectedSession ? selectedSession.points : validPoints;
+        const sessionIndex = selectedSession ? sessions.indexOf(selectedSession) + 1 : 0;
+        sessionPicker.querySelectorAll('[data-activity-session]').forEach(button => {
+            const selected = button.dataset.activitySession === sessionKey;
+            button.classList.toggle('is-selected', selected);
+            button.setAttribute('aria-pressed', String(selected));
+        });
+        updateRoverActivitySessionSummary(selectedSession, selectedPoints, sessionIndex, sessions, validPoints, title, meta);
+        if (roverActivityMap) roverActivityMap.remove();
+        roverActivityMap = null;
+        mapElement.replaceChildren();
+        const routeSessions = selectedSession
+            ? [{ session: selectedSession, index: sessionIndex - 1 }]
+            : sessions.map((session, index) => ({ session, index }));
+        renderRoverActivitySessionLinks(routeSessions, sessionColor, googleLinks);
+        renderRoverActivitySessionPoints(selectedPoints, pointList, selectedSession, sessionIndex);
+        if (!selectedPoints.length) {
+            const emptyMessage = selectedSession ? `Phiên ${sessionIndex} chưa có tọa độ hợp lệ.` : 'Chưa có điểm vị trí nào được lưu trong ngày này.';
+            setRoverActivityMapEmpty(mapElement, emptyMessage);
+            return;
+        }
+        mapElement.classList.remove('is-empty');
+        const visibleSessions = selectedSession ? [selectedSession] : sessions;
+        renderRoverActivitySessionMap(mapElement, visibleSessions, sessions, selectedSession, sessionColor);
     }
 
     function renderRoverActivityTrack(points, sessionRecords = []) {
@@ -1617,105 +1755,38 @@ function createRoverRowElement(r) {
             const sessionStatus = session.ended_at ? 'Đã kết thúc' : 'Đang hoạt động';
             return `<button type="button" class="rover-activity-session-button ${selected ? 'is-selected' : ''}" style="--rover-activity-route-color:${sessionColor(index)}" data-activity-session="${escapeHtml(session.id)}" aria-pressed="${selected}"><strong>Phiên ${index + 1}</strong><small>${session.points.length} điểm · ${formatDateTime(sessionStart)} – ${formatDateTime(sessionEnd)} · ${sessionStatus}</small></button>`;
         }).join('')}`;
-        const googlePointUrl = point => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${point.lat},${point.lon}`)}`;
         const googleLinks = document.getElementById('rover-activity-google-links');
         const title = document.getElementById('rover-activity-track-title');
         const meta = document.getElementById('rover-activity-track-meta');
-        const selectSession = sessionKey => {
-            const selectedSession = sessions.find(session => session.id === sessionKey);
-            const selectedPoints = selectedSession ? selectedSession.points : validPoints;
-            const sessionIndex = selectedSession ? sessions.indexOf(selectedSession) + 1 : 0;
-            sessionPicker.querySelectorAll('[data-activity-session]').forEach(button => {
-                const selected = button.dataset.activitySession === sessionKey;
-                button.classList.toggle('is-selected', selected);
-                button.setAttribute('aria-pressed', String(selected));
-            });
-            const selectedMachine = roverActivityMachines.find(item => roverActivityMachineKey(item) === roverActivitySelectedMachineKey);
-            if (title) title.textContent = `${roverActivityMachineLabel(selectedMachine)}${selectedSession ? ` · Phiên ${sessionIndex}` : ''}`;
-            if (meta) meta.textContent = selectedSession
-                ? selectedPoints.length
-                    ? `${selectedPoints.length} điểm vị trí · ${formatDateTime(selectedPoints[0].recorded_at)} – ${formatDateTime(selectedPoints[selectedPoints.length - 1].recorded_at)} · nối từ đầu xanh đến cuối đỏ`
-                    : `Phiên ${sessionIndex} chưa có điểm vị trí được lưu.`
-                : `${validPoints.length} điểm vị trí · ${sessions.length} phiên · mỗi phiên một màu`;
-
-            if (roverActivityMap) roverActivityMap.remove();
-            roverActivityMap = null;
-            mapElement.replaceChildren();
-            const routeSessions = selectedSession
-                ? [{ session: selectedSession, index: sessionIndex - 1 }]
-                : sessions.map((session, index) => ({ session, index }));
-            if (googleLinks) {
-                googleLinks.innerHTML = routeSessions.map(({ session, index }) => {
-                    const routes = roverHistoryGoogleMapsRoutes(session.points);
-                    return routes
-                        ? `<div class="rover-activity-route-group" style="--rover-activity-route-color:${sessionColor(index)}"><strong>Phiên ${index + 1}</strong>${routes}</div>`
-                        : '';
-                }).join('');
-                googleLinks.hidden = !googleLinks.childElementCount;
-            }
-            const emptyPointsMessage = selectedSession
-                ? `Phiên ${sessionIndex} chưa có tọa độ hợp lệ.`
-                : 'Chưa có điểm vị trí nào được lưu trong ngày này.';
-            pointList.innerHTML = selectedPoints.length ? selectedPoints.map((point, index) => `<div class="rover-activity-point-row">
-                <div class="rover-activity-point-details">
-                    <span><strong>${index + 1}.</strong> ${formatDateTime(point.recorded_at)} · ${escapeHtml(point.username || '')}${point.mountpoint ? ` · ${escapeHtml(point.mountpoint)}` : ''}</span>
-                    <span class="rover-activity-point-coordinates">Tọa độ (vĩ độ, kinh độ): ${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}</span>
-                    <span>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}</span>
-                </div>
-                <a href="${googlePointUrl(point)}" target="_blank" rel="noopener noreferrer" aria-label="Mở tọa độ điểm ${index + 1}${selectedSession ? ` phiên ${sessionIndex}` : ''} trên Google Maps">Bản đồ</a>
-            </div>`).join('') : '';
-            if (!selectedPoints.length) {
-                mapElement.classList.add('is-empty');
-                mapElement.innerHTML = `<div class="rover-activity-empty"><i class="bi bi-geo" aria-hidden="true"></i><span>${emptyPointsMessage}</span></div>`;
-                return;
-            }
-            mapElement.classList.remove('is-empty');
-
-            const leaflet = window.L;
-            if (!leaflet || typeof leaflet.map !== 'function') {
-                mapElement.classList.add('is-empty');
-                mapElement.innerHTML = '<div class="rover-activity-empty">Bản đồ chưa tải được. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
-                return;
-            }
-            try {
-                roverActivityMap = leaflet.map(mapElement, { preferCanvas: true, scrollWheelZoom: false });
-                addMapTiles(leaflet, roverActivityMap);
-                const visibleSessions = selectedSession ? [selectedSession] : sessions;
-                const mapCoordinates = [];
-                visibleSessions.forEach(session => {
-                    const originalSessionIndex = sessions.indexOf(session);
-                    const routeColor = sessionColor(originalSessionIndex);
-                    const coordinates = session.points.map(point => [Number(point.lat), Number(point.lon)]);
-                    if (coordinates.length > 1) {
-                        leaflet.polyline(coordinates, { color: routeColor, weight: 4, opacity: 0.9 }).addTo(roverActivityMap);
-                    }
-                    coordinates.forEach((coordinate, index) => {
-                        const point = session.points[index];
-                        const isStart = index === 0;
-                        const isEnd = index === session.points.length - 1;
-                        mapCoordinates.push(coordinate);
-                        leaflet.circleMarker(coordinate, {
-                            radius: isStart || isEnd ? 6 : 3,
-                            color: isStart ? '#34d399' : isEnd ? '#fb7185' : routeColor,
-                            fillColor: isStart ? '#34d399' : isEnd ? '#fb7185' : routeColor,
-                            fillOpacity: 0.95,
-                            weight: 1
-                        }).addTo(roverActivityMap).bindPopup(`<strong>${selectedSession ? `Điểm ${index + 1}` : `Phiên ${originalSessionIndex + 1} · điểm ${index + 1}`}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}<br>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}`);
-                    });
-                });
-                if (mapCoordinates.length > 1) roverActivityMap.fitBounds(leaflet.latLngBounds(mapCoordinates), { padding: [22, 22], maxZoom: 19 });
-                else roverActivityMap.setView(mapCoordinates[0], 17);
-                requestAnimationFrame(() => roverActivityMap?.invalidateSize());
-            } catch (error) {
-                mapElement.classList.add('is-empty');
-                mapElement.innerHTML = '<div class="rover-activity-empty">Không thể dựng bản đồ. Danh sách tọa độ vẫn có thể mở trên Google Maps.</div>';
-                console.warn('Could not render Rover activity map', error);
-            }
-        };
+        const sessionContext = { sessions, validPoints, sessionPicker, pointList, mapElement, googleLinks, title, meta, sessionColor };
+        const selectSession = sessionKey => selectRoverActivitySession(sessionKey, sessionContext);
         sessionPicker.querySelectorAll('[data-activity-session]').forEach(button => {
             button.addEventListener('click', () => selectSession(button.dataset.activitySession));
         });
         selectSession(initialSessionKey);
+    }
+
+    function handleRoverActivityAccountKeydown(event, accountOptions) {
+        if (event.key === 'Escape') {
+            closeRoverActivityAccountOptions();
+            return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            if (accountOptions?.hidden) renderRoverActivityAccountOptions({ showAll: true });
+            const direction = event.key === 'ArrowDown' ? 1 : -1;
+            const count = accountOptions?.querySelectorAll('[data-rover-activity-account]').length || 0;
+            if (!count) return;
+            event.preventDefault();
+            setRoverActivityAccountOptionActive(roverActivityAccountOptionIndex < 0
+                ? (direction > 0 ? 0 : count - 1)
+                : roverActivityAccountOptionIndex + direction);
+            return;
+        }
+        if (event.key !== 'Enter' || !accountOptions || accountOptions.hidden) return;
+        const choice = accountOptions.querySelectorAll('[data-rover-activity-account]')[roverActivityAccountOptionIndex];
+        if (!choice) return;
+        event.preventDefault();
+        selectRoverActivityAccount(choice.dataset.roverActivityAccount);
     }
 
     function setupRoverActivity() {
@@ -1741,30 +1812,7 @@ function createRoverRowElement(r) {
             renderRoverActivityAccountOptions();
         });
         accountInput?.addEventListener('blur', () => setTimeout(closeRoverActivityAccountOptions, 120));
-        accountInput?.addEventListener('keydown', event => {
-            if (event.key === 'Escape') {
-                closeRoverActivityAccountOptions();
-                return;
-            }
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                if (accountOptions?.hidden) renderRoverActivityAccountOptions({ showAll: true });
-                const direction = event.key === 'ArrowDown' ? 1 : -1;
-                const count = accountOptions?.querySelectorAll('[data-rover-activity-account]').length || 0;
-                if (!count) return;
-                event.preventDefault();
-                setRoverActivityAccountOptionActive(roverActivityAccountOptionIndex < 0
-                    ? (direction > 0 ? 0 : count - 1)
-                    : roverActivityAccountOptionIndex + direction);
-                return;
-            }
-            if (event.key === 'Enter' && accountOptions && !accountOptions.hidden) {
-                const choice = accountOptions.querySelectorAll('[data-rover-activity-account]')[roverActivityAccountOptionIndex];
-                if (choice) {
-                    event.preventDefault();
-                    selectRoverActivityAccount(choice.dataset.roverActivityAccount);
-                }
-            }
-        });
+        accountInput?.addEventListener('keydown', event => handleRoverActivityAccountKeydown(event, accountOptions));
         accountOptions?.addEventListener('mousedown', event => {
             if (event.target.closest('[data-rover-activity-account]')) event.preventDefault();
         });
