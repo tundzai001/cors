@@ -1169,144 +1169,172 @@ async def _check_rover_blocked(username: str, mountpoint: Optional[str] = None) 
     return None
 
 
-async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_address: Optional[str] = None, source_streaming: bool = False):
-    """Xử lý wake trạm, trả về PlainTextResponse chuẩn cho Caster."""
+def _passive_wake_response(mountpoint: str, stream_hint: str = "pending"):
+    return PlainTextResponse(
+        f"WAKE_STATUS: ok\nSTREAM_HINT: {stream_hint}\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK"
+    )
+
+
+async def _ntrip_wake_preflight(mountpoint, client_id):
     is_command_mp = mountpoint and _is_command_mountpoint(mountpoint)
     if is_command_mp:
         logger.debug("[NTRIP Wake] Passive wake requested")
     else:
         logger.info("[NTRIP Wake] Wake requested")
-
-    # 1. Check Blocklist ngay lập tức
     reason = await _check_rover_blocked(client_id, mountpoint)
     if reason:
-        msg = f"BLOCKED: {reason}"
         logger.warning("[NTRIP Wake] Blocklist denied wake request")
-        return PlainTextResponse(f"WAKE_STATUS: blocked\n{msg}")
-
-    # 1.5. Bypass cho command mountpoints
+        return PlainTextResponse(f"WAKE_STATUS: blocked\nBLOCKED: {reason}")
     if mountpoint and is_command_mp:
-        logger.debug(f"[NTRIP Wake] Bypassing wake for command/test mountpoint '{mountpoint}'")
-        return PlainTextResponse(f"WAKE_STATUS: ok\nSTREAM_HINT: streaming\nMOUNTPOINT: {mountpoint}\nOK")
-
-    if is_4g_mountpoint(mountpoint):
-        # Caster owns this source; decoder telemetry must never gate its input.
-        # Pending keeps legacy casters accepting bytes without claiming RTCM exists.
+        logger.debug("[NTRIP Wake] Bypassing wake for command/test mountpoint '%s'", mountpoint)
         return PlainTextResponse(
-            f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK"
+            f"WAKE_STATUS: ok\nSTREAM_HINT: streaming\nMOUNTPOINT: {mountpoint}\nOK"
         )
+    if is_4g_mountpoint(mountpoint):
+        return _passive_wake_response(mountpoint)
+    return None
 
-    # 2. Bật trạm nếu hợp lệ
+
+def _device_has_connected_mountpoint(device, mountpoint):
+    if str(device.status or '').lower() == 'offline':
+        return False
+    config = _device_service_config(device)
+    telemetry = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
+    return any(
+        config.get(f'server{server_id}_enabled')
+        and _normalize_mountpoint(config.get(f'mountpoint{server_id}')) == _normalize_mountpoint(mountpoint)
+        and isinstance(telemetry.get(f'server{server_id}'), dict)
+        and telemetry[f'server{server_id}'].get('connected') is True
+        for server_id in service_server_ids(config)
+    )
+
+
+async def _find_streaming_device_serial(db: AsyncSession, mountpoint: str) -> Optional[str]:
+    result = await db.execute(select(models.Device))
+    candidates = [
+        device for device in result.scalars().all()
+        if _device_has_connected_mountpoint(device, mountpoint)
+    ]
+    return candidates[0].serial if len(candidates) == 1 else None
+
+
+async def _resolve_wake_target(db: AsyncSession, mountpoint: str, source_streaming: bool):
+    if source_streaming:
+        serial = await _find_streaming_device_serial(db, mountpoint)
+        if serial is None:
+            return None, _passive_wake_response(mountpoint, "streaming")
+    else:
+        serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
+    if serial is None:
+        return None, _passive_wake_response(mountpoint)
+
+    device = await crud.get_device_by_serial(db, serial)
+    if device and not _device_has_enabled_mountpoint(device, mountpoint):
+        serial = await _resolve_station_serial_by_mountpoint(db, mountpoint, force_refresh=True)
+        if serial is None:
+            return None, _passive_wake_response(mountpoint)
+        device = await crud.get_device_by_serial(db, serial)
+    return (serial, device), None
+
+
+def _wake_device_preflight(serial, device, client_id, mountpoint):
+    if not device:
+        return PlainTextResponse(f"WAKE_STATUS: error\nERROR: Trạm {serial} không tồn tại")
+    is_self_observer = (
+        str(serial).lower().startswith("esp_")
+        and _normalize_mountpoint(client_id) == _normalize_mountpoint(mountpoint)
+    )
+    if is_self_observer:
+        return _passive_wake_response(mountpoint)
+    if str(getattr(device, 'status', '')).lower() == 'offline':
+        logger.warning("[NTRIP Wake] Station '%s' is OFFLINE. Cannot wake up.", serial)
+        return PlainTextResponse(
+            f"WAKE_STATUS: offline\nERROR: Trạm {device.name or serial} đang offline"
+        )
+    return None
+
+
+def _wake_service_config(device):
+    raw_config = getattr(device, "service_config", None)
+    if isinstance(raw_config, dict):
+        return raw_config
+    if isinstance(raw_config, str):
+        try:
+            return json.loads(raw_config)
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def _resolve_wake_server_host(config, mountpoint, requested_address):
+    server_id = _resolve_preferred_server_id_for_mountpoint(config, mountpoint, requested_address)
+    if server_id not in service_server_ids(config):
+        return ""
+    logger.info("[NTRIP Wake] Selected server %s", server_id)
+    return str(config.get(f"serverhost{server_id}", "") or "").strip()
+
+
+def _build_wake_result(mountpoint, name, wake_result, source_streaming):
+    wake_status = str(wake_result.get("wake_status", "unknown"))
+    connected_now = bool(wake_result.get("connected", False))
+    selected_mp = str(wake_result.get("selected_mountpoint", mountpoint) or mountpoint)
+    stream_hint = "streaming" if source_streaming or connected_now else "pending"
+    wake_notes = {
+        "activation-sent": "đã gửi lệnh bật trạm",
+        "cooldown-skip": "bỏ qua lệnh bật do chống bão reconnect",
+        "joined-existing": "đã ghép vào phiên đang hoạt động",
+    }
+    wake_note = wake_notes.get(wake_status, "đã xử lý yêu cầu wake")
+    response_lines = [
+        f"WAKE_STATUS: {wake_status}",
+        f"STREAM_HINT: {stream_hint}",
+        f"MOUNTPOINT: {selected_mp}",
+        "Lắng nghe thành công",
+        f"OK {wake_note} {name}",
+    ]
+    return response_lines
+
+
+async def _wake_resolved_device(db, mountpoint, client_id, ttl, requested_address, source_streaming):
+    target, response = await _resolve_wake_target(db, mountpoint, source_streaming)
+    if response:
+        return response
+    serial, device = target
+    response = _wake_device_preflight(serial, device, client_id, mountpoint)
+    if response:
+        return response
+
+    config = _wake_service_config(device)
+    server_host = _resolve_wake_server_host(config, mountpoint, requested_address)
+    wake_result = await _ntrip_mqtt_start(
+        serial=serial,
+        mountpoint=mountpoint,
+        client_instance_id=client_id,
+        ttl_seconds=ttl,
+        requested_address=requested_address,
+        caster_host=server_host,
+        source_streaming=source_streaming,
+    )
+    response_lines = _build_wake_result(
+        mountpoint, device.name if device else serial, wake_result, source_streaming
+    )
+    return PlainTextResponse("\n".join(response_lines))
+
+
+async def _do_ntrip_wake(mountpoint: str, client_id: str, ttl: int, requested_address: Optional[str] = None, source_streaming: bool = False):
+    """Xử lý wake trạm, trả về PlainTextResponse chuẩn cho Caster."""
+    response = await _ntrip_wake_preflight(mountpoint, client_id)
+    if response:
+        return response
     try:
         async with device_session_scope() as db:
-            if source_streaming:
-                # Match the active output, not an offline station sharing its mountpoint.
-                result = await db.execute(select(models.Device))
-                candidates = []
-                for candidate in result.scalars().all():
-                    if str(candidate.status or '').lower() == 'offline':
-                        continue
-                    cfg = _device_service_config(candidate)
-                    telemetry = candidate.ntrip_status if isinstance(candidate.ntrip_status, dict) else {}
-                    for sid in service_server_ids(cfg):
-                        info = telemetry.get(f'server{sid}')
-                        if (cfg.get(f'server{sid}_enabled') and
-                            _normalize_mountpoint(cfg.get(f'mountpoint{sid}')) == _normalize_mountpoint(mountpoint) and
-                            isinstance(info, dict) and info.get('connected') is True):
-                            candidates.append(candidate)
-                            break
-                if len(candidates) != 1:
-                    return PlainTextResponse(
-                        f"WAKE_STATUS: ok\nSTREAM_HINT: streaming\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK"
-                    )
-                serial = candidates[0].serial
-            else:
-                serial = await _resolve_station_serial_by_mountpoint(db, mountpoint)
-            if serial is None:
-                return PlainTextResponse(f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
-            device = await crud.get_device_by_serial(db, serial)
-            if device and not _device_has_enabled_mountpoint(device, mountpoint):
-                # A config edit or duplicate disabled row can invalidate a cached owner.
-                serial = await _resolve_station_serial_by_mountpoint(db, mountpoint, force_refresh=True)
-                if serial is None:
-                    return PlainTextResponse(f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK")
-                device = await crud.get_device_by_serial(db, serial)
-            if not device:
-                return PlainTextResponse(f"WAKE_STATUS: error\nERROR: Trạm {serial} không tồn tại")
-
-            # The system Rover (username=MP) only observes an ESP source already
-            # pushing to the caster. It must not wake or gate its own source on
-            # a delayed agent heartbeat/DB status.
-            if str(serial).lower().startswith("esp_") and _normalize_mountpoint(client_id) == _normalize_mountpoint(mountpoint):
-                return PlainTextResponse(
-                    f"WAKE_STATUS: ok\nSTREAM_HINT: pending\nCONTROL_MODE: passive\nMOUNTPOINT: {mountpoint}\nOK"
-                )
-
-            # Kiểm tra trạng thái trạm
-            if str(getattr(device, 'status', '')).lower() == 'offline':
-                logger.warning(f"[NTRIP Wake] Station '{serial}' is OFFLINE. Cannot wake up.")
-                return PlainTextResponse(f"WAKE_STATUS: offline\nERROR: Trạm {device.name or serial} đang offline")
-
-            name = device.name if device else serial
-
-            # 🔥 FIX: Robustly handle service_config type to avoid 'length 29; 2 is required' error
-            raw_cfg = getattr(device, "service_config", None)
-            if isinstance(raw_cfg, dict):
-                cfg = raw_cfg
-            elif isinstance(raw_cfg, str):
-                import json
-                try:
-                    cfg = json.loads(raw_cfg)
-                except json.JSONDecodeError:
-                    cfg = {}
-            else:
-                cfg = {}
-            selected_server_id = _resolve_preferred_server_id_for_mountpoint(cfg, mountpoint, requested_address)
-            selected_server_host = ""
-            if selected_server_id in service_server_ids(cfg):
-                selected_server_host = str(cfg.get(f"serverhost{selected_server_id}", "") or "").strip()
-
-            wake_result = await _ntrip_mqtt_start(
-                serial=serial,
-                mountpoint=mountpoint,
-                client_instance_id=client_id,
-                ttl_seconds=ttl,
-                requested_address=requested_address,
-                caster_host=selected_server_host,
-                source_streaming=source_streaming,
+            return await _wake_resolved_device(
+                db, mountpoint, client_id, ttl, requested_address, source_streaming
             )
-
-            wake_status = str(wake_result.get("wake_status", "unknown"))
-            connected_now = bool(wake_result.get("connected", False))
-            selected_mp = str(wake_result.get("selected_mountpoint", mountpoint) or mountpoint)
-            stream_hint = "streaming" if source_streaming or connected_now else "pending"
-
-            if wake_status == "activation-sent":
-                wake_note = "đã gửi lệnh bật trạm"
-            elif wake_status == "cooldown-skip":
-                wake_note = "bỏ qua lệnh bật do chống bão reconnect"
-            elif wake_status == "joined-existing":
-                wake_note = "đã ghép vào phiên đang hoạt động"
-            else:
-                wake_note = "đã xử lý yêu cầu wake"
-
-            if selected_server_id in service_server_ids(cfg):
-                logger.info("[NTRIP Wake] Selected server %s", selected_server_id)
-
-            # Trả trạng thái rõ ràng để caster phân biệt "đã gửi lệnh" và "đang streaming".
-            response_lines = [
-                f"WAKE_STATUS: {wake_status}",
-                f"STREAM_HINT: {stream_hint}",
-                f"MOUNTPOINT: {selected_mp}",
-                "Lắng nghe thành công",
-                f"OK {wake_note} {name}",
-            ]
-            return PlainTextResponse("\n".join(response_lines))
-
-    except Exception as e:
-        msg = f"ERROR: {e}"
-        logger.error(f"[NTRIP Wake ERR] {msg}")
-        return PlainTextResponse(f"WAKE_STATUS: error\n{msg}", status_code=200)
+    except Exception as error:
+        message = f"ERROR: {error}"
+        logger.error("[NTRIP Wake ERR] %s", message)
+        return PlainTextResponse(f"WAKE_STATUS: error\n{message}", status_code=200)
 
 
 def _resolve_station_caster_host(device, mountpoint: str, requested_address: Optional[str]) -> Optional[str]:
