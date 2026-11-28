@@ -740,6 +740,47 @@ function drawSkyplotSatellite(satData, satCtx, centerX, centerY, radius) {
     satCtx.fillText(label, x, y + flagSize / 2 + 7);
 }
 
+function updateSkyplotTextStats({ device, nmeaData, now, lastUpdate, interval, satelliteMaxAgeMs }) {
+    if (now - lastUpdate.current < interval) return;
+    const satellites = nmeaData.satellites;
+    const satelliteCount = document.getElementById('db-sats');
+    if (satelliteCount) {
+        const counts = getDecodedSatelliteCounts(Object.values(satellites || {}), satelliteMaxAgeMs);
+        satelliteCount.textContent = counts.rtcm;
+    }
+    const dop = getGnssDop(device, nmeaData, !isDeviceStaleOffline(device), now / 1000);
+    const dopElement = document.getElementById('db-dop');
+    if (dopElement) dopElement.textContent = dop.timeOnly ? 'Không áp dụng'
+        : `${formatTelemetryNumber(dop.hdop, 2, '—')} / ${formatTelemetryNumber(dop.pdop, 2, '—')}`;
+    const rawDopElement = document.getElementById('db-dop-raw');
+    if (rawDopElement) rawDopElement.textContent = dop.timeOnly && (dop.rawHdop !== null || dop.rawPdop !== null)
+        ? `Chip trả: ${formatTelemetryNumber(dop.rawHdop, 2, '—')} / ${formatTelemetryNumber(dop.rawPdop, 2, '—')}` : '';
+    const dopSourceElement = document.getElementById('db-dop-source');
+    if (dopSourceElement) dopSourceElement.textContent = dop.source;
+    const position = getDashboardPosition(device, nmeaData);
+    const latitudeElement = document.getElementById('db-lat');
+    if (latitudeElement) latitudeElement.textContent = formatTelemetryNumber(position?.lat, 8, '—');
+    const longitudeElement = document.getElementById('db-lon');
+    if (longitudeElement) longitudeElement.textContent = formatTelemetryNumber(position?.lon, 8, '—');
+    const positionSourceElement = document.getElementById('db-position-source');
+    if (positionSourceElement) positionSourceElement.textContent = position?.source || 'Chưa có tọa độ';
+    lastUpdate.current = now;
+}
+
+function updateSkyplotCanvasIfDue({ device, nmeaData, now, lastUpdate, interval, draw }) {
+    if (now - lastUpdate.current < interval) return;
+    const plot = getSatellitePlotSource(device, nmeaData, !isDeviceStaleOffline(device), now / 1000);
+    draw(plot.satellites, plot.maxAgeMs);
+    lastUpdate.current = now;
+}
+
+function updateSkyplotBarsIfDue({ device, nmeaData, now, lastUpdate, interval, draw }) {
+    if (now - lastUpdate.current < interval) return;
+    const plot = getSatellitePlotSource(device, nmeaData, !isDeviceStaleOffline(device), now / 1000);
+    draw(plot.satellites, plot);
+    lastUpdate.current = now;
+}
+
 // Chuẩn hóa PRN về dải RTCM (1-based) để NMEA và RTCM cùng vệ tinh dùng chung key.
 // GLONASS: NMEA dùng 65-96 → chuẩn hóa về 1-32 (RTCM)
 // Galileo: NMEA dùng 301-336 → chuẩn hóa về 1-36 (RTCM)
@@ -1490,53 +1531,20 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
         const animate = () => {
             const now = Date.now();
-            const { satellites } = safeNmeaDataRef.current;
-
-            // Text Stats Updates
-            if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
-
-                const satCountEl = document.getElementById('db-sats');
-                if (satCountEl) {
-                    const counts = getDecodedSatelliteCounts(Object.values(satellites || {}), SATELLITE_TIMEOUT + FADE_DURATION);
-                    satCountEl.textContent = counts.rtcm;
-                }
-
-                const dop = getGnssDop(deviceRef.current, safeNmeaDataRef.current,
-                    !isDeviceStaleOffline(deviceRef.current), now / 1000);
-                const dopEl = document.getElementById('db-dop');
-                if (dopEl) dopEl.textContent = dop.timeOnly ? 'Không áp dụng'
-                    : `${formatTelemetryNumber(dop.hdop, 2, '—')} / ${formatTelemetryNumber(dop.pdop, 2, '—')}`;
-                const rawDop = document.getElementById('db-dop-raw');
-                if (rawDop) rawDop.textContent = dop.timeOnly && (dop.rawHdop !== null || dop.rawPdop !== null)
-                    ? `Chip trả: ${formatTelemetryNumber(dop.rawHdop, 2, '—')} / ${formatTelemetryNumber(dop.rawPdop, 2, '—')}` : '';
-                const dopSource = document.getElementById('db-dop-source');
-                if (dopSource) dopSource.textContent = dop.source;
-                const position = getDashboardPosition(deviceRef.current, safeNmeaDataRef.current);
-                const latEl = document.getElementById('db-lat');
-                if (latEl) latEl.textContent = formatTelemetryNumber(position?.lat, 8, '—');
-                const lonEl = document.getElementById('db-lon');
-                if (lonEl) lonEl.textContent = formatTelemetryNumber(position?.lon, 8, '—');
-                const positionSource = document.getElementById('db-position-source');
-                if (positionSource) positionSource.textContent = position?.source || 'Chưa có tọa độ';
-
-                lastStatsUpdate.current = now;
-            }
-
-            // Canvas & Bars Updates
-            if (now - lastCanvasUpdate.current >= CANVAS_INTERVAL) {
-                const plot = getSatellitePlotSource(deviceRef.current, safeNmeaDataRef.current,
-                    !isDeviceStaleOffline(deviceRef.current), now / 1000);
-                drawSkyplotSatellites(plot.satellites, plot.maxAgeMs);
-                lastCanvasUpdate.current = now;
-            }
-
-            if (now - lastBarsUpdate.current >= BARS_INTERVAL) {
-                const plot = getSatellitePlotSource(deviceRef.current, safeNmeaDataRef.current,
-                    !isDeviceStaleOffline(deviceRef.current), now / 1000);
-                drawSignalBars(plot.satellites, plot);
-                lastBarsUpdate.current = now;
-            }
-
+            const device = deviceRef.current;
+            const nmeaData = safeNmeaDataRef.current;
+            updateSkyplotTextStats({
+                device, nmeaData, now, lastUpdate: lastStatsUpdate,
+                interval: STATS_INTERVAL, satelliteMaxAgeMs: SATELLITE_TIMEOUT + FADE_DURATION,
+            });
+            updateSkyplotCanvasIfDue({
+                device, nmeaData, now, lastUpdate: lastCanvasUpdate, interval: CANVAS_INTERVAL,
+                draw: drawSkyplotSatellites,
+            });
+            updateSkyplotBarsIfDue({
+                device, nmeaData, now, lastUpdate: lastBarsUpdate, interval: BARS_INTERVAL,
+                draw: drawSignalBars,
+            });
             animationFrameRef.current = requestAnimationFrame(animate);
         };
 
