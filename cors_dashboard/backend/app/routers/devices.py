@@ -794,227 +794,256 @@ async def create_rover_for_base(
     
     return new_rover
 
+async def _validate_rover_update_scope(rover, update_req, devices_db, db, current_user):
+    if update_req.auto_save_sessions is not None and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình lưu phiên Rover.")
+    if update_req.auto_save_fixed_points is not None and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình tự lưu điểm Fixed.")
+    if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
+        manageable = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
+        selected = {
+            str(serial).strip().upper()
+            for serial in update_req.selected_serials
+            if str(serial).strip()
+        }
+        if not selected.issubset(manageable):
+            raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
+    if current_user.role != auth.Role.ADMIN and update_req.mountpoints is not None:
+        serials = update_req.selected_serials or (rover.base_serial.split(",") if rover.base_serial else [])
+        allowed = await crud.rover_mountpoints_within_scope(
+            devices_db, current_user, serials, update_req.mountpoints
+        )
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
+
+
+def _rover_update_values(rover, update_req):
+    return {
+        "password": update_req.password if update_req.password else rover.password,
+        "mountpoints": update_req.mountpoints if update_req.mountpoints is not None else rover.mountpoints,
+        "max_connections": update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
+        "show_position": update_req.show_position if update_req.show_position is not None else rover.show_position,
+        "rtcm_cycle_enabled": (
+            update_req.rtcm_cycle_enabled if update_req.rtcm_cycle_enabled is not None
+            else bool(getattr(rover, "rtcm_cycle_enabled", False))
+        ),
+        "rtcm_cycle_interval": (
+            update_req.rtcm_disconnect_interval_seconds
+            if update_req.rtcm_disconnect_interval_seconds is not None
+            else int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300)
+        ),
+        "rtcm_cycle_duration": (
+            update_req.rtcm_disconnect_duration_seconds
+            if update_req.rtcm_disconnect_duration_seconds is not None
+            else int(getattr(rover, "rtcm_disconnect_duration_seconds", 10) or 10)
+        ),
+    }
+
+
+async def _live_rover_hosts(username):
+    live_hosts = set()
+    try:
+        rover_key = str(username or "").strip().lower()
+        async with global_caster_cache_lock:
+            for cache_data in (await redis_client.get_all_caster_cache()).values():
+                host = str(cache_data.get("host", "") or "").strip()
+                if not host:
+                    continue
+                for user in (cache_data.get("users") or []):
+                    if str(user.get("username", "") or "").strip().lower() == rover_key:
+                        live_hosts.add(host)
+                        break
+    except Exception as error:
+        logger.warning("Failed to resolve live caster hosts for '%s': %s", username, error)
+    return live_hosts
+
+
+def _validated_rover_hosts(rover, update_req, live_hosts):
+    old_hosts = {
+        host.strip() for host in (rover.target_casters if rover.target_casters else "").split(";")
+        if host.strip()
+    }
+    if update_req.target_casters is not None:
+        requested = [str(host).strip() for host in update_req.target_casters if str(host).strip()]
+        updated = requested if requested else list(old_hosts or live_hosts)
+    else:
+        updated = list(old_hosts or live_hosts)
+    if not updated:
+        env_hosts, env_config = _read_caster_config_from_env()
+        if env_hosts:
+            updated = [str(host).strip() for host in env_hosts if host.strip()]
+        else:
+            default_host = str(env_config.get("host") or settings.CASTER_HOST or "").strip()
+            if default_host:
+                updated = [default_host]
+
+    seen = set()
+    updated = [host for host in updated if host and not (host in seen or seen.add(host))]
+    try:
+        updated = validate_caster_hosts(updated)
+    except ValueError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from None
+    return old_hosts, updated
+
+
+def _removed_rover_hosts(old_hosts, updated_hosts):
+    removed_hosts = set()
+    for host in old_hosts - set(updated_hosts):
+        try:
+            removed_hosts.update(validate_caster_hosts([host]))
+        except ValueError:
+            # A stale database host must not select an arbitrary network target.
+            continue
+    return removed_hosts
+
+
+async def _rover_durations_by_host(rover, updated_hosts, update_req, port):
+    if update_req.expiry_days is not None:
+        return {}
+    durations = {}
+    for host in updated_hosts:
+        remaining = await CasterClient(host, port).get_user_remaining_seconds(rover.username)
+        if remaining is None:
+            try:
+                remaining = saved_rover_duration(rover)
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from None
+        durations[host] = remaining
+    return durations
+
+
+async def _update_rover_on_caster(
+    host, port, creator_username, identifiers, rover, update_req, values, durations
+):
+    caster = CasterClient(host, port)
+    duration = (
+        update_req.expiry_days * 86400
+        if update_req.expiry_days is not None
+        else durations[host]
+    )
+    created = await caster.create_user(
+        creator=creator_username,
+        username=rover.username,
+        password=values["password"],
+        mountpoints=values["mountpoints"],
+        expiry_seconds=duration,
+        max_users=values["max_connections"],
+        show_position=values["show_position"],
+        rtcm_cycle_enabled=bool(values["rtcm_cycle_enabled"]),
+        rtcm_disconnect_interval_seconds=int(values["rtcm_cycle_interval"]),
+        rtcm_disconnect_duration_seconds=int(values["rtcm_cycle_duration"]),
+    )
+    if not created:
+        raise RuntimeError("Caster did not confirm account restore/update")
+    for identifier in identifiers:
+        toggled = await caster.toggle_show_pos(
+            identifier=identifier,
+            username=rover.username,
+            enabled=values["show_position"],
+        )
+        if toggled:
+            return
+    logger.warning("Caster %s did not confirm show_position toggle for rover '%s'", host, rover.username)
+
+
+async def _restore_rover_on_casters(updated_hosts, port, creator_username, identifiers, rover, update_req, values, durations):
+    failed_hosts = []
+    for host in updated_hosts:
+        try:
+            await _update_rover_on_caster(
+                host, port, creator_username, identifiers, rover, update_req, values, durations
+            )
+        except Exception as error:
+            logger.exception("Failed to update rover on caster %s: %s", host, error)
+            failed_hosts.append(host)
+    if failed_hosts:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Cấu hình đã lưu được giữ nguyên; có thể thử lại.",
+        )
+
+
+async def _cleanup_removed_rover_hosts(removed_hosts, port, creator_username, rover):
+    for host in removed_hosts:
+        try:
+            caster = CasterClient(host, port)
+            deleted = await caster.delete_user(identifier=creator_username, username=rover.username)
+            if not deleted:
+                logger.warning("Caster %s did not confirm delete for rover '%s'", host, rover.username)
+            logger.info("✓ Cleaned up (deleted) rover '%s' from removed caster %s", rover.username, host)
+        except Exception as error:
+            logger.warning("Failed to cleanup rover from removed caster %s: %s", host, error)
+
+
+async def _sync_rover_casters(db, rover, update_req, current_user, values):
+    live_hosts = await _live_rover_hosts(rover.username)
+    old_hosts, updated_hosts = _validated_rover_hosts(rover, update_req, live_hosts)
+    removed_hosts = _removed_rover_hosts(old_hosts, updated_hosts)
+    port = int(settings.CASTER_PORT or 2101)
+    creator = await crud.get_user_by_id(db, rover.created_by_user_id)
+    creator_username = creator.username if creator else "admin"
+    identifiers = []
+    for identifier in (creator_username, current_user.username, "admin", "id"):
+        normalized = str(identifier or "").strip()
+        if normalized and normalized not in identifiers:
+            identifiers.append(normalized)
+    durations = await _rover_durations_by_host(rover, updated_hosts, update_req, port)
+    await _restore_rover_on_casters(
+        updated_hosts, port, creator_username, identifiers, rover, update_req, values, durations
+    )
+    await _cleanup_removed_rover_hosts(removed_hosts, port, creator_username, rover)
+    return updated_hosts
+
+
+def _rover_update_data(update_req, values, updated_hosts):
+    data = {
+        "password": values["password"],
+        "mountpoints": values["mountpoints"],
+        "max_connections": values["max_connections"],
+        "show_position": values["show_position"],
+        "rtcm_cycle_enabled": bool(values["rtcm_cycle_enabled"]),
+        "rtcm_disconnect_interval_seconds": int(values["rtcm_cycle_interval"]),
+        "rtcm_disconnect_duration_seconds": int(values["rtcm_cycle_duration"]),
+        "target_casters": ";".join(updated_hosts),
+    }
+    if update_req.selected_serials:
+        data["base_serial"] = ",".join(update_req.selected_serials)
+    if update_req.is_shared_with_managers is not None:
+        data["is_shared_with_managers"] = update_req.is_shared_with_managers
+    if update_req.auto_save_sessions is not None:
+        data["auto_save_sessions"] = update_req.auto_save_sessions
+    if update_req.auto_save_fixed_points is not None:
+        data["auto_save_fixed_points"] = update_req.auto_save_fixed_points
+    if update_req.expiry_days is not None:
+        data["expires_at"] = int(time.time()) + update_req.expiry_days * 86400
+    return data
+
+
 @router.put("/api/rovers/{rover_id}", response_model=schemas.RoverAccountResponse, responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 502: {"description": "Bad Gateway"}})
 async def update_rover(
     rover_id: int,
     update_req: schemas.RoverUpdate,
     db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db), # Add devices_db here
-    current_user: models.User = Depends(auth.get_current_user)
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
 ):
-    # 1. Lấy thông tin Rover cũ
     rover = await crud.get_rover_by_id(db, rover_id)
     if not rover:
         raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Rover.")
-
-    # 2. Kiểm tra quyền
-    has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
-    if not has_perm:
+    has_permission = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
+    if not has_permission:
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
-    if update_req.auto_save_sessions is not None and current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình lưu phiên Rover.")
-    if update_req.auto_save_fixed_points is not None and current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình tự lưu điểm Fixed.")
-
-
-    # 3. Chuẩn bị dữ liệu mới (nếu client không gửi thì dùng cái cũ)
-    new_password = update_req.password if update_req.password else rover.password
-    if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
-        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
-        selected_serials = {
-            str(serial).strip().upper()
-            for serial in update_req.selected_serials
-            if str(serial).strip()
-        }
-        if not selected_serials.issubset(manageable_serials):
-            raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
-    # Empty string is intentional: it means remove every allowed mountpoint.
-    # Only None means "keep the current value".
-    new_mountpoints = update_req.mountpoints if update_req.mountpoints is not None else rover.mountpoints
-    if current_user.role != auth.Role.ADMIN and update_req.mountpoints is not None:
-        serials_for_mps = update_req.selected_serials or (rover.base_serial.split(",") if rover.base_serial else [])
-        if not await crud.rover_mountpoints_within_scope(devices_db, current_user, serials_for_mps, update_req.mountpoints):
-            raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
-    
-    # 4. GỌI CASTER ĐỂ CẬP NHẬT
+    await _validate_rover_update_scope(rover, update_req, devices_db, db, current_user)
     try:
-        from app.caster_client import CasterClient
-        creator_identifier = current_user.username 
-        new_max_connections = update_req.max_connections if update_req.max_connections is not None else rover.max_connections
-        target_show_pos = update_req.show_position if update_req.show_position is not None else rover.show_position
-        target_rtcm_cycle_enabled = update_req.rtcm_cycle_enabled if update_req.rtcm_cycle_enabled is not None else bool(getattr(rover, "rtcm_cycle_enabled", False))
-        target_rtcm_cycle_interval = update_req.rtcm_disconnect_interval_seconds if update_req.rtcm_disconnect_interval_seconds is not None else int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300)
-        target_rtcm_cycle_duration = update_req.rtcm_disconnect_duration_seconds if update_req.rtcm_disconnect_duration_seconds is not None else int(getattr(rover, "rtcm_disconnect_duration_seconds", 10) or 10)
-        
-        # Determine updated target casters
-        # If request provides target_casters, use it. Otherwise use what's in DB.
-        old_hosts_str = rover.target_casters if rover.target_casters else ""
-        old_hosts_set = set(h.strip() for h in old_hosts_str.split(";") if h.strip())
-        
-        # Resolve hosts where this rover actually exists from live caster cache.
-        live_hosts_set = set()
-        try:
-            rover_key = str(rover.username or "").strip().lower()
-            async with global_caster_cache_lock:
-                for cache_data in (await redis_client.get_all_caster_cache()).values():
-                    host = str(cache_data.get("host", "") or "").strip()
-                    if not host:
-                        continue
-                    for u in (cache_data.get("users") or []):
-                        if str(u.get("username", "") or "").strip().lower() == rover_key:
-                            live_hosts_set.add(host)
-                            break
-        except Exception as e:
-            logger.warning(f"Failed to resolve live caster hosts for '{rover.username}': {e}")
-
-        if update_req.target_casters is not None:
-            requested_hosts = [str(h).strip() for h in update_req.target_casters if str(h).strip()]
-            if requested_hosts:
-                updated_target_hosts = requested_hosts
-            else:
-                # Frontend legacy case: empty selection should not cause no-op update.
-                updated_target_hosts = list(old_hosts_set or live_hosts_set)
-        else:
-            # Load from DB first, then from live cache.
-            updated_target_hosts = list(old_hosts_set or live_hosts_set)
-
-        if not updated_target_hosts:
-            # Last fallback to all configured hosts to ensure complete sync
-            env_hosts, env_cfg = _read_caster_config_from_env()
-            if env_hosts:
-                updated_target_hosts = [str(h).strip() for h in env_hosts if h.strip()]
-            else:
-                default_h = str(env_cfg.get("host") or settings.CASTER_HOST or "").strip()
-                if default_h:
-                    updated_target_hosts = [default_h]
-
-        # Keep order and deduplicate
-        seen_hosts = set()
-        updated_target_hosts = [h for h in updated_target_hosts if h and not (h in seen_hosts or seen_hosts.add(h))]
-        try:
-            updated_target_hosts = validate_caster_hosts(updated_target_hosts)
-        except ValueError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from None
-        
-        new_hosts_set = set(updated_target_hosts)
-        removed_hosts = set()
-        for old_host in old_hosts_set - new_hosts_set:
-            try:
-                removed_hosts.update(validate_caster_hosts([old_host]))
-            except ValueError:
-                # Do not let stale or imported DB values select an arbitrary network target.
-                continue
-        
-        port = int(settings.CASTER_PORT or 2101)
-        results_log = []
-        creator_user = await crud.get_user_by_id(db, rover.created_by_user_id)
-        creator_username = creator_user.username if creator_user else "admin"
-        id_candidates = []
-        for ident in (creator_username, creator_identifier, "admin", "id"):
-            ident_s = str(ident or "").strip()
-            if ident_s and ident_s not in id_candidates:
-                id_candidates.append(ident_s)
-
-        durations_by_host = {}
-        if update_req.expiry_days is None:
-            for host in updated_target_hosts:
-                remaining = await CasterClient(host, port).get_user_remaining_seconds(rover.username)
-                if remaining is None:
-                    try:
-                        remaining = saved_rover_duration(rover)
-                    except ValueError as exc:
-                        raise HTTPException(status_code=409, detail=str(exc)) from None
-                durations_by_host[host] = remaining
-
-        failed_hosts = []
-        # 4a. Update/Create on selected hosts
-        for host in updated_target_hosts:
-            try:
-                caster = CasterClient(host, port)
-                duration_seconds = update_req.expiry_days * 86400 if update_req.expiry_days is not None else durations_by_host[host]
-                created_ok = await caster.create_user(
-                    creator=creator_username,
-                    username=rover.username,
-                    password=new_password,
-                    mountpoints=new_mountpoints, 
-                    expiry_seconds=duration_seconds, 
-                    max_users=new_max_connections,
-                    show_position=target_show_pos,
-                    rtcm_cycle_enabled=bool(target_rtcm_cycle_enabled),
-                    rtcm_disconnect_interval_seconds=int(target_rtcm_cycle_interval),
-                    rtcm_disconnect_duration_seconds=int(target_rtcm_cycle_duration),
-                )
-                if not created_ok:
-                    raise RuntimeError("Caster did not confirm account restore/update")
-
-                # Ensure show_position is synced on legacy caster variants.
-                toggle_ok = False
-                for ident in id_candidates:
-                    if await caster.toggle_show_pos(
-                        identifier=ident,
-                        username=rover.username,
-                        enabled=target_show_pos
-                    ):
-                        toggle_ok = True
-                        break
-                if not toggle_ok:
-                    logger.warning(f"Caster {host} did not confirm show_position toggle for rover '{rover.username}'")
-                results_log.append(host)
-            except Exception as e:
-                logger.exception(f"Failed to update rover on caster {host}: {e}")
-                failed_hosts.append(host)
-        if failed_hosts:
-            raise HTTPException(status_code=502, detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Cấu hình đã lưu được giữ nguyên; có thể thử lại.")
-
-        # 4b. Cleanup removed hosts
-        for host in removed_hosts:
-            try:
-                caster = CasterClient(host, port)
-                deleted_ok = await caster.delete_user(
-                    identifier=creator_username,
-                    username=rover.username
-                )
-                if not deleted_ok:
-                    logger.warning(f"Caster {host} did not confirm delete for rover '{rover.username}'")
-                logger.info(f"✓ Cleaned up (deleted) rover '{rover.username}' from removed caster {host}")
-            except Exception as e:
-                logger.warning(f"Failed to cleanup rover from removed caster {host}: {e}")
-
+        values = _rover_update_values(rover, update_req)
+        updated_hosts = await _sync_rover_casters(db, rover, update_req, current_user, values)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.exception(f"Caster Multi-Update Error: {e}")
-        raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(e)}")
-
-    # 5. Cập nhật DB Local
-    update_data = {
-        "password": new_password,
-        "mountpoints": new_mountpoints,
-        "max_connections": new_max_connections,
-        "show_position": target_show_pos,
-        "rtcm_cycle_enabled": bool(target_rtcm_cycle_enabled),
-        "rtcm_disconnect_interval_seconds": int(target_rtcm_cycle_interval),
-        "rtcm_disconnect_duration_seconds": int(target_rtcm_cycle_duration),
-        "target_casters": ";".join(updated_target_hosts)
-    }
-    
-    # 🔥 FIX: Cập nhật base_serial nếu client gửi lên danh sách trạm mới
-    if update_req.selected_serials:
-        update_data["base_serial"] = ",".join(update_req.selected_serials)
-        
-    if update_req.is_shared_with_managers is not None:
-        update_data["is_shared_with_managers"] = update_req.is_shared_with_managers
-    if update_req.auto_save_sessions is not None:
-        update_data["auto_save_sessions"] = update_req.auto_save_sessions
-    if update_req.auto_save_fixed_points is not None:
-        update_data["auto_save_fixed_points"] = update_req.auto_save_fixed_points
-
-    if update_req.expiry_days is not None:
-        update_data["expires_at"] = int(time.time()) + update_req.expiry_days * 86400
-        
-    updated_rover = await crud.update_rover_account(db, rover_id, update_data)
-    
-    return updated_rover
+    except Exception as error:
+        logger.exception("Caster Multi-Update Error: %s", error)
+        raise HTTPException(status_code=502, detail=f"Lỗi cập nhật Caster: {str(error)}")
+    update_data = _rover_update_data(update_req, values, updated_hosts)
+    return await crud.update_rover_account(db, rover_id, update_data)
 
 @router.delete("/api/rovers/{rover_id}", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def delete_rover(
