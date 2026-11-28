@@ -172,7 +172,7 @@ const getStatusColor = (status) => {
         case 'configuring': return '#0d6efd';
         case 'locked': return '#dc3545';
         default:
-            if (status && status.startsWith('auto_setup')) return '#0dcaf0';
+            if (status?.startsWith?.('auto_setup')) return '#0dcaf0';
             return '#6c757d'; // secondary
     }
 };
@@ -599,7 +599,7 @@ function removeStaleRoverMarkers(roverMarkers, showRovers, validRoverKeys, ensur
 function getBaseCoordinates(device) {
     const config = device?.base_config;
     if (!config) return null;
-    if (config.coords && config.coords.lat && config.coords.lon) return config.coords;
+    if (config.coords?.lat && config.coords.lon) return config.coords;
     if (config.lat !== undefined && config.lon !== undefined) return {lat: config.lat, lon: config.lon, alt: config.alt};
     return null;
 }
@@ -766,7 +766,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             try {
                 const apiCaller = window.apiFetch || fetch;
                 const response = await apiCaller('/api/caster/clienttable');
-                if (!response || !response.ok) return;
+                if (!response?.ok) return;
 
                 const payload = await response.json();
                 const items = Array.isArray(payload.items) ? payload.items : [];
@@ -829,7 +829,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
             if (!map) return;
 
             Object.values(roverMarkersRef.current).forEach((marker) => {
-                if (marker && marker.__animFrame) {
+                if (marker?.__animFrame) {
                     cancelAnimationFrame(marker.__animFrame);
                     marker.__animFrame = null;
                 }
@@ -873,7 +873,7 @@ const AllStationsMap = memo(function AllStationsMap({ devices, currentUser }) {
                         ? { lat: device.base_config.lat, lon: device.base_config.lon, alt: device.base_config.alt }
                         : null
                 );
-                if (coords && coords.lat && coords.lon) {
+                if (coords?.lat && coords.lon) {
                     validCorsKeys.add(device.serial);
                     const lat = Number.parseFloat(coords.lat);
                     const lon = Number.parseFloat(coords.lon);

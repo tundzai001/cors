@@ -1313,7 +1313,7 @@ function DetailsPanelNotices({device, staleOffline, tokenConfirmed, rawStatusKey
 
 function requestStationSerialRename(device) {
     const newSerial = prompt('Nhập Serial mới cho trạm LTE này:', device.serial);
-    if (newSerial && newSerial.trim() && newSerial.trim() !== device.serial) {
+    if (newSerial?.trim() && newSerial.trim() !== device.serial) {
         void window.handleRenameSerial(device.serial, newSerial.trim());
     }
 }
@@ -1625,7 +1625,7 @@ const DetailsPanel = memo(function DetailsPanel({
 
     return (
         <div className="card dashboard-detail-card bg-dark-tertiary h-100 d-flex flex-column" style={{ position: 'relative', overflowX: 'hidden' }}>
-            {isAdmin && device && device.system_info && (
+            {isAdmin && device?.system_info && (
                 <button
                     className="btn-system-toggle"
                     onClick={() => setIsSystemPanelOpen(!isSystemPanelOpen)}

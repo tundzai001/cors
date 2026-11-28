@@ -190,7 +190,7 @@ const Vn2000Result = ({ report, onReviewChange }) => {
         neh[key] != null && neh[key] !== '' && Number.isFinite(Number(neh[key])));
     const decoded = report.rtcm1025;
     const canRecalculate = !onReviewChange || (report.input_coord && report.parameters && report.parameter_source === 'rtcm1021');
-    const hasDecoded = decoded && decoded.raw_k0 != null && decoded.raw_l0 != null;
+    const hasDecoded = decoded?.raw_k0 != null && decoded.raw_l0 != null;
     const processorLabel = {
         esp32: 'ESP32',
         python_agent: 'Agent Python trên Pi',

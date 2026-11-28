@@ -1002,7 +1002,7 @@ const HeroThreeScene = () => {
                 line.geometry.dispose();
                 line.material.dispose();
             });
-            if (renderer.domElement && renderer.domElement.parentNode) {
+            if (renderer.domElement?.parentNode) {
                 renderer.domElement.parentNode.removeChild(renderer.domElement);
             }
         };
@@ -2372,7 +2372,7 @@ const HomePageEnterprise = ({ devices = [], networkSummary = null }) => {
                     ),
                     React.createElement('button', {
                         className: 'btn-outline-cyan',
-                        onClick: () => window.openPublicMap && window.openPublicMap()
+                        onClick: () => window.openPublicMap?.()
                     },
                         React.createElement('i', { className: 'bi bi-globe-asia-australia me-2' }),
                         'Xem bản đồ trạm'

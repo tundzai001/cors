@@ -89,7 +89,7 @@
                 const resp = await (window.apiFetch || fetch)(url);
                 if (!resp.ok) throw new Error(`HTTP error ${resp.status}`);
                 const data = await resp.json();
-                if (data && data.tec_grid && data.tec_grid.length) {
+                if (data?.tec_grid?.length) {
                     this.cachedData = data;
                     this.notify();
                 }
@@ -104,7 +104,7 @@
 
         // Render offscreen canvas raster representing the 72x72 grid
         generateRasterDataUrl(mode = 'tec', options = {}) {
-            if (!this.cachedData || !this.cachedData.tec_grid || !this.cachedData.tec_grid.length) {
+            if (!this.cachedData?.tec_grid?.length) {
                 return null;
             }
 
@@ -175,7 +175,7 @@
 
         // Bilinear probe for any lat, lon coordinate
         sample(lat, lon) {
-            if (!this.cachedData || !this.cachedData.tec_grid || !this.cachedData.tec_grid.length) {
+            if (!this.cachedData?.tec_grid?.length) {
                 return null;
             }
 
@@ -200,7 +200,7 @@
             const dc = colPos - c0;
 
             const interp = (grid) => {
-                if (!grid || !grid.length) return 0.0;
+                if (!grid?.length) return 0.0;
                 const v00 = grid[r0][c0];
                 const v01 = grid[r0][c1];
                 const v10 = grid[r1][c0];

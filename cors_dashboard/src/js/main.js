@@ -158,7 +158,7 @@ function flushPendingStatusUpdates() {
 function enqueueStatusUpdate(payload) {
     const list = Array.isArray(payload) ? payload : [payload];
     list.forEach((item) => {
-        if (!item || !item.serial) return;
+        if (!item?.serial) return;
         const revision = Number(item.status_revision || 0);
         const receivedAt = Number(item.server_received_at || item.timestamp || 0);
         const previous = lastStatusMetaBySerial.get(item.serial);
@@ -269,8 +269,8 @@ function getFilteredDevices() {
 
         cachedFilteredDevices = globalState.devices
             .filter(d =>
-                (d.name && d.name.toLowerCase().includes(term)) ||
-                (d.serial && d.serial.toLowerCase().includes(term))
+                d.name?.toLowerCase().includes(term) ||
+                d.serial?.toLowerCase().includes(term)
             );
 
         // Keep the station list stable while status/license/bps packets arrive.
@@ -584,11 +584,11 @@ function updateAuthButtons() {
 document.addEventListener('click', (e) => {
     const target = e.target;
     if (!target) return;
-    if (target.id === 'login-btn' || (target.closest && target.closest('#login-btn'))) {
+    if (target.id === 'login-btn' || target.closest?.('#login-btn')) {
         e.preventDefault();
         softGoHome();
     }
-    if (target.id === 'back-home-btn' || (target.closest && target.closest('#back-home-btn'))) {
+    if (target.id === 'back-home-btn' || target.closest?.('#back-home-btn')) {
         e.preventDefault();
         window.switchView('homepage');
     }
@@ -849,7 +849,7 @@ function selectDeviceFromDashboardQuery() {
 // ===============================================================================
 
 async function handleRenameDevice(serial, newName) {
-    if (!newName || !newName.trim()) {
+    if (!newName?.trim()) {
         showError('Tên trạm không được để trống!');
         return;
     }

@@ -293,7 +293,7 @@
                 const resp = await fetch('/api/public/world-countries-geojson');
                 if (!resp.ok) return;
                 const data = await resp.json();
-                if (!data || !data.features || !window.THREE) return;
+                if (!data?.features || !window.THREE) return;
 
                 this.countryFeatures = data.features;
 
@@ -338,7 +338,7 @@
                 const resp = await fetch('/api/public/vietnam-provinces-geojson');
                 if (!resp.ok) return;
                 const data = await resp.json();
-                if (!data || !data.features || !window.THREE) return;
+                if (!data?.features || !window.THREE) return;
 
                 const THREE = window.THREE;
                 const Math3D = window.Globe3DMath;

@@ -395,7 +395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
         const user = await window.ApiClient.requireAuthenticatedPage();
-        if (!user || user.role !== 'admin' || sessionClosed) { clearSensitivePage(); window.location.replace('/'); return; }
+        if (user?.role !== 'admin' || sessionClosed) { clearSensitivePage(); window.location.replace('/'); return; }
         document.querySelector('main').hidden = false;
         const [devices, loadedKeys] = await Promise.all([request('/api/devices'), request('/api/admin/api-keys')]);
         keys = loadedKeys;

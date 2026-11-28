@@ -137,7 +137,7 @@ function drawSkyplotSatellite(ctx, satData, centerX, centerY, radius) {
         ctx.fill();
     }
 
-    if (flag && flag.complete) {
+    if (flag?.complete) {
         ctx.drawImage(flag, x - flagSize / 2, y - flagSize / 2, flagSize, flagSize);
     } else {
         ctx.beginPath();

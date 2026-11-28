@@ -10,7 +10,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
     const markerRef = useRef(null);
 
     useEffect(() => {
-        if (!coords || !coords.lat || !coords.lon) {
+        if (!coords?.lat || !coords.lon) {
             console.warn('[Map] No coords provided');
             return;
         }
@@ -51,7 +51,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords }) {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    if (!coords || !coords.lat || (Number.parseFloat(coords.lat) === 0 && Number.parseFloat(coords.lon) === 0)) {
+    if (!coords?.lat || (Number.parseFloat(coords.lat) === 0 && Number.parseFloat(coords.lon) === 0)) {
         return (
             <div className="d-flex align-items-center justify-content-center p-4 text-danger border rounded bg-dark"
                 style={{ height: '250px', border: '2px solid red' }}>

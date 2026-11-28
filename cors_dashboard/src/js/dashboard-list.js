@@ -70,7 +70,7 @@ function getDeviceOpsFlags(device) {
         0
     );
     const antennaStatus = device?.antenna_status || device?.system_info?.antenna_status;
-    const antennaFault = (antennaStatus && antennaStatus.state === "FAULT") ||
+    const antennaFault = antennaStatus?.state === "FAULT" ||
         (['online', 'sleep', 'streaming', 'starting'].includes(status) && rtcmInputBps > 0 && rtcmInputBps < 100);
 
     const alert = status === 'locked' || unsynced || antennaFault || noStream;
@@ -80,7 +80,7 @@ function getDeviceOpsFlags(device) {
     } else if (status === 'locked') {
         alertTitle = 'Locked';
     } else if (antennaFault) {
-        alertTitle = (antennaStatus && antennaStatus.message) || `Lỗi Ăng-ten (Dòng RTCM cực thấp: ${rtcmInputBps} B/s)`;
+        alertTitle = antennaStatus?.message || `Lỗi Ăng-ten (Dòng RTCM cực thấp: ${rtcmInputBps} B/s)`;
     }
 
     if (noStream && alertTitle === 'Needs attention') {

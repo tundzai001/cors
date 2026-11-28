@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let pending = false;
     let lastReport;
     let series = 'logins';
-    if (!user || user.role !== 'admin') {
+    if (user?.role !== 'admin') {
         content.hidden = true;
         error.textContent = 'Chỉ quản trị viên được xem Analytics.';
         error.classList.remove('d-none');

@@ -120,7 +120,7 @@
     }
 
     function pointInGeometry(pt, geom) {
-        if (!geom || !geom.coordinates) return false;
+        if (!geom?.coordinates) return false;
         if (geom.type === 'Polygon') return pointInPolygon(pt, geom.coordinates);
         if (geom.type === 'MultiPolygon') return pointInMultiPolygon(pt, geom.coordinates);
         return false;
@@ -200,7 +200,7 @@
         let ionoLine = '';
         if (coords && window.IonosphereOverlay?.sample) {
             const probe = window.IonosphereOverlay.sample(coords.lat, coords.lon);
-            if (probe && probe.tec !== undefined) {
+            if (probe?.tec !== undefined) {
                 ionoLine = `<span class="station-map-popup-label">Local TEC</span><span class="station-map-popup-value" style="color:#38bdf8;font-weight:700;">${probe.tec.toFixed(1)} TECU</span>`;
             }
         }
@@ -1232,7 +1232,7 @@
                 const overlay = window.IonosphereOverlay;
                 if (!showIonosphereRef.current || !overlay?.sample) return;
                 const probe = overlay.sample(event.latlng.lat, event.latlng.lng);
-                if (!probe || probe.tec === undefined) return;
+                if (probe?.tec === undefined) return;
                 L.popup({ maxWidth: 280, className: 'ionosphere-leaflet-popup' })
                     .setLatLng(event.latlng)
                     .setContent(ionosphereProbePopupHtml(probe))
@@ -1426,7 +1426,7 @@
             ]).then(([geojson, summary]) => {
                 if (!active) return;
                 if (Array.isArray(summary)) setProvincesList(summary);
-                if (geojson && geojson.type === 'FeatureCollection') {
+                if (geojson?.type === 'FeatureCollection') {
                     provincesDataRef.current = geojson;
                     setProvincesLoaded(c => c + 1);
                 }

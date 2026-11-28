@@ -47,7 +47,7 @@
                 && !(allowUnfixed && position.position_type === 'SINGLE'))
                 || typeof position.raw !== 'string' || !position.raw.startsWith('#BESTNAVA,')) return null;
             const fields = position.raw.split(';')[1]?.split('*')[0].split(',');
-            if (!fields || fields[0] !== 'SOL_COMPUTED' || fields[1] !== position.position_type
+            if (fields?.[0] !== 'SOL_COMPUTED' || fields[1] !== position.position_type
                 || fields[6] !== 'WGS84') return null;
             const values = fields.slice(2, 6).map(value => value.trim());
             if (values.length !== 4 || values.some(value => !/^-?\d+(?:\.\d+)?$/.test(value)

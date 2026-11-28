@@ -208,7 +208,7 @@ function getRfMonitorHistory(report) {
 
 function getRfDiagnostic(device, field, live = true, now = Date.now() / 1000) {
     const snapshot = device?.[field], spectrum = field === 'gnss_spectrum';
-    if (!live || !snapshot || snapshot.source !== (spectrum ? 'ubx_mon_span' : 'ubx_mon_rf')
+    if (!live || !snapshot?.source || snapshot.source !== (spectrum ? 'ubx_mon_span' : 'ubx_mon_rf')
         || typeof snapshot.payload_b64 !== 'string' || snapshot.payload_b64.length > 1456
         || typeof snapshot.age_seconds !== 'number') return null;
     const received = Number(device.server_received_at || device.timestamp);
@@ -554,7 +554,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords, rtcmOnly = false
 
     useEffect(() => {
         // Kiểm tra tọa độ đầu vào
-        if (!coords || !coords.lat || !coords.lon) {
+        if (!coords?.lat || !coords.lon) {
             console.warn('[Map] No coords provided');
             return;
         }
@@ -603,7 +603,7 @@ const BaseLocationMap = memo(function BaseLocationMap({ coords, rtcmOnly = false
     }, []);
 
     // Hiển thị placeholder nếu chưa có tọa độ
-    if (!coords || !coords.lat || (Number.parseFloat(coords.lat) === 0 && Number.parseFloat(coords.lon) === 0)) {
+    if (!coords?.lat || (Number.parseFloat(coords.lat) === 0 && Number.parseFloat(coords.lon) === 0)) {
         console.warn('[Map] No valid coords - showing placeholder');
         return (
             <div className="d-flex align-items-center justify-content-center p-4 text-danger border rounded bg-dark"
@@ -796,7 +796,7 @@ function drawSkyplotSatellite(satData, satCtx, centerX, centerY, radius) {
         satCtx.fillStyle = (colors[system] || '#fff') + '40';
         satCtx.fill();
     }
-    if (flag && flag.complete && flag.naturalWidth > 0) {
+    if (flag?.complete && flag.naturalWidth > 0) {
         satCtx.drawImage(flag, x - flagSize / 2, y - flagSize / 2, flagSize, flagSize);
     } else {
         satCtx.beginPath();

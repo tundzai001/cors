@@ -276,7 +276,7 @@
                     .catch(() => finish(null));
 
                 pc.onicecandidate = (event) => {
-                    if (!event || !event.candidate || !event.candidate.candidate) return;
+                    if (!event?.candidate?.candidate) return;
                     const candidate = event.candidate.candidate;
                     const match = candidate.match(/([0-9]{1,3}(?:\.[0-9]{1,3}){3})/);
                     if (match) {

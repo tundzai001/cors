@@ -158,7 +158,7 @@
                         return;
                     }
                     const sample = window.IonosphereOverlay?.sample(event.lngLat.lat, event.lngLat.lng);
-                    if (!sample || sample.tec === undefined) {
+                    if (sample?.tec === undefined) {
                         if (this.ionoTooltip) this.ionoTooltip.style.display = 'none';
                         return;
                     }

@@ -85,7 +85,7 @@
                 const resp = await (window.apiFetch || fetch)('/api/gnss/satellites/tle');
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
-                if (!data || !data.constellations) return;
+                if (!data?.constellations) return;
                 this.tleInfo = { is_stale: data.is_stale, updated_at_utc: data.updated_at_utc };
 
                 const satLib = window.satellite;
@@ -448,7 +448,7 @@
             let delayM = null;
             if (window.IonosphereOverlay?.sample) {
                 const probe = window.IonosphereOverlay.sample(ippLat, ippLon);
-                if (probe && probe.tec !== undefined) {
+                if (probe?.tec !== undefined) {
                     vtecVal = probe.tec;
                     stecVal = Math.round(vtecVal * mf * 10) / 10;
                     delayM = (stecVal * 0.1624).toFixed(2);

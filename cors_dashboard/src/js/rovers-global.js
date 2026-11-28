@@ -1196,7 +1196,7 @@ function createRoverRowElement(r) {
 }
 
     function patchEditedRoverRow(updatedRover) {
-        if (!updatedRover || !updatedRover.username) return;
+        if (!updatedRover?.username) return;
 
         const updatedKey = normalizeUsername(updatedRover.username);
         const existingIndex = allRovers.findIndex(r => r.id === updatedRover.id || normalizeUsername(r.username) === updatedKey);
@@ -2455,14 +2455,14 @@ function createRoverRowElement(r) {
 
     function matchesRoverSearch(rover, searchTerm) {
         return rover.username.toLowerCase().includes(searchTerm)
-            || (rover.base_serial && rover.base_serial.toLowerCase().includes(searchTerm))
-            || (rover.base_name && rover.base_name.toLowerCase().includes(searchTerm));
+            || rover.base_serial?.toLowerCase().includes(searchTerm)
+            || rover.base_name?.toLowerCase().includes(searchTerm);
     }
 
     function matchesRoverStation(rover, stationFilter) {
         if (!stationFilter) return true;
         const device = allDevices.find(item => item.serial === stationFilter);
-        const serialMatches = rover.base_serial && rover.base_serial.split(',').map(value => value.trim()).includes(stationFilter);
+        const serialMatches = rover.base_serial?.split(',').map(value => value.trim()).includes(stationFilter);
         const mountpoints = (rover.mountpoints || '').split(';').map(value => value.trim().toLowerCase());
         const mountpointMatches = device?.mountpoint && mountpoints.includes(device.mountpoint.toLowerCase());
         return Boolean(serialMatches || mountpointMatches);

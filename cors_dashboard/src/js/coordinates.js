@@ -364,7 +364,7 @@
         if (!result) return;
         const snapshot = result, index = $('copy-point').value;
         const point = snapshot.data.points[Number(index)];
-        if (!point || point.length !== 3) {
+        if (point?.length !== 3) {
             status('Cần nhập cả độ cao h hoặc H rồi chuyển đổi để sao chép cho GNSS.', true);
             return;
         }

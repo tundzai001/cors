@@ -62,7 +62,7 @@ const getStatusColor = (status) => {
         case 'configuring': return '#0d6efd';
         case 'locked': return '#dc3545';
         default:
-            if (status && status.startsWith('auto_setup')) return '#0dcaf0';
+            if (status?.startsWith?.('auto_setup')) return '#0dcaf0';
             return '#6c757d'; // secondary
     }
 };

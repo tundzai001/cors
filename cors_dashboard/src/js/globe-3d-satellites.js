@@ -126,7 +126,7 @@
 
     // Determine authentic orbital parameters & classification (GEO, IGSO, MEO)
     function getOrbitTypeInfo(satItem) {
-        if (!satItem || !satItem.satrec) {
+        if (!satItem?.satrec) {
             return { type: 'MEO', label: 'MEO (Quỹ đạo tầm trung)', periodHours: 12.0, periodMins: 720, incDeg: 55 };
         }
         const incDeg = satItem.satrec.inclo ? (satItem.satrec.inclo * 180 / Math.PI) : 55;
@@ -460,7 +460,7 @@
             this.stationSprites = [];
 
             stationList.forEach(item => {
-                const coords = item.coords || (item.device && item.device.latitude && { lat: Number(item.device.latitude), lon: Number(item.device.longitude) });
+                const coords = item.coords || (item.device?.latitude && { lat: Number(item.device.latitude), lon: Number(item.device.longitude) });
                 if (!coords || !Number.isFinite(coords.lat) || !Number.isFinite(coords.lon)) return;
 
                 const isOnline = item.status === 'online' || item.status === 'streaming';
@@ -564,7 +564,7 @@
             if (!THREE || !satLib || !Math3D) return;
 
             disposeGroup(this.singleOrbitGroup);
-            if (!satItem || !satItem.satrec) return;
+            if (!satItem?.satrec) return;
 
             const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
             const now = new Date();
@@ -584,7 +584,7 @@
             for (let i = 0; i <= sampleCount; i++) {
                 const sampleTime = new Date(now.getTime() + (i * dtMins * 60 * 1000));
                 const posVel = satLib.propagate(satItem.satrec, sampleTime);
-                if (posVel && posVel.position) {
+                if (posVel?.position) {
                     const gd = satLib.eciToGeodetic(posVel.position, gmstNow);
                     const lat = satLib.degreesLat(gd.latitude);
                     const lon = satLib.degreesLong(gd.longitude);
