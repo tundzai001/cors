@@ -324,51 +324,17 @@ class ConversationMixin:
 
     async def _handle_notification_severity(self, update, key, state, answer):
         data = state["data"]
-        lowered = answer.lower()
-        if lowered in {"1", "critical", "nghiem trong", "nghiêm trọng"}:
-            data.update({"enabled": True, "min_severity": "critical"})
-        elif lowered in {"2", "warning", "canh bao", "cảnh báo"}:
-            data.update({"enabled": True, "min_severity": "warning"})
-        elif lowered in {"3", "off", "tat", "tắt", "khong", NEGATIVE_ANSWER}:
-            data.update({"enabled": False, "min_severity": "critical"})
-        else:
+        selection = self._parse_notification_severity(answer)
+        if selection is None:
             await update.message.reply_text("Chọn 1, 2 hoặc 3 để mình đặt mức cảnh báo.")
             return True
-        if not data.get("enabled", True):
-            binding_id = int(data["binding_id"])
-            await zalo_repository.set_notification_preference(
-                binding_id,
-                enabled=False,
-                min_severity="critical",
-                scopes=dict(data.get("scopes") or {"mode": "all"}),
-                quiet_start=None,
-                quiet_end=None,
-                timezone="Asia/Saigon",
-                critical_override=True,
-            )
-            await zalo_repository.complete_onboarding(binding_id)
-            self._conversation_states.pop(key, None)
-            await update.message.reply_text(
-                "✅ Đã tắt thông báo cho chat này. Phạm vi truy cập được cấp vẫn giữ nguyên khi tra cứu.\n\n"
-                "Gõ /menu để bắt đầu dùng bot."
-            )
+        enabled, min_severity = selection
+        data.update({"enabled": enabled, "min_severity": min_severity})
+        if not enabled:
+            await self._disable_notification_setup(update, key, data)
             return True
         if data.get("scope_locked"):
-            state["step"] = "quiet"
-            scope_mode = str((data.get("scopes") or {}).get("mode") or "all")
-            scope_text = (
-                "tất cả trạm" if scope_mode == "all"
-                else "không có trạm" if scope_mode == "none"
-                else f"{len((data.get('scopes') or {}).get('values') or [])} trạm admin đã chọn"
-            )
-            locked_by = "group" if data.get("binding_type") in {"group_admin", "group_public"} else "tài khoản"
-            await update.message.reply_text(
-                f"Phạm vi cảnh báo được khóa theo {locked_by}: {scope_text}.\n\n"
-                "2/2 — Giờ im lặng:\n"
-                "1. Không đặt giờ im lặng\n"
-                "2. 22:00-07:00\n"
-                "Hoặc nhập trực tiếp dạng HH:MM-HH:MM."
-            )
+            await self._prompt_locked_notification_scope(update, state, data)
             return True
         state["step"] = "scope"
         await update.message.reply_text(
@@ -378,7 +344,98 @@ class ConversationMixin:
             "3. Không nhận cảnh báo nội bộ"
         )
         return True
-        return False
+
+    async def _disable_notification_setup(self, update, key, data):
+        binding_id = int(data["binding_id"])
+        await zalo_repository.set_notification_preference(
+            binding_id,
+            enabled=False,
+            min_severity="critical",
+            scopes=dict(data.get("scopes") or {"mode": "all"}),
+            quiet_start=None,
+            quiet_end=None,
+            timezone="Asia/Saigon",
+            critical_override=True,
+        )
+        await zalo_repository.complete_onboarding(binding_id)
+        self._conversation_states.pop(key, None)
+        await update.message.reply_text(
+            "✅ Đã tắt thông báo cho chat này. Phạm vi truy cập được cấp vẫn giữ nguyên khi tra cứu.\n\n"
+            "Gõ /menu để bắt đầu dùng bot."
+        )
+
+    async def _prompt_locked_notification_scope(self, update, state, data):
+        state["step"] = "quiet"
+        scopes = data.get("scopes") or {}
+        scope_mode = str(scopes.get("mode") or "all")
+        scope_text = {"all": "tất cả trạm", "none": "không có trạm"}.get(
+            scope_mode, f"{len(scopes.get('values') or [])} trạm admin đã chọn"
+        )
+        locked_by = "group" if data.get("binding_type") in {"group_admin", "group_public"} else "tài khoản"
+        await update.message.reply_text(
+            f"Phạm vi cảnh báo được khóa theo {locked_by}: {scope_text}.\n\n"
+            "2/2 — Giờ im lặng:\n"
+            "1. Không đặt giờ im lặng\n"
+            "2. 22:00-07:00\n"
+            "Hoặc nhập trực tiếp dạng HH:MM-HH:MM."
+        )
+
+    async def _handle_notification_quiet(self, update, key, state, answer):
+        data = state["data"]
+        valid, quiet_start, quiet_end = self._parse_quiet_hours(answer)
+        if not valid:
+            await update.message.reply_text("Giờ im lặng cần dạng HH:MM-HH:MM, ví dụ 22:00-07:00.")
+            return True
+        binding_id = int(data["binding_id"])
+        await zalo_repository.set_notification_preference(
+            binding_id,
+            enabled=bool(data.get("enabled", True)),
+            min_severity=str(data.get("min_severity") or "critical"),
+            scopes=dict(data.get("scopes") or {"mode": "all"}),
+            quiet_start=quiet_start,
+            quiet_end=quiet_end,
+            timezone="Asia/Saigon",
+            critical_override=True,
+        )
+        await zalo_repository.complete_onboarding(binding_id)
+        self._conversation_states.pop(key, None)
+        severity = "tắt" if not data.get("enabled", True) else data.get("min_severity")
+        quiet = f"{quiet_start}-{quiet_end}" if quiet_start and quiet_end else "không đặt"
+        scopes = data.get("scopes") or {}
+        scope_mode = str(scopes.get("mode") or "all")
+        scope_text = {"all": "tất cả trạm", "none": "không có trạm"}.get(
+            scope_mode, f"{len(scopes.get('values') or [])} trạm được chọn"
+        )
+        await update.message.reply_text(
+            f"✅ Đã lưu thiết lập cảnh báo.\n"
+            f"• Mức nhận: {severity}\n"
+            f"• Phạm vi: {scope_text}\n"
+            f"• Giờ im lặng: {quiet}\n\n"
+            "Gõ /menu để bắt đầu dùng bot."
+        )
+        return True
+
+
+    def _parse_notification_severity(self, answer):
+        lowered = answer.lower()
+        if lowered in {"1", "critical", "nghiem trong", "nghiêm trọng"}:
+            return True, "critical"
+        if lowered in {"2", "warning", "canh bao", "cảnh báo"}:
+            return True, "warning"
+        if lowered in {"3", "off", "tat", "tắt", "khong", NEGATIVE_ANSWER}:
+            return False, "critical"
+        return None
+
+    def _parse_quiet_hours(self, answer):
+        lowered = answer.lower()
+        if lowered in {"1", "khong", NEGATIVE_ANSWER, "none", "no"}:
+            return True, None, None
+        if lowered in {"2", "dem", "đêm", "night"}:
+            return True, "22:00", "07:00"
+        match = re.fullmatch(r"\s*(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*", answer)
+        if not match:
+            return False, None, None
+        return True, match.group(1), match.group(2)
 
     async def _handle_notification_scope(self, update, state, answer):
         data = state["data"]
@@ -406,7 +463,6 @@ class ConversationMixin:
             "Hoặc nhập trực tiếp dạng HH:MM-HH:MM."
         )
         return True
-        return False
 
     async def _handle_notification_scope_values(self, update, state, answer):
         data = state["data"]
@@ -423,53 +479,6 @@ class ConversationMixin:
             "Hoặc nhập trực tiếp dạng HH:MM-HH:MM."
         )
         return True
-        return False
-
-    async def _handle_notification_quiet(self, update, key, state, answer):
-        data = state["data"]
-        quiet_start = quiet_end = None
-        lowered = answer.lower()
-        if lowered in {"1", "khong", NEGATIVE_ANSWER, "none", "no"}:
-            pass
-        elif lowered in {"2", "dem", "đêm", "night"}:
-            quiet_start, quiet_end = "22:00", "07:00"
-        else:
-            match = re.fullmatch(r"\s*(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*", answer)
-            if not match:
-                await update.message.reply_text("Giờ im lặng cần dạng HH:MM-HH:MM, ví dụ 22:00-07:00.")
-                return True
-            quiet_start, quiet_end = match.group(1), match.group(2)
-        binding_id = int(data["binding_id"])
-        await zalo_repository.set_notification_preference(
-            binding_id,
-            enabled=bool(data.get("enabled", True)),
-            min_severity=str(data.get("min_severity") or "critical"),
-            scopes=dict(data.get("scopes") or {"mode": "all"}),
-            quiet_start=quiet_start,
-            quiet_end=quiet_end,
-            timezone="Asia/Saigon",
-            critical_override=True,
-        )
-        await zalo_repository.complete_onboarding(binding_id)
-        self._conversation_states.pop(key, None)
-        severity = "tắt" if not data.get("enabled", True) else data.get("min_severity")
-        quiet = f"{quiet_start}-{quiet_end}" if quiet_start and quiet_end else "không đặt"
-        scope_mode = str((data.get("scopes") or {}).get("mode") or "all")
-        scope_text = (
-            "tất cả trạm" if scope_mode == "all"
-            else "không có trạm" if scope_mode == "none"
-            else f"{len((data.get('scopes') or {}).get('values') or [])} trạm được chọn"
-        )
-        await update.message.reply_text(
-            f"✅ Đã lưu thiết lập cảnh báo.\n"
-            f"• Mức nhận: {severity}\n"
-            f"• Phạm vi: {scope_text}\n"
-            f"• Giờ im lặng: {quiet}\n\n"
-            "Gõ /menu để bắt đầu dùng bot."
-        )
-        return True
-        return False
-
 
     async def _handle_station_config_read(self, update, key, state, answer):
         flow = state["flow"]
@@ -582,7 +591,6 @@ class ConversationMixin:
             + self._format_editor_menu(flow, data)
         )
         return True
-        return False
 
     async def _handle_editor_mountpoint_action(self, update, state, answer, flow, current_value):
         data = state["data"]
@@ -634,7 +642,6 @@ class ConversationMixin:
             return True
         await update.message.reply_text("Chọn từ 0 đến 4 theo danh sách.")
         return True
-        return False
 
     async def _handle_editor_mountpoint_selection(self, update, state, answer, flow, current_value):
         data = state["data"]
@@ -664,7 +671,6 @@ class ConversationMixin:
             + self._format_editor_menu(flow, data)
         )
         return True
-        return False
 
     async def _handle_editor_mountpoint_replace(self, update, state, answer, flow):
         data = state["data"]
@@ -678,7 +684,6 @@ class ConversationMixin:
             f"✅ Danh sách mới: {', '.join(new_list)}\n\n" + self._format_editor_menu(flow, data)
         )
         return True
-        return False
 
     async def _handle_editor_value(self, update, state, answer, flow, field):
         data = state["data"]
@@ -694,7 +699,6 @@ class ConversationMixin:
             + self._format_editor_menu(flow, data)
         )
         return True
-        return False
 
 
     async def _handle_rover_create(self, update, key, state, answer):
@@ -799,25 +803,26 @@ class ConversationMixin:
             )
         return True
 
+    async def _handle_idle_conversation(self, update):
+        answer = self._clean_conversation_answer(update, getattr(update.message, "text", ""))
+        if not answer:
+            return
+        if await self._try_dispatch_intent(update, answer):
+            return
+        principal = await self._resolve_principal(update)
+        if principal.is_linked and principal.allows(auth.Permission.VIEW_DEVICES):
+            await self._admin_read(update, "smart_search", {"query": answer})
+        else:
+            await update.message.reply_text(
+                "Mình chưa thể tra cứu vì cuộc trò chuyện chưa được liên kết. "
+                "Chat cá nhân dùng /link <mã trên dashboard>; group dùng /register <mã group>."
+            )
+
     async def _conversation_message_impl(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = self._conversation_key(update)
         state = self._conversation_states.get(key)
         if not state:
-            answer = self._clean_conversation_answer(update, getattr(update.message, "text", ""))
-            if not answer:
-                return
-            # --- Smart dispatch: try command detection / NLP before smart_search ---
-            if await self._try_dispatch_intent(update, answer):
-                return
-            # --- Fallback: smart_search ---
-            principal = await self._resolve_principal(update)
-            if principal.is_linked and principal.allows(auth.Permission.VIEW_DEVICES):
-                await self._admin_read(update, "smart_search", {"query": answer})
-            else:
-                await update.message.reply_text(
-                    "Mình chưa thể tra cứu vì cuộc trò chuyện chưa được liên kết. "
-                    "Chat cá nhân dùng /link <mã trên dashboard>; group dùng /register <mã group>."
-                )
+            await self._handle_idle_conversation(update)
             return
         if state.get("expires_at", 0) <= time.time():
             self._conversation_states.pop(key, None)
@@ -866,14 +871,6 @@ class ConversationMixin:
         handler = flow_handlers.get(flow)
         if handler and await handler(update, key, state, answer):
             return
-
-
-
-
-
-
-
-
 
 
         self._conversation_states.pop(key, None)

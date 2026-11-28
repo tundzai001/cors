@@ -897,10 +897,9 @@ def _prepare_status_sync(serial, data):
     return is_synced, sync_errors, command_source_changed
 
 
-def _apply_agent_license_state(serial, data, metadata, agent_token_fp, is_synced, sync_errors):
+def _agent_license_requirements(serial, metadata, agent_token_fp):
     if not (metadata.get("exists") or crud.is_valid_serial(serial)):
-        return is_synced
-    agent_reported_status = str(data.get("status") or "").strip().lower()
+        return None
     license_bypass = bool(metadata.get("license_bypass"))
     configured_token = str(metadata.get("device_token") or "").strip()
     expected_fp = (
@@ -921,6 +920,27 @@ def _apply_agent_license_state(serial, data, metadata, agent_token_fp, is_synced
     needs_token_deploy = license_state.needs_token_deploy or (
         token_deployment_pending and not license_bypass
     )
+    return {
+        "expected_fp": expected_fp,
+        "license_bypass": license_bypass,
+        "license_state": license_state,
+        "token_deployment_pending": token_deployment_pending,
+        "needs_token_deploy": needs_token_deploy,
+    }
+
+
+def _apply_agent_license_state(serial, data, metadata, agent_token_fp, is_synced, sync_errors):
+    requirements = _agent_license_requirements(serial, metadata, agent_token_fp)
+    if requirements is None:
+        return is_synced
+    expected_fp = requirements["expected_fp"]
+    license_bypass = requirements["license_bypass"]
+    license_state = requirements["license_state"]
+    token_deployment_pending = requirements["token_deployment_pending"]
+    needs_token_deploy = requirements["needs_token_deploy"]
+    agent_reported_status = str(data.get("status") or "").strip().lower()
+    token_check_available = license_state.token_check_available
+    token_synced = license_state.token_synced
     if needs_token_deploy:
         is_synced = False
         if expected_fp:
@@ -1017,7 +1037,7 @@ def _update_live_status_cache(serial, data):
     device_telemetry_cache[serial] = snapshot
 
 
-async def _broadcast_status_update(serial, data, is_retained):
+async def _broadcast_status_update(data, is_retained):
     message = {
         "type": "status_update",
         "data": data,
@@ -1032,6 +1052,25 @@ async def _broadcast_status_update(serial, data, is_retained):
 def _status_write_flags(serial, data, metadata, now, command_source_changed, is_retained):
     last_write_time = device_write_cache.get(serial, 0)
     last_known_status = device_status_cache.get(serial, "unknown")
+    new_status = data.get("status")
+    changes = _status_change_flags(data, metadata, command_source_changed, is_retained)
+    should_write = any(changes.values())
+    if not should_write and changes["token_pending_state_changed"]:
+        should_write = True
+    elif not should_write and new_status and new_status != last_known_status:
+        should_write = True
+        _log_status_transition(serial, last_known_status, new_status)
+    elif not should_write and now - last_write_time > DB_WRITE_INTERVAL:
+        should_write = True
+        logging.debug("⏰ Heartbeat update for %s", serial)
+    return {
+        "should_write": should_write,
+        **changes,
+        "new_status": new_status,
+    }
+
+
+def _status_change_flags(data, metadata, command_source_changed, is_retained):
     new_status = data.get("status")
     reported_system_info = data.get("system_info")
     reported_auth_status = (
@@ -1062,27 +1101,20 @@ def _status_write_flags(serial, data, metadata, now, command_source_changed, is_
         )
         and base_config.get("auto_base_started_boot_id") != data.get("status_boot_id")
     )
-    should_write = any((command_source_changed, device_lock_changed, chip_type_changed, boot_result_changed))
-    if not should_write and token_pending_state_changed:
-        should_write = True
-    elif not should_write and new_status and new_status != last_known_status:
-        should_write = True
-        if last_known_status == "online" and new_status == "offline":
-            logging.warning("⚠️ DEVICE OFFLINE: %s", serial)
-        elif last_known_status == "offline" and new_status == "online":
-            logging.info("✓ Device back online: %s", serial)
-    elif not should_write and now - last_write_time > DB_WRITE_INTERVAL:
-        should_write = True
-        logging.debug("⏰ Heartbeat update for %s", serial)
     return {
-        "should_write": should_write,
         "command_source_changed": command_source_changed,
         "device_lock_changed": device_lock_changed,
         "chip_type_changed": chip_type_changed,
         "boot_result_changed": boot_result_changed,
         "token_pending_state_changed": token_pending_state_changed,
-        "new_status": new_status,
     }
+
+
+def _log_status_transition(serial, last_known_status, new_status):
+    if last_known_status == "online" and new_status == "offline":
+        logging.warning("⚠️ DEVICE OFFLINE: %s", serial)
+    elif last_known_status == "offline" and new_status == "online":
+        logging.info("✓ Device back online: %s", serial)
 
 
 def _mqtt_status_write_needed(serial, now, flags):
@@ -1120,6 +1152,18 @@ async def _write_device_status(serial, db_data):
         device_status_cache[serial] = db_data["status"]
 
 
+def _skip_device_status_write(serial, is_retained):
+    if device_was_deleted(serial):
+        logging.info("Skipping MQTT status write after deletion: %s", serial)
+        return True
+    if is_retained:
+        current_metadata = device_metadata_cache.get(serial) or {}
+        if current_metadata.get("exists") is False:
+            logging.info("Skipping retained status write after deletion: %s", serial)
+            return True
+    return False
+
+
 async def _persist_device_status(serial, data, now, is_synced, flags, is_retained):
     if not flags["should_write"]:
         return
@@ -1127,14 +1171,8 @@ async def _persist_device_status(serial, data, now, is_synced, flags, is_retaine
     for attempt in range(3):
         try:
             async with mqtt_db_write_lock:
-                if device_was_deleted(serial):
-                    logging.info("Skipping MQTT status write after deletion: %s", serial)
+                if _skip_device_status_write(serial, is_retained):
                     return
-                if is_retained:
-                    current_metadata = device_metadata_cache.get(serial) or {}
-                    if current_metadata.get("exists") is False:
-                        logging.info("Skipping retained status write after deletion: %s", serial)
-                        return
                 if not _mqtt_status_write_needed(serial, now, flags):
                     break
                 await _write_device_status(serial, db_data)
@@ -1162,7 +1200,7 @@ async def _handle_status_update(serial, data, is_retained):
     data["sync_errors"] = sync_errors
     _enrich_status_from_metadata(serial, data, metadata)
     _update_live_status_cache(serial, data)
-    await _broadcast_status_update(serial, data, is_retained)
+    await _broadcast_status_update(data, is_retained)
     flags = _status_write_flags(serial, data, metadata, now, command_source_changed, is_retained)
     await _persist_device_status(serial, data, now, is_synced, flags, is_retained)
 
