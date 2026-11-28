@@ -510,241 +510,150 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
 });
 window.EspStoragePanel = EspStoragePanel;
 
-const SystemInfoPanel = memo(function SystemInfoPanel({ device, isOpen, onClose }) {
-    if (!device || !device.system_info) {
-        return null;
+function formatSystemUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h ${mins}m`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+}
+
+function getSystemHealthScore(info, device) {
+    let score = 100;
+    if (info.cpu?.usage_percent > 80) score -= 20;
+    else if (info.cpu?.usage_percent > 60) score -= 10;
+    if (info.temperature?.celsius > 70) score -= 25;
+    else if (info.temperature?.celsius > 60) score -= 15;
+    if (info.memory?.percent > 85) score -= 20;
+    else if (info.memory?.percent > 70) score -= 10;
+    if (device.measured_latency !== undefined) {
+        if (device.measured_latency > 5) score -= 30;
+        else if (device.measured_latency > 2) score -= 15;
     }
+    return Math.max(score, 0);
+}
 
-    const info = device.system_info;
+function getMemoryRingLabel(memory, isEsp) {
+    if (isEsp || memory.total_heap_bytes || (memory.total_mb && memory.total_mb < 5)) {
+        const totalKb = memory.total_kb !== undefined ? Math.round(memory.total_kb)
+            : memory.total_heap_bytes ? Math.round(memory.total_heap_bytes / 1024)
+                : Math.round((memory.total_mb || 0) * 1024);
+        const usedKb = memory.used_kb !== undefined ? Math.round(memory.used_kb)
+            : memory.total_heap_bytes && memory.free_heap_bytes !== undefined
+                ? Math.round((memory.total_heap_bytes - memory.free_heap_bytes) / 1024)
+                : Math.round((memory.used_mb || 0) * 1024);
+        return totalKb > 0 ? `${usedKb}/${totalKb} KB` : `${Math.round(memory.percent || 0)}%`;
+    }
+    if (memory.total_mb !== undefined && memory.used_mb !== undefined) {
+        return `${Math.round(memory.used_mb)}/${Math.round(memory.total_mb)}MB`;
+    }
+    return `${Math.round(memory.percent || 0)}%`;
+}
 
-    // Format uptime
-    const formatUptime = (seconds) => {
-        const days = Math.floor(seconds / 86400);
-        const hours = Math.floor((seconds % 86400) / 3600);
-        const mins = Math.floor((seconds % 3600) / 60);
+function SystemHealthSummary({device, info, score, color}) {
+    return <div className="d-flex align-items-center justify-content-between mb-4 p-3 rounded bg-dark border border-secondary">
+        <div>
+            <div className="text-muted small text-uppercase">Health Score</div>
+            <div className="display-6 fw-bold" style={{color}}>{score}%</div>
+            <div className="small text-light">{score >= 80 ? 'Excellent' : 'Warning'}</div>
+        </div>
+        <div className="text-end">
+            <div className="text-muted small">Uptime</div>
+            <div className="fw-bold text-light">{info.uptime_seconds ? formatSystemUptime(info.uptime_seconds) : 'N/A'}</div>
+            <div className="text-muted small mt-1">Chip: {device.detected_chip_type || 'Unknown'}</div>
+        </div>
+    </div>;
+}
 
-        if (days > 0) return `${days}d ${hours}h ${mins}m`;
-        if (hours > 0) return `${hours}h ${mins}m`;
-        return `${mins}m`;
-    };
+function SystemResourceRings({info, isEsp}) {
+    return <div className="row g-3 mb-4">
+        {info.cpu && window.ProgressRing && <div className="col-6 d-flex justify-content-center">
+            <window.ProgressRing value={info.cpu.usage_percent} max={100} size={110} strokeWidth={8}
+                color={info.cpu.usage_percent > 80 ? '#fa5252' : '#0d6efd'} label="CPU Load" subLabel={`${info.cpu.count} Cores`} />
+        </div>}
+        {info.memory && window.ProgressRing && <div className="col-6 d-flex justify-content-center">
+            <window.ProgressRing value={info.memory.percent} max={100} size={110} strokeWidth={8}
+                color={info.memory.percent > 85 ? '#fa5252' : '#74c0fc'} label="RAM Usage"
+                subLabel={getMemoryRingLabel(info.memory, isEsp)} />
+        </div>}
+    </div>;
+}
 
-    // Calculate health score
-    const calculateHealthScore = () => {
-        let score = 100;
-        if (info.cpu?.usage_percent > 80) score -= 20;
-        else if (info.cpu?.usage_percent > 60) score -= 10;
-
-        if (info.temperature?.celsius > 70) score -= 25;
-        else if (info.temperature?.celsius > 60) score -= 15;
-
-        if (info.memory?.percent > 85) score -= 20;
-        else if (info.memory?.percent > 70) score -= 10;
-
-        if (device.measured_latency !== undefined) {
-            const latency = device.measured_latency;
-            if (latency > 5) score -= 30;
-            else if (latency > 2) score -= 15;
-        }
-
-        return Math.max(score, 0);
-    };
-
-    const healthScore = calculateHealthScore();
-    const healthColor = healthScore >= 80 ? '#51cf66' : healthScore >= 60 ? '#ffd43b' : '#fa5252';
-
-    return (
-        <div className={`system-info-panel ${isOpen ? 'open' : ''}`}>
-            {/* Header */}
-            <div className="panel-header-sys">
-                <div className="d-flex align-items-center gap-2">
-                    <i className="bi bi-cpu text-primary"></i>
-                    <h5 className="mb-0">System Monitor</h5>
-                </div>
-                <button className="btn btn-sm btn-ghost" onClick={onClose} title="Đóng">
-                    <i className="bi bi-x-lg"></i>
-                </button>
+function SystemTemperature({temperature}) {
+    return <div className="info-section">
+        <div className="section-title"><i className="bi bi-thermometer-half me-2"></i>Temperature</div>
+        {temperature?.celsius ? <div className="metric-card">
+            <div className="d-flex justify-content-between mb-1">
+                <span className="fw-bold text-light">{temperature.celsius}°C</span><span className="text-muted small">Max: 85°C</span>
             </div>
+            <div className="progress" style={{height:'8px'}}><div className={`progress-bar ${temperature.celsius > 70 ? 'bg-danger' : 'bg-success'}`} style={{width:`${Math.min((temperature.celsius / 85) * 100, 100)}%`}}></div></div>
+        </div> : <div className="text-muted small">No sensor data</div>}
+    </div>;
+}
 
-            {/* Body */}
-            <div className="panel-body-sys">
+function SystemDiskMetric({disk}) {
+    const freeSpace = disk.total_gb >= 1 ? `Free: ${(disk.total_gb - disk.used_gb).toFixed(1)} GB`
+        : disk.total_mb !== undefined ? `Free: ${(disk.total_mb - (disk.used_mb || 0)).toFixed(1)} MB (${Math.round(disk.total_mb)}MB Flash)`
+            : `Free: ${(disk.total_gb - disk.used_gb).toFixed(2)} GB`;
+    return <div className="metric-card">
+        <div className="d-flex justify-content-between mb-1">
+            <span className="fw-bold text-light">{disk.percent}% Used</span><span className="text-muted small">{freeSpace}</span>
+        </div>
+        <div className="progress" style={{height:'8px'}}><div className={`progress-bar ${disk.percent > 90 ? 'bg-danger' : 'bg-primary'}`} style={{width:`${disk.percent}%`}}></div></div>
+    </div>;
+}
 
-                {/* 1. HEALTH SCORE & DEVICE INFO */}
-                <div className="d-flex align-items-center justify-content-between mb-4 p-3 rounded bg-dark border border-secondary">
-                    <div>
-                        <div className="text-muted small text-uppercase">Health Score</div>
-                        <div className="display-6 fw-bold" style={{ color: healthColor }}>{healthScore}%</div>
-                        <div className="small text-light">{healthScore >= 80 ? 'Excellent' : 'Warning'}</div>
-                    </div>
-                    <div className="text-end">
-                        <div className="text-muted small">Uptime</div>
-                        <div className="fw-bold text-light">{info.uptime_seconds ? formatUptime(info.uptime_seconds) : 'N/A'}</div>
-                        <div className="text-muted small mt-1">Chip: {device.detected_chip_type || 'Unknown'}</div>
-                    </div>
-                </div>
+function SystemDiskUsage({device, info, isEsp}) {
+    if (isEsp) return <EspStoragePanel key={device.serial} device={device} />;
+    return <div className="info-section mt-3">
+        <div className="section-title"><i className="bi bi-hdd me-2"></i>Disk Usage</div>
+        {info.disk ? <SystemDiskMetric disk={info.disk} /> : <div className="text-muted small">No disk data</div>}
+    </div>;
+}
 
-                {/* 2. CIRCULAR METRICS (CPU & RAM) */}
-                <div className="row g-3 mb-4">
-                    {/* CPU Ring */}
-                    {info.cpu && window.ProgressRing && (
-                        <div className="col-6 d-flex justify-content-center">
-                            <window.ProgressRing
-                                value={info.cpu.usage_percent}
-                                max={100}
-                                size={110}
-                                strokeWidth={8}
-                                color={info.cpu.usage_percent > 80 ? '#fa5252' : '#0d6efd'}
-                                label="CPU Load"
-                                subLabel={`${info.cpu.count} Cores`}
-                            />
-                        </div>
-                    )}
+function SystemLatency({latency:rawLatency}) {
+    if (rawLatency === undefined) return <div className="text-muted small">Đang chờ dữ liệu...</div>;
+    const latency = rawLatency.toFixed(1);
+    if (latency > 5) return <div className="metric-card bg-danger bg-opacity-25 border border-danger">
+        <div className="d-flex justify-content-between mb-1"><span className="fw-bold text-danger">Mất kết nối / Trễ cao ({latency}s)</span></div>
+        <div className="small text-light">Cảnh báo: Dữ liệu gửi từ trạm đang bị trễ ({latency} giây). Trạm có thể đang bị rớt mạng (LTE/Wifi) hoặc quá tải.</div>
+    </div>;
+    if (latency >= 2) return <div className="metric-card bg-warning bg-opacity-25 border border-warning">
+        <div className="d-flex justify-content-between mb-1"><span className="fw-bold text-warning">Trễ mạng ({latency}s)</span></div>
+        <div className="small text-light">Mạng chậm/không đều. Chênh lệch thời gian giữa Agent và Server là {latency}s.</div>
+    </div>;
+    return <div className="metric-card border border-success">
+        <div className="d-flex justify-content-between mb-1"><span className="fw-bold text-success">Ổn định ({latency}s)</span></div>
+        <div className="small text-light">Kết nối mạng từ trạm đến máy chủ rất tốt và liên tục.</div>
+    </div>;
+}
 
-                    {/* RAM Ring */}
-                    {info.memory && window.ProgressRing && (() => {
-                        const isEsp = /^esp_/i.test(device.serial);
-                        let subLabel = '';
-                        if (isEsp || info.memory.total_heap_bytes || (info.memory.total_mb && info.memory.total_mb < 5)) {
-                            const totalKb = info.memory.total_kb !== undefined
-                                ? Math.round(info.memory.total_kb)
-                                : info.memory.total_heap_bytes
-                                    ? Math.round(info.memory.total_heap_bytes / 1024)
-                                    : Math.round((info.memory.total_mb || 0) * 1024);
-                            const usedKb = info.memory.used_kb !== undefined
-                                ? Math.round(info.memory.used_kb)
-                                : (info.memory.total_heap_bytes && info.memory.free_heap_bytes !== undefined)
-                                    ? Math.round((info.memory.total_heap_bytes - info.memory.free_heap_bytes) / 1024)
-                                    : Math.round((info.memory.used_mb || 0) * 1024);
-                            subLabel = (totalKb > 0) ? `${usedKb}/${totalKb} KB` : `${Math.round(info.memory.percent || 0)}%`;
-                        } else if (info.memory.total_mb !== undefined && info.memory.used_mb !== undefined) {
-                            subLabel = `${Math.round(info.memory.used_mb)}/${Math.round(info.memory.total_mb)}MB`;
-                        } else {
-                            subLabel = `${Math.round(info.memory.percent || 0)}%`;
-                        }
-
-                        return (
-                            <div className="col-6 d-flex justify-content-center">
-                                <window.ProgressRing
-                                    value={info.memory.percent}
-                                    max={100}
-                                    size={110}
-                                    strokeWidth={8}
-                                    color={info.memory.percent > 85 ? '#fa5252' : '#74c0fc'}
-                                    label="RAM Usage"
-                                    subLabel={subLabel}
-                                />
-                            </div>
-                        );
-                    })()}
-                </div>
-
-                {/* 3. TEMPERATURE & DISK (Bar Style for Compactness) */}
-                <div className="info-section">
-                    <div className="section-title"><i className="bi bi-thermometer-half me-2"></i>Temperature</div>
-                    {info.temperature?.celsius ? (
-                        <div className="metric-card">
-                            <div className="d-flex justify-content-between mb-1">
-                                <span className="fw-bold text-light">{info.temperature.celsius}°C</span>
-                                <span className="text-muted small">Max: 85°C</span>
-                            </div>
-                            <div className="progress" style={{ height: '8px' }}>
-                                <div
-                                    className={`progress-bar ${info.temperature.celsius > 70 ? 'bg-danger' : 'bg-success'}`}
-                                    style={{ width: `${Math.min((info.temperature.celsius / 85) * 100, 100)}%` }}
-                                ></div>
-                            </div>
-                        </div>
-                    ) : <div className="text-muted small">No sensor data</div>}
-                </div>
-
-                {/^esp_/i.test(device.serial) ? <EspStoragePanel key={device.serial} device={device} /> : (
-                <div className="info-section mt-3">
-                    <div className="section-title">
-                        <i className={`bi ${/^esp_/i.test(device.serial) ? 'bi-memory' : 'bi-hdd'} me-2`}></i>
-                        {/^esp_/i.test(device.serial) ? 'Flash Storage (ROM)' : 'Disk Usage'}
-                    </div>
-                    {info.disk ? (
-                        <div className="metric-card">
-                            <div className="d-flex justify-content-between mb-1">
-                                <span className="fw-bold text-light">{info.disk.percent}% Used</span>
-                                <span className="text-muted small">
-                                    {info.disk.total_gb >= 1 
-                                        ? `Free: ${(info.disk.total_gb - info.disk.used_gb).toFixed(1)} GB`
-                                        : info.disk.total_mb !== undefined
-                                            ? `Free: ${(info.disk.total_mb - (info.disk.used_mb || 0)).toFixed(1)} MB (${Math.round(info.disk.total_mb)}MB Flash)`
-                                            : `Free: ${(info.disk.total_gb - info.disk.used_gb).toFixed(2)} GB`
-                                    }
-                                </span>
-                            </div>
-                            <div className="progress" style={{ height: '8px' }}>
-                                <div
-                                    className={`progress-bar ${info.disk.percent > 90 ? 'bg-danger' : 'bg-primary'}`}
-                                    style={{ width: `${info.disk.percent}%` }}
-                                ></div>
-                            </div>
-                        </div>
-                    ) : /^esp_/i.test(device.serial) ? (
-                        <div className="metric-card">
-                            <div className="d-flex justify-content-between mb-1">
-                                <span className="fw-bold text-light">Flash 4MB / NVS</span>
-                                <span className="badge bg-success-subtle text-success border border-success-subtle">An toàn</span>
-                            </div>
-                            <div className="small text-muted mt-1">
-                                ESP32 stream RTCM trực tiếp qua 4G, không lưu đệm vào bộ nhớ; cấu hình lưu gọn trên phân vùng NVS.
-                            </div>
-                        </div>
-                    ) : <div className="text-muted small">No disk data</div>}
-                </div>
-
-                )}
-
-                <div className="info-section mt-3 mb-4">
-                    <div className="section-title"><i className="bi bi-activity me-2"></i>Network Latency (Agent → Server)</div>
-                    {(() => {
-                        if (device.measured_latency === undefined) {
-                            return <div className="text-muted small">Đang chờ dữ liệu...</div>;
-                        }
-                        
-                        let latency = device.measured_latency.toFixed(1);
-                        
-                        if (latency > 5) {
-                            return (
-                                <div className="metric-card bg-danger bg-opacity-25 border border-danger">
-                                    <div className="d-flex justify-content-between mb-1">
-                                        <span className="fw-bold text-danger">Mất kết nối / Trễ cao ({latency}s)</span>
-                                    </div>
-                                    <div className="small text-light">Cảnh báo: Dữ liệu gửi từ trạm đang bị trễ ({latency} giây). Trạm có thể đang bị rớt mạng (LTE/Wifi) hoặc quá tải.</div>
-                                </div>
-                            );
-                        } else if (latency >= 2) {
-                            return (
-                                <div className="metric-card bg-warning bg-opacity-25 border border-warning">
-                                    <div className="d-flex justify-content-between mb-1">
-                                        <span className="fw-bold text-warning">Trễ mạng ({latency}s)</span>
-                                    </div>
-                                    <div className="small text-light">Mạng chậm/không đều. Chênh lệch thời gian giữa Agent và Server là {latency}s.</div>
-                                </div>
-                            );
-                        } else {
-                            return (
-                                <div className="metric-card border border-success">
-                                    <div className="d-flex justify-content-between mb-1">
-                                        <span className="fw-bold text-success">Ổn định ({latency}s)</span>
-                                    </div>
-                                    <div className="small text-light">Kết nối mạng từ trạm đến máy chủ rất tốt và liên tục.</div>
-                                </div>
-                            );
-                        }
-                    })()}
-                </div>
-
-                {/* Footer */}
-                <div className="text-center text-muted small mt-4 pt-3 border-top border-secondary">
-                    <i className="bi bi-clock-history me-1"></i>
-                    Updated: {new Date(info.timestamp * 1000).toLocaleTimeString()}
-                </div>
+const SystemInfoPanel = memo(function SystemInfoPanel({device, isOpen, onClose}) {
+    if (!device?.system_info) return null;
+    const info = device.system_info;
+    const isEsp = /^esp_/i.test(device.serial || '');
+    const healthScore = getSystemHealthScore(info, device);
+    const healthColor = healthScore >= 80 ? '#51cf66' : healthScore >= 60 ? '#ffd43b' : '#fa5252';
+    return <div className={`system-info-panel ${isOpen ? 'open' : ''}`}>
+        <div className="panel-header-sys">
+            <div className="d-flex align-items-center gap-2"><i className="bi bi-cpu text-primary"></i><h5 className="mb-0">System Monitor</h5></div>
+            <button className="btn btn-sm btn-ghost" onClick={onClose} title="Đóng"><i className="bi bi-x-lg"></i></button>
+        </div>
+        <div className="panel-body-sys">
+            <SystemHealthSummary device={device} info={info} score={healthScore} color={healthColor} />
+            <SystemResourceRings info={info} isEsp={isEsp} />
+            <SystemTemperature temperature={info.temperature} />
+            <SystemDiskUsage device={device} info={info} isEsp={isEsp} />
+            <div className="info-section mt-3 mb-4">
+                <div className="section-title"><i className="bi bi-activity me-2"></i>Network Latency (Agent → Server)</div>
+                <SystemLatency latency={device.measured_latency} />
+            </div>
+            <div className="text-center text-muted small mt-4 pt-3 border-top border-secondary">
+                <i className="bi bi-clock-history me-1"></i>Updated: {new Date(info.timestamp * 1000).toLocaleTimeString()}
             </div>
         </div>
-    );
+    </div>;
 });
 window.SystemInfoPanel = SystemInfoPanel;
 
