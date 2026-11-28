@@ -1401,13 +1401,6 @@ def _remember_baud_hint(port_device: str, baud: int) -> None:
     CHIP_DETECT_BAUD_HINTS[str(port_device).strip()] = int(baud)
 
 
-def _append_serial_response_chunk(chunks, chunk, max_bytes):
-    if not chunk:
-        return False
-    chunks.append(chunk)
-    return sum(len(item) for item in chunks) >= max_bytes
-
-
 def _wait_for_serial_response(ser, wait_seconds: float, max_bytes: int = 2048) -> bytes:
     deadline = time.time() + max(0.1, float(wait_seconds))
     chunks = []
@@ -1416,22 +1409,22 @@ def _wait_for_serial_response(ser, wait_seconds: float, max_bytes: int = 2048) -
 
     while time.time() < deadline:
         waiting = int(getattr(ser, 'in_waiting', 0) or 0)
-        if waiting > 0:
-            read_size = min(waiting, max_bytes)
-            chunk = ser.read(read_size)
-            if chunk:
-                seen_data = True
-                idle_ticks_after_data = 0
-                if _append_serial_response_chunk(chunks, chunk, max_bytes):
+        if waiting <= 0:
+            if seen_data:
+                idle_ticks_after_data += 1
+                if idle_ticks_after_data >= 3:
                     break
-            time.sleep(0.03)
+            time.sleep(0.05)
             continue
 
-        if seen_data:
-            idle_ticks_after_data += 1
-            if idle_ticks_after_data >= 3:
+        chunk = ser.read(min(waiting, max_bytes))
+        if chunk:
+            chunks.append(chunk)
+            seen_data = True
+            idle_ticks_after_data = 0
+            if sum(len(item) for item in chunks) >= max_bytes:
                 break
-        time.sleep(0.05)
+        time.sleep(0.03)
 
     return b''.join(chunks)
 
