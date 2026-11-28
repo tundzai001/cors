@@ -173,53 +173,60 @@ class ControlPlaneFailover:
             baseline = self._armed_at
         return baseline is None or (now - baseline) >= self.stale_after_seconds
 
+    def _stale_channels(self, current: float) -> list[str]:
+        return [
+            channel for channel in VALID_CHANNELS
+            if self._channel_is_stale(channel, current)
+        ]
+
+    def _activate_failover(self, current: float) -> FailoverTransition:
+        self._active = True
+        self._entered_at = current
+        self._entered_after_sequence = self._latest_probe_sequence
+        self._recovery_since = None
+        self._last_reason = "websocket_and_mqtt_ack_stale"
+        return FailoverTransition(True, True, self._last_reason)
+
+    def _evaluate_active_failover(self, current: float) -> FailoverTransition:
+        eligible_recovery_ack = any(
+            not self._channel_is_stale(channel, current)
+            and self._last_ack_sequence[channel] is not None
+            and self._last_ack_sequence[channel] > self._entered_after_sequence
+            for channel in VALID_CHANNELS
+        )
+        if not eligible_recovery_ack:
+            self._recovery_since = None
+            self._last_reason = "websocket_and_mqtt_ack_stale"
+            return FailoverTransition(False, self._active, self._last_reason)
+        if self._recovery_since is None:
+            self._recovery_since = current
+        if current - self._recovery_since >= self.recovery_after_seconds:
+            self._active = False
+            self._entered_at = None
+            self._recovery_since = None
+            self._last_reason = "fresh_backend_ack_received"
+            return FailoverTransition(True, False, self._last_reason)
+        self._last_reason = "recovery_confirmation"
+        return FailoverTransition(False, self._active, self._last_reason)
+
+    def _set_healthy_failover_reason(self, stale_channels: list[str]) -> FailoverTransition:
+        self._last_reason = (
+            "control_plane_healthy" if not stale_channels
+            else f"degraded_{stale_channels[0]}_ack_stale"
+        )
+        return FailoverTransition(False, self._active, self._last_reason)
+
     def evaluate(self, *, now: float | None = None) -> FailoverTransition:
         current = self._clock() if now is None else float(now)
         with self._lock:
             if self._armed_at is None:
                 return FailoverTransition(False, self._active, "waiting_for_first_probe")
-
-            stale_channels = [
-                channel for channel in VALID_CHANNELS
-                if self._channel_is_stale(channel, current)
-            ]
-            both_stale = len(stale_channels) == len(VALID_CHANNELS)
-
-            if not self._active and both_stale:
-                self._active = True
-                self._entered_at = current
-                self._entered_after_sequence = self._latest_probe_sequence
-                self._recovery_since = None
-                self._last_reason = "websocket_and_mqtt_ack_stale"
-                return FailoverTransition(True, True, self._last_reason)
-
+            stale_channels = self._stale_channels(current)
+            if not self._active and len(stale_channels) == len(VALID_CHANNELS):
+                return self._activate_failover(current)
             if self._active:
-                eligible_recovery_ack = any(
-                    not self._channel_is_stale(channel, current)
-                    and self._last_ack_sequence[channel] is not None
-                    and self._last_ack_sequence[channel] > self._entered_after_sequence
-                    for channel in VALID_CHANNELS
-                )
-                if eligible_recovery_ack:
-                    if self._recovery_since is None:
-                        self._recovery_since = current
-                    if current - self._recovery_since >= self.recovery_after_seconds:
-                        self._active = False
-                        self._entered_at = None
-                        self._recovery_since = None
-                        self._last_reason = "fresh_backend_ack_received"
-                        return FailoverTransition(True, False, self._last_reason)
-                    self._last_reason = "recovery_confirmation"
-                else:
-                    self._recovery_since = None
-                    self._last_reason = "websocket_and_mqtt_ack_stale"
-            else:
-                self._last_reason = (
-                    "control_plane_healthy" if not stale_channels
-                    else f"degraded_{stale_channels[0]}_ack_stale"
-                )
-
-            return FailoverTransition(False, self._active, self._last_reason)
+                return self._evaluate_active_failover(current)
+            return self._set_healthy_failover_reason(stale_channels)
 
     @property
     def active(self) -> bool:
