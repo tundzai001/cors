@@ -286,9 +286,9 @@ async def _fix_possible_report(health, question):
 
 def _cors_status_headline(status):
     return {
-        'online': 'CORS Cục đang hoạt động.',
-        'offline': 'CORS Cục đang gián đoạn.',
-    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
+        'online': 'Hệ thống CORS đang hoạt động.',
+        'offline': 'Hệ thống CORS đang gián đoạn.',
+    }.get(status, 'Chưa xác định được trạng thái hệ thống CORS.')
 
 
 def _geomagnetic_summary(kp):
@@ -406,10 +406,7 @@ async def _primary_report_reply(health, question, words, intent, previous_intent
     name = region_for_question(question)[0]
     heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
     status = health.get('status')
-    headline = {
-        'online': 'CORS Cục đang hoạt động.',
-        'offline': 'CORS Cục đang gián đoạn.',
-    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
+    headline = _cors_status_headline(status)
     status_reply = _status_report_reply(
         intent, previous_intent, status, name, heading, headline
     )
@@ -516,10 +513,7 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
     name = region_for_question(question)[0]
     heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
     status = health.get('status')
-    headline = {
-        'online': 'CORS Cục đang hoạt động.',
-        'offline': 'CORS Cục đang gián đoạn.',
-    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
+    headline = _cors_status_headline(status)
     return await _detailed_report(
         health, question, words, intent, name, heading, status, headline
     )
