@@ -317,6 +317,37 @@ async def restore_admin_caster_source(
 
 
 @router.put("/api/admin/caster-sources", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 502: {"description": "Bad Gateway"}})
+def _admin_caster_source_values(saved, request):
+    fields = schemas.CasterSourceCreateRequest.model_fields
+    old = {key: value for key, value in (saved.source_data or {}).items() if key in fields}
+    old.update(
+        mountpoint=saved.mountpoint,
+        password=saved.password,
+        identifier=(saved.source_data or {}).get('identifier') or '',
+    )
+    values = {**old, **request.model_dump(exclude_unset=True, exclude={'host', 'mountpoint', 'password'})}
+    values['password'] = request.password or saved.password
+    if not values['password'] or not saved.password:
+        raise HTTPException(status_code=409, detail="Thiếu mật khẩu đã lưu; không thể sửa an toàn. Hãy tạo lại mountpoint với mật khẩu đầy đủ.")
+    desired = schemas.CasterSourceCreateRequest(**values).model_dump(exclude={'host'})
+    return old, desired
+
+
+async def _replace_admin_caster_source(caster, saved, old, desired):
+    live = await caster.get_sources()
+    if live is None:
+        raise HTTPException(status_code=502, detail="Không đọc được caster; chưa thay đổi cấu hình.")
+    existing = next((item for item in live if item.get('mountpoint') == saved.mountpoint), None)
+    if existing is not None and not await caster.delete_source(existing.get('identifier') or '', saved.mountpoint):
+        raise HTTPException(status_code=502, detail="Caster chưa xác nhận cập nhật; cấu hình đã lưu được giữ nguyên.")
+    if await caster.create_source(**desired):
+        return
+    rollback = schemas.CasterSourceCreateRequest(**old).model_dump(exclude={'host'})
+    restored = await caster.create_source(**rollback)
+    detail = "Lưu thất bại; đã gửi lại cấu hình cũ." if restored else "Lưu thất bại; cấu hình cũ vẫn được giữ. Cần khôi phục mountpoint trên caster."
+    raise HTTPException(status_code=502, detail=detail)
+
+
 async def update_admin_caster_source(
     req: schemas.CasterSourceUpdateRequest,
     db: AsyncSession = Depends(get_auth_db),
@@ -337,28 +368,10 @@ async def update_admin_caster_source(
     ))).scalars().first()
     if saved is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy mountpoint đã lưu")
-    fields = schemas.CasterSourceCreateRequest.model_fields
-    old = {k: v for k, v in (saved.source_data or {}).items() if k in fields}
-    old.update(mountpoint=saved.mountpoint, password=saved.password,
-               identifier=(saved.source_data or {}).get('identifier') or '')
-    values = {**old, **req.model_dump(exclude_unset=True, exclude={'host', 'mountpoint', 'password'})}
-    values['password'] = req.password or saved.password
-    if not values['password'] or not saved.password:
-        raise HTTPException(status_code=409, detail="Thiếu mật khẩu đã lưu; không thể sửa an toàn. Hãy tạo lại mountpoint với mật khẩu đầy đủ.")
-    desired = schemas.CasterSourceCreateRequest(**values).model_dump(exclude={'host'})
+    old, desired = _admin_caster_source_values(saved, req)
     from .caster_client import CasterClient
     caster = CasterClient(host, port)
-    live = await caster.get_sources()
-    if live is None:
-        raise HTTPException(status_code=502, detail="Không đọc được caster; chưa thay đổi cấu hình.")
-    existing = next((item for item in live if item.get('mountpoint') == saved.mountpoint), None)
-    if existing is not None and not await caster.delete_source(existing.get('identifier') or '', saved.mountpoint):
-        raise HTTPException(status_code=502, detail="Caster chưa xác nhận cập nhật; cấu hình đã lưu được giữ nguyên.")
-    if not await caster.create_source(**desired):
-        rollback = schemas.CasterSourceCreateRequest(**old).model_dump(exclude={'host'})
-        restored = await caster.create_source(**rollback)
-        detail = "Lưu thất bại; đã gửi lại cấu hình cũ." if restored else "Lưu thất bại; cấu hình cũ vẫn được giữ. Cần khôi phục mountpoint trên caster."
-        raise HTTPException(status_code=502, detail=detail)
+    await _replace_admin_caster_source(caster, saved, old, desired)
     await save_sources(db, host, port, [desired], int(time.time()))
     await db.commit()
     return {'status': 'updated', 'host': host, 'mountpoint': saved.mountpoint}

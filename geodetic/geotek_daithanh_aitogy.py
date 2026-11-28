@@ -2498,22 +2498,27 @@ class MonitorWorker(threading.Thread):
             raise ConnectionError('Chunked NTRIP stream unsupported')
         return body
 
-    def _connect_socket(self):
+    def _wait_for_monitor_connect_interval(self):
         global MONITOR_LAST_CONNECT_AT
+        while not self.stop_event.is_set():
+            with MONITOR_CONNECT_LOCK:
+                delay = MONITOR_CONNECT_INTERVAL - (time.monotonic() - MONITOR_LAST_CONNECT_AT)
+                if delay <= 0:
+                    MONITOR_LAST_CONNECT_AT = time.monotonic()
+                    return True
+            if self.stop_event.wait(delay):
+                return False
+        return False
+
+    def _connect_socket(self):
         while not self.stop_event.is_set():
             if not SOURCE_CONNECT_LIMIT.acquire(timeout=0.2):
                 continue
             try:
                 if self.is_prefix7:
                     # Pace actual TCP starts even when the shared connect gate is busy.
-                    while not self.stop_event.is_set():
-                        with MONITOR_CONNECT_LOCK:
-                            delay = MONITOR_CONNECT_INTERVAL - (time.monotonic() - MONITOR_LAST_CONNECT_AT)
-                            if delay <= 0:
-                                MONITOR_LAST_CONNECT_AT = time.monotonic()
-                                break
-                        if self.stop_event.wait(delay):
-                            return None
+                    if not self._wait_for_monitor_connect_interval():
+                        return None
                 if self.stop_event.is_set():
                     return None
                 self.log('INFO', f"Connecting MONITOR: {self.host}:{self.port}/{self.cfg['mountpoint']}")

@@ -68,6 +68,40 @@ STYLES = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </styleSheet>'''
 
 
+def _write_workbook_columns(write, headers):
+    widths = []
+    for index, header in enumerate(headers, 1):
+        width = min(54, max(19, len(str(header)) * 1.5 + 6))
+        if any(word in str(header) for word in ("Nội dung", "Sự kiện", "Lý do", "Giá trị", "Google Maps")):
+            width = 54
+        elif any(word in str(header) for word in ("Thời gian", "Cập nhật", "Bắt đầu", "Kết thúc", "Ngày tạo", "Hết hạn")):
+            width = max(width, 24)
+        widths.append(width)
+        write(f'<col min="{index}" max="{index}" width="{width:.1f}" customWidth="1"/>')
+    return widths
+
+
+def _write_workbook_title_rows(write, title, subtitle, headers):
+    for number, value, style, height in ((1, title, 1, 34), (2, subtitle, 2, 25)):
+        write(f'<row r="{number}" ht="{height}" customHeight="1">')
+        for index in range(1, len(headers) + 1):
+            write(_cell(f'{_column(index)}{number}', value if index == 1 else "", style))
+        write(WORKSHEET_ROW_END)
+
+
+def _write_workbook_data_rows(write, rows, widths):
+    last_row = 4
+    for last_row, values in enumerate(rows, 5):
+        style = 4 if last_row % 2 else 5
+        lines = max((sum(max(1, math.ceil(len(part) / max(1, int(width) - 3))) for part in _text(value).splitlines() or [""]) for value, width in zip(values, widths)), default=1)
+        height = min(84, max(22, lines * 16 + 6))
+        write(f'<row r="{last_row}" ht="{height}" customHeight="1">')
+        for index, value in enumerate(values, 1):
+            write(_cell(f'{_column(index)}{last_row}', value, style))
+        write(WORKSHEET_ROW_END)
+    return last_row
+
+
 def make_workbook(title, subtitle, headers, rows):
     """Return an Excel workbook with readable columns and no executable formulas."""
     output = io.BytesIO()
@@ -100,34 +134,14 @@ def make_workbook(title, subtitle, headers, rows):
             write('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">')
             write('<sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>')
             write('<sheetFormatPr defaultRowHeight="18"/><cols>')
-            widths = []
-            for index, header in enumerate(headers, 1):
-                width = min(54, max(19, len(str(header)) * 1.5 + 6))
-                if any(word in str(header) for word in ("Nội dung", "Sự kiện", "Lý do", "Giá trị", "Google Maps")):
-                    width = 54
-                elif any(word in str(header) for word in ("Thời gian", "Cập nhật", "Bắt đầu", "Kết thúc", "Ngày tạo", "Hết hạn")):
-                    width = max(width, 24)
-                widths.append(width)
-                write(f'<col min="{index}" max="{index}" width="{width:.1f}" customWidth="1"/>')
+            widths = _write_workbook_columns(write, headers)
             write('</cols><sheetData>')
-            for number, value, style, height in ((1, title, 1, 34), (2, subtitle, 2, 25)):
-                write(f'<row r="{number}" ht="{height}" customHeight="1">')
-                for index in range(1, len(headers) + 1):
-                    write(_cell(f'{_column(index)}{number}', value if index == 1 else "", style))
-                write(WORKSHEET_ROW_END)
+            _write_workbook_title_rows(write, title, subtitle, headers)
             write('<row r="4" ht="30" customHeight="1">')
             for index, header in enumerate(headers, 1):
                 write(_cell(f'{_column(index)}4', header, 3))
             write(WORKSHEET_ROW_END)
-            last_row = 4
-            for last_row, values in enumerate(rows, 5):
-                style = 4 if last_row % 2 else 5
-                lines = max((sum(max(1, math.ceil(len(part) / max(1, int(width) - 3))) for part in _text(value).splitlines() or [""]) for value, width in zip(values, widths)), default=1)
-                height = min(84, max(22, lines * 16 + 6))
-                write(f'<row r="{last_row}" ht="{height}" customHeight="1">')
-                for index, value in enumerate(values, 1):
-                    write(_cell(f'{_column(index)}{last_row}', value, style))
-                write(WORKSHEET_ROW_END)
+            last_row = _write_workbook_data_rows(write, rows, widths)
             write('</sheetData>')
             write(f'<autoFilter ref="A4:{last_column}{last_row}"/>')
             if len(headers) > 1:
