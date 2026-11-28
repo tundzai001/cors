@@ -135,23 +135,26 @@ class AdministrationMixin:
         needles.update(self._device_search_key(token) for token in tokens)
         return {needle for needle in needles if len(needle) >= 2}
 
+    @staticmethod
+    def _score_device_needle(needle, name_key, serial_key):
+        score = 0
+        if needle == name_key:
+            score += 10
+        if needle == serial_key:
+            score += 10
+        if len(needle) >= 10 and needle.isdigit() and needle == serial_key:
+            score += 20
+        if len(needle) >= 3:
+            if needle != name_key and name_key and needle in name_key:
+                score += 3
+            if needle != serial_key and serial_key and needle in serial_key:
+                score += 3
+        return score
+
     def _score_local_device(self, device, needles):
         name_key = self._device_search_key(device.get("name") or "")
         serial_key = self._device_search_key(device.get("serial") or "")
-        score = 0
-        for needle in needles:
-            if needle == name_key:
-                score += 10
-            if needle == serial_key:
-                score += 10
-            if len(needle) >= 10 and needle.isdigit() and needle == serial_key:
-                score += 20
-            if len(needle) >= 3:
-                if needle != name_key and name_key and needle in name_key:
-                    score += 3
-                if needle != serial_key and serial_key and needle in serial_key:
-                    score += 3
-        return score
+        return sum(self._score_device_needle(needle, name_key, serial_key) for needle in needles)
 
     def _rank_local_devices(self, devices_list, needles):
         scored_devices = []

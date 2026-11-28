@@ -543,6 +543,45 @@ async def get_caster_blocklist(
     return rs.scalars().all()
 
 
+async def _require_rover_management_access(auth_db, devices_db, username: str, current_user):
+    rover = await crud.get_rover_by_username(auth_db, username)
+    if not rover and current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Rover")
+    if rover:
+        has_permission = await crud.check_rover_management_permission(
+            rover, current_user, devices_db, auth_db
+        )
+        if not has_permission:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
+    return rover
+
+
+async def _delete_rover_block_entries(auth_db, username: str, mountpoint: Optional[str]) -> None:
+    query = delete(models.RoverBlocklist).where(models.RoverBlocklist.username == username)
+    if mountpoint:
+        query = query.where(models.RoverBlocklist.mountpoint == mountpoint)
+    result = await auth_db.execute(query)
+    _ = result.rowcount
+    await auth_db.commit()
+
+
+async def _recreate_rover_on_casters(username: str, rover, current_user) -> bool:
+    hosts, _ = _read_caster_config_from_env()
+    target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
+    port = int(settings.CASTER_PORT or 2101)
+    recreated_count = 0
+    for host in target_hosts:
+        try:
+            from app.caster_client import CasterClient
+            caster = CasterClient(host, port)
+            await caster.unblock_user(identifier=current_user.username, username=rover.username)
+            recreated_count += 1
+            logger.info(f"[CASTER MGMT] Unblocked user '{username}' on caster {host}")
+        except Exception as error:
+            logger.warning(f"[CASTER MGMT] Failed to unblock user on caster {host}: {error}")
+    return recreated_count > 0
+
+
 @router.post("/api/caster/unblock-user", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def unblock_caster_user(
     req: schemas.UnblockRoverRequest,
@@ -557,32 +596,9 @@ async def unblock_caster_user(
     3. Cập nhật RoverAccount.is_active = True (nếu có)
     """
     username = req.username.strip()
-
-    # Permission check if rover exists in DB
-    rover = await crud.get_rover_by_username(auth_db, username)
-    if not rover and current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=404, detail="Không tìm thấy Rover")
-    if rover:
-        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, auth_db)
-        if not has_perm:
-            raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
-
-    username = req.username.strip()
+    await _require_rover_management_access(auth_db, devices_db, username, current_user)
     mountpoint = req.mountpoint.strip() if req.mountpoint else None
-
-    # 1. Xóa khỏi blocklist
-    del_q = delete(models.RoverBlocklist).where(
-        models.RoverBlocklist.username == username,
-    )
-    if mountpoint:
-        del_q = del_q.where(models.RoverBlocklist.mountpoint == mountpoint)
-    else:
-        # Xóa tất cả block entries cho user này
-        pass
-
-    result = await auth_db.execute(del_q)
-    _ = result.rowcount
-    await auth_db.commit()
+    await _delete_rover_block_entries(auth_db, username, mountpoint)
 
     caster_recreated = False
     rover = await crud.get_rover_by_username(auth_db, username)
@@ -590,25 +606,7 @@ async def unblock_caster_user(
     if rover:
         rover.is_active = True
         await auth_db.commit()
-
-        # 3. Tạo lại user trên TẤT CẢ caster
-        hosts, _ = _read_caster_config_from_env()
-        target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
-        port = int(settings.CASTER_PORT or 2101)
-
-        recreated_count = 0
-        for host in target_hosts:
-            try:
-                from app.caster_client import CasterClient
-                caster = CasterClient(host, port)
-
-                await caster.unblock_user(identifier=current_user.username, username=rover.username)
-                recreated_count += 1
-                logger.info(f"[CASTER MGMT] Unblocked user '{username}' on caster {host}")
-            except Exception as e:
-                logger.warning(f"[CASTER MGMT] Failed to unblock user on caster {host}: {e}")
-
-        caster_recreated = (recreated_count > 0)
+        caster_recreated = await _recreate_rover_on_casters(username, rover, current_user)
     else:
         await auth_db.commit()
 

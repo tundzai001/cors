@@ -409,6 +409,41 @@ class ZaloBotService(
             )
             raise
 
+    # SDK replies use raw IDs; background sends use the bot-scoped stored key.
+    def _normalize_outbound_chat_id(self, args, kwargs) -> str:
+        chat_id = kwargs.get("chat_id", args[0] if args else None)
+        if self.bot_key == "tun" and not self.owns_chat(str(chat_id)):
+            raise ValueError("Chat belongs to another Zalo bot")
+        return scoped_chat_id(self.bot_key, str(chat_id))
+
+    async def _handle_traced_send_message(self, original_send_message, args, kwargs):
+        trace_id = self._active_trace_id.get()
+        chat_id = self._normalize_outbound_chat_id(args, kwargs)
+        text = kwargs.get("text", args[1] if len(args) > 1 else None)
+        cors_context = self._cors_outbound.get()
+        # Change delivery already owns the preference row lock. Reuse that
+        # policy instead of opening another auth session while holding it.
+        policy, cors_kind = await self._outbound_chat_policy(chat_id, cors_context)
+        if self._outbound_policy_suppresses(policy, cors_kind):
+            logger.info("Zalo outbound suppressed by chat policy for chat_id=%s", chat_id)
+            return None
+        outbound = self._track_outbound_message(trace_id, chat_id, text)
+        if str(chat_id) in self._revoked_chat_ids and not self._allow_revoked_outbound.get():
+            outbound["status"] = "suppressed_revoked"
+            logger.info(
+                "[ZALO TRACE %s] suppressed outbound to revoked chat_id=%s",
+                trace_id or "background", chat_id,
+            )
+            return None
+        logger.info(
+            "[ZALO TRACE %s] outbound sending chat_id=%s text=%r",
+            trace_id or "background", chat_id,
+            self._redact_command_secret(str(text or "")),
+        )
+        return await self._send_traced_message(
+            original_send_message, args, kwargs, chat_id, trace_id, outbound
+        )
+
     def _install_send_trace(self) -> None:
         bot = getattr(self.app, "bot", None) if self.app else None
         if not bot or getattr(bot, "_cors_send_trace_installed", False):
@@ -420,39 +455,7 @@ class ZaloBotService(
             return
 
         async def traced_send_message(*args, **kwargs):
-            trace_id = self._active_trace_id.get()
-            chat_id = kwargs.get("chat_id", args[0] if args else None)
-            # SDK replies carry a raw ID; background deliveries carry a stored key.
-            if self.bot_key == "tun" and not self.owns_chat(str(chat_id)):
-                raise ValueError("Chat belongs to another Zalo bot")
-            chat_id = scoped_chat_id(self.bot_key, str(chat_id))
-            text = kwargs.get("text", args[1] if len(args) > 1 else None)
-            cors_context = self._cors_outbound.get()
-            # Change delivery already owns the preference row lock. Reuse that
-            # policy rather than acquire a second auth session while holding it.
-            policy, cors_kind = await self._outbound_chat_policy(chat_id, cors_context)
-            if self._outbound_policy_suppresses(policy, cors_kind):
-                logger.info("Zalo outbound suppressed by chat policy for chat_id=%s", chat_id)
-                return None
-            outbound = self._track_outbound_message(trace_id, chat_id, text)
-            if (
-                str(chat_id) in self._revoked_chat_ids
-                and not self._allow_revoked_outbound.get()
-            ):
-                outbound["status"] = "suppressed_revoked"
-                logger.info(
-                    "[ZALO TRACE %s] suppressed outbound to revoked chat_id=%s",
-                    trace_id or "background", chat_id,
-                )
-                return None
-            logger.info(
-                "[ZALO TRACE %s] outbound sending chat_id=%s text=%r",
-                trace_id or "background", chat_id,
-                self._redact_command_secret(str(text or "")),
-            )
-            return await self._send_traced_message(
-                original_send_message, args, kwargs, chat_id, trace_id, outbound
-            )
+            return await self._handle_traced_send_message(original_send_message, args, kwargs)
 
         try:
             setattr(bot, "send_message", traced_send_message)

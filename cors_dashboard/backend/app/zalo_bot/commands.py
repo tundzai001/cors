@@ -453,24 +453,19 @@ class CommandsMixin:
         )
         await update.message.reply_text(text)
 
-    async def _menu_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        principal = await self._resolve_principal(update)
-        if not principal.is_linked:
-            await self._public_menu_cmd(update, context)
-            return
+    @staticmethod
+    def _menu_scope_label(principal) -> str:
+        if principal.station_scope_mode == "selected":
+            return f"Phạm vi: {len(principal.allowed_bases)} trạm được admin chọn"
+        if principal.station_scope_mode == "none":
+            return "Phạm vi: không có trạm"
+        if principal.binding_type == "private":
+            return "Phạm vi: theo đúng tài khoản web"
+        return "Phạm vi: tất cả trạm"
 
+    @staticmethod
+    def _menu_read_actions(principal) -> list[str]:
         lines = [
-            "🎛️ MENU BOT CORS",
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            f"Quyền hiện tại: {principal.username or principal.binding_type} ({principal.role or 'public'})",
-            (
-                f"Phạm vi: {len(principal.allowed_bases)} trạm được admin chọn"
-                if principal.station_scope_mode == "selected"
-                else "Phạm vi: không có trạm" if principal.station_scope_mode == "none"
-                else "Phạm vi: theo đúng tài khoản web" if principal.binding_type == "private"
-                else "Phạm vi: tất cả trạm"
-            ),
-            "",
             "📡 TRA CỨU",
             "/status — Tổng quan các trạm bạn được xem",
             "/stations — Danh sách trạm",
@@ -483,13 +478,17 @@ class CommandsMixin:
             ))
         if principal.allows(auth.Permission.VIEW_CONFIG):
             lines.append("/config <tên> — Xem cấu hình trạm")
-        write_lines = []
+        return lines
+
+    @staticmethod
+    def _menu_write_actions(principal) -> list[str]:
+        lines = []
         if principal.allows(auth.Permission.EDIT_COORDINATES):
-            write_lines.append("/coord <tên> — Sửa tọa độ")
+            lines.append("/coord <tên> — Sửa tọa độ")
         if principal.allows(auth.Permission.EDIT_SERVICE_CONFIG):
-            write_lines.append("/configset <tên> — Sửa cấu hình bằng menu từng mục")
+            lines.append("/configset <tên> — Sửa cấu hình bằng menu từng mục")
         if principal.allows(auth.Permission.MANAGE_CASTER):
-            write_lines.extend((
+            lines.extend((
                 "/rovercreate — Tạo rover",
                 "/roverupdate <user> — Sửa rover: thêm/xóa/thay mountpoint, bật/tắt rõ nghĩa",
                 "/roverrenew <user> — Gia hạn rover",
@@ -498,18 +497,14 @@ class CommandsMixin:
                 "/roverdelete <user> — Xóa rover",
             ))
         if principal.allows(auth.Permission.MANAGE_USERS):
-            write_lines.extend((
-                "/stationlock <tên> — Khóa trạm",
-                "/stationunlock <tên> — Mở khóa trạm",
-            ))
+            lines.extend(("/stationlock <tên> — Khóa trạm", "/stationunlock <tên> — Mở khóa trạm"))
         if principal.allows(auth.Permission.DELETE_DEVICE):
-            write_lines.extend((
-                "/stationreset <tên> — Khởi động lại trạm",
-                "/stationdelete <tên> — Xóa trạm",
-            ))
-        if write_lines:
-            lines.extend(("", "🛠️ THAO TÁC CẦN XÁC NHẬN", *write_lines))
-        lines.extend(("", "🔔 HỆ THỐNG"))
+            lines.extend(("/stationreset <tên> — Khởi động lại trạm", "/stationdelete <tên> — Xóa trạm"))
+        return lines
+
+    @staticmethod
+    def _menu_system_actions(principal, write_lines) -> list[str]:
+        lines = ["🔔 HỆ THỐNG"]
         if principal.allows(auth.Permission.VIEW_CONFIG):
             lines.append("/errors — Cảnh báo hiện tại")
         lines.append("/notifications — Sửa cảnh báo của chat này")
@@ -523,8 +518,26 @@ class CommandsMixin:
             "━━━━━━━━━━━━━━━━━━━━━━",
             "Bạn cũng có thể nhắn tự nhiên: “tdbd01”, “xem rover abc”, “trạm offline”.",
         ))
-        text = "\n".join(lines)
-        await update.message.reply_text(text)
+        return lines
+
+    async def _menu_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        principal = await self._resolve_principal(update)
+        if not principal.is_linked:
+            await self._public_menu_cmd(update, context)
+            return
+        lines = [
+            "🎛️ MENU BOT CORS",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"Quyền hiện tại: {principal.username or principal.binding_type} ({principal.role or 'public'})",
+            self._menu_scope_label(principal),
+            "",
+        ]
+        lines.extend(self._menu_read_actions(principal))
+        write_lines = self._menu_write_actions(principal)
+        if write_lines:
+            lines.extend(("", "🛠️ THAO TÁC CẦN XÁC NHẬN", *write_lines))
+        lines.extend(("", *self._menu_system_actions(principal, write_lines)))
+        await update.message.reply_text("\n".join(lines))
 
     async def _link_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = self._get_chat_id(update)

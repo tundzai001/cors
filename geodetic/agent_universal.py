@@ -1566,53 +1566,49 @@ def find_chip_robustly():
     return {"port": None, "type": "UNKNOWN", "baud": None}
 
 
+def _probe_fallback_port(port, common_baud_rates):
+    for baud in _ordered_baud_rates(port.device, common_baud_rates):
+        try:
+            with serial.Serial(port.device, baud, timeout=3) as ser:
+                ser.reset_input_buffer()
+                ser.write(b'unlog\r\n')
+                ser.flush()
+                _wait_for_serial_response(ser, wait_seconds=0.6, max_bytes=512)
+                if ser.in_waiting > 0:
+                    ser.read(ser.in_waiting)
+
+                ser.write(UNICORE_VERSION_COMMAND)
+                ser.flush()
+                response = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
+                if response:
+                    response_str = response.decode('ascii', errors='ignore')
+                    if any(kw in response_str for kw in ['UM982', 'Unicore', 'FIRMWARE']):
+                        logging.info(f"[Fallback] Found UM982 on {port.device} @ {baud}")
+                        _remember_baud_hint(port.device, baud)
+                        return {"port": port.device, "type": "Unicorecomm", "baud": baud}
+
+                ser.reset_input_buffer()
+                data = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
+                if b'$G' in data or b'\xB5\x62' in data or b'\xD3' in data:
+                    logging.info(f"[Fallback] Found GNSS-like data on {port.device} @ {baud}")
+                    _remember_baud_hint(port.device, baud)
+                    return {"port": port.device, "type": "Generic", "baud": baud}
+        except Exception as error:
+            logging.debug(f"Fallback test error: {error}")
+    return None
+
+
 def find_chip_fallback():
     logging.info("[ChipDetector] Running FALLBACK detection with NMEA disable...")
-    ports = serial.tools.list_ports.comports()
-    
-    for port in ports:
+    for port in serial.tools.list_ports.comports():
         if 'bluetooth' in port.device.lower():
             continue
-            
         logging.info(f"[Fallback] Testing {port.device}...")
-        
-        for baud in _ordered_baud_rates(port.device, [115200, 460800, 921600, 38400]):
-            try:
-                with serial.Serial(port.device, baud, timeout=3) as ser:
-                    ser.reset_input_buffer()
-                    ser.write(b'unlog\r\n')
-                    ser.flush()
-                    _wait_for_serial_response(ser, wait_seconds=0.6, max_bytes=512)
-                    
-                    # Clear buffer
-                    if ser.in_waiting > 0:
-                        ser.read(ser.in_waiting)
-                    
-                    # Test version command
-                    ser.write(UNICORE_VERSION_COMMAND)
-                    ser.flush()
-                    response = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
-                    if response:
-                        response_str = response.decode('ascii', errors='ignore')
-                        
-                        if any(kw in response_str for kw in ['UM982', 'Unicore', 'FIRMWARE']):
-                            logging.info(f"[Fallback] Found UM982 on {port.device} @ {baud}")
-                            _remember_baud_hint(port.device, baud)
-                            return {"port": port.device, "type": "Unicorecomm", "baud": baud}
-                    
-                    # Test for any GNSS data
-                    ser.reset_input_buffer()
-                    data = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
-                    if b'$G' in data or b'\xB5\x62' in data or b'\xD3' in data:
-                        logging.info(f"[Fallback] Found GNSS-like data on {port.device} @ {baud}")
-                        _remember_baud_hint(port.device, baud)
-                        return {"port": port.device, "type": "Generic", "baud": baud}
-                            
-            except Exception as e:
-                logging.debug(f"Fallback test error: {e}")
-                continue
-    
+        detection = _probe_fallback_port(port, [115200, 460800, 921600, 38400])
+        if detection:
+            return detection
     return {"port": None, "type": "UNKNOWN", "baud": None}
+
 
 async def detect_chip_with_retry(max_retries=3, retry_delay=10):
     for attempt in range(max_retries):
@@ -1638,53 +1634,64 @@ async def detect_chip_with_retry(max_retries=3, retry_delay=10):
 # === UTILITY FUNCTIONS                                                     ===
 # ==============================================================================
 
+def _read_saved_machine_serial(path):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r') as serial_file:
+            saved_serial = serial_file.read().strip()
+        if ((saved_serial.startswith("LP_") and len(saved_serial) > 10)
+                or re.fullmatch(r'(?:PI_[0-9a-f]{12}|[0-9a-f]{16})', saved_serial, re.IGNORECASE)):
+            return saved_serial
+    except Exception:
+        pass
+    return None
+
+
+def _generate_windows_machine_serial():
+    try:
+        serial = f"LP_{uuid.getnode():012X}"
+        logging.info(f"Generated new serial from MAC: {serial}")
+        return serial
+    except Exception:
+        return f"LP_RND_{uuid.uuid4().hex[:12]}"
+
+
+def _generate_pi_machine_serial():
+    serial = ""
+    try:
+        with open('/proc/cpuinfo', 'r') as cpuinfo:
+            for line in cpuinfo:
+                if line.startswith('Serial'):
+                    serial = line.strip().split(':')[-1].strip()
+    except Exception:
+        pass
+    return serial or f"PI_{uuid.uuid4().hex[:12]}"
+
+
+def _save_machine_serial(path, serial):
+    try:
+        with open(path, 'w') as serial_file:
+            serial_file.write(serial)
+        logging.info(f"Saved new serial to {path}")
+    except Exception as error:
+        logging.exception(f"Cannot save device ID: {error}")
+
+
 def get_machine_serial():
-    SERIAL_FILE_PATH = os.path.join(BASE_DIR, "device_id.txt") 
-
-    if os.path.exists(SERIAL_FILE_PATH):
-        try:
-            with open(SERIAL_FILE_PATH, 'r') as f:
-                saved_serial = f.read().strip()
-                if (saved_serial.startswith("LP_") and len(saved_serial) > 10) or re.fullmatch(
-                    r'(?:PI_[0-9a-f]{12}|[0-9a-f]{16})', saved_serial, re.IGNORECASE
-                ):
-                    return saved_serial
-        except Exception:
-            pass
-    final_serial = ""
-
+    serial_path = os.path.join(BASE_DIR, "device_id.txt")
+    saved_serial = _read_saved_machine_serial(serial_path)
+    if saved_serial:
+        return saved_serial
     if IS_WINDOWS:
-        try:
-            mac = uuid.getnode()
-
-            mac_str = f"{mac:012X}"
-  
-            final_serial = f"LP_{mac_str}"
-            
-            logging.info(f"Generated new serial from MAC: {final_serial}")
-        except Exception:
-            final_serial = f"LP_RND_{uuid.uuid4().hex[:12]}"
-    
+        final_serial = _generate_windows_machine_serial()
     elif IS_RASPBERRY_PI:
-        try:
-            with open('/proc/cpuinfo', 'r') as f:
-                for line in f:
-                    if line.startswith('Serial'):
-                        final_serial = line.strip().split(':')[-1].strip()
-        except Exception: pass
-        if not final_serial: final_serial = f"PI_{uuid.uuid4().hex[:12]}"
-    
+        final_serial = _generate_pi_machine_serial()
     else:
         final_serial = f"UNK_{uuid.uuid4().hex[:12]}"
-
-    try:
-        with open(SERIAL_FILE_PATH, 'w') as f:
-            f.write(final_serial)
-            logging.info(f"Saved new serial to {SERIAL_FILE_PATH}")
-    except Exception as e:
-        logging.exception(f"Cannot save device ID: {e}")
-
+    _save_machine_serial(serial_path, final_serial)
     return final_serial
+
 
 def is_valid_license_key(key: str, serial: str) -> bool:
     if re.fullmatch(r"dt_[A-Za-z0-9_-]{40,64}", key):
@@ -3106,66 +3113,72 @@ class RTCMSignalDecoder:
             return None
         return self.decode_sync(serial, payload)
 
-    def decode_json(self, serial: str, data: dict) -> dict[str, Any] | None:
-        nav_system = data.get("navSystem")
-        sats_in = data.get("satellites", [])
-        if not nav_system or not sats_in:
-            return None
-        
+    @staticmethod
+    def _json_system_code(nav_system):
         system_map = {
             "gps": "G", "us": "G", "g": "G",
             "glonass": "R", "ru": "R", "r": "R",
             "galileo": "E", "eu": "E", "e": "E",
             "beidou": "C", "cn": "C", "c": "C",
         }
-        sys_code = system_map.get(str(nav_system or "").strip().lower())
+        return system_map.get(str(nav_system or "").strip().lower())
+
+    def _json_satellite_angles(self, serial, sat_id, sys_code, prn, now_ms, now_s, base_pos):
+        cached = self._azel_cache[serial].get(sat_id)
+        if cached and now_s - cached[0] < 10.0:
+            return cached[1], cached[2]
+        if not base_pos:
+            return 0.0, 0.0
+        sat_pos = self._satpos(sys_code, prn, now_ms)
+        if not sat_pos:
+            return 0.0, 0.0
+        azimuth, elevation = self._satazel(sat_pos, base_pos)
+        self._azel_cache[serial][sat_id] = (now_s, azimuth, elevation)
+        return azimuth, elevation
+
+    @staticmethod
+    def _json_satellite_entry(sat_id, prn, sys_code, snr, elevation, azimuth, now_ms):
+        return {
+            "id": sat_id,
+            "prn": prn,
+            "system": sys_code,
+            "snr": snr,
+            "cnr": float(snr),
+            "signalId": 1,
+            "messageType": 9999,
+            "isTracking": True,
+            "elevation": elevation,
+            "azimuth": azimuth,
+            "lastSeen": now_ms,
+        }
+
+    def decode_json(self, serial: str, data: dict) -> dict[str, Any] | None:
+        nav_system = data.get("navSystem")
+        sats_in = data.get("satellites", [])
+        if not nav_system or not sats_in:
+            return None
+        sys_code = self._json_system_code(nav_system)
         if not sys_code:
             return None
-            
+
         now_ms = int(time.time() * 1000)
         now_s = now_ms / 1000.0
         satellites_out = []
         base_pos = self._base_positions.get(serial)
-        
         if serial not in self._azel_cache:
             self._azel_cache[serial] = {}
-            
         for sat in sats_in:
             prn = sat.get("prn")
             snr = sat.get("snr", 0)
             if not prn or snr <= 0:
                 continue
-                
             sat_str_id = f"RTCM:{sys_code}:{prn}"
-            elevation = 0.0
-            azimuth = 0.0
-            
-            cached = self._azel_cache[serial].get(sat_str_id)
-            if cached and now_s - cached[0] < 10.0:
-                azimuth, elevation = cached[1], cached[2]
-            else:
-                if base_pos:
-                    sat_pos = self._satpos(sys_code, prn, now_ms)
-                    if sat_pos:
-                        az, el = self._satazel(sat_pos, base_pos)
-                        azimuth = az
-                        elevation = el
-                        self._azel_cache[serial][sat_str_id] = (now_s, azimuth, elevation)
-            
-            satellites_out.append({
-                "id": sat_str_id,
-                "prn": prn,
-                "system": sys_code,
-                "snr": snr,
-                "cnr": float(snr),
-                "signalId": 1,
-                "messageType": 9999,
-                "isTracking": True,
-                "elevation": elevation,
-                "azimuth": azimuth,
-                "lastSeen": now_ms,
-            })
-            
+            azimuth, elevation = self._json_satellite_angles(
+                serial, sat_str_id, sys_code, prn, now_ms, now_s, base_pos
+            )
+            satellites_out.append(self._json_satellite_entry(
+                sat_str_id, prn, sys_code, snr, elevation, azimuth, now_ms
+            ))
         return {
             "navSystem": nav_system,
             "msmLevel": "JSON",
