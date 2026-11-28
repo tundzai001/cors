@@ -3483,135 +3483,129 @@ class RTCMPublisherMQTT(threading.Thread):
     def stop(self):
         self._stop_event.set()
 
+    def _should_publish_rtcm_skyview(self):
+        last_gsv_ts = globals().get('LAST_GSV_TS', 0)
+        return (
+            not _base_config_expects_nmea_skyview(self.agent_manager)
+            and time.time() - last_gsv_ts >= 60
+        )
+
+    def _ensure_rtcm_base_position(self, publish_rtcm_skyview):
+        if not publish_rtcm_skyview or self.serial_number in self.decoder._base_positions:
+            return
+        agent_manager = self.agent_manager or globals().get('agent')
+        if not agent_manager or not hasattr(agent_manager, 'get_base_config'):
+            return
+        base_config = agent_manager.get_base_config() or {}
+        base_coords = base_config.get("coords") or {}
+        if not base_coords and "lat" in base_config:
+            base_coords = {
+                "lat": base_config.get("lat"),
+                "lon": base_config.get("lon"),
+                "alt": base_config.get("alt", 0.0),
+            }
+        if base_coords and base_coords.get("lat") is not None and base_coords.get("lon") is not None:
+            reference = (
+                float(base_coords["lat"]),
+                float(base_coords["lon"]),
+                float(base_coords.get("alt") or 0.0),
+            )
+        else:
+            reference = globals().get('LAST_HPPOSLLH_COORD') or globals().get('LAST_GGA_COORD')
+        if not reference:
+            return
+        try:
+            x, y, z = self.decoder._llh2ecef(*reference)
+            self.decoder._base_positions[self.serial_number] = (x, y, z)
+        except Exception:
+            pass
+
+    def _rtcm_skyview_payload(self, parsed):
+        nav_system = "GPS"
+        for packet in parsed.get("packets", []):
+            if "navSystem" in packet:
+                nav_system = packet["navSystem"]
+                break
+        system_names = {"us": "GPS", "ru": "GLONASS", "eu": "GALILEO", "cn": "BEIDOU", "jp": "QZSS"}
+        satellites = []
+        for satellite in parsed.get("satellites", []):
+            system = satellite.get("system", nav_system)
+            if isinstance(system, str):
+                system = system_names.get(system, system)
+            satellites.append({
+                "prn": satellite["prn"],
+                "snr": satellite.get("cnr", satellite.get("snr", 0)),
+                "sys": system,
+                "system": system,
+                "talker": satellite.get("talker", "RTCM"),
+                "azimuth": satellite.get("azimuth", 0.0),
+                "elevation": satellite.get("elevation", 0.0),
+                "isTracking": satellite.get("isTracking", True),
+                "last_seen": time.time(),
+            })
+        return nav_system, satellites
+
+    def _publish_rtcm_skyview(self, topic, nav_system, satellites):
+        if not satellites:
+            return
+        globals()['LAST_RTCM_SATELLITES'] = satellites
+        globals()['LAST_RTCM_SATELLITES_TS'] = time.time()
+        decoded_payload = {
+            "type": "rtcm_skyview_calculated",
+            "navSystem": nav_system,
+            "satellites": satellites,
+            "timestamp": round(time.time(), 3),
+        }
+        payload = json.dumps(decoded_payload).encode('ascii')
+        mqtt_delivered = False
+        if self.mqtt_client and self.mqtt_client.is_connected():
+            try:
+                result = self.mqtt_client.publish(topic, payload, qos=0)
+                mqtt_delivered = result.rc == mqtt.MQTT_ERR_SUCCESS
+            except Exception as error:
+                logging.exception(f"Failed to publish RTCM skyview: {error}")
+        if not mqtt_delivered and active_websocket_connection and self.loop and not self.loop.is_closed():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    active_websocket_connection.send(json.dumps({
+                        "type": "rtcm_signal_update",
+                        "payload": decoded_payload,
+                    })),
+                    self.loop,
+                )
+            except Exception as error:
+                logging.debug(f"Failed to send RTCM skyview over websocket: {error}")
+
+    def _decode_rtcm_chunk(self, data_chunk, topic):
+        if not HAS_RTCM_DECODER or not self.decoder:
+            return
+        try:
+            publish_skyview = self._should_publish_rtcm_skyview()
+            self._ensure_rtcm_base_position(publish_skyview)
+            parsed = self.decoder.decode_sync(self.serial_number, data_chunk)
+            while parsed is not None:
+                if publish_skyview and parsed.get("satellites"):
+                    nav_system, satellites = self._rtcm_skyview_payload(parsed)
+                    self._publish_rtcm_skyview(topic, nav_system, satellites)
+                parsed = self.decoder.decode_sync(self.serial_number, b"")
+        except Exception as error:
+            logging.debug(f"RTCMSignalDecoder error: {error}")
+
     def run(self):
         import time, json, logging
         from queue import Empty
-        
+
         logging.info("RTCM MQTT Publisher thread started.")
         topic = f"pi/devices/{self.serial_number}/raw_data"
-        
         while not self._stop_event.is_set():
             try:
                 data_chunk = self.queue.get(timeout=0.1)
-                
-                # If we have a decoder, process all RTCM packets (including Ephemeris 1019/1020, Base Pos 1005/1006)
-                # Note: We do NOT publish raw RTCM bytes to raw_data topic, as the station streams directly to NTRIP.
-                if HAS_RTCM_DECODER and self.decoder:
-                    try:
-                        # Always decode RTCM so rtcm_stats reflects the messages
-                        # currently emitted by the receiver. NMEA availability
-                        # only controls whether RTCM-derived skyview is published.
-                        last_gsv_ts = globals().get('LAST_GSV_TS', 0)
-                        publish_rtcm_skyview = (
-                            not _base_config_expects_nmea_skyview(self.agent_manager)
-                            and time.time() - last_gsv_ts >= 60
-                        )
-
-                        # Try to get base position from agent config or NMEA/UBX if not already received from RTCM 1005/1006
-                        if publish_rtcm_skyview and self.serial_number not in self.decoder._base_positions:
-                            ag = self.agent_manager or globals().get('agent')
-                            base_coords = None
-                            if ag and hasattr(ag, 'get_base_config'):
-                                base_cfg = ag.get_base_config() or {}
-                                base_coords = base_cfg.get("coords") or {}
-                                if not base_coords and "lat" in base_cfg:
-                                    base_coords = {
-                                        "lat": base_cfg.get("lat"),
-                                        "lon": base_cfg.get("lon"),
-                                        "alt": base_cfg.get("alt", 0.0)
-                                    }
-                                
-                                ref_coord = None
-                                if base_coords and base_coords.get("lat") is not None and base_coords.get("lon") is not None:
-                                    ref_coord = (float(base_coords["lat"]), float(base_coords["lon"]), float(base_coords.get("alt") or 0.0))
-                                else:
-                                    ref_coord = globals().get('LAST_HPPOSLLH_COORD') or globals().get('LAST_GGA_COORD')
-                                
-                                if ref_coord:
-                                    lat, lon, alt = ref_coord
-                                    try:
-                                        x, y, z = self.decoder._llh2ecef(lat, lon, alt)
-                                        self.decoder._base_positions[self.serial_number] = (x, y, z)
-                                    except Exception:
-                                        pass
-
-                        # Feed the chunk. It might contain multiple packets!
-                        parsed = self.decoder.decode_sync(self.serial_number, data_chunk)
-                        
-                        # Loop until the buffer is completely drained
-                        while parsed is not None:
-                            if publish_rtcm_skyview and parsed.get("satellites"):
-                                nav_system = "GPS"
-                                for pkt in parsed.get("packets", []):
-                                    if "navSystem" in pkt:
-                                        nav_system = pkt["navSystem"]
-                                        break
-                                
-                                sats = []
-                                for sat in parsed.get("satellites", []):
-                                    if True:
-                                        sys_mapped = sat.get("system", nav_system)
-                                        if sys_mapped == "us": sys_mapped = "GPS"
-                                        elif sys_mapped == "ru": sys_mapped = "GLONASS"
-                                        elif sys_mapped == "eu": sys_mapped = "GALILEO"
-                                        elif sys_mapped == "cn": sys_mapped = "BEIDOU"
-                                        elif sys_mapped == "jp": sys_mapped = "QZSS"
-
-                                        sat_obj = {
-                                            "prn": sat["prn"],
-                                            "snr": sat.get("cnr", sat.get("snr", 0)),
-                                            "sys": sys_mapped,
-                                            "system": sys_mapped,
-                                            "talker": sat.get("talker", "RTCM"),
-                                            "azimuth": sat.get("azimuth", 0.0),
-                                            "elevation": sat.get("elevation", 0.0),
-                                            "isTracking": sat.get("isTracking", True),
-                                            "last_seen": time.time()
-                                        }
-                                        sats.append(sat_obj)
-                                
-                                if sats:
-                                    globals()['LAST_RTCM_SATELLITES'] = sats
-                                    globals()['LAST_RTCM_SATELLITES_TS'] = time.time()
-                                    decoded_payload = {
-                                        "type": "rtcm_skyview_calculated",
-                                        "navSystem": nav_system,
-                                        "satellites": sats,
-                                        "timestamp": round(time.time(), 3)
-                                    }
-                                    payload = json.dumps(decoded_payload).encode('ascii')
-                                    mqtt_delivered = False
-                                    if self.mqtt_client and self.mqtt_client.is_connected():
-                                        try:
-                                            result = self.mqtt_client.publish(topic, payload, qos=0)
-                                            mqtt_delivered = result.rc == mqtt.MQTT_ERR_SUCCESS
-                                        except Exception as e:
-                                            logging.exception(f"Failed to publish RTCM skyview: {e}")
-                                    if (
-                                        not mqtt_delivered
-                                        and active_websocket_connection
-                                        and self.loop
-                                        and not self.loop.is_closed()
-                                    ):
-                                        try:
-                                            asyncio.run_coroutine_threadsafe(
-                                                active_websocket_connection.send(json.dumps({
-                                                    "type": "rtcm_signal_update",
-                                                    "payload": decoded_payload
-                                                })),
-                                                self.loop
-                                            )
-                                        except Exception as e:
-                                            logging.debug(f"Failed to send RTCM skyview over websocket: {e}")
-                            
-                            # Feed empty bytes to drain any remaining packets in the buffer
-                            parsed = self.decoder.decode_sync(self.serial_number, b"")
-                    except Exception as e:
-                        logging.debug(f"RTCMSignalDecoder error: {e}")
+                # The station streams raw RTCM directly to NTRIP; this worker only decodes it.
+                self._decode_rtcm_chunk(data_chunk, topic)
             except Empty:
                 pass
-            except Exception as e:
-                logging.exception(f"Error in RTCMPublisherMQTT: {e}", exc_info=True)
+            except Exception as error:
+                logging.exception(f"Error in RTCMPublisherMQTT: {error}", exc_info=True)
 
 class NTRIPServerWorker(threading.Thread):
     def __init__(self, server_id, config, log_callback, stats_dict, stats_lock, connection_status_dict):
@@ -5449,109 +5443,97 @@ class AgentManager:
         cleaned = str(value).strip()
         return cleaned.lower() if cleaned else None
 
+    def _match_stream_server_by_address(self, services, address):
+        normalized_address = str(address).strip().lower()
+        for server_id in _get_ntrip_server_ids(services):
+            host = str(services.get(f'server{server_id}_host', services.get(f'serverhost{server_id}', '')) or '').strip().lower()
+            if host and (normalized_address in host or host in normalized_address):
+                logging.info(f"[STREAM CONTROL] Matched address '{address}' to server {server_id} (host: {host})")
+                return server_id
+        return None
+
+    def _set_explicit_server_stream(self, services, server_id, active, mountpoint):
+        previous_switch = _get_server_stream_switches(services, server_id)
+        previous_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+        if not bool(active) and not previous_switch['on_demand']:
+            logging.info(f"[STREAM CONTROL] Ignoring sleep command for explicit server {server_id} because it is in Always-On mode.")
+            return
+        services[f'server{server_id}_stream_active'] = bool(active)
+        if mountpoint and bool(active):
+            services['active_mountpoint'] = str(mountpoint)
+        elif not bool(active) and previous_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{server_id}')):
+            services.pop('active_mountpoint', None)
+
+    def _on_demand_stream_servers(self, services, target_mountpoint):
+        match_mountpoint = target_mountpoint or self._normalize_mountpoint(services.get('active_mountpoint'))
+        target_ids = []
+        for server_id in _get_ntrip_server_ids(services):
+            switch = _get_server_stream_switches(services, server_id)
+            server_mountpoint = self._normalize_mountpoint(services.get(f'mountpoint{server_id}'))
+            if switch['enabled'] and switch['on_demand']:
+                if match_mountpoint is None or server_mountpoint == match_mountpoint:
+                    target_ids.append(server_id)
+        return target_ids
+
+    def _target_stream_server_ids(self, services, active, mountpoint, server_id):
+        server_ids = _get_ntrip_server_ids(services)
+        target_mountpoint = self._normalize_mountpoint(mountpoint)
+        if server_id is not None:
+            return [server_id] if server_id in server_ids else []
+        if not bool(active):
+            return self._on_demand_stream_servers(services, target_mountpoint)
+        if not target_mountpoint:
+            return []
+        preferred_id = _resolve_preferred_server_for_mountpoint(services, target_mountpoint)
+        return [preferred_id] if preferred_id else []
+
+    def _apply_target_stream_servers(self, services, target_ids, active, mountpoint, previous_mountpoint):
+        for server_id in target_ids:
+            previous_switch = _get_server_stream_switches(services, server_id)
+            if not bool(active) and not previous_switch['on_demand']:
+                logging.info(f"[STREAM CONTROL] Ignoring sleep command for server {server_id} because it is Always-On.")
+                continue
+            services[f'server{server_id}_stream_active'] = bool(active)
+            if mountpoint and bool(active):
+                services['active_mountpoint'] = str(mountpoint)
+            elif not bool(active) and previous_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{server_id}')):
+                services.pop('active_mountpoint', None)
+
+    def _apply_global_stream_state(self, services, active, mountpoint):
+        global_on_demand = _to_bool(services.get('stream_on_demand', False), False)
+        if not bool(active) and not global_on_demand:
+            logging.info("[STREAM CONTROL] Ignoring global sleep command because agent is in Always-On mode.")
+            return
+        services['stream_active'] = bool(active)
+        if mountpoint and bool(active):
+            services['active_mountpoint'] = str(mountpoint)
+        elif not bool(active):
+            services.pop('active_mountpoint', None)
+
     def set_rtcm_stream_active(self, active: bool, mountpoint: str = None, server_id: int = None, address: str = None):
         global rtcm_stream_active_flag
         services = self.config.setdefault('services', {})
-        should_restart = False
-
         if address and not server_id:
-            # Match server by address/host
-            normalized_addr = str(address).strip().lower()
-            for sid in _get_ntrip_server_ids(services):
-                sid_host = str(services.get(f'server{sid}_host', services.get(f'serverhost{sid}', '')) or '').strip().lower()
-                if sid_host and (normalized_addr in sid_host or sid_host in normalized_addr):
-                    server_id = sid
-                    logging.info(f"[STREAM CONTROL] Matched address '{address}' to server {sid} (host: {sid_host})")
-                    break
+            server_id = self._match_stream_server_by_address(services, address)
 
         if server_id in _get_ntrip_server_ids(services):
-            prev_switch = _get_server_stream_switches(services, server_id)
-            prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-
-            if not bool(active) and not prev_switch['on_demand']:
-                logging.info(f"[STREAM CONTROL] Ignoring sleep command for explicit server {server_id} because it is in Always-On mode.")
-                should_restart = False
-            else:
-                services[f'server{server_id}_stream_active'] = bool(active)
-    
-                # Optional selector for dashboards still using mountpoint targeting.
-                if mountpoint and bool(active):
-                    services['active_mountpoint'] = str(mountpoint)
-                elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{server_id}')):
-                    services.pop('active_mountpoint', None)
-    
-                new_switch = _get_server_stream_switches(services, server_id)
-                new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-                should_restart = (prev_switch['can_push'] != new_switch['can_push']) or (prev_mountpoint != new_mountpoint)
+            self._set_explicit_server_stream(services, server_id, active, mountpoint)
         else:
-            prev_active = bool(services.get('stream_active', False))
-            prev_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-            prev_any_can_push = _compute_any_server_can_push(services)
-            target_mp = self._normalize_mountpoint(mountpoint)
-            
-            # Identify which servers to apply the command to
-            target_sids = []
-            if server_id is not None:
-                if server_id in _get_ntrip_server_ids(services):
-                    target_sids = [server_id]
+            previous_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
+            target_ids = self._target_stream_server_ids(services, active, mountpoint, server_id)
+            if target_ids:
+                self._apply_target_stream_servers(services, target_ids, active, mountpoint, previous_mountpoint)
             else:
-                if not bool(active):
-                    # Shut down ALL on-demand servers matching the target mountpoint
-                    # or ALL on-demand servers if no mountpoint provided.
-                    match_mp = target_mp or self._normalize_mountpoint(services.get('active_mountpoint'))
-                    for sid in _get_ntrip_server_ids(services):
-                        sw = _get_server_stream_switches(services, sid)
-                        sid_mp = self._normalize_mountpoint(services.get(f'mountpoint{sid}'))
-                        if sw['enabled'] and sw['on_demand']:
-                            if match_mp is None or sid_mp == match_mp:
-                                target_sids.append(sid)
-                else:
-                    # Activate specific mountpoint -> resolve to the preferred server
-                    if target_mp:
-                        sid = _resolve_preferred_server_for_mountpoint(services, target_mp)
-                        if sid: target_sids.append(sid)
-
-            if target_sids:
-                for sid in target_sids:
-                    prev_sw = _get_server_stream_switches(services, sid)
-                    if not bool(active) and not prev_sw['on_demand']:
-                        logging.info(f"[STREAM CONTROL] Ignoring sleep command for server {sid} because it is Always-On.")
-                        continue
-                    
-                    services[f'server{sid}_stream_active'] = bool(active)
-                    
-                    if mountpoint and bool(active):
-                        services['active_mountpoint'] = str(mountpoint)
-                    elif not bool(active) and prev_mountpoint == self._normalize_mountpoint(services.get(f'mountpoint{sid}')):
-                        services.pop('active_mountpoint', None)
-                        
-                new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-                should_restart = (prev_any_can_push != _compute_any_server_can_push(services)) or (prev_mountpoint != new_mountpoint)
-            else:
-                if not should_restart:
-                    global_on_demand = _to_bool(services.get('stream_on_demand', False), False)
-                    if not bool(active) and not global_on_demand:
-                        logging.info("[STREAM CONTROL] Ignoring global sleep command because agent is in Always-On mode.")
-                    else:
-                        services['stream_active'] = bool(active)
-                        if mountpoint and bool(active):
-                            services['active_mountpoint'] = str(mountpoint)
-                        elif not bool(active):
-                            services.pop('active_mountpoint', None)
-                        
-                        new_mountpoint = self._normalize_mountpoint(services.get('active_mountpoint'))
-                        should_restart = (prev_active != bool(active)) or (prev_mountpoint != new_mountpoint)
+                self._apply_global_stream_state(services, active, mountpoint)
 
         self.rtcm_stream_active = _compute_any_server_can_push(
             services,
             apply_fail_open=True,
         )
-        rtcm_stream_active_flag = self.rtcm_stream_active  # Update global dispatch gate
+        rtcm_stream_active_flag = self.rtcm_stream_active
         self.save_config()
-        # Workers share the services dict and apply the gate on their next tick.
-        # Wake/sleep must not tear down an authenticated caster connection.
         logging.debug("[STREAM CONTROL] Applied stream gate without restarting caster workers.")
-    
+
     def get_base_config(self):
         return self.config.get('base_config', {})
     
