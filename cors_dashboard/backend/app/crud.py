@@ -505,25 +505,243 @@ def is_valid_serial(serial: str) -> bool:
     return False
 
 
+def _build_ntrip_status(device_data: dict) -> dict:
+    if not isinstance(device_data, dict):
+        return {}
+    normalized = normalize_ntrip_status_payload(device_data)
+    if "antenna_status" in device_data and "antenna_status" not in normalized:
+        normalized["antenna_status"] = device_data["antenna_status"]
+    return normalized
+
+
+async def _create_or_skip_relay_device(
+    db, serial, device_data, base_config, service_config, system_info,
+    chip_type, name, status_value, timestamp,
+):
+    is_relay_like = (
+        serial.startswith(('RELAY_', 'MONITOR_', 'GEOTEK_LTE_', 'MQTT_'))
+        or '_LTE_' in serial
+        or device_data.get("is_lte") is True
+    )
+    if not is_relay_like:
+        logger.warning(
+            f"⚠️ SKIP UNKNOWN DEVICE: Serial '{serial}' does not exist in DB. "
+            "Auto-create is disabled for status updates."
+        )
+        return None
+    final_service_config = {
+        "port1": 2101,
+        "ntrip_version1": 1,
+        "reconnectioninterval": 10,
+        "stream_on_demand": True,
+        "server1_enabled": True,
+    }
+    if isinstance(service_config, dict):
+        final_service_config.update(service_config)
+    device = models.Device(
+        serial=serial,
+        name=name or serial,
+        status=status_value or "offline",
+        is_provisioned=True,
+        timestamp=timestamp,
+        offline_since=device_data.get("offline_since"),
+        base_config=base_config,
+        service_config=final_service_config,
+        system_info=system_info or None,
+        detected_chip_type=chip_type,
+        version=device_data.get("version"),
+        device_token=None,
+        is_synced=True,
+    )
+    db.add(device)
+    await db.commit()
+    await db.refresh(device)
+    logger.info(f"🆕 AUTO-CREATED RELAY DEVICE: {serial}")
+    return device
+
+
+def _update_provisioning_state(device, raw_is_provisioned, updates):
+    if device.is_provisioned and raw_is_provisioned is False:
+        updates["is_provisioned"] = False
+        return True
+    if not device.is_provisioned and raw_is_provisioned is True:
+        updates["is_provisioned"] = True
+        return True
+    return False
+
+
+def _update_device_identity(device, chip_type, device_data, updates):
+    changed = False
+    if chip_type and chip_type != "UNKNOWN" and device.detected_chip_type != chip_type:
+        updates["detected_chip_type"] = chip_type
+        changed = True
+    version = device_data.get("version")
+    if version and device.version != version:
+        updates["version"] = version
+        changed = True
+    return changed
+
+
+def _update_base_config(device, device_data, new_base_config, new_is_synced, readonly_4g, updates):
+    is_out_of_sync = device.is_synced is False and not readonly_4g
+    current_base = _ensure_dict(device.base_config)
+    boot_result = (
+        confirmed_boot_auto_base(device_data)
+        and (current_base.get('base_setup_method') in ('SURVEY_IN', 'AUTO_CORS')
+             or current_base.get('coordinate_source') == 'AUTO_CORS')
+        and current_base.get('auto_base_started_boot_id') != device_data.get('status_boot_id')
+    )
+    if is_out_of_sync and not boot_result:
+        if new_base_config and current_base != new_base_config:
+            logger.debug(f"ℹ️ [{device.serial}] Config diff ignored: Waiting for sync to apply target config.")
+        return is_out_of_sync, False
+    if not new_base_config or current_base == new_base_config:
+        return is_out_of_sync, False
+    old_coords = _ensure_dict(current_base.get('coords'))
+    new_coords = _ensure_dict(new_base_config.get('coords'))
+    new_method = new_base_config.get('base_setup_method')
+    if old_coords and not new_coords and new_method != "SURVEY_IN":
+        return is_out_of_sync, False
+    if "gnss_options" not in new_base_config and current_base.get("gnss_options"):
+        new_base_config["gnss_options"] = current_base["gnss_options"]
+    updates["base_config"] = new_base_config
+    updates["is_synced"] = new_is_synced if readonly_4g else False
+    return is_out_of_sync, True
+
+
+def _merge_device_service_config(serial, previous, new_service_config):
+    if new_service_config:
+        new_service_config = {
+            **previous,
+            **schemas.preserve_service_passwords(previous, new_service_config),
+        }
+    previous_relay_source = previous.get("relay_source")
+    is_relay_device = str(serial or "").strip().upper().startswith("RELAY_")
+    if (new_service_config and is_relay_device and isinstance(previous_relay_source, dict)
+            and "relay_source" not in new_service_config):
+        new_service_config = {**new_service_config, "relay_source": previous_relay_source}
+    return new_service_config, is_relay_device
+
+
+def _update_device_service_config(device, previous, new_service_config, is_out_of_sync, is_relay_device, updates):
+    if is_out_of_sync and is_relay_device and new_service_config:
+        relay_runtime_config = {
+            key: new_service_config[key]
+            for key in ("agent_station_power_control", "agent_station_enabled")
+            if key in new_service_config
+        }
+        updated_service_config = {**previous, **relay_runtime_config}
+        if updated_service_config != previous:
+            updates["service_config"] = updated_service_config
+            return True
+        return False
+    if (is_out_of_sync or device.server_config_lock or not new_service_config
+            or previous == new_service_config):
+        return False
+    updates["service_config"] = new_service_config
+    return True
+
+
+def _update_device_status(device, new_status, current_ts, device_data, updates):
+    normalized_new = str(new_status or "").strip().lower()
+    normalized_current = str(device.status or "").strip().lower()
+    if normalized_new and normalized_new != normalized_current:
+        updates["status"] = new_status
+        updates["timestamp"] = current_ts
+        if normalized_new == "offline":
+            last_seen = int(device.timestamp or 0)
+            updates["offline_since"] = (
+                min(current_ts, last_seen + 180)
+                if last_seen > 0 and current_ts - last_seen > 180
+                else current_ts
+            )
+        else:
+            updates["offline_since"] = None
+        return True
+    updates["timestamp"] = current_ts
+    if normalized_new == "offline" and device.offline_since is None and device_data.get("offline_since"):
+        updates["offline_since"] = int(device_data["offline_since"])
+    elif normalized_new and normalized_new != "offline" and device.offline_since is not None:
+        updates["offline_since"] = None
+    return True
+
+
+def _update_device_ntrip(device, device_data, updates):
+    ntrip_status = _build_ntrip_status(device_data)
+    changed = False
+    if ntrip_status:
+        old_status = _ensure_dict(device.ntrip_status)
+        if old_status != ntrip_status:
+            updates["ntrip_status"] = ntrip_status
+            changed = True
+            server1 = ntrip_status.get("server1", {})
+            server2 = ntrip_status.get("server2", {})
+            total_bps = int(server1.get("bps", 0) or 0) + int(server2.get("bps", 0) or 0)
+            if total_bps != device.bps:
+                updates["bps"] = total_bps
+                changed = True
+    new_ntrip = device_data.get("ntrip_connected")
+    if new_ntrip is None and ntrip_status:
+        server1 = ntrip_status.get("server1", {})
+        server2 = ntrip_status.get("server2", {})
+        new_ntrip = bool(server1.get("connected") or server2.get("connected"))
+    if new_ntrip is not None and new_ntrip != device.ntrip_connected:
+        updates["ntrip_connected"] = new_ntrip
+        changed = True
+    return changed
+
+
+def _update_device_sync_state(device, new_is_synced, updates):
+    if new_is_synced is False and device.is_synced is not False:
+        updates["is_synced"] = False
+        return True
+    if new_is_synced is True and device.is_synced is False:
+        updates["is_synced"] = True
+        return True
+    return False
+
+
+def _update_device_system_info(device, new_system_info, updates):
+    if not new_system_info:
+        return False
+    old_info = _ensure_dict(device.system_info)
+    old_cpu = _ensure_dict(old_info.get('cpu')).get('usage_percent', 0)
+    new_cpu = _ensure_dict(new_system_info.get('cpu')).get('usage_percent', 0)
+    changes = (
+        not old_info
+        or abs(float(old_cpu or 0) - float(new_cpu or 0)) > 5
+        or _ensure_dict(old_info.get("auth_status")) != _ensure_dict(new_system_info.get("auth_status"))
+        or _ensure_dict(old_info.get("receiver_base_readback")) != _ensure_dict(new_system_info.get("receiver_base_readback"))
+        or old_info.get("survey_in_status") != new_system_info.get("survey_in_status")
+        or old_info.get("survey_in_result") != new_system_info.get("survey_in_result")
+        or old_info.get("base_startup") != new_system_info.get("base_startup")
+        or old_info.get("gnss_verification_supported") != new_system_info.get("gnss_verification_supported")
+        or old_info.get("gnss_verification_uart1") != new_system_info.get("gnss_verification_uart1")
+        or old_info.get("gnss_verification") != new_system_info.get("gnss_verification")
+    )
+    if not changes:
+        return False
+    merged_info = old_info.copy()
+    merged_info.update(new_system_info)
+    updates["system_info"] = merged_info
+    return True
+
+
 async def update_or_create_device(db: AsyncSession, device_data: dict) -> models.Device | None:
     """Tạo mới hoặc cập nhật thiết bị với validation chặt chẽ"""
-    
     serial = device_data.get("serial")
-    if not serial: 
+    if not serial:
         return None
     serial = str(serial).strip()
     device_data["serial"] = serial
-
-    # ✅ BƯỚC 1: VALIDATE SERIAL TRƯỚC KHI XỬ LÝ
     if not is_valid_serial(serial):
         logger.warning(
             f"⚠️ REJECTED INVALID SERIAL: '{serial}' "
             f"(status={device_data.get('status')}, name={device_data.get('name')})"
         )
-        return None  # Từ chối xử lý serial không hợp lệ
+        return None
 
     existing_device = await get_device_for_update(db, serial)
-
     new_base_config = normalize_base_config(device_data.get("base_config", {}))
     if confirmed_boot_auto_base(device_data) and device_data['base_config'].get('base_setup_method') == 'SURVEY_IN':
         new_base_config = dict(device_data['base_config'])
@@ -531,11 +749,7 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     new_system_info = _ensure_dict(device_data.get("system_info"))
     new_system_info = {
         key: value for key, value in new_system_info.items()
-        if key not in {
-            "auth_license_bypass",
-            "auth_license_bypass_by",
-            "auth_license_bypass_at",
-        }
+        if key not in {"auth_license_bypass", "auth_license_bypass_by", "auth_license_bypass_at"}
     }
     command_source = _ensure_dict(device_data.get("command_source"))
     if command_source:
@@ -544,259 +758,46 @@ async def update_or_create_device(db: AsyncSession, device_data: dict) -> models
     if "config_status" in device_data:
         new_system_info["config_status"] = device_data["config_status"]
     new_name = device_data.get("name")
-    
-    raw_is_provisioned = device_data.get("is_provisioned") 
+    raw_is_provisioned = device_data.get("is_provisioned")
     current_ts = device_data.get("timestamp", int(time.time()))
     new_status = device_data.get("status")
     new_is_synced = device_data.get("is_synced", True)
-    
-    def build_ntrip_status(device_data: dict) -> dict:
-        if not isinstance(device_data, dict):
-            return {}
-        normalized = normalize_ntrip_status_payload(device_data)
-        if "antenna_status" in device_data and "antenna_status" not in normalized:
-            normalized["antenna_status"] = device_data["antenna_status"]
-        return normalized
-    
-    # ✅ BƯỚC 2: TỰ ĐỘNG TẠO CHO RELAY / VIRTUAL / MONITOR
+
     if not existing_device:
-        is_relay_like = (
-            serial.startswith(('RELAY_', 'MONITOR_', 'GEOTEK_LTE_', 'MQTT_')) 
-            or '_LTE_' in serial
-            or device_data.get("is_lte") is True
+        return await _create_or_skip_relay_device(
+            db, serial, device_data, new_base_config, new_service_config,
+            new_system_info, new_chip_type, new_name, new_status, current_ts,
         )
-        
-        if is_relay_like:
-            # Initialize with defaults if missing to prevent sync errors
-            final_service_config = {
-                "port1": 2101,
-                "ntrip_version1": 1,
-                "reconnectioninterval": 10,
-                "stream_on_demand": True,
-                "server1_enabled": True
-            }
-            if isinstance(new_service_config, dict):
-                final_service_config.update(new_service_config)
 
-            # Tạo mới thiết bị nếu là relay-like
-            new_device = models.Device(
-                serial=serial,
-                name=new_name or serial,
-                status=new_status or "offline",
-                is_provisioned=True, 
-                timestamp=current_ts,
-                offline_since=device_data.get("offline_since"),
-                base_config=new_base_config,
-                service_config=final_service_config,
-                system_info=new_system_info or None,
-                detected_chip_type=new_chip_type,
-                version=device_data.get("version"),
-                device_token=None,
-                is_synced=True
-            )
-            db.add(new_device)
-            await db.commit()
-            await db.refresh(new_device)
-            logger.info(f"🆕 AUTO-CREATED RELAY DEVICE: {serial}")
-            return new_device
-            
-        logger.warning(
-            f"⚠️ SKIP UNKNOWN DEVICE: Serial '{serial}' does not exist in DB. "
-            f"Auto-create is disabled for status updates."
-        )
-        return None
-    
-    # ✅ BƯỚC 3: UPDATE EXISTING DEVICE (giữ nguyên logic cũ)
-    should_update = False
-    update_values = {}
+    updates = {}
+    should_update = _update_provisioning_state(existing_device, raw_is_provisioned, updates)
+    should_update |= _update_device_identity(existing_device, new_chip_type, device_data, updates)
 
-    # Xử lý is_provisioned
-    if existing_device.is_provisioned and raw_is_provisioned is False:
-        update_values["is_provisioned"] = False
-        should_update = True
-    elif not existing_device.is_provisioned and raw_is_provisioned is True:
-        update_values["is_provisioned"] = True
-        should_update = True
-
-    # Chip type
-    if new_chip_type and new_chip_type != "UNKNOWN" and existing_device.detected_chip_type != new_chip_type:
-        update_values["detected_chip_type"] = new_chip_type
-        should_update = True
-
-    # Version
-    new_version = device_data.get("version")
-    if new_version and existing_device.version != new_version:
-        update_values["version"] = new_version
-        should_update = True
-
-    # ✅ KIỂM TRA BẢO VỆ CẤU HÌNH KHI OUT OF SYNC
     from .mobile_base import is_readonly_base
     readonly_4g = is_readonly_base(existing_device)
-    is_out_of_sync = existing_device.is_synced is False and not readonly_4g
+    is_out_of_sync, base_changed = _update_base_config(
+        existing_device, device_data, new_base_config, new_is_synced, readonly_4g, updates
+    )
+    should_update |= base_changed
 
-    # ✅ KIỂM TRA BASE CONFIG
-    # 🔥 FIX: Nếu đang OUT OF SYNC, không cho phép status từ device ghi đè Target Config trong DB
-    current_base = _ensure_dict(existing_device.base_config)
-    boot_result = (confirmed_boot_auto_base(device_data)
-                   and (current_base.get('base_setup_method') in ('SURVEY_IN', 'AUTO_CORS')
-                        or current_base.get('coordinate_source') == 'AUTO_CORS')
-                   and current_base.get('auto_base_started_boot_id') != device_data.get('status_boot_id'))
-    if is_out_of_sync and not boot_result:
-        if new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
-            logger.debug(f"ℹ️ [{serial}] Config diff ignored: Waiting for sync to apply target config.")
-    elif new_base_config and _ensure_dict(existing_device.base_config) != new_base_config:
-        # Chỉ cập nhật khi payload có tọa độ thực sự; payload partial/offline
-        # không được làm rơi config đã lưu trong DB.
-        old_config = _ensure_dict(existing_device.base_config)
-        old_coords = _ensure_dict(old_config.get('coords'))
-        new_coords = _ensure_dict(new_base_config.get('coords'))
-        new_method = new_base_config.get('base_setup_method')
-
-        # Nếu DB đã có tọa độ mà status mới không có (nhưng cùng method), giữ nguyên DB
-        if not (old_coords and not new_coords and new_method != "SURVEY_IN"):
-            if "gnss_options" not in new_base_config and old_config.get("gnss_options"):
-                new_base_config["gnss_options"] = old_config["gnss_options"]
-            update_values["base_config"] = new_base_config
-            update_values["is_synced"] = new_is_synced if readonly_4g else False
-            should_update = True
-
-    # ✅ KIỂM TRA SERVICE CONFIG
-    # 🔥 FIX: Không xóa config nếu device gửi dữ liệu rỗng
     previous_service_config = _ensure_dict(existing_device.service_config)
-    if new_service_config:
-        new_service_config = {
-            **previous_service_config,
-            **schemas.preserve_service_passwords(previous_service_config, new_service_config),
-        }
-    previous_relay_source = previous_service_config.get("relay_source")
-    is_relay_device = str(serial or "").strip().upper().startswith("RELAY_")
-    if (
-        new_service_config
-        and is_relay_device
-        and isinstance(previous_relay_source, dict)
-        and "relay_source" not in new_service_config
-    ):
-        new_service_config = {**new_service_config, "relay_source": previous_relay_source}
-
-    if is_out_of_sync and is_relay_device and new_service_config:
-        relay_runtime_config = {
-            key: new_service_config[key]
-            for key in ("agent_station_power_control", "agent_station_enabled")
-            if key in new_service_config
-        }
-        updated_service_config = {**previous_service_config, **relay_runtime_config}
-        if updated_service_config != previous_service_config:
-            update_values["service_config"] = updated_service_config
-            should_update = True
-    elif not is_out_of_sync and not existing_device.server_config_lock and new_service_config and previous_service_config != new_service_config:
-        update_values["service_config"] = new_service_config
-        should_update = True
-    
-    # Status
-    normalized_new_status = str(new_status or "").strip().lower()
-    normalized_existing_status = str(existing_device.status or "").strip().lower()
-    if normalized_new_status and normalized_new_status != normalized_existing_status:
-        update_values["status"] = new_status
-        update_values["timestamp"] = current_ts
-        if normalized_new_status == "offline":
-            last_seen = int(existing_device.timestamp or 0)
-            update_values["offline_since"] = (
-                min(current_ts, last_seen + 180)
-                if last_seen > 0 and current_ts - last_seen > 180
-                else current_ts
-            )
-        else:
-            update_values["offline_since"] = None
-        should_update = True
-    else:
-        update_values["timestamp"] = current_ts
-        if normalized_new_status == "offline" and existing_device.offline_since is None and device_data.get("offline_since"):
-            update_values["offline_since"] = int(device_data["offline_since"])
-        elif normalized_new_status and normalized_new_status != "offline" and existing_device.offline_since is not None:
-            update_values["offline_since"] = None
-        should_update = True
-
-    # NTRIP status
-    new_ntrip_status = build_ntrip_status(device_data)
-    
-    if new_ntrip_status:
-        old_ntrip_status = _ensure_dict(existing_device.ntrip_status)
-        if old_ntrip_status != new_ntrip_status:
-            update_values["ntrip_status"] = new_ntrip_status
-            should_update = True
-            
-            # Recalculate top-level bps
-            s1 = new_ntrip_status.get("server1", {})
-            s2 = new_ntrip_status.get("server2", {})
-            total_bps = int(s1.get("bps", 0) or 0) + int(s2.get("bps", 0) or 0)
-            if total_bps != existing_device.bps:
-                update_values["bps"] = total_bps
-                should_update = True
-
-    # NTRIP connected
-    new_ntrip = device_data.get("ntrip_connected")
-    if new_ntrip is None and new_ntrip_status:
-        s1 = new_ntrip_status.get("server1", {})
-        s2 = new_ntrip_status.get("server2", {})
-        new_ntrip = bool(s1.get("connected") or s2.get("connected"))
-    if new_ntrip is not None and new_ntrip != existing_device.ntrip_connected:
-        update_values["ntrip_connected"] = new_ntrip
-        should_update = True
-    
-    # ✅ XỬ LÝ is_synced
-    if new_is_synced is False and existing_device.is_synced is not False:
-        update_values["is_synced"] = False
-        should_update = True
-    elif new_is_synced is True and existing_device.is_synced is False:
-        update_values["is_synced"] = True
-        should_update = True
-
-    # System info
-    if new_system_info:
-        # Logic so sánh đơn giản để giảm update DB không cần thiết
-        old_info = _ensure_dict(existing_device.system_info)
-        old_auth_status = _ensure_dict(old_info.get("auth_status"))
-        new_auth_status = _ensure_dict(new_system_info.get("auth_status"))
-        
-        # 🔥 FIX: Thêm bảo vệ sâu hơn cho các trường lồng nhau
-        old_cpu_dict = _ensure_dict(old_info.get('cpu'))
-        new_cpu_dict = _ensure_dict(new_system_info.get('cpu'))
-        
-        old_cpu = old_cpu_dict.get('usage_percent', 0)
-        new_cpu = new_cpu_dict.get('usage_percent', 0)
-        old_receiver_readback = _ensure_dict(old_info.get("receiver_base_readback"))
-        new_receiver_readback = _ensure_dict(new_system_info.get("receiver_base_readback"))
-        
-        # Chỉ update nếu CPU thay đổi > 5% hoặc chưa có info
-        if (
-            not old_info
-            or abs(float(old_cpu or 0) - float(new_cpu or 0)) > 5
-            or old_auth_status != new_auth_status
-            or old_receiver_readback != new_receiver_readback
-            or old_info.get("survey_in_status") != new_system_info.get("survey_in_status")
-            or old_info.get("survey_in_result") != new_system_info.get("survey_in_result")
-            or old_info.get("base_startup") != new_system_info.get("base_startup")
-            or old_info.get("gnss_verification_supported") != new_system_info.get("gnss_verification_supported")
-            or old_info.get("gnss_verification_uart1") != new_system_info.get("gnss_verification_uart1")
-            or old_info.get("gnss_verification") != new_system_info.get("gnss_verification")
-        ):
-            # Merge to preserve backend-managed flags (e.g. auth_license_bypass)
-            merged_info = old_info.copy()
-            merged_info.update(new_system_info)
-            update_values["system_info"] = merged_info
-            should_update = True
+    new_service_config, is_relay_device = _merge_device_service_config(
+        serial, previous_service_config, new_service_config
+    )
+    should_update |= _update_device_service_config(
+        existing_device, previous_service_config, new_service_config,
+        is_out_of_sync, is_relay_device, updates,
+    )
+    should_update |= _update_device_status(existing_device, new_status, current_ts, device_data, updates)
+    should_update |= _update_device_ntrip(existing_device, device_data, updates)
+    should_update |= _update_device_sync_state(existing_device, new_is_synced, updates)
+    should_update |= _update_device_system_info(existing_device, new_system_info, updates)
 
     if should_update:
-        stmt = (
-            update(models.Device)
-            .where(models.Device.serial == serial)
-            .values(**update_values)
-        )
+        stmt = update(models.Device).where(models.Device.serial == serial).values(**updates)
         await db.execute(stmt)
         await db.commit()
         await db.refresh(existing_device)
-        return existing_device
-
     return existing_device
 
 async def get_system_settings(db: AsyncSession) -> dict:
