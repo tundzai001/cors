@@ -75,10 +75,7 @@ class SatelliteService:
             pass
 
     @staticmethod
-    def _parse_identifiers(text: str) -> dict[str, list[tuple[str, str, str]]]:
-        """Join IGS spacecraft identifiers with time-bounded PRN/slot assignments."""
-        if not isinstance(text, str):
-            return {}
+    def _parse_identifier_records(text: str):
         norad_by_svn = {}
         assignments = []
         block = ""
@@ -94,12 +91,24 @@ class SatelliteService:
                     norad_by_svn[fields[0]] = fields[2].lstrip("0")
                 elif block == "SATELLITE/PRN" and len(fields) >= 4:
                     assignments.append(fields[:4])
+        return norad_by_svn, assignments
+
+    @staticmethod
+    def _join_satellite_assignments(norad_by_svn, assignments):
         result = {}
         for svn, start, end, code in assignments:
             norad = norad_by_svn.get(svn)
             if norad and re.fullmatch(r"[GRECJI]\d{2,3}", code):
                 result.setdefault(norad, []).append((start, end, code))
         return result
+
+    @staticmethod
+    def _parse_identifiers(text: str) -> dict[str, list[tuple[str, str, str]]]:
+        """Join IGS spacecraft identifiers with time-bounded PRN/slot assignments."""
+        if not isinstance(text, str):
+            return {}
+        norad_by_svn, assignments = SatelliteService._parse_identifier_records(text)
+        return SatelliteService._join_satellite_assignments(norad_by_svn, assignments)
 
     def _normalize_codes(self, payload: dict[str, Any]) -> dict[str, Any]:
         # Merge supplemental operational satellites when constellation data is present.

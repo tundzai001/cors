@@ -56,6 +56,19 @@ class ConnectionManager:
 
         return True
 
+    def _viewer_safe_message(self, connection: WebSocket, message: dict) -> dict:
+        context = self.connection_contexts.get(connection, {})
+        if context.get("role") != "viewer" or message.get("type") != "status_update":
+            return message
+        data = message.get("data")
+        if not isinstance(data, dict):
+            return message
+        safe_data = dict(data)
+        for key in ("base_config", "service_config", "system_info"):
+            if key in safe_data:
+                safe_data[key] = redact_config_secrets(safe_data[key])
+        return {**message, "data": safe_data}
+
     async def _send_one(self, connection: WebSocket, message: dict) -> None:
         lock = self.connection_locks.get(connection)
         if lock is None:
@@ -67,16 +80,7 @@ class ConnectionManager:
                     return
                 if not self._can_receive(connection, message):
                     return
-                outbound = message
-                context = self.connection_contexts.get(connection, {})
-                if context.get("role") == "viewer" and message.get("type") == "status_update":
-                    data = message.get("data")
-                    if isinstance(data, dict):
-                        safe_data = dict(data)
-                        for key in ("base_config", "service_config", "system_info"):
-                            if key in safe_data:
-                                safe_data[key] = redact_config_secrets(safe_data[key])
-                        outbound = {**message, "data": safe_data}
+                outbound = self._viewer_safe_message(connection, message)
                 await asyncio.wait_for(connection.send_json(outbound), timeout=2.0)
         except (WebSocketDisconnect, RuntimeError, OSError):
             self.disconnect(connection)

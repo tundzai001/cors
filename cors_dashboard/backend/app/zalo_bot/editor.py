@@ -9,7 +9,7 @@ from ..zalo_assistant import zalo_repository
 
 class EditorMixin:
     @staticmethod
-    def _parse_key_values(values: List[str]) -> Dict[str, str]:
+    def _parse_raw_key_values(values: List[str]) -> Dict[str, str]:
         parsed: Dict[str, str] = {}
         i = 0
         while i < len(values):
@@ -27,7 +27,10 @@ class EditorMixin:
                         i += 2
                         continue
                 raise ValueError(f"Không thể tự động suy luận giá trị cho tham số '{key}'. Hãy dùng dạng 'khoá=giá trị' hoặc 'khoá giá_trị'.")
+        return parsed
 
+    @staticmethod
+    def _map_config_keys(parsed: Dict[str, str]) -> Dict[str, str]:
         # Smart keyword mapping
         mapping = {
             "port": "port1", "cổng": "port1", "cong": "port1",
@@ -49,6 +52,11 @@ class EditorMixin:
                 mapped_k = ROVER_CONFIG_CHOICES[mapped_k][0]
             smart_parsed[mapped_k] = v
         return smart_parsed
+
+    @staticmethod
+    def _parse_key_values(values: List[str]) -> Dict[str, str]:
+        parsed = EditorMixin._parse_raw_key_values(values)
+        return EditorMixin._map_config_keys(parsed)
 
     @staticmethod
     def _format_choice_menu(choices: Dict[str, tuple[str, str]]) -> str:

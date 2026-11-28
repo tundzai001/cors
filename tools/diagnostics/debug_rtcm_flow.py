@@ -336,64 +336,64 @@ async def start_ntrip_monitor():
         await asyncio.sleep(5)
 
 # --- IN THỐNG KÊ CHI TIẾT ---
+def _refresh_recent_statistics(now):
+    for key in ("mqtt", "ntrip"):
+        stats[key]["history"] = [item for item in stats[key]["history"] if now - item[0] <= 60]
+        stats[key]["rtcm_history"] = [item for item in stats[key]["rtcm_history"] if now - item[0] <= 60]
+        recent_raw = sum(item[1] for item in stats[key]["history"] if now - item[0] <= 10)
+        recent_rtcm = sum(item[1] for item in stats[key]["rtcm_history"] if now - item[0] <= 10)
+        stats[key]["last_sec_bytes"] = recent_raw / 10.0
+        stats[key]["last_sec_rtcm"] = recent_rtcm / 10.0
+
+
+def _log_flow_statistics(now, uptime):
+    mqtt_stats = stats["mqtt"]
+    ntrip_stats = stats["ntrip"]
+    m_status = "ONLINE" if mqtt_stats["connected"] else "OFFLINE"
+    m_raw = mqtt_stats["last_sec_bytes"]
+    m_rtcm = mqtt_stats["last_sec_rtcm"]
+    m_total_raw = mqtt_stats["total_bytes"]
+    m_total_rtcm = mqtt_stats["rtcm_bytes"]
+    _ = now - mqtt_stats["last_recv_time"] if mqtt_stats["last_recv_time"] > 0 else uptime
+    n_status = "ONLINE" if ntrip_stats["connected"] else "OFFLINE"
+    n_raw = ntrip_stats["last_sec_bytes"]
+    n_rtcm = ntrip_stats["last_sec_rtcm"]
+    n_total_raw = ntrip_stats["total_bytes"]
+    n_total_rtcm = ntrip_stats["rtcm_bytes"]
+    _ = ntrip_stats["reconnect_count"]
+    _ = now - ntrip_stats["last_recv_time"] if ntrip_stats["last_recv_time"] > 0 else uptime
+
+    logging.info("------------------------------------------------------------------------------------------------")
+    logging.info(
+        f"Uptime: {int(uptime)}s | "
+        f"MQTT: {m_status} [Thô: {m_raw:.1f} B/s, RTCM: {m_rtcm:.1f} B/s] (Tổng thô: {m_total_raw} B, RTCM: {m_total_rtcm} B) | "
+        f"NTRIP: {n_status} [Thô: {n_raw:.1f} B/s, RTCM: {n_rtcm:.1f} B/s] (Tổng thô: {n_total_raw} B, RTCM: {n_total_rtcm} B)"
+    )
+    _log_flow_warning(m_raw, m_rtcm, n_rtcm)
+
+
+def _log_flow_warning(m_raw, m_rtcm, n_rtcm):
+    if m_raw > 20 and m_rtcm < 5:
+        logging.warning(
+            f"[!] CẢNH BÁO THIẾT BỊ: MQTT nhận tổng cộng {m_raw:.1f} B/s nhưng chỉ có {m_rtcm:.1f} B/s là RTCM hợp lệ.\n"
+            f"    -> Khả năng cao thiết bị đang gửi rác, gửi lệnh cấu hình lỗi hoặc chỉ gửi NMEA thô chứ không phát RTCM."
+        )
+    elif m_rtcm > 30 and n_rtcm < (m_rtcm * 0.5):
+        logging.critical(
+            f"[!] CẢNH BÁO TRUNG GIAN: Thiết bị phát RTCM chuẩn lên MQTT ({m_rtcm:.1f} B/s) "
+            f"nhưng NTRIP nhận được quá ít ({n_rtcm:.1f} B/s).\n"
+            f"    -> File trung gian 'geotek_daithanh_aitogy.py' đang nuốt/lọc sai hoặc kết nối từ nó lên Caster bị nghẽn/đứt quãng!"
+        )
+
+
 async def print_statistics():
     start_time = time.time()
     logging.info("=== Bắt đầu đo lường luồng RTCM (MQTT vs NTRIP) ===")
-    
     while True:
         await asyncio.sleep(5)
         now = time.time()
-        
-        for k in ["mqtt", "ntrip"]:
-            # Dọn dẹp lịch sử > 60 giây
-            stats[k]["history"] = [x for x in stats[k]["history"] if now - x[0] <= 60]
-            stats[k]["rtcm_history"] = [x for x in stats[k]["rtcm_history"] if now - x[0] <= 60]
-            
-            # Tính trung bình 10 giây gần nhất
-            recent_raw = sum(x[1] for x in stats[k]["history"] if now - x[0] <= 10)
-            recent_rtcm = sum(x[1] for x in stats[k]["rtcm_history"] if now - x[0] <= 10)
-            
-            stats[k]["last_sec_bytes"] = recent_raw / 10.0
-            stats[k]["last_sec_rtcm"] = recent_rtcm / 10.0
-            
-        uptime = now - start_time
-        
-        # MQTT Stats
-        m_status = "ONLINE" if stats["mqtt"]["connected"] else "OFFLINE"
-        m_raw = stats["mqtt"]["last_sec_bytes"]
-        m_rtcm = stats["mqtt"]["last_sec_rtcm"]
-        m_total_raw = stats["mqtt"]["total_bytes"]
-        m_total_rtcm = stats["mqtt"]["rtcm_bytes"]
-        _ = now - stats["mqtt"]["last_recv_time"] if stats["mqtt"]["last_recv_time"] > 0 else uptime
-        
-        # NTRIP Stats
-        n_status = "ONLINE" if stats["ntrip"]["connected"] else "OFFLINE"
-        n_raw = stats["ntrip"]["last_sec_bytes"]
-        n_rtcm = stats["ntrip"]["last_sec_rtcm"]
-        n_total_raw = stats["ntrip"]["total_bytes"]
-        n_total_rtcm = stats["ntrip"]["rtcm_bytes"]
-        _ = stats["ntrip"]["reconnect_count"]
-        _ = now - stats["ntrip"]["last_recv_time"] if stats["ntrip"]["last_recv_time"] > 0 else uptime
-
-        logging.info("------------------------------------------------------------------------------------------------")
-        logging.info(
-            f"Uptime: {int(uptime)}s | "
-            f"MQTT: {m_status} [Thô: {m_raw:.1f} B/s, RTCM: {m_rtcm:.1f} B/s] (Tổng thô: {m_total_raw} B, RTCM: {m_total_rtcm} B) | "
-            f"NTRIP: {n_status} [Thô: {n_raw:.1f} B/s, RTCM: {n_rtcm:.1f} B/s] (Tổng thô: {n_total_raw} B, RTCM: {n_total_rtcm} B)"
-        )
-        
-        # Phân tích nguyên nhân lệch băng thông
-        if m_raw > 20 and m_rtcm < 5:
-            logging.warning(
-                f"[!] CẢNH BÁO THIẾT BỊ: MQTT nhận tổng cộng {m_raw:.1f} B/s nhưng chỉ có {m_rtcm:.1f} B/s là RTCM hợp lệ.\n"
-                f"    -> Khả năng cao thiết bị đang gửi rác, gửi lệnh cấu hình lỗi hoặc chỉ gửi NMEA thô chứ không phát RTCM."
-            )
-        elif m_rtcm > 30 and n_rtcm < (m_rtcm * 0.5):
-            logging.critical(
-                f"[!] CẢNH BÁO TRUNG GIAN: Thiết bị phát RTCM chuẩn lên MQTT ({m_rtcm:.1f} B/s) "
-                f"nhưng NTRIP nhận được quá ít ({n_rtcm:.1f} B/s).\n"
-                f"    -> File trung gian 'geotek_daithanh_aitogy.py' đang nuốt/lọc sai hoặc kết nối từ nó lên Caster bị nghẽn/đứt quãng!"
-            )
+        _refresh_recent_statistics(now)
+        _log_flow_statistics(now, now - start_time)
 
 async def main():
     try:
