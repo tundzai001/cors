@@ -1229,6 +1229,46 @@ function RfDiagnostics({device, live, data}) {
     </section>;
 }
 
+const DASHBOARD_AUTO_SETUP_FIX_INFO = {
+    auto_setup_rover: { label: 'Bước 1: Đặt chế độ ROVER', color: '#17a2b8', icon: '🔄' },
+    auto_setup_wait_fix: { label: 'Bước 2: Chờ RTK Fix...', color: '#ffc107', icon: '📡' },
+    auto_setup_averaging: { label: 'Bước 3: Lấy mẫu tọa độ...', color: '#17a2b8', icon: '📊' },
+    auto_setup_base: { label: 'Bước 4: Cài đặt BASE', color: '#17a2b8', icon: '🏯' },
+};
+const DASHBOARD_RTK_FIX_INFO = {
+    RTK_FIXED: { label: 'RTK Fixed', color: '#00ff00', icon: '🎯' },
+    RTK_FLOAT: { label: 'Float', color: '#ffaa00', icon: '📍' },
+    DGPS: { label: 'DGPS', color: '#ff9900', icon: '⚠️' },
+    GPS_FIX: { label: '3D', color: '#999999', icon: '📡' },
+    NO_FIX: { label: 'NO FIX', color: '#ff0000', icon: '❌' },
+};
+
+function getDashboardBaseFixInfo(device) {
+    const baseConfig = device.base_config || {};
+    if (baseConfig.auto_configured) return { label: 'BASE (Auto)', color: '#00ff00', icon: '🏯' };
+    if (baseConfig.base_setup_method === 'FIXED_LLA') return { label: 'BASE FIXED', color: '#00ff00', icon: '🏯' };
+    if (device.ntrip_connected) return { label: 'BASE READY', color: '#00ff00', icon: '📡' };
+    return { label: 'SURVEYING...', color: '#ffaa00', icon: '⏳' };
+}
+
+function getDashboardFixInfo(device, liveDataAvailable, isReadonly4g, rtkStatus) {
+    if (isReadonly4g) {
+        const online = liveDataAvailable && window.CorsDashboardShared?.getMapEffectiveStatus?.(device) === 'online';
+        return online
+            ? { label: 'ONLINE', color: '#00ff88', icon: '📡' }
+            : { label: 'OFFLINE', color: '#ff0000', icon: '❌' };
+    }
+    if (!liveDataAvailable) return { label: 'OFFLINE', color: '#6c757d', icon: '⏸️' };
+
+    const status = device.status || '';
+    if (status.startsWith('auto_setup')) {
+        return DASHBOARD_AUTO_SETUP_FIX_INFO[status]
+            || { label: 'Auto Setup...', color: '#17a2b8', icon: '⏳' };
+    }
+    if (device.base_mode_active) return getDashboardBaseFixInfo(device);
+    return DASHBOARD_RTK_FIX_INFO[rtkStatus] || DASHBOARD_RTK_FIX_INFO.NO_FIX;
+}
+
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const [offlineClockNow, setOfflineClockNow] = useState(Date.now());
     useEffect(() => {
@@ -1241,49 +1281,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const rtcmMessageTypes = Object.keys(device.rtcm_stats || {}).filter(
         type => /^\d{4}$/.test(type) && Number(device.rtcm_stats[type]?.count) > 0
     );
-
-    let fixInfo = liveDataAvailable
-        ? { label: 'NO FIX', color: '#ff0000', icon: '❌' }
-        : { label: 'OFFLINE', color: '#6c757d', icon: '⏸️' };
-
-    const isAutoSetupStatus = liveDataAvailable && (device.status || '').startsWith('auto_setup');
-
-    if (isReadonly4g) {
-        fixInfo = liveDataAvailable && window.CorsDashboardShared?.getMapEffectiveStatus?.(device) === 'online'
-            ? { label: 'ONLINE', color: '#00ff88', icon: '📡' }
-            : { label: 'OFFLINE', color: '#ff0000', icon: '❌' };
-    } else if (isAutoSetupStatus) {
-        const AUTO_SETUP_STEPS = {
-            'auto_setup_rover': { label: 'Bước 1: Đặt chế độ ROVER', color: '#17a2b8', icon: '🔄', step: 1 },
-            'auto_setup_wait_fix': { label: 'Bước 2: Chờ RTK Fix...', color: '#ffc107', icon: '📡', step: 2 },
-            'auto_setup_averaging': { label: 'Bước 3: Lấy mẫu tọa độ...', color: '#17a2b8', icon: '📊', step: 3 },
-            'auto_setup_base': { label: 'Bước 4: Cài đặt BASE', color: '#17a2b8', icon: '🏯', step: 4 }
-        };
-        const stepInfo = AUTO_SETUP_STEPS[device.status] || { label: 'Auto Setup...', color: '#17a2b8', icon: '⏳', step: 0 };
-        fixInfo = { label: stepInfo.label, color: stepInfo.color, icon: stepInfo.icon };
-    } else if (liveDataAvailable && device.base_mode_active) {
-        const baseConfig = device.base_config || {};
-        if (baseConfig.auto_configured) {
-            fixInfo = { label: 'BASE (Auto)', color: '#00ff00', icon: '🏯' };
-        } else if (baseConfig.base_setup_method === 'FIXED_LLA') {
-            fixInfo = { label: 'BASE FIXED', color: '#00ff00', icon: '🏯' };
-        } else {
-            if (device.ntrip_connected) {
-                fixInfo = { label: 'BASE READY', color: '#00ff00', icon: '📡' };
-            } else {
-                fixInfo = { label: 'SURVEYING...', color: '#ffaa00', icon: '⏳' };
-            }
-        }
-    } else if (liveDataAvailable) {
-        const FIX_STATUS_MAP = {
-            'RTK_FIXED': { label: 'RTK Fixed', color: '#00ff00', icon: '🎯' },
-            'RTK_FLOAT': { label: 'Float', color: '#ffaa00', icon: '📍' },
-            'DGPS': { label: 'DGPS', color: '#ff9900', icon: '⚠️' },
-            'GPS_FIX': { label: '3D', color: '#999999', icon: '📡' },
-            'NO_FIX': { label: 'NO FIX', color: '#ff0000', icon: '❌' }
-        };
-        fixInfo = FIX_STATUS_MAP[rtk_status] || FIX_STATUS_MAP['NO_FIX'];
-    }
+    const fixInfo = getDashboardFixInfo(device, liveDataAvailable, isReadonly4g, rtk_status);
     const bgCanvasRef = useRef(null);
     const satCanvasRef = useRef(null);
     const animationFrameRef = useRef(null);
